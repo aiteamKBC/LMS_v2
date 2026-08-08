@@ -79,7 +79,7 @@ export default function FinanceWorkspace() {
                   stat.colour === 'red' ? 'bg-red-50 text-red-600' :
                   'bg-accent-50 text-accent-600'
                 }`}>
-                  <i className={`${stat.icon} text-xs`}></i>
+                  <AppIcon className={`${stat.icon} text-xs`}></AppIcon>
                 </span>
               </div>
               <p className="text-2xl font-heading font-semibold text-foreground-950">{stat.value}</p>
@@ -220,7 +220,7 @@ export default function FinanceWorkspace() {
                   { label: 'Export for Audit', icon: 'ri-download-line' },
                 ].map((action) => (
                   <button key={action.label} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer">
-                    <i className={`${action.icon} text-foreground-400`}></i>
+                    <AppIcon className={`${action.icon} text-foreground-400`}></AppIcon>
                     {action.label}
                   </button>
                 ))}

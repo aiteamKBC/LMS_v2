@@ -135,13 +135,13 @@ export default function LeadershipDashboard() {
           <div className="rounded-xl border border-red-200/60 bg-red-50/40 overflow-hidden">
             <button onClick={() => setAlertsExpanded(!alertsExpanded)} className="w-full flex items-center justify-between px-5 py-3 cursor-pointer">
               <div className="flex items-center gap-3">
-                <span className="w-8 h-8 rounded-lg bg-red-500 flex items-center justify-center"><i className="ri-alert-fill text-white text-sm"></i></span>
+                <span className="w-8 h-8 rounded-lg bg-red-500 flex items-center justify-center"><AppIcon className="ri-alert-fill text-white text-sm"></AppIcon></span>
                 <div className="text-left">
                   <span className="text-sm font-heading font-semibold text-red-800">Strategic Alerts Requiring Leadership Attention</span>
                   <span className="text-[11px] text-red-600 ml-2">{redAlerts} critical · {amberAlerts} warning</span>
                 </div>
               </div>
-              <i className={`${alertsExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-red-400 text-sm`}></i>
+              <AppIcon className={`${alertsExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-red-400 text-sm`}></AppIcon>
             </button>
             {alertsExpanded && (
               <div className="px-5 pb-3 space-y-1.5">
@@ -172,7 +172,7 @@ export default function LeadershipDashboard() {
             { l: 'Achieved', v: String(LEARNER_COUNTS.achieved), sub: `this AY`, i: 'ri-trophy-line', c: 'bg-emerald-100 text-emerald-600' },
           ].map(k => (
             <div key={k.l} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 cursor-pointer hover:border-background-300/70 transition-smooth">
-              <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${k.c} mb-3`}><i className={`${k.i} text-sm`}></i></span>
+              <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${k.c} mb-3`}><AppIcon className={`${k.i} text-sm`}></AppIcon></span>
               <p className="text-2xl font-heading font-semibold text-foreground-900">{k.v}</p>
               <p className="text-[11px] text-foreground-500 mt-0.5">{k.l}</p>
               <p className="text-[9px] text-foreground-400">{k.sub}</p>
@@ -186,7 +186,7 @@ export default function LeadershipDashboard() {
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Cohort Completion Rates</h3>
-              <a href="/leadership/cohort-performance" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">View all <i className="ri-arrow-right-line text-[9px]"></i></a>
+              <a href="/leadership/cohort-performance" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">View all <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
             </div>
             <div className="space-y-3">
               {COHORTS.map(c => (
@@ -210,7 +210,7 @@ export default function LeadershipDashboard() {
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Achievement Pipeline</h3>
-              <a href="/leadership/achievement-pipeline" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">View all <i className="ri-arrow-right-line text-[9px]"></i></a>
+              <a href="/leadership/achievement-pipeline" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">View all <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
             </div>
             <div className="space-y-2.5">
               {[
@@ -222,7 +222,7 @@ export default function LeadershipDashboard() {
                 { label: 'Achieved', count: PIPELINE.achieved, color: 'bg-emerald-700', icon: 'ri-trophy-line' },
               ].map((s, i) => (
                 <div key={s.label} className="flex items-center gap-3">
-                  <span className={`w-7 h-7 rounded-lg ${s.color} flex items-center justify-center shrink-0`}><i className={`${s.icon} text-white text-xs`}></i></span>
+                  <span className={`w-7 h-7 rounded-lg ${s.color} flex items-center justify-center shrink-0`}><AppIcon className={`${s.icon} text-white text-xs`}></AppIcon></span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-0.5">
                       <span className="text-[11px] font-medium text-foreground-700">{s.label}</span>
@@ -232,7 +232,7 @@ export default function LeadershipDashboard() {
                       <div className={`h-1.5 rounded-full transition-all duration-700 ${s.color}`} style={{ width: `${(s.count / totalLearners) * 100}%` }}></div>
                     </div>
                   </div>
-                  {i < 5 && <span className="text-foreground-300 text-[10px]"><i className="ri-arrow-right-line"></i></span>}
+                  {i < 5 && <span className="text-foreground-300 text-[10px]"><AppIcon className="ri-arrow-right-line"></AppIcon></span>}
                 </div>
               ))}
             </div>
@@ -243,7 +243,7 @@ export default function LeadershipDashboard() {
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance & Engagement — 12-Month Trend</h3>
-            <a href="/leadership/attendance-trends" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Attendance <i className="ri-arrow-right-line text-[9px]"></i></a>
+            <a href="/leadership/attendance-trends" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Attendance <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
           </div>
           <div className="relative h-52">
             <div className="absolute inset-0 flex items-end justify-between px-1">
@@ -270,7 +270,7 @@ export default function LeadershipDashboard() {
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">OTJH — Planned vs Validated</h3>
-              <a href="/leadership/otjh-trends" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full report <i className="ri-arrow-right-line text-[9px]"></i></a>
+              <a href="/leadership/otjh-trends" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full report <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
             </div>
             <div className="relative h-48">
               <div className="absolute inset-0 flex items-end justify-between px-1">
@@ -295,7 +295,7 @@ export default function LeadershipDashboard() {
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">KSB Progress Overview</h3>
-              <a href="/leadership/ksb-progress" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Drill down <i className="ri-arrow-right-line text-[9px]"></i></a>
+              <a href="/leadership/ksb-progress" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Drill down <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
             </div>
             <div className="space-y-4">
               {KSB_OVERVIEW.map(k => (
@@ -326,7 +326,7 @@ export default function LeadershipDashboard() {
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Tutor SLA Performance</h3>
-              <a href="/leadership/tutor-sla" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full SLA <i className="ri-arrow-right-line text-[9px]"></i></a>
+              <a href="/leadership/tutor-sla" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full SLA <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
             </div>
             <div className="space-y-3">
               {TUTORS.map(t => (
@@ -359,7 +359,7 @@ export default function LeadershipDashboard() {
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Coach Workload</h3>
-              <a href="/leadership/coach-workload" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full analysis <i className="ri-arrow-right-line text-[9px]"></i></a>
+              <a href="/leadership/coach-workload" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full analysis <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
             </div>
             <div className="space-y-3">
               {COACHES.map(c => (
@@ -391,7 +391,7 @@ export default function LeadershipDashboard() {
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Compliance Risk Matrix</h3>
-              <a href="/leadership/compliance-risk" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full matrix <i className="ri-arrow-right-line text-[9px]"></i></a>
+              <a href="/leadership/compliance-risk" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full matrix <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {COMPLIANCE_ALERTS.map(ca => (
@@ -411,7 +411,7 @@ export default function LeadershipDashboard() {
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">QA Sampling & Ofsted Evidence</h3>
-              <a href="/leadership/qa-sampling" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">View QA <i className="ri-arrow-right-line text-[9px]"></i></a>
+              <a href="/leadership/qa-sampling" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">View QA <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
             </div>
             <div className="space-y-3">
               {/* QA Summary */}
@@ -440,7 +440,7 @@ export default function LeadershipDashboard() {
               <a href="/leadership/ofsted" className="block p-3 rounded-lg border border-foreground-200 hover:border-primary-200/60 transition-smooth cursor-pointer">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-[11px] font-semibold text-foreground-800">Ofsted Evidence Readiness</p>
-                  <span className="text-[9px] font-semibold text-primary-500">View pack <i className="ri-arrow-right-line text-[8px]"></i></span>
+                  <span className="text-[9px] font-semibold text-primary-500">View pack <AppIcon className="ri-arrow-right-line text-[8px]"></AppIcon></span>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5">
                   {[
@@ -472,7 +472,7 @@ export default function LeadershipDashboard() {
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-heading font-semibold text-foreground-900">Employer Engagement Overview</h3>
-            <a href="/leadership/employer-engagement" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full engagement <i className="ri-arrow-right-line text-[9px]"></i></a>
+            <a href="/leadership/employer-engagement" className="text-[10px] font-semibold text-primary-500 hover:text-primary-600 whitespace-nowrap">Full engagement <AppIcon className="ri-arrow-right-line text-[9px]"></AppIcon></a>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {EMPLOYERS.map(emp => (

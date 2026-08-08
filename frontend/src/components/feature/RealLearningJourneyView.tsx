@@ -270,7 +270,7 @@ function CheckpointRing({ station }: { station: ModuleStation }) {
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
         <span className={`w-10 h-10 rounded-full flex items-center justify-center ${s.iconWrap}`}>
-          <i className={`${s.icon} text-lg`}></i>
+          <AppIcon className={`${s.icon} text-lg`}></AppIcon>
         </span>
         <span className="text-[10px] font-bold text-foreground-500 mt-1 leading-none">
           {station.status === 'completed' ? '100%' : station.pct !== null ? `${station.pct}%` : `M${station.index + 1}`}
@@ -374,7 +374,7 @@ function HorizontalRoadmap({ stations, done, travelled, real }: { stations: Modu
                     ? 'border-primary-200 bg-gradient-to-br from-primary-500 to-primary-700 text-white shadow-xl shadow-primary-500/35'
                     : 'border-background-100 bg-background-50 text-foreground-500 ring-2 ring-inset ring-foreground-200'
               } ${item.station ? 'group-hover:-translate-y-1 group-hover:scale-110 group-hover:shadow-2xl' : ''}`}>
-                <i className={item.icon} />
+                <AppIcon className={item.icon} />
               </span>
               <span className={`mt-3 rounded-full px-3 py-1.5 text-center text-xs font-bold leading-tight ${
                 item.status === 'current'
@@ -435,17 +435,17 @@ function ModuleActivityModal({ station, real, onClose }: { station: ModuleStatio
         <div className="relative overflow-hidden bg-gradient-to-br from-primary-600 via-primary-700 to-primary-900 px-6 py-6 text-white">
           <div className="pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
           <button type="button" onClick={onClose} aria-label="Close" className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition hover:bg-white/20">
-            <i className="ri-close-line text-lg" />
+            <AppIcon className="ri-close-line text-lg" />
           </button>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold text-white/80">
-            <i className="ri-book-open-line" />Module {station.index + 1}
+            <AppIcon className="ri-book-open-line" />Module {station.index + 1}
           </span>
           <h2 id="module-activity-title" className="mt-3 pr-10 text-xl font-heading font-bold !text-white">{station.module.module}</h2>
           <div className="mt-4 flex flex-wrap items-center gap-4 text-xs !text-white">
-            <span><i className="ri-checkbox-circle-line mr-1.5" />{completedActivities.length} activities completed</span>
-            <span><i className="ri-history-line mr-1.5" />{activityRecords.length} recorded actions</span>
-            <span><i className="ri-stack-line mr-1.5" />{station.componentCount} total activities</span>
-            <span><i className="ri-bar-chart-line mr-1.5" />{station.pct ?? 0}% progress</span>
+            <span><AppIcon className="ri-checkbox-circle-line mr-1.5" />{completedActivities.length} activities completed</span>
+            <span><AppIcon className="ri-history-line mr-1.5" />{activityRecords.length} recorded actions</span>
+            <span><AppIcon className="ri-stack-line mr-1.5" />{station.componentCount} total activities</span>
+            <span><AppIcon className="ri-bar-chart-line mr-1.5" />{station.pct ?? 0}% progress</span>
           </div>
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/15">
             <div className="h-full rounded-full bg-gradient-to-r from-emerald-300 to-white" style={{ width: `${station.pct ?? 0}%` }} />
@@ -468,7 +468,7 @@ function ModuleActivityModal({ station, real, onClose }: { station: ModuleStatio
                 const completed = entry.passed !== false;
                 return (
                   <div key={`${entry.at}-${entry.componentId || entry.quizId || index}`} className="group flex items-center gap-3 rounded-2xl border border-foreground-100 bg-background-50 p-3.5 transition hover:border-primary-200 hover:bg-primary-50/20 hover:shadow-sm">
-                    <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${meta.cls}`}><i className={`${meta.icon} text-lg`} /></span>
+                    <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${meta.cls}`}><AppIcon className={`${meta.icon} text-lg`} /></span>
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2">
                         <p className="truncate text-sm font-semibold text-foreground-900">{entry.title || entry.action}</p>
@@ -476,18 +476,18 @@ function ModuleActivityModal({ station, real, onClose }: { station: ModuleStatio
                       </div>
                       <p className="mt-1 truncate text-[10px] text-foreground-400">{entry.detail || entry.action}</p>
                       <p className="mt-1 text-[10px] text-foreground-400">
-                        <i className="ri-calendar-line mr-1" />{new Date(entry.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        <AppIcon className="ri-calendar-line mr-1" />{new Date(entry.at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                         {entry.week ? ` · ${weekDisplayLabel(entry.week)}` : ''}
                       </p>
                     </div>
-                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${completed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}><i className={completed ? 'ri-check-line' : 'ri-time-line'} /></span>
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${completed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}><AppIcon className={completed ? 'ri-check-line' : 'ri-time-line'} /></span>
                   </div>
                 );
               })}
             </div>
           ) : (
             <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-100/50 px-6 py-12 text-center">
-              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-background-100 text-foreground-400"><i className="ri-inbox-line text-xl" /></span>
+              <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-background-100 text-foreground-400"><AppIcon className="ri-inbox-line text-xl" /></span>
               <p className="mt-3 text-sm font-semibold text-foreground-700">No recorded activity yet</p>
               <p className="mt-1 text-xs text-foreground-400">The learner’s actions will appear here.</p>
             </div>
@@ -660,7 +660,7 @@ function RoadStart() {
     <Reveal>
       <div className="flex flex-col items-center">
         <span className="w-11 h-11 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-500 text-white flex items-center justify-center shadow-md ring-4 ring-background-50">
-          <i className="ri-flag-2-fill text-lg"></i>
+          <AppIcon className="ri-flag-2-fill text-lg"></AppIcon>
         </span>
         <span className="mt-2 text-[10px] font-bold uppercase tracking-wider text-emerald-600 whitespace-nowrap">Start</span>
       </div>
@@ -680,7 +680,7 @@ function RoadSummitNode({ done }: { done: boolean }) {
               ? 'bg-gradient-to-br from-amber-300 via-amber-400 to-amber-500 text-white ring-amber-100 shadow-[0_0_30px_-4px_rgba(245,158,11,0.65)]'
               : 'bg-background-50 text-foreground-400 ring-background-100 border-2 border-dashed border-background-300'
           }`}>
-            <i className="ri-trophy-fill text-2xl leading-none"></i>
+            <AppIcon className="ri-trophy-fill text-2xl leading-none"></AppIcon>
           </div>
         </div>
         <span className={`mt-2 text-[10px] font-bold uppercase tracking-wider whitespace-nowrap ${done ? 'text-amber-600' : 'text-foreground-400'}`}>Gateway</span>
@@ -728,7 +728,7 @@ function RoadCard({ station }: { station: ModuleStation }) {
           Module {station.index + 1} · {station.module.weeks.length}{station.module.weeks.length === 1 ? ' week' : ' weeks'}
         </p>
         <span className={`shrink-0 inline-flex items-center gap-1 text-[9px] font-bold px-2 py-0.5 rounded-full ${s.badge}`}>
-          <i className={s.badgeIcon}></i>{s.badgeLabel}
+          <AppIcon className={s.badgeIcon}></AppIcon>{s.badgeLabel}
         </span>
       </div>
       <h3 className="text-sm font-heading font-bold text-foreground-900 leading-snug mb-2.5 line-clamp-2">{station.module.module}</h3>
@@ -752,7 +752,7 @@ function RoadCard({ station }: { station: ModuleStation }) {
 function RoadStat({ icon, value, label }: { icon: string; value: string; label: string }) {
   return (
     <div className="rounded-lg bg-background-100/70 border border-background-200 px-1 py-1 text-center">
-      <p className="text-xs font-heading font-bold text-foreground-900 leading-tight"><i className={`${icon} text-foreground-400 text-[10px] mr-0.5`}></i>{value}</p>
+      <p className="text-xs font-heading font-bold text-foreground-900 leading-tight"><AppIcon className={`${icon} text-foreground-400 text-[10px] mr-0.5`}></AppIcon>{value}</p>
       <p className="text-[8px] text-foreground-400 uppercase tracking-wide">{label}</p>
     </div>
   );
@@ -771,7 +771,7 @@ function RoadStack({ stations, done, learnerName, travelled }: { stations: Modul
         <Reveal>
           <div className="flex items-center gap-3 pl-1">
             <span className="w-11 h-11 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-500 text-white flex items-center justify-center shadow-md ring-4 ring-background-50">
-              <i className="ri-flag-2-fill text-lg"></i>
+              <AppIcon className="ri-flag-2-fill text-lg"></AppIcon>
             </span>
             <span className="text-xs font-bold text-emerald-600">{learnerName ? `${learnerName.split(' ')[0]}'s journey begins` : 'Your journey begins'}</span>
           </div>
@@ -838,7 +838,7 @@ function KsbSection({ real, evidencedCodes }: { real: LearnerDetail; evidencedCo
     <Reveal>
       <section className="rounded-3xl border border-foreground-100 bg-gradient-to-br from-background-50 via-background-50 to-primary-50/20 p-5 shadow-[0_12px_40px_rgba(31,19,57,0.05)] md:p-7">
         <div className="mb-6 flex items-center gap-3.5">
-          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-secondary-100 text-secondary-600"><i className="ri-bar-chart-grouped-line text-lg"></i></span>
+          <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-secondary-100 text-secondary-600"><AppIcon className="ri-bar-chart-grouped-line text-lg"></AppIcon></span>
           <div>
             <h3 className="font-heading text-lg font-bold text-foreground-900">KSB Progression</h3>
             <p className="mt-1 text-sm text-foreground-500">{groups.reduce((n, g) => n + g.done, 0)} of {groups.reduce((n, g) => n + g.total, 0)} KSBs evidenced through your activities</p>
@@ -850,7 +850,7 @@ function KsbSection({ real, evidencedCodes }: { real: LearnerDetail; evidencedCo
             <div key={g.key} className="group rounded-2xl border border-foreground-100 bg-background-50 p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <span className={`flex h-11 w-11 items-center justify-center rounded-2xl ${g.chip}`}><i className={`${g.icon} text-lg`}></i></span>
+                  <span className={`flex h-11 w-11 items-center justify-center rounded-2xl ${g.chip}`}><AppIcon className={`${g.icon} text-lg`}></AppIcon></span>
                   <div>
                     <span className="text-base font-semibold text-foreground-900">{g.label}</span>
                     <p className="mt-1 text-xs text-foreground-500">{g.blurb}</p>
@@ -895,10 +895,10 @@ function LearningHistorySection({ real }: { real: LearnerDetail }) {
                 <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${
                   entry.passed === false ? 'bg-amber-100 text-amber-600' : entry.kind === 'quiz' ? 'bg-primary-100 text-primary-600' : 'bg-emerald-100 text-emerald-600'
                 }`}>
-                  <i className={`${entry.kind === 'quiz' ? 'ri-questionnaire-line' : entry.kind === 'video' ? 'ri-video-line' : 'ri-file-list-3-line'} text-lg`} />
+                  <AppIcon className={`${entry.kind === 'quiz' ? 'ri-questionnaire-line' : entry.kind === 'video' ? 'ri-video-line' : 'ri-file-list-3-line'} text-lg`} />
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-[9px] font-bold uppercase tracking-wide text-emerald-700">
-                  <i className="ri-check-line" />Completed
+                  <AppIcon className="ri-check-line" />Completed
                 </span>
               </div>
               <div className="mt-4">
@@ -909,9 +909,9 @@ function LearningHistorySection({ real }: { real: LearnerDetail }) {
                 <p className="mt-2 line-clamp-2 min-h-8 text-xs leading-relaxed text-foreground-400">{entry.detail || entry.action}</p>
               </div>
               <div className="mt-4 flex items-center justify-between border-t border-foreground-100 pt-3 text-[10px] text-foreground-400">
-                <span><i className="ri-calendar-line mr-1" />{new Date(entry.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                <span><AppIcon className="ri-calendar-line mr-1" />{new Date(entry.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                 {(entry.module || entry.week) && (
-                  <span className="max-w-[55%] truncate"><i className="ri-book-open-line mr-1" />{entry.week || entry.module}</span>
+                  <span className="max-w-[55%] truncate"><AppIcon className="ri-book-open-line mr-1" />{entry.week || entry.module}</span>
                 )}
               </div>
             </article>
@@ -925,7 +925,7 @@ function LearningHistorySection({ real }: { real: LearnerDetail }) {
                 onClick={() => setVisibleCount((count) => Math.min(count + 6, entries.length))}
                 className="inline-flex items-center gap-2 rounded-xl bg-primary-500 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600"
               >
-                <i className="ri-add-line" />Show more
+                <AppIcon className="ri-add-line" />Show more
                 <span className="rounded-full bg-white/15 px-1.5 py-0.5 text-[9px]">{entries.length - visibleCount} left</span>
               </button>
             )}
@@ -935,7 +935,7 @@ function LearningHistorySection({ real }: { real: LearnerDetail }) {
                 onClick={() => setVisibleCount(6)}
                 className="inline-flex items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 py-2.5 text-xs font-semibold text-foreground-600 transition-smooth hover:bg-background-100"
               >
-                <i className="ri-arrow-up-line" />Show less
+                <AppIcon className="ri-arrow-up-line" />Show less
               </button>
             )}
           </div>
@@ -975,7 +975,7 @@ function WeeklyLearningSection({ real, station }: { real: LearnerDetail; station
       <header className="flex flex-col justify-between gap-5 border-b border-foreground-100 bg-gradient-to-r from-primary-50/70 via-background-50 to-emerald-50/40 px-5 py-5 md:flex-row md:items-center md:px-7 md:py-6">
         <div>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-100 px-3 py-1.5 text-[10px] font-semibold text-primary-700">
-            <i className="ri-calendar-2-line" />Weekly schedule
+            <AppIcon className="ri-calendar-2-line" />Weekly schedule
           </span>
           <h2 className="mt-2.5 font-heading text-2xl font-bold text-foreground-950">Weekly Learning Calendar</h2>
           <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -991,7 +991,7 @@ function WeeklyLearningSection({ real, station }: { real: LearnerDetail; station
         <div className="flex w-full flex-col overflow-hidden rounded-2xl border border-foreground-100 bg-white/90 p-1 shadow-sm backdrop-blur sm:w-auto sm:flex-row">
           <div className="flex w-full min-w-0 items-center gap-3 rounded-xl px-3.5 py-2.5 sm:min-w-[210px] sm:w-auto">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-600">
-              <i className="ri-bar-chart-line text-base" />
+              <AppIcon className="ri-bar-chart-line text-base" />
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-3">
@@ -1006,12 +1006,12 @@ function WeeklyLearningSection({ real, station }: { real: LearnerDetail; station
           </div>
           <div className="mx-2 h-px bg-foreground-100 sm:mx-0 sm:my-2 sm:h-10 sm:w-px" />
           <div className="flex w-full min-w-0 items-center gap-0.5 px-1 sm:min-w-[170px] sm:w-auto">
-            <button type="button" disabled={selectedWeekIndex === 0} onClick={() => setSelectedWeekIndex((index) => Math.max(0, index - 1))} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 transition hover:bg-primary-50 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Previous week"><i className="ri-arrow-left-s-line text-lg" /></button>
+            <button type="button" disabled={selectedWeekIndex === 0} onClick={() => setSelectedWeekIndex((index) => Math.max(0, index - 1))} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 transition hover:bg-primary-50 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Previous week"><AppIcon className="ri-arrow-left-s-line text-lg" /></button>
             <div className="min-w-[76px] flex-1 text-center">
               <p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">Viewing</p>
               <p className="mt-0.5 text-xs font-bold text-foreground-900">{weekDisplayLabel(selectedWeek.week)}</p>
             </div>
-            <button type="button" disabled={selectedWeekIndex >= station.module.weeks.length - 1} onClick={() => setSelectedWeekIndex((index) => Math.min(station.module.weeks.length - 1, index + 1))} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 transition hover:bg-primary-50 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Next week"><i className="ri-arrow-right-s-line text-lg" /></button>
+            <button type="button" disabled={selectedWeekIndex >= station.module.weeks.length - 1} onClick={() => setSelectedWeekIndex((index) => Math.min(station.module.weeks.length - 1, index + 1))} className="flex h-9 w-9 items-center justify-center rounded-xl text-foreground-500 transition hover:bg-primary-50 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-30" aria-label="Next week"><AppIcon className="ri-arrow-right-s-line text-lg" /></button>
           </div>
         </div>
       </header>
@@ -1039,16 +1039,16 @@ function WeeklyLearningSection({ real, station }: { real: LearnerDetail; station
                       <article key={component.componentId || `${component.title}-${activityIndex}`} className={`group relative min-h-[105px] overflow-hidden rounded-xl border bg-background-50 p-3 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${complete ? 'border-emerald-200' : 'border-red-200'}`}>
                         <span className={`absolute inset-y-0 left-0 w-1 ${complete ? 'bg-emerald-400' : 'bg-red-400'}`} />
                         <div className="flex items-center justify-between gap-1.5 pl-1">
-                          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${meta.cls}`}><i className={`${meta.icon} text-sm`} /></span>
+                          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${meta.cls}`}><AppIcon className={`${meta.icon} text-sm`} /></span>
                           <span className={`rounded-full px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${complete ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>{complete ? 'Done' : 'Not completed'}</span>
                         </div>
                         <p className="mt-2.5 line-clamp-2 pl-1 text-xs font-semibold leading-snug text-foreground-900">{component.title}</p>
-                        <p className="mt-2 pl-1 text-[10px] text-foreground-500"><i className="ri-time-line mr-1" />{component.durationMinutes ? `${component.durationMinutes} min` : component.expectedOtjh ? `${component.expectedOtjh} OTJ hrs` : 'Self-paced'}</p>
+                        <p className="mt-2 pl-1 text-[10px] text-foreground-500"><AppIcon className="ri-time-line mr-1" />{component.durationMinutes ? `${component.durationMinutes} min` : component.expectedOtjh ? `${component.expectedOtjh} OTJ hrs` : 'Self-paced'}</p>
                       </article>
                     );
                   }) : (
                     <div className="flex min-h-[90px] flex-col items-center justify-center rounded-xl border border-dashed border-foreground-100 text-center">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-background-100 text-foreground-300"><i className="ri-calendar-line text-sm" /></span>
+                      <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-background-100 text-foreground-300"><AppIcon className="ri-calendar-line text-sm" /></span>
                       <p className="mt-2 text-[9px] text-foreground-300">No activity</p>
                     </div>
                   )}
@@ -1088,7 +1088,7 @@ function AchievementsSection({ overallPct, modulesDone, quizzesPassed, attendanc
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600">
-            <i className="ri-trophy-line text-base" />
+            <AppIcon className="ri-trophy-line text-base" />
           </span>
           <div className="min-w-0">
             <h3 className="font-heading text-base font-bold text-foreground-900">Your Badges</h3>
@@ -1116,9 +1116,9 @@ function AchievementsSection({ overallPct, modulesDone, quizzesPassed, attendanc
                   ? 'bg-gradient-to-br from-amber-300 to-amber-500 text-white shadow-md shadow-amber-400/20'
                   : 'bg-background-100 text-foreground-300'
               }`}>
-                <i className={badge.icon} />
+                <AppIcon className={badge.icon} />
               </span>
-              <i className={`${badge.earned ? 'ri-check-line text-emerald-500' : 'ri-lock-line text-foreground-300'} text-xs`} />
+              <AppIcon className={`${badge.earned ? 'ri-check-line text-emerald-500' : 'ri-lock-line text-foreground-300'} text-xs`} />
             </div>
             <p className={`mt-3 truncate text-xs font-semibold leading-snug ${
               badge.earned ? 'text-foreground-900' : 'text-foreground-500'
@@ -1147,7 +1147,7 @@ function UpcomingTasksSection({ real, station }: { real: LearnerDetail; station:
             <span className="h-5 w-5 rounded-md border border-foreground-200" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-semibold text-foreground-900">{component.title}</p>
-              <p className="mt-1 text-[10px] text-foreground-400"><i className="ri-book-open-line mr-1" />{weekDisplayLabel(week)} · {component.durationMinutes ? `${component.durationMinutes} min` : 'Self-paced'}</p>
+              <p className="mt-1 text-[10px] text-foreground-400"><AppIcon className="ri-book-open-line mr-1" />{weekDisplayLabel(week)} · {component.durationMinutes ? `${component.durationMinutes} min` : 'Self-paced'}</p>
             </div>
             <span className={`h-2 w-2 rounded-full ${index < 3 ? 'bg-red-500' : 'bg-amber-500'}`} />
           </div>
@@ -1173,7 +1173,7 @@ function FinishLineSection({ overallPct, stations, totalActivities, doneActiviti
         <div className="mt-5 h-2.5 overflow-hidden rounded-full bg-background-200"><div className="h-full rounded-full bg-gradient-to-r from-primary-500 to-amber-400" style={{ width: `${overallPct}%` }} /></div>
         <p className="mt-2 text-[10px] text-foreground-400">{overallPct}% of programme completed</p>
       </div>
-      <a href="/learner/training-plan" className="mt-7 inline-flex items-center gap-2 rounded-xl bg-primary-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600"><i className="ri-rocket-line" />Continue Learning Journey</a>
+      <a href="/learner/training-plan" className="mt-7 inline-flex items-center gap-2 rounded-xl bg-primary-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600"><AppIcon className="ri-rocket-line" />Continue Learning Journey</a>
     </section>
   );
 }
@@ -1187,7 +1187,7 @@ function SectionHeading({ badge, badgeIcon, title, subtitle, tone }: {
 }) {
   return (
     <div className="px-4 text-center">
-      <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-semibold ${tone === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-primary-100 text-primary-700'}`}><i className={badgeIcon} />{badge}</span>
+      <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-semibold ${tone === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-primary-100 text-primary-700'}`}><AppIcon className={badgeIcon} />{badge}</span>
       <h2 className="mt-3 text-2xl font-heading font-bold text-foreground-950 md:text-3xl">{title}</h2>
       <p className="mx-auto mt-1 max-w-xl text-sm text-foreground-400">{subtitle}</p>
     </div>
@@ -1225,7 +1225,7 @@ export function TrailToGatewaySection({
       <div className="relative px-4 py-9 md:px-7 md:py-12">
         <div className="mx-auto mb-6 max-w-[1180px] text-center">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-primary-100 px-3.5 py-1.5 text-[10px] font-bold uppercase tracking-wider text-primary-700 ring-1 ring-primary-200/60">
-            <i className="ri-road-map-line" />Your Journey
+            <AppIcon className="ri-road-map-line" />Your Journey
           </span>
           <h2 className="mt-3 text-3xl font-heading font-bold tracking-tight text-foreground-950 md:text-4xl">Learning Roadmap</h2>
           <p className="mx-auto mt-2 max-w-xl text-sm text-foreground-500">From enrolment to graduation — track every step of your learning journey</p>
@@ -1370,7 +1370,7 @@ export function RealLearningJourneyView({
               <div className="flex min-w-0 items-start gap-3 sm:items-center sm:gap-4">
                 <div className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 text-xl font-heading font-bold text-white shadow-xl shadow-primary-500/20 sm:h-24 sm:w-24 sm:rounded-3xl sm:text-2xl">
                   {initials}
-                  <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-amber-400 text-white ring-4 ring-background-50"><i className="ri-check-line text-xs" /></span>
+                  <span className="absolute -bottom-1 -right-1 flex h-6 w-6 items-center justify-center rounded-full bg-amber-400 text-white ring-4 ring-background-50"><AppIcon className="ri-check-line text-xs" /></span>
                 </div>
                 <div className="min-w-0">
                   <h1 className="break-words text-xl font-heading font-bold tracking-tight text-foreground-950 sm:text-2xl md:text-3xl">{real?.name || 'Learner'}</h1>
@@ -1425,13 +1425,13 @@ function ProfileChip({ icon, text, tone }: { icon: string; text: string; tone: '
   const cls = tone === 'primary'
     ? 'bg-primary-100 text-primary-700'
     : tone === 'blue' ? 'bg-blue-50 text-blue-700' : 'bg-background-100 text-foreground-600';
-  return <span className={`inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium ${cls}`}><i className={icon} /><span className="truncate">{text}</span></span>;
+  return <span className={`inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-medium ${cls}`}><AppIcon className={icon} /><span className="truncate">{text}</span></span>;
 }
 
 function ProfileInfo({ icon, label, value, tone }: { icon: string; label: string; value: string; tone: 'amber' | 'primary' }) {
   return (
     <div className="flex min-w-0 items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3 py-2.5 sm:min-w-[165px]">
-      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone === 'amber' ? 'bg-amber-100 text-amber-600' : 'bg-primary-100 text-primary-600'}`}><i className={icon} /></span>
+      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone === 'amber' ? 'bg-amber-100 text-amber-600' : 'bg-primary-100 text-primary-600'}`}><AppIcon className={icon} /></span>
       <div className="min-w-0">
         <p className="text-[10px] text-foreground-400">{label}</p>
         <p className="truncate text-xs font-semibold text-foreground-900">{value}</p>
@@ -1445,10 +1445,10 @@ function JourneyMetric({ metric, onClick }: { metric: JourneyMetricData; onClick
   return (
     <button type="button" onClick={onClick} aria-label={`View ${label} details`} className="group relative flex min-h-[145px] flex-col overflow-hidden rounded-2xl border border-white/80 bg-white/90 p-4 text-left shadow-[0_6px_20px_rgba(31,19,57,0.04)] backdrop-blur transition-all duration-300 hover:-translate-y-1 hover:border-primary-200 hover:shadow-[0_14px_30px_rgba(86,52,177,0.11)] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2">
       <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-primary-400 via-secondary-400 to-emerald-400 opacity-0 transition-opacity group-hover:opacity-100" />
-      <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-100 to-primary-50 text-primary-600 ring-1 ring-inset ring-primary-100"><i className={`${icon} text-base`} /></span>
+      <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-primary-100 to-primary-50 text-primary-600 ring-1 ring-inset ring-primary-100"><AppIcon className={`${icon} text-base`} /></span>
       <p className="mt-3 text-[10px] font-medium uppercase tracking-wide text-foreground-400">{label}</p>
       <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{value}</p>
-      <p className="mt-auto flex items-center gap-1 pt-2 text-[10px] font-medium text-emerald-600"><i className="ri-pulse-line" />{detail}</p>
+      <p className="mt-auto flex items-center gap-1 pt-2 text-[10px] font-medium text-emerald-600"><AppIcon className="ri-pulse-line" />{detail}</p>
     </button>
   );
 }
@@ -1465,8 +1465,8 @@ function JourneyMetricModal({ metric, onClose }: { metric: JourneyMetricData; on
       <div role="dialog" aria-modal="true" aria-labelledby="journey-metric-title" className="w-full max-w-md overflow-hidden rounded-3xl border border-white/70 bg-background-50 shadow-[0_30px_100px_rgba(20,8,45,0.35)]" onMouseDown={(event) => event.stopPropagation()}>
         <div className="relative overflow-hidden bg-gradient-to-br from-primary-600 via-primary-700 to-primary-900 px-6 py-6 text-white">
           <div className="pointer-events-none absolute -right-12 -top-16 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
-          <button type="button" onClick={onClose} aria-label="Close" className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition hover:bg-white/20"><i className="ri-close-line text-lg" /></button>
-          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 text-xl ring-1 ring-inset ring-white/20"><i className={metric.icon} /></span>
+          <button type="button" onClick={onClose} aria-label="Close" className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition hover:bg-white/20"><AppIcon className="ri-close-line text-lg" /></button>
+          <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 text-xl ring-1 ring-inset ring-white/20"><AppIcon className={metric.icon} /></span>
           <p className="mt-4 text-[10px] font-semibold uppercase tracking-widest !text-white/70">{metric.label}</p>
           <h2 id="journey-metric-title" className="mt-1 text-3xl font-heading font-bold !text-white">{metric.value}</h2>
           <p className="mt-2 pr-8 text-sm !text-white/75">{metric.description}</p>
@@ -1489,7 +1489,7 @@ function JourneyMetricModal({ metric, onClose }: { metric: JourneyMetricData; on
 function SnapshotTile({ label, value, icon, iconBg }: { label: string; value: string; icon: string; iconBg: string }) {
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 text-center hover:scale-[1.03] hover:shadow-md transition-all duration-200">
-      <span className={`w-9 h-9 rounded-xl flex items-center justify-center mx-auto mb-2 ${iconBg}`}><i className={icon}></i></span>
+      <span className={`w-9 h-9 rounded-xl flex items-center justify-center mx-auto mb-2 ${iconBg}`}><AppIcon className={icon}></AppIcon></span>
       <p className="text-base font-heading font-bold text-foreground-900 leading-tight">{value}</p>
       <p className="text-[11px] text-foreground-400 mt-0.5">{label}</p>
     </div>

@@ -220,7 +220,7 @@ export function SignaturePad({ onCommit, onCancel }: { onCommit: (dataUrl: strin
         mode === m ? 'bg-primary-50 text-primary-700 border-primary-300/60' : 'text-foreground-500 border-transparent hover:bg-background-100'
       }`}
     >
-      <i className={icon} />{label}
+      <AppIcon className={icon} />{label}
     </button>
   );
 
@@ -244,16 +244,16 @@ export function SignaturePad({ onCommit, onCancel }: { onCommit: (dataUrl: strin
           <p className="text-[11px] text-foreground-400 mt-1.5">Sign inside the box using a mouse, trackpad or finger.</p>
           <div className="flex items-center gap-2 mt-3">
             <button className={btnPrimary} onClick={commitDrawing} disabled={!hasInk}>
-              <i className="ri-check-line" />Use signature
+              <AppIcon className="ri-check-line" />Use signature
             </button>
-            <button className={btnSecondary} onClick={clear} disabled={!hasInk}><i className="ri-eraser-line" />Clear</button>
+            <button className={btnSecondary} onClick={clear} disabled={!hasInk}><AppIcon className="ri-eraser-line" />Clear</button>
             <button className={btnSecondary} onClick={onCancel}>Cancel</button>
           </div>
         </>
       ) : (
         <>
           <label className="w-full h-32 border-2 border-dashed border-foreground-200 rounded-lg bg-background-50 flex flex-col items-center justify-center text-foreground-400 hover:border-primary-300 hover:text-primary-500 transition-smooth cursor-pointer">
-            <i className="ri-image-add-line text-2xl mb-1" />
+            <AppIcon className="ri-image-add-line text-2xl mb-1" />
             <span className="text-[12px]">Choose a signature image</span>
             <span className="text-[11px] text-foreground-300 mt-0.5">PNG, JPEG or WebP · max 2 MB</span>
             <input
@@ -274,7 +274,7 @@ export function SignaturePad({ onCommit, onCancel }: { onCommit: (dataUrl: strin
         </>
       )}
 
-      {err && <p className="text-[12px] text-red-600 mt-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
+      {err && <p className="text-[12px] text-red-600 mt-2"><AppIcon className="ri-error-warning-line mr-1" />{err}</p>}
     </div>
   );
 }

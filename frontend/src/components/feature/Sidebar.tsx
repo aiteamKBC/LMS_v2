@@ -1,6 +1,72 @@
 import { useState, useCallback, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
+import {
+  Activity,
+  AlertTriangle,
+  Archive,
+  ArrowRight,
+  ArrowUpCircle,
+  BarChart3,
+  Bell,
+  BookOpen,
+  Bot,
+  Building2,
+  Calendar,
+  CalendarCheck,
+  CalendarDays,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Circle,
+  CircleDollarSign,
+  ClipboardList,
+  Clock,
+  Compass,
+  Database,
+  ExternalLink,
+  FileSearch,
+  FileText,
+  Flag,
+  Folder,
+  FolderOpen,
+  FolderUp,
+  Gift,
+  GitBranch,
+  HandHeart,
+  Heart,
+  HeartPulse,
+  History,
+  KeyRound,
+  LayoutDashboard,
+  LifeBuoy,
+  Link2,
+  LockKeyhole,
+  MessageSquare,
+  Phone,
+  Pin,
+  PinOff,
+  PieChart,
+  Plug,
+  Presentation,
+  Receipt,
+  RefreshCw,
+  Search,
+  Settings2,
+  ShieldCheck,
+  ShoppingBag,
+  Star,
+  ThumbsUp,
+  Trophy,
+  Upload,
+  UserCog,
+  UserPlus,
+  Users,
+  Workflow,
+  X,
+  Zap,
+  type LucideIcon,
+} from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
 
@@ -29,11 +95,99 @@ interface SidebarProps {
   onPinChange?: (pinned: boolean) => void;
 }
 
-export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: SidebarProps) {
+/**
+ * Resolve navigation icons from the meaning of the item instead of the old
+ * icon-font class. The navigation data remains unchanged; this is only a
+ * presentation adapter for the sidebar's desktop and mobile renderers.
+ */
+function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
+  const key = `${id} ${label} ${sourceIcon}`.toLowerCase();
+
+  if (/dashboard|overview/.test(key)) return LayoutDashboard;
+  if (/message|communication|feedback/.test(key)) return MessageSquare;
+  if (/support|ticket|knowledge-base|help/.test(key)) return LifeBuoy;
+  if (/permission|access|role|key/.test(key)) return KeyRound;
+  if (/setting|configuration|automation|manual-mode|system/.test(key)) return Settings2;
+  if (/integration|plug/.test(key)) return Plug;
+  if (/notification|what's new/.test(key)) return Bell;
+  if (/audit|history|log|governance/.test(key)) return History;
+  if (/safeguard|wellbeing|welfare|heart|prevent|concern/.test(key)) return HeartPulse;
+  if (/risk|escalat|urgent|warning|absence|rejected|error/.test(key)) return AlertTriangle;
+  if (/finance|funding|payment|budget|invoice|invoic|money/.test(key)) return CircleDollarSign;
+  if (/document|file|form|policy|record|contract|report|review/.test(key)) {
+    return /review|audit|search/.test(key) ? FileSearch : FileText;
+  }
+  if (/evidence|folder|library|storage|resource/.test(key)) return FolderOpen;
+  if (/quiz|question|assessment|test|checkpoint/.test(key)) return ClipboardList;
+  if (/attendance|calendar|timetable|meeting|event|session|schedule/.test(key)) {
+    return /attendance/.test(key) ? CalendarCheck : CalendarDays;
+  }
+  if (/training|learning|module|programme|curriculum|knowledge|plan|week/.test(key)) return BookOpen;
+  if (/journey|readiness|gateway|epa/.test(key)) return Compass;
+  if (/progress|intelligence|performance|trend|impact|quality|insight|sampling/.test(key)) return BarChart3;
+  if (/employer|tenant|organisation|building|workplace/.test(key)) return Building2;
+  if (/learner|apprentice|cohort|staff|user|team|club|group/.test(key)) return Users;
+  if (/allocation|assignment/.test(key)) return UserPlus;
+  if (/coach|tutor/.test(key)) return UserCog;
+  if (/upload|import/.test(key)) return Upload;
+  if (/link|mapping/.test(key)) return Link2;
+  if (/version|branch/.test(key)) return GitBranch;
+  if (/archive/.test(key)) return Archive;
+  if (/reward|recognition|achievement|trophy|award/.test(key)) return Trophy;
+  if (/gift|voucher|claim|points/.test(key)) return Gift;
+  if (/shopping|shop/.test(key)) return ShoppingBag;
+  if (/flash|ai|robot/.test(key)) return Bot;
+  if (/phone|contact/.test(key)) return Phone;
+  if (/external/.test(key)) return ExternalLink;
+  if (/secure|lock/.test(key)) return LockKeyhole;
+  if (/starred|star/.test(key)) return Star;
+  if (/thumb|recognition/.test(key)) return ThumbsUp;
+  if (/flag|pipeline/.test(key)) return Flag;
+  if (/arrow-up|internal/.test(key)) return ArrowUpCircle;
+  if (/shield|compliance|quality/.test(key)) return ShieldCheck;
+  if (/database|data/.test(key)) return Database;
+  if (/receipt|invoice|bill/.test(key)) return Receipt;
+  if (/pie/.test(key)) return PieChart;
+  if (/refresh|cycle/.test(key)) return RefreshCw;
+  if (/activity|engagement/.test(key)) return Activity;
+  if (/heart/.test(key)) return Heart;
+  if (/hand-heart/.test(key)) return HandHeart;
+  if (/presentation|teaching|delivery/.test(key)) return Presentation;
+  if (/clock|time|otjh|hours/.test(key)) return Clock;
+  if (/folder/.test(key)) return Folder;
+  if (/open-cases/.test(key)) return FolderUp;
+  if (/open/.test(key)) return FolderOpen;
+  if (/pin/.test(key)) return Pin;
+  if (/calendar/.test(key)) return Calendar;
+  if (/search|find|qa/.test(key)) return Search;
+  if (/workflow|automation/.test(key)) return Workflow;
+  if (/zap|flash/.test(key)) return Zap;
+
+  return Circle;
+}
+
+function SidebarIcon({ id, label, sourceIcon, size = 18, className }: {
+  id?: string;
+  label: string;
+  sourceIcon?: string;
+  size?: number;
+  className?: string;
+}) {
+  const Icon = resolveSidebarIcon(id, label, sourceIcon);
+  return <Icon aria-hidden="true" focusable="false" size={size} strokeWidth={1.8} className={className} />;
+}
+
+export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHoverChange, onPinChange }: SidebarProps) {
   const location = useLocation();
   const { canSeeNavItem } = useAuth();
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [hoverExpanded, setHoverExpanded] = useState(false);
+  const [isPinned, setIsPinned] = useState(() => {
+    try {
+      const stored = localStorage.getItem('kbc_sidebar_pinned_v2');
+      return stored === 'true';
+    } catch { return false; }
+  });
+  const [isHovering, setIsHovering] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem('kbc_sidebar_expanded');
@@ -42,8 +196,17 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
   });
 
   useEffect(() => {
-    localStorage.setItem('kbc_sidebar_expanded', JSON.stringify([...expandedGroups]));
+    try {
+      localStorage.setItem('kbc_sidebar_expanded', JSON.stringify([...expandedGroups]));
+    } catch { /* Ignore unavailable browser storage. */ }
   }, [expandedGroups]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('kbc_sidebar_pinned_v2', String(isPinned));
+    } catch { /* Ignore unavailable browser storage. */ }
+    onPinChange?.(isPinned);
+  }, [isPinned, onPinChange]);
 
   // Close dropdown on route change
   useEffect(() => {
@@ -71,7 +234,8 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
       .map(item => ({
         ...item,
         children: item.children?.filter(child => canSeeNavItem(child.id)),
-      }));
+      }))
+      .filter(item => Boolean(item.href || item.children?.length));
   }, [navItems, canSeeNavItem]);
 
   const queryMatchedHref = useMemo(() => {
@@ -110,12 +274,39 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
     );
   };
 
+  // Keep the section containing the current route open when navigation is
+  // supplied dynamically by the active role/configuration.
+  useEffect(() => {
+    const activeGroupIds = filteredNavItems
+      .filter(item => item.children?.some(child => isActive(child.href)))
+      .map(item => item.id);
+    if (activeGroupIds.length === 0) return;
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      activeGroupIds.forEach(id => next.add(id));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [filteredNavItems, location.pathname, location.search]);
+
   const hasChildren = (item: SidebarNavItem) => item.children && item.children.length > 0;
+
+  const handleMouseEnter = useCallback(() => {
+    setIsHovering(true);
+    onHoverChange?.(true);
+  }, [onHoverChange]);
+
+  const handleMouseLeave = useCallback(() => {
+    setIsHovering(false);
+    setActiveDropdown(null);
+    onHoverChange?.(false);
+  }, [onHoverChange]);
+
+  const sidebarExpanded = isPinned || isHovering;
 
   // Desktop sidebar (collapsed)
   const desktopSidebar = (
     <aside
-      className="w-full flex flex-col h-screen text-white relative overflow-visible"
+      className="workspace-sidebar-panel w-full flex flex-col h-screen text-white relative overflow-visible"
       style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
     >
       {/* Liquid blob decorations */}
@@ -169,6 +360,15 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
       {/* Logo */}
       <div className="relative z-10 flex items-center justify-center h-14 px-3 shrink-0">
         <img src="/kbc-logo.png" alt="Kent Business College" className="h-8 w-14 object-contain object-left transition-transform duration-300 hover:scale-105" />
+        <button
+          type="button"
+          onClick={() => setIsPinned(true)}
+          aria-label="Expand sidebar"
+          title="Expand sidebar"
+          className="workspace-sidebar-pin absolute right-1.5 top-3 hidden h-8 w-8 items-center justify-center rounded-lg transition-colors duration-200 lg:flex"
+        >
+          <ArrowRight size={18} strokeWidth={1.8} aria-hidden="true" />
+        </button>
       </div>
 
       {/* Navigation */}
@@ -206,7 +406,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
   // Expanded sidebar (used for mobile drawer and desktop hover-expand)
   const mobileSidebar = (
     <aside
-      className="w-full flex flex-col h-screen text-white relative overflow-hidden"
+      className="workspace-sidebar-panel w-full flex flex-col h-screen text-white relative overflow-hidden"
       style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
     >
       {/* Liquid blobs */}
@@ -258,8 +458,18 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
       </div>
 
       {/* Logo */}
-      <div className="relative z-10 flex items-center h-14 px-3 shrink-0">
+      <div className="relative z-10 flex items-center justify-between h-14 px-3 shrink-0">
         <BrandLockup size="compact" theme="dark" />
+        <button
+          type="button"
+          onClick={() => setIsPinned(prev => !prev)}
+          aria-label={isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
+          aria-pressed={isPinned}
+          title={isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
+          className="workspace-sidebar-pin hidden h-8 w-8 items-center justify-center rounded-lg transition-colors duration-200 lg:flex"
+        >
+          {isPinned ? <PinOff size={16} strokeWidth={1.8} aria-hidden="true" /> : <Pin size={16} strokeWidth={1.8} aria-hidden="true" />}
+        </button>
       </div>
 
       {/* Mobile navigation */}
@@ -306,16 +516,13 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
 
   return (
     <>
-      {/* Desktop sidebar — expands on hover */}
+      {/* Desktop sidebar — pinned open or expanded temporarily on hover */}
       <div
-        className={`hidden lg:block fixed left-0 top-0 z-40 h-screen overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${hoverExpanded ? 'w-[264px] shadow-2xl' : 'w-[56px]'}`}
-        onMouseEnter={() => setHoverExpanded(true)}
-        onMouseLeave={() => {
-          setHoverExpanded(false);
-          setActiveDropdown(null);
-        }}
+        className={`workspace-sidebar-desktop hidden lg:block fixed left-0 top-0 z-40 h-screen overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${sidebarExpanded ? 'w-[264px] shadow-2xl' : 'w-[56px]'}`}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
       >
-        {hoverExpanded ? mobileSidebar : desktopSidebar}
+        {sidebarExpanded ? mobileSidebar : desktopSidebar}
       </div>
 
       {/* Mobile overlay */}
@@ -327,13 +534,13 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile }: Side
       )}
 
       {/* Mobile sidebar */}
-      <div className={`lg:hidden fixed left-0 top-0 z-50 h-screen w-[264px] transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <div className={`workspace-sidebar-mobile lg:hidden fixed left-0 top-0 z-50 h-screen w-[264px] transition-transform duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {mobileSidebar}
         <button
           onClick={onCloseMobile}
           className="absolute top-3 right-3 w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-white/60 hover:text-white hover:bg-white/20 transition-smooth cursor-pointer lg:hidden"
         >
-          <i className="ri-close-line text-lg"></i>
+          <X size={18} strokeWidth={1.8} aria-hidden="true" />
         </button>
       </div>
     </>
@@ -405,7 +612,7 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
         className={`w-full flex items-center justify-center px-2 py-2 rounded-lg text-sm transition-all duration-200 group relative ${anyChildActive ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/90 hover:bg-white/7'}`}
       >
         <span className="w-5 h-5 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
-          <i className={`${item.icon} text-sm`}></i>
+          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />
         </span>
         {item.badge && (
           <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-accent-500 rounded-full animate-pulse-slow"></span>
@@ -436,11 +643,11 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
           <div className="p-1 max-h-[calc(100vh-24px)] overflow-y-auto">
             <div className="px-3 py-2 text-sm font-semibold text-white/90 border-b border-white/10 flex items-center justify-between">
               <span>{item.label}</span>
-              {item.comingSoon ? <SoonBadge /> : <i className="ri-arrow-right-s-line text-xs text-white/40"></i>}
+              {item.comingSoon ? <SoonBadge /> : <ChevronRight size={14} strokeWidth={1.8} className="text-white/40" aria-hidden="true" />}
             </div>
             {needsSearch && (
               <div className="relative px-2 py-2">
-                <i className="ri-search-line absolute left-4 top-1/2 -translate-y-1/2 text-xs text-white/30"></i>
+                <Search size={14} strokeWidth={1.8} className="absolute left-4 top-1/2 -translate-y-1/2 text-white/30" aria-hidden="true" />
                 <input
                   type="text"
                   value={searchQuery}
@@ -461,9 +668,9 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-all ${childActive ? 'bg-white/10 text-white' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
                     onClick={onToggle}
                   >
-                    <i className={`${child.icon} text-sm`}></i>
+                    <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={16} />
                     <span className="flex-1">{child.label}</span>
-                    {child.comingSoon ? <SoonBadge /> : <i className="ri-arrow-right-s-line text-xs text-white/40"></i>}
+                    {child.comingSoon ? <SoonBadge /> : <ChevronRight size={14} strokeWidth={1.8} className="text-white/40" aria-hidden="true" />}
                   </Link>
                 );
               })}
@@ -500,7 +707,7 @@ function NavLink({ item, isActive }: {
   const content = (
     <>
       <span ref={spanRef} className="w-5 h-5 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
-        <i className={`${item.icon} text-sm`}></i>
+        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />
       </span>
       {hovered && tooltipStyle && createPortal(
         <div className="fixed z-[100] tooltip-fade-in px-2 py-1 tooltip-bg text-white text-xs rounded-md shadow-lg whitespace-nowrap pointer-events-none"
@@ -561,7 +768,7 @@ function SidebarBottomLink({ href, icon, label, isActive }: {
       onMouseLeave={() => setHovered(false)}
     >
       <span ref={spanRef} className="w-5 h-5 flex items-center justify-center shrink-0">
-        <i className={`${icon} text-xs`}></i>
+        <SidebarIcon id={icon} label={label} sourceIcon={icon} size={15} />
       </span>
       {hovered && tooltipStyle && createPortal(
         <div className="fixed z-[100] tooltip-fade-in px-2 py-1 tooltip-bg text-white text-xs rounded-md shadow-lg whitespace-nowrap pointer-events-none"
@@ -592,13 +799,13 @@ function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
         className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all duration-200 ease-out group relative ${anyChildActive ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/90 hover:bg-white/7 hover:translate-x-0.5'}`}
       >
         <span className="w-5 h-5 flex items-center justify-center shrink-0">
-          <i className={`${item.icon} text-base`}></i>
+          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
         </span>
         <span className="flex-1 text-left whitespace-nowrap text-sm font-medium">{item.label}</span>
         <span className="flex items-center gap-1 shrink-0">
           {item.comingSoon && <SoonBadge />}
           {item.badge && <NavBadge count={item.badge} />}
-          <i className={`${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-xs text-white/30`}></i>
+          {isExpanded ? <ChevronUp size={14} strokeWidth={1.8} className="text-white/30" aria-hidden="true" /> : <ChevronDown size={14} strokeWidth={1.8} className="text-white/30" aria-hidden="true" />}
         </span>
       </button>
       {isExpanded && item.children && (
@@ -612,7 +819,7 @@ function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
                 className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all duration-200 ease-out group ${childActive ? 'bg-white/10 text-white shadow-sm' : 'text-white/45 hover:text-white/80 hover:bg-white/7 hover:translate-x-0.5'}`}
                 style={{ animationDelay: `${idx * 60}ms` }}
               >
-                <i className={`${child.icon} text-xs`}></i>
+                <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
                 <span className="whitespace-nowrap text-sm">{child.label}</span>
                 <span className="flex items-center gap-1 ml-auto">
                   {child.comingSoon && <SoonBadge />}
@@ -637,7 +844,7 @@ function MobileNavLink({ item, isActive }: {
     <>
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400 shadow-[0_0_6px_rgba(0,0,0,0.3)]"></span>}
       <span className="w-5 h-5 flex items-center justify-center shrink-0">
-        <i className={`${item.icon} text-base`}></i>
+        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
       </span>
       <span className="flex-1 whitespace-nowrap text-sm font-medium">{item.label}</span>
       <span className="flex items-center gap-1.5 shrink-0">
@@ -694,7 +901,7 @@ function MobileSidebarBottomLink({ href, icon, label, isActive }: {
     >
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
       <span className="w-5 h-5 flex items-center justify-center shrink-0">
-        <i className={`${icon} text-xs`}></i>
+        <SidebarIcon id={icon} label={label} sourceIcon={icon} size={15} />
       </span>
       <span className="flex-1 whitespace-nowrap">{label}</span>
     </Link>

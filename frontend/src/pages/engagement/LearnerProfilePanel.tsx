@@ -143,16 +143,16 @@ export function LearnerProfilePanel({ learnerId, onClose }: LearnerProfilePanelP
           {/* Quick actions */}
           <div className="grid grid-cols-2 gap-2">
             <button onClick={goAward} className="flex items-center justify-center gap-1.5 px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer">
-              <i className="ri-award-line"></i> Award Recognition
+              <AppIcon className="ri-award-line"></AppIcon> Award Recognition
             </button>
             <button onClick={copyEmail} className="flex items-center justify-center gap-1.5 px-3 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
-              <i className="ri-mail-line"></i> Message
+              <AppIcon className="ri-mail-line"></AppIcon> Message
             </button>
             <button onClick={logCall} className="flex items-center justify-center gap-1.5 px-3 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
-              <i className="ri-phone-line"></i> Log Call
+              <AppIcon className="ri-phone-line"></AppIcon> Log Call
             </button>
             <button onClick={goAttendance} className="flex items-center justify-center gap-1.5 px-3 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-100 transition-smooth cursor-pointer">
-              <i className="ri-alert-line"></i> Attendance Risk
+              <AppIcon className="ri-alert-line"></AppIcon> Attendance Risk
             </button>
           </div>
 
@@ -160,7 +160,7 @@ export function LearnerProfilePanel({ learnerId, onClose }: LearnerProfilePanelP
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1">
             {TABS.map(t => (
               <button key={t.key} onClick={() => setTab(t.key)} className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${tab === t.key ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                <i className={`${t.icon} text-xs`}></i>
+                <AppIcon className={`${t.icon} text-xs`}></AppIcon>
                 {t.label}
               </button>
             ))}
@@ -173,7 +173,7 @@ export function LearnerProfilePanel({ learnerId, onClose }: LearnerProfilePanelP
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${learner.riskLevel === 'red' ? 'bg-red-100 text-red-700' : learner.riskLevel === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>{learner.riskLevel.toUpperCase()} risk</span>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${learner.overallStatus === 'on-track' ? 'bg-emerald-100 text-emerald-700' : learner.overallStatus === 'monitor' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{learner.overallStatus === 'on-track' ? 'On Track' : learner.overallStatus === 'monitor' ? 'Monitor' : 'At Risk'}</span>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full bg-background-100 ${learner.trend === 'up' ? 'text-emerald-600' : learner.trend === 'down' ? 'text-red-600' : 'text-foreground-500'}`}>
-                  <i className={learner.trend === 'up' ? 'ri-arrow-up-line' : learner.trend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'}></i> {learner.trend}
+                  <AppIcon className={learner.trend === 'up' ? 'ri-arrow-up-line' : learner.trend === 'down' ? 'ri-arrow-down-line' : 'ri-subtract-line'}></AppIcon> {learner.trend}
                 </span>
               </div>
 
@@ -189,7 +189,7 @@ export function LearnerProfilePanel({ learnerId, onClose }: LearnerProfilePanelP
 
               <div className="grid grid-cols-2 gap-3 text-[11px]">
                 <StatTile label="Overall Points" value={learner.overallPoints.toLocaleString()} />
-                <StatTile label="Points This Month" value={`+${learner.pointsThisMonth}`} sub={<span className={`inline-flex items-center gap-0.5 mt-0.5 text-[9px] font-semibold ${learner.monthlyStatus === 'rising' ? 'text-emerald-600' : learner.monthlyStatus === 'falling' ? 'text-red-600' : 'text-foreground-400'}`}><i className={learner.monthlyStatus === 'rising' ? 'ri-arrow-up-line' : learner.monthlyStatus === 'falling' ? 'ri-arrow-down-line' : 'ri-subtract-line'}></i>{learner.monthlyStatus}</span>} />
+                <StatTile label="Points This Month" value={`+${learner.pointsThisMonth}`} sub={<span className={`inline-flex items-center gap-0.5 mt-0.5 text-[9px] font-semibold ${learner.monthlyStatus === 'rising' ? 'text-emerald-600' : learner.monthlyStatus === 'falling' ? 'text-red-600' : 'text-foreground-400'}`}><AppIcon className={learner.monthlyStatus === 'rising' ? 'ri-arrow-up-line' : learner.monthlyStatus === 'falling' ? 'ri-arrow-down-line' : 'ri-subtract-line'}></AppIcon>{learner.monthlyStatus}</span>} />
                 <StatTile label="Badges" value={String(learner.badgesCount)} sub={<span className="block text-[9px] text-foreground-400 truncate mt-0.5">{learner.topBadge}</span>} />
                 <StatTile label="Last Attendance" value={learner.lastAttendance} />
               </div>
@@ -280,7 +280,7 @@ export function LearnerProfilePanel({ learnerId, onClose }: LearnerProfilePanelP
               </div>
               {recognitions.length === 0 ? (
                 <div className="flex flex-col items-center justify-center text-center gap-2 py-8 bg-background-100/40 rounded-lg">
-                  <i className="ri-award-line text-2xl text-foreground-300"></i>
+                  <AppIcon className="ri-award-line text-2xl text-foreground-300"></AppIcon>
                   <p className="text-[11px] font-semibold text-foreground-700">No recognitions yet</p>
                   <button onClick={goAward} className="text-[10px] font-semibold text-primary-600 hover:text-primary-700 cursor-pointer">Award the first one →</button>
                 </div>
@@ -289,7 +289,7 @@ export function LearnerProfilePanel({ learnerId, onClose }: LearnerProfilePanelP
                   const cfg = RECOGNITION_TYPE[rec.type];
                   return (
                     <div key={rec.id} className="flex items-start gap-2.5 bg-background-100/50 rounded-lg p-3">
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${cfg.wrap}`}><i className={`${cfg.icon} text-sm`}></i></span>
+                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${cfg.wrap}`}><AppIcon className={`${cfg.icon} text-sm`}></AppIcon></span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-[12px] font-semibold text-foreground-900 truncate">{rec.title}</p>
@@ -314,14 +314,14 @@ export function LearnerProfilePanel({ learnerId, onClose }: LearnerProfilePanelP
               </div>
               {claims.length === 0 ? (
                 <div className="flex flex-col items-center justify-center text-center gap-2 py-8 bg-background-100/40 rounded-lg">
-                  <i className="ri-gift-line text-2xl text-foreground-300"></i>
+                  <AppIcon className="ri-gift-line text-2xl text-foreground-300"></AppIcon>
                   <p className="text-[11px] font-semibold text-foreground-700">No reward claims yet</p>
                 </div>
               ) : (
                 claims.map(claim => (
                   <div key={claim.id} className="flex items-center gap-2.5 bg-background-100/50 rounded-lg p-3">
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${claim.deliveryType === 'digital' ? 'bg-primary-100 text-primary-700' : 'bg-amber-100 text-amber-700'}`}>
-                      <i className={claim.deliveryType === 'digital' ? 'ri-mail-send-line' : 'ri-box-3-line'}></i>
+                      <AppIcon className={claim.deliveryType === 'digital' ? 'ri-mail-send-line' : 'ri-box-3-line'}></AppIcon>
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className="text-[12px] font-semibold text-foreground-900 truncate">{claim.reward}</p>

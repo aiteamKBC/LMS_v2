@@ -66,7 +66,7 @@ export default function EmployerOTJHConfirmation() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-time-line text-white text-2xl"></i>
+              <AppIcon className="ri-time-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">OTJH Confirmation</h2>
@@ -91,21 +91,21 @@ export default function EmployerOTJHConfirmation() {
         {pending.length > 0 && (
           <div className="bg-amber-50 border border-amber-200/50 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <span className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-              <i className="ri-alert-line text-amber-600 text-base"></i>
+              <AppIcon className="ri-alert-line text-amber-600 text-base"></AppIcon>
             </span>
             <div className="flex-1">
               <p className="text-sm font-semibold text-amber-800">{pending.length} OTJH entries need your confirmation</p>
               <p className="text-[12px] text-amber-600 mt-0.5">Confirm these were completed during paid working hours to comply with funding rules</p>
             </div>
             <button className="px-4 py-2 bg-amber-600 text-white rounded-lg text-[12px] font-semibold hover:bg-amber-700 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-check-double-line mr-1"></i> Confirm All Pending
+              <AppIcon className="ri-check-double-line mr-1"></AppIcon> Confirm All Pending
             </button>
           </div>
         )}
 
         {/* Search */}
         <div className="relative sm:max-w-sm">
-          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
           <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search entries..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
         </div>
 
@@ -142,7 +142,7 @@ export default function EmployerOTJHConfirmation() {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button onClick={() => handleConfirm(entry.id)} disabled={confirming[entry.id]} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50">
-                        {confirming[entry.id] ? <><i className="ri-check-line mr-1"></i> Confirmed!</> : <><i className="ri-check-line mr-1"></i> Confirm</>}
+                        {confirming[entry.id] ? <><AppIcon className="ri-check-line mr-1"></AppIcon> Confirmed!</> : <><AppIcon className="ri-check-line mr-1"></AppIcon> Confirm</>}
                       </button>
                       <button onClick={() => handleDecline(entry.id)} disabled={declining[entry.id]} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50">
                         {declining[entry.id] ? 'Declined' : 'Decline'}
@@ -183,7 +183,7 @@ export default function EmployerOTJHConfirmation() {
                       </div>
                     </div>
                     <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1 shrink-0">
-                      <i className="ri-check-double-line"></i> Confirmed
+                      <AppIcon className="ri-check-double-line"></AppIcon> Confirmed
                     </span>
                   </div>
                 ))}
@@ -195,7 +195,7 @@ export default function EmployerOTJHConfirmation() {
         {/* Policy Notice */}
         <div className="bg-background-100/50 rounded-xl border border-background-200/30 p-4">
           <div className="flex items-center gap-3">
-            <i className="ri-information-line text-foreground-400"></i>
+            <AppIcon className="ri-information-line text-foreground-400"></AppIcon>
             <div>
               <p className="text-[12px] font-medium text-foreground-700">Employer Confirmation Policy</p>
               <p className="text-[11px] text-foreground-400">By confirming OTJH, you verify these activities were undertaken during normal paid working hours at Tim Hortons UK, in line with apprenticeship funding rules. False declarations may result in funding clawback.</p>

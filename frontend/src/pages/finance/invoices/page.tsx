@@ -67,28 +67,28 @@ export default function InvoicingPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><i className="ri-bill-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><AppIcon className="ri-bill-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Total Invoiced</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalInvoiced.toLocaleString()}</p>
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><i className="ri-check-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-check-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Paid</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalPaid.toLocaleString()}</p>
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><i className="ri-time-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><AppIcon className="ri-time-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Outstanding</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalOutstanding.toLocaleString()}</p>
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center"><i className="ri-error-warning-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center"><AppIcon className="ri-error-warning-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Overdue</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">{overdueCount}</p>
@@ -98,7 +98,7 @@ export default function InvoicingPage() {
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search invoices..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
@@ -111,7 +111,7 @@ export default function InvoicingPage() {
           </div>
           <div className="flex-1"></div>
           <button className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-add-line"></i> New Invoice
+            <AppIcon className="ri-add-line"></AppIcon> New Invoice
           </button>
         </div>
 
@@ -147,10 +147,10 @@ export default function InvoicingPage() {
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       <button className="px-2 py-1 bg-background-50 border border-foreground-200/60 rounded-lg text-[10px] text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-eye-line mr-0.5"></i> View
+                        <AppIcon className="ri-eye-line mr-0.5"></AppIcon> View
                       </button>
                       <button className="px-2 py-1 bg-background-50 border border-foreground-200/60 rounded-lg text-[10px] text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-download-line mr-0.5"></i> PDF
+                        <AppIcon className="ri-download-line mr-0.5"></AppIcon> PDF
                       </button>
                     </div>
                   </td>

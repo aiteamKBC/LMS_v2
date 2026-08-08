@@ -33,7 +33,7 @@ export default function ActivityTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-history-line text-primary-500"></i> Activity Timeline
+              <AppIcon className="ri-history-line text-primary-500"></AppIcon> Activity Timeline
             </h2>
             <span className="text-[11px] text-foreground-400">{timelineItems.length} event(s)</span>
           </div>
@@ -46,7 +46,7 @@ export default function ActivityTab({ data }: CaseFileTabProps) {
                 {timelineItems.map((item) => (
                   <div key={item.id} className="relative pb-5 last:pb-0">
                     <div className={`absolute -left-[19px] w-4 h-4 rounded-full flex items-center justify-center ring-2 ${toneMap[item.tone]} z-10 bg-background-50`}>
-                      <i className={`${activityIcon(item.event, item.tone)} text-[8px]`}></i>
+                      <AppIcon className={`${activityIcon(item.event, item.tone)} text-[8px]`}></AppIcon>
                     </div>
                     <div className="ml-2">
                       <p className="text-[12px] font-semibold text-foreground-900">{item.event}</p>
@@ -65,7 +65,7 @@ export default function ActivityTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-calendar-todo-line text-accent-500"></i> Upcoming Milestones
+              <AppIcon className="ri-calendar-todo-line text-accent-500"></AppIcon> Upcoming Milestones
             </h2>
             <span className="text-[11px] text-foreground-400">{milestones.length} dated item(s)</span>
           </div>
@@ -126,7 +126,7 @@ function StatCard({
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${cardTone[tone]}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>
@@ -149,7 +149,7 @@ function DetailCard({
     <div className="rounded-xl border border-background-200/70 bg-background-100/50 p-4">
       <div className="flex items-center gap-2 mb-2">
         <span className="w-8 h-8 rounded-lg bg-background-50 border border-background-200 flex items-center justify-center">
-          <i className={`${icon} text-sm text-foreground-600`}></i>
+          <AppIcon className={`${icon} text-sm text-foreground-600`}></AppIcon>
         </span>
         <p className="text-[12px] font-semibold text-foreground-900">{title}</p>
       </div>

@@ -147,7 +147,7 @@ function StatCard({ icon, label, value, detail, color }: { icon: string; label: 
   const c = STAT_COLORS[color] || STAT_COLORS.primary;
   return (
     <div className="bg-background-50 rounded-2xl border border-foreground-200/50 p-4 md:p-5 card-premium">
-      <div className={`w-9 h-9 rounded-xl ${c.bg} flex items-center justify-center mb-3`}><i className={`${icon} ${c.icon} text-base`} /></div>
+      <div className={`w-9 h-9 rounded-xl ${c.bg} flex items-center justify-center mb-3`}><AppIcon className={`${icon} ${c.icon} text-base`} /></div>
       <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">{label}</p>
       <p className="text-2xl font-heading font-bold text-foreground-900 leading-none">{value}</p>
       <p className="text-[11px] text-foreground-400 mt-1.5">{detail}</p>
@@ -164,14 +164,14 @@ function QuizRow({ quiz, canTake, onTake }: { quiz: LinkedQuiz; canTake: boolean
   return (
     <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-4 md:p-5 card-premium flex items-center gap-4">
       <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
-        <i className="ri-questionnaire-line text-amber-600 text-lg" />
+        <AppIcon className="ri-questionnaire-line text-amber-600 text-lg" />
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-heading font-bold text-foreground-900 truncate">{quiz.name}</p>
         <div className="flex items-center gap-x-2.5 gap-y-1 text-[11px] text-foreground-400 mt-1 flex-wrap">
-          {quiz.module && <span className="inline-flex items-center gap-1"><i className="ri-book-2-line text-[10px]" />{quiz.module}</span>}
-          {quiz.week && <span className="inline-flex items-center gap-1"><i className="ri-calendar-line text-[10px]" />{quiz.week}</span>}
-          {quiz.questions != null && <span className="inline-flex items-center gap-1"><i className="ri-list-check text-[10px]" />{quiz.questions} questions</span>}
+          {quiz.module && <span className="inline-flex items-center gap-1"><AppIcon className="ri-book-2-line text-[10px]" />{quiz.module}</span>}
+          {quiz.week && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line text-[10px]" />{quiz.week}</span>}
+          {quiz.questions != null && <span className="inline-flex items-center gap-1"><AppIcon className="ri-list-check text-[10px]" />{quiz.questions} questions</span>}
         </div>
       </div>
 
@@ -179,7 +179,7 @@ function QuizRow({ quiz, canTake, onTake }: { quiz: LinkedQuiz; canTake: boolean
       {best ? (
         <div className="shrink-0 flex flex-col items-end gap-0.5">
           <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${bestPassed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-            <i className={bestPassed ? 'ri-checkbox-circle-line text-[10px]' : 'ri-close-circle-line text-[10px]'} />
+            <AppIcon className={bestPassed ? 'ri-checkbox-circle-line text-[10px]' : 'ri-close-circle-line text-[10px]'} />
             {bestGrade} · {bestPassed ? 'Passed' : 'Failed'}
           </span>
           <span className="text-[10px] text-foreground-400">{attempts.length} {attempts.length === 1 ? 'attempt' : 'attempts'} · best</span>
@@ -193,7 +193,7 @@ function QuizRow({ quiz, canTake, onTake }: { quiz: LinkedQuiz; canTake: boolean
           onClick={onTake}
           className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
         >
-          <i className={best ? 'ri-refresh-line text-xs' : 'ri-play-fill text-xs'} />
+          <AppIcon className={best ? 'ri-refresh-line text-xs' : 'ri-play-fill text-xs'} />
           {best ? 'Retake' : 'Start'}
         </button>
       )}

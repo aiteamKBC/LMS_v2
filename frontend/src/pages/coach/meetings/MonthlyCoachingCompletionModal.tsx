@@ -58,7 +58,7 @@ export function MonthlyCoachingCompletionModal({
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
               <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-lg text-secondary-200">
-                <i className="ri-chat-check-line"></i>
+                <AppIcon className="ri-chat-check-line"></AppIcon>
               </span>
               <div>
                 <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-secondary-200">Complete monthly coaching meeting</p>
@@ -67,7 +67,7 @@ export function MonthlyCoachingCompletionModal({
               </div>
             </div>
             <button type="button" onClick={onClose} disabled={busy} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20 disabled:opacity-50" aria-label="Close form">
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
           <div className="mt-4 flex items-center gap-3">
@@ -80,7 +80,7 @@ export function MonthlyCoachingCompletionModal({
 
         <div className="flex-1 space-y-3 overflow-y-auto bg-[#f7f6fb] p-4 sm:p-6">
           <div className="rounded-xl border border-primary-100 bg-primary-50 px-4 py-3 text-xs leading-5 text-primary-800">
-            <i className="ri-information-line mr-2"></i>
+            <AppIcon className="ri-information-line mr-2"></AppIcon>
             These answers will be saved to this MCM and displayed in the learner’s Monthly Coaching record.
           </div>
 
@@ -106,7 +106,7 @@ export function MonthlyCoachingCompletionModal({
               <section key={section.id} className={`overflow-hidden rounded-2xl border bg-background-50 transition-all ${open ? 'border-primary-300 shadow-sm' : 'border-background-200'}`}>
                 <button type="button" onClick={() => setOpenSection(open ? '' : section.id)} className="flex w-full items-center gap-3 p-4 text-left sm:px-5">
                   <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${open ? 'bg-primary-600 text-white' : 'bg-primary-50 text-primary-700'}`}>
-                    <i className={section.icon}></i>
+                    <AppIcon className={section.icon}></AppIcon>
                     <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white bg-primary-900 px-1 text-[8px] font-bold text-white">{sectionIndex + 1}</span>
                   </span>
                   <span className="min-w-0 flex-1">
@@ -114,9 +114,9 @@ export function MonthlyCoachingCompletionModal({
                     <span className="mt-0.5 block text-sm font-bold text-foreground-900">{section.title}</span>
                     <span className="mt-1 hidden text-[10px] text-foreground-400 sm:block">{section.description}</span>
                   </span>
-                  {complete && <i className="ri-checkbox-circle-fill text-lg text-emerald-500"></i>}
+                  {complete && <AppIcon className="ri-checkbox-circle-fill text-lg text-emerald-500"></AppIcon>}
                   <span className={`flex h-8 w-8 items-center justify-center rounded-full bg-background-100 text-foreground-500 transition-transform ${open ? 'rotate-180' : ''}`}>
-                    <i className="ri-arrow-down-s-line"></i>
+                    <AppIcon className="ri-arrow-down-s-line"></AppIcon>
                   </span>
                 </button>
 
@@ -152,7 +152,7 @@ export function MonthlyCoachingCompletionModal({
                                 ['No', 'ri-close-line'],
                               ].map(([value, icon]) => (
                                 <button key={value} type="button" onClick={() => update(question.id, value)} className={`flex h-11 items-center justify-center gap-2 rounded-xl border text-xs font-bold transition ${responses[question.id] === value ? value === 'Yes' ? 'border-emerald-500 bg-emerald-500 text-white shadow-sm' : 'border-foreground-700 bg-foreground-800 text-white shadow-sm' : 'border-background-300 bg-white text-foreground-600 hover:border-primary-300 hover:bg-primary-50'}`}>
-                                  <i className={icon}></i>{value}
+                                  <AppIcon className={icon}></AppIcon>{value}
                                 </button>
                               ))}
                             </div>
@@ -170,7 +170,7 @@ export function MonthlyCoachingCompletionModal({
                             <div className="grid gap-2 sm:grid-cols-2">
                               {(question.options || []).map((option) => (
                                 <button key={option} type="button" onClick={() => update(question.id, option)} className={`min-h-10 rounded-xl border px-3 py-2 text-left text-[11px] font-semibold transition ${responses[question.id] === option ? 'border-primary-600 bg-primary-600 text-white shadow-sm' : 'border-background-300 bg-white text-foreground-600 hover:border-primary-300 hover:bg-primary-50'}`}>
-                                  <i className={`mr-2 ${responses[question.id] === option ? 'ri-checkbox-circle-fill' : 'ri-checkbox-blank-circle-line'}`}></i>{option}
+                                  <AppIcon className={`mr-2 ${responses[question.id] === option ? 'ri-checkbox-circle-fill' : 'ri-checkbox-blank-circle-line'}`}></AppIcon>{option}
                                 </button>
                               ))}
                             </div>
@@ -186,7 +186,7 @@ export function MonthlyCoachingCompletionModal({
                                 ['Red', 'bg-red-500 text-white', 'bg-red-50 text-red-700'],
                               ].map(([value, activeClass, idleClass]) => (
                                 <button key={value} type="button" onClick={() => update(question.id, value)} className={`rounded-xl px-4 py-2.5 text-xs font-bold transition ${responses[question.id] === value ? activeClass : idleClass}`}>
-                                  <i className="ri-circle-fill mr-1.5 text-[8px]"></i>{value}
+                                  <AppIcon className="ri-circle-fill mr-1.5 text-[8px]"></AppIcon>{value}
                                 </button>
                               ))}
                             </div>
@@ -202,7 +202,7 @@ export function MonthlyCoachingCompletionModal({
 
           {(validationError || error) && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
-              <i className="ri-error-warning-line mr-2"></i>{validationError || error}
+              <AppIcon className="ri-error-warning-line mr-2"></AppIcon>{validationError || error}
             </div>
           )}
         </div>
@@ -210,7 +210,7 @@ export function MonthlyCoachingCompletionModal({
         <footer className="flex shrink-0 flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
           <button type="button" onClick={onClose} disabled={busy} className="h-10 rounded-xl px-4 text-xs font-semibold text-foreground-500 transition hover:bg-background-100 disabled:opacity-50">Cancel</button>
           <button type="button" onClick={submit} disabled={busy} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
-            <i className={busy ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></i>
+            <AppIcon className={busy ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
             {busy ? 'Saving meeting...' : 'Save & Complete MCM'}
           </button>
         </footer>

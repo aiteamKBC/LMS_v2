@@ -197,7 +197,7 @@ export default function QuizzesPage() {
               {/* Left: Icon + Title */}
               <div className="flex items-center gap-4 shrink-0">
                 <span className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center">
-                  <i className="ri-questionnaire-line text-white text-2xl"></i>
+                  <AppIcon className="ri-questionnaire-line text-white text-2xl"></AppIcon>
                 </span>
                 <div>
                   <h2 className="text-xl font-heading font-bold text-white">Quizzes &amp; Knowledge Checks</h2>
@@ -208,19 +208,19 @@ export default function QuizzesPage() {
               {/* Right: Quick summary pills */}
               <div className="flex items-center gap-2 flex-wrap lg:ml-auto">
                 <span className="text-xs text-white/70 bg-white/10 rounded-full px-3 py-1.5 whitespace-nowrap">
-                  <i className="ri-check-double-line text-emerald-300 mr-1"></i>
+                  <AppIcon className="ri-check-double-line text-emerald-300 mr-1"></AppIcon>
                   {completedQuizzes} of {totalQuizzes - lockedQuizzes.length} passed
                 </span>
                 <span className="text-xs text-white/70 bg-white/10 rounded-full px-3 py-1.5 whitespace-nowrap">
-                  <i className="ri-bar-chart-2-line text-primary-300 mr-1"></i>
+                  <AppIcon className="ri-bar-chart-2-line text-primary-300 mr-1"></AppIcon>
                   Avg {averageScore}%
                 </span>
                 <span className="text-xs text-white/70 bg-white/10 rounded-full px-3 py-1.5 whitespace-nowrap">
-                  <i className="ri-flashlight-line text-amber-300 mr-1"></i>
+                  <AppIcon className="ri-flashlight-line text-amber-300 mr-1"></AppIcon>
                   Streak {quizStreak}
                 </span>
                 <span className="text-xs text-white/70 bg-white/10 rounded-full px-3 py-1.5 whitespace-nowrap">
-                  <i className="ri-coin-line text-secondary-300 mr-1"></i>
+                  <AppIcon className="ri-coin-line text-secondary-300 mr-1"></AppIcon>
                   {earnedPoints} pts
                 </span>
               </div>
@@ -234,7 +234,7 @@ export default function QuizzesPage() {
             <section className="animate-in slide-in-from-top-2 duration-400">
               <div className="flex items-center gap-3 mb-3">
                 <span className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-                  <i className="ri-notification-3-line text-red-500 text-sm"></i>
+                  <AppIcon className="ri-notification-3-line text-red-500 text-sm"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Upcoming Deadlines</h3>
@@ -263,7 +263,7 @@ export default function QuizzesPage() {
                       className={`flex items-center gap-4 rounded-xl border ${urgencyConfig.border} ${urgencyConfig.bg} p-3.5 transition-smooth hover:bg-opacity-80`}
                     >
                       <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${urgencyConfig.iconColor}`}>
-                        <i className={`${urgencyConfig.icon} text-lg`}></i>
+                        <AppIcon className={`${urgencyConfig.icon} text-lg`}></AppIcon>
                       </span>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-0.5">
@@ -287,14 +287,14 @@ export default function QuizzesPage() {
                           onClick={() => setDismissedNotifications(prev => [...prev, quiz.id])}
                           className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"
                         >
-                          <i className="ri-close-line text-sm"></i>
+                          <AppIcon className="ri-close-line text-sm"></AppIcon>
                         </button>
                         <button
                           onClick={() => openQuiz(quiz)}
                           disabled={!getQuestionsForQuiz(quiz.id).length}
                           className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          <i className="ri-play-circle-line"></i>
+                          <AppIcon className="ri-play-circle-line"></AppIcon>
                           Start
                         </button>
                       </div>
@@ -312,7 +312,7 @@ export default function QuizzesPage() {
             <section className="animate-in slide-in-from-bottom-4 duration-500 delay-200">
               <div className="flex items-center gap-3 mb-4">
                 <span className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-                  <i className="ri-alert-line text-red-500 text-sm"></i>
+                  <AppIcon className="ri-alert-line text-red-500 text-sm"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Current Priority</h3>
@@ -334,7 +334,7 @@ export default function QuizzesPage() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <span className="w-9 h-9 rounded-xl bg-primary-100 flex items-center justify-center">
-                          <i className="ri-questionnaire-line text-primary-600"></i>
+                          <AppIcon className="ri-questionnaire-line text-primary-600"></AppIcon>
                         </span>
                         <h4 className="text-base font-heading font-bold text-foreground-900">{priorityQuiz.title}</h4>
                         <span className="text-xs font-semibold bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full whitespace-nowrap">
@@ -376,19 +376,19 @@ export default function QuizzesPage() {
                         disabled={!getQuestionsForQuiz(priorityQuiz?.id || '').length}
                         className="flex-1 lg:flex-none inline-flex items-center justify-center gap-1.5 px-5 py-3 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        <i className="ri-play-circle-line"></i> Start Quiz
+                        <AppIcon className="ri-play-circle-line"></AppIcon> Start Quiz
                       </button>
                       <button
                         onClick={() => setPreviewQuiz(priorityQuiz)}
                         className="flex-1 lg:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-background-100 border border-foreground-200/60 text-foreground-600 rounded-lg text-sm font-medium hover:bg-background-200 transition-smooth whitespace-nowrap cursor-pointer"
                       >
-                        <i className="ri-eye-line"></i> Preview
+                        <AppIcon className="ri-eye-line"></AppIcon> Preview
                       </button>
                       <Link
                         to="/learner/ksbs"
                         className="flex-1 lg:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-background-100 border border-foreground-200/60 text-foreground-600 rounded-lg text-sm font-medium hover:bg-background-200 transition-smooth whitespace-nowrap cursor-pointer"
                       >
-                        <i className="ri-bar-chart-2-line"></i> View KSBs
+                        <AppIcon className="ri-bar-chart-2-line"></AppIcon> View KSBs
                       </Link>
                     </div>
                   </div>
@@ -405,7 +405,7 @@ export default function QuizzesPage() {
             <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
               <div className="flex items-center gap-3">
                 <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-                  <i className="ri-stack-line text-primary-600 text-sm"></i>
+                  <AppIcon className="ri-stack-line text-primary-600 text-sm"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Weekly &amp; Monthly Quizzes</h3>
@@ -428,7 +428,7 @@ export default function QuizzesPage() {
                         : 'text-foreground-400 hover:text-foreground-600'
                     }`}
                   >
-                    <i className={`${tab.icon}`}></i> {tab.label}
+                    <AppIcon className={`${tab.icon}`}></AppIcon> {tab.label}
                   </button>
                 ))}
               </div>
@@ -466,7 +466,7 @@ export default function QuizzesPage() {
                         : 'bg-background-50 text-foreground-500 border-foreground-200/60 hover:bg-background-100'
                     }`}
                   >
-                    <i className="ri-questionnaire-line text-sm"></i>
+                    <AppIcon className="ri-questionnaire-line text-sm"></AppIcon>
                     Weekly ({weeklyQuizzes.length})
                   </button>
                   <button
@@ -477,7 +477,7 @@ export default function QuizzesPage() {
                         : 'bg-background-50 text-foreground-500 border-foreground-200/60 hover:bg-background-100'
                     }`}
                   >
-                    <i className="ri-award-line text-sm"></i>
+                    <AppIcon className="ri-award-line text-sm"></AppIcon>
                     Monthly KSB ({monthlyQuizzes.length})
                   </button>
                 </div>
@@ -574,7 +574,7 @@ function ProgressRingCard({ label, subtitle, percentage, color, icon, animReady 
       </div>
       <div className="min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <i className={`${icon} text-sm ${colorClass}`}></i>
+          <AppIcon className={`${icon} text-sm ${colorClass}`}></AppIcon>
           <p className="text-sm font-semibold text-foreground-900">{label}</p>
         </div>
         <p className="text-xs text-foreground-500">{subtitle}</p>
@@ -598,7 +598,7 @@ function DetailChip({ label, value, icon }: { label: string; value: string; icon
     <div className="bg-background-50 rounded-lg border border-foreground-200/60 p-2">
       <p className="text-[11px] text-foreground-400 mb-0.5">{label}</p>
       <p className="text-sm font-medium text-foreground-900 flex items-center gap-1.5">
-        <i className={`${icon} text-foreground-400 text-xs`}></i>{value}
+        <AppIcon className={`${icon} text-foreground-400 text-xs`}></AppIcon>{value}
       </p>
     </div>
   );
@@ -616,7 +616,7 @@ function QuizPreviewModal({ quiz, onClose }: { quiz: QuizItem; onClose: () => vo
         <div className="flex items-center justify-between gap-4 p-5 border-b border-foreground-200/60">
           <div className="flex items-center gap-3 min-w-0">
             <span className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
-              <i className="ri-eye-line text-primary-600 text-lg"></i>
+              <AppIcon className="ri-eye-line text-primary-600 text-lg"></AppIcon>
             </span>
             <div className="min-w-0">
               <h3 className="text-base font-heading font-semibold text-foreground-900 truncate">{quiz.title}</h3>
@@ -630,14 +630,14 @@ function QuizPreviewModal({ quiz, onClose }: { quiz: QuizItem; onClose: () => vo
                 showingAnswers ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500 hover:bg-background-200'
               }`}
             >
-              <i className={`${showingAnswers ? 'ri-checkbox-circle-line' : 'ri-question-line'} text-xs`}></i>
+              <AppIcon className={`${showingAnswers ? 'ri-checkbox-circle-line' : 'ri-question-line'} text-xs`}></AppIcon>
               {showingAnswers ? 'Hide Answers' : 'Show Answers'}
             </button>
             <button
               onClick={onClose}
               className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer"
             >
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
         </div>
@@ -647,7 +647,7 @@ function QuizPreviewModal({ quiz, onClose }: { quiz: QuizItem; onClose: () => vo
           {questions.length === 0 ? (
             <div className="text-center py-10">
               <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                <i className="ri-file-list-3-line text-foreground-300 text-xl"></i>
+                <AppIcon className="ri-file-list-3-line text-foreground-300 text-xl"></AppIcon>
               </span>
               <p className="text-sm font-medium text-foreground-500">No preview available</p>
               <p className="text-xs text-foreground-400 mt-1">Questions for this quiz are not yet loaded</p>
@@ -682,7 +682,7 @@ function QuizPreviewModal({ quiz, onClose }: { quiz: QuizItem; onClose: () => vo
                       </span>
                       <span className="flex-1">{opt}</span>
                       {showingAnswers && j === q.correctAnswer && (
-                        <i className="ri-check-line text-emerald-600 text-sm shrink-0"></i>
+                        <AppIcon className="ri-check-line text-emerald-600 text-sm shrink-0"></AppIcon>
                       )}
                     </div>
                   ))}
@@ -701,14 +701,14 @@ function QuizPreviewModal({ quiz, onClose }: { quiz: QuizItem; onClose: () => vo
         {/* Footer */}
         <div className="flex items-center justify-between p-5 border-t border-foreground-200/60">
           <span className="text-xs text-foreground-400">
-            <i className="ri-information-line text-xs mr-1"></i>
+            <AppIcon className="ri-information-line text-xs mr-1"></AppIcon>
             This is a preview only — no answers are recorded
           </span>
           <button
             onClick={onClose}
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap cursor-pointer"
           >
-            <i className="ri-close-line"></i> Close Preview
+            <AppIcon className="ri-close-line"></AppIcon> Close Preview
           </button>
         </div>
       </div>
@@ -727,7 +727,7 @@ function QuizCardsGrid({ quizzes, onQuizClick, onStartQuiz, onPreviewQuiz }: {
     return (
       <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 text-center">
         <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-          <i className="ri-inbox-line text-foreground-300 text-xl"></i>
+          <AppIcon className="ri-inbox-line text-foreground-300 text-xl"></AppIcon>
         </span>
         <p className="text-sm font-medium text-foreground-500">No quizzes match this filter</p>
         <p className="text-xs text-foreground-400 mt-1">Try a different category</p>
@@ -770,19 +770,19 @@ function QuizCardsGrid({ quizzes, onQuizClick, onStartQuiz, onPreviewQuiz }: {
             {/* Metadata row */}
             <div className="grid grid-cols-2 gap-x-4 gap-y-2 mb-4">
               <div className="flex items-center gap-2 text-xs text-foreground-500">
-                <i className="ri-questionnaire-line text-foreground-300"></i>
+                <AppIcon className="ri-questionnaire-line text-foreground-300"></AppIcon>
                 {quiz.questionCount} questions
               </div>
               <div className="flex items-center gap-2 text-xs text-foreground-500">
-                <i className="ri-calendar-line text-foreground-300"></i>
+                <AppIcon className="ri-calendar-line text-foreground-300"></AppIcon>
                 Due {quiz.dueDate}
               </div>
               <div className="flex items-center gap-2 text-xs text-foreground-500">
-                <i className="ri-checkbox-circle-line text-foreground-300"></i>
+                <AppIcon className="ri-checkbox-circle-line text-foreground-300"></AppIcon>
                 Pass {quiz.passMark}%
               </div>
               <div className="flex items-center gap-2 text-xs text-foreground-500">
-                <i className="ri-restart-line text-foreground-300"></i>
+                <AppIcon className="ri-restart-line text-foreground-300"></AppIcon>
                 Attempts: {quiz.attemptCount}
               </div>
             </div>
@@ -811,9 +811,9 @@ function QuizCardsGrid({ quizzes, onQuizClick, onStartQuiz, onPreviewQuiz }: {
                   disabled={!hasQuestions}
                   className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <i className="ri-play-circle-line"></i>
+                  <AppIcon className="ri-play-circle-line"></AppIcon>
                   {isInProgress ? 'Continue' : isFailed ? 'Retake' : 'Start Quiz'}
-                  <i className="ri-arrow-right-line text-xs"></i>
+                  <AppIcon className="ri-arrow-right-line text-xs"></AppIcon>
                 </button>
               )}
               {isPassed && (
@@ -824,13 +824,13 @@ function QuizCardsGrid({ quizzes, onQuizClick, onStartQuiz, onPreviewQuiz }: {
                   }}
                   className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-50 text-emerald-700 border border-emerald-200/50 rounded-lg text-sm font-semibold hover:bg-emerald-100 transition-smooth whitespace-nowrap cursor-pointer"
                 >
-                  <i className="ri-check-double-line"></i>
+                  <AppIcon className="ri-check-double-line"></AppIcon>
                   Passed
                 </button>
               )}
               {isLocked && (
                 <span className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 bg-background-100 text-foreground-400 border border-foreground-200/60 rounded-lg text-sm font-medium whitespace-nowrap">
-                  <i className="ri-lock-line"></i>
+                  <AppIcon className="ri-lock-line"></AppIcon>
                   Locked
                 </span>
               )}
@@ -841,7 +841,7 @@ function QuizCardsGrid({ quizzes, onQuizClick, onStartQuiz, onPreviewQuiz }: {
                 }}
                 className="inline-flex items-center justify-center gap-1 px-3 py-2.5 bg-background-100 border border-foreground-200/60 text-foreground-500 rounded-lg text-sm hover:bg-background-200 transition-smooth cursor-pointer"
               >
-                <i className="ri-eye-line"></i>
+                <AppIcon className="ri-eye-line"></AppIcon>
               </button>
             </div>
           </div>
@@ -859,7 +859,7 @@ function QuizHistorySection() {
     return (
       <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 text-center">
         <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-          <i className="ri-history-line text-foreground-300 text-xl"></i>
+          <AppIcon className="ri-history-line text-foreground-300 text-xl"></AppIcon>
         </span>
         <p className="text-sm font-medium text-foreground-500">No quiz history yet</p>
         <p className="text-xs text-foreground-400 mt-1">Complete your first quiz to see your history here</p>
@@ -905,9 +905,9 @@ function QuizHistorySection() {
                     qz.status === 'Retake Required' ? 'bg-red-50 text-red-600' :
                     'bg-background-100 text-foreground-500'
                   }`}>
-                    {qz.status === 'Passed' && <i className="ri-check-line text-[10px]"></i>}
-                    {qz.status === 'Failed' && <i className="ri-close-line text-[10px]"></i>}
-                    {qz.status === 'Retake Required' && <i className="ri-refresh-line text-[10px]"></i>}
+                    {qz.status === 'Passed' && <AppIcon className="ri-check-line text-[10px]"></AppIcon>}
+                    {qz.status === 'Failed' && <AppIcon className="ri-close-line text-[10px]"></AppIcon>}
+                    {qz.status === 'Retake Required' && <AppIcon className="ri-refresh-line text-[10px]"></AppIcon>}
                     {qz.status}
                   </span>
                 </td>
@@ -923,7 +923,7 @@ function QuizHistorySection() {
                 <td className="px-5 py-3">
                   {qz.feedback ? (
                     <span className="text-xs text-emerald-600 flex items-center gap-1 cursor-pointer hover:text-emerald-700">
-                      <i className="ri-chat-1-line text-xs"></i> View
+                      <AppIcon className="ri-chat-1-line text-xs"></AppIcon> View
                     </span>
                   ) : (
                     <span className="text-xs text-foreground-300">—</span>

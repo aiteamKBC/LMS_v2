@@ -105,7 +105,7 @@ export default function TenantOnboardingWizard() {
         <div className="p-3 md:p-6 flex items-center justify-center min-h-[60vh]">
           <div className="text-center max-w-md">
             <div className="w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-5 animate-in zoom-in duration-500">
-              <i className="ri-check-line text-emerald-600 text-3xl"></i>
+              <AppIcon className="ri-check-line text-emerald-600 text-3xl"></AppIcon>
             </div>
             <h2 className="text-xl font-heading font-bold text-foreground-900 mb-2">Tenant Provisioned Successfully</h2>
             <p className="text-sm text-foreground-500 mb-6">
@@ -122,10 +122,10 @@ export default function TenantOnboardingWizard() {
             </div>
             <div className="flex items-center gap-3 justify-center">
               <a href="/admin/tenants" className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-building-4-line mr-1.5"></i> View Tenants
+                <AppIcon className="ri-building-4-line mr-1.5"></AppIcon> View Tenants
               </a>
               <button onClick={() => { setIsComplete(false); setStep(1); setTenantName(''); setTenantCode(''); setSelectedPlan(''); setContactEmail(''); setContactName(''); setOrgs([{ id: 'o1', name: 'Main Department', type: 'department', description: 'Default department for training delivery' }]); setSelectedProgrammes([]); }} className="px-5 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-add-line mr-1.5"></i> Onboard Another
+                <AppIcon className="ri-add-line mr-1.5"></AppIcon> Onboard Another
               </button>
             </div>
           </div>
@@ -153,7 +153,7 @@ export default function TenantOnboardingWizard() {
               <div key={i} className="flex items-center flex-1">
                 <div className="flex flex-col items-center">
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-sm font-heading font-bold transition-all duration-300 ${i + 1 < step ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20' : i + 1 === step ? 'bg-primary-500 text-white shadow-sm shadow-primary-500/20 ring-4 ring-primary-100' : 'bg-background-100 text-foreground-300'}`}>
-                    {i + 1 < step ? <i className="ri-check-line"></i> : i + 1}
+                    {i + 1 < step ? <AppIcon className="ri-check-line"></AppIcon> : i + 1}
                   </div>
                   <span className={`text-[10px] font-semibold mt-1.5 text-center ${i + 1 <= step ? 'text-foreground-700' : 'text-foreground-300'}`}>
                     {['Details', 'Structure', 'Programmes', 'Config', 'Review'][i]}
@@ -216,7 +216,7 @@ export default function TenantOnboardingWizard() {
                     >
                       <div className="flex items-center gap-3 mb-2">
                         <span className={`w-8 h-8 rounded-lg bg-${plan.color === 'primary' ? 'primary' : plan.color === 'secondary' ? 'secondary' : 'accent'}-100 flex items-center justify-center`}>
-                          <i className={`${plan.icon} text-${plan.color === 'primary' ? 'primary' : plan.color === 'secondary' ? 'secondary' : 'accent'}-600 text-sm`}></i>
+                          <AppIcon className={`${plan.icon} text-${plan.color === 'primary' ? 'primary' : plan.color === 'secondary' ? 'secondary' : 'accent'}-600 text-sm`}></AppIcon>
                         </span>
                         <div>
                           <p className="text-[13px] font-semibold text-foreground-900">{plan.name}</p>
@@ -226,7 +226,7 @@ export default function TenantOnboardingWizard() {
                       <ul className="space-y-1">
                         {plan.features.map(f => (
                           <li key={f} className="text-[10px] text-foreground-500 flex items-center gap-1.5">
-                            <i className="ri-check-line text-emerald-500 text-[9px]"></i> {f}
+                            <AppIcon className="ri-check-line text-emerald-500 text-[9px]"></AppIcon> {f}
                           </li>
                         ))}
                       </ul>
@@ -249,7 +249,7 @@ export default function TenantOnboardingWizard() {
                     Organisation Structure
                   </h3>
                   <button onClick={addOrg} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-add-line mr-1"></i> Add Organisation
+                    <AppIcon className="ri-add-line mr-1"></AppIcon> Add Organisation
                   </button>
                 </div>
                 <p className="text-[12px] text-foreground-400">Define the organisational hierarchy for this tenant. Add departments, employer groups, and partner organisations.</p>
@@ -292,7 +292,7 @@ export default function TenantOnboardingWizard() {
                         </div>
                         {orgs.length > 1 && (
                           <button onClick={() => removeOrg(org.id)} className="text-foreground-300 hover:text-red-500 transition-smooth cursor-pointer shrink-0">
-                            <i className="ri-delete-bin-line"></i>
+                            <AppIcon className="ri-delete-bin-line"></AppIcon>
                           </button>
                         )}
                       </div>
@@ -323,7 +323,7 @@ export default function TenantOnboardingWizard() {
                       className={`text-left p-3.5 rounded-xl border transition-smooth cursor-pointer flex items-start gap-3 ${selectedProgrammes.includes(prog.id) ? 'border-primary-300 bg-primary-50/30 ring-1 ring-primary-200/50' : 'border-background-200 hover:border-background-300/60 bg-background-50'}`}
                     >
                       <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 mt-0.5 transition-smooth ${selectedProgrammes.includes(prog.id) ? 'bg-primary-500 border-primary-500' : 'border-background-300'}`}>
-                        {selectedProgrammes.includes(prog.id) && <i className="ri-check-line text-white text-[10px]"></i>}
+                        {selectedProgrammes.includes(prog.id) && <AppIcon className="ri-check-line text-white text-[10px]"></AppIcon>}
                       </div>
                       <div className="min-w-0">
                         <p className="text-[12px] font-semibold text-foreground-900">{prog.name}</p>
@@ -381,7 +381,7 @@ export default function TenantOnboardingWizard() {
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 md:p-6 space-y-5">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
                   <span className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600 text-xs font-bold">
-                    <i className="ri-check-line"></i>
+                    <AppIcon className="ri-check-line"></AppIcon>
                   </span>
                   Review & Provision Tenant
                 </h3>
@@ -429,11 +429,11 @@ export default function TenantOnboardingWizard() {
                   >
                     {isSubmitting ? (
                       <>
-                        <i className="ri-loader-4-line animate-spin"></i> Provisioning Tenant...
+                        <AppIcon className="ri-loader-4-line animate-spin"></AppIcon> Provisioning Tenant...
                       </>
                     ) : (
                       <>
-                        <i className="ri-rocket-line mr-1"></i> Provision Tenant — {tenantName || 'New Tenant'}
+                        <AppIcon className="ri-rocket-line mr-1"></AppIcon> Provision Tenant — {tenantName || 'New Tenant'}
                       </>
                     )}
                   </button>
@@ -451,7 +451,7 @@ export default function TenantOnboardingWizard() {
               disabled={step === 1}
               className="px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              <i className="ri-arrow-left-line mr-1.5"></i> Previous
+              <AppIcon className="ri-arrow-left-line mr-1.5"></AppIcon> Previous
             </button>
 
             <span className="text-[11px] text-foreground-300">Step {step} of {totalSteps}</span>
@@ -462,7 +462,7 @@ export default function TenantOnboardingWizard() {
                 disabled={!canProceed()}
                 className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Next <i className="ri-arrow-right-line ml-1.5"></i>
+                Next <AppIcon className="ri-arrow-right-line ml-1.5"></AppIcon>
               </button>
             ) : (
               <button
@@ -471,9 +471,9 @@ export default function TenantOnboardingWizard() {
                 className="px-5 py-2.5 bg-emerald-500 text-white rounded-xl text-[13px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {isSubmitting ? (
-                  <><i className="ri-loader-4-line animate-spin"></i> Provisioning...</>
+                  <><AppIcon className="ri-loader-4-line animate-spin"></AppIcon> Provisioning...</>
                 ) : (
-                  <><i className="ri-rocket-line mr-1"></i> Provision Tenant</>
+                  <><AppIcon className="ri-rocket-line mr-1"></AppIcon> Provision Tenant</>
                 )}
               </button>
             )}

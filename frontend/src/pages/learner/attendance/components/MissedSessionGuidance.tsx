@@ -18,11 +18,11 @@ export default function MissedSessionGuidance() {
       >
         <div className="flex items-center gap-3">
           <span className="w-9 h-9 rounded-xl bg-secondary-100 flex items-center justify-center">
-            <i className="ri-question-answer-line text-secondary-600 text-base"></i>
+            <AppIcon className="ri-question-answer-line text-secondary-600 text-base"></AppIcon>
           </span>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">What Happens If I Miss a Session?</h3>
         </div>
-        <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-400 text-lg`}></i>
+        <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-400 text-lg`}></AppIcon>
       </button>
       {open && (
         <div className="px-5 pb-5">
@@ -33,7 +33,7 @@ export default function MissedSessionGuidance() {
                 <div key={g.level} className={`bg-background-100/40 rounded-xl border ${colors.border} p-4`}>
                   <div className="flex items-center gap-2 mb-2">
                     <span className={`w-8 h-8 rounded-xl flex items-center justify-center ${colors.iconBg}`}>
-                      <i className={`${g.icon} text-sm`}></i>
+                      <AppIcon className={`${g.icon} text-sm`}></AppIcon>
                     </span>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${colors.badgeBg}`}>
                       {g.badge}

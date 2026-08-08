@@ -39,7 +39,7 @@ export default function AdminEmployersPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-building-2-line text-white text-2xl"></i>
+              <AppIcon className="ri-building-2-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Employer Directory</h2>
@@ -67,7 +67,7 @@ export default function AdminEmployersPage() {
         {/* Filters */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
           <div className="relative flex-1 w-full lg:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search employers..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
           </div>
           <div className="flex items-center gap-2">
@@ -78,7 +78,7 @@ export default function AdminEmployersPage() {
               <option value="draft">Draft</option>
             </select>
             <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1.5"></i> Add Employer
+              <AppIcon className="ri-add-line mr-1.5"></AppIcon> Add Employer
             </button>
           </div>
         </div>
@@ -105,10 +105,10 @@ export default function AdminEmployersPage() {
                     <p className="text-[11px] text-foreground-400 mt-0.5">{e.industry} · {e.size} · {e.address}</p>
                   </div>
                   <div className="flex items-center gap-4 text-[12px] text-foreground-500 shrink-0">
-                    <span><i className="ri-graduation-cap-line mr-1"></i>{e.activeApprentices}/{e.totalApprentices}</span>
-                    <span><i className="ri-file-text-line mr-1"></i>{e.contracts.length}</span>
+                    <span><AppIcon className="ri-graduation-cap-line mr-1"></AppIcon>{e.activeApprentices}/{e.totalApprentices}</span>
+                    <span><AppIcon className="ri-file-text-line mr-1"></AppIcon>{e.contracts.length}</span>
                   </div>
-                  <i className={`ri-arrow-right-s-line text-foreground-300 ${selectedEmployer === e.id ? 'text-primary-500' : ''}`}></i>
+                  <AppIcon className={`ri-arrow-right-s-line text-foreground-300 ${selectedEmployer === e.id ? 'text-primary-500' : ''}`}></AppIcon>
                 </div>
               );
             })}
@@ -127,19 +127,19 @@ export default function AdminEmployersPage() {
                 </div>
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-[12px]">
-                    <i className="ri-user-line text-foreground-400 text-xs w-4"></i>
+                    <AppIcon className="ri-user-line text-foreground-400 text-xs w-4"></AppIcon>
                     <span className="text-foreground-600">{emp.contact}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[12px]">
-                    <i className="ri-mail-line text-foreground-400 text-xs w-4"></i>
+                    <AppIcon className="ri-mail-line text-foreground-400 text-xs w-4"></AppIcon>
                     <span className="text-foreground-600">{emp.email}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[12px]">
-                    <i className="ri-phone-line text-foreground-400 text-xs w-4"></i>
+                    <AppIcon className="ri-phone-line text-foreground-400 text-xs w-4"></AppIcon>
                     <span className="text-foreground-600">{emp.phone}</span>
                   </div>
                   <div className="flex items-center gap-2 text-[12px]">
-                    <i className="ri-map-pin-line text-foreground-400 text-xs w-4"></i>
+                    <AppIcon className="ri-map-pin-line text-foreground-400 text-xs w-4"></AppIcon>
                     <span className="text-foreground-600">{emp.address}</span>
                   </div>
                 </div>
@@ -171,7 +171,7 @@ export default function AdminEmployersPage() {
             ) : (
               <div className="text-center py-8">
                 <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-building-2-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-building-2-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-sm text-foreground-500">Select an employer to view details</p>
               </div>

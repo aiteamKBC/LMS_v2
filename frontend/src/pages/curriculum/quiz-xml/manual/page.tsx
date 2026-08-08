@@ -1,11 +1,14 @@
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
+import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairFields';
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from '@/hooks/useToast';
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
 import { getQuizGeneralSettings } from '@/lib/quizGeneralSettings';
+import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -134,18 +137,6 @@ function isAlwaysCorrectType(type: QuestionType) {
   return ['ordering', 'matching', 'image_matching', 'keywords', 'fill_gap'].includes(type);
 }
 
-function splitAnswerPair(value: string) {
-  const parts = value.split(/\s*(?:->|=>|=)\s*/);
-  return {
-    left: (parts[0] || '').trim(),
-    right: (parts.length > 1 ? parts.slice(1).join(' -> ') : '').trim(),
-  };
-}
-
-function joinAnswerPair(left: string, right: string) {
-  return `${left.trim()} -> ${right.trim()}`;
-}
-
 function normalizeAnswers(answers: ManualQuestion['answers'], type: QuestionType): ManualQuestion['answers'] {
   const fallbackId = -Date.now();
   const nextAnswers = answers.length ? [...answers] : [{ id: fallbackId, text: '', isCorrect: true }];
@@ -188,7 +179,7 @@ function answerCopy(type: QuestionType) {
   if (type === 'multiple_choice') return { title: 'Answer choices', hint: 'Tick every correct answer.', add: 'Add option' };
   if (type === 'true_false') return { title: 'True/False answers', hint: 'Choose whether True or False is correct.', add: 'Add option' };
   if (type === 'matching') return { title: 'Matching pairs', hint: 'Write each pair as prompt and match.', add: 'Add pair' };
-  if (type === 'image_matching') return { title: 'Image matching pairs', hint: 'Write each image prompt and matching concept.', add: 'Add match' };
+  if (type === 'image_matching') return { title: 'Image matching pairs', hint: 'Upload each image and enter the concept it should match.', add: 'Add match' };
   if (type === 'keywords') return { title: 'Accepted keywords', hint: 'Each row is an accepted keyword or phrase.', add: 'Add keyword' };
   if (type === 'fill_gap') return { title: 'Accepted gap answers', hint: 'Each row is an accepted answer for the blank.', add: 'Add answer' };
   if (type === 'ordering') return { title: 'Correct order', hint: 'Add the steps in the correct sequence.', add: 'Add step' };
@@ -282,7 +273,17 @@ export default function ManualQuizPage() {
   };
 
   const updateQuestionType = (questionId: number, questionType: QuestionType) => {
-    setQuestions(prev => prev.map(question => question.id === questionId ? { ...question, questionType, answers: normalizeAnswers(question.answers, questionType) } : question));
+    setQuestions(prev => prev.map(question => question.id === questionId ? {
+      ...question,
+      questionType,
+      answers: normalizeAnswers(
+        question.answers.map(answer => ({
+          ...answer,
+          text: convertAnswerTextForQuestionType(answer.text, question.questionType, questionType),
+        })),
+        questionType,
+      ),
+    } : question));
   };
 
   const updateAnswer = (questionId: number, answerId: number, text: string) => {
@@ -292,13 +293,14 @@ export default function ManualQuizPage() {
     } : question));
   };
 
-  const updateAnswerPair = (questionId: number, answerId: number, side: 'left' | 'right', value: string) => {
+  const updateAnswerPair = (questionId: number, answerId: number, patch: { left?: string; right?: string; imageUrl?: string }) => {
     setQuestions(prev => prev.map(question => question.id === questionId ? {
       ...question,
       answers: question.answers.map(answer => {
         if (answer.id !== answerId) return answer;
-        const pair = splitAnswerPair(answer.text);
-        return { ...answer, text: joinAnswerPair(side === 'left' ? value : pair.left, side === 'right' ? value : pair.right), isCorrect: true };
+        const type = question.questionType === 'image_matching' ? 'image_matching' : 'matching';
+        const pair = parseQuizPairAnswer(answer.text, type);
+        return { ...answer, text: serializeQuizPairAnswer(type, { ...pair, ...patch }), isCorrect: true };
       }),
     } : question));
   };
@@ -353,7 +355,15 @@ export default function ManualQuizPage() {
     if (!form.title.trim()) return 'Quiz title is required.';
     for (const [index, question] of questions.entries()) {
       if (!question.text.trim()) return `Question ${index + 1} needs question text.`;
-      if (question.answers.some(answer => !answer.text.trim())) return `Question ${index + 1} has an empty answer.`;
+      if (question.questionType === 'matching' && question.answers.some(answer => !isPairAnswerComplete('matching', answer.text))) {
+        return `Question ${index + 1} has an incomplete matching pair.`;
+      }
+      if (question.questionType === 'image_matching' && question.answers.some(answer => !isPairAnswerComplete('image_matching', answer.text))) {
+        return `Question ${index + 1} needs an image or prompt plus a matching concept for every row.`;
+      }
+      if (!['matching', 'image_matching'].includes(question.questionType) && question.answers.some(answer => !answer.text.trim())) {
+        return `Question ${index + 1} has an empty answer.`;
+      }
       if (!isAlwaysCorrectType(question.questionType) && !question.answers.some(answer => answer.isCorrect)) return `Question ${index + 1} needs at least one correct answer.`;
       if (['single_choice', 'multiple_choice', 'true_false'].includes(question.questionType) && question.answers.length < 2) return `Question ${index + 1} needs at least two answers.`;
     }
@@ -414,14 +424,14 @@ export default function ManualQuizPage() {
         <div className="rounded-2xl border border-[#e3dee9] bg-white p-5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="min-w-0">
             <Link to="/curriculum/quiz-xml" className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">
-              <i className="ri-arrow-left-line mr-1"></i> Back to Quiz Workspace
+              <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Back to Quiz Workspace
             </Link>
             <h2 className="mt-2 text-2xl font-heading font-bold text-foreground-900">Manual Quiz Builder</h2>
             <p className="text-sm text-[#647083]">Build the quiz, questions and learner settings before publishing.</p>
           </div>
           <div className="flex flex-col sm:flex-row gap-2">
             <button type="button" onClick={addQuestion} className="h-10 px-4 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
-              <i className="ri-add-line mr-1"></i>Add question
+              <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
             </button>
             <button type="submit" disabled={saving} className="h-10 px-5 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
               {saving ? 'Saving...' : 'Save Manual Quiz'}
@@ -480,7 +490,7 @@ export default function ManualQuizPage() {
             <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-5">
               <aside className="border border-[#dfe4ec] rounded-2xl bg-[#f8fafc] p-3 max-h-[680px] overflow-y-auto quiz-preview-scroll">
                 <button type="button" onClick={addQuestion} className="mb-3 flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#5b2dbb] text-sm font-semibold text-white hover:bg-[#4c1d95]">
-                  <i className="ri-add-line"></i>Add question
+                  <AppIcon className="ri-add-line"></AppIcon>Add question
                 </button>
                 <div className="space-y-2">
                   {questions.map((question, index) => (
@@ -501,7 +511,7 @@ export default function ManualQuizPage() {
                     <div className="flex items-center justify-between gap-3 mb-2">
                       <label className="text-xs font-semibold text-foreground-600">Question text</label>
                       <button type="button" onClick={() => removeQuestion(activeQuestion.id)} disabled={questions.length === 1} className="h-8 px-3 rounded-lg bg-red-50 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                        <i className="ri-delete-bin-line mr-1"></i>Remove
+                        <AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Remove
                       </button>
                     </div>
                     <textarea value={activeQuestion.text} onChange={event => updateQuestion(activeQuestion.id, { text: event.target.value })} className="w-full min-h-36 rounded-xl border border-[#d8dde6] bg-white p-4 text-sm outline-none focus:border-[#8b5cf6] focus:ring-2 focus:ring-[#ede9fe]" placeholder="Write the question learners will answer" />
@@ -526,25 +536,37 @@ export default function ManualQuizPage() {
                       </div>
                       {activeQuestion.questionType !== 'true_false' && (
                         <button type="button" onClick={() => addAnswer(activeQuestion.id)} className="h-9 px-3 rounded-lg bg-[#5b2dbb] text-white text-xs font-semibold hover:bg-[#4c1d95]">
-                          <i className="ri-add-line mr-1"></i>{activeAnswerCopy.add}
+                          <AppIcon className="ri-add-line mr-1"></AppIcon>{activeAnswerCopy.add}
                         </button>
                       )}
                     </div>
                     <div className="space-y-3">
                       {activeQuestion.answers.map((answer, answerIndex) => {
                         const isPair = activeQuestion.questionType === 'matching' || activeQuestion.questionType === 'image_matching';
-                        const pair = splitAnswerPair(answer.text);
+                        const pair = isPair
+                          ? parseQuizPairAnswer(
+                            answer.text,
+                            activeQuestion.questionType === 'image_matching' ? 'image_matching' : 'matching',
+                          )
+                          : null;
                         const rowLabel = activeQuestion.questionType === 'ordering' ? answerIndex + 1 : String.fromCharCode(65 + answerIndex);
                         return (
                           <div key={answer.id} className="rounded-xl border border-[#e2e8f0] bg-[#fbfcfe] p-3">
                             <div className="flex flex-col lg:flex-row lg:items-center gap-3">
                               <span className="w-8 h-8 rounded-lg bg-white border border-[#d8dde6] text-[#647083] flex items-center justify-center text-xs font-bold shrink-0">{rowLabel}</span>
                               {isPair ? (
-                                <div className="grid flex-1 min-w-0 grid-cols-1 sm:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)] gap-2">
-                                  <input value={pair.left} onChange={event => updateAnswerPair(activeQuestion.id, answer.id, 'left', event.target.value)} placeholder={activeQuestion.questionType === 'image_matching' ? 'Image prompt' : 'Prompt'} className="h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6]" />
-                                  <span className="hidden sm:flex items-center justify-center text-[#5b2dbb]"><i className="ri-arrow-right-line"></i></span>
-                                  <input value={pair.right} onChange={event => updateAnswerPair(activeQuestion.id, answer.id, 'right', event.target.value)} placeholder="Match" className="h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6]" />
-                                </div>
+                                activeQuestion.questionType === 'image_matching' ? (
+                                  <ImageMatchingPairFields
+                                    value={answer.text}
+                                    onChange={nextValue => updateAnswerPair(activeQuestion.id, answer.id, parseQuizPairAnswer(nextValue, 'image_matching'))}
+                                  />
+                                ) : (
+                                  <div className="grid flex-1 min-w-0 grid-cols-1 sm:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)] gap-2">
+                                    <input value={pair?.left ?? ''} onChange={event => updateAnswerPair(activeQuestion.id, answer.id, { left: event.target.value })} placeholder="Prompt" className="h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6]" />
+                                    <span className="hidden sm:flex items-center justify-center text-[#5b2dbb]"><AppIcon className="ri-arrow-right-line"></AppIcon></span>
+                                    <input value={pair?.right ?? ''} onChange={event => updateAnswerPair(activeQuestion.id, answer.id, { right: event.target.value })} placeholder="Match" className="h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6]" />
+                                  </div>
+                                )
                               ) : (
                                 <input value={answer.text} readOnly={activeQuestion.questionType === 'true_false'} onChange={event => updateAnswer(activeQuestion.id, answer.id, event.target.value)} placeholder={activeQuestion.questionType === 'ordering' ? `Step ${answerIndex + 1}` : `Option ${rowLabel}`} className="flex-1 min-w-0 h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] read-only:bg-[#f8fafc]" />
                               )}
@@ -558,7 +580,7 @@ export default function ManualQuizPage() {
                               )}
                               {activeQuestion.questionType !== 'true_false' && (
                                 <button type="button" onClick={() => removeAnswer(activeQuestion.id, answer.id)} disabled={activeQuestion.answers.length <= 1} className="w-9 h-9 rounded-lg bg-white text-foreground-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 disabled:cursor-not-allowed shrink-0">
-                                  <i className="ri-close-line"></i>
+                                  <AppIcon className="ri-close-line"></AppIcon>
                                 </button>
                               )}
                             </div>
@@ -622,7 +644,7 @@ export default function ManualQuizPage() {
                   <div className="h-11 bg-[#f8fafc] border-b border-[#e2e8f0] flex items-center gap-3 px-3 text-xs text-[#526173] overflow-x-auto">
                     <span>View</span><span>Format</span><span>Table</span><span>Tools</span>
                     <span className="ml-4 font-semibold">B</span><span className="italic font-semibold">I</span><span className="underline font-semibold">U</span>
-                    <i className="ri-link"></i><i className="ri-image-line"></i><i className="ri-video-line"></i><i className="ri-list-check-2"></i><i className="ri-align-left"></i>
+                    <AppIcon className="ri-link"></AppIcon><AppIcon className="ri-image-line"></AppIcon><AppIcon className="ri-video-line"></AppIcon><AppIcon className="ri-list-check-2"></AppIcon><AppIcon className="ri-align-left"></AppIcon>
                   </div>
                   <textarea value={settings.lessonContent} onChange={event => setSettings({ ...settings, lessonContent: event.target.value })} className="w-full min-h-72 bg-white p-4 text-sm leading-relaxed outline-none focus:ring-2 focus:ring-inset focus:ring-[#ede9fe]" />
                 </div>
@@ -635,7 +657,7 @@ export default function ManualQuizPage() {
           <p className="text-xs text-[#647083]">{questions.length} question{questions.length === 1 ? '' : 's'} ready to save.</p>
           <div className="flex flex-col sm:flex-row gap-2">
             <button type="button" onClick={addQuestion} className="px-4 py-2 rounded-lg bg-white border border-primary-200 text-primary-700 text-sm font-semibold hover:bg-primary-50">
-              <i className="ri-add-line mr-1"></i>Add question
+              <AppIcon className="ri-add-line mr-1"></AppIcon>Add question
             </button>
             <button type="submit" disabled={saving} className="px-5 py-2 rounded-lg bg-[#5b2dbb] text-white text-sm font-semibold hover:bg-[#4c1d95] disabled:opacity-60 disabled:cursor-wait">
               {saving ? 'Saving...' : 'Save Manual Quiz'}

@@ -258,16 +258,16 @@ export default function EngagementClubsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/events')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-calendar-event-line text-sm"></i> Events
+            <AppIcon className="ri-calendar-event-line text-sm"></AppIcon> Events
           </button>
           <button onClick={() => navigate('/engagement/recognition')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-thumb-up-line text-sm"></i> Recognition
+            <AppIcon className="ri-thumb-up-line text-sm"></AppIcon> Recognition
           </button>
           <button onClick={() => navigate('/engagement/points-rules')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-gift-2-line text-sm"></i> Points Rules
+            <AppIcon className="ri-gift-2-line text-sm"></AppIcon> Points Rules
           </button>
           <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-amber-50 hover:text-amber-600 hover:border-amber-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-heart-line text-sm"></i> Learner Engagement
+            <AppIcon className="ri-heart-line text-sm"></AppIcon> Learner Engagement
           </button>
         </div>
 
@@ -299,7 +299,7 @@ export default function EngagementClubsPage() {
             </div>
           ) : (
             <button onClick={() => setAddingLocation(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-dashed border-foreground-300/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-300/60 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-map-pin-line text-sm"></i> Add location
+              <AppIcon className="ri-map-pin-line text-sm"></AppIcon> Add location
             </button>
           )}
 
@@ -309,7 +309,7 @@ export default function EngagementClubsPage() {
           </label>
 
           <button onClick={() => { setClubForm(emptyClubForm); setCreatingClub(true); }} className="ml-auto flex items-center gap-1.5 px-3.5 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap shadow-sm">
-            <i className="ri-add-line text-sm"></i> Create club
+            <AppIcon className="ri-add-line text-sm"></AppIcon> Create club
           </button>
         </div>
 
@@ -317,7 +317,7 @@ export default function EngagementClubsPage() {
 
         {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
-            <i className="ri-team-line text-2xl text-foreground-300"></i>
+            <AppIcon className="ri-team-line text-2xl text-foreground-300"></AppIcon>
             <p className="text-sm font-semibold text-foreground-700">No clubs match this view</p>
             <p className="text-[11px] text-foreground-400">Try switching the location filter, turn off "Active only", or create a club.</p>
           </div>
@@ -328,12 +328,12 @@ export default function EngagementClubsPage() {
             <div key={club.id} className={`rounded-xl border p-4 card-premium transition-smooth flex flex-col ${club.active ? 'bg-background-50 border-foreground-200/60 hover:border-primary-200/50' : 'bg-background-100/70 border-foreground-200/50 grayscale opacity-70'}`}>
               <div className="flex items-start gap-3 mb-3">
                 <div className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
-                  <i className="ri-map-pin-2-line text-sm"></i>
+                  <AppIcon className="ri-map-pin-2-line text-sm"></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
                   <h4 className="text-[13px] font-semibold text-foreground-900">{club.name}</h4>
                   <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-primary-100 text-primary-700">
-                    <i className="ri-map-pin-line"></i> {club.location}
+                    <AppIcon className="ri-map-pin-line"></AppIcon> {club.location}
                   </span>
                 </div>
                 {!club.active && <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-background-200 text-foreground-500">Inactive</span>}
@@ -342,7 +342,7 @@ export default function EngagementClubsPage() {
               <p className="text-[11px] text-foreground-500 mb-3">{club.description}</p>
 
               <div className="text-[10px] text-foreground-400 mb-3">
-                <p><i className="ri-shield-star-line mr-1 text-secondary-500"></i>Ambassador: {club.ambassador} ({club.ambassadorRole})</p>
+                <p><AppIcon className="ri-shield-star-line mr-1 text-secondary-500"></AppIcon>Ambassador: {club.ambassador} ({club.ambassadorRole})</p>
               </div>
 
               {/* Joined members indicator — no capacity limit */}
@@ -356,7 +356,7 @@ export default function EngagementClubsPage() {
                   {club.members > 4 && <span className="ml-1 text-[10px] font-semibold text-foreground-500">+{club.members - 4}</span>}
                 </div>
                 <span className="flex items-center gap-1 text-[11px] font-semibold text-primary-600">
-                  <i className="ri-group-line"></i> {club.members} joined
+                  <AppIcon className="ri-group-line"></AppIcon> {club.members} joined
                 </span>
               </div>
 
@@ -365,7 +365,7 @@ export default function EngagementClubsPage() {
                 <div className="flex items-center justify-between">
                   <p className="text-[10px] font-semibold text-foreground-500 uppercase tracking-wide">Meetings</p>
                   <button onClick={() => { setAddingClubId(addingClubId === club.id ? null : club.id); setDraftTitle(''); }} className="flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-add-line"></i> Add meeting
+                    <AppIcon className="ri-add-line"></AppIcon> Add meeting
                   </button>
                 </div>
 
@@ -392,7 +392,7 @@ export default function EngagementClubsPage() {
                 {club.meetings.map(m => (
                   <div key={m.id} className="rounded-lg border border-foreground-200/50 p-2.5">
                     <div className="flex items-start gap-2">
-                      <i className={`${m.scheduled ? 'ri-calendar-check-line text-primary-500' : 'ri-calendar-todo-line text-foreground-400'} text-sm mt-0.5`}></i>
+                      <AppIcon className={`${m.scheduled ? 'ri-calendar-check-line text-primary-500' : 'ri-calendar-todo-line text-foreground-400'} text-sm mt-0.5`}></AppIcon>
                       <div className="flex-1 min-w-0">
                         <p className="text-[11px] font-semibold text-foreground-800">{m.title}</p>
                         {m.scheduled ? (
@@ -401,12 +401,12 @@ export default function EngagementClubsPage() {
                           </p>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 mt-0.5">
-                            <i className="ri-time-line"></i> Not scheduled
+                            <AppIcon className="ri-time-line"></AppIcon> Not scheduled
                           </span>
                         )}
                       </div>
                       <button onClick={() => openMeeting(club, m)} className="shrink-0 px-2 py-1 rounded-md text-[9px] font-semibold text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer whitespace-nowrap">
-                        <i className="ri-edit-line mr-0.5"></i> Manage
+                        <AppIcon className="ri-edit-line mr-0.5"></AppIcon> Manage
                       </button>
                     </div>
                   </div>
@@ -416,7 +416,7 @@ export default function EngagementClubsPage() {
               <div className="flex items-center gap-2 mt-3 pt-3 border-t border-foreground-200/40">
                 <div className="flex-1"></div>
                 <button onClick={() => openManage(club)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-edit-line mr-1"></i> Manage
+                  <AppIcon className="ri-edit-line mr-1"></AppIcon> Manage
                 </button>
               </div>
             </div>
@@ -429,13 +429,13 @@ export default function EngagementClubsPage() {
             <div className="bg-background-50 rounded-2xl max-w-md w-full shadow-xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between px-5 py-4 border-b border-foreground-200/60">
                 <div className="flex items-center gap-2.5">
-                  <span className="w-9 h-9 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-add-circle-line"></i></span>
+                  <span className="w-9 h-9 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-add-circle-line"></AppIcon></span>
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Create a club</h3>
                     <p className="text-[11px] text-foreground-400">Start a new location-based community club</p>
                   </div>
                 </div>
-                <button onClick={() => { setCreatingClub(false); setClubForm(emptyClubForm); }} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+                <button onClick={() => { setCreatingClub(false); setClubForm(emptyClubForm); }} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
 
               <div className="px-5 py-4 space-y-3">
@@ -469,7 +469,7 @@ export default function EngagementClubsPage() {
 
               <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-foreground-200/60">
                 <button onClick={() => { setCreatingClub(false); setClubForm(emptyClubForm); }} className="px-4 py-2 rounded-lg text-xs font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">Cancel</button>
-                <button onClick={createClub} disabled={!clubForm.name.trim() || !clubForm.location.trim()} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"><i className="ri-add-line mr-1"></i>Create club</button>
+                <button onClick={createClub} disabled={!clubForm.name.trim() || !clubForm.location.trim()} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"><AppIcon className="ri-add-line mr-1"></AppIcon>Create club</button>
               </div>
             </div>
           </div>
@@ -481,13 +481,13 @@ export default function EngagementClubsPage() {
             <div className="bg-background-50 rounded-2xl max-w-md w-full shadow-xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
               <div className="flex items-center justify-between px-5 py-4 border-b border-foreground-200/60">
                 <div className="flex items-center gap-2.5">
-                  <span className="w-9 h-9 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-settings-3-line"></i></span>
+                  <span className="w-9 h-9 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-settings-3-line"></AppIcon></span>
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Manage {managingClub.name}</h3>
-                    <p className="text-[11px] text-foreground-400"><i className="ri-map-pin-line mr-0.5"></i>{managingClub.location} · {managingClub.members} joined</p>
+                    <p className="text-[11px] text-foreground-400"><AppIcon className="ri-map-pin-line mr-0.5"></AppIcon>{managingClub.location} · {managingClub.members} joined</p>
                   </div>
                 </div>
-                <button onClick={() => setManagingClubId(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+                <button onClick={() => setManagingClubId(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
 
               <div className="px-5 py-4 space-y-3">
@@ -517,10 +517,10 @@ export default function EngagementClubsPage() {
               </div>
 
               <div className="flex items-center justify-between gap-2 px-5 py-4 border-t border-foreground-200/60">
-                <button onClick={() => deleteClub(managingClub.id)} className="px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-smooth cursor-pointer"><i className="ri-delete-bin-line mr-1"></i>Delete</button>
+                <button onClick={() => deleteClub(managingClub.id)} className="px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-smooth cursor-pointer"><AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Delete</button>
                 <div className="flex items-center gap-2">
                   <button onClick={() => setManagingClubId(null)} className="px-4 py-2 rounded-lg text-xs font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer">Cancel</button>
-                  <button onClick={saveManage} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"><i className="ri-save-line mr-1"></i>Save changes</button>
+                  <button onClick={saveManage} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"><AppIcon className="ri-save-line mr-1"></AppIcon>Save changes</button>
                 </div>
               </div>
             </div>
@@ -533,13 +533,13 @@ export default function EngagementClubsPage() {
             <div className="bg-background-50 rounded-2xl max-w-md w-full max-h-[90vh] overflow-y-auto shadow-xl animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
               <div className="sticky top-0 bg-background-50 rounded-t-2xl flex items-center justify-between px-5 py-4 border-b border-foreground-200/60 z-10">
                 <div className="flex items-center gap-2.5">
-                  <span className="w-9 h-9 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-calendar-event-line"></i></span>
+                  <span className="w-9 h-9 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-calendar-event-line"></AppIcon></span>
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Manage meeting</h3>
-                    <p className="text-[11px] text-foreground-400"><i className="ri-map-pin-line mr-0.5"></i>{managingMeeting.club.name} · {managingMeeting.club.location}</p>
+                    <p className="text-[11px] text-foreground-400"><AppIcon className="ri-map-pin-line mr-0.5"></AppIcon>{managingMeeting.club.name} · {managingMeeting.club.location}</p>
                   </div>
                 </div>
-                <button onClick={() => setMeetingCtx(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+                <button onClick={() => setMeetingCtx(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
 
               {/* Details / scheduling form */}
@@ -564,25 +564,25 @@ export default function EngagementClubsPage() {
                 </div>
                 <p className="text-[10px] text-foreground-400">
                   {meetingForm.date
-                    ? <><i className="ri-time-line mr-0.5"></i>Starts {remainingLabel(meetingForm.date, meetingForm.time)}</>
-                    : <><i className="ri-information-line mr-0.5"></i>Leave the date empty to keep this meeting unscheduled.</>}
+                    ? <><AppIcon className="ri-time-line mr-0.5"></AppIcon>Starts {remainingLabel(meetingForm.date, meetingForm.time)}</>
+                    : <><AppIcon className="ri-information-line mr-0.5"></AppIcon>Leave the date empty to keep this meeting unscheduled.</>}
                 </p>
                 <div className="flex items-center gap-2">
-                  <button onClick={saveMeeting} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"><i className="ri-save-line mr-1"></i>Save meeting</button>
-                  <button onClick={deleteMeeting} className="px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-smooth cursor-pointer"><i className="ri-delete-bin-line mr-1"></i>Delete meeting</button>
+                  <button onClick={saveMeeting} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"><AppIcon className="ri-save-line mr-1"></AppIcon>Save meeting</button>
+                  <button onClick={deleteMeeting} className="px-3 py-2 rounded-lg text-xs font-semibold text-rose-600 hover:bg-rose-50 transition-smooth cursor-pointer"><AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Delete meeting</button>
                 </div>
               </div>
 
               {/* Email students */}
               <div className="px-5 py-4 border-t border-foreground-200/60 space-y-2">
                 <div className="flex items-center gap-2">
-                  <i className="ri-mail-send-line text-primary-500"></i>
+                  <AppIcon className="ri-mail-send-line text-primary-500"></AppIcon>
                   <p className="text-[12px] font-semibold text-foreground-700">Email students a reminder</p>
                 </div>
                 <div className="rounded-lg bg-background-100/60 p-2.5 text-[10px] text-foreground-500 space-y-0.5">
-                  <p><i className="ri-group-line mr-1"></i>To: {managingMeeting.club.members} joined learner{managingMeeting.club.members === 1 ? '' : 's'}</p>
-                  <p><i className="ri-time-line mr-1"></i>When: {meetingForm.date ? `${formatMeetingDate(meetingForm.date)}${meetingForm.time ? ` · ${meetingForm.time}` : ''} (${remainingLabel(meetingForm.date, meetingForm.time)})` : 'Not scheduled yet'}</p>
-                  <p><i className="ri-map-pin-line mr-1"></i>Place: {meetingForm.venue.trim() || 'To be confirmed'}</p>
+                  <p><AppIcon className="ri-group-line mr-1"></AppIcon>To: {managingMeeting.club.members} joined learner{managingMeeting.club.members === 1 ? '' : 's'}</p>
+                  <p><AppIcon className="ri-time-line mr-1"></AppIcon>When: {meetingForm.date ? `${formatMeetingDate(meetingForm.date)}${meetingForm.time ? ` · ${meetingForm.time}` : ''} (${remainingLabel(meetingForm.date, meetingForm.time)})` : 'Not scheduled yet'}</p>
+                  <p><AppIcon className="ri-map-pin-line mr-1"></AppIcon>Place: {meetingForm.venue.trim() || 'To be confirmed'}</p>
                 </div>
                 <textarea value={emailMsg} onChange={e => setEmailMsg(e.target.value)} rows={4} className="w-full px-3 py-2 rounded-lg border border-foreground-200/60 bg-background-50 text-sm text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 resize-none" />
                 <p className="text-[10px] text-foreground-400">The meeting's remaining time and place are included automatically.</p>
@@ -591,7 +591,7 @@ export default function EngagementClubsPage() {
                   disabled={!emailMsg.trim()}
                   className="w-full px-4 py-2 rounded-lg bg-primary-500 text-white text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <i className="ri-mail-send-line mr-1"></i> Send reminder now
+                  <AppIcon className="ri-mail-send-line mr-1"></AppIcon> Send reminder now
                 </button>
               </div>
             </div>
@@ -601,7 +601,7 @@ export default function EngagementClubsPage() {
         {/* Confirmation toast */}
         {toast && (
           <div className="fixed bottom-6 right-6 z-[60] flex items-center gap-2 bg-foreground-900 text-white px-4 py-2.5 rounded-xl shadow-lg animate-in slide-in-from-bottom-4 duration-300">
-            <i className={`${toast.kind === 'error' ? 'ri-error-warning-line text-rose-400' : 'ri-checkbox-circle-line text-emerald-400'}`}></i>
+            <AppIcon className={`${toast.kind === 'error' ? 'ri-error-warning-line text-rose-400' : 'ri-checkbox-circle-line text-emerald-400'}`}></AppIcon>
             <span className="text-[12px] font-medium">{toast.msg}</span>
           </div>
         )}

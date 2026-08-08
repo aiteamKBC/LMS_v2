@@ -95,7 +95,7 @@ export function EvidenceFilesButton({ kind, learnerId, componentId }: {
         className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg border border-background-300 bg-white text-foreground-600 hover:bg-background-50 transition-colors cursor-pointer"
         title="View uploaded evidence"
       >
-        <i className="ri-attachment-2 text-[10px]" />
+        <AppIcon className="ri-attachment-2 text-[10px]" />
         {files.length === 1 ? 'View file' : `${files.length} files`}
       </button>
 
@@ -117,7 +117,7 @@ export function EvidenceFilesButton({ kind, learnerId, componentId }: {
                       isApproved ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default opacity-60'
                     }`}
                   >
-                    <i className="ri-file-line text-foreground-400 text-sm shrink-0" />
+                    <AppIcon className="ri-file-line text-foreground-400 text-sm shrink-0" />
                     <span className="flex-1 min-w-0">
                       <span className="block text-[12px] font-semibold text-foreground-800 truncate">{f.filename}</span>
                       {!isApproved && (
@@ -126,7 +126,7 @@ export function EvidenceFilesButton({ kind, learnerId, componentId }: {
                         </span>
                       )}
                     </span>
-                    {isApproved && <i className="ri-external-link-line text-foreground-400 text-xs shrink-0" />}
+                    {isApproved && <AppIcon className="ri-external-link-line text-foreground-400 text-xs shrink-0" />}
                   </button>
                 </li>
               );

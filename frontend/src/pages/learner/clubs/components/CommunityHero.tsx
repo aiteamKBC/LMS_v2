@@ -20,7 +20,7 @@ export function CommunityHero() {
         {/* Top row */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-5 mb-6">
           <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-            <i className="ri-community-line text-white text-2xl"></i>
+            <AppIcon className="ri-community-line text-white text-2xl"></AppIcon>
           </span>
           <div className="flex-1">
             <h2 className="text-xl font-heading font-bold text-white mb-1">KBC Learner Community Hub</h2>
@@ -42,7 +42,7 @@ export function CommunityHero() {
             return (
               <div key={stat.label} className="bg-white/10 backdrop-blur-sm rounded-xl px-4 py-3 text-center hover:bg-white/15 transition-smooth">
                 <span className={`w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-1.5 ${c.bg}`}>
-                  <i className={`${stat.icon} text-base ${c.icon}`}></i>
+                  <AppIcon className={`${stat.icon} text-base ${c.icon}`}></AppIcon>
                 </span>
                 <p className={`text-xl font-bold ${c.value}`}>{typeof stat.value === 'number' ? stat.value.toLocaleString() : stat.value}</p>
                 <p className="text-xs text-white/50 font-medium mt-0.5">{stat.label}</p>

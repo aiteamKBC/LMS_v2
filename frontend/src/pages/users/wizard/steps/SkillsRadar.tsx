@@ -158,7 +158,7 @@ export default function SkillsRadar() {
           className={`${btnPrimary} mb-4`}
           onClick={() => open(ksbs.findIndex((k) => !sr.assessments[k.id]?.level))}
         >
-          <i className="ri-play-line" />{answeredCount === 0 ? 'Start assessment' : 'Continue assessment'}
+          <AppIcon className="ri-play-line" />{answeredCount === 0 ? 'Start assessment' : 'Continue assessment'}
         </button>
       )}
 
@@ -190,7 +190,7 @@ export default function SkillsRadar() {
                 onClick={() => open(i)}
                 className={`${btnSecondary} !py-1 !px-3 !text-[11px] shrink-0`}
               >
-                <i className={readOnly ? 'ri-eye-line' : 'ri-edit-line'} />{readOnly ? 'View' : level ? 'Edit' : 'Answer'}
+                <AppIcon className={readOnly ? 'ri-eye-line' : 'ri-edit-line'} />{readOnly ? 'View' : level ? 'Edit' : 'Answer'}
               </button>
             </div>
           );
@@ -212,7 +212,7 @@ export default function SkillsRadar() {
               <>
                 <button className={btnSecondary} onClick={() => setOpenIndex(null)}>Cancel</button>
                 <button className={btnPrimary} onClick={confirm} disabled={!work.level}>
-                  <i className="ri-check-line" />{openIndex + 1 < ksbs.length ? 'Confirm & next' : 'Confirm'}
+                  <AppIcon className="ri-check-line" />{openIndex + 1 < ksbs.length ? 'Confirm & next' : 'Confirm'}
                 </button>
               </>
             )
@@ -276,7 +276,7 @@ export default function SkillsRadar() {
             <label className="block text-[12px] font-medium text-foreground-700 mb-1.5">Upload evidence:</label>
             {!readOnly && (
               <label className="inline-flex items-center gap-2 px-3 py-2 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer mb-2">
-                <i className="ri-folder-open-line" />Select file…
+                <AppIcon className="ri-folder-open-line" />Select file…
                 <input
                   type="file"
                   multiple

@@ -105,7 +105,7 @@ export default function GatewayReadinessPage() {
           <div className="bg-background-50 rounded-xl border border-background-200/50 p-4 card-premium">
             <div className="flex items-start justify-between mb-3">
               <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center">
-                <i className="ri-calendar-todo-line text-primary-600"></i>
+                <AppIcon className="ri-calendar-todo-line text-primary-600"></AppIcon>
               </span>
               <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-primary-100 text-primary-700">
                 {GATEWAY_PROGRESS_STATUS.label}
@@ -115,14 +115,14 @@ export default function GatewayReadinessPage() {
             <p className="text-2xl font-heading font-bold text-foreground-900">{p.gatewayTargetDate}</p>
             <p className="text-xs text-foreground-500 mt-1">{GATEWAY_PROGRESS_STATUS.explanation}</p>
             <div className="mt-2 flex items-center gap-1 text-[9px] text-foreground-400">
-              <i className="ri-time-line"></i>
+              <AppIcon className="ri-time-line"></AppIcon>
               <span>Progress Status: {GATEWAY_PROGRESS_STATUS.detail}</span>
             </div>
           </div>
           <div className="bg-background-50 rounded-xl border border-background-200/50 p-4 card-premium">
             <div className="flex items-start justify-between mb-3">
               <span className="w-9 h-9 rounded-lg bg-accent-100 flex items-center justify-center">
-                <i className="ri-hourglass-line text-accent-700"></i>
+                <AppIcon className="ri-hourglass-line text-accent-700"></AppIcon>
               </span>
               <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-accent-100 text-accent-700">
                 Countdown
@@ -132,7 +132,7 @@ export default function GatewayReadinessPage() {
             <p className="text-2xl font-heading font-bold text-accent-700">16 Months</p>
             <p className="text-xs text-foreground-500 mt-1">482 Days Remaining</p>
             <div className="mt-2 flex items-center gap-1 text-[9px] text-foreground-400">
-              <i className="ri-calendar-line"></i>
+              <AppIcon className="ri-calendar-line"></AppIcon>
               <span>Target: {p.gatewayTargetDate}</span>
             </div>
           </div>
@@ -153,7 +153,7 @@ export default function GatewayReadinessPage() {
                 activeTab === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
               }`}
             >
-              <i className={`${tab.icon} text-sm`}></i>
+              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
               {tab.label}
             </button>
           ))}
@@ -178,7 +178,7 @@ export default function GatewayReadinessPage() {
                           milestone.status === 'in-progress' ? 'bg-primary-500 text-white ring-4 ring-primary-100' :
                           'bg-background-200 text-foreground-400'
                         }`}>
-                          {milestone.status === 'completed' ? <i className="ri-check-line text-sm"></i> : i + 1}
+                          {milestone.status === 'completed' ? <AppIcon className="ri-check-line text-sm"></AppIcon> : i + 1}
                         </div>
                         {i < GATEWAY_MILESTONES.length - 1 && (
                           <div className={`w-0.5 h-10 ${milestone.status === 'completed' ? 'bg-emerald-300' : 'bg-background-200'}`}></div>
@@ -235,7 +235,7 @@ export default function GatewayReadinessPage() {
                     'Met the minimum programme duration (12 months)',
                   ].map((item, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-foreground-600">
-                      <i className="ri-checkbox-circle-line text-primary-500 mt-0.5 shrink-0"></i>
+                      <AppIcon className="ri-checkbox-circle-line text-primary-500 mt-0.5 shrink-0"></AppIcon>
                       {item}
                     </li>
                   ))}
@@ -326,7 +326,7 @@ export default function GatewayReadinessPage() {
             <div className="bg-background-50 rounded-xl border border-foreground-200/50 p-5">
               <div className="flex items-start gap-3">
                 <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center shrink-0">
-                  <i className="ri-lightbulb-line text-primary-600"></i>
+                  <AppIcon className="ri-lightbulb-line text-primary-600"></AppIcon>
                 </span>
                 <div>
                   <p className="text-sm font-semibold text-primary-900 mb-1">Gateway Target: 100% KSB Validation</p>
@@ -367,7 +367,7 @@ export default function GatewayReadinessPage() {
                         item.status === 'in-progress' ? 'bg-amber-100 text-amber-600' :
                         'bg-background-100 text-foreground-300'
                       }`}>
-                        <i className={`${item.status === 'done' ? 'ri-check-line' : item.status === 'in-progress' ? 'ri-time-line' : 'ri-subtract-line'} text-sm`}></i>
+                        <AppIcon className={`${item.status === 'done' ? 'ri-check-line' : item.status === 'in-progress' ? 'ri-time-line' : 'ri-subtract-line'} text-sm`}></AppIcon>
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm font-medium ${item.status === 'done' ? 'text-foreground-500 line-through' : 'text-foreground-900'}`}>{item.item}</p>
@@ -402,7 +402,7 @@ export default function GatewayReadinessPage() {
                     onClick={() => setShowBookMockModal(true)}
                     className="px-4 py-2 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                   >
-                    <i className="ri-calendar-check-line mr-1"></i> Book Mock Session
+                    <AppIcon className="ri-calendar-check-line mr-1"></AppIcon> Book Mock Session
                   </button>
                 ) : (
                   <div className="relative group">
@@ -410,7 +410,7 @@ export default function GatewayReadinessPage() {
                       disabled
                       className="px-4 py-2 bg-background-200 text-foreground-400 rounded-lg text-xs font-semibold cursor-not-allowed whitespace-nowrap"
                     >
-                      <i className="ri-calendar-check-line mr-1"></i> Book Mock Session
+                      <AppIcon className="ri-calendar-check-line mr-1"></AppIcon> Book Mock Session
                     </button>
                     <div className="absolute right-0 top-full mt-2 w-60 bg-foreground-900 text-white text-xs rounded-lg px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none z-20 text-center">
                       Mock sessions are only available after your Gateway has been approved. You are currently at the <strong>Gateway Preparation</strong> stage.
@@ -431,7 +431,7 @@ export default function GatewayReadinessPage() {
                         q.difficulty === 'Medium' ? 'bg-amber-100 text-amber-600' :
                         'bg-emerald-100 text-emerald-600'
                       }`}>
-                        <i className="ri-question-line text-sm"></i>
+                        <AppIcon className="ri-question-line text-sm"></AppIcon>
                       </span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground-900">{q.question}</p>
@@ -447,14 +447,14 @@ export default function GatewayReadinessPage() {
                           </span>
                         </div>
                       </div>
-                      <i className={`${expandedQuestion === q.id ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300 shrink-0`}></i>
+                      <AppIcon className={`${expandedQuestion === q.id ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300 shrink-0`}></AppIcon>
                     </button>
                     {expandedQuestion === q.id && (
                       <div className="px-4 pb-4 border-t border-background-200/30 pt-3 bg-background-100/30 animate-in fade-in slide-in-from-bottom-2 duration-300">
                         {/* Example Response */}
                         <div className="mb-3">
                           <p className="text-xs font-semibold text-foreground-700 mb-1.5">
-                            <i className="ri-chat-smile-2-line text-accent-500 mr-1"></i>
+                            <AppIcon className="ri-chat-smile-2-line text-accent-500 mr-1"></AppIcon>
                             Example Response
                           </p>
                           <div className="bg-background-50 rounded-lg p-3 border border-background-200/50">
@@ -466,19 +466,19 @@ export default function GatewayReadinessPage() {
                         <p className="text-xs font-semibold text-foreground-700 mb-2">How to prepare:</p>
                         <ul className="space-y-1.5">
                           <li className="text-xs text-foreground-500 flex items-start gap-1.5">
-                            <i className="ri-checkbox-blank-circle-fill text-[6px] text-primary-400 mt-1.5 shrink-0"></i>
+                            <AppIcon className="ri-checkbox-blank-circle-fill text-[6px] text-primary-400 mt-1.5 shrink-0"></AppIcon>
                             Use the STAR method (Situation, Task, Action, Result) to structure your answer
                           </li>
                           <li className="text-xs text-foreground-500 flex items-start gap-1.5">
-                            <i className="ri-checkbox-blank-circle-fill text-[6px] text-primary-400 mt-1.5 shrink-0"></i>
+                            <AppIcon className="ri-checkbox-blank-circle-fill text-[6px] text-primary-400 mt-1.5 shrink-0"></AppIcon>
                             Link your answer to specific workplace examples from Tim Hortons
                           </li>
                           <li className="text-xs text-foreground-500 flex items-start gap-1.5">
-                            <i className="ri-checkbox-blank-circle-fill text-[6px] text-primary-400 mt-1.5 shrink-0"></i>
+                            <AppIcon className="ri-checkbox-blank-circle-fill text-[6px] text-primary-400 mt-1.5 shrink-0"></AppIcon>
                             Reference the KSBs listed and explain how you demonstrated them
                           </li>
                           <li className="text-xs text-foreground-500 flex items-start gap-1.5">
-                            <i className="ri-checkbox-blank-circle-fill text-[6px] text-primary-400 mt-1.5 shrink-0"></i>
+                            <AppIcon className="ri-checkbox-blank-circle-fill text-[6px] text-primary-400 mt-1.5 shrink-0"></AppIcon>
                             Practice aloud — record yourself or practise with your coach
                           </li>
                         </ul>
@@ -486,7 +486,7 @@ export default function GatewayReadinessPage() {
                         {/* Coach Tip */}
                         <div className="mt-3 p-3 bg-accent-50 rounded-lg border border-accent-200/50">
                           <p className="text-xs text-accent-700 font-medium">
-                            <i className="ri-user-voice-line mr-1"></i>
+                            <AppIcon className="ri-user-voice-line mr-1"></AppIcon>
                             Coach tip: {q.coachTip}
                           </p>
                         </div>
@@ -498,7 +498,7 @@ export default function GatewayReadinessPage() {
                             <div className="flex flex-wrap gap-2">
                               {q.prepResources.map((res, i) => (
                                 <span key={i} className="inline-flex items-center gap-1 text-[9px] font-semibold px-2 py-1 rounded-full bg-primary-50 text-primary-700 border border-primary-200/50">
-                                  <i className={`${res.type === 'Reading' ? 'ri-book-open-line' : 'ri-file-copy-line'} text-[10px]`}></i>
+                                  <AppIcon className={`${res.type === 'Reading' ? 'ri-book-open-line' : 'ri-file-copy-line'} text-[10px]`}></AppIcon>
                                   {res.label}
                                 </span>
                               ))}
@@ -552,7 +552,7 @@ function ReadinessCard({ label, value, sub, icon, color, status }: {
     <div className="bg-background-50 rounded-xl border border-background-200/50 p-4 card-premium">
       <div className="flex items-start justify-between mb-3">
         <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${
           status === 'amber' ? 'bg-amber-100 text-amber-700' :

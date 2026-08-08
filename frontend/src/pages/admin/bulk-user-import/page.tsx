@@ -73,7 +73,7 @@ export default function BulkUserImportPage() {
           <div className="relative z-10 p-5 sm:p-8 flex flex-col min-h-[170px] md:min-h-[200px]">
             <div className="flex items-start gap-4 mb-2">
               <div className="w-14 h-14 rounded-2xl bg-accent-500 flex items-center justify-center shrink-0 shadow-lg shadow-accent-500/20">
-                <i className="ri-file-upload-line text-foreground-950 text-2xl"></i>
+                <AppIcon className="ri-file-upload-line text-foreground-950 text-2xl"></AppIcon>
               </div>
               <div className="min-w-0">
                 <h2 className="text-2xl sm:text-3xl font-heading font-bold text-white tracking-tight leading-tight">Bulk User Import</h2>
@@ -96,7 +96,7 @@ export default function BulkUserImportPage() {
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-smooth ${
                 step > s ? 'bg-emerald-500 text-white' : step === s ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-400'
               }`}>
-                {step > s ? <i className="ri-check-line"></i> : s}
+                {step > s ? <AppIcon className="ri-check-line"></AppIcon> : s}
               </div>
               <span className={`text-[11px] font-medium ${step >= s ? 'text-foreground-700' : 'text-foreground-300'}`}>
                 {s === 1 ? 'Upload CSV' : s === 2 ? 'Map & Preview' : 'Import'}
@@ -119,7 +119,7 @@ export default function BulkUserImportPage() {
               onClick={() => fileInputRef.current?.click()}
             >
               <div className="w-16 h-16 rounded-2xl bg-secondary-100 flex items-center justify-center mx-auto mb-4">
-                <i className="ri-upload-cloud-2-line text-secondary-600 text-2xl"></i>
+                <AppIcon className="ri-upload-cloud-2-line text-secondary-600 text-2xl"></AppIcon>
               </div>
               <h3 className="text-base font-heading font-semibold text-foreground-900 mb-2">Drop your CSV file here</h3>
               <p className="text-[13px] text-foreground-400 mb-6">or click to browse. Supports .csv files up to 10MB.</p>
@@ -127,7 +127,7 @@ export default function BulkUserImportPage() {
                 onClick={handleFilePick}
                 className="px-6 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
               >
-                <i className="ri-file-line mr-1.5"></i> Choose File
+                <AppIcon className="ri-file-line mr-1.5"></AppIcon> Choose File
               </button>
               <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={handleFilePick} />
               <p className="text-[11px] text-foreground-300 mt-4">Required columns: Name, Email, Role. Optional: Tenant, Programme, Cohort, Phone, Department, Start Date</p>
@@ -135,7 +135,7 @@ export default function BulkUserImportPage() {
 
             <div className="mt-6 p-4 bg-accent-50/60 rounded-xl border border-accent-200/40 text-left max-w-lg mx-auto">
               <p className="text-[11px] font-semibold text-foreground-700 mb-2 flex items-center gap-2">
-                <i className="ri-lightbulb-line text-accent-600"></i> CSV Template Format
+                <AppIcon className="ri-lightbulb-line text-accent-600"></AppIcon> CSV Template Format
               </p>
               <code className="text-[10px] text-foreground-500 block bg-background-50 rounded-lg p-2 border border-background-200">Name,Email,Role,Tenant,Programme,Cohort<br/>James Wilson,j.wilson@kbc.ac.uk,Learner,KBC,Business Admin L3,Cohort C</code>
             </div>
@@ -151,7 +151,7 @@ export default function BulkUserImportPage() {
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center gap-2.5 mb-4">
                 <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-                  <i className="ri-link text-primary-600 text-sm"></i>
+                  <AppIcon className="ri-link text-primary-600 text-sm"></AppIcon>
                 </div>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Column Mapping</h3>
@@ -228,10 +228,10 @@ export default function BulkUserImportPage() {
             {/* Actions */}
             <div className="flex items-center gap-3">
               <button onClick={() => setStep(1)} className="px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-arrow-left-line mr-1"></i> Back
+                <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Back
               </button>
               <button onClick={handleImport} className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-upload-cloud-line mr-1.5"></i> Import {totalRows} Users
+                <AppIcon className="ri-upload-cloud-line mr-1.5"></AppIcon> Import {totalRows} Users
               </button>
             </div>
           </div>
@@ -245,7 +245,7 @@ export default function BulkUserImportPage() {
             {importing ? (
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-12 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-primary-100 flex items-center justify-center mx-auto mb-4 animate-spin-slow">
-                  <i className="ri-loader-4-line text-primary-600 text-2xl"></i>
+                  <AppIcon className="ri-loader-4-line text-primary-600 text-2xl"></AppIcon>
                 </div>
                 <h3 className="text-base font-heading font-semibold text-foreground-900 mb-2">Importing users...</h3>
                 <p className="text-[13px] text-foreground-400">Creating accounts, assigning roles, sending welcome emails</p>
@@ -254,7 +254,7 @@ export default function BulkUserImportPage() {
               <div className="space-y-4 md:space-y-6">
                 <div className="bg-emerald-50 rounded-2xl border border-emerald-200/60 p-6 md:p-8 text-center">
                   <div className="w-16 h-16 rounded-2xl bg-emerald-100 flex items-center justify-center mx-auto mb-4">
-                    <i className="ri-check-line text-emerald-600 text-3xl"></i>
+                    <AppIcon className="ri-check-line text-emerald-600 text-3xl"></AppIcon>
                   </div>
                   <h3 className="text-lg font-heading font-semibold text-emerald-900 mb-2">Import Complete!</h3>
                   <p className="text-[13px] text-emerald-700 mb-6">
@@ -270,10 +270,10 @@ export default function BulkUserImportPage() {
 
                 <div className="flex items-center gap-3">
                   <button onClick={() => { setStep(1); setFileName(null); setPreviewData(null); setImportDone(false); }} className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-add-line mr-1"></i> Import Another File
+                    <AppIcon className="ri-add-line mr-1"></AppIcon> Import Another File
                   </button>
                   <a href="/admin/users" className="px-5 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-user-line mr-1.5"></i> View All Users
+                    <AppIcon className="ri-user-line mr-1.5"></AppIcon> View All Users
                   </a>
                 </div>
               </div>
@@ -296,7 +296,7 @@ function ResultCard({ label, value, color, icon }: { label: string; value: numbe
   return (
     <div className={`${c.bg} rounded-xl p-3 text-center`}>
       <span className={`w-7 h-7 rounded-lg flex items-center justify-center mx-auto mb-1.5 ${c.iconBg}`}>
-        <i className={`${icon} text-xs`}></i>
+        <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <p className={`text-xl font-heading font-bold ${c.text}`}>{value}</p>
       <p className="text-[10px] text-foreground-400">{label}</p>

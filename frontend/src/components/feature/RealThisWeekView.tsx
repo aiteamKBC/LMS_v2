@@ -125,7 +125,7 @@ export function RealThisWeekView({
               {['Learn', 'Apply', 'Reflect', 'Evidence', 'Complete'].map((step, i) => (
                 <div key={step} className="flex items-center gap-2 shrink-0">
                   <span className={`text-xs font-semibold whitespace-nowrap ${i <= 1 ? 'text-foreground-700' : 'text-foreground-400'}`}>{step}</span>
-                  {i < 4 && <i className="ri-arrow-right-s-line text-foreground-300 text-xs" />}
+                  {i < 4 && <AppIcon className="ri-arrow-right-s-line text-foreground-300 text-xs" />}
                 </div>
               ))}
             </div>
@@ -159,7 +159,7 @@ function SnapshotCard({ icon, label, value, detail, color }: {
   return (
     <div className="bg-background-50 rounded-2xl border border-foreground-200/50 p-4 md:p-5 card-premium">
       <div className={`w-9 h-9 rounded-xl ${c.bg} flex items-center justify-center mb-3`}>
-        <i className={`${icon} ${c.icon} text-base`} />
+        <AppIcon className={`${icon} ${c.icon} text-base`} />
       </div>
       <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400 mb-1">{label}</p>
       <p className="text-2xl font-heading font-bold text-foreground-900 leading-none">{value}</p>
@@ -270,7 +270,7 @@ function LmsSourceLibrary({ real }: { real: LearnerDetail | null }) {
           </p>
         </div>
         <div className="relative">
-          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm" />
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -341,7 +341,7 @@ function LmsMaterialRow({ row, onOpen }: { row: FlatLmsMaterial; onOpen: () => v
   return (
     <button type="button" onClick={onOpen} className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-background-100/60 transition-colors">
       <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
-        <i className={`${meta.icon} ${meta.text} text-sm`} />
+        <AppIcon className={`${meta.icon} ${meta.text} text-sm`} />
       </span>
       <span className="flex-1 min-w-0">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{section.section_title}</span>
@@ -356,7 +356,7 @@ function LmsMaterialRow({ row, onOpen }: { row: FlatLmsMaterial; onOpen: () => v
         done ? 'bg-emerald-100 text-emerald-700' : started ? 'bg-accent-100 text-accent-700' : 'bg-background-100 text-foreground-500'
       }`}>{status}</span>
       <span className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-[11px] font-semibold text-white">
-        <i className="ri-window-line text-[10px]" /> Open
+        <AppIcon className="ri-window-line text-[10px]" /> Open
       </span>
     </button>
   );
@@ -387,7 +387,7 @@ function LmsMaterialModal({ item, onClose }: { item: FlatLmsMaterial | null; onC
         <div className="flex items-center justify-between gap-3 border-b border-foreground-200 px-4 py-3">
           <div className="flex min-w-0 items-center gap-3">
             <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
-              <i className={`${meta.icon} ${meta.text} text-sm`} />
+              <AppIcon className={`${meta.icon} ${meta.text} text-sm`} />
             </span>
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-foreground-900">{material.material_title}</p>
@@ -397,11 +397,11 @@ function LmsMaterialModal({ item, onClose }: { item: FlatLmsMaterial | null; onC
           <div className="flex items-center gap-2 shrink-0">
             {(urls.open || urls.file) && (
               <a href={urls.open || urls.file || undefined} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 px-3 text-xs font-semibold text-foreground-600 hover:bg-background-100">
-                <i className="ri-external-link-line" /> New tab
+                <AppIcon className="ri-external-link-line" /> New tab
               </a>
             )}
             <button type="button" onClick={onClose} className="h-9 w-9 rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
-              <i className="ri-close-line text-lg" />
+              <AppIcon className="ri-close-line text-lg" />
             </button>
           </div>
         </div>
@@ -427,7 +427,7 @@ function LmsMaterialModal({ item, onClose }: { item: FlatLmsMaterial | null; onC
           ) : (
             <div className="grid min-h-[360px] place-items-center p-8 text-center text-white">
               <div>
-                <i className="ri-link-unlink-m text-3xl text-white/40" />
+                <AppIcon className="ri-link-unlink-m text-3xl text-white/40" />
                 <p className="mt-3 text-sm font-semibold">No embeddable source is available for this component.</p>
               </div>
             </div>
@@ -453,7 +453,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, navigate, complet
         className="w-full flex items-center gap-3 px-5 py-3.5 transition-colors text-left cursor-pointer hover:bg-background-100/30"
       >
         <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-primary-100">
-          <i className="ri-book-2-line text-primary-600 text-base" />
+          <AppIcon className="ri-book-2-line text-primary-600 text-base" />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-heading font-bold text-foreground-800 truncate">{module.module}</p>
@@ -464,7 +464,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, navigate, complet
         <div className="flex items-center gap-3">
           {moduleOtjh > 0 && <span className="hidden sm:inline text-xs font-semibold text-primary-600">{Math.round(moduleOtjh * 10) / 10}h</span>}
           <div className="w-7 h-7 flex items-center justify-center rounded-lg bg-background-100">
-            <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform text-sm ${collapsed ? '' : 'rotate-180'}`} />
+            <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform text-sm ${collapsed ? '' : 'rotate-180'}`} />
           </div>
         </div>
       </button>
@@ -508,7 +508,7 @@ function WeekCard({ week, module, kind, learnerId, navigate, completedIds }: {
           className="w-full flex items-center gap-3 px-4 py-3 cursor-pointer text-left hover:bg-background-50/80 transition-colors"
         >
           <span className="shrink-0 w-9 h-9 text-xs rounded-lg flex items-center justify-center font-heading font-bold bg-background-100 text-foreground-500">
-            <i className="ri-calendar-line" />
+            <AppIcon className="ri-calendar-line" />
           </span>
           <div className="flex-1 min-w-0">
             <span className="text-sm font-heading font-bold text-foreground-800">{week.week}</span>
@@ -517,7 +517,7 @@ function WeekCard({ week, module, kind, learnerId, navigate, completedIds }: {
           <div className="flex items-center gap-3 shrink-0">
             {week.otjh > 0 && <span className="text-xs font-semibold text-foreground-500">{Math.round(week.otjh * 10) / 10}h</span>}
             <div className="flex items-center justify-center rounded-lg bg-background-100 w-6 h-6">
-              <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''} text-xs`} />
+              <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''} text-xs`} />
             </div>
           </div>
         </button>
@@ -557,7 +557,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   return (
     <div className="w-full flex items-center gap-3 px-4 py-3">
       <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
-        <i className={`${meta.icon} text-[13px] ${meta.color}`} />
+        <AppIcon className={`${meta.icon} text-[13px] ${meta.color}`} />
       </div>
       <div className="flex-1 min-w-0">
         <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{meta.label}</span>
@@ -565,18 +565,18 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
       </div>
       {c.isQuiz && c.quizMeta?.questions != null ? (
         <span className="shrink-0 text-[11px] text-foreground-400 inline-flex items-center gap-1">
-          <i className="ri-questionnaire-line text-[10px]" />{c.quizMeta.questions} {c.quizMeta.questions === 1 ? 'question' : 'questions'}
+          <AppIcon className="ri-questionnaire-line text-[10px]" />{c.quizMeta.questions} {c.quizMeta.questions === 1 ? 'question' : 'questions'}
         </span>
       ) : c.expectedOtjh != null && c.expectedOtjh > 0 && (
         <span className="shrink-0 text-[11px] text-foreground-400 inline-flex items-center gap-1">
-          <i className="ri-time-line text-[10px]" />{c.expectedOtjh}h
+          <AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h
         </span>
       )}
       {c.isQuiz && lastAttempt && (
         <span className={`shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
           lastAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
         }`}>
-          <i className={lastAttempt.passed ? 'ri-checkbox-circle-line text-[10px]' : 'ri-close-circle-line text-[10px]'} />
+          <AppIcon className={lastAttempt.passed ? 'ri-checkbox-circle-line text-[10px]' : 'ri-close-circle-line text-[10px]'} />
           {gradeLabel}
         </span>
       )}
@@ -585,13 +585,13 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
           onClick={() => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
           className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
         >
-          <i className={lastAttempt ? 'ri-refresh-line text-[10px]' : 'ri-play-fill text-[10px]'} />
+          <AppIcon className={lastAttempt ? 'ri-refresh-line text-[10px]' : 'ri-play-fill text-[10px]'} />
           {lastAttempt ? 'Retake Quiz' : 'Start Quiz'}
         </button>
       )}
       {completed && !c.isQuiz && (
         <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-emerald-100 text-emerald-700">
-          <i className="ri-checkbox-circle-line text-[10px]" />Done
+          <AppIcon className="ri-checkbox-circle-line text-[10px]" />Done
         </span>
       )}
       {c.type === 'video' && c.videoUrl && c.componentId && canStartQuiz && (
@@ -599,7 +599,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
           onClick={() => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
           className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors cursor-pointer"
         >
-          <i className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
+          <AppIcon className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
           {completed ? 'Rewatch' : 'Play'}
         </button>
       )}
@@ -611,7 +611,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
           onClick={() => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
           className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
         >
-          <i className={`${completed ? 'ri-refresh-line' : 'ri-arrow-right-line'} text-[10px]`} />
+          <AppIcon className={`${completed ? 'ri-refresh-line' : 'ri-arrow-right-line'} text-[10px]`} />
           {completed ? 'Review again' : 'Open'}
         </button>
       )}

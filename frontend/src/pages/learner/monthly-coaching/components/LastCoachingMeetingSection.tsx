@@ -24,7 +24,7 @@ export default function LastCoachingMeetingSection() {
       <div className="p-6 md:p-8">
         <div className="flex items-center gap-2 mb-6">
           <div className="w-8 h-8 rounded-lg bg-secondary-100 flex items-center justify-center">
-            <i className="ri-history-line text-secondary-700" />
+            <AppIcon className="ri-history-line text-secondary-700" />
           </div>
           <h2 className="text-lg font-heading font-semibold text-foreground-900">Last Coaching Meeting</h2>
         </div>
@@ -32,15 +32,15 @@ export default function LastCoachingMeetingSection() {
         {/* Header Row */}
         <div className="flex flex-wrap items-center gap-4 mb-6 p-4 rounded-xl bg-background-100/50 border border-background-200/50">
           <div className="flex items-center gap-2">
-            <i className="ri-calendar-line text-foreground-400" />
+            <AppIcon className="ri-calendar-line text-foreground-400" />
             <span className="text-sm font-medium text-foreground-700">{l.date}</span>
           </div>
           <div className="flex items-center gap-2">
-            <i className="ri-user-voice-line text-foreground-400" />
+            <AppIcon className="ri-user-voice-line text-foreground-400" />
             <span className="text-sm font-medium text-foreground-700">{l.coach}</span>
           </div>
           <div className="flex items-center gap-2">
-            <i className="ri-time-line text-foreground-400" />
+            <AppIcon className="ri-time-line text-foreground-400" />
             <span className="text-sm font-medium text-foreground-700">{l.duration}</span>
           </div>
           <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${r.bg} ${r.text} ${r.border} border ml-auto`}>
@@ -74,7 +74,7 @@ export default function LastCoachingMeetingSection() {
                 <ul className="space-y-2">
                   {l.actionsAgreed.map((a, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-foreground-700">
-                      <i className="ri-arrow-right-s-line text-primary-600 mt-0.5 shrink-0" />
+                      <AppIcon className="ri-arrow-right-s-line text-primary-600 mt-0.5 shrink-0" />
                       <span>{a}</span>
                     </li>
                   ))}
@@ -86,7 +86,7 @@ export default function LastCoachingMeetingSection() {
                 <ul className="space-y-2">
                   {l.strengths.map((s, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-green-700">
-                      <i className="ri-check-line text-green-500 mt-0.5 shrink-0" />
+                      <AppIcon className="ri-check-line text-green-500 mt-0.5 shrink-0" />
                       <span>{s}</span>
                     </li>
                   ))}
@@ -99,7 +99,7 @@ export default function LastCoachingMeetingSection() {
               <ul className="space-y-2">
                 {l.areasForImprovement.map((a, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm text-amber-800">
-                    <i className="ri-arrow-up-line text-amber-500 mt-0.5 shrink-0" />
+                    <AppIcon className="ri-arrow-up-line text-amber-500 mt-0.5 shrink-0" />
                     <span>{a}</span>
                   </li>
                 ))}

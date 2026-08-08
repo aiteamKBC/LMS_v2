@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
@@ -195,7 +196,7 @@ function IntroScreen({ quiz, totalPoints, onStart, onBack }: {
     <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6 md:p-8 card-premium">
       <div className="flex items-center gap-3 mb-4">
         <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
-          <i className="ri-questionnaire-line text-amber-600 text-xl" />
+          <AppIcon className="ri-questionnaire-line text-amber-600 text-xl" />
         </div>
         <div>
           <h1 className="text-lg font-heading font-bold text-foreground-900">{quiz.title}</h1>
@@ -219,7 +220,7 @@ function IntroScreen({ quiz, totalPoints, onStart, onBack }: {
           disabled={quiz.questions.length === 0}
           className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-2"
         >
-          <i className="ri-play-fill" /> Start Quiz
+          <AppIcon className="ri-play-fill" /> Start Quiz
         </button>
       </div>
       {quiz.questions.length === 0 && (
@@ -232,7 +233,7 @@ function IntroScreen({ quiz, totalPoints, onStart, onBack }: {
 function StatTile({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
     <div className="rounded-xl border border-foreground-100 p-3">
-      <i className={`${icon} text-primary-500 text-base`} />
+      <AppIcon className={`${icon} text-primary-500 text-base`} />
       <p className="text-sm font-semibold text-foreground-900 mt-1">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>
     </div>
@@ -276,7 +277,7 @@ function QuizScreen({
       <div className="flex items-center justify-between bg-background-50 rounded-xl border border-foreground-200/60 px-4 py-3">
         <span className="text-sm font-semibold text-foreground-700">{answeredCount}/{quiz.questions.length} answered</span>
         <span className={`text-sm font-mono font-bold inline-flex items-center gap-1.5 ${timeRemaining != null && timeRemaining < 60 ? 'text-red-600' : 'text-foreground-700'}`}>
-          <i className="ri-timer-line" />
+          <AppIcon className="ri-timer-line" />
           {timeRemaining != null ? formatClock(timeRemaining) : formatClock(elapsedSeconds)}
         </span>
       </div>
@@ -329,7 +330,7 @@ function QuizScreen({
             onClick={onSubmit}
             className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors cursor-pointer inline-flex items-center justify-center gap-2"
           >
-            <i className="ri-check-line" /> Finish Quiz
+            <AppIcon className="ri-check-line" /> Finish Quiz
           </button>
         ) : (
           <button
@@ -374,7 +375,7 @@ function QuestionInput({ question, value, onChange }: {
       return <OrderingInput question={question} value={value as number[] | undefined} onChange={onChange} />;
     case 'matching':
     case 'image_matching':
-      return <MatchingInput question={question} value={value as Record<string, string> | undefined} onChange={onChange} />;
+      return <MatchingInputRich question={question} value={value as Record<string, string> | undefined} onChange={onChange} />;
     default:
       return <p className="text-sm text-foreground-400 italic">This question type isn't supported yet — skip and continue.</p>;
   }
@@ -426,7 +427,7 @@ function MultipleChoiceInput({ question, value, onChange }: {
           <span className={`w-5 h-5 rounded-md flex items-center justify-center shrink-0 border-2 ${
             selected.includes(a.id) ? 'bg-primary-600 border-primary-600' : 'border-foreground-300'
           }`}>
-            {selected.includes(a.id) && <i className="ri-check-line text-white text-xs" />}
+            {selected.includes(a.id) && <AppIcon className="ri-check-line text-white text-xs" />}
           </span>
           <span className="text-sm text-foreground-800">{a.text}</span>
         </button>
@@ -494,10 +495,10 @@ function OrderingInput({ question, value, onChange }: {
           <span className="flex-1 text-sm text-foreground-800">{byId.get(id)}</span>
           <div className="flex items-center gap-1 shrink-0">
             <button onClick={() => move(i, -1)} disabled={i === 0} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-background-100 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed">
-              <i className="ri-arrow-up-line text-foreground-500 text-sm" />
+              <AppIcon className="ri-arrow-up-line text-foreground-500 text-sm" />
             </button>
             <button onClick={() => move(i, 1)} disabled={i === order.length - 1} className="w-7 h-7 rounded-lg flex items-center justify-center hover:bg-background-100 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed">
-              <i className="ri-arrow-down-line text-foreground-500 text-sm" />
+              <AppIcon className="ri-arrow-down-line text-foreground-500 text-sm" />
             </button>
           </div>
         </div>
@@ -520,7 +521,7 @@ function MatchingInput({ question, value, onChange }: {
       {question.answers.map((a) => (
         <div key={a.id} className="flex items-center gap-3">
           <span className="flex-1 text-sm text-foreground-800 px-3 py-2.5 rounded-lg bg-background-100">{a.left}</span>
-          <i className="ri-arrow-right-line text-foreground-300 shrink-0" />
+          <AppIcon className="ri-arrow-right-line text-foreground-300 shrink-0" />
           <select
             value={pairs[a.left || ''] || ''}
             onChange={(e) => setMatch(a.left || '', e.target.value)}
@@ -537,6 +538,56 @@ function MatchingInput({ question, value, onChange }: {
   );
 }
 
+function MatchingInputRich({ question, value, onChange }: {
+  question: QuizQuestion; value: Record<string, string> | undefined; onChange: (v: QuizAnswerValue) => void;
+}) {
+  const pairs = value || {};
+  const setMatch = (key: string, right: string) => {
+    onChange({ ...pairs, [key]: right });
+  };
+  const rightOptions = question.rightOptions || [];
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-foreground-400 mb-1">Match each item on the left with the correct option</p>
+      {question.answers.map((answer, index) => {
+        const answerKey = answer.leftKey || answer.left || String(answer.id);
+        const label = answer.label || answer.left || `Item ${index + 1}`;
+        const hasImage = Boolean(answer.imageUrl);
+
+        return (
+          <div key={answer.id} className="flex items-center gap-3">
+            <span className={`flex-1 rounded-lg bg-background-100 ${hasImage ? 'px-3 py-3' : 'px-3 py-2.5'} text-sm text-foreground-800`}>
+              {hasImage ? (
+                <span className="flex items-center gap-3">
+                  <img src={answer.imageUrl} alt={label} className="h-20 w-20 rounded-lg object-cover border border-foreground-200/60 bg-white shrink-0" />
+                  <span className="min-w-0">
+                    <span className="block text-[11px] font-bold uppercase tracking-wide text-foreground-400">Image {String.fromCharCode(65 + index)}</span>
+                    <span className="block break-words">{label}</span>
+                  </span>
+                </span>
+              ) : (
+                answer.left
+              )}
+            </span>
+            <AppIcon className="ri-arrow-right-line text-foreground-300 shrink-0" />
+            <select
+              value={pairs[answerKey] || ''}
+              onChange={(e) => setMatch(answerKey, e.target.value)}
+              className="flex-1 h-10 px-3 text-sm bg-background-50 border border-foreground-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-300 text-foreground-800"
+            >
+              <option value="">Select...</option>
+              {rightOptions.map((rightOption) => (
+                <option key={rightOption} value={rightOption}>{rightOption}</option>
+              ))}
+            </select>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════
    RESULTS
    ═══════════════════════════════════════════════════════ */
@@ -546,7 +597,7 @@ function ResultsScreen({ quiz, result, onBack }: { quiz: Quiz; result: QuizAttem
     <div className="space-y-4">
       <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6 md:p-8 card-premium text-center">
         <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${attempt.passed ? 'bg-emerald-100' : 'bg-red-100'}`}>
-          <i className={`${attempt.passed ? 'ri-trophy-line text-emerald-600' : 'ri-close-circle-line text-red-600'} text-2xl`} />
+          <AppIcon className={`${attempt.passed ? 'ri-trophy-line text-emerald-600' : 'ri-close-circle-line text-red-600'} text-2xl`} />
         </div>
         <h1 className="text-lg font-heading font-bold text-foreground-900 mb-1">{attempt.passed ? 'Quiz Passed!' : 'Quiz Not Passed'}</h1>
         <p className="text-sm text-foreground-400 mb-6">{quiz.title}</p>
@@ -579,7 +630,7 @@ function ResultsScreen({ quiz, result, onBack }: { quiz: Quiz; result: QuizAttem
                 <span className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold mt-0.5 ${
                   q.correct ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'
                 }`}>
-                  <i className={q.correct ? 'ri-check-line' : 'ri-close-line'} />
+                  <AppIcon className={q.correct ? 'ri-check-line' : 'ri-close-line'} />
                 </span>
                 <p className="text-sm font-semibold text-foreground-900 flex-1">
                   <span className="text-foreground-400 font-normal">Q{i + 1}.</span> {q.questionText}

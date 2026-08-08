@@ -184,7 +184,7 @@ export default function MisDeliveryTimelinePage() {
                 onClick={() => setViewMode(opt.mode)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all cursor-pointer whitespace-nowrap ${viewMode === opt.mode ? 'bg-background-50 text-foreground-800 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}
               >
-                <i className={`${opt.icon} text-xs`}></i> {opt.label}
+                <AppIcon className={`${opt.icon} text-xs`}></AppIcon> {opt.label}
               </button>
             ))}
           </div>
@@ -288,7 +288,7 @@ export default function MisDeliveryTimelinePage() {
                     <div className="flex items-center gap-2 flex-wrap" style={{ minWidth: `${Math.max(800, maxWeeks * 13)}px` }}>
                       {timeline.milestones.map((ms, idx) => (
                         <div key={idx} className={`flex items-center gap-1 px-2 py-1 rounded-full border text-[10px] font-medium ${milestoneColour(ms.type)}`}>
-                          <i className={`text-[9px] ${ms.type === 'start' ? 'ri-play-circle-line' : ms.type === 'gateway' ? 'ri-flag-line' : ms.type === 'review' ? 'ri-search-eye-line' : ms.type === 'assessment' ? 'ri-clipboard-line' : 'ri-stop-circle-line'}`}></i>
+                          <AppIcon className={`text-[9px] ${ms.type === 'start' ? 'ri-play-circle-line' : ms.type === 'gateway' ? 'ri-flag-line' : ms.type === 'review' ? 'ri-search-eye-line' : ms.type === 'assessment' ? 'ri-clipboard-line' : 'ri-stop-circle-line'}`}></AppIcon>
                           <span>{ms.label}</span>
                           <span className="text-foreground-300 ml-1">{ms.date}</span>
                         </div>
@@ -351,7 +351,7 @@ export default function MisDeliveryTimelinePage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       {timeline.milestones.map((ms, idx) => (
                         <div key={idx} className={`flex items-center gap-1 px-2.5 py-1 rounded-full border text-[10px] font-medium ${milestoneColour(ms.type)}`}>
-                          <i className={`text-[9px] ${ms.type === 'start' ? 'ri-play-circle-line' : ms.type === 'gateway' ? 'ri-flag-line' : ms.type === 'review' ? 'ri-search-eye-line' : ms.type === 'assessment' ? 'ri-clipboard-line' : 'ri-stop-circle-line'}`}></i>
+                          <AppIcon className={`text-[9px] ${ms.type === 'start' ? 'ri-play-circle-line' : ms.type === 'gateway' ? 'ri-flag-line' : ms.type === 'review' ? 'ri-search-eye-line' : ms.type === 'assessment' ? 'ri-clipboard-line' : 'ri-stop-circle-line'}`}></AppIcon>
                           <span>{ms.label}</span>
                           <span className="text-foreground-300 ml-1.5">{ms.date}</span>
                         </div>
@@ -367,7 +367,7 @@ export default function MisDeliveryTimelinePage() {
         {filteredTimelines.length === 0 && (
           <div className="text-center py-16">
             <div className="w-14 h-14 bg-background-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
-              <i className="ri-timeline-view text-foreground-300 text-2xl"></i>
+              <AppIcon className="ri-timeline-view text-foreground-300 text-2xl"></AppIcon>
             </div>
             <p className="text-sm font-medium text-foreground-600">No timelines found</p>
             <p className="text-[12px] text-foreground-400 mt-1">Try adjusting your filters</p>

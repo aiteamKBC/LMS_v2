@@ -41,7 +41,7 @@ export function PolicyTracker({ policies, learnerName }: PolicyTrackerProps) {
               <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
                 policy.acknowledgedDate ? 'bg-emerald-100 text-emerald-600' : 'bg-background-100 text-foreground-300'
               }`}>
-                <i className={`${policy.acknowledgedDate ? 'ri-check-line' : 'ri-time-line'} text-sm`}></i>
+                <AppIcon className={`${policy.acknowledgedDate ? 'ri-check-line' : 'ri-time-line'} text-sm`}></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className="text-[13px] font-medium text-foreground-800 truncate">{policy.policyName}</p>
@@ -67,7 +67,7 @@ export function PolicyTracker({ policies, learnerName }: PolicyTrackerProps) {
                 className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center hover:bg-primary-50 hover:text-primary-600 transition-smooth cursor-pointer"
                 title="View document"
               >
-                <i className="ri-file-text-line text-xs"></i>
+                <AppIcon className="ri-file-text-line text-xs"></AppIcon>
               </a>
             </div>
           </div>

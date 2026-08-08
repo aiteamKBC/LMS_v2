@@ -74,7 +74,7 @@ export function DurationCalculator({ reduction, crosswalk }: DurationCalculatorP
 
         {reductionApplied && reduction.approvedBy && (
           <div className="flex items-center gap-2 text-[11px] text-foreground-400">
-            <i className="ri-check-line text-emerald-500"></i>
+            <AppIcon className="ri-check-line text-emerald-500"></AppIcon>
             <span>Approved by <span className="font-medium text-foreground-600">{reduction.approvedBy}</span></span>
             <span className="text-foreground-300">on</span>
             <span>{formatDate(reduction.approvedAt)}</span>
@@ -112,7 +112,7 @@ export function DurationCalculator({ reduction, crosswalk }: DurationCalculatorP
                     <div className="mt-2 space-y-0.5">
                       {exp.responsibilities.map((resp, i) => (
                         <div key={i} className="flex items-start gap-1.5 text-[11px] text-foreground-500">
-                          <i className="ri-check-line text-emerald-500 text-xs mt-0.5 shrink-0"></i>
+                          <AppIcon className="ri-check-line text-emerald-500 text-xs mt-0.5 shrink-0"></AppIcon>
                           {resp}
                         </div>
                       ))}

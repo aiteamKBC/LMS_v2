@@ -240,7 +240,7 @@ function TemplateListView({
         </div>
         <button onClick={onNew} className="group inline-flex items-center gap-2 rounded-full bg-primary-600 pl-5 pr-2 py-2 text-[13px] font-bold text-background-50 hover:bg-primary-700 transition-smooth self-start sm:self-auto">
           New template
-          <span className="grid place-items-center w-7 h-7 rounded-full bg-background-50 text-foreground-950 group-hover:rotate-90 transition-transform"><i className="ri-add-line"></i></span>
+          <span className="grid place-items-center w-7 h-7 rounded-full bg-background-50 text-foreground-950 group-hover:rotate-90 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
         </button>
       </header>
 
@@ -266,13 +266,13 @@ function TemplateListView({
           {STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
         </select>
         <div className="relative flex-1 min-w-[180px] max-w-[300px]">
-          <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+          <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search templates" className="w-full rounded-full border border-background-200 bg-background-50 pl-9 pr-4 py-2 text-[12px]" />
         </div>
-        <button onClick={onReload} title="Refresh" className="grid place-items-center w-9 h-9 rounded-full border border-background-200 bg-background-50 text-foreground-500 hover:text-foreground-800 hover:bg-background-100 transition-smooth"><i className="ri-refresh-line"></i></button>
+        <button onClick={onReload} title="Refresh" className="grid place-items-center w-9 h-9 rounded-full border border-background-200 bg-background-50 text-foreground-500 hover:text-foreground-800 hover:bg-background-100 transition-smooth"><AppIcon className="ri-refresh-line"></AppIcon></button>
       </div>
 
-      {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-[12px] text-red-700"><i className="ri-error-warning-line mr-1"></i>{error}</div>}
+      {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-[12px] text-red-700"><AppIcon className="ri-error-warning-line mr-1"></AppIcon>{error}</div>}
 
       {loading ? (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -307,7 +307,7 @@ function TemplateCard({ template, onOpen, onDuplicate, onDelete }: { template: W
       <span className={`absolute left-0 top-0 bottom-0 w-1 ${course.bar}`} />
       <button onClick={onOpen} className="text-left p-5 pl-6 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] ${course.text}`}><i className={course.icon}></i>{course.kicker}</span>
+          <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] ${course.text}`}><AppIcon className={course.icon}></AppIcon>{course.kicker}</span>
           <span className={`text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ring-1 ${STATUS_BADGE[template.status] || STATUS_BADGE.draft}`}>{template.status}</span>
         </div>
         <h3 className="mt-2.5 font-heading text-[16px] font-bold text-foreground-950 leading-snug line-clamp-2 group-hover:text-primary-700 transition-smooth">{template.title || 'Untitled week'}</h3>
@@ -349,10 +349,10 @@ function DensityRibbon({ count, tone }: { count: number; tone: string }) {
 function EmptyCatalogue({ onNew, hasAny }: { onNew: () => void; hasAny: boolean }) {
   return (
     <div className="rounded-2xl border border-dashed border-background-300 bg-background-50/60 py-16 text-center">
-      <div className="mx-auto w-12 h-12 rounded-2xl bg-primary-50 grid place-items-center text-primary-500 text-2xl"><i className="ri-route-line"></i></div>
+      <div className="mx-auto w-12 h-12 rounded-2xl bg-primary-50 grid place-items-center text-primary-500 text-2xl"><AppIcon className="ri-route-line"></AppIcon></div>
       <p className="mt-4 font-heading text-[15px] font-bold text-foreground-800">{hasAny ? 'Nothing matches those filters' : 'No week templates yet'}</p>
       <p className="mt-1 text-[12px] text-foreground-400">{hasAny ? 'Try clearing a filter or the search box.' : 'Build a week once and reuse it everywhere.'}</p>
-      {!hasAny && <button onClick={onNew} className="mt-5 inline-flex items-center gap-2 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth"><i className="ri-add-line"></i> New template</button>}
+      {!hasAny && <button onClick={onNew} className="mt-5 inline-flex items-center gap-2 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth"><AppIcon className="ri-add-line"></AppIcon> New template</button>}
     </div>
   );
 }
@@ -438,10 +438,10 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
               const active = courseType === value;
               return (
                 <button key={value} onClick={() => setCourseType(value)} className={`relative text-left p-4 rounded-2xl border-2 transition-all ${active ? `${course.ring} ${course.soft} ring-2 border-transparent` : 'border-background-200 bg-background-50 hover:border-background-300'}`}>
-                  <span className={`grid place-items-center w-9 h-9 rounded-xl ${active ? course.bar + ' text-white' : 'bg-background-100 text-foreground-500'} transition-colors`}><i className={`${course.icon} text-lg`}></i></span>
+                  <span className={`grid place-items-center w-9 h-9 rounded-xl ${active ? course.bar + ' text-white' : 'bg-background-100 text-foreground-500'} transition-colors`}><AppIcon className={`${course.icon} text-lg`}></AppIcon></span>
                   <p className="mt-2.5 text-[13px] font-bold text-foreground-900">{course.label}</p>
                   <p className="text-[11px] text-foreground-500 leading-snug mt-0.5">{value === 'paid' ? 'Tied to a programme, module & group' : 'Standalone — no scope required'}</p>
-                  {active && <i className={`ri-checkbox-circle-fill absolute top-3 right-3 text-lg ${course.text}`}></i>}
+                  {active && <AppIcon className={`ri-checkbox-circle-fill absolute top-3 right-3 text-lg ${course.text}`}></AppIcon>}
                 </button>
               );
             })}
@@ -466,7 +466,7 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
 
         <div className="flex items-center justify-end gap-2 pt-1">
           <button onClick={onClose} className="px-4 py-2 rounded-full text-[12px] font-semibold text-foreground-500 hover:text-foreground-800 transition-smooth">Cancel</button>
-          <button onClick={handleCreate} disabled={!canCreate} className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-primary-600 text-background-50 text-[12px] font-bold hover:bg-primary-700 transition-smooth disabled:opacity-30">Start building <i className="ri-arrow-right-line"></i></button>
+          <button onClick={handleCreate} disabled={!canCreate} className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-primary-600 text-background-50 text-[12px] font-bold hover:bg-primary-700 transition-smooth disabled:opacity-30">Start building <AppIcon className="ri-arrow-right-line"></AppIcon></button>
         </div>
       </div>
     </ModalShell>
@@ -486,7 +486,7 @@ function StepLabel({ index, text, hint }: { index: string; text: string; hint?: 
 function ScopeSelect({ icon, value, placeholder, options, onChange, disabled }: { icon: string; value: string; placeholder: string; options: { value: string; label: string }[]; onChange: (value: string) => void; disabled?: boolean }) {
   return (
     <div className={`flex items-center gap-2 rounded-xl border border-background-200 bg-background-50 px-3 ${disabled ? 'opacity-50' : ''}`}>
-      <i className={`${icon} text-foreground-400`}></i>
+      <AppIcon className={`${icon} text-foreground-400`}></AppIcon>
       <select value={value} disabled={disabled} onChange={e => onChange(e.target.value)} className="flex-1 bg-transparent py-2.5 text-[12px] outline-none">
         <option value="">{placeholder}</option>
         {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -657,11 +657,11 @@ function TemplateEditor({ initial, isNew, onClose }: { initial: WeekTemplate; is
       <div className="relative rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
         <span className={`absolute left-0 top-0 bottom-0 w-1.5 ${course.bar}`} />
         <div className="p-5 pl-7">
-          <button onClick={back} className="inline-flex items-center gap-1 text-[11px] font-bold text-foreground-400 hover:text-foreground-800 transition-smooth"><i className="ri-arrow-left-line"></i> All templates</button>
+          <button onClick={back} className="inline-flex items-center gap-1 text-[11px] font-bold text-foreground-400 hover:text-foreground-800 transition-smooth"><AppIcon className="ri-arrow-left-line"></AppIcon> All templates</button>
           <div className="mt-2 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                <span className={`inline-flex items-center gap-1 font-bold uppercase tracking-[0.12em] ${course.text}`}><i className={course.icon}></i>{course.kicker}</span>
+                <span className={`inline-flex items-center gap-1 font-bold uppercase tracking-[0.12em] ${course.text}`}><AppIcon className={course.icon}></AppIcon>{course.kicker}</span>
                 {template.courseType === 'paid' && <span className="text-foreground-400"><Breadcrumb parts={[template.programmeName || 'Programme', template.groupName || 'Group']} /></span>}
                 <SaveStatus dirty={dirty} saving={saving} isNew={!persistedId} />
               </div>
@@ -673,10 +673,10 @@ function TemplateEditor({ initial, isNew, onClose }: { initial: WeekTemplate; is
                 <select value={template.status} onChange={e => update(prev => ({ ...prev, status: e.target.value }))} className={`appearance-none rounded-full pl-3 pr-7 py-1.5 text-[11px] font-bold uppercase tracking-wide ring-1 ${STATUS_BADGE[template.status] || STATUS_BADGE.draft}`}>
                   {STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
                 </select>
-                <i className="ri-arrow-down-s-line absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-current opacity-60 text-xs"></i>
+                <AppIcon className="ri-arrow-down-s-line absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-current opacity-60 text-xs"></AppIcon>
               </div>
               <button onClick={save} disabled={saving || !dirty} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
-                {saving ? <><i className="ri-loader-4-line animate-spin"></i>Saving</> : <><i className="ri-save-3-line"></i>{persistedId ? 'Save' : 'Create'}</>}
+                {saving ? <><AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Saving</> : <><AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save' : 'Create'}</>}
               </button>
             </div>
           </div>
@@ -686,7 +686,7 @@ function TemplateEditor({ initial, isNew, onClose }: { initial: WeekTemplate; is
             <Meter icon="ri-time-line" value={String(template.totalOtjh)} label="OTJH" />
             <Meter icon="ri-medal-line" value={String(template.points)} label="points" />
             <span className={`inline-flex items-center gap-1.5 font-semibold ${issues ? 'text-amber-600' : 'text-emerald-600'}`}>
-              <i className={issues ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'}></i>
+              <AppIcon className={issues ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'}></AppIcon>
               {issues ? `${issues} to resolve` : 'Ready to publish'}
             </span>
           </div>
@@ -726,11 +726,11 @@ function TemplateEditor({ initial, isNew, onClose }: { initial: WeekTemplate; is
       {(dirty || saving) && (
         <div className="wb-savebar fixed bottom-6 left-1/2 z-40 flex items-center gap-3 rounded-full border border-background-200 bg-background-50/95 backdrop-blur px-3 py-2 shadow-2xl">
           <span className="inline-flex items-center gap-2 pl-2 text-[12px] font-semibold text-foreground-600">
-            {saving ? <><i className="ri-loader-4-line animate-spin text-primary-500"></i>Saving changes…</> : <><span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />Unsaved changes</>}
+            {saving ? <><AppIcon className="ri-loader-4-line animate-spin text-primary-500"></AppIcon>Saving changes…</> : <><span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />Unsaved changes</>}
           </span>
           {!saving && <button onClick={discard} className="rounded-full px-3 py-1.5 text-[12px] font-semibold text-foreground-500 hover:text-foreground-900 hover:bg-background-100 transition-smooth">Discard</button>}
           <button onClick={save} disabled={saving} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-40">
-            <i className="ri-save-3-line"></i>{persistedId ? 'Save changes' : 'Create template'}
+            <AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save changes' : 'Create template'}
           </button>
         </div>
       )}
@@ -745,7 +745,7 @@ function Breadcrumb({ parts }: { parts: string[] }) {
     <span className="inline-flex items-center gap-1">
       {parts.map((part, index) => (
         <Fragment key={index}>
-          {index > 0 && <i className="ri-arrow-right-s-line opacity-50"></i>}
+          {index > 0 && <AppIcon className="ri-arrow-right-s-line opacity-50"></AppIcon>}
           <span className="truncate max-w-[160px]">{part}</span>
         </Fragment>
       ))}
@@ -756,7 +756,7 @@ function Breadcrumb({ parts }: { parts: string[] }) {
 function Meter({ icon, value, label }: { icon: string; value: string; label: string }) {
   return (
     <span className="inline-flex items-baseline gap-1.5">
-      <i className={`${icon} text-foreground-400 self-center`}></i>
+      <AppIcon className={`${icon} text-foreground-400 self-center`}></AppIcon>
       <strong className="font-heading text-[15px] font-black text-foreground-900 tabular-nums leading-none">{value}</strong>
       <span className="text-[11px] text-foreground-400">{label}</span>
     </span>
@@ -791,7 +791,7 @@ function InsertionZone({ index, open, onOpen, onClose, onPick, first, last }: { 
     return (
       <div className="flex gap-3">
         <SpineGutter connectTop={!first} connectBottom={!last}>
-          <span className="grid place-items-center w-6 h-6 rounded-full bg-primary-500 text-white text-xs shadow ring-4 ring-primary-100"><i className="ri-add-line"></i></span>
+          <span className="grid place-items-center w-6 h-6 rounded-full bg-primary-500 text-white text-xs shadow ring-4 ring-primary-100"><AppIcon className="ri-add-line"></AppIcon></span>
         </SpineGutter>
         <div className="flex-1 my-1.5">
           <TypePicker onPick={onPick} onClose={onClose} atIndex={index} />
@@ -806,7 +806,7 @@ function InsertionZone({ index, open, onOpen, onClose, onPick, first, last }: { 
         <button onClick={onOpen} className="relative w-full h-5 flex items-center justify-center" aria-label="Add a component here">
           <span className="absolute inset-x-0 h-px bg-primary-200 opacity-0 group-hover/insert:opacity-100 transition-opacity" />
           <span className="relative inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-400 opacity-0 group-hover/insert:opacity-100 group-hover/insert:text-primary-600 group-hover/insert:border-primary-200 transition-all">
-            <i className="ri-add-line"></i> Add here
+            <AppIcon className="ri-add-line"></AppIcon> Add here
           </span>
         </button>
       </div>
@@ -860,12 +860,12 @@ function RailNodeCard({ component, index, selected, issues, dragging, onSelect, 
         onClick={onSelect}
         className={`flex-1 my-1 flex items-center gap-2 rounded-xl border px-2.5 py-2.5 transition-all cursor-pointer ${dragging ? 'border-primary-300 bg-background-50 shadow-xl ring-2 ring-primary-200' : selected ? `${tone.border} ${tone.soft} shadow-sm` : 'border-background-200 bg-background-50 hover:border-background-300 hover:shadow-sm'}`}
       >
-        <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><i className="ri-draggable"></i></button>
-        <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><i className={`${definition.icon} text-base`}></i></span>
+        <button type="button" {...(handleProps || {})} onClick={e => e.stopPropagation()} aria-label="Drag to reorder" className="grid place-items-center w-5 h-8 -ml-0.5 shrink-0 text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none rounded"><AppIcon className="ri-draggable"></AppIcon></button>
+        <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip}`}><AppIcon className={`${definition.icon} text-base`}></AppIcon></span>
         <span className="flex-1 min-w-0">
           <span className="flex items-center gap-2">
             <span className="text-[13px] font-bold text-foreground-900 truncate">{component.title || weekTypeLabel(component.type)}</span>
-            {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><i className="ri-error-warning-fill"></i>{issues}</span>}
+            {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
           <span className="mt-0.5 flex items-center gap-2 text-[10px] text-foreground-400">
             <span className={`font-semibold ${tone.text}`}>{weekTypeLabel(component.type)}</span>
@@ -876,8 +876,8 @@ function RailNodeCard({ component, index, selected, issues, dragging, onSelect, 
         </span>
         {(onDuplicate || onDelete) && (
           <span className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover/node:opacity-100 transition-opacity">
-            <span onClick={e => { e.stopPropagation(); onDuplicate?.(); }} className="grid place-items-center w-7 h-7 rounded-lg text-foreground-400 hover:bg-background-100 hover:text-primary-600 cursor-pointer"><i className="ri-file-copy-line text-[13px]"></i></span>
-            <span onClick={e => { e.stopPropagation(); onDelete?.(); }} className="grid place-items-center w-7 h-7 rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600 cursor-pointer"><i className="ri-delete-bin-line text-[13px]"></i></span>
+            <span onClick={e => { e.stopPropagation(); onDuplicate?.(); }} className="grid place-items-center w-7 h-7 rounded-lg text-foreground-400 hover:bg-background-100 hover:text-primary-600 cursor-pointer"><AppIcon className="ri-file-copy-line text-[13px]"></AppIcon></span>
+            <span onClick={e => { e.stopPropagation(); onDelete?.(); }} className="grid place-items-center w-7 h-7 rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600 cursor-pointer"><AppIcon className="ri-delete-bin-line text-[13px]"></AppIcon></span>
           </span>
         )}
       </div>
@@ -889,8 +889,8 @@ function TypePicker({ onPick, onClose, atIndex }: { onPick: (type: ModuleCompone
   return (
     <div className="rounded-xl border border-primary-200 bg-background-50 shadow-lg ring-1 ring-primary-100 overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b border-background-200 bg-primary-50/50">
-        <span className="text-[11px] font-bold text-primary-700"><i className="ri-add-circle-line mr-1"></i>Add a part {atIndex === 0 ? 'at the start' : ''}</span>
-        <button onClick={onClose} className="grid place-items-center w-6 h-6 rounded-md text-foreground-400 hover:bg-background-100 hover:text-foreground-700"><i className="ri-close-line"></i></button>
+        <span className="text-[11px] font-bold text-primary-700"><AppIcon className="ri-add-circle-line mr-1"></AppIcon>Add a part {atIndex === 0 ? 'at the start' : ''}</span>
+        <button onClick={onClose} className="grid place-items-center w-6 h-6 rounded-md text-foreground-400 hover:bg-background-100 hover:text-foreground-700"><AppIcon className="ri-close-line"></AppIcon></button>
       </div>
       <div className="p-3 space-y-3 max-h-[340px] overflow-y-auto">
         {weekPaletteGroups.map(group => (
@@ -902,7 +902,7 @@ function TypePicker({ onPick, onClose, atIndex }: { onPick: (type: ModuleCompone
                 const definition = getComponentDefinition(type.type);
                 return (
                   <button key={type.type} onClick={() => onPick(type.type)} className={`group/tile flex items-center gap-2.5 rounded-lg border border-background-200 bg-background-50 p-2.5 text-left hover:border-background-300 hover:shadow-sm transition-all`}>
-                    <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip} group-hover/tile:scale-105 transition-transform`}><i className={`${type.icon} text-base`}></i></span>
+                    <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip} group-hover/tile:scale-105 transition-transform`}><AppIcon className={`${type.icon} text-base`}></AppIcon></span>
                     <span className="min-w-0">
                       <span className="block text-[12px] font-bold text-foreground-800 truncate">{type.label}</span>
                       <span className="block text-[10px] text-foreground-400 tabular-nums">{definition.defaultOtjh}h · {definition.defaultPoints}pts</span>
@@ -995,7 +995,7 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
 
       {components.length === 0 && pickerIndex === null ? (
         <button onClick={() => setPickerIndex(0)} className="mt-3 w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
-          <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><i className="ri-add-line"></i></span>
+          <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
           <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first part</p>
           <p className="text-[11px] text-foreground-400">Live sessions, videos, readings, quizzes…</p>
         </button>
@@ -1167,7 +1167,7 @@ export function WeekOverviewPanel({ components, ksbMappings, summary, learningOu
         <Section title="Week detail">
           <Field label="Summary"><textarea value={summary} onChange={e => onChangeSummary(e.target.value)} rows={2} placeholder="What this week is about…" className={`${inputClass} resize-none`} /></Field>
           <Field label="Learning outcomes" className="mt-4"><textarea value={learningOutcomes.join('\n')} onChange={e => onChangeLearningOutcomes(e.target.value.split('\n'))} rows={3} placeholder="One outcome per line" className={`${inputClass} resize-none`} /></Field>
-          <p className="mt-3 text-[11px] text-foreground-400"><i className="ri-lightbulb-flash-line mr-1 text-amber-500"></i>Hover the spine between parts to insert exactly where you want.</p>
+          <p className="mt-3 text-[11px] text-foreground-400"><AppIcon className="ri-lightbulb-flash-line mr-1 text-amber-500"></AppIcon>Hover the spine between parts to insert exactly where you want.</p>
         </Section>
       </div>
     </div>
@@ -1193,7 +1193,7 @@ function ReadinessDial({ value }: { value: number }) {
 function BigStat({ value, label, icon, accent = 'text-foreground-900' }: { value: string; label: string; icon: string; accent?: string }) {
   return (
     <div className="min-w-0 p-3 sm:p-4">
-      <i className={`${icon} text-foreground-300`}></i>
+      <AppIcon className={`${icon} text-foreground-300`}></AppIcon>
       <p className={`mt-1 truncate font-heading text-[18px] sm:text-[22px] leading-none font-black tabular-nums ${accent}`}>{value}</p>
       <p className="mt-1 truncate text-[10px] font-bold uppercase tracking-[0.12em] text-foreground-400">{label}</p>
     </div>
@@ -1205,7 +1205,7 @@ function AssureChip({ icon, value, label }: { icon: string; value: number; label
   return (
     <div className={`min-w-0 rounded-xl border px-3 py-2 ${on ? 'border-primary-200 bg-primary-50/60' : 'border-background-200 bg-background-50'}`}>
       <div className="flex items-center gap-1.5">
-        <i className={`${icon} ${on ? 'text-primary-600' : 'text-foreground-300'}`}></i>
+        <AppIcon className={`${icon} ${on ? 'text-primary-600' : 'text-foreground-300'}`}></AppIcon>
         <span className="font-heading text-[16px] font-black tabular-nums text-foreground-900">{value}</span>
       </div>
       <p className="mt-0.5 truncate text-[10px] font-semibold text-foreground-400">{label}</p>
@@ -1214,9 +1214,9 @@ function AssureChip({ icon, value, label }: { icon: string; value: number; label
 }
 
 function SaveStatus({ dirty, saving, isNew }: { dirty: boolean; saving: boolean; isNew: boolean }) {
-  if (saving) return <span className="inline-flex items-center gap-1.5 text-primary-600 font-semibold"><i className="ri-loader-4-line animate-spin" />Saving…</span>;
+  if (saving) return <span className="inline-flex items-center gap-1.5 text-primary-600 font-semibold"><AppIcon className="ri-loader-4-line animate-spin" />Saving…</span>;
   if (dirty) return <span className="inline-flex items-center gap-1.5 text-amber-600 font-semibold"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />{isNew ? 'Draft — not created yet' : 'Unsaved changes'}</span>;
-  return <span className="inline-flex items-center gap-1.5 text-emerald-600 font-semibold"><i className="ri-checkbox-circle-fill" />All changes saved</span>;
+  return <span className="inline-flex items-center gap-1.5 text-emerald-600 font-semibold"><AppIcon className="ri-checkbox-circle-fill" />All changes saved</span>;
 }
 
 // The week's fixed scope (programme + module), resolved once in the editor.
@@ -1246,14 +1246,14 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
   return (
     <div className="rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
       <div className={`flex items-center gap-3 px-5 py-4 border-b ${tone.border} ${tone.soft}`}>
-        <button onClick={onBack} title="Back to week overview" className="grid place-items-center w-8 h-8 shrink-0 rounded-lg text-foreground-500 hover:bg-background-50 hover:text-foreground-900 transition-smooth"><i className="ri-arrow-left-line"></i></button>
-        <span className={`grid place-items-center w-11 h-11 rounded-xl text-white ${tone.marker}`}><i className={`${definition.icon} text-xl`}></i></span>
+        <button onClick={onBack} title="Back to week overview" className="grid place-items-center w-8 h-8 shrink-0 rounded-lg text-foreground-500 hover:bg-background-50 hover:text-foreground-900 transition-smooth"><AppIcon className="ri-arrow-left-line"></AppIcon></button>
+        <span className={`grid place-items-center w-11 h-11 rounded-xl text-white ${tone.marker}`}><AppIcon className={`${definition.icon} text-xl`}></AppIcon></span>
         <div className="flex-1 min-w-0">
           <p className={`text-[10px] font-bold uppercase tracking-[0.12em] ${tone.text}`}>{definition.group}</p>
           <p className="text-[16px] font-heading font-black text-foreground-950 leading-tight truncate">{component.title || weekTypeLabel(component.type)}</p>
         </div>
         <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[10px] font-bold ${issues.length ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-          <i className={issues.length ? 'ri-error-warning-fill' : 'ri-checkbox-circle-fill'}></i>{issues.length ? `${issues.length} to fix` : 'Valid'}
+          <AppIcon className={issues.length ? 'ri-error-warning-fill' : 'ri-checkbox-circle-fill'}></AppIcon>{issues.length ? `${issues.length} to fix` : 'Valid'}
         </span>
       </div>
 
@@ -1274,7 +1274,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
         {issues.length > 0 && (
           <Section title="To fix before publish">
             <ul className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-1">
-              {issues.map(issue => <li key={issue.path} className="text-[11px] text-amber-700 flex gap-1.5"><i className="ri-error-warning-line mt-0.5 shrink-0"></i>{issue.message}</li>)}
+              {issues.map(issue => <li key={issue.path} className="text-[11px] text-amber-700 flex gap-1.5"><AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>{issue.message}</li>)}
             </ul>
           </Section>
         )}
@@ -1294,7 +1294,7 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
           <Field label="Expected OTJH"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
-        <p className="mt-2 text-[11px] text-foreground-400"><i className="ri-flashlight-line mr-1 text-amber-500"></i>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for ${weekTypeLabel(component.type)} (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} className={`${inputClass} resize-none`} /></Field>
       </Section>
 
@@ -1354,7 +1354,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, restoreT
           <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
-        <p className="mt-2 text-[11px] text-foreground-400"><i className="ri-flashlight-line mr-1 text-amber-500"></i>{typeof rulePoints === 'number' ? `Fixed by the "Attendance" points rule for live sessions (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the "Attendance" points rule for live sessions (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
       </Section>
 
       <Section title="Assurance">
@@ -1430,7 +1430,7 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
           <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
-        <p className="mt-2 text-[11px] text-foreground-400"><i className="ri-flashlight-line mr-1 text-amber-500"></i>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for videos (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for videos (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
       </Section>
 
       <Section title="Assurance">
@@ -1516,7 +1516,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
           <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
-        <p className="mt-2 text-[11px] text-foreground-400"><i className="ri-flashlight-line mr-1 text-amber-500"></i>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for reading materials (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for reading materials (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
       </Section>
 
       <Section title="Assurance">
@@ -1616,7 +1616,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
           <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
-        <p className="mt-2 text-[11px] text-foreground-400"><i className="ri-flashlight-line mr-1 text-amber-500"></i>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for podcasts (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for podcasts (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
       </Section>
 
       <Section title="Assurance">
@@ -1712,7 +1712,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
           <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
-        <p className="mt-2 text-[11px] text-foreground-400"><i className="ri-flashlight-line mr-1 text-amber-500"></i>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for PowerPoint decks (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for PowerPoint decks (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
       </Section>
 
       <Section title="Assurance">
@@ -1871,7 +1871,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
         {weekScope.courseType === 'paid' && (
           <p className="mt-2 text-[11px] text-foreground-400">
-            <i className="ri-filter-3-line mr-1"></i>
+            <AppIcon className="ri-filter-3-line mr-1"></AppIcon>
             Matched to <strong className="text-foreground-600">{weekScope.programmeName || 'this programme'}</strong>
             {weekScope.moduleName ? <> · <strong className="text-foreground-600">{weekScope.moduleName}</strong></> : ''} — group isn't matched, since a week is reused across groups.
           </p>
@@ -1886,23 +1886,23 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-foreground-500">
                   <span className="tabular-nums"><strong className="text-foreground-800">{linkedQuestions}</strong> question{linkedQuestions === 1 ? '' : 's'}</span>
                   {linkedStatus && <span className="capitalize">{linkedStatus}</span>}
-                  {isCheckpoint && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-700"><i className="ri-flag-2-line"></i>Checkpoint</span>}
-                  {!linkedQuiz && !loading && !isCheckpoint && <span className="text-amber-600"><i className="ri-error-warning-line mr-0.5"></i>Not found in workspace</span>}
+                  {isCheckpoint && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-700"><AppIcon className="ri-flag-2-line"></AppIcon>Checkpoint</span>}
+                  {!linkedQuiz && !loading && !isCheckpoint && <span className="text-amber-600"><AppIcon className="ri-error-warning-line mr-0.5"></AppIcon>Not found in workspace</span>}
                 </p>
               </div>
-              <span className="grid place-items-center w-10 h-10 shrink-0 rounded-xl bg-primary-500 text-white"><i className="ri-questionnaire-line text-lg"></i></span>
+              <span className="grid place-items-center w-10 h-10 shrink-0 rounded-xl bg-primary-500 text-white"><AppIcon className="ri-questionnaire-line text-lg"></AppIcon></span>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button type="button" onClick={() => setEditorOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-4 py-1.5 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth">
-                <i className="ri-edit-2-line"></i>Edit questions
+                <AppIcon className="ri-edit-2-line"></AppIcon>Edit questions
               </button>
-              <button type="button" onClick={() => loadQuizzes()} className="inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-50 px-3 py-1.5 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 transition-smooth"><i className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></i>Refresh</button>
-              <button type="button" onClick={() => link(null)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold text-foreground-500 hover:text-red-600 transition-smooth"><i className="ri-link-unlink"></i>Unlink</button>
+              <button type="button" onClick={() => loadQuizzes()} className="inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-50 px-3 py-1.5 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 transition-smooth"><AppIcon className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon>Refresh</button>
+              <button type="button" onClick={() => link(null)} className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-semibold text-foreground-500 hover:text-red-600 transition-smooth"><AppIcon className="ri-link-unlink"></AppIcon>Unlink</button>
             </div>
             <label className="mt-3 flex cursor-pointer select-none items-center gap-2">
               <input type="checkbox" checked={isCheckpoint} disabled={togglingCheckpoint} onChange={e => void toggleCheckpoint(e.target.checked)} className="h-4 w-4 rounded border-background-300 accent-primary-600 disabled:cursor-not-allowed" />
               <span className="text-[12px] font-semibold text-foreground-700">Mark as checkpoint assessment</span>
-              {togglingCheckpoint && <i className="ri-loader-4-line animate-spin text-foreground-400"></i>}
+              {togglingCheckpoint && <AppIcon className="ri-loader-4-line animate-spin text-foreground-400"></AppIcon>}
             </label>
             <p className="mt-1 text-[11px] text-foreground-400">{isCheckpoint ? 'Listed on the Checkpoints assessment page. It stays linked to this week.' : 'Tick to also list this quiz on the Checkpoints assessment page. Edits still save to the Quiz Workspace.'}</p>
           </div>
@@ -1915,7 +1915,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
                   <option value="">{loading ? 'Loading quizzes…' : matchingQuizzes.length ? 'Choose a quiz to import' : 'No matching quizzes'}</option>
                   {matchingQuizzes.map(quiz => <option key={quiz.id} value={quiz.id}>{quiz.title} · {Number(quiz.questions || 0)} q{quiz.status ? ` · ${quiz.status}` : ''}</option>)}
                 </select>
-                <button type="button" onClick={() => loadQuizzes()} title="Refresh" className="grid place-items-center w-9 h-9 shrink-0 rounded-lg border border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100 transition-smooth"><i className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></i></button>
+                <button type="button" onClick={() => loadQuizzes()} title="Refresh" className="grid place-items-center w-9 h-9 shrink-0 rounded-lg border border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100 transition-smooth"><AppIcon className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon></button>
               </div>
               {!loading && !matchingQuizzes.length && <p className="mt-2 text-[11px] text-foreground-400">No workspace quizzes match this programme{weekScope.moduleName ? ' + module' : ''} yet — upload one below, or build it in the Quiz Workspace.</p>}
               {loadError && <p className="mt-2 text-[11px] text-red-600">{loadError}</p>}
@@ -1928,7 +1928,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
             </div>
 
             <button type="button" onClick={() => setWizardOpen(true)} className="flex w-full items-center gap-3 rounded-xl border border-dashed border-primary-300 bg-primary-50/50 px-4 py-3 text-left transition-smooth hover:border-primary-400 hover:bg-primary-50">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><i className="ri-upload-cloud-2-line"></i></span>
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><AppIcon className="ri-upload-cloud-2-line"></AppIcon></span>
               <span className="min-w-0">
                 <span className="block text-[13px] font-bold text-foreground-900">Upload a new quiz file</span>
                 <span className="block text-[11px] text-foreground-500">CSV, Excel, XML or SCORM — guided, with structure checks. Links to this week automatically.</span>
@@ -1943,7 +1943,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
           <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
-        <p className="mt-2 text-[11px] text-foreground-400"><i className="ri-flashlight-line mr-1 text-amber-500"></i>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for a passed quiz (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for a passed quiz (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
       </Section>
 
       <Section title="Assurance">
@@ -2016,7 +2016,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
           <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
-        <p className="mt-2 text-[11px] text-foreground-400"><i className="ri-flashlight-line mr-1 text-amber-500"></i>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for assignments (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for assignments (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
       </Section>
 
       <Section title="Assurance">
@@ -2081,7 +2081,7 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
           </p>
           {uploadedUrl && (
             <a href={uploadedUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700">
-              <i className="ri-external-link-line"></i> Open uploaded file
+              <AppIcon className="ri-external-link-line"></AppIcon> Open uploaded file
             </a>
           )}
         </div>
@@ -2099,7 +2099,7 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
             }}
           />
           <label htmlFor={inputId} className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
-            <i className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></i>
+            <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></AppIcon>
             {uploading ? 'Uploading…' : 'Upload file'}
           </label>
         </div>
@@ -2246,7 +2246,7 @@ function KsbMappingEditor({ mappings, onChange }: { mappings: KsbMapping[]; onCh
               <div className="flex items-center gap-1 ml-auto">
                 <input type="number" min="0" max="100" value={mapping.weight} onChange={e => patch(mapping.id, { weight: Number(e.target.value) || 0 })} className="w-14 rounded-lg border border-background-200 bg-background-50 px-2 py-1 text-[11px] tabular-nums" />
                 <span className="text-[10px] text-foreground-400">wt</span>
-                <button onClick={() => remove(mapping.id)} className="grid place-items-center w-6 h-6 rounded-md text-foreground-400 hover:bg-red-100 hover:text-red-600"><i className="ri-close-line text-[13px]"></i></button>
+                <button onClick={() => remove(mapping.id)} className="grid place-items-center w-6 h-6 rounded-md text-foreground-400 hover:bg-red-100 hover:text-red-600"><AppIcon className="ri-close-line text-[13px]"></AppIcon></button>
               </div>
             </li>
           ))}
@@ -2262,7 +2262,7 @@ function KsbMappingEditor({ mappings, onChange }: { mappings: KsbMapping[]; onCh
 function IconButton({ label, icon, tone = 'default', onClick }: { label: string; icon: string; tone?: 'default' | 'danger'; onClick: () => void }) {
   return (
     <button title={label} aria-label={label} onClick={onClick} className={`grid place-items-center w-9 h-9 rounded-lg border border-background-200 bg-background-50 transition-smooth ${tone === 'danger' ? 'text-foreground-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200' : 'text-foreground-500 hover:bg-background-100 hover:text-foreground-800'}`}>
-      <i className={icon}></i>
+      <AppIcon className={icon}></AppIcon>
     </button>
   );
 }
@@ -2279,7 +2279,7 @@ function Field({ label, children, className = '' }: { label: string; children: R
 function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
   return (
     <button onClick={() => onChange(!checked)} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-bold transition-all ${checked ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-500 hover:border-background-300'}`}>
-      <i className={checked ? 'ri-checkbox-circle-fill' : 'ri-circle-line'}></i>{label}
+      <AppIcon className={checked ? 'ri-checkbox-circle-fill' : 'ri-circle-line'}></AppIcon>{label}
     </button>
   );
 }
@@ -2290,7 +2290,7 @@ function ModalShell({ title, children, onClose }: { title: string; children: Rea
       <div className="w-full max-w-lg rounded-3xl bg-background-50 shadow-2xl border border-background-200 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-background-200 sticky top-0 bg-background-50 z-10">
           <h3 className="font-heading text-[16px] font-black text-foreground-950">{title}</h3>
-          <button onClick={onClose} className="grid place-items-center w-8 h-8 rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-800"><i className="ri-close-line text-lg"></i></button>
+          <button onClick={onClose} className="grid place-items-center w-8 h-8 rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-800"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
         </div>
         <div className="p-6">{children}</div>
       </div>

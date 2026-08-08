@@ -16,7 +16,7 @@ export default function CoachingHeroSection() {
           <div className="flex-1 min-w-0 max-w-xl">
             <div className="flex items-center gap-2.5 mb-2">
               <span className="w-8 h-8 rounded-lg bg-white/15 backdrop-blur-sm flex items-center justify-center">
-                <i className="ri-chat-smile-2-line text-white text-sm"></i>
+                <AppIcon className="ri-chat-smile-2-line text-white text-sm"></AppIcon>
               </span>
               <span className="text-[10px] font-semibold text-white/50 uppercase tracking-widest">Monthly Coaching</span>
               <span className="text-[10px] font-semibold text-accent-300/80 bg-accent-400/10 px-2 py-0.5 rounded-full border border-accent-400/15">{m.cycleLabel}</span>
@@ -34,14 +34,14 @@ export default function CoachingHeroSection() {
               onMouseEnter={() => setHovered(true)}
               onMouseLeave={() => setHovered(false)}
             >
-              <i className={hovered ? 'ri-video-on-line' : 'ri-video-line'} />
+              <AppIcon className={hovered ? 'ri-video-on-line' : 'ri-video-line'} />
               Join Meeting
             </a>
             <a
               href={m.calendarLink}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white/10 text-white/80 text-sm font-medium border border-white/10 hover:bg-white/20 transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-calendar-event-line" />
+              <AppIcon className="ri-calendar-event-line" />
               Add To Calendar
             </a>
           </div>

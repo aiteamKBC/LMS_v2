@@ -139,7 +139,7 @@ export default function LearnerEngagementPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/attendance-risk')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-red-50 hover:text-red-600 hover:border-red-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-alert-line text-sm"></i> Attendance Risk
+            <AppIcon className="ri-alert-line text-sm"></AppIcon> Attendance Risk
           </button>
         </div>
 
@@ -149,7 +149,7 @@ export default function LearnerEngagementPage() {
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search learners..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1">
@@ -252,13 +252,13 @@ export default function LearnerEngagementPage() {
                       <p className="text-[10px] text-foreground-400 mb-0.5">Points This Month</p>
                       <p className="font-semibold text-foreground-900">+{learner.pointsThisMonth}</p>
                       <span className={`inline-flex items-center gap-0.5 mt-0.5 text-[9px] font-semibold ${monthlyStatus.text}`}>
-                        <i className={monthlyStatus.icon}></i>{monthlyStatus.label}
+                        <AppIcon className={monthlyStatus.icon}></AppIcon>{monthlyStatus.label}
                       </span>
                     </div>
                     <div className="col-span-2">
                       <p className="text-[10px] text-foreground-400 mb-0.5">Badges</p>
                       <p className="font-semibold text-foreground-900 flex items-center gap-1">
-                        <i className="ri-medal-line text-accent-500"></i>
+                        <AppIcon className="ri-medal-line text-accent-500"></AppIcon>
                         {learner.badgesCount} <span className="text-[10px] font-normal text-foreground-400 truncate">&middot; {learner.topBadge}</span>
                       </p>
                     </div>

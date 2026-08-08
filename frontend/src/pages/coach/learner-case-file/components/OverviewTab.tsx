@@ -40,7 +40,7 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-user-line text-primary-500"></i> About
+              <AppIcon className="ri-user-line text-primary-500"></AppIcon> About
             </h2>
           </div>
           <p className="text-[13px] text-foreground-600 leading-relaxed">
@@ -63,7 +63,7 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
           <div>
             <h2 className="text-sm font-heading font-bold text-foreground-950 flex items-center gap-2">
               <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
-                <i className="ri-route-line text-sm"></i>
+                <AppIcon className="ri-route-line text-sm"></AppIcon>
               </span>
               Programme Journey
             </h2>
@@ -93,7 +93,7 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
         <div className="p-5 md:p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
-              <i className="ri-question-answer-line text-secondary-500"></i> Recent Assessments
+              <AppIcon className="ri-question-answer-line text-secondary-500"></AppIcon> Recent Assessments
             </h2>
             <span className="text-[11px] text-foreground-400">{data.detail?.quizAttempts.length || 0} total attempt(s)</span>
           </div>
@@ -109,7 +109,7 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     attempt.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-700'
                   }`}>
-                    <i className="ri-questionnaire-line text-base"></i>
+                    <AppIcon className="ri-questionnaire-line text-base"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-semibold text-foreground-900">{resolveQuizAttemptTitle(data.detail, attempt)}</p>
@@ -188,7 +188,7 @@ function CoachModuleSection({
         className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-background-100/50 md:px-5"
       >
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
-          <i className="ri-book-2-line text-base"></i>
+          <AppIcon className="ri-book-2-line text-base"></AppIcon>
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-primary-600">
@@ -204,7 +204,7 @@ function CoachModuleSection({
           <SummaryPill label="Items" value={String(componentCount)} compact />
         </span>
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
-          <i className={`ri-arrow-down-s-line text-sm transition-transform ${open ? 'rotate-180' : ''}`}></i>
+          <AppIcon className={`ri-arrow-down-s-line text-sm transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
         </span>
       </button>
 
@@ -255,7 +255,7 @@ function CoachWeekCard({
           className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-background-100/55"
         >
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500">
-            <i className="ri-calendar-line text-sm"></i>
+            <AppIcon className="ri-calendar-line text-sm"></AppIcon>
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-heading font-bold text-foreground-800">{week.week}</span>
@@ -266,7 +266,7 @@ function CoachWeekCard({
           <span className="flex shrink-0 items-center gap-3">
             {week.otjh > 0 && <span className="text-xs font-semibold text-foreground-500">{formatHours(week.otjh)}</span>}
             <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
-              <i className={`ri-arrow-down-s-line text-xs transition-transform ${open ? 'rotate-180' : ''}`}></i>
+              <AppIcon className={`ri-arrow-down-s-line text-xs transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
             </span>
           </span>
         </button>
@@ -301,7 +301,7 @@ function CoachComponentRow({ component, completed }: { component: JourneyCompone
   return (
     <div className="flex items-center gap-3 px-4 py-3">
       <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${display.bg}`}>
-        <i className={`${display.icon} ${display.color} text-[13px]`}></i>
+        <AppIcon className={`${display.icon} ${display.color} text-[13px]`}></AppIcon>
       </span>
       <div className="min-w-0 flex-1">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{display.label}</p>
@@ -310,13 +310,13 @@ function CoachComponentRow({ component, completed }: { component: JourneyCompone
       <div className="flex shrink-0 items-center gap-2">
         {component.isQuiz && component.quizMeta?.questions != null && (
           <span className="hidden items-center gap-1 text-[11px] text-foreground-400 sm:inline-flex">
-            <i className="ri-questionnaire-line text-[10px]"></i>
+            <AppIcon className="ri-questionnaire-line text-[10px]"></AppIcon>
             {component.quizMeta.questions} {component.quizMeta.questions === 1 ? 'question' : 'questions'}
           </span>
         )}
         {!component.isQuiz && component.expectedOtjh != null && component.expectedOtjh > 0 && (
           <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground-400">
-            <i className="ri-time-line text-[10px]"></i>
+            <AppIcon className="ri-time-line text-[10px]"></AppIcon>
             {formatHours(component.expectedOtjh)}
           </span>
         )}
@@ -324,13 +324,13 @@ function CoachComponentRow({ component, completed }: { component: JourneyCompone
           <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
             latestAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
           }`}>
-            <i className={latestAttempt.passed ? 'ri-checkbox-circle-line text-[10px]' : 'ri-close-circle-line text-[10px]'}></i>
+            <AppIcon className={latestAttempt.passed ? 'ri-checkbox-circle-line text-[10px]' : 'ri-close-circle-line text-[10px]'}></AppIcon>
             {formatAttemptGrade(latestAttempt)} {latestAttempt.passed ? 'Passed' : 'Failed'}
           </span>
         )}
         {completed && !component.isQuiz && (
           <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-            <i className="ri-checkbox-circle-line text-[10px]"></i>
+            <AppIcon className="ri-checkbox-circle-line text-[10px]"></AppIcon>
             Done
           </span>
         )}
@@ -461,7 +461,7 @@ function StatCard({
           <p className="mt-2 text-lg font-heading font-bold text-foreground-950">{value}</p>
         </div>
         <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${toneMap[tone]}`}>
-          <i className={`${icon} text-base`}></i>
+          <AppIcon className={`${icon} text-base`}></AppIcon>
         </div>
       </div>
     </div>

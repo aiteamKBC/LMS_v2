@@ -34,7 +34,7 @@ export default function SupportResolved() {
               <div key={ticket.id} className="p-4 md:p-5 hover:bg-background-50/60 transition-smooth">
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center shrink-0">
-                    <i className="ri-check-double-line text-emerald-600 text-lg"></i>
+                    <AppIcon className="ri-check-double-line text-emerald-600 text-lg"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between">

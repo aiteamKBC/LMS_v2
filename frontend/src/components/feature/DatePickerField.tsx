@@ -127,14 +127,14 @@ export function DatePickerField({
       <div className="border-b border-background-200 bg-background-50 px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <button type="button" onClick={() => moveMonth(-1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 hover:bg-background-100 hover:text-primary-700" aria-label="Previous month">
-            <i className="ri-arrow-left-s-line text-xl"></i>
+            <AppIcon className="ri-arrow-left-s-line text-xl"></AppIcon>
           </button>
           <div className="text-center">
             <p className="text-[10px] font-bold uppercase text-foreground-400">Choose date</p>
             <p className="text-[13px] font-heading font-bold text-foreground-950">{monthLabel}</p>
           </div>
           <button type="button" onClick={() => moveMonth(1)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 hover:bg-background-100 hover:text-primary-700" aria-label="Next month">
-            <i className="ri-arrow-right-s-line text-xl"></i>
+            <AppIcon className="ri-arrow-right-s-line text-xl"></AppIcon>
           </button>
         </div>
       </div>
@@ -188,9 +188,9 @@ export function DatePickerField({
         disabled={disabled}
         className={`mt-1 flex h-[42px] w-full items-center gap-2 rounded-lg border bg-background-50 px-3 text-left text-[13px] font-semibold text-foreground-900 outline-none transition-smooth disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500 ${open ? 'border-primary-300 ring-2 ring-primary-100' : error ? 'border-red-300' : 'border-background-200 hover:border-primary-200'}`}
       >
-        <i className="ri-calendar-event-line text-foreground-400"></i>
+        <AppIcon className="ri-calendar-event-line text-foreground-400"></AppIcon>
         <span className={`min-w-0 flex-1 truncate ${value ? '' : 'text-foreground-400'}`}>{formatDatePickerValue(value) || placeholder}</span>
-        <i className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>
+        <AppIcon className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
       {picker}
       {error ? <p className="mt-1 text-[11px] font-medium text-red-600">{error}</p> : helper ? <p className="mt-1 text-[11px] text-foreground-400">{helper}</p> : null}

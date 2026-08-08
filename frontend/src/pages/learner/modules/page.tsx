@@ -342,7 +342,7 @@ function TimelineView({
                     mod.status === 'Gateway' ? 'bg-amber-100 text-amber-600' :
                     'bg-background-100 text-foreground-300'
                   }`}>
-                    <i className={`${mod.icon} text-xs`}></i>
+                    <AppIcon className={`${mod.icon} text-xs`}></AppIcon>
                   </span>
                   <span className="text-xs font-medium text-foreground-700 truncate">{mod.shortTitle}</span>
                 </div>
@@ -462,7 +462,7 @@ export default function ModulesPage() {
         <div className="flex items-center justify-between gap-3 animate-in slide-in-from-bottom-2 duration-400">
           <div className="flex items-center gap-3">
             <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-              <i className="ri-road-map-line text-primary-600 text-sm"></i>
+              <AppIcon className="ri-road-map-line text-primary-600 text-sm"></AppIcon>
             </span>
             <div>
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Your Journey</h3>
@@ -476,14 +476,14 @@ export default function ModulesPage() {
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 cursor-pointer whitespace-nowrap hover:scale-105 active:scale-95 ${
                 viewMode === 'road' ? 'bg-background-50 text-foreground-900 shadow-sm border border-foreground-200 scale-105' : 'text-foreground-400 hover:text-foreground-600'
               }`}>
-              <i className="ri-road-map-line"></i> Road Journey
+              <AppIcon className="ri-road-map-line"></AppIcon> Road Journey
             </button>
             <button
               onClick={() => setViewMode('timeline')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 cursor-pointer whitespace-nowrap hover:scale-105 active:scale-95 ${
                 viewMode === 'timeline' ? 'bg-background-50 text-foreground-900 shadow-sm border border-foreground-200 scale-105' : 'text-foreground-400 hover:text-foreground-600'
               }`}>
-              <i className="ri-bar-chart-horizontal-line"></i> Timeline
+              <AppIcon className="ri-bar-chart-horizontal-line"></AppIcon> Timeline
             </button>
           </div>
         </div>
@@ -509,7 +509,7 @@ export default function ModulesPage() {
         <section className="animate-in slide-in-from-bottom-2 duration-400 delay-200">
           <div className="flex items-center gap-3 mb-4">
             <span className="w-8 h-8 rounded-lg bg-secondary-100 flex items-center justify-center">
-              <i className="ri-bar-chart-grouped-line text-secondary-600 text-sm"></i>
+              <AppIcon className="ri-bar-chart-grouped-line text-secondary-600 text-sm"></AppIcon>
             </span>
             <div>
               <h3 className="text-sm font-heading font-semibold text-foreground-900">KSB Progression</h3>
@@ -522,7 +522,7 @@ export default function ModulesPage() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <span className="w-7 h-7 rounded-lg bg-primary-100 flex items-center justify-center"><i className="ri-book-open-line text-primary-600 text-xs"></i></span>
+                    <span className="w-7 h-7 rounded-lg bg-primary-100 flex items-center justify-center"><AppIcon className="ri-book-open-line text-primary-600 text-xs"></AppIcon></span>
                     <span className="text-sm font-semibold text-foreground-900">Knowledge</span>
                   </div>
                   <span className="text-sm font-bold text-primary-600">{ksbKnowledgeProgress}%</span>
@@ -535,7 +535,7 @@ export default function ModulesPage() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <span className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center"><i className="ri-tools-line text-amber-600 text-xs"></i></span>
+                    <span className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center"><AppIcon className="ri-tools-line text-amber-600 text-xs"></AppIcon></span>
                     <span className="text-sm font-semibold text-foreground-900">Skills</span>
                   </div>
                   <span className="text-sm font-bold text-amber-600">{ksbSkillsProgress}%</span>
@@ -548,7 +548,7 @@ export default function ModulesPage() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <span className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center"><i className="ri-heart-line text-emerald-600 text-xs"></i></span>
+                    <span className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center"><AppIcon className="ri-heart-line text-emerald-600 text-xs"></AppIcon></span>
                     <span className="text-sm font-semibold text-foreground-900">Behaviours</span>
                   </div>
                   <span className="text-sm font-bold text-emerald-600">{ksbBehavioursProgress}%</span>
@@ -566,7 +566,7 @@ export default function ModulesPage() {
         <section className="animate-in slide-in-from-bottom-2 duration-400 delay-300">
           <div className="flex items-center gap-3 mb-4">
             <span className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center">
-              <i className="ri-dashboard-line text-foreground-500 text-sm"></i>
+              <AppIcon className="ri-dashboard-line text-foreground-500 text-sm"></AppIcon>
             </span>
             <div>
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Programme Statistics</h3>
@@ -593,7 +593,7 @@ function StatBlock({ label, value, icon, iconBg }: { label: string; value: strin
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 text-center hover:scale-[1.03] hover:shadow-sm transition-all duration-200">
       <span className={`w-9 h-9 rounded-xl flex items-center justify-center mx-auto mb-2 ${iconBg}`}>
-        <i className={icon}></i>
+        <AppIcon className={icon}></AppIcon>
       </span>
       <p className="text-lg font-heading font-bold text-foreground-900">{value}</p>
       <p className="text-xs text-foreground-400">{label}</p>

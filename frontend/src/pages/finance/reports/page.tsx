@@ -61,7 +61,7 @@ export default function FinanceReportsPage() {
         {/* Filters */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search reports..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
@@ -83,7 +83,7 @@ export default function FinanceReportsPage() {
             {filtered.map(report => (
               <div key={report.id} className="p-4 flex items-center gap-4">
                 <span className="w-10 h-10 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
-                  <i className="ri-file-chart-line text-sm"></i>
+                  <AppIcon className="ri-file-chart-line text-sm"></AppIcon>
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -101,10 +101,10 @@ export default function FinanceReportsPage() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-play-line mr-1"></i> Generate
+                    <AppIcon className="ri-play-line mr-1"></AppIcon> Generate
                   </button>
                   <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-download-line mr-1"></i> Download
+                    <AppIcon className="ri-download-line mr-1"></AppIcon> Download
                   </button>
                 </div>
               </div>

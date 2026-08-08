@@ -198,7 +198,7 @@ function MockKSBsPage() {
             <div className="relative p-6 md:p-8 flex flex-col lg:flex-row items-start lg:items-center gap-6 lg:gap-10">
               <div className="flex items-center gap-4 shrink-0">
                 <span className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center">
-                  <i className="ri-bar-chart-box-line text-white text-2xl"></i>
+                  <AppIcon className="ri-bar-chart-box-line text-white text-2xl"></AppIcon>
                 </span>
                 <div>
                   <h2 className="text-xl font-heading font-bold text-white">KSB Progress</h2>
@@ -263,7 +263,7 @@ function MockKSBsPage() {
                 <div key={cat.type} className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5">
                   <div className="flex items-center gap-3 mb-5">
                     <span className={`w-10 h-10 rounded-xl ${tc.bg} flex items-center justify-center`}>
-                      <i className={`${tc.icon} ${tc.text} text-lg`}></i>
+                      <AppIcon className={`${tc.icon} ${tc.text} text-lg`}></AppIcon>
                     </span>
                     <div className="flex-1">
                       <h3 className="text-sm font-heading font-semibold text-foreground-900">{cat.type}</h3>
@@ -286,7 +286,7 @@ function MockKSBsPage() {
                     onClick={() => { setFilterType(cat.type); setFilterStatus('All'); setSearchQuery(''); }}
                     className="mt-4 w-full text-center text-xs font-semibold text-foreground-500 hover:text-primary-600 transition-smooth py-2 rounded-xl hover:bg-background-100 cursor-pointer"
                   >
-                    View all {cat.type} <i className="ri-arrow-right-line ml-0.5"></i>
+                    View all {cat.type} <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                   </button>
                 </div>
               );
@@ -303,7 +303,7 @@ function MockKSBsPage() {
             <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5">
               <div className="flex items-center gap-3 mb-4">
                 <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-                  <i className="ri-error-warning-line text-red-600"></i>
+                  <AppIcon className="ri-error-warning-line text-red-600"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">At-Risk KSBs</h3>
@@ -343,7 +343,7 @@ function MockKSBsPage() {
             <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5">
               <div className="flex items-center gap-3 mb-4">
                 <span className="w-9 h-9 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                  <i className="ri-rocket-line text-emerald-600"></i>
+                  <AppIcon className="ri-rocket-line text-emerald-600"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Quick Wins</h3>
@@ -394,7 +394,7 @@ function MockKSBsPage() {
                 to="/learner/evidence"
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-500 text-background-50 text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
               >
-                <i className="ri-upload-cloud-line"></i> Upload Evidence
+                <AppIcon className="ri-upload-cloud-line"></AppIcon> Upload Evidence
               </Link>
             </div>
 
@@ -402,7 +402,7 @@ function MockKSBsPage() {
             <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-4">
               <div className="flex flex-col sm:flex-row gap-3">
                 <div className="relative flex-1">
-                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
                   <input
                     type="text"
                     placeholder="Search by code or description..."
@@ -420,7 +420,7 @@ function MockKSBsPage() {
                         : 'bg-background-100 text-foreground-500 border-transparent hover:border-foreground-200/40'
                     }`}
                   >
-                    <i className="ri-filter-3-line text-sm"></i>
+                    <AppIcon className="ri-filter-3-line text-sm"></AppIcon>
                     Filters
                     {hasActiveFilters && (
                       <span className="w-2 h-2 rounded-full bg-primary-500"></span>
@@ -430,7 +430,7 @@ function MockKSBsPage() {
                     onClick={() => setSortBy(sortBy === 'code' ? 'pct' : 'code')}
                     className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-background-100 text-sm font-semibold text-foreground-500 hover:text-foreground-700 transition-smooth cursor-pointer whitespace-nowrap border border-transparent hover:border-foreground-200/40"
                   >
-                    <i className={`${sortBy === 'code' ? 'ri-sort-alphabet-asc' : 'ri-sort-number-desc'} text-sm`}></i>
+                    <AppIcon className={`${sortBy === 'code' ? 'ri-sort-alphabet-asc' : 'ri-sort-number-desc'} text-sm`}></AppIcon>
                     {sortBy === 'code' ? 'By Code' : 'By Progress'}
                   </button>
                 </div>
@@ -489,7 +489,7 @@ function MockKSBsPage() {
                         onClick={() => { setFilterType('All'); setFilterStatus('All'); setSearchQuery(''); }}
                         className="flex items-center gap-1.5 text-xs text-primary-600 font-semibold hover:text-primary-700 cursor-pointer"
                       >
-                        <i className="ri-close-circle-line"></i> Clear all filters
+                        <AppIcon className="ri-close-circle-line"></AppIcon> Clear all filters
                       </button>
                     </div>
                   )}
@@ -568,7 +568,7 @@ function MockKSBsPage() {
               {filteredKSBs.length === 0 && (
                 <div className="py-12 text-center">
                   <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                    <i className="ri-search-line text-foreground-300 text-xl"></i>
+                    <AppIcon className="ri-search-line text-foreground-300 text-xl"></AppIcon>
                   </span>
                   <p className="text-sm text-foreground-500">No KSBs match your filters</p>
                   <button
@@ -623,13 +623,13 @@ function MockKSBsPage() {
                   to="/learner/gateway"
                   className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-primary-500 text-background-50 text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-flag-line"></i> View Gateway
+                  <AppIcon className="ri-flag-line"></AppIcon> View Gateway
                 </Link>
                 <Link
                   to="/learner/evidence"
                   className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl border border-foreground-200 text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-upload-cloud-line"></i> Add Evidence
+                  <AppIcon className="ri-upload-cloud-line"></AppIcon> Add Evidence
                 </Link>
               </div>
             </div>
@@ -650,7 +650,7 @@ function MockKSBsPage() {
                 to="/learner/evidence"
                 className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary-600 hover:text-primary-700 whitespace-nowrap cursor-pointer"
               >
-                <i className="ri-add-line"></i> Upload
+                <AppIcon className="ri-add-line"></AppIcon> Upload
               </Link>
             </div>
             <div className="space-y-3">
@@ -658,14 +658,14 @@ function MockKSBsPage() {
                 <div key={i} className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 group">
                   <div className="flex flex-col sm:flex-row sm:items-start gap-4">
                     <span className="w-10 h-10 rounded-xl bg-primary-100 flex items-center justify-center shrink-0">
-                      <i className="ri-lightbulb-line text-primary-600 text-lg"></i>
+                      <AppIcon className="ri-lightbulb-line text-primary-600 text-lg"></AppIcon>
                     </span>
                     <div className="flex-1 min-w-0">
                       <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-1">{se.title}</h3>
                       <p className="text-sm text-foreground-500 leading-relaxed mb-3">{se.reason}</p>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-medium text-primary-700 bg-primary-50 px-2.5 py-1 rounded-full">
-                          <i className="ri-link mr-1"></i>{se.linksTo}
+                          <AppIcon className="ri-link mr-1"></AppIcon>{se.linksTo}
                         </span>
                         <span className="text-xs text-foreground-400">{se.ksbCount} KSB{se.ksbCount > 1 ? 's' : ''} covered</span>
                       </div>
@@ -674,7 +674,7 @@ function MockKSBsPage() {
                       to="/learner/evidence"
                       className="inline-flex items-center gap-1.5 shrink-0 px-4 py-2 bg-primary-500 text-background-50 rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap cursor-pointer self-start"
                     >
-                      <i className="ri-upload-cloud-line"></i> Add
+                      <AppIcon className="ri-upload-cloud-line"></AppIcon> Add
                     </Link>
                   </div>
                 </div>
@@ -702,7 +702,7 @@ function StatCard({ label, value, total, color, icon }: { label: string; value: 
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <span className="text-xs text-foreground-400">{label}</span>
       </div>

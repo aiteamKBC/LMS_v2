@@ -15,6 +15,9 @@ export interface QuizAnswerOption {
   id: number;
   text?: string;
   left?: string;
+  leftKey?: string;
+  label?: string;
+  imageUrl?: string;
 }
 
 export interface QuizQuestion {
@@ -47,7 +50,7 @@ export interface Quiz {
  *  single_choice/true_false -> answer id (number)
  *  multiple_choice          -> answer ids (number[])
  *  fill_gap                 -> free text (string)
- *  matching/image_matching  -> { [leftText]: rightOptionText }
+ *  matching/image_matching  -> { [leftKey]: rightOptionText }
  *  ordering                 -> answer ids in the learner's chosen order (number[])
  *  keywords                 -> free-text words (string[])
  */

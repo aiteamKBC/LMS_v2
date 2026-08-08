@@ -8,7 +8,7 @@ export function EPATimeline() {
     <section className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
       <div className="flex items-start gap-3 mb-5">
         <span className="w-9 h-9 rounded-lg bg-accent-100 flex items-center justify-center shrink-0">
-          <i className="ri-route-line text-accent-700"></i>
+          <AppIcon className="ri-route-line text-accent-700"></AppIcon>
         </span>
         <div>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">EPA Readiness Timeline</h3>
@@ -64,9 +64,9 @@ export function EPATimeline() {
                   'bg-background-200 text-foreground-400'
                 } ${isHovered ? 'scale-125' : ''}`}>
                   {isCompleted ? (
-                    <i className="ri-check-line text-xs"></i>
+                    <AppIcon className="ri-check-line text-xs"></AppIcon>
                   ) : isCurrent ? (
-                    <i className="ri-map-pin-line text-xs"></i>
+                    <AppIcon className="ri-map-pin-line text-xs"></AppIcon>
                   ) : (
                     <span className="text-[9px] font-bold">{index + 1}</span>
                   )}

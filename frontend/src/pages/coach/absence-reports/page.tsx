@@ -18,7 +18,7 @@ function FilterDropdown({ label, value, onChange, options, allLabel }: { label: 
         <option value="all">{allLabel || `All ${label}s`}</option>
         {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      <i className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs pointer-events-none"></i>
+      <AppIcon className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs pointer-events-none"></AppIcon>
     </div>
   );
 }
@@ -241,7 +241,7 @@ export default function CoachAbsenceReports() {
           <div className="relative flex flex-col gap-5 p-5 sm:p-6 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-4">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/15 bg-white/10 shadow-inner backdrop-blur-sm">
-                <i className="ri-file-list-3-line text-xl text-white"></i>
+                <AppIcon className="ri-file-list-3-line text-xl text-white"></AppIcon>
               </span>
               <div>
                 <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-primary-200">Attendance management</p>
@@ -290,9 +290,9 @@ export default function CoachAbsenceReports() {
                   card.color === 'emerald' ? 'bg-emerald-50 text-emerald-600' :
                   'bg-primary-50 text-primary-600'
                 }`}>
-                  <i className={`${card.icon} text-lg`}></i>
+                  <AppIcon className={`${card.icon} text-lg`}></AppIcon>
                 </span>
-                <i className="ri-arrow-right-line text-sm text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-primary-500"></i>
+                <AppIcon className="ri-arrow-right-line text-sm text-foreground-300 transition group-hover:translate-x-0.5 group-hover:text-primary-500"></AppIcon>
               </div>
               <div className="mt-3 flex items-end justify-between gap-2">
                 <div>
@@ -321,7 +321,7 @@ export default function CoachAbsenceReports() {
           <div className="flex flex-col gap-3">
             {/* Search */}
             <div className="relative flex-1 w-full">
-              <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
               <input
                 type="text"
                 value={searchQuery}
@@ -331,7 +331,7 @@ export default function CoachAbsenceReports() {
               />
               {searchQuery && (
                 <button onClick={() => { setSearchQuery(''); setCurrentPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400 hover:text-foreground-600 cursor-pointer">
-                  <i className="ri-close-line text-xs"></i>
+                  <AppIcon className="ri-close-line text-xs"></AppIcon>
                 </button>
               )}
             </div>
@@ -404,43 +404,43 @@ export default function CoachAbsenceReports() {
               {statusFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1)}
-                  <button onClick={() => { setStatusFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setStatusFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
               {programmeFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {programmeFilter}
-                  <button onClick={() => { setProgrammeFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setProgrammeFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
               {cohortFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {cohortFilter}
-                  <button onClick={() => { setCohortFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setCohortFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
               {reportedByFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {reportedByFilter}
-                  <button onClick={() => { setReportedByFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setReportedByFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
               {reasonFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {reasonCategoryLabel[reasonFilter] || reasonFilter}
-                  <button onClick={() => { setReasonFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setReasonFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
               {queueFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {queueFilter === 'high-priority' ? HIGH_RISK_ABSENCE_REPORTS_LABEL : queueFilter === 'with-evidence' ? 'With evidence' : 'Missing evidence'}
-                  <button onClick={() => { setQueueFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setQueueFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
               {(dateFrom || dateTo) && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {dateFrom || '...'} to {dateTo || '...'}
-                  <button onClick={() => { setDateFrom(''); setDateTo(''); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setDateFrom(''); setDateTo(''); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
             </div>
@@ -452,7 +452,7 @@ export default function CoachAbsenceReports() {
           <div className="flex flex-col gap-3 border-b border-foreground-200/60 bg-gradient-to-r from-white via-white to-primary-50/40 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">
               <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
-                <i className="ri-list-check-3 text-lg"></i>
+                <AppIcon className="ri-list-check-3 text-lg"></AppIcon>
               </span>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Review queue</p>
@@ -488,13 +488,13 @@ export default function CoachAbsenceReports() {
                     <td colSpan={9} className="px-4 py-16 text-center">
                       <div className="flex flex-col items-center gap-3">
                         <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center">
-                          <i className={`${loadingReports ? 'ri-loader-4-line animate-spin' : reportsError ? 'ri-error-warning-line' : 'ri-inbox-line'} text-foreground-300 text-xl`}></i>
+                          <AppIcon className={`${loadingReports ? 'ri-loader-4-line animate-spin' : reportsError ? 'ri-error-warning-line' : 'ri-inbox-line'} text-foreground-300 text-xl`}></AppIcon>
                         </span>
                         <p className="text-[13px] text-foreground-400 font-medium">{loadingReports ? 'Loading absence reports...' : reportsError || 'No absence reports found'}</p>
                         {!loadingReports && !reportsError && <p className="text-[11px] text-foreground-300">Try adjusting your search or filters</p>}
                         {hasActiveFilters && (
                           <button onClick={clearFilters} className="px-3 py-1.5 bg-background-100 text-foreground-500 rounded-lg text-[11px] font-medium hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
-                            <i className="ri-close-line mr-1"></i>Clear Filters
+                            <AppIcon className="ri-close-line mr-1"></AppIcon>Clear Filters
                           </button>
                         )}
                       </div>
@@ -556,12 +556,12 @@ export default function CoachAbsenceReports() {
                               className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-primary-700 bg-primary-50 border border-primary-200 px-2.5 py-1.5 rounded-lg hover:bg-primary-100 hover:border-primary-300 transition-smooth cursor-pointer whitespace-nowrap"
                               aria-label={`View ${evidenceActionLabel(row)} evidence for ${row.learner}`}
                             >
-                              <i className={`${isImageEvidence(row) ? 'ri-image-line' : row.evidenceImageUrl ? 'ri-attachment-2' : 'ri-file-text-line'} text-[12px]`}></i>
+                              <AppIcon className={`${isImageEvidence(row) ? 'ri-image-line' : row.evidenceImageUrl ? 'ri-attachment-2' : 'ri-file-text-line'} text-[12px]`}></AppIcon>
                               View {evidenceActionLabel(row)}
                             </button>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-[10px] font-medium text-foreground-400 bg-foreground-50 px-2 py-0.5 rounded-full">
-                              <i className="ri-close-line text-[9px]"></i>
+                              <AppIcon className="ri-close-line text-[9px]"></AppIcon>
                               None
                             </span>
                           )}
@@ -596,7 +596,7 @@ export default function CoachAbsenceReports() {
                                   }}
                                   className="px-2.5 py-1.5 bg-emerald-500 text-white rounded-lg text-[10px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1"
                                 >
-                                  <i className="ri-check-line text-[11px]"></i> Approve
+                                  <AppIcon className="ri-check-line text-[11px]"></AppIcon> Approve
                                 </button>
                                 <button
                                   onClick={() => {
@@ -606,7 +606,7 @@ export default function CoachAbsenceReports() {
                                   }}
                                   className="px-2.5 py-1.5 bg-red-50 border border-red-200 text-red-700 rounded-lg text-[10px] font-semibold hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1"
                                 >
-                                  <i className="ri-close-line text-[11px]"></i> Decline
+                                  <AppIcon className="ri-close-line text-[11px]"></AppIcon> Decline
                                 </button>
                               </>
                             )}
@@ -614,7 +614,7 @@ export default function CoachAbsenceReports() {
                               onClick={() => setSelectedReportId(row.id)}
                               className={`w-7 h-7 rounded-lg flex items-center justify-center transition-smooth cursor-pointer ${isSel ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500 hover:text-foreground-700 hover:bg-background-200'}`}
                             >
-                              <i className="ri-eye-line text-xs"></i>
+                              <AppIcon className="ri-eye-line text-xs"></AppIcon>
                             </button>
                           </div>
                         </td>
@@ -646,10 +646,10 @@ export default function CoachAbsenceReports() {
                   <option value={15}>15</option>
                 </select>
                 <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                  <i className="ri-skip-back-line"></i>
+                  <AppIcon className="ri-skip-back-line"></AppIcon>
                 </button>
                 <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                  <i className="ri-arrow-left-s-line"></i>
+                  <AppIcon className="ri-arrow-left-s-line"></AppIcon>
                 </button>
                 <div className="flex items-center gap-1">
                   {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
@@ -666,10 +666,10 @@ export default function CoachAbsenceReports() {
                   })}
                 </div>
                 <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                  <i className="ri-arrow-right-s-line"></i>
+                  <AppIcon className="ri-arrow-right-s-line"></AppIcon>
                 </button>
                 <button onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                  <i className="ri-skip-forward-line"></i>
+                  <AppIcon className="ri-skip-forward-line"></AppIcon>
                 </button>
               </div>
             </div>
@@ -709,7 +709,7 @@ export default function CoachAbsenceReports() {
             {/* Session Info Card */}
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 space-y-3">
               <h4 className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider flex items-center gap-1.5">
-                <i className="ri-calendar-event-line text-xs"></i> Missed Session
+                <AppIcon className="ri-calendar-event-line text-xs"></AppIcon> Missed Session
               </h4>
               <div className="space-y-2">
                 <div className="flex justify-between text-[12px]">
@@ -734,7 +734,7 @@ export default function CoachAbsenceReports() {
             {/* Reason & Evidence */}
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 space-y-3">
               <h4 className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider flex items-center gap-1.5">
-                <i className="ri-file-text-line text-xs"></i> Reason & Evidence
+                <AppIcon className="ri-file-text-line text-xs"></AppIcon> Reason & Evidence
               </h4>
               <div className="space-y-2">
                 <div>
@@ -757,7 +757,7 @@ export default function CoachAbsenceReports() {
             {/* Learner Stats */}
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 space-y-3">
               <h4 className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider flex items-center gap-1.5">
-                <i className="ri-bar-chart-line text-xs"></i> Learner Attendance Stats
+                <AppIcon className="ri-bar-chart-line text-xs"></AppIcon> Learner Attendance Stats
               </h4>
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-background-100 rounded-lg p-3 text-center">
@@ -789,7 +789,7 @@ export default function CoachAbsenceReports() {
             {!isPendingReport(selectedReport) && selectedReport.coachNotes && (
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 space-y-3">
                 <h4 className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider flex items-center gap-1.5">
-                  <i className="ri-history-line text-xs"></i> Decision History
+                  <AppIcon className="ri-history-line text-xs"></AppIcon> Decision History
                 </h4>
                 <div className="space-y-2">
                   <div className="flex justify-between text-[12px]">
@@ -826,7 +826,7 @@ export default function CoachAbsenceReports() {
                   }}
                   className="w-full px-4 py-2.5 bg-emerald-500 text-white rounded-lg text-[13px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5"
                 >
-                  <i className="ri-check-line"></i> Approve Absence
+                  <AppIcon className="ri-check-line"></AppIcon> Approve Absence
                 </button>
                 <button
                   onClick={() => {
@@ -837,7 +837,7 @@ export default function CoachAbsenceReports() {
                   }}
                   className="w-full px-4 py-2.5 bg-red-50 border border-red-200 text-red-700 rounded-lg text-[13px] font-semibold hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5"
                 >
-                  <i className="ri-close-line"></i> Decline Absence
+                  <AppIcon className="ri-close-line"></AppIcon> Decline Absence
                 </button>
               </div>
             )}
@@ -853,7 +853,7 @@ export default function CoachAbsenceReports() {
             <div className="flex items-start justify-between gap-4 border-b border-foreground-100 px-5 py-4">
               <div className="flex items-center gap-3 min-w-0">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700">
-                  <i className={`${isImageEvidence(selectedEvidence) ? 'ri-image-line' : selectedEvidence.evidenceImageUrl ? 'ri-attachment-2' : 'ri-file-text-line'} text-lg`}></i>
+                  <AppIcon className={`${isImageEvidence(selectedEvidence) ? 'ri-image-line' : selectedEvidence.evidenceImageUrl ? 'ri-attachment-2' : 'ri-file-text-line'} text-lg`}></AppIcon>
                 </span>
                 <div className="min-w-0">
                   <h3 className="text-sm font-bold text-foreground-900">Absence evidence</h3>
@@ -861,7 +861,7 @@ export default function CoachAbsenceReports() {
                 </div>
               </div>
               <button type="button" onClick={() => setSelectedEvidence(null)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Close evidence preview">
-                <i className="ri-close-line text-lg"></i>
+                <AppIcon className="ri-close-line text-lg"></AppIcon>
               </button>
             </div>
 
@@ -869,7 +869,7 @@ export default function CoachAbsenceReports() {
               {isImageEvidence(selectedEvidence) ? (
                 <div className="relative flex min-h-[290px] items-center justify-center overflow-hidden rounded-xl border border-foreground-200 bg-background-100">
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-foreground-400">
-                    <i className="ri-image-line text-4xl"></i>
+                    <AppIcon className="ri-image-line text-4xl"></AppIcon>
                     <span className="text-xs font-medium">Image preview unavailable</span>
                     {selectedEvidence.evidenceImageUrl && (
                       <a href={resolveEvidenceUrl(selectedEvidence.evidenceImageUrl)} target="_blank" rel="noreferrer" className="text-xs font-semibold text-primary-700 hover:text-primary-800">
@@ -890,7 +890,7 @@ export default function CoachAbsenceReports() {
                 <div className="rounded-xl border border-foreground-200 bg-background-100 p-4">
                   <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Attached file</p>
                   <a href={resolveEvidenceUrl(selectedEvidence.evidenceImageUrl)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] font-semibold text-primary-700 hover:bg-primary-100">
-                    <i className="ri-attachment-2"></i>
+                    <AppIcon className="ri-attachment-2"></AppIcon>
                     Open evidence file
                   </a>
                   {selectedEvidence.evidenceText && (
@@ -928,7 +928,7 @@ export default function CoachAbsenceReports() {
             {/* Header */}
             <div className="flex items-center gap-3 mb-4">
               <span className={`w-10 h-10 rounded-xl flex items-center justify-center ${actionModal.type === 'approve' ? 'bg-emerald-100' : 'bg-red-100'}`}>
-                <i className={`text-lg ${actionModal.type === 'approve' ? 'ri-check-line text-emerald-600' : 'ri-close-line text-red-600'}`}></i>
+                <AppIcon className={`text-lg ${actionModal.type === 'approve' ? 'ri-check-line text-emerald-600' : 'ri-close-line text-red-600'}`}></AppIcon>
               </span>
               <div>
                 <h3 className="text-sm font-heading font-bold text-foreground-900">

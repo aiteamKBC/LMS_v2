@@ -55,7 +55,7 @@ export default function SignaturesPage() {
             { label: 'Regenerated', count: SIGNATURES.filter(s => s.status === 'Regenerated').length, icon: 'ri-refresh-line', color: 'bg-primary-100 text-primary-600' },
           ].map(c => (
             <div key={c.label} className="bg-background-50 rounded-xl border border-background-200/50 p-4">
-              <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${c.color}`}><i className={`${c.icon} text-xs`}></i></span>
+              <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${c.color}`}><AppIcon className={`${c.icon} text-xs`}></AppIcon></span>
               <p className="text-[11px] text-foreground-400">{c.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{c.count}</p>
             </div>

@@ -80,7 +80,7 @@ export default function MisDeliveryDatesPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'primary' ? 'bg-primary-100 text-primary-600' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : 'bg-secondary-100 text-secondary-600'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -91,7 +91,7 @@ export default function MisDeliveryDatesPage() {
         {/* Toolbar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 min-w-0">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search cohort, programme, standard..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-background-200 rounded-lg text-sm text-foreground-800 placeholder-foreground-400 focus:outline-none focus:border-primary-400" />
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -110,7 +110,7 @@ export default function MisDeliveryDatesPage() {
                 <div className="p-4 flex flex-col sm:flex-row sm:items-center gap-4">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${statusColour(m.status)}`}>
-                      <i className="ri-timer-line text-sm"></i>
+                      <AppIcon className="ri-timer-line text-sm"></AppIcon>
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -137,7 +137,7 @@ export default function MisDeliveryDatesPage() {
                     <span className="text-foreground-300">|</span>
                     <span>{m.learners} learners</span>
                     <button onClick={() => setExpandedId(isExpanded ? null : m.id)} className="w-7 h-7 flex items-center justify-center bg-background-100 rounded-lg hover:bg-background-200 cursor-pointer">
-                      <i className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></i>
+                      <AppIcon className={isExpanded ? 'ri-arrow-up-s-line text-foreground-500' : 'ri-arrow-down-s-line text-foreground-500'}></AppIcon>
                     </button>
                   </div>
                 </div>

@@ -117,7 +117,7 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
                   }`}
                 >
                   <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${cm.bg}`}>
-                    <i className={`${cm.icon} text-[12px] ${cm.color}`} />
+                    <AppIcon className={`${cm.icon} text-[12px] ${cm.color}`} />
                   </span>
                   <span className="flex-1 min-w-0">
                     <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
@@ -133,9 +133,9 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
                     </span>
                   )}
                   {isCurrent ? (
-                    <i className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
+                    <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
                   ) : clickable ? (
-                    <i className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
+                    <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
                   ) : null}
                 </button>
               </li>
@@ -160,7 +160,7 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
                   }`}
                 >
                   <span className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-background-100 text-foreground-500">
-                    <i className="ri-calendar-line text-[12px]" />
+                    <AppIcon className="ri-calendar-line text-[12px]" />
                   </span>
                   <span className="flex-1 min-w-0">
                     <span className={`block text-[13px] font-semibold leading-snug truncate ${w.active ? 'text-foreground-900' : 'text-foreground-700'}`}>

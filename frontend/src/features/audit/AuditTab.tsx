@@ -64,7 +64,7 @@ export default function AuditTab({ data }: CaseFileTabProps) {
         <div className="flex flex-col gap-3 border-b border-background-200 bg-background-100/50 p-5 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="flex items-center gap-2 text-sm font-heading font-semibold text-foreground-900">
-              <i className="ri-shield-check-line text-primary-500"></i> Learner Audit
+              <AppIcon className="ri-shield-check-line text-primary-500"></AppIcon> Learner Audit
             </h2>
             <p className="mt-1 text-[11px] text-foreground-500">
               Aptem/LMS reconciliation from Audit.Aptem_LMS_matching.
@@ -76,7 +76,7 @@ export default function AuditTab({ data }: CaseFileTabProps) {
             disabled={!audit || loading || exporting}
             className="inline-flex items-center justify-center gap-2 rounded-full bg-foreground-950 px-4 py-2.5 text-[12px] font-semibold text-white shadow-sm transition hover:bg-foreground-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <i className={`${exporting ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-line'} text-sm`}></i>
+            <AppIcon className={`${exporting ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-line'} text-sm`}></AppIcon>
             Export PDF
           </button>
         </div>
@@ -112,7 +112,7 @@ export default function AuditTab({ data }: CaseFileTabProps) {
       <section className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
         <div className="flex items-center justify-between border-b border-background-200 bg-background-100/50 px-5 py-4">
           <h2 className="flex items-center gap-2 text-sm font-heading font-semibold text-foreground-900">
-            <i className="ri-timeline-view text-accent-500"></i> Monthly Audit Timeline
+            <AppIcon className="ri-timeline-view text-accent-500"></AppIcon> Monthly Audit Timeline
           </h2>
           <span className="text-[11px] text-foreground-400">{audit?.months.length || 0} month(s)</span>
         </div>
@@ -172,7 +172,7 @@ function StatCard({ icon, label, value, tone }: { icon: string; label: string; v
   return (
     <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-4">
       <div className={`mb-3 flex h-9 w-9 items-center justify-center rounded-lg ${toneMap[tone]}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400">{label}</p>

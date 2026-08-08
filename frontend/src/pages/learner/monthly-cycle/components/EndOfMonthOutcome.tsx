@@ -30,7 +30,7 @@ export default function EndOfMonthOutcome({ month }: EndOfMonthOutcomeProps) {
       {/* Monthly Health Indicator */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-5 pb-4 border-b border-background-200/50">
         <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${h.status === 'On Track' ? 'bg-emerald-100' : 'bg-amber-100'}`}>
-          <i className={`text-lg ${h.status === 'On Track' ? 'ri-check-double-line text-emerald-600' : 'ri-error-warning-line text-amber-600'}`}></i>
+          <AppIcon className={`text-lg ${h.status === 'On Track' ? 'ri-check-double-line text-emerald-600' : 'ri-error-warning-line text-amber-600'}`}></AppIcon>
         </div>
         <div className="flex-1">
           <p className={`text-sm font-heading font-semibold ${h.status === 'On Track' ? 'text-emerald-800' : 'text-amber-800'}`}>{h.label}</p>
@@ -43,7 +43,7 @@ export default function EndOfMonthOutcome({ month }: EndOfMonthOutcomeProps) {
 
       {/* End of Month Outcome */}
       <div className="flex items-center gap-2 mb-3">
-        <i className="ri-flag-line text-foreground-600 text-sm"></i>
+        <AppIcon className="ri-flag-line text-foreground-600 text-sm"></AppIcon>
         <h3 className="text-sm font-heading font-semibold text-foreground-900">End of Month Outcome</h3>
       </div>
       <p className="text-xs text-foreground-400 mb-3">{o.summary}</p>
@@ -55,7 +55,7 @@ export default function EndOfMonthOutcome({ month }: EndOfMonthOutcomeProps) {
             <div key={item.label} className="p-3 rounded-lg border border-background-200/50 bg-background-50/50">
               <div className="flex items-center gap-2 mb-1.5">
                 <div className="w-6 h-6 rounded-md bg-background-100 flex items-center justify-center shrink-0">
-                  <i className={`${item.icon} text-foreground-500 text-xs`}></i>
+                  <AppIcon className={`${item.icon} text-foreground-500 text-xs`}></AppIcon>
                 </div>
                 <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`}></span>
               </div>

@@ -142,7 +142,7 @@ function StatsBanner() {
           <div key={stat.label} className="bg-background-50 rounded-xl border border-background-200/50 p-3.5 card-premium cursor-pointer">
             <div className="flex items-center gap-3">
               <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${iconBg}`}>
-                <i className={`${stat.icon} text-sm`}></i>
+                <AppIcon className={`${stat.icon} text-sm`}></AppIcon>
               </span>
               <div className="min-w-0">
                 <p className="text-2xl font-heading font-semibold text-foreground-900">{stat.value}</p>
@@ -177,7 +177,7 @@ function RecordsList({
         <span className="text-[10px] font-medium text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">{records.length} record{records.length !== 1 ? 's' : ''}</span>
       </div>
       <div className="relative mb-3">
-        <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+        <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
         <input
           type="text" value={searchQuery} onChange={e => onSearchChange(e.target.value)}
           placeholder="Search learner or employer..."
@@ -260,7 +260,7 @@ function ActionHistory({ actions, notes }: { actions: { action: string; by: stri
               <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
                 item.type === 'note' ? 'bg-primary-50 text-primary-600' : 'bg-emerald-50 text-emerald-600'
               }`}>
-                <i className={item.type === 'note' ? 'ri-chat-1-line text-xs' : 'ri-check-line text-xs'}></i>
+                <AppIcon className={item.type === 'note' ? 'ri-chat-1-line text-xs' : 'ri-check-line text-xs'}></AppIcon>
               </span>
               {i < allItems.length - 1 && <div className="w-px flex-1 bg-background-200 mt-1 mb-1"></div>}
             </div>

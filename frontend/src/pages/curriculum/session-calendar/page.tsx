@@ -378,38 +378,38 @@ export default function SessionCalendarPage() {
             <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
               <div className="flex min-w-0 items-center gap-2">
                 <Link to="/workspace/curriculum" className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-slate-100" title="Curriculum Studio">
-                  <i className="ri-side-bar-line"></i>
+                  <AppIcon className="ri-side-bar-line"></AppIcon>
                 </Link>
                 <button onClick={goToday} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-[12px] font-bold text-slate-800 hover:bg-slate-100">
-                  <i className="ri-calendar-line"></i>
+                  <AppIcon className="ri-calendar-line"></AppIcon>
                   Today
                 </button>
-                <button onClick={() => navigate(-1)} className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-slate-100" aria-label="Previous"><i className="ri-arrow-left-s-line"></i></button>
-                <button onClick={() => navigate(1)} className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-slate-100" aria-label="Next"><i className="ri-arrow-right-s-line"></i></button>
+                <button onClick={() => navigate(-1)} className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-slate-100" aria-label="Previous"><AppIcon className="ri-arrow-left-s-line"></AppIcon></button>
+                <button onClick={() => navigate(1)} className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-slate-100" aria-label="Next"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
                 <h3 className="truncate px-2 text-[15px] font-bold text-slate-950">{calendarTitle}</h3>
               </div>
 
               <div className="flex items-center gap-2">
                 <ViewMenu view={view} onChange={setView} />
                 <button onClick={() => setShowFilters(!showFilters)} className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[12px] font-semibold ${activeFilterCount ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-700 hover:bg-slate-100'}`}>
-                  <i className="ri-filter-3-line"></i>
+                  <AppIcon className="ri-filter-3-line"></AppIcon>
                   {activeFilterCount ? 'Filter applied' : 'Filter'}
                   {activeFilterCount > 0 && <span className="rounded bg-primary-600 px-1.5 text-[10px] text-white">{activeFilterCount}</span>}
-                  <i className="ri-arrow-down-s-line"></i>
+                  <AppIcon className="ri-arrow-down-s-line"></AppIcon>
                 </button>
               </div>
             </header>
 
             {notification && (
               <div className={`mx-4 mt-3 rounded-md border px-3 py-2 text-[12px] font-semibold ${notification.type === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
-                <i className={`${notification.type === 'success' ? 'ri-check-line' : 'ri-close-line'} mr-2`}></i>
+                <AppIcon className={`${notification.type === 'success' ? 'ri-check-line' : 'ri-close-line'} mr-2`}></AppIcon>
                 {notification.message}
               </div>
             )}
 
             {error && (
               <div className="mx-4 mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-700">
-                <i className="ri-wifi-off-line mr-2"></i>
+                <AppIcon className="ri-wifi-off-line mr-2"></AppIcon>
                 Live LMS data is unavailable, so no generated session schedule is shown.
               </div>
             )}
@@ -464,7 +464,7 @@ export default function SessionCalendarPage() {
             <form onSubmit={saveSession} className="w-full max-w-md rounded-lg bg-white text-slate-950 shadow-2xl" onClick={event => event.stopPropagation()}>
               <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
                 <h3 className="text-sm font-heading font-semibold">Edit Session</h3>
-                <button type="button" onClick={() => setEditingSession(null)} className="grid h-8 w-8 place-items-center rounded-md bg-slate-100 hover:bg-slate-200"><i className="ri-close-line text-slate-700"></i></button>
+                <button type="button" onClick={() => setEditingSession(null)} className="grid h-8 w-8 place-items-center rounded-md bg-slate-100 hover:bg-slate-200"><AppIcon className="ri-close-line text-slate-700"></AppIcon></button>
               </div>
               <div className="space-y-4 p-6">
                 <SessionField label="Start time" type="time" value={sessionForm.startTime} onChange={value => setSessionForm(previous => ({ ...previous, startTime: value }))} />
@@ -500,15 +500,15 @@ function TeamsSidebar({ currentDate, miniMonthDays, isToday, isCurrentMonth, hol
       <div className="flex h-14 items-center justify-between border-b border-slate-200 px-4">
         <h2 className="text-[15px] font-bold text-slate-950">Calendar</h2>
         <Link to="/workspace/curriculum" className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-white" title="Curriculum Studio">
-          <i className="ri-arrow-go-back-line"></i>
+          <AppIcon className="ri-arrow-go-back-line"></AppIcon>
         </Link>
       </div>
       <div className="space-y-5 p-4">
         <div>
           <div className="mb-3 flex items-center justify-between">
-            <button onClick={() => onMonthNavigate(-1)} className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-white" aria-label="Previous month"><i className="ri-arrow-up-s-line"></i></button>
+            <button onClick={() => onMonthNavigate(-1)} className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-white" aria-label="Previous month"><AppIcon className="ri-arrow-up-s-line"></AppIcon></button>
             <p className="text-[12px] font-bold text-slate-800">{currentDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</p>
-            <button onClick={() => onMonthNavigate(1)} className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-white" aria-label="Next month"><i className="ri-arrow-down-s-line"></i></button>
+            <button onClick={() => onMonthNavigate(1)} className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-white" aria-label="Next month"><AppIcon className="ri-arrow-down-s-line"></AppIcon></button>
           </div>
           <div className="grid grid-cols-7 gap-y-1 text-center">
             {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => <span key={`${day}-${index}`} className="text-[10px] font-bold text-slate-500">{day}</span>)}
@@ -523,12 +523,12 @@ function TeamsSidebar({ currentDate, miniMonthDays, isToday, isCurrentMonth, hol
           </div>
         </div>
         <button disabled className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-[12px] font-semibold text-primary-700">
-          <i className="ri-calendar-add-line text-base"></i>
+          <AppIcon className="ri-calendar-add-line text-base"></AppIcon>
           Add calendar
         </button>
         <div className="border-t border-slate-200 pt-4">
           <div className="mb-3 flex items-center gap-2 text-[12px] font-bold text-slate-800">
-            <i className="ri-arrow-down-s-line"></i>
+            <AppIcon className="ri-arrow-down-s-line"></AppIcon>
             My calendars
           </div>
           <label className="flex items-center gap-3 rounded px-1 py-2 text-[12px] font-semibold text-slate-700">
@@ -607,7 +607,7 @@ function TeamsTimelineView({ days, hours, selectedSession, draggedSession, dragO
                 {hours.map(hour => <div key={hour} className="h-[72px] border-b border-slate-100 bg-[linear-gradient(to_bottom,transparent_0,transparent_35px,rgba(148,163,184,0.15)_36px,transparent_37px)]"></div>)}
                 {dayHolidays.length > 0 && (
                   <div className="absolute left-2 right-2 top-2 z-10 rounded-md border border-amber-200 bg-amber-50/95 px-2 py-1 text-[10px] font-bold text-amber-800 shadow-sm">
-                    <i className="ri-suitcase-line mr-1"></i>
+                    <AppIcon className="ri-suitcase-line mr-1"></AppIcon>
                     {dayHolidays[0].label}{dayHolidays.length > 1 ? ` +${dayHolidays.length - 1}` : ''}
                   </div>
                 )}
@@ -661,7 +661,7 @@ function TeamsMonthView({ days, currentDate, isToday, isCurrentMonth, getSession
               <div className="space-y-1">
                 {dayHolidays.slice(0, 2).map(holiday => (
                   <div key={holiday.id} className="truncate rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-800">
-                    <i className="ri-suitcase-line mr-1"></i>{holiday.label}
+                    <AppIcon className="ri-suitcase-line mr-1"></AppIcon>{holiday.label}
                   </div>
                 ))}
                 {daySessions.slice(0, 4).map(session => (
@@ -743,7 +743,7 @@ function TeamsSessionPanel({ session, onClose, onEdit }: { session: CalSession; 
           </div>
           <h3 className="text-sm font-heading font-semibold text-slate-950">{session.title}</h3>
         </div>
-        <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200"><i className="ri-close-line text-sm"></i></button>
+        <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200"><AppIcon className="ri-close-line text-sm"></AppIcon></button>
       </div>
       <div className="grid grid-cols-2 gap-3 text-[12px] sm:grid-cols-4">
         <TeamsDetail label="Date" value={`${session.date} (${session.day})`} />
@@ -756,8 +756,8 @@ function TeamsSessionPanel({ session, onClose, onEdit }: { session: CalSession; 
         <TeamsDetail label="Venue" value={session.venue} />
       </div>
       <div className="mt-4 flex items-center gap-2 border-t border-slate-200 pt-3">
-        <button onClick={onEdit} className="rounded-md bg-primary-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-primary-700"><i className="ri-edit-line mr-1"></i>Edit Session</button>
-        <button disabled className="cursor-not-allowed rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400"><i className="ri-delete-bin-line mr-1"></i>Cancel Session</button>
+        <button onClick={onEdit} className="rounded-md bg-primary-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-primary-700"><AppIcon className="ri-edit-line mr-1"></AppIcon>Edit Session</button>
+        <button disabled className="cursor-not-allowed rounded-md border border-slate-200 bg-slate-50 px-3 py-1.5 text-[11px] font-medium text-slate-400"><AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Cancel Session</button>
       </div>
     </div>
   );
@@ -789,7 +789,7 @@ function TeamsFilterSelect({ label, value, options, onChange }: { label: string;
         className={`flex h-10 w-full items-center justify-between gap-2 rounded-lg border bg-white px-3 text-left text-[12px] font-semibold shadow-sm outline-none transition ${open ? 'border-primary-400 ring-2 ring-primary-100' : 'border-slate-200 hover:border-primary-200 hover:bg-primary-50/30'}`}
       >
         <span className={value === 'all' ? 'truncate text-slate-600' : 'truncate text-slate-950'}>{selectedLabel}</span>
-        <i className={`ri-arrow-down-s-line text-base text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`}></i>
+        <AppIcon className={`ri-arrow-down-s-line text-base text-slate-500 transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
 
       {open && (
@@ -808,7 +808,7 @@ function TeamsFilterSelect({ label, value, options, onChange }: { label: string;
                   className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[12px] font-semibold transition ${selected ? 'bg-primary-50 text-primary-700' : 'text-slate-700 hover:bg-slate-50'}`}
                 >
                   <span className="truncate">{option.label}</span>
-                  {selected && <i className="ri-check-line text-sm text-primary-700"></i>}
+                  {selected && <AppIcon className="ri-check-line text-sm text-primary-700"></AppIcon>}
                 </button>
               );
             })}

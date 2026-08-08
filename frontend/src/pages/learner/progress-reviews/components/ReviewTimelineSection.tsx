@@ -16,7 +16,7 @@ export default function ReviewTimelineSection() {
           return (
             <div key={rev.id} className="flex flex-col items-center min-w-[100px] flex-1">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm mb-2 ${bg}`}>
-                <i className={icon} />
+                <AppIcon className={icon} />
               </div>
               <p className="text-xs font-semibold text-foreground-900 text-center">{rev.status === 'gateway' ? 'Gateway' : `Review ${rev.number}`}</p>
               <p className={`text-xs font-medium text-center mt-0.5 ${text}`}>

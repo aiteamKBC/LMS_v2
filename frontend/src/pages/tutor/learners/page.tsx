@@ -57,7 +57,7 @@ export default function TutorLearnersPage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-user-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-user-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">My Learners</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">{LEARNERS.length} learners across 5 cohorts · {atRisk} flagged at risk · {lowProgress} below 40% progress</p>
@@ -78,7 +78,7 @@ export default function TutorLearnersPage() {
             { label: 'On Track', value: String(LEARNERS.filter(l => l.progress >= 60 && l.riskLevel === 'low').length), sub: 'meeting targets', icon: 'ri-check-double-line', color: 'emerald' },
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-background-200/50 p-4 cursor-pointer">
-              <span className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${s.color === 'red' ? 'bg-red-100 text-red-600' : s.color === 'amber' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'}`}><i className={`${s.icon} text-sm`}></i></span>
+              <span className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${s.color === 'red' ? 'bg-red-100 text-red-600' : s.color === 'amber' ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600'}`}><AppIcon className={`${s.icon} text-sm`}></AppIcon></span>
               <p className="text-[11px] text-foreground-400 mb-1">{s.label}</p>
               <p className="text-2xl font-heading font-semibold text-foreground-900">{s.value}</p>
               <p className="text-[11px] text-foreground-400 mt-1">{s.sub}</p>
@@ -89,7 +89,7 @@ export default function TutorLearnersPage() {
         <div className="flex items-center gap-3 flex-wrap justify-between">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <div className="relative flex-1 max-w-xs">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
               <input type="text" placeholder="Search learners..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-4 py-2 bg-background-50 border border-foreground-200 rounded-lg text-[12px] text-foreground-900 placeholder-foreground-300 outline-none focus:border-primary-300" />
             </div>
             <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
@@ -193,10 +193,10 @@ export default function TutorLearnersPage() {
 
               <div className="flex flex-col gap-2 pt-2">
                 <button className="w-full px-4 py-2.5 bg-primary-500 text-white rounded-lg text-[13px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-file-chart-line mr-1.5"></i> View Full Profile
+                  <AppIcon className="ri-file-chart-line mr-1.5"></AppIcon> View Full Profile
                 </button>
                 <button className="w-full px-4 py-2.5 bg-background-50 border border-background-200/50 rounded-lg text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-mail-line mr-1.5"></i> Message Coach
+                  <AppIcon className="ri-mail-line mr-1.5"></AppIcon> Message Coach
                 </button>
               </div>
             </div>

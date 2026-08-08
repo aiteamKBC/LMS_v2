@@ -111,7 +111,7 @@ export function Modal({ title, onClose, children, footer, size = 'max-w-3xl', sc
             aria-label="Close"
             className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 hover:text-foreground-700 transition-smooth cursor-pointer shrink-0"
           >
-            <i className="ri-close-line text-[18px]" />
+            <AppIcon className="ri-close-line text-[18px]" />
           </button>
         </div>
         <div ref={bodyRef} className="flex-1 overflow-y-auto p-5">{children}</div>

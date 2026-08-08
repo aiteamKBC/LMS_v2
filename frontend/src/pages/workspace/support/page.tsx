@@ -81,7 +81,7 @@ export default function SupportDashboard() {
                 stat.colour === 'amber' ? 'bg-amber-50 text-amber-600' :
                 'bg-emerald-50 text-emerald-600'
               }`}>
-                <i className={`${stat.icon} text-xs`}></i>
+                <AppIcon className={`${stat.icon} text-xs`}></AppIcon>
               </span>
               <p className="text-xl md:text-2xl font-heading font-semibold text-foreground-900">{stat.value}</p>
               <p className="text-[10px] text-foreground-400 mt-1">{stat.label}</p>
@@ -172,13 +172,13 @@ export default function SupportDashboard() {
 
                     <div className="flex items-center gap-3 mt-2.5 pt-2.5 border-t border-background-100">
                       <span className="text-[10px] text-foreground-400 flex items-center gap-1">
-                        <i className="ri-price-tag-3-line text-[9px]"></i> {ticket.category}
+                        <AppIcon className="ri-price-tag-3-line text-[9px]"></AppIcon> {ticket.category}
                       </span>
                       <span className="text-[10px] text-foreground-400 flex items-center gap-1">
-                        <i className="ri-user-line text-[9px]"></i> {ticket.assignedTo === '—' ? 'Unassigned' : ticket.assignedTo}
+                        <AppIcon className="ri-user-line text-[9px]"></AppIcon> {ticket.assignedTo === '—' ? 'Unassigned' : ticket.assignedTo}
                       </span>
                       <span className="text-[10px] text-foreground-400 flex items-center gap-1">
-                        <i className="ri-time-line text-[9px]"></i> {ticket.sla}
+                        <AppIcon className="ri-time-line text-[9px]"></AppIcon> {ticket.sla}
                       </span>
                       <span className="text-[10px] text-foreground-300 ml-auto">{ticket.created}</span>
                     </div>
@@ -243,7 +243,7 @@ export default function SupportDashboard() {
                   { label: 'SLA Report', icon: 'ri-bar-chart-2-line', href: '/support/reports' },
                 ].map(action => (
                   <a key={action.label} href={action.href} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer">
-                    <i className={`${action.icon} text-foreground-400`}></i>
+                    <AppIcon className={`${action.icon} text-foreground-400`}></AppIcon>
                     {action.label}
                   </a>
                 ))}

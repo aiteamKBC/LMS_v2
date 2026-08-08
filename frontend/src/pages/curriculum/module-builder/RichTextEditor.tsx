@@ -133,11 +133,11 @@ export function RichTextDraft({ label, value, onChange, rows = 9, compact = fals
           <RichTool icon="ri-underline" label="Underline" disabled={mode !== 'design'} onClick={() => runCommand('underline')} />
           <RichTool icon="ri-strikethrough" label="Strikethrough" disabled={mode !== 'design'} onClick={() => runCommand('strikeThrough')} />
           <label title="Text color" className={`flex h-8 w-8 items-center justify-center rounded-md ${mode === 'design' ? 'cursor-pointer text-foreground-700 hover:bg-background-200' : 'pointer-events-none opacity-40'}`}>
-            <i className="ri-font-color text-base"></i>
+            <AppIcon className="ri-font-color text-base"></AppIcon>
             <input type="color" className="sr-only" onChange={event => runCommand('foreColor', event.target.value)} />
           </label>
           <label title="Highlight" className={`flex h-8 w-8 items-center justify-center rounded-md ${mode === 'design' ? 'cursor-pointer text-foreground-700 hover:bg-background-200' : 'pointer-events-none opacity-40'}`}>
-            <i className="ri-mark-pen-line text-base"></i>
+            <AppIcon className="ri-mark-pen-line text-base"></AppIcon>
             <input type="color" className="sr-only" onChange={event => runCommand('hiliteColor', event.target.value)} />
           </label>
           <RichToolbarDivider />
@@ -199,7 +199,7 @@ function RichTool({ icon, label, onClick, disabled = false }: { icon: string; la
       onClick={onClick}
       className="flex h-8 w-8 items-center justify-center rounded-md text-foreground-700 transition-smooth hover:bg-background-200 hover:text-foreground-950 disabled:pointer-events-none disabled:opacity-35"
     >
-      <i className={`${icon} text-base`}></i>
+      <AppIcon className={`${icon} text-base`}></AppIcon>
     </button>
   );
 }

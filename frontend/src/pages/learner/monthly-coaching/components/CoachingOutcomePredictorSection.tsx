@@ -21,7 +21,7 @@ export default function CoachingOutcomePredictorSection() {
       <div className="p-6 md:p-8">
         <div className="flex items-center gap-2 mb-6">
           <div className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center">
-            <i className="ri-bar-chart-box-line text-accent-700" />
+            <AppIcon className="ri-bar-chart-box-line text-accent-700" />
           </div>
           <h2 className="text-lg font-heading font-semibold text-foreground-900">Coaching Outcome Predictor</h2>
         </div>
@@ -45,7 +45,7 @@ export default function CoachingOutcomePredictorSection() {
               return (
                 <div key={i} className="flex items-start gap-3 p-4 rounded-xl border border-background-200/50 bg-background-100/30">
                   <div className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center shrink-0">
-                    <i className={`${risk.icon} text-foreground-500`} />
+                    <AppIcon className={`${risk.icon} text-foreground-500`} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
@@ -68,7 +68,7 @@ export default function CoachingOutcomePredictorSection() {
           <ul className="space-y-2">
             {o.recommendations.map((rec, i) => (
               <li key={i} className="flex items-start gap-2 text-sm text-primary-800">
-                <i className="ri-arrow-right-line text-primary-600 mt-0.5 shrink-0" />
+                <AppIcon className="ri-arrow-right-line text-primary-600 mt-0.5 shrink-0" />
                 <span>{rec}</span>
               </li>
             ))}

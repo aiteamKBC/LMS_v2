@@ -82,7 +82,7 @@ export default function MisTimetablesPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'primary' ? 'bg-primary-100 text-primary-600' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : 'bg-secondary-100 text-secondary-600'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -94,11 +94,11 @@ export default function MisTimetablesPage() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button onClick={() => setWeekOffset(weekOffset - 1)} className="w-8 h-8 flex items-center justify-center bg-background-100 rounded-lg hover:bg-background-200 cursor-pointer">
-              <i className="ri-arrow-left-s-line text-foreground-500"></i>
+              <AppIcon className="ri-arrow-left-s-line text-foreground-500"></AppIcon>
             </button>
             <span className="text-sm font-semibold text-foreground-900 min-w-[100px] text-center">{weekLabel}</span>
             <button onClick={() => setWeekOffset(weekOffset + 1)} className="w-8 h-8 flex items-center justify-center bg-background-100 rounded-lg hover:bg-background-200 cursor-pointer">
-              <i className="ri-arrow-right-s-line text-foreground-500"></i>
+              <AppIcon className="ri-arrow-right-s-line text-foreground-500"></AppIcon>
             </button>
             <button onClick={() => setWeekOffset(0)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 cursor-pointer whitespace-nowrap">Today</button>
           </div>
@@ -183,7 +183,7 @@ export default function MisTimetablesPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-heading font-semibold text-foreground-900">{showEntry.module}</h2>
               <button onClick={() => setShowEntry(null)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-background-100 hover:bg-background-200 cursor-pointer">
-                <i className="ri-close-line text-foreground-500"></i>
+                <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
               </button>
             </div>
             <div className="space-y-3 text-[12px] text-foreground-600">
@@ -215,10 +215,10 @@ export default function MisTimetablesPage() {
               </div>
               <div className="flex items-center gap-3 mt-4">
                 <Link to="/mis/teams-sessions" className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer text-center whitespace-nowrap">
-                  <i className="ri-video-line mr-1"></i> Teams Link
+                  <AppIcon className="ri-video-line mr-1"></AppIcon> Teams Link
                 </Link>
                 <Link to="/mis/tutor-assignment" className="flex-1 px-3 py-2 border border-background-300 bg-background-50 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer text-center whitespace-nowrap">
-                  <i className="ri-user-settings-line mr-1"></i> Tutor
+                  <AppIcon className="ri-user-settings-line mr-1"></AppIcon> Tutor
                 </Link>
               </div>
             </div>

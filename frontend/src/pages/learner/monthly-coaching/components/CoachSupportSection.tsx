@@ -8,7 +8,7 @@ export default function CoachSupportSection() {
       <div className="p-6 md:p-8">
         <div className="flex items-center gap-2 mb-6">
           <div className="w-8 h-8 rounded-lg bg-secondary-100 flex items-center justify-center">
-            <i className="ri-user-voice-line text-secondary-700" />
+            <AppIcon className="ri-user-voice-line text-secondary-700" />
           </div>
           <h2 className="text-lg font-heading font-semibold text-foreground-900">Coach Support</h2>
         </div>
@@ -29,26 +29,26 @@ export default function CoachSupportSection() {
 
             <div className="space-y-2 mb-4">
               <div className="flex items-center gap-2 text-xs text-foreground-500">
-                <i className="ri-time-line text-foreground-400" />
+                <AppIcon className="ri-time-line text-foreground-400" />
                 <span>{c.responseTime}</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-foreground-500">
-                <i className="ri-calendar-check-line text-foreground-400" />
+                <AppIcon className="ri-calendar-check-line text-foreground-400" />
                 <span>{c.availability}</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-foreground-500">
-                <i className="ri-calendar-event-line text-foreground-400" />
+                <AppIcon className="ri-calendar-event-line text-foreground-400" />
                 <span>Next available: {c.nextAvailable}</span>
               </div>
             </div>
 
             <div className="flex flex-col gap-2">
               <button className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-mail-line" />
+                <AppIcon className="ri-mail-line" />
                 Message Coach
               </button>
               <button className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-background-100 text-foreground-700 rounded-lg text-sm font-semibold border border-background-200/50 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-calendar-schedule-line" />
+                <AppIcon className="ri-calendar-schedule-line" />
                 Book Additional Support
               </button>
             </div>
@@ -61,7 +61,7 @@ export default function CoachSupportSection() {
               {c.recentSupport.map((support, i) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-background-200/50 bg-background-100/30">
                   <div className="w-8 h-8 rounded-full bg-secondary-100 flex items-center justify-center shrink-0">
-                    <i className={`${support.type === 'Message' ? 'ri-mail-line' : 'ri-phone-line'} text-secondary-700 text-sm`} />
+                    <AppIcon className={`${support.type === 'Message' ? 'ri-mail-line' : 'ri-phone-line'} text-secondary-700 text-sm`} />
                   </div>
                   <div>
                     <p className="text-sm font-medium text-foreground-800">{support.type} — {support.topic}</p>

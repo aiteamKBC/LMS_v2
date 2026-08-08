@@ -51,7 +51,7 @@ export default function NewConcernsPage() {
         {/* Alert Banner */}
         <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-4 flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
-            <i className="ri-alert-line text-amber-600 text-lg"></i>
+            <AppIcon className="ri-alert-line text-amber-600 text-lg"></AppIcon>
           </div>
           <div>
             <p className="text-sm font-heading font-semibold text-amber-900">Triage Required</p>
@@ -94,7 +94,7 @@ export default function NewConcernsPage() {
             >
               <div className="flex flex-col sm:flex-row sm:items-start gap-3">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${triaged.has(kase.id) ? 'bg-emerald-100' : 'bg-amber-100'}`}>
-                  <i className={`${triaged.has(kase.id) ? 'ri-check-double-line text-emerald-600' : 'ri-alert-line text-amber-600'} text-lg`}></i>
+                  <AppIcon className={`${triaged.has(kase.id) ? 'ri-check-double-line text-emerald-600' : 'ri-alert-line text-amber-600'} text-lg`}></AppIcon>
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-2">
@@ -169,7 +169,7 @@ export default function NewConcernsPage() {
         {displayCases.length === 0 && (
           <div className="text-center py-12">
             <div className="w-16 h-16 rounded-2xl bg-emerald-100 flex items-center justify-center mx-auto mb-4">
-              <i className="ri-check-double-line text-emerald-500 text-2xl"></i>
+              <AppIcon className="ri-check-double-line text-emerald-500 text-2xl"></AppIcon>
             </div>
             <p className="text-sm font-heading font-semibold text-foreground-700">No New Concerns</p>
             <p className="text-[12px] text-foreground-400 mt-1">All concerns have been triaged. New concerns will appear here when reported.</p>

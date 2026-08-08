@@ -71,7 +71,7 @@ export default function QuizResultsPage() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-bar-chart-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-bar-chart-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Quiz Results</h2>
               <p className="text-[13px] text-white/80 leading-relaxed"><strong>{QUIZ_RESULTS.length} quizzes</strong> recorded. Avg pass rate {Math.round(QUIZ_RESULTS.reduce((s, q) => s + q.passRate, 0) / QUIZ_RESULTS.length)}%. Monitor learner performance and identify gaps.</p>

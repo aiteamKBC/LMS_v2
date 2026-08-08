@@ -80,7 +80,7 @@ export default function LeadershipReportsPage() {
           {REPORT_CATEGORIES.map(rc => (
             <div key={rc.category} className="bg-background-50 rounded-xl border border-background-200/50 p-5">
               <div className="flex items-center gap-3 mb-4">
-                <span className="w-8 h-8 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center"><i className={`${rc.icon} text-sm`}></i></span>
+                <span className="w-8 h-8 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className={`${rc.icon} text-sm`}></AppIcon></span>
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">{rc.category}</h3>
                 <span className="text-[10px] text-foreground-400">{rc.reports.length} reports</span>
               </div>
@@ -94,7 +94,7 @@ export default function LeadershipReportsPage() {
                       <span className="text-foreground-400">{r.frequency}</span>
                     </div>
                     <button className="mt-2 w-full flex items-center justify-center gap-1.5 bg-background-100 hover:bg-primary-100 text-foreground-600 hover:text-primary-700 rounded-lg py-1.5 text-[10px] font-medium transition-smooth cursor-pointer">
-                      <i className="ri-download-line text-xs"></i> Generate
+                      <AppIcon className="ri-download-line text-xs"></AppIcon> Generate
                     </button>
                   </div>
                 ))}

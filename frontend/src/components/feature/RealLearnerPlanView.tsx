@@ -165,7 +165,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
         className="flex w-full cursor-pointer items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-primary-50/30 sm:gap-4 sm:px-5 md:px-6"
       >
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary-200/70 bg-primary-100 sm:h-11 sm:w-11">
-          <i className="ri-book-2-line text-lg text-primary-600" />
+          <AppIcon className="ri-book-2-line text-lg text-primary-600" />
         </div>
         <div className="flex-1 min-w-0">
           <p className="truncate font-heading text-base font-bold text-foreground-900">{module.module}</p>
@@ -178,7 +178,7 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
             <span className="hidden rounded-full bg-primary-50 px-3 py-1 text-xs font-bold text-primary-700 sm:inline">{Math.round(moduleOtjh * 10) / 10}h OTJH</span>
           )}
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-background-100">
-            <i className={`ri-arrow-down-s-line text-base text-foreground-500 transition-transform ${collapsed ? '' : 'rotate-180'}`} />
+            <AppIcon className={`ri-arrow-down-s-line text-base text-foreground-500 transition-transform ${collapsed ? '' : 'rotate-180'}`} />
           </div>
         </div>
       </button>
@@ -223,7 +223,7 @@ function WeekCard({ week, module, kind, learnerId, completedIds }: {
           className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-3.5 text-left transition-colors hover:bg-primary-50/30 sm:gap-3 sm:px-4"
         >
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-background-300 bg-background-100 font-heading text-sm font-bold text-foreground-600">
-            <i className="ri-calendar-line" />
+            <AppIcon className="ri-calendar-line" />
           </span>
           <div className="flex-1 min-w-0">
             <span className="font-heading text-sm font-bold text-foreground-900 md:text-[15px]">{week.week}</span>
@@ -232,7 +232,7 @@ function WeekCard({ week, module, kind, learnerId, completedIds }: {
           <div className="flex items-center gap-3 shrink-0">
             {week.otjh > 0 && <span className="rounded-md bg-background-100 px-2 py-1 text-xs font-semibold text-foreground-600">{Math.round(week.otjh * 10) / 10}h</span>}
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-background-100">
-              <i className={`ri-arrow-down-s-line text-sm text-foreground-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+              <AppIcon className={`ri-arrow-down-s-line text-sm text-foreground-500 transition-transform ${open ? 'rotate-180' : ''}`} />
             </div>
           </div>
         </button>
@@ -316,7 +316,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
     <div>
       <div className="flex w-full flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
-          <i className={`${meta.icon} text-[13px] ${meta.color}`} />
+          <AppIcon className={`${meta.icon} text-[13px] ${meta.color}`} />
         </div>
         <div className="flex-1 min-w-0">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{meta.label}</span>
@@ -324,11 +324,11 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
         </div>
         {c.isQuiz && c.quizMeta?.questions != null ? (
           <span className="shrink-0 text-[11px] text-foreground-400 inline-flex items-center gap-1">
-            <i className="ri-questionnaire-line text-[10px]" />{c.quizMeta.questions} {c.quizMeta.questions === 1 ? 'question' : 'questions'}
+            <AppIcon className="ri-questionnaire-line text-[10px]" />{c.quizMeta.questions} {c.quizMeta.questions === 1 ? 'question' : 'questions'}
           </span>
         ) : c.expectedOtjh != null && c.expectedOtjh > 0 && (
           <span className="shrink-0 text-[11px] text-foreground-400 inline-flex items-center gap-1">
-            <i className="ri-time-line text-[10px]" />{c.expectedOtjh}h
+            <AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h
           </span>
         )}
         {c.isQuiz && lastAttempt && (
@@ -340,13 +340,13 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${
               lastAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
             }`}>
-              <i className={lastAttempt.passed ? 'ri-checkbox-circle-line text-[10px]' : 'ri-close-circle-line text-[10px]'} />
+              <AppIcon className={lastAttempt.passed ? 'ri-checkbox-circle-line text-[10px]' : 'ri-close-circle-line text-[10px]'} />
               {gradeLabel} · {lastAttempt.passed ? 'Passed' : 'Failed'}
             </span>
             <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1">
               {scoreSummary && <span>{scoreSummary} ·</span>}
               {attempts.length} {attempts.length === 1 ? 'attempt' : 'attempts'}
-              {hasBreakdown && <i className={`ri-arrow-down-s-line transition-transform ${showBreakdown ? 'rotate-180' : ''}`} />}
+              {hasBreakdown && <AppIcon className={`ri-arrow-down-s-line transition-transform ${showBreakdown ? 'rotate-180' : ''}`} />}
             </span>
           </button>
         )}
@@ -355,13 +355,13 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             onClick={() => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
             className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
           >
-            <i className={lastAttempt ? 'ri-refresh-line text-[10px]' : 'ri-play-fill text-[10px]'} />
+            <AppIcon className={lastAttempt ? 'ri-refresh-line text-[10px]' : 'ri-play-fill text-[10px]'} />
             {lastAttempt ? 'Retake Quiz' : 'Start Quiz'}
           </button>
         )}
         {completed && !c.isQuiz && (
           <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-emerald-100 text-emerald-700">
-            <i className="ri-checkbox-circle-line text-[10px]" />Done
+            <AppIcon className="ri-checkbox-circle-line text-[10px]" />Done
           </span>
         )}
         {c.type === 'video' && c.videoUrl && c.componentId && canStartQuiz && (
@@ -369,7 +369,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             onClick={() => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
             className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-red-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
           >
-            <i className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
+            <AppIcon className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
             {completed ? 'Rewatch' : 'Play'}
           </button>
         )}
@@ -381,7 +381,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             onClick={() => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
             className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
           >
-            <i className={`${completed ? 'ri-refresh-line' : 'ri-arrow-right-line'} text-[10px]`} />
+            <AppIcon className={`${completed ? 'ri-refresh-line' : 'ri-arrow-right-line'} text-[10px]`} />
             {completed ? 'Review again' : 'Open'}
           </button>
         )}
@@ -422,7 +422,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
                 <div key={q.questionId} className={`rounded-lg border p-2.5 ${q.correct ? 'border-emerald-200 bg-emerald-50/50' : 'border-red-200 bg-red-50/50'}`}>
                   <div className="flex items-start gap-2">
                     <span className={`shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold mt-0.5 ${q.correct ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
-                      <i className={q.correct ? 'ri-check-line' : 'ri-close-line'} />
+                      <AppIcon className={q.correct ? 'ri-check-line' : 'ri-close-line'} />
                     </span>
                     <p className="text-xs font-medium text-foreground-800 flex-1">
                       <span className="text-foreground-400">Q{i + 1}.</span> {r.questionText}

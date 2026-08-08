@@ -77,7 +77,7 @@ function ProgrammeCard({ programme, onMoveLeft, onMoveRight, stages }: {
       </div>
       <p className="text-[10px] text-foreground-400 mb-2">{programme.employer}</p>
       <p className="text-[10px] text-foreground-400 mb-2">
-        <i className="ri-map-pin-line mr-0.5"></i>{programme.regions.join(', ')}
+        <AppIcon className="ri-map-pin-line mr-0.5"></AppIcon>{programme.regions.join(', ')}
       </p>
       {programme.learners > 0 && (
         <div className="mb-2">
@@ -95,12 +95,12 @@ function ProgrammeCard({ programme, onMoveLeft, onMoveRight, stages }: {
         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-smooth">
           {stageIndex > 0 && (
             <button onClick={onMoveLeft} className="w-5 h-5 flex items-center justify-center bg-background-100 rounded hover:bg-background-200 cursor-pointer transition-smooth" title="Move back">
-              <i className="ri-arrow-left-s-line text-foreground-500 text-xs"></i>
+              <AppIcon className="ri-arrow-left-s-line text-foreground-500 text-xs"></AppIcon>
             </button>
           )}
           {stageIndex < stages.length - 1 && (
             <button onClick={onMoveRight} className="w-5 h-5 flex items-center justify-center bg-primary-100 rounded hover:bg-primary-200 cursor-pointer transition-smooth" title="Move forward">
-              <i className="ri-arrow-right-s-line text-primary-700 text-xs"></i>
+              <AppIcon className="ri-arrow-right-s-line text-primary-700 text-xs"></AppIcon>
             </button>
           )}
         </div>
@@ -148,7 +148,7 @@ export default function MisProgrammeAllocationPage() {
             return (
               <div key={stage.key} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
                 <div className={`w-7 h-7 rounded-lg flex items-center justify-center mb-2 ${stage.color} text-xs`}>
-                  <i className={`${stage.icon}`}></i>
+                  <AppIcon className={`${stage.icon}`}></AppIcon>
                 </div>
                 <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium truncate">{stage.label}</p>
                 <p className="text-xl font-heading font-semibold text-foreground-900">{count}</p>
@@ -160,7 +160,7 @@ export default function MisProgrammeAllocationPage() {
         {/* Toolbar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 min-w-0">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search programme, standard..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-background-200 rounded-lg text-sm text-foreground-800 placeholder-foreground-400 focus:outline-none focus:border-primary-400" />
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -169,14 +169,14 @@ export default function MisProgrammeAllocationPage() {
             </select>
             <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1">
               <button onClick={() => setViewMode('kanban')} className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-smooth cursor-pointer ${viewMode === 'kanban' ? 'bg-background-50 text-foreground-900' : 'text-foreground-400 hover:text-foreground-700'}`}>
-                <i className="ri-layout-4-line mr-1"></i>Kanban
+                <AppIcon className="ri-layout-4-line mr-1"></AppIcon>Kanban
               </button>
               <button onClick={() => setViewMode('list')} className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-smooth cursor-pointer ${viewMode === 'list' ? 'bg-background-50 text-foreground-900' : 'text-foreground-400 hover:text-foreground-700'}`}>
-                <i className="ri-list-check mr-1"></i>List
+                <AppIcon className="ri-list-check mr-1"></AppIcon>List
               </button>
             </div>
             <button className="px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1"></i> New Programme
+              <AppIcon className="ri-add-line mr-1"></AppIcon> New Programme
             </button>
           </div>
         </div>
@@ -192,7 +192,7 @@ export default function MisProgrammeAllocationPage() {
                     {/* Column Header */}
                     <div className={`rounded-xl border p-3 mb-3 ${stage.color}`}>
                       <div className="flex items-center gap-2 mb-1">
-                        <i className={`${stage.icon} text-sm`}></i>
+                        <AppIcon className={`${stage.icon} text-sm`}></AppIcon>
                         <span className="text-[12px] font-semibold">{stage.label}</span>
                         <span className="ml-auto text-[11px] font-bold bg-white/50 px-1.5 py-0.5 rounded-full">{stageProgrammes.length}</span>
                       </div>
@@ -259,12 +259,12 @@ export default function MisProgrammeAllocationPage() {
                       <div className="flex items-center gap-1">
                         {KANBAN_STAGES.findIndex(s => s.key === prog.kanbanStage) > 0 && (
                           <button onClick={() => moveStage(prog.id, 'left')} className="w-6 h-6 flex items-center justify-center bg-background-100 rounded hover:bg-background-200 cursor-pointer" title="Move back">
-                            <i className="ri-arrow-left-s-line text-foreground-500 text-xs"></i>
+                            <AppIcon className="ri-arrow-left-s-line text-foreground-500 text-xs"></AppIcon>
                           </button>
                         )}
                         {KANBAN_STAGES.findIndex(s => s.key === prog.kanbanStage) < KANBAN_STAGES.length - 1 && (
                           <button onClick={() => moveStage(prog.id, 'right')} className="w-6 h-6 flex items-center justify-center bg-primary-100 rounded hover:bg-primary-200 cursor-pointer" title="Move forward">
-                            <i className="ri-arrow-right-s-line text-primary-700 text-xs"></i>
+                            <AppIcon className="ri-arrow-right-s-line text-primary-700 text-xs"></AppIcon>
                           </button>
                         )}
                       </div>
@@ -278,7 +278,7 @@ export default function MisProgrammeAllocationPage() {
 
         {/* Summary */}
         <div className="flex items-center gap-4 text-[12px] text-foreground-400 bg-background-100/50 rounded-xl border border-background-200/30 p-3">
-          <i className="ri-information-line text-foreground-300 text-sm"></i>
+          <AppIcon className="ri-information-line text-foreground-300 text-sm"></AppIcon>
           <span><strong className="text-foreground-700">{filteredProgrammes.length}</strong> programmes shown</span>
           <span className="text-foreground-300">|</span>
           <span><strong className="text-foreground-700">{totalLearners}</strong> active learners</span>

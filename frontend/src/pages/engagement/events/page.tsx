@@ -81,7 +81,7 @@ function EventForm({
         <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 flex-wrap">
           {(Object.keys(typeConfig) as Array<keyof typeof typeConfig>).map(t => (
             <button key={t} type="button" onClick={() => setForm(f => ({ ...f, type: t as EventFormData['type'] }))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${form.type === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-              <i className={`${typeConfig[t].icon} text-sm`}></i>
+              <AppIcon className={`${typeConfig[t].icon} text-sm`}></AppIcon>
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </button>
           ))}
@@ -295,10 +295,10 @@ export default function EventsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/clubs')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-team-line text-sm"></i> Learner Clubs
+            <AppIcon className="ri-team-line text-sm"></AppIcon> Learner Clubs
           </button>
           <button onClick={() => navigate('/engagement/recognition')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-thumb-up-line text-sm"></i> Recognition
+            <AppIcon className="ri-thumb-up-line text-sm"></AppIcon> Recognition
           </button>
         </div>
 
@@ -320,7 +320,7 @@ export default function EventsPage() {
           </div>
           <div className="flex-1"></div>
           <button onClick={openAddModal} className="flex items-center gap-2 px-4 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-add-line"></i> Add New Event
+            <AppIcon className="ri-add-line"></AppIcon> Add New Event
           </button>
         </div>
 
@@ -328,7 +328,7 @@ export default function EventsPage() {
 
         {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
-            <i className="ri-calendar-event-line text-2xl text-foreground-300"></i>
+            <AppIcon className="ri-calendar-event-line text-2xl text-foreground-300"></AppIcon>
             <p className="text-sm font-semibold text-foreground-700">No events match this view</p>
             <p className="text-[11px] text-foreground-400">Try switching the status or type filter — or add a new event.</p>
           </div>
@@ -343,7 +343,7 @@ export default function EventsPage() {
                 <span className={`absolute inset-y-0 left-0 w-1 ${cfg.bar}`} aria-hidden="true"></span>
                 <div className="flex items-start gap-3 mb-3">
                   <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${cfg.bg} ${cfg.text}`}>
-                    <i className={`${cfg.icon} text-sm`}></i>
+                    <AppIcon className={`${cfg.icon} text-sm`}></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <h4 className="text-[13px] font-semibold text-foreground-900">{event.title}</h4>
@@ -352,13 +352,13 @@ export default function EventsPage() {
                 </div>
                 <p className="text-[11px] text-foreground-500 mb-3">{event.description}</p>
                 <div className="space-y-1 text-[10px] text-foreground-400">
-                  <p><i className="ri-calendar-line mr-1 text-primary-500"></i>{event.date}</p>
-                  <p><i className="ri-time-line mr-1 text-primary-500"></i>{event.time}</p>
-                  <p><i className="ri-map-pin-line mr-1 text-primary-500"></i>{event.location}</p>
-                  <p><i className="ri-user-line mr-1 text-primary-500"></i>{event.organizer}</p>
+                  <p><AppIcon className="ri-calendar-line mr-1 text-primary-500"></AppIcon>{event.date}</p>
+                  <p><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>{event.time}</p>
+                  <p><AppIcon className="ri-map-pin-line mr-1 text-primary-500"></AppIcon>{event.location}</p>
+                  <p><AppIcon className="ri-user-line mr-1 text-primary-500"></AppIcon>{event.organizer}</p>
                 </div>
                 <div className="mt-3 flex items-center gap-1.5 text-[11px] text-foreground-600">
-                  <i className="ri-group-line text-primary-500"></i>
+                  <AppIcon className="ri-group-line text-primary-500"></AppIcon>
                   <span className="font-semibold text-foreground-900">{event.attendees}</span>
                   <span className="text-foreground-400">student{event.attendees === 1 ? '' : 's'} intending to attend</span>
                 </div>
@@ -366,10 +366,10 @@ export default function EventsPage() {
                   <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${event.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : event.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>{event.status}</span>
                   <div className="flex-1"></div>
                   <button onClick={() => openEditModal(event)} className="px-2 py-1.5 bg-background-100 text-foreground-600 rounded-lg text-[10px] font-medium hover:bg-background-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-edit-line mr-0.5"></i> Edit
+                    <AppIcon className="ri-edit-line mr-0.5"></AppIcon> Edit
                   </button>
                   <button onClick={() => setDeleteEventId(event.id)} className="px-2 py-1.5 bg-red-50 text-red-600 rounded-lg text-[10px] font-medium hover:bg-red-100 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-delete-bin-line mr-0.5"></i> Delete
+                    <AppIcon className="ri-delete-bin-line mr-0.5"></AppIcon> Delete
                   </button>
                 </div>
               </div>
@@ -384,13 +384,13 @@ export default function EventsPage() {
             <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
               <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-calendar-event-line text-lg"></i></span>
+                  <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-calendar-event-line text-lg"></AppIcon></span>
                   <div>
                     <h3 className="text-base font-heading font-semibold text-foreground-900">Add New Event</h3>
                     <p className="text-[11px] text-foreground-400">Create a new event for learners</p>
                   </div>
                 </div>
-                <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+                <button onClick={() => setShowAddModal(false)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
               </div>
               <div className="p-5 overflow-y-auto">
                 <EventForm form={addForm} errors={addErrors} setForm={setAddForm} setErrors={setAddErrors} />
@@ -398,7 +398,7 @@ export default function EventsPage() {
               <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
                 <button onClick={() => setShowAddModal(false)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
                 <button onClick={handleAdd} disabled={addSubmitted} className={`px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 ${addSubmitted ? 'bg-emerald-500 text-white' : 'bg-primary-500 text-white hover:bg-primary-600'}`}>
-                  {addSubmitted ? <><i className="ri-check-line"></i> Created!</> : <><i className="ri-add-line"></i> Create Event</>}
+                  {addSubmitted ? <><AppIcon className="ri-check-line"></AppIcon> Created!</> : <><AppIcon className="ri-add-line"></AppIcon> Create Event</>}
                 </button>
               </div>
             </div>
@@ -412,13 +412,13 @@ export default function EventsPage() {
             <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
               <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center"><i className="ri-edit-line text-lg"></i></span>
+                  <span className="w-10 h-10 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center"><AppIcon className="ri-edit-line text-lg"></AppIcon></span>
                   <div>
                     <h3 className="text-base font-heading font-semibold text-foreground-900">Edit Event</h3>
                     <p className="text-[11px] text-foreground-400">Update event details</p>
                   </div>
                 </div>
-                <button onClick={() => setEditEventId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+                <button onClick={() => setEditEventId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
               </div>
               <div className="p-5 overflow-y-auto">
                 <EventForm form={editForm} errors={editErrors} setForm={setEditForm} setErrors={setEditErrors} />
@@ -426,7 +426,7 @@ export default function EventsPage() {
               <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
                 <button onClick={() => setEditEventId(null)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
                 <button onClick={handleEdit} disabled={editSubmitted} className={`px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 ${editSubmitted ? 'bg-emerald-500 text-white' : 'bg-accent-500 text-white hover:bg-accent-600'}`}>
-                  {editSubmitted ? <><i className="ri-check-line"></i> Saved!</> : <><i className="ri-save-line"></i> Save Changes</>}
+                  {editSubmitted ? <><AppIcon className="ri-check-line"></AppIcon> Saved!</> : <><AppIcon className="ri-save-line"></AppIcon> Save Changes</>}
                 </button>
               </div>
             </div>
@@ -440,7 +440,7 @@ export default function EventsPage() {
             <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-sm w-full p-6 flex flex-col gap-4" onClick={e => e.stopPropagation()}>
               <div className="flex items-center gap-3">
                 <span className="w-12 h-12 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
-                  <i className="ri-delete-bin-line text-xl"></i>
+                  <AppIcon className="ri-delete-bin-line text-xl"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-[15px] font-heading font-semibold text-foreground-900">Delete Event</h3>
@@ -455,7 +455,7 @@ export default function EventsPage() {
                   Cancel
                 </button>
                 <button onClick={confirmDelete} className="px-5 py-2 bg-red-600 text-white rounded-lg text-[12px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2">
-                  <i className="ri-delete-bin-line"></i> Delete Event
+                  <AppIcon className="ri-delete-bin-line"></AppIcon> Delete Event
                 </button>
               </div>
             </div>

@@ -68,7 +68,7 @@ function NewSampleModal({ onClose, onCreate }: { onClose: () => void; onCreate: 
       <div className="relative w-full max-w-md bg-background-50 rounded-2xl border border-foreground-200 shadow-2xl shadow-foreground-950/15 overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between p-5 border-b border-foreground-400/50">
           <p className="text-sm font-semibold text-foreground-900">Create New Sample</p>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="p-5 space-y-4">
           <div>
@@ -113,7 +113,7 @@ function NewSampleModal({ onClose, onCreate }: { onClose: () => void; onCreate: 
           <div className="flex gap-2 pt-1">
             <button onClick={onClose} className="flex-1 px-3 py-2.5 border border-background-200 rounded-lg text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
             <button onClick={handleCreate} disabled={!type || !scope || !methodology} className="flex-1 px-3 py-2.5 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1"></i> Create Sample
+              <AppIcon className="ri-add-line mr-1"></AppIcon> Create Sample
             </button>
           </div>
         </div>
@@ -136,7 +136,7 @@ function ReviewModal({ sample, onClose, onStart, onSubmit }: { sample: Sample; o
             <p className="text-sm font-semibold text-foreground-900">{sample.status === 'Scheduled' ? 'Start Sampling' : 'Continue Review'}</p>
             <p className="text-[11px] text-foreground-500 mt-0.5">{sample.id} · {sample.scope}</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-3 text-[12px]">
@@ -176,7 +176,7 @@ function ReviewModal({ sample, onClose, onStart, onSubmit }: { sample: Sample; o
             <button onClick={onClose} className="flex-1 px-3 py-2.5 border border-background-200 rounded-lg text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
             {sample.status === 'Scheduled' ? (
               <button onClick={onStart} className="flex-1 px-3 py-2.5 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-play-circle-line mr-1"></i> Start Sampling
+                <AppIcon className="ri-play-circle-line mr-1"></AppIcon> Start Sampling
               </button>
             ) : showFindings ? (
               <button
@@ -184,11 +184,11 @@ function ReviewModal({ sample, onClose, onStart, onSubmit }: { sample: Sample; o
                 disabled={!findings.trim()}
                 className="flex-1 px-3 py-2.5 bg-emerald-500 text-white rounded-lg text-[12px] font-semibold hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
               >
-                <i className="ri-check-double-line mr-1"></i> Submit Findings
+                <AppIcon className="ri-check-double-line mr-1"></AppIcon> Submit Findings
               </button>
             ) : (
               <button onClick={onClose} className="flex-1 px-3 py-2.5 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <i className="ri-loader-4-line mr-1"></i> Continue Review
+                <AppIcon className="ri-loader-4-line mr-1"></AppIcon> Continue Review
               </button>
             )}
           </div>
@@ -198,7 +198,7 @@ function ReviewModal({ sample, onClose, onStart, onSubmit }: { sample: Sample; o
               onClick={() => setShowFindings(true)}
               className="w-full px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100 transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-file-check-line mr-1"></i> Ready to Submit Findings
+              <AppIcon className="ri-file-check-line mr-1"></AppIcon> Ready to Submit Findings
             </button>
           )}
         </div>
@@ -215,7 +215,7 @@ function ViewDetailsModal({ sample, onClose }: { sample: Sample; onClose: () => 
       <div className="relative w-full max-w-sm bg-background-50 rounded-2xl border border-foreground-200 shadow-2xl shadow-foreground-950/15 overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between p-5 border-b border-foreground-400/50">
           <p className="text-sm font-semibold text-foreground-900">Sample Details — {sample.id}</p>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="p-5 space-y-3 text-[12px]">
           <div className="flex justify-between"><span className="text-foreground-400">Type</span><span className="text-foreground-700 font-medium">{sample.type}</span></div>
@@ -323,7 +323,7 @@ export default function QASamplingPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'foreground' ? 'bg-foreground-100 text-foreground-500' : s.color === 'primary' ? 'bg-primary-100 text-primary-700' : s.color === 'emerald' ? 'bg-emerald-100 text-emerald-700' : 'bg-accent-100 text-accent-700'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -342,7 +342,7 @@ export default function QASamplingPage() {
             onClick={() => setNewOpen(true)}
             className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
           >
-            <i className="ri-add-line mr-1"></i> New Sample
+            <AppIcon className="ri-add-line mr-1"></AppIcon> New Sample
           </button>
         </div>
 

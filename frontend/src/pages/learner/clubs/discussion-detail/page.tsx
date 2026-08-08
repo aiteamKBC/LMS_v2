@@ -85,7 +85,7 @@ export default function DiscussionDetailPage() {
       >
         <div className="p-6 flex flex-col items-center justify-center py-24">
           <span className="w-20 h-20 rounded-3xl bg-foreground-100 flex items-center justify-center mb-6">
-            <i className="ri-emotion-sad-line text-foreground-300 text-3xl"></i>
+            <AppIcon className="ri-emotion-sad-line text-foreground-300 text-3xl"></AppIcon>
           </span>
           <h2 className="text-xl font-heading font-bold text-foreground-900 mb-2">Discussion Not Found</h2>
           <p className="text-sm text-foreground-500 mb-6">We couldn&apos;t find that discussion thread.</p>
@@ -93,7 +93,7 @@ export default function DiscussionDetailPage() {
             to="/learner/clubs"
             className="px-5 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-all whitespace-nowrap"
           >
-            <i className="ri-arrow-left-line mr-1.5"></i> Back to Clubs
+            <AppIcon className="ri-arrow-left-line mr-1.5"></AppIcon> Back to Clubs
           </Link>
         </div>
       </WorkspaceShell>
@@ -193,7 +193,7 @@ export default function DiscussionDetailPage() {
             <div className="bg-background-50 rounded-2xl px-8 py-5 shadow-lg border border-accent-200/60 animate-in zoom-in-50 duration-300">
               <div className="flex items-center gap-3">
                 <span className="w-12 h-12 rounded-full bg-accent-100 text-accent-600 flex items-center justify-center">
-                  <i className="ri-coins-line text-xl"></i>
+                  <AppIcon className="ri-coins-line text-xl"></AppIcon>
                 </span>
                 <div>
                   <p className="text-sm font-heading font-bold text-foreground-900">+25 Points Earned!</p>
@@ -209,7 +209,7 @@ export default function DiscussionDetailPage() {
       {exportToast && (
         <div className="fixed top-20 right-6 z-50 bg-background-50 rounded-xl border border-emerald-200/60 shadow-lg px-4 py-3 flex items-center gap-3 animate-in slide-in-from-right-4 duration-300">
           <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
-            <i className="ri-calendar-check-line"></i>
+            <AppIcon className="ri-calendar-check-line"></AppIcon>
           </span>
           <p className="text-sm font-semibold text-foreground-900">{exportToast}</p>
         </div>
@@ -221,7 +221,7 @@ export default function DiscussionDetailPage() {
           onClick={() => navigate(-1)}
           className="inline-flex items-center gap-1.5 text-sm text-foreground-500 hover:text-foreground-700 transition-all cursor-pointer whitespace-nowrap"
         >
-          <i className="ri-arrow-left-line"></i>
+          <AppIcon className="ri-arrow-left-line"></AppIcon>
           Back to {club?.title || 'Discussions'}
         </button>
 
@@ -263,10 +263,10 @@ export default function DiscussionDetailPage() {
                 onClick={handleLikeDiscussion}
                 className={`text-xs transition-smooth cursor-pointer flex items-center gap-1 ${discussionLiked ? 'text-red-500 font-semibold' : 'text-foreground-400 hover:text-red-500'}`}
               >
-                <i className={`${discussionLiked ? 'ri-heart-fill' : 'ri-heart-line'}`}></i> {discussionLikes} Likes
+                <AppIcon className={`${discussionLiked ? 'ri-heart-fill' : 'ri-heart-line'}`}></AppIcon> {discussionLikes} Likes
               </button>
               <button className="text-xs text-foreground-400 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1">
-                <i className="ri-chat-1-line"></i> {totalReplies} Replies
+                <AppIcon className="ri-chat-1-line"></AppIcon> {totalReplies} Replies
               </button>
               {/* Active viewers indicator — WebSocket simulation */}
               <span className="text-xs text-emerald-600 font-medium flex items-center gap-1">
@@ -282,13 +282,13 @@ export default function DiscussionDetailPage() {
                   className="text-xs text-foreground-400 hover:text-emerald-600 transition-smooth cursor-pointer flex items-center gap-1"
                   title="Add to Calendar"
                 >
-                  <i className="ri-calendar-2-line"></i> Calendar
+                  <AppIcon className="ri-calendar-2-line"></AppIcon> Calendar
                 </button>
                 <button
                   onClick={() => setShowShareModal(!showShareModal)}
                   className="text-xs text-foreground-400 hover:text-accent-600 transition-smooth cursor-pointer flex items-center gap-1"
                 >
-                  <i className="ri-share-forward-line"></i> Share (+25 pts)
+                  <AppIcon className="ri-share-forward-line"></AppIcon> Share (+25 pts)
                 </button>
                 {showShareModal && (
                   <div className="absolute right-0 top-full mt-2 bg-background-50 rounded-xl border border-background-200/60 shadow-lg p-2 z-20 min-w-[180px] animate-in slide-in-from-top-2 duration-200">
@@ -299,7 +299,7 @@ export default function DiscussionDetailPage() {
                         className="flex items-center gap-2 w-full px-3 py-2 rounded-lg text-xs font-semibold hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"
                       >
                         <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${platform.color}`}>
-                          <i className={`${platform.icon} text-xs`}></i>
+                          <AppIcon className={`${platform.icon} text-xs`}></AppIcon>
                         </span>
                         {platform.name === 'Copy Link' ? (
                           <>
@@ -333,7 +333,7 @@ export default function DiscussionDetailPage() {
             {replies.length === 0 ? (
               <div className="text-center py-12 bg-background-50 rounded-xl border border-background-200/50">
                 <span className="w-12 h-12 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-chat-1-line text-foreground-300 text-lg"></i>
+                  <AppIcon className="ri-chat-1-line text-foreground-300 text-lg"></AppIcon>
                 </span>
                 <p className="text-sm text-foreground-500">No replies yet</p>
                 <p className="text-xs text-foreground-400 mt-0.5">Be the first to join the conversation</p>
@@ -358,10 +358,10 @@ export default function DiscussionDetailPage() {
                             onClick={() => handleLikeReply(reply.id)}
                             className={`text-xs transition-smooth cursor-pointer flex items-center gap-1 ${isLiked ? 'text-red-500 font-semibold' : 'text-foreground-400 hover:text-red-400'}`}
                           >
-                            <i className={`${isLiked ? 'ri-heart-fill' : 'ri-heart-line'}`}></i> {reply.likes + (isLiked ? 1 : 0)}
+                            <AppIcon className={`${isLiked ? 'ri-heart-fill' : 'ri-heart-line'}`}></AppIcon> {reply.likes + (isLiked ? 1 : 0)}
                           </button>
                           <button className="text-xs text-foreground-400 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1">
-                            <i className="ri-reply-line"></i> Reply
+                            <AppIcon className="ri-reply-line"></AppIcon> Reply
                           </button>
                         </div>
                       </div>
@@ -394,7 +394,7 @@ export default function DiscussionDetailPage() {
                     disabled={!newReplyText.trim()}
                     className="px-4 py-2 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <i className="ri-send-plane-line mr-1"></i> Post Reply
+                    <AppIcon className="ri-send-plane-line mr-1"></AppIcon> Post Reply
                   </button>
                 </div>
               </div>
@@ -406,7 +406,7 @@ export default function DiscussionDetailPage() {
         {club && (
           <section className="mt-8">
             <div className="flex items-center gap-2 mb-4">
-              <i className="ri-links-line text-foreground-400"></i>
+              <AppIcon className="ri-links-line text-foreground-400"></AppIcon>
               <h3 className="text-sm font-heading font-semibold text-foreground-900">More discussions in {club.title}</h3>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -419,8 +419,8 @@ export default function DiscussionDetailPage() {
                   <p className="text-sm font-semibold text-foreground-900 mb-1 line-clamp-1">{d.title}</p>
                   <p className="text-xs text-foreground-400 line-clamp-2 mb-2">{d.content}</p>
                   <div className="flex items-center gap-3 text-xs text-foreground-400">
-                    <span><i className="ri-heart-line mr-0.5"></i>{d.likes}</span>
-                    <span><i className="ri-chat-1-line mr-0.5"></i>{d.replies}</span>
+                    <span><AppIcon className="ri-heart-line mr-0.5"></AppIcon>{d.likes}</span>
+                    <span><AppIcon className="ri-chat-1-line mr-0.5"></AppIcon>{d.replies}</span>
                     <span className="ml-auto">{d.timeAgo}</span>
                   </div>
                 </Link>
