@@ -9,7 +9,9 @@ import {
   createCurriculumTutor,
   deleteCurriculumCoach,
   deleteCurriculumTutor,
+  fetchCurriculumCoaches,
   fetchCurriculumOverview,
+  fetchCurriculumTutors,
   updateCurriculumCoach,
   updateCurriculumTutor,
   type CurriculumGroup,
@@ -136,7 +138,15 @@ export default function StaffProfilesPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const payload = await fetchCurriculumOverview(undefined, { compact: false });
+      const [tutors, coaches] = await Promise.all([
+        fetchCurriculumTutors(undefined, { skipCache: true }),
+        fetchCurriculumCoaches(undefined, { skipCache: true }),
+      ]);
+      const basePayload = { schema: 'curriculum', stats: {}, programmes: [], modules: [], cohorts: [], groups: [], sessions: [], holidays: [], tutors, coaches } as unknown as CurriculumOverview;
+      setData(basePayload);
+      setLoading(false);
+      const overview = await fetchCurriculumOverview(undefined, { compact: true, skipCache: true, timeoutMs: 15000 }).catch(() => null);
+      const payload = { ...(overview || basePayload), tutors, coaches };
       setData(payload);
       setError(null);
       setSelected(prev => {

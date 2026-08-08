@@ -1,5 +1,57 @@
 export type CurriculumStatus = 'active' | 'draft' | 'archived' | 'published' | 'planned' | 'completed' | string;
 
+/**
+ * Determines if an error is retryable.
+ * Retries only transient failures; permanent errors fail immediately.
+ */
+export function isRetryableError(error: unknown): boolean {
+  // Check for AbortError first (DOMException)
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return false;
+  }
+
+  // Check for HTTP status codes embedded in Error messages from fetchJsonUncached
+  // Format: "Curriculum API returned NNN for /path"
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+
+    // Extract status code from error message if present
+    const statusMatch = error.message.match(/curriculum api returned (\d{3})/i);
+    if (statusMatch) {
+      const status = parseInt(statusMatch[1], 10);
+      // Transient errors (retry)
+      if (status === 408 || status === 429 || (status >= 500 && status <= 599)) {
+        return true;
+      }
+      // Permanent errors (don't retry)
+      if ((status >= 400 && status <= 499)) {
+        return false;
+      }
+    }
+
+    // Network/timeout errors (no HTTP response)
+    if (msg.includes('network') || msg.includes('timeout')) {
+      return true; // Network errors are transient and should be retried
+    }
+  }
+
+  // If it's a Response object (unlikely in production given error handling above)
+  if (error instanceof Response) {
+    const status = error.status;
+    // Transient errors (retry)
+    if (status === 408 || status === 429 || (status >= 500 && status <= 599)) {
+      return true;
+    }
+    // Permanent errors (don't retry)
+    if ((status >= 400 && status <= 499)) {
+      return false;
+    }
+  }
+
+  // Default: retry unknown errors (network issues with no captured status)
+  return true;
+}
+
 interface CurriculumRequestInit {
   method?: string;
   headers?: Record<string, string>;
@@ -511,6 +563,7 @@ export interface CurriculumGroup {
   schedule: string;
   color?: string;
   mode: string;
+  moduleIds?: string[];
   modules: string[];
   sessions: number;
 }
@@ -697,6 +750,225 @@ interface CurriculumCollection<T> {
   results: T[];
 }
 
+// Multi-tier cache: hot cache for recent requests, cold cache for longer TTLs
+interface CacheEntry<T> {
+  value: T;
+  expiresAt: number;
+  hitCount: number;
+  createdAt: number;
+  entityType?: string; // 'programme', 'cohort', 'module', etc. for targeted invalidation
+  entityId?: string;   // the programme/cohort/module ID for invalidation scoping
+}
+
+// Cache tier configuration: TTL and size limits by data category
+const CACHE_TIERS = {
+  // Reference data: frameworks, standards, component types (rarely change)
+  metadata: { ttlMs: 300_000, maxEntries: 200 }, // 5 minutes
+  // Programme trees: structure with cohorts/groups/modules (changes with save)
+  programmeTree: { ttlMs: 60_000, maxEntries: 50 }, // 1 minute (per programme)
+  // Module structures: week/component hierarchies (large, changes with authoring)
+  moduleStructure: { ttlMs: 120_000, maxEntries: 100 }, // 2 minutes
+  // KSB coverage and impact analysis (computed, medium volatility)
+  ksbAnalysis: { ttlMs: 90_000, maxEntries: 50 }, // 1.5 minutes
+  // Dynamic lists: tutors, coaches, sessions (may change frequently)
+  dynamic: { ttlMs: 45_000, maxEntries: 100 }, // 45 seconds
+  // Default tier for other GET requests
+  default: { ttlMs: 30_000, maxEntries: 200 }, // 30 seconds
+} as const;
+
+// Cache statistics for observability
+interface CacheStats {
+  hits: number;
+  misses: number;
+  evictions: number;
+  totalSize: number;
+  entries: number;
+}
+
+class MultiTierCache {
+  private caches = new Map<keyof typeof CACHE_TIERS, Map<string, CacheEntry<unknown>>>();
+  private inFlightRequests = new Map<string, Promise<unknown>>();
+  private stats = new Map<keyof typeof CACHE_TIERS, CacheStats>();
+
+  constructor() {
+    for (const tier of Object.keys(CACHE_TIERS) as Array<keyof typeof CACHE_TIERS>) {
+      this.caches.set(tier, new Map());
+      this.stats.set(tier, { hits: 0, misses: 0, evictions: 0, totalSize: 0, entries: 0 });
+    }
+  }
+
+  private getTier(path: string): keyof typeof CACHE_TIERS {
+    if (path.includes('/standards/') || path.includes('/frameworks/') || path.includes('/component-types')) {
+      return 'metadata';
+    }
+    if (path.includes('/programmes/') && path.includes('/detail/')) {
+      return 'programmeTree';
+    }
+    if (path.includes('/modules/') && !path.includes('/ksb-') && !path.includes('/coverage')) {
+      return 'moduleStructure';
+    }
+    if (path.includes('/ksb-') || path.includes('/coverage') || path.includes('/impact')) {
+      return 'ksbAnalysis';
+    }
+    if (path.includes('/tutors') || path.includes('/coaches') || path.includes('/holidays') || path.includes('/sessions')) {
+      return 'dynamic';
+    }
+    return 'default';
+  }
+
+  private estimateSize(value: unknown): number {
+    if (typeof value === 'string') return value.length * 2;
+    if (typeof value === 'number') return 8;
+    if (typeof value === 'boolean') return 1;
+    if (value === null) return 0;
+    if (Array.isArray(value)) {
+      return 48 + value.reduce((sum, v) => sum + this.estimateSize(v), 0);
+    }
+    if (typeof value === 'object') {
+      try {
+        return JSON.stringify(value).length * 2;
+      } catch {
+        return 1024; // Conservative estimate for unserializable objects
+      }
+    }
+    return 0;
+  }
+
+  get<T>(path: string, options?: { skipCache?: boolean }): CacheEntry<T> | null {
+    if (options?.skipCache) return null;
+    const tier = this.getTier(path);
+    const cache = this.caches.get(tier);
+    const entry = cache?.get(path) as CacheEntry<T> | undefined;
+
+    if (!entry) {
+      const stats = this.stats.get(tier);
+      if (stats) stats.misses += 1;
+      return null;
+    }
+
+    if (entry.expiresAt > Date.now()) {
+      entry.hitCount += 1;
+      const stats = this.stats.get(tier);
+      if (stats) stats.hits += 1;
+      return entry;
+    }
+
+    // Expired entry
+    cache?.delete(path);
+    const stats = this.stats.get(tier);
+    if (stats) {
+      stats.evictions += 1;
+      stats.misses += 1;
+    }
+    return null;
+  }
+
+  set<T>(path: string, value: T, entityType?: string, entityId?: string): void {
+    const tier = this.getTier(path);
+    const cache = this.caches.get(tier);
+    if (!cache) return;
+
+    const tierConfig = CACHE_TIERS[tier];
+    const size = this.estimateSize(value);
+
+    // Evict LRU if cache full
+    if (cache.size >= tierConfig.maxEntries) {
+      let oldest: [string, CacheEntry<unknown>] | null = null;
+      for (const [key, entry] of cache) {
+        if (!oldest || entry.createdAt < oldest[1].createdAt) {
+          oldest = [key, entry];
+        }
+      }
+      if (oldest) {
+        cache.delete(oldest[0]);
+        const stats = this.stats.get(tier);
+        if (stats) stats.evictions += 1;
+      }
+    }
+
+    const entry: CacheEntry<T> = {
+      value,
+      expiresAt: Date.now() + tierConfig.ttlMs,
+      hitCount: 0,
+      createdAt: Date.now(),
+      entityType,
+      entityId,
+    };
+
+    cache.set(path, entry as CacheEntry<unknown>);
+    const stats = this.stats.get(tier);
+    if (stats) {
+      stats.entries = cache.size;
+      stats.totalSize += size;
+    }
+  }
+
+  // Invalidate cache entries by entity (e.g., save programme A → invalidate only programme A's tree)
+  invalidateByEntity(entityType: string, entityId?: string): number {
+    let count = 0;
+    for (const cache of this.caches.values()) {
+      for (const [key, entry] of cache) {
+        if (entry.entityType === entityType && (!entityId || entry.entityId === entityId)) {
+          cache.delete(key);
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }
+
+  // Invalidate cache entries matching a pattern
+  invalidateByPattern(pattern: string | RegExp): number {
+    let count = 0;
+    for (const cache of this.caches.values()) {
+      for (const key of cache.keys()) {
+        const matches = typeof pattern === 'string' ? key.includes(pattern) : pattern.test(key);
+        if (matches) {
+          cache.delete(key);
+          count += 1;
+        }
+      }
+    }
+    return count;
+  }
+
+  clear(): void {
+    for (const cache of this.caches.values()) {
+      cache.clear();
+    }
+    this.inFlightRequests.clear();
+    for (const stats of this.stats.values()) {
+      stats.hits = 0;
+      stats.misses = 0;
+      stats.evictions = 0;
+      stats.entries = 0;
+      stats.totalSize = 0;
+    }
+  }
+
+  getInFlight(key: string): Promise<unknown> | undefined {
+    return this.inFlightRequests.get(key);
+  }
+
+  setInFlight(key: string, promise: Promise<unknown>): void {
+    this.inFlightRequests.set(key, promise);
+  }
+
+  clearInFlight(key: string): void {
+    this.inFlightRequests.delete(key);
+  }
+
+  getStats() {
+    const result: Record<string, CacheStats> = {};
+    for (const [tier, stats] of this.stats) {
+      result[tier] = { ...stats };
+    }
+    return result;
+  }
+}
+
+const multiTierCache = new MultiTierCache();
+
 // Combines several abort signals into one. Prefers the native implementation and
 // falls back to a manual relay for older browsers.
 function anySignal(signals: AbortSignal[]): AbortSignal {
@@ -720,41 +992,94 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
 // noisy "(cancelled)" rows even though the next mount needs the same data.
 const inFlightGets = new Map<string, Promise<unknown>>();
 const completedGets = new Map<string, { value: unknown; expiresAt: number }>();
-const GET_CACHE_TTL_MS = 30_000;
+const GET_CACHE_TTL_MS = 30_000; // Fallback for legacy code
 
 export function clearCurriculumGetCache() {
+  multiTierCache.clear();
   completedGets.clear();
   inFlightGets.clear();
+}
+
+export function invalidateCurriculumCacheByEntity(entityType: string, entityId?: string): number {
+  return multiTierCache.invalidateByEntity(entityType, entityId);
+}
+
+export function getCurriculumCacheStats() {
+  return multiTierCache.getStats();
 }
 
 async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   if (method !== 'GET') {
-    clearCurriculumGetCache();
+    // For mutations, invalidate cache selectively based on the endpoint
+    if (path.includes('/programmes/tree/')) {
+      // Tree save: invalidate all programme trees and related data
+      multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
+      multiTierCache.invalidateByEntity('programme');
+    } else if (path.includes('/programmes/')) {
+      multiTierCache.invalidateByEntity('programme');
+    } else if (path.includes('/cohorts/')) {
+      multiTierCache.invalidateByEntity('cohort');
+    } else if (path.includes('/groups/')) {
+      multiTierCache.invalidateByEntity('group');
+    } else if (path.includes('/modules/')) {
+      multiTierCache.invalidateByEntity('module');
+    } else if (path.includes('/ksb-')) {
+      multiTierCache.invalidateByEntity('ksb');
+    } else {
+      // Fallback: clear all caches for unknown mutations
+      multiTierCache.clear();
+    }
     return fetchJsonUncached<T>(path, init);
   }
 
+  // GET: check multi-tier cache
   if (!init?.skipCache) {
-    const cached = completedGets.get(path);
-    if (cached && cached.expiresAt > Date.now()) {
-      return settleWithCallerAbort(Promise.resolve(cached.value as T), init?.signal);
+    const cached = multiTierCache.get<T>(path, init);
+    if (cached) {
+      return settleWithCallerAbort(Promise.resolve(cached.value), init?.signal);
     }
-    if (cached) completedGets.delete(path);
   }
 
+  // Check in-flight deduplication. skipCache must bypass this too: callers use
+  // it when they need a fresh network request, or when a previous shared GET may
+  // be stuck and should not capture the next attempt.
   const sharedInit = init?.signal ? { ...init, signal: undefined } : init;
-  const existing = inFlightGets.get(path) as Promise<T> | undefined;
+  const existing = init?.skipCache ? undefined : multiTierCache.getInFlight(path) as Promise<T> | undefined;
+
   const pending = existing || fetchJsonUncached<T>(path, sharedInit).then(value => {
-    if (!init?.skipCache) completedGets.set(path, { value, expiresAt: Date.now() + GET_CACHE_TTL_MS });
+    if (!init?.skipCache) {
+      // Tag cache entries with entity type for targeted invalidation
+      let entityType: string | undefined;
+      let entityId: string | undefined;
+      if (path.includes('/programmes/') && path.includes('/detail/')) {
+        entityType = 'programme';
+        const match = path.match(/\/programmes\/([^/]+)\/detail/);
+        entityId = match ? decodeURIComponent(match[1]) : undefined;
+      } else if (path.includes('/cohorts/')) {
+        entityType = 'cohort';
+      } else if (path.includes('/groups/')) {
+        entityType = 'group';
+      } else if (path.includes('/modules/')) {
+        entityType = 'module';
+      } else if (path.includes('/ksb-') || path.includes('/coverage') || path.includes('/impact')) {
+        entityType = 'ksb';
+      }
+      multiTierCache.set(path, value, entityType, entityId);
+    }
     return value;
   });
-  if (!existing) {
-    inFlightGets.set(path, pending as Promise<unknown>);
+
+  if (!existing && !init?.skipCache) {
+    multiTierCache.setInFlight(path, pending as Promise<unknown>);
     const clearInFlight = () => {
-      if (inFlightGets.get(path) === (pending as Promise<unknown>)) inFlightGets.delete(path);
+      if (multiTierCache.getInFlight(path) === (pending as Promise<unknown>)) {
+        multiTierCache.clearInFlight(path);
+      }
     };
     pending.then(clearInFlight, clearInFlight);
   }
+
   return settleWithCallerAbort(pending, init?.signal);
 }
 
@@ -843,8 +1168,8 @@ export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOv
   return fetchJson<CurriculumOverview['stats']>('/curriculum/stats/', { signal });
 }
 
-export function fetchCurriculumProgrammes(signal?: AbortSignal): Promise<CurriculumProgramme[]> {
-  return fetchCollection<CurriculumProgramme>('/curriculum/programmes/', { signal });
+export function fetchCurriculumProgrammes(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumProgramme[]> {
+  return fetchCollection<CurriculumProgramme>('/curriculum/programmes/', { signal, skipCache: options.skipCache });
 }
 
 export function fetchCurriculumKsbFrameworks(signal?: AbortSignal): Promise<CurriculumKsbFramework[]> {
@@ -963,12 +1288,12 @@ export function fetchCurriculumSessions(signal?: AbortSignal): Promise<Curriculu
   return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal });
 }
 
-export function fetchCurriculumTutors(signal?: AbortSignal): Promise<CurriculumStaffProfile[]> {
-  return fetchCollection<CurriculumStaffProfile>('/curriculum/tutors/', { signal });
+export function fetchCurriculumTutors(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumStaffProfile[]> {
+  return fetchCollection<CurriculumStaffProfile>('/curriculum/tutors/', { signal, skipCache: options.skipCache, timeoutMs: 15000 });
 }
 
-export function fetchCurriculumCoaches(signal?: AbortSignal): Promise<CurriculumStaffProfile[]> {
-  return fetchCollection<CurriculumStaffProfile>('/curriculum/coaches/', { signal });
+export function fetchCurriculumCoaches(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumStaffProfile[]> {
+  return fetchCollection<CurriculumStaffProfile>('/curriculum/coaches/', { signal, skipCache: options.skipCache, timeoutMs: 15000 });
 }
 
 export type CurriculumStaffProfileInput = {
@@ -987,8 +1312,8 @@ export function fetchCurriculumHolidays(signal?: AbortSignal): Promise<Curriculu
   return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal });
 }
 
-export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean } = {}): Promise<CurriculumOverview> {
-  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal });
+export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
+  return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, timeoutMs: options.timeoutMs });
 }
 
 export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal): Promise<CurriculumProgrammeDetail> {
@@ -1060,13 +1385,18 @@ export type CurriculumProgrammeTreeInput = {
   programme: CurriculumProgrammeInput & { id?: string; sourceId?: string; programmeId?: string };
   cohorts: Array<CurriculumCohortInput & {
     id: string;
-    groups: Array<CurriculumGroupInput & {
+    groups?: Array<CurriculumGroupInput & {
       id: string;
-      modules: CurriculumModuleAttachmentInput[];
+      modules?: CurriculumModuleAttachmentInput[];
+      modulesPartial?: boolean;
     }>;
   }>;
+  partialTree?: boolean;
   removeMissing?: boolean;
   hydrationComplete?: boolean;
+  removeCohortIds?: string[];
+  removeGroupIds?: string[];
+  removeModuleIds?: string[];
 };
 export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
   id: string;

@@ -106,6 +106,18 @@ export function DatePickerField({
     setViewDate(current => new Date(current.getFullYear(), current.getMonth() + amount, 1));
   };
 
+  const togglePicker = () => {
+    if (disabled) return;
+    setOpen(current => {
+      const next = !current;
+      const nextSelectedDate = dateFromInput(value);
+      if (next && nextSelectedDate) {
+        setViewDate(new Date(nextSelectedDate.getFullYear(), nextSelectedDate.getMonth(), 1));
+      }
+      return next;
+    });
+  };
+
   const picker = open && typeof document !== 'undefined' ? createPortal(
     <div
       ref={panelRef}
@@ -172,7 +184,7 @@ export function DatePickerField({
       <button
         ref={buttonRef}
         type="button"
-        onClick={() => !disabled && setOpen(current => !current)}
+        onClick={togglePicker}
         disabled={disabled}
         className={`mt-1 flex h-[42px] w-full items-center gap-2 rounded-lg border bg-background-50 px-3 text-left text-[13px] font-semibold text-foreground-900 outline-none transition-smooth disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500 ${open ? 'border-primary-300 ring-2 ring-primary-100' : error ? 'border-red-300' : 'border-background-200 hover:border-primary-200'}`}
       >
@@ -205,9 +217,9 @@ function toDateInput(date: Date) {
 }
 
 function formatDatePickerValue(value: string) {
-  const date = dateFromInput(value);
-  if (!date) return '';
-  return date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  const parts = parseDateParts(value);
+  if (!parts) return '';
+  return `${String(parts.day).padStart(2, '0')}/${String(parts.month).padStart(2, '0')}/${parts.year}`;
 }
 
 function buildCalendarDays(viewDate: Date) {

@@ -7,7 +7,7 @@ import re
 import threading
 import uuid
 from collections import Counter, defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
 from urllib import parse as urllib_parse
@@ -62,6 +62,7 @@ LIVE_SESSIONS_TABLE = 'live_sessions'
 LIVE_SESSION_OCCURRENCES_TABLE = 'live_session_occurrences'
 LIVE_SESSION_ATTENDANCE_TABLE = 'live_session_attendance'
 LIVE_SESSION_ARTIFACTS_TABLE = 'live_session_artifacts'
+LIVE_SESSION_RECORDING_EVENTS_TABLE = 'live_session_recording_events'
 
 
 def invalidate_curriculum_cache():
@@ -227,18 +228,6 @@ def ensure_columns(table, specs):
 
 def ensure_ksb_profile_programme_id_column():
     global _KSB_PROFILE_PROGRAMME_ID_READY
-    if _KSB_PROFILE_PROGRAMME_ID_READY:
-        return
-    try:
-        ensure_columns('ksb_profiles', {'programme_id': 'varchar(128)'})
-        if connection.vendor == 'postgresql':
-            with connection.cursor() as cursor:
-                cursor.execute(f'''
-                    create index if not exists curriculum_ksb_profiles_programme_id_idx
-                    on {table_name("ksb_profiles")} ({quote_ident("programme_id")})
-                ''')
-    except Exception as exc:
-        logger.warning('Could not ensure KSB profile programme_id column: %s', exc)
     _KSB_PROFILE_PROGRAMME_ID_READY = True
 
 
@@ -247,11 +236,7 @@ def ensure_ksb_profile_identity_columns():
     try:
         ensure_columns('ksb_profiles', {
             'ksb_profile_id': 'varchar(128)',
-            'legacy_numeric_id': 'bigint',
             'programme_ids': 'jsonb',
-            'cohort_ids': 'jsonb',
-            'group_ids': 'jsonb',
-            'module_catalogue_ids': 'jsonb',
         })
         if connection.vendor == 'postgresql':
             with connection.cursor() as cursor:
@@ -511,6 +496,7 @@ def ensure_live_session_tracking_tables():
     occurrences = authoring_table_name(LIVE_SESSION_OCCURRENCES_TABLE)
     attendance = authoring_table_name(LIVE_SESSION_ATTENDANCE_TABLE)
     artifacts = authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)
+    recording_events = authoring_table_name(LIVE_SESSION_RECORDING_EVENTS_TABLE)
     json_type = 'jsonb' if connection.vendor == 'postgresql' else 'text'
     with connection.cursor() as cursor:
         if connection.vendor == 'postgresql':
@@ -556,11 +542,35 @@ def ensure_live_session_tracking_tables():
                 unique (occurrence_id, artifact_type, graph_artifact_id)
             )
         ''')
+        cursor.execute(f'''
+            create table if not exists {recording_events} (
+                id varchar(128) primary key, live_session_id varchar(128) not null,
+                occurrence_id varchar(128) not null default '', artifact_id varchar(128) not null,
+                preview_session_id varchar(128) not null, event_type varchar(64) not null,
+                viewer_id varchar(255) not null default '', viewer_email varchar(320) not null default '',
+                viewer_name varchar(500) not null default '', viewer_role varchar(128) not null default '',
+                browser_session_id varchar(128) not null default '', client_event_id varchar(128) not null default '',
+                event_time timestamp not null default current_timestamp, video_time_seconds double precision not null default 0,
+                previous_video_time_seconds double precision, duration_seconds double precision,
+                watched_seconds_delta double precision not null default 0, playback_rate double precision not null default 1,
+                volume double precision, muted boolean, skipped boolean not null default false,
+                skip_from_seconds double precision, skip_to_seconds double precision, skip_delta_seconds double precision,
+                viewport_width integer, viewport_height integer, user_agent text not null default '',
+                page_url text not null default '', referrer text not null default '', metadata {json_type},
+                created_at timestamp not null default current_timestamp,
+                foreign key (live_session_id) references {live_sessions} (id) on delete cascade,
+                foreign key (artifact_id) references {artifacts} (id) on delete cascade
+            )
+        ''')
         cursor.execute(f'create index if not exists curriculum_live_occurrence_series_idx on {occurrences} (live_session_id)')
         cursor.execute(f'create index if not exists curriculum_live_occurrence_start_idx on {occurrences} (scheduled_start)')
         cursor.execute(f'create index if not exists curriculum_live_attendance_occurrence_idx on {attendance} (occurrence_id)')
         cursor.execute(f'create index if not exists curriculum_live_artifact_occurrence_idx on {artifacts} (occurrence_id)')
-    for table in (LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE, LIVE_SESSION_ATTENDANCE_TABLE, LIVE_SESSION_ARTIFACTS_TABLE):
+        cursor.execute(f'create index if not exists curriculum_recording_events_artifact_idx on {recording_events} (artifact_id)')
+        cursor.execute(f'create index if not exists curriculum_recording_events_preview_idx on {recording_events} (preview_session_id)')
+        cursor.execute(f'create index if not exists curriculum_recording_events_viewer_idx on {recording_events} (viewer_email, viewer_id)')
+        cursor.execute(f'create index if not exists curriculum_recording_events_time_idx on {recording_events} (event_time)')
+    for table in (LIVE_SESSIONS_TABLE, LIVE_SESSION_OCCURRENCES_TABLE, LIVE_SESSION_ATTENDANCE_TABLE, LIVE_SESSION_ARTIFACTS_TABLE, LIVE_SESSION_RECORDING_EVENTS_TABLE):
         _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
     _LIVE_SESSION_TRACKING_TABLES_READY = True
 
@@ -883,6 +893,63 @@ def teams_event_payload(payload, graph_settings):
     return event, invited_people, presenters, utc_start, duration, repeat, occurrences
 
 
+def teams_single_occurrence_payload(title, target, attendees):
+    return {
+        'subject': title,
+        'body': {
+            'contentType': 'HTML',
+            'content': ''.join([
+                f'<p><strong>{escape(title)}</strong></p>',
+                '<p>Created from the KBC LearningOS Module Builder.</p>',
+            ]),
+        },
+        'start': {
+            'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'),
+            'timeZone': 'UTC',
+        },
+        'end': {
+            'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'),
+            'timeZone': 'UTC',
+        },
+        'attendees': [
+            {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
+            for email in attendees
+        ],
+        'isOnlineMeeting': True,
+        'onlineMeetingProvider': 'teamsForBusiness',
+        'responseRequested': True,
+        'allowNewTimeProposals': True,
+        'hideAttendees': False,
+    }
+
+
+def teams_calendar_minute_key(value):
+    parsed = value if isinstance(value, datetime) else parse_graph_datetime(value)
+    if not parsed:
+        return ''
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed.replace(second=0, microsecond=0).isoformat(timespec='minutes')
+
+
+def teams_series_email_list(*values):
+    emails = []
+    for value in values:
+        if isinstance(value, str):
+            candidates = parse_json_value(value, [])
+            if not isinstance(candidates, list):
+                candidates = re.split(r'[\s,;]+', value)
+        elif isinstance(value, (list, tuple, set)):
+            candidates = value
+        else:
+            candidates = []
+        for candidate in candidates:
+            email = clean_str(candidate).lower()
+            if email and email not in emails:
+                emails.append(email)
+    return emails
+
+
 def teams_online_meeting_owner_id(organizer, join_url=''):
     """Return the organizer object ID required by onlineMeetings Graph routes."""
     configured_id = clean_str(os.environ.get('MICROSOFT_TEAMS_ORGANIZER_ID'))
@@ -1110,8 +1177,28 @@ def attendance_identity(record):
     for key in ('user', 'guest', 'phone', 'encrypted'):
         value = identity.get(key)
         if isinstance(value, dict):
-            return clean_str(value.get('displayName')), clean_str(value.get('id'))
+            display_name = clean_str(value.get('displayName') or value.get('name'))
+            identity_id = clean_str(value.get('id'))
+            if display_name or identity_id:
+                return display_name, identity_id
     return '', ''
+
+
+def attendance_display_name(record):
+    if not isinstance(record, dict):
+        return ''
+    display_name, _identity_id = attendance_identity(record)
+    if display_name:
+        return display_name
+    for key in ('displayName', 'participantDisplayName', 'name'):
+        display_name = clean_str(record.get(key))
+        if display_name:
+            return display_name
+    email = clean_str(record.get('emailAddress') or record.get('email')).lower()
+    if email and '@' in email:
+        local = email.split('@', 1)[0]
+        return ' '.join(part.capitalize() for part in re.split(r'[._-]+', local) if part)
+    return ''
 
 
 def attendance_interval_seconds(intervals):
@@ -1188,6 +1275,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         logger.warning('Unable to update Module Builder Teams event schedule: %s', exc)
         return json_error('Microsoft Teams could not update the meeting schedule.', status=502, detail=str(exc))
 
+    warnings = []
     supplied_occurrences = payload.get('scheduledOccurrences') if isinstance(payload.get('scheduledOccurrences'), list) else []
     if len(supplied_occurrences) > 1:
         target_occurrences = []
@@ -1221,22 +1309,56 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
                 instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
                 instances = instance_response.get('value') if isinstance(instance_response, dict) else []
                 instances = sorted(instances, key=lambda item: clean_str((item.get('start') or {}).get('dateTime')))
+                target_by_key = {
+                    teams_calendar_minute_key(target['start']): target
+                    for target in target_occurrences
+                }
+                invited_people = teams_series_email_list(series.get('presenters'), series.get('attendees'))
+                paired_instances = []
                 for index, target in enumerate(sorted(target_occurrences, key=lambda item: item['session_number'])):
                     if index >= len(instances):
                         break
-                    instance_id = clean_str(instances[index].get('id'))
+                    paired_instances.append((instances[index], target))
+                for instance, target in reversed(paired_instances):
+                    instance_id = clean_str(instance.get('id'))
                     if not instance_id:
                         continue
-                    current_start = parse_graph_datetime((instances[index].get('start') or {}).get('dateTime'))
-                    if current_start and abs((current_start.replace(tzinfo=None) - target['start'].replace(tzinfo=None)).total_seconds()) < 60:
+                    current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
+                    target_key = teams_calendar_minute_key(target['start'])
+                    if current_key and current_key == target_key:
                         continue
-                    microsoft_graph_request('PATCH', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}', payload={
-                        'start': {'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
-                        'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
-                    })
+                    instance_key = urllib_parse.quote(instance_id, safe='')
+                    try:
+                        microsoft_graph_request('PATCH', f'users/{owner_key}/events/{instance_key}', payload={
+                            'start': {'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+                            'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+                        })
+                    except RuntimeError as exc:
+                        microsoft_graph_request(
+                            'POST',
+                            f'users/{owner_key}/events',
+                            payload=teams_single_occurrence_payload(title, target, invited_people),
+                        )
+                        microsoft_graph_request('DELETE', f'users/{owner_key}/events/{instance_key}')
+                        warnings.append({
+                            'code': 'teams_shifted_occurrence_recreated',
+                            'message': 'Microsoft Teams could not move a recurring occurrence across the series boundary, so it was recreated on the wizard date and the old occurrence was removed.',
+                            'detail': str(exc),
+                        })
+                instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
+                instances = instance_response.get('value') if isinstance(instance_response, dict) else []
+                for instance in instances:
+                    instance_id = clean_str(instance.get('id'))
+                    current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
+                    if instance_id and current_key and current_key not in target_by_key:
+                        microsoft_graph_request('DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}')
             except RuntimeError as exc:
                 logger.warning('Unable to update individual Teams event instances: %s', exc)
-                return json_error('Microsoft Teams updated the meeting series, but could not update shifted individual sessions.', status=502, detail=str(exc))
+                warnings.append({
+                    'code': 'teams_individual_occurrences_not_updated',
+                    'message': 'Microsoft Teams updated the meeting series, but could not update shifted individual sessions.',
+                    'detail': str(exc),
+                })
 
     join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or clean_str(series.get('join_url'))
     occurrence_rows = replace_live_session_occurrences(
@@ -1272,6 +1394,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'repeatOccurrences': occurrences if repeat != 'none' else 1,
             'trackedOccurrences': len(occurrence_rows),
         },
+        'warnings': warnings,
     })
 
 
@@ -1321,6 +1444,11 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             for attendance in occurrence['attendance']:
                 attendance['intervals'] = parse_json_value(attendance.get('intervals'), [])
                 attendance['raw_data'] = parse_json_value(attendance.get('raw_data'), {})
+                if not clean_str(attendance.get('display_name')):
+                    attendance['display_name'] = attendance_display_name({
+                        **attendance['raw_data'],
+                        'emailAddress': attendance.get('email') or attendance['raw_data'].get('emailAddress'),
+                    })
             occurrence['artifacts'] = authoring_fetch_all(
                 LIVE_SESSION_ARTIFACTS_TABLE, 'occurrence_id = %s', [occurrence['id']], 'artifact_type asc'
             )
@@ -1387,6 +1515,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
             })
             for record in records:
                 display_name, identity_id = attendance_identity(record)
+                display_name = display_name or attendance_display_name(record)
                 graph_record_id = clean_str(record.get('id') or identity_id or record.get('emailAddress'))
                 stable_key = graph_record_id or uuid.uuid4().hex
                 authoring_upsert(LIVE_SESSION_ATTENDANCE_TABLE, ['id'], {
@@ -1500,12 +1629,121 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     content_type = graph_response.headers.get('Content-Type') or ('text/vtt' if artifact_type == 'transcript' else 'video/mp4')
     filename = f'{live_session_id}-{artifact_type}.{"vtt" if artifact_type == "transcript" else "mp4"}'
     if artifact_type == 'recording':
-        return FileResponse(graph_response, as_attachment=True, filename=filename, content_type=content_type)
+        return FileResponse(
+            graph_response,
+            as_attachment=clean_str(request.GET.get('preview')).lower() not in {'1', 'true', 'yes'},
+            filename=filename,
+            content_type=content_type,
+        )
     content = graph_response.read()
     graph_response.close()
     response = HttpResponse(content, content_type=content_type)
     response['Content-Disposition'] = f'inline; filename="{filename}"'
     return response
+
+
+def safe_float(value, default=0.0):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number != number or number in (float('inf'), float('-inf')):
+        return default
+    return number
+
+
+def parse_client_event_time(value):
+    parsed = parse_graph_datetime(value)
+    if not parsed:
+        return datetime.utcnow()
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+@csrf_exempt
+def curriculum_teams_recording_events(request, live_session_id, artifact_id):
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    payload = json_body(request)
+    if payload is None:
+        return json_error('Invalid JSON body.')
+
+    ensure_live_session_tracking_tables()
+    series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
+    if not series_rows:
+        return json_error('Live session series not found.', status=404)
+    occurrences = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id])
+    occurrence_by_id = {clean_str(row.get('id')): row for row in occurrences}
+    artifacts = authoring_fetch_all(LIVE_SESSION_ARTIFACTS_TABLE, 'id = %s', [artifact_id])
+    artifact = artifacts[0] if artifacts else None
+    occurrence_id = clean_str((artifact or {}).get('occurrence_id'))
+    if not artifact or occurrence_id not in occurrence_by_id:
+        return json_error('Meeting recording not found.', status=404)
+    if clean_str(artifact.get('artifact_type')).lower() != 'recording':
+        return json_error('Only recording artifacts can receive recording tracking events.', status=400)
+
+    viewer = payload.get('viewer') if isinstance(payload.get('viewer'), dict) else {}
+    browser = payload.get('browser') if isinstance(payload.get('browser'), dict) else {}
+    preview_session_id = clean_str(payload.get('previewSessionId'))[:128] or uuid.uuid4().hex
+    events = payload.get('events') if isinstance(payload.get('events'), list) else []
+    if not events:
+        return json_error('No recording events were supplied.', status=400)
+
+    now = datetime.utcnow()
+    saved = 0
+    for event in events[:200]:
+        if not isinstance(event, dict):
+            continue
+        event_type = clean_str(event.get('type') or event.get('eventType'))[:64]
+        if not event_type:
+            continue
+        video_time = max(0.0, safe_float(event.get('videoTimeSeconds') if 'videoTimeSeconds' in event else event.get('videoTime'), 0.0))
+        previous_video_time = event.get('previousVideoTimeSeconds') if 'previousVideoTimeSeconds' in event else event.get('previousVideoTime')
+        previous_video_time = None if previous_video_time is None else max(0.0, safe_float(previous_video_time, 0.0))
+        skip_from = event.get('skipFromSeconds') if 'skipFromSeconds' in event else event.get('skipFrom')
+        skip_to = event.get('skipToSeconds') if 'skipToSeconds' in event else event.get('skipTo')
+        skip_from = None if skip_from is None else max(0.0, safe_float(skip_from, 0.0))
+        skip_to = None if skip_to is None else max(0.0, safe_float(skip_to, 0.0))
+        skip_delta = None
+        if skip_from is not None and skip_to is not None:
+            skip_delta = skip_to - skip_from
+        metadata = event.get('metadata') if isinstance(event.get('metadata'), dict) else {}
+        insert_row(LIVE_SESSION_RECORDING_EVENTS_TABLE, {
+            'id': clean_str(event.get('id'))[:128] or uuid.uuid4().hex,
+            'live_session_id': live_session_id,
+            'occurrence_id': occurrence_id,
+            'artifact_id': artifact_id,
+            'preview_session_id': preview_session_id,
+            'event_type': event_type,
+            'viewer_id': clean_str(viewer.get('id'))[:255],
+            'viewer_email': clean_str(viewer.get('email')).lower()[:320],
+            'viewer_name': clean_str(viewer.get('name'))[:500],
+            'viewer_role': clean_str(viewer.get('role'))[:128],
+            'browser_session_id': clean_str(browser.get('sessionId') or payload.get('browserSessionId'))[:128],
+            'client_event_id': clean_str(event.get('clientEventId') or event.get('id'))[:128],
+            'event_time': parse_client_event_time(event.get('eventTime') or event.get('timestamp')) if event.get('eventTime') or event.get('timestamp') else now,
+            'video_time_seconds': video_time,
+            'previous_video_time_seconds': previous_video_time,
+            'duration_seconds': None if event.get('durationSeconds') is None else max(0.0, safe_float(event.get('durationSeconds'), 0.0)),
+            'watched_seconds_delta': max(0.0, safe_float(event.get('watchedSecondsDelta'), 0.0)),
+            'playback_rate': max(0.0, safe_float(event.get('playbackRate'), 1.0)),
+            'volume': None if event.get('volume') is None else max(0.0, min(1.0, safe_float(event.get('volume'), 0.0))),
+            'muted': bool_payload(event.get('muted')) if event.get('muted') is not None else None,
+            'skipped': bool_payload(event.get('skipped')) or event_type in {'seeked', 'seek_end', 'skip'},
+            'skip_from_seconds': skip_from,
+            'skip_to_seconds': skip_to,
+            'skip_delta_seconds': skip_delta,
+            'viewport_width': parse_int(browser.get('viewportWidth'), 0) or None,
+            'viewport_height': parse_int(browser.get('viewportHeight'), 0) or None,
+            'user_agent': clean_str(browser.get('userAgent') or request.META.get('HTTP_USER_AGENT'))[:1000],
+            'page_url': clean_str(browser.get('pageUrl'))[:1000],
+            'referrer': clean_str(browser.get('referrer') or request.META.get('HTTP_REFERER'))[:1000],
+            'metadata': json.dumps(metadata),
+        })
+        saved += 1
+
+    return JsonResponse({'saved': saved, 'previewSessionId': preview_session_id})
 
 
 def require_fields(payload, fields):
@@ -2035,8 +2273,6 @@ def get_ksb_profile_for_program(program_name, ksb_profiles):
         return None
     for profile in ksb_profiles:
         candidates = [
-            profile.get('programme_id'),
-            profile.get('programme_name'),
             profile.get('name'),
             *ksb_profile_context_ids(profile, 'programme_ids'),
         ]
@@ -2071,7 +2307,7 @@ def ksb_profile_source_id(profile):
     public_id = clean_str((profile or {}).get('id'))
     if public_id.startswith('KSBP-'):
         return public_id
-    return clean_str((profile or {}).get('ksb_profile_id')) or unique_ksb_profile_id((profile or {}).get('programme_id') or '')
+    return clean_str((profile or {}).get('ksb_profile_id')) or unique_ksb_profile_id((profile or {}).get('name') or '')
 
 
 def ksb_profile_context_ids(profile, key, primary_value=''):
@@ -2099,15 +2335,12 @@ def unlink_programmes_from_other_ksb_profiles(active_profile_id, programme_value
         row_id = clean_str(row.get('id'))
         if row_id == clean_str(active_profile_id):
             continue
-        current_primary = clean_str(row.get('programme_id'))
-        current_context = ksb_profile_context_ids(row, 'programme_ids', current_primary)
-        current_values = unique([current_primary, row.get('programme_name'), *current_context])
+        current_context = ksb_profile_context_ids(row, 'programme_ids')
+        current_values = unique(current_context)
         if not any(normalise(value) in targets for value in current_values):
             continue
         next_context = [value for value in current_context if normalise(value) not in targets]
-        next_primary = current_primary if normalise(current_primary) not in targets else (next_context[0] if next_context else '')
         update_rows('ksb_profiles', 'id = %s', [row_id], {
-            'programme_id': next_primary,
             'programme_ids': json.dumps(next_context),
             'updated_at': datetime.utcnow(),
         })
@@ -2374,8 +2607,8 @@ def authoring_modules_as_catalogue_rows():
 
 def profile_matches_visible_programmes(profile, programmes):
     candidates = [
-        profile.get('programme_name'),
         profile.get('name'),
+        *ksb_profile_context_ids(profile, 'programme_ids'),
     ]
     candidate_norms = [normalise(candidate) for candidate in candidates if normalise(candidate)]
     if not candidate_norms:
@@ -2670,8 +2903,6 @@ def ensure_staff_profile_tables():
                     email varchar(255) not null default '',
                     phone varchar(64) not null default '',
                     job_title varchar(255) not null default '',
-                    status varchar(32) not null default 'active',
-                    specialisms {json_type},
                     {assignment_column} {json_type},
                     notes text not null default '',
                     is_archived boolean not null default false,
@@ -2680,11 +2911,9 @@ def ensure_staff_profile_tables():
                 )
             ''')
             if connection.vendor == 'postgresql':
-                cursor.execute(f'alter table {table_name(table)} add column if not exists specialisms {json_type}')
                 cursor.execute(f'alter table {table_name(table)} add column if not exists {assignment_column} {json_type}')
                 cursor.execute(f'alter table {table_name(table)} drop column if exists {stale_assignment_column}')
                 cursor.execute(f'create index if not exists curriculum_{table}_name_idx on {table_name(table)} (name)')
-                cursor.execute(f'create index if not exists curriculum_{table}_status_idx on {table_name(table)} (status)')
     _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.coaches', None)
     _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.tutors', None)
     _STAFF_PROFILE_TABLES_READY = True
@@ -2781,10 +3010,15 @@ def module_assignment_ids(module):
         module.get('id'),
         module.get('moduleId'),
         module.get('moduleCatalogueId'),
+        module.get('module_catalogue_id'),
         module.get('deliveryRowId'),
+        module.get('delivery_row_id'),
         module.get('deliveryModuleId'),
+        module.get('delivery_module_id'),
         module.get('catalogueId'),
+        module.get('catalogue_id'),
         module.get('sourceId'),
+        module.get('source_id'),
     ]
     ids = set()
     for value in values:
@@ -2950,6 +3184,22 @@ def build_staff_profiles(training_rows, profile_rows, role, modules=None):
         merged.values(),
         key=lambda item: (item.get('status') == 'archived', item.get('name', '').lower()),
     )
+
+
+def build_staff_profile_collection(role, visibility='operational'):
+    rebuild_staff_profile_assignments_from_authoring()
+    training_rows = get_training_rows()
+    if visibility != 'all':
+        training_rows = [row for row in training_rows if is_operational_training_row(row)]
+    profile_rows = get_staff_profile_rows(role, include_archived=visibility == 'all')
+    modules = build_modules(
+        get_module_rows(),
+        training_rows,
+        get_program_config_rows(),
+        include_unused=visibility == 'all',
+    )
+    modules = apply_staff_assignments_to_modules(modules, get_tutor_rows())
+    return build_staff_profiles(training_rows, profile_rows, role, modules)
 
 
 def get_curriculum_rows(compact=False):
@@ -3348,6 +3598,9 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
         if cohort_key:
             modules_by_cohort[cohort_key].append(module)
 
+    def module_ids(rows):
+        return [module_id for module_id in unique([clean_str(row.get('module_catalogue_id')) for row in rows]) if module_id]
+
     def module_names(rows):
         return [name for name in unique([clean_str(row.get('title')) for row in rows]) if name]
 
@@ -3362,6 +3615,7 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
         if not cohort_id:
             continue
         cohort_modules = modules_by_cohort.get(cohort_id, [])
+        stored_module_ids = [module_id for module_id in (detail.get('moduleCatalogueIds') or []) if clean_str(module_id)]
         cohorts.append({
             'id': cohort_id,
             'name': clean_str(detail.get('cohortName')),
@@ -3379,6 +3633,7 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
                 normalise(detail.get('cohortName')),
             ), 0),
             'groups': [clean_str(value) for value in (detail.get('groupIds') or []) if clean_str(value)],
+            'moduleIds': module_ids(cohort_modules) or stored_module_ids,
             'modules': module_names(cohort_modules),
             'sessions': session_total(cohort_modules),
             'color': detail.get('color') or '#6941c6',
@@ -3397,6 +3652,7 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             continue
         seen_group_ids.add(group_id)
         group_modules = modules_by_group.get(group_id, [])
+        stored_module_ids = [module_id for module_id in (detail.get('moduleIds') or []) if clean_str(module_id)]
         stored_module_names = [name for name in (detail.get('modules') or []) if clean_str(name)]
         groups.append({
             'id': group_id,
@@ -3418,6 +3674,7 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'schedule': detail.get('schedule') or '',
             'color': detail.get('color') or '',
             'mode': detail.get('mode') or 'Live',
+            'moduleIds': module_ids(group_modules) or stored_module_ids,
             'modules': module_names(group_modules) or stored_module_names,
             'sessions': session_total(group_modules),
         })
@@ -3446,6 +3703,7 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'schedule': '',
             'color': clean_str(first_module.get('color')),
             'mode': 'Live',
+            'moduleIds': module_ids(group_modules),
             'modules': module_names(group_modules),
             'sessions': session_total(group_modules),
         })
@@ -4040,25 +4298,24 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
         behaviour_count = sum(1 for item in normalised_items if item.get('type') == 'B') or len(behaviours)
         mapped_count = sum(1 for entry in entries if entry['status'] == 'mapped')
         framework_id = ksb_profile_source_id(profile)
-        programme_ids = ksb_profile_context_ids(profile, 'programme_ids', profile.get('programme_id'))
-        cohort_ids = ksb_profile_context_ids(profile, 'cohort_ids')
-        group_ids = ksb_profile_context_ids(profile, 'group_ids')
-        module_catalogue_ids = ksb_profile_context_ids(profile, 'module_catalogue_ids')
+        programme_ids = ksb_profile_context_ids(profile, 'programme_ids')
+        primary_programme_id = programme_ids[0] if programme_ids else ''
+        display_name = profile.get('name') or 'KSB Framework'
         frameworks.append({
             'id': framework_id,
             'profileId': profile.get('id'),
             'ksbProfileId': framework_id,
-            'programmeId': profile.get('programme_id') or '',
+            'programmeId': primary_programme_id,
             'programmeIds': programme_ids,
-            'cohortIds': cohort_ids,
-            'groupIds': group_ids,
-            'moduleCatalogueIds': module_catalogue_ids,
-            'name': profile.get('name') or profile.get('programme_name') or 'KSB Framework',
+            'cohortIds': [],
+            'groupIds': [],
+            'moduleCatalogueIds': [],
+            'name': display_name,
             'standard': profile.get('name') or '',
-            'programmeName': profile.get('programme_name') or '',
+            'programmeName': display_name,
             'notes': profile.get('description') or '',
-            'ifateRef': profile.get('programme_name') or '',
-            'level': parse_int(infer_level(profile.get('programme_name')).replace('L', ''), 0),
+            'ifateRef': display_name,
+            'level': parse_int(infer_level(display_name).replace('L', ''), 0),
             'totalKsbs': total,
             'knowledgeCount': knowledge_count,
             'skillCount': skill_count,
@@ -4069,18 +4326,18 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             'lastModified': format_date(profile.get('updated_at')),
             'modifiedBy': profile.get('created_by') or '',
             'version': '1.0',
-            'programmes': programme_ids or ([profile.get('programme_name')] if profile.get('programme_name') else []),
+            'programmes': programme_ids,
         })
         sets.append({
             'frameworkId': framework_id,
             'profileId': profile.get('id'),
             'ksbProfileId': framework_id,
-            'programmeId': profile.get('programme_id') or '',
+            'programmeId': primary_programme_id,
             'programmeIds': programme_ids,
-            'cohortIds': cohort_ids,
-            'groupIds': group_ids,
-            'moduleCatalogueIds': module_catalogue_ids,
-            'programmeName': profile.get('programme_name') or profile.get('name') or 'Programme',
+            'cohortIds': [],
+            'groupIds': [],
+            'moduleCatalogueIds': [],
+            'programmeName': display_name,
             'standard': profile.get('name') or '',
             'notes': profile.get('description') or '',
             'status': 'published' if profile.get('is_active') else 'archived',
@@ -4189,7 +4446,28 @@ def curriculum_results_response(results):
 def module_belongs_to_group(module, group):
     module_group_id = clean_str(module.get('groupId') or module.get('group_id'))
     module_group_name = clean_str(module.get('group') or module.get('groupName') or module.get('group_name'))
-    group_module_names = {normalise(item) for item in (group.get('modules') or [])}
+    group_module_ids = {
+        normalise(item)
+        for item in (group.get('moduleIds') or group.get('module_ids') or [])
+        if clean_str(item)
+    }
+    group_module_names = {
+        normalise(item)
+        for item in (group.get('modules') or group.get('moduleNames') or group.get('module_names') or [])
+        if clean_str(item)
+    }
+    module_ids = [
+        module.get('moduleCatalogueId'),
+        module.get('module_catalogue_id'),
+        module.get('catalogueId'),
+        module.get('moduleId'),
+        module.get('module_id'),
+        module.get('structureId'),
+        module.get('id'),
+        module.get('sourceId'),
+    ]
+    if any(normalise(value) in group_module_ids for value in module_ids if clean_str(value)):
+        return True
     if module_group_id or module_group_name:
         return (
             (bool(module_group_id) and matches_curriculum_identifier(module_group_id, group.get('id')))
@@ -4400,12 +4678,9 @@ def profile_required_ksbs(identifier):
         row_ids = {
             clean_str(row.get('id')),
             f'ksb-{clean_str(row.get("id"))}',
-            clean_str(row.get('legacy_numeric_id')),
-            f'ksb-{clean_str(row.get("legacy_numeric_id"))}',
             clean_str(row.get('ksb_profile_id')),
-            clean_str(row.get('programme_id')),
             slugify(row.get('name') or ''),
-            slugify(row.get('programme_name') or ''),
+            *ksb_profile_context_ids(row, 'programme_ids'),
         }
         if clean_str(identifier) in row_ids or ident in row_ids:
             matched = row
@@ -4518,15 +4793,13 @@ def source_display_metadata(source_type='', source_id=''):
             row for row in get_ksb_profile_rows()
             if ident in {
                 clean_str(row.get('id')),
-                clean_str(row.get('programme_id')),
                 slugify(row.get('name') or ''),
-                slugify(row.get('programme_name') or ''),
-            }
+                *ksb_profile_context_ids(row, 'programme_ids'),
+            } or ident in {slugify(value) for value in ksb_profile_context_ids(row, 'programme_ids')}
         ), None)
         if matched:
-            name = clean_str(matched.get('name') or matched.get('programme_name')) or source_id
-            programme = clean_str(matched.get('programme_name'))
-            label = f'{name} ({programme})' if programme and normalise(programme) != normalise(name) else name
+            name = clean_str(matched.get('name')) or source_id
+            label = name
             return {
                 'source_name': name,
                 'sourceName': name,
@@ -4920,7 +5193,6 @@ def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
         'end_date': format_date(group.get('endDate') or first_row.get('end_date')) or None,
         'schedule': clean_str(group.get('schedule') or existing_group.get('schedule')),
         'color': clean_str(group.get('color') or existing_group.get('color')),
-        'mode': clean_str(group.get('mode')) or 'Live',
         'status': clean_str(group.get('status') or existing_group.get('status')) or 'planned',
         'notes': clean_str(first_row.get('notes') or group.get('notes')),
         'source_type': 'curriculum_authoring',
@@ -4958,7 +5230,6 @@ def serialize_group_authoring_detail(row):
         'endDate': format_date(row.get('end_date')),
         'schedule': row.get('schedule') or '',
         'color': row.get('color') or '',
-        'mode': row.get('mode') or 'Live',
         'status': row.get('status') or 'planned',
         'notes': row.get('notes') or '',
         'sourceType': row.get('source_type') or 'curriculum_authoring',
@@ -5430,14 +5701,11 @@ def ensure_module_authoring_tables():
                 title varchar(500) not null,
                 description text,
                 color varchar(32),
-                status varchar(32) not null default 'draft',
                 sessions_number integer not null default 0,
                 start_date date,
                 end_date date,
                 total_otjh numeric(8,2) not null default 0,
                 quality_score integer not null default 0,
-                source_type varchar(64),
-                source_id varchar(128),
                 ksb_profile_source_id varchar(128),
                 session_week_day varchar(255),
                 session_start_time varchar(32),
@@ -5454,8 +5722,6 @@ def ensure_module_authoring_tables():
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists cohort_name varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists group_id varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists group_name varchar(255)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_type varchar(64)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_profile_source_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_week_day varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_start_time varchar(32)')
@@ -5479,10 +5745,6 @@ def ensure_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column group_id varchar(255)')
             if 'group_name' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column group_name varchar(255)')
-            if 'source_type' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column source_type varchar(64)')
-            if 'source_id' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column source_id varchar(128)')
             if 'ksb_profile_source_id' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_profile_source_id varchar(128)')
             if 'session_week_day' not in columns:
@@ -5764,18 +6026,13 @@ def ensure_module_authoring_tables():
                 programme_name varchar(255) not null default '',
                 module_ids {json_type},
                 module_names {json_type},
-                training_plan_ids {json_type},
                 coach_name varchar(255),
                 tutor_name varchar(255),
                 start_date date,
                 end_date date,
                 schedule varchar(255),
                 color varchar(32),
-                mode varchar(64) not null default 'Live',
-                status varchar(32) not null default 'planned',
                 notes text,
-                source_type varchar(64) not null default 'training_plan',
-                source_id varchar(128),
                 created_at timestamp not null default current_timestamp,
                 updated_at timestamp not null default current_timestamp
             )
@@ -5783,7 +6040,6 @@ def ensure_module_authoring_tables():
         if connection.vendor == 'postgresql':
             cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists module_ids {json_type}')
             cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists module_names {json_type}')
-            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists training_plan_ids {json_type}')
             cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists color varchar(32)')
             cursor.execute(f'create index if not exists curriculum_groups_programme_idx on {authoring_table_name(GROUPS_TABLE)} (programme_id)')
             cursor.execute(f'create index if not exists curriculum_groups_cohort_idx on {authoring_table_name(GROUPS_TABLE)} (cohort_id)')
@@ -5812,7 +6068,6 @@ def ensure_module_authoring_tables():
         _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
     with connection.cursor() as cursor:
         cursor.execute(f'create index if not exists curriculum_modules_title_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (title)')
-        cursor.execute(f'create index if not exists curriculum_modules_source_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (source_id)')
         cursor.execute(f'create index if not exists curriculum_weeks_module_idx on {authoring_table_name(AUTHORING_WEEKS_TABLE)} (module_catalogue_id)')
         cursor.execute(f'create index if not exists curriculum_components_module_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (module_catalogue_id)')
         cursor.execute(f'create index if not exists curriculum_components_week_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (week_id)')
@@ -6269,6 +6524,7 @@ def repair_curriculum_parent_links(programme_id=''):
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")")
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(component_id, '') <> '' and component_id not in (select id from " + authoring_table_name(AUTHORING_COMPONENTS_TABLE) + ")")
+        rebuild_staff_profile_assignments_from_authoring()
     except (Exception, AssertionError):
         logger.warning('Could not repair curriculum parent links.', exc_info=True)
 
@@ -7462,6 +7718,164 @@ def save_component_builder_payload(payload, component_id=None):
     )
 
 
+def teams_delivery_metadata_from_weeks(weeks):
+    for week in weeks or []:
+        for component in week.get('components') or []:
+            if clean_str(component.get('type')).lower().replace('_', '-') != 'live-session':
+                continue
+            settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+            live_session_id = clean_str(settings.get('teamsLiveSessionId'))
+            event_id = clean_str(settings.get('teamsEventId'))
+            join_url = clean_str(settings.get('teamsMeetingUrl') or settings.get('liveSessionUrl'))
+            if not (live_session_id or event_id or join_url):
+                continue
+            return {
+                'teamsMeetingUrl': join_url,
+                'liveSessionUrl': join_url,
+                'teamsLiveSessionId': live_session_id,
+                'teamsOnlineMeetingId': clean_str(settings.get('teamsOnlineMeetingId')),
+                'teamsEventId': event_id,
+                'teamsWebLink': clean_str(settings.get('teamsWebLink')),
+                'teamsMeetingOptionsUrl': clean_str(settings.get('teamsMeetingOptionsUrl')),
+                'teamsOrganizerEmail': clean_str(settings.get('teamsOrganizerEmail')),
+                'teamsAttendees': settings.get('teamsAttendees') or [],
+                'teamsPresenters': settings.get('teamsPresenters') or [],
+                'teamsStartDateTimeUtc': clean_str(settings.get('teamsStartDateTimeUtc') or settings.get('sessionDateTimeUtc')),
+                'teamsDurationMinutes': clean_str(settings.get('teamsDurationMinutes') or settings.get('durationMinutes')),
+                'teamsRepeat': clean_str(settings.get('teamsRepeat')),
+                'teamsRepeatOccurrences': clean_str(settings.get('teamsRepeatOccurrences')),
+                'teamsLobbyBypass': clean_str(settings.get('teamsLobbyBypass')),
+                'teamsRecording': clean_str(settings.get('teamsRecording')),
+                'teamsSpokenLanguage': clean_str(settings.get('teamsSpokenLanguage')),
+                'teamsMeetingType': clean_str(settings.get('teamsMeetingType')),
+                'teamsRequestResponses': settings.get('teamsRequestResponses'),
+                'teamsAllowTimeProposals': settings.get('teamsAllowTimeProposals'),
+                'teamsHideAttendees': settings.get('teamsHideAttendees'),
+            }
+    return {}
+
+
+def teams_delivery_metadata_from_live_session(module_catalogue_id):
+    ensure_live_session_tracking_tables()
+    sessions = authoring_fetch_all(
+        LIVE_SESSIONS_TABLE,
+        "module_catalogue_id = %s and status = 'active'",
+        [module_catalogue_id],
+        'updated_at desc, created_at desc',
+    )
+    if not sessions:
+        return {}
+    settings = live_session_row_to_component_settings(sessions[0])
+    return {
+        'teamsMeetingUrl': settings.get('teamsMeetingUrl') or '',
+        'liveSessionUrl': settings.get('liveSessionUrl') or '',
+        'teamsLiveSessionId': settings.get('teamsLiveSessionId') or '',
+        'teamsOnlineMeetingId': settings.get('teamsOnlineMeetingId') or '',
+        'teamsEventId': settings.get('teamsEventId') or '',
+        'teamsWebLink': settings.get('teamsWebLink') or '',
+        'teamsMeetingOptionsUrl': settings.get('teamsMeetingOptionsUrl') or '',
+        'teamsOrganizerEmail': settings.get('teamsOrganizerEmail') or '',
+        'teamsAttendees': settings.get('teamsAttendees') or [],
+        'teamsPresenters': settings.get('teamsPresenters') or [],
+        'teamsStartDateTimeUtc': settings.get('teamsStartDateTimeUtc') or '',
+        'teamsDurationMinutes': settings.get('teamsDurationMinutes') or '',
+        'teamsRepeat': settings.get('teamsRepeat') or '',
+        'teamsRepeatOccurrences': settings.get('teamsRepeatOccurrences') or '',
+        'teamsLobbyBypass': settings.get('teamsLobbyBypass') or '',
+        'teamsRecording': settings.get('teamsRecording') or '',
+        'teamsSpokenLanguage': settings.get('teamsSpokenLanguage') or '',
+        'teamsMeetingType': settings.get('teamsMeetingType') or '',
+        'teamsRequestResponses': settings.get('teamsRequestResponses'),
+        'teamsAllowTimeProposals': settings.get('teamsAllowTimeProposals'),
+        'teamsHideAttendees': settings.get('teamsHideAttendees'),
+    }
+
+
+def live_session_row_to_component_settings(row):
+    start_datetime = row.get('start_datetime')
+    start_value = start_datetime.isoformat() if hasattr(start_datetime, 'isoformat') else clean_str(start_datetime)
+    join_url = clean_str(row.get('join_url'))
+    return {
+        'teamsMeetingUrl': join_url,
+        'liveSessionUrl': join_url,
+        'teamsLiveSessionId': clean_str(row.get('id')),
+        'teamsOnlineMeetingId': clean_str(row.get('online_meeting_id')),
+        'teamsEventId': clean_str(row.get('graph_event_id')),
+        'teamsWebLink': clean_str(row.get('web_link')),
+        'teamsMeetingOptionsUrl': clean_str(row.get('meeting_options_url')),
+        'teamsOrganizerEmail': clean_str(row.get('organizer_email')),
+        'teamsAttendees': as_json_value(row.get('attendees'), []),
+        'teamsPresenters': as_json_value(row.get('presenters'), []),
+        'teamsStartDateTimeUtc': start_value,
+        'sessionDateTimeUtc': start_value,
+        'teamsDurationMinutes': parse_int(row.get('duration_minutes'), 60),
+        'durationMinutes': parse_int(row.get('duration_minutes'), 60),
+        'teamsProvider': clean_str(row.get('provider')) or 'Microsoft Teams',
+        'teamsRepeat': clean_str(row.get('repeat_pattern')) or 'none',
+        'teamsRepeatOccurrences': parse_int(row.get('repeat_occurrences'), 1),
+        'teamsLobbyBypass': clean_str(row.get('lobby_bypass')) or 'invited',
+        'teamsRecording': clean_str(row.get('recording')) or 'none',
+        'teamsSpokenLanguage': clean_str(row.get('spoken_language')) or 'en-GB',
+        'teamsMeetingType': clean_str(row.get('meeting_type')) or 'live-session',
+        'teamsRequestResponses': bool(row.get('request_responses')),
+        'teamsAllowTimeProposals': bool(row.get('allow_time_proposals')),
+        'teamsHideAttendees': bool(row.get('hide_attendees')),
+    }
+
+
+@csrf_exempt
+def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
+    """Restore the last tracked Teams meeting into a module's live-session components."""
+    if request.method not in ('GET', 'POST'):
+        return json_error('Method not allowed.', status=405)
+    ensure_module_authoring_tables()
+    ensure_live_session_tracking_tables()
+    requested_id = clean_str(module_catalogue_id)
+    resolved_id = resolve_authoring_catalogue_id(requested_id) or requested_id
+    if not authoring_module_exists(resolved_id):
+        return json_error('Module authoring structure not found.', status=404)
+
+    sessions = authoring_fetch_all(
+        LIVE_SESSIONS_TABLE,
+        "module_catalogue_id = %s and status = 'active'",
+        [resolved_id],
+        'updated_at desc, created_at desc',
+    )
+    if not sessions:
+        return json_error('No saved Teams meeting was found for this module.', status=404)
+
+    settings_update = live_session_row_to_component_settings(sessions[0])
+    updated_components = 0
+    if request.method == 'POST':
+        component_rows = active_component_rows(authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE,
+            'module_catalogue_id = %s',
+            [resolved_id],
+            'display_order, id',
+        ))
+        now = datetime.utcnow()
+        for row in component_rows:
+            if frontend_component_type(row.get('type')) != 'live-session':
+                continue
+            current_settings = component_builder_settings(row)
+            update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
+                'settings_json': json_db_value({**current_settings, **settings_update}),
+                'live_sessions_link': settings_update.get('liveSessionUrl') or '',
+                'updated_at': now,
+            })
+            updated_components += 1
+        if updated_components:
+            invalidate_curriculum_cache()
+
+    payload = get_authoring_structure_payload(resolved_id)
+    return JsonResponse({
+        'restored': request.method == 'POST',
+        'updatedComponents': updated_components,
+        'meeting': settings_update,
+        'module': payload,
+    })
+
+
 def get_authoring_structure_payload(module_catalogue_id):
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     if not module_rows:
@@ -7569,6 +7983,9 @@ def get_authoring_structure_payload(module_catalogue_id):
             'tutor': payload.get('tutor') or '',
             'color': payload.get('color') or '',
         }
+    teams_metadata = teams_delivery_metadata_from_weeks(weeks) or teams_delivery_metadata_from_live_session(module_catalogue_id)
+    if teams_metadata:
+        payload['deliveryMetadata'] = {**(payload.get('deliveryMetadata') or {}), **teams_metadata}
     if module.get('source_type') == 'training_plan' and module.get('source_id'):
         training_row = training_row_by_id(module.get('source_id'))
         if training_row:
@@ -7747,6 +8164,9 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
                 'tutor': payload.get('tutor') or '',
                 'color': payload.get('color') or '',
             }
+        teams_metadata = teams_delivery_metadata_from_weeks(weeks)
+        if teams_metadata:
+            payload['deliveryMetadata'] = {**(payload.get('deliveryMetadata') or {}), **teams_metadata}
         if include_quality:
             checklist, score = module_authoring_quality_check(payload)
             payload['qualityChecklist'] = checklist
@@ -7922,6 +8342,7 @@ def authoring_summary_catalogue_item(summary):
             'group': summary.get('group') or '',
             'tutor': summary.get('tutor') or '',
             'coach': summary.get('coach') or '',
+            **teams_delivery_metadata_from_weeks(summary.get('weekStructure') or []),
         },
     }
 
@@ -7931,6 +8352,51 @@ def saved_authoring_catalogue_items():
     for summary in authoring_catalogue_summaries().values():
         items.append(authoring_summary_catalogue_item(summary))
     return items
+
+
+def enrich_curriculum_modules_with_authoring_details(modules):
+    module_ids = unique([
+        clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('moduleId') or module.get('structureId'))
+        for module in modules or []
+        if clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('moduleId') or module.get('structureId'))
+    ])
+    if not module_ids:
+        return modules
+    authoring_payloads = get_authoring_structure_payloads(
+        module_ids,
+        include_staff=False,
+        include_quality=False,
+        include_extra=False,
+    )
+    enriched = []
+    for module in modules or []:
+        module_id = clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('moduleId') or module.get('structureId'))
+        authoring = authoring_payloads.get(module_id)
+        if not authoring:
+            enriched.append(module)
+            continue
+        delivery_metadata = {
+            **(module.get('deliveryMetadata') if isinstance(module.get('deliveryMetadata'), dict) else {}),
+            **(authoring.get('deliveryMetadata') if isinstance(authoring.get('deliveryMetadata'), dict) else {}),
+        }
+        enriched.append({
+            **module,
+            'moduleCatalogueId': authoring.get('catalogueId') or module.get('moduleCatalogueId') or module_id,
+            'catalogueId': authoring.get('catalogueId') or module.get('catalogueId') or module_id,
+            'structureId': authoring.get('catalogueId') or module.get('structureId') or module_id,
+            'name': authoring.get('title') or module.get('name'),
+            'notes': authoring.get('description') if authoring.get('description') is not None else module.get('notes'),
+            'startDate': authoring.get('startDate') or module.get('startDate'),
+            'endDate': authoring.get('endDate') or module.get('endDate'),
+            'sessionsNumber': authoring.get('sessionsNumber') or module.get('sessionsNumber'),
+            'weeks': authoring.get('weeks') or module.get('weeks'),
+            'weekStructure': authoring.get('weekStructure') or module.get('weekStructure') or [],
+            'sessionNames': meaningful_session_names(authoring.get('sessionNames')) or module.get('sessionNames') or [],
+            'moduleKsbMappings': authoring.get('moduleKsbMappings') or module.get('moduleKsbMappings') or [],
+            'ksbCodes': authoring.get('ksbCodes') or module.get('ksbCodes') or [],
+            'deliveryMetadata': delivery_metadata,
+        })
+    return enriched
 
 
 def module_delivery_signature(module):
@@ -8948,6 +9414,9 @@ def curriculum_programmes(request):
 @require_GET
 def curriculum_programme_tree_detail(request, identifier):
     visibility = curriculum_visibility(request)
+    programme_id = clean_str(identifier)
+    repair_curriculum_parent_links(programme_id)
+    invalidate_curriculum_cache()
 
     def build_detail_payload():
         return build_curriculum_programme_tree_detail_payload(identifier, visibility)
@@ -8980,6 +9449,7 @@ def build_curriculum_programme_tree_detail_payload(identifier, visibility):
     programme = find_programme({'programmes': programmes}, identifier)
     if not programme:
         return None
+    repair_curriculum_parent_links(clean_str(programme.get('id') or programme.get('sourceId')))
 
     configs_by_id = program_config_by_id(curriculum_rows['program_configs'])
     programme_training_rows = [
@@ -9025,6 +9495,7 @@ def build_curriculum_programme_tree_detail_payload(identifier, visibility):
         curriculum_rows['program_configs'],
         include_unused=False,
     )
+    modules = enrich_curriculum_modules_with_authoring_details(modules)
     sessions = build_sessions_basic(programme_training_rows, curriculum_rows['modules'], curriculum_rows['program_configs'])
     module_catalogue_ids = unique([
         module.get('moduleCatalogueId')
@@ -9333,7 +9804,7 @@ def upsert_programme_for_tree(payload):
     }
 
 
-def save_tree_cohort(cohort, programme_id, programme_name):
+def save_tree_cohort(cohort, programme_id, programme_name, preserve_missing_groups=False):
     name = clean_str(cohort.get('name'))
     if not name:
         raise ValueError('Cohort name is required.')
@@ -9342,6 +9813,9 @@ def save_tree_cohort(cohort, programme_id, programme_name):
     end_date = cohort.get('endDate') or format_date(calculate_cohort_end_date(cohort.get('startDate'), duration_months))
     existing = fetch_cohort_row(cohort_id) or {}
     holiday_ids = parse_notes_id_list(cohort.get('holidayIds') or cohort.get('holiday_ids'))
+    group_ids = [clean_str(group.get('id') or group.get('groupId') or group.get('sourceId')) for group in cohort.get('groups') or []]
+    if preserve_missing_groups:
+        group_ids = unique([*parse_json_value(existing.get('group_ids'), []), *group_ids])
     payload = {
         'id': cohort_id,
         'name': name,
@@ -9352,7 +9826,7 @@ def save_tree_cohort(cohort, programme_id, programme_name):
         'status': title_case_status(clean_str(existing.get('status')) == 'archived', cohort.get('startDate'), end_date),
         'color': cohort.get('color') or existing.get('color') or '',
         'holidayIds': holiday_ids,
-        'groups': [clean_str(group.get('id') or group.get('groupId') or group.get('sourceId')) for group in cohort.get('groups') or []],
+        'groups': group_ids,
     }
     holiday_rows = cohort.get('holidays') or cohort.get('holidayDetails')
     if holiday_rows is None:
@@ -9401,7 +9875,6 @@ def save_tree_group(group, cohort_row):
         'endDate': group.get('endDate') or cohort['endDate'],
         'schedule': build_group_schedule(group.get('weekDays') or group.get('deliveryDays'), group.get('startTime'), group.get('endTime'), existing.get('schedule')),
         'color': group.get('color') or existing.get('color') or '',
-        'mode': group.get('mode') or existing.get('mode') or 'Live',
         'status': group.get('status') or existing.get('status') or 'planned',
     }
     previous_cohort_id = clean_str(existing.get('cohort_id'))
@@ -9416,7 +9889,7 @@ def save_tree_group(group, cohort_row):
     return curriculum_group_from_authoring_detail(serialize_group_authoring_detail(row))
 
 
-def save_tree_group_modules(group, cohort, modules):
+def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
     saved_catalogue_ids = set()
     saved_modules = []
     for module in modules or []:
@@ -9462,7 +9935,7 @@ def save_tree_group_modules(group, cohort, modules):
         saved = save_module_authoring_structure(catalogue_id, structure_payload)
         saved_catalogue_ids.add(catalogue_id)
         saved_modules.append(saved)
-    removed = unassign_authoring_modules_from_group(group.get('id'), saved_catalogue_ids)
+    removed = [] if preserve_missing else unassign_authoring_modules_from_group(group.get('id'), saved_catalogue_ids)
     group_module_rows = [
         row for row in safe_authoring_module_rows()
         if clean_str(row.get('group_id')) == clean_str(group.get('id'))
@@ -9471,7 +9944,23 @@ def save_tree_group_modules(group, cohort, modules):
         'module_ids': json_db_value(unique([clean_str(row.get('module_catalogue_id')) for row in group_module_rows if row.get('module_catalogue_id')])),
         'module_names': json_db_value(unique([clean_str(row.get('title')) for row in group_module_rows if row.get('title')])),
     })
+    for row in group_module_rows:
+        sync_module_tutor_profile_links(
+            clean_str(row.get('tutor_name')),
+            module_assignment_ids(row),
+        )
     return saved_modules, removed
+
+
+def clean_tree_remove_ids(payload, *keys):
+    ids = []
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str):
+            ids.extend(parse_notes_id_list(value))
+        elif isinstance(value, (list, tuple, set)):
+            ids.extend(value)
+    return unique([clean_str(item) for item in ids if clean_str(item)])
 
 
 @csrf_exempt
@@ -9492,9 +9981,12 @@ def curriculum_programme_tree_save(request):
             saved_cohort_ids = set()
             saved_group_ids = set()
             removed_module_ids = []
+            removed_group_ids = []
+            removed_cohort_ids = []
+            partial_tree = bool_payload(payload.get('partialTree'))
             remove_missing = bool_payload(payload.get('removeMissing')) and bool_payload(payload.get('hydrationComplete'))
             for cohort_payload in payload.get('cohorts') or []:
-                cohort = save_tree_cohort(cohort_payload, programme_id, programme_name)
+                cohort = save_tree_cohort(cohort_payload, programme_id, programme_name, preserve_missing_groups=partial_tree)
                 saved_cohorts.append(cohort)
                 saved_cohort_ids.add(cohort['id'])
                 cohort_row = fetch_cohort_row(cohort['id'])
@@ -9502,9 +9994,56 @@ def curriculum_programme_tree_save(request):
                     group = save_tree_group(group_payload, cohort_row)
                     saved_groups.append(group)
                     saved_group_ids.add(group['id'])
-                    modules, removed = save_tree_group_modules(group, cohort, group_payload.get('modules') or [])
-                    saved_modules.extend(modules)
-                    removed_module_ids.extend(removed)
+                    if not partial_tree or 'modules' in group_payload:
+                        modules, removed = save_tree_group_modules(
+                            group,
+                            cohort,
+                            group_payload.get('modules') or [],
+                            preserve_missing=partial_tree and bool_payload(group_payload.get('modulesPartial')),
+                        )
+                        saved_modules.extend(modules)
+                        removed_module_ids.extend(removed)
+
+            explicit_module_ids = clean_tree_remove_ids(payload, 'removeModuleIds', 'removedModuleIds', 'deleteModuleIds', 'deletedModuleIds')
+            explicit_group_ids = clean_tree_remove_ids(payload, 'removeGroupIds', 'removedGroupIds', 'deleteGroupIds', 'deletedGroupIds')
+            explicit_cohort_ids = clean_tree_remove_ids(payload, 'removeCohortIds', 'removedCohortIds', 'deleteCohortIds', 'deletedCohortIds')
+
+            for module_id in explicit_module_ids:
+                module_row = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id])
+                if not module_row or clean_str((module_row[0] or {}).get('programme_id')) != programme_id:
+                    continue
+                update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
+                    'cohort_id': None,
+                    'cohort_name': '',
+                    'group_id': None,
+                    'group_name': '',
+                })
+                removed_module_ids.append(module_id)
+
+            for group_id in explicit_group_ids:
+                if group_id in saved_group_ids:
+                    continue
+                group_row = fetch_group_row(group_id) or {}
+                if clean_str(group_row.get('programme_id')) != programme_id:
+                    continue
+                removed_module_ids.extend(unassign_authoring_modules_from_group(group_id))
+                authoring_delete(GROUPS_TABLE, 'group_id = %s', [group_id])
+                removed_group_ids.append(group_id)
+
+            for cohort_id in explicit_cohort_ids:
+                if cohort_id in saved_cohort_ids:
+                    continue
+                cohort_row = fetch_cohort_row(cohort_id) or {}
+                if clean_str(cohort_row.get('programme_id')) != programme_id:
+                    continue
+                for group_row in authoring_fetch_all(GROUPS_TABLE, 'cohort_id = %s', [cohort_id]):
+                    group_id = clean_str(group_row.get('group_id'))
+                    if group_id and group_id not in saved_group_ids:
+                        removed_module_ids.extend(unassign_authoring_modules_from_group(group_id))
+                        authoring_delete(GROUPS_TABLE, 'group_id = %s', [group_id])
+                        removed_group_ids.append(group_id)
+                authoring_delete(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
+                removed_cohort_ids.append(cohort_id)
 
             if remove_missing:
                 for group_row in authoring_fetch_all(GROUPS_TABLE, 'programme_id = %s', [programme_id]):
@@ -9512,10 +10051,12 @@ def curriculum_programme_tree_save(request):
                     if group_id and group_id not in saved_group_ids:
                         removed_module_ids.extend(unassign_authoring_modules_from_group(group_id))
                         authoring_delete(GROUPS_TABLE, 'group_id = %s', [group_id])
+                        removed_group_ids.append(group_id)
                 for cohort_row in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, 'programme_id = %s', [programme_id]):
                     cohort_id = clean_str(cohort_row.get('cohort_id'))
                     if cohort_id and cohort_id not in saved_cohort_ids:
                         authoring_delete(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
+                        removed_cohort_ids.append(cohort_id)
 
             repair_curriculum_parent_links(programme_id)
             invalidate_curriculum_cache()
@@ -9534,6 +10075,8 @@ def curriculum_programme_tree_save(request):
         'groups': saved_groups,
         'modules': saved_modules,
         'removedModuleIds': unique(removed_module_ids),
+        'removedGroupIds': unique(removed_group_ids),
+        'removedCohortIds': unique(removed_cohort_ids),
         'removedMissing': remove_missing,
     })
 
@@ -11110,12 +11653,12 @@ def curriculum_ksb_framework_collection(request):
         'id': ksb_profile_id,
         'name': name,
         'ksb_profile_id': ksb_profile_id,
-        'programme_id': programme_id,
-        'programme_ids': json.dumps(payload_context_ids(payload, 'programmeIds', 'programme_ids', ('programmeId', 'programme_id'))),
-        'cohort_ids': json.dumps(payload_context_ids(payload, 'cohortIds', 'cohort_ids', ('cohortId', 'cohort_id'))),
-        'group_ids': json.dumps(payload_context_ids(payload, 'groupIds', 'group_ids', ('groupId', 'group_id'))),
-        'module_catalogue_ids': json.dumps(payload_context_ids(payload, 'moduleCatalogueIds', 'module_catalogue_ids', ('moduleCatalogueId', 'module_catalogue_id', 'catalogueId'))),
-        'programme_name': payload.get('programmeName') or payload.get('programme'),
+        'programme_ids': json.dumps(unique([
+            programme_id,
+            payload.get('programmeName'),
+            payload.get('programme'),
+            *payload_context_ids(payload, 'programmeIds', 'programme_ids', ('programmeId', 'programme_id')),
+        ])),
         'description': payload.get('description') or '',
         'knowledge_codes': json.dumps(payload.get('knowledgeCodes') or []),
         'skill_codes': json.dumps(payload.get('skillCodes') or []),
@@ -11140,11 +11683,17 @@ def curriculum_ksb_framework_detail(request, identifier):
         f'''
         select *
         from {table_name("ksb_profiles")}
-        where cast(id as text) = %s or cast(legacy_numeric_id as text) = %s or ksb_profile_id = %s or programme_id = %s
-        limit 1
+        where cast(id as text) = %s or ksb_profile_id = %s
         ''',
-        [ident, ident, clean_str(identifier), clean_str(identifier)],
+        [ident, clean_str(identifier)],
     )
+    if not rows:
+        rows = [
+            row for row in get_ksb_profile_rows()
+            if clean_str(identifier) in ksb_profile_context_ids(row, 'programme_ids')
+            or ident in ksb_profile_context_ids(row, 'programme_ids')
+            or slugify(identifier) in {slugify(value) for value in ksb_profile_context_ids(row, 'programme_ids')}
+        ][:1]
     if not rows:
         return json_error('KSB framework not found.', status=404)
     profile_id = clean_str(rows[0].get('id'))
@@ -11188,12 +11737,12 @@ def curriculum_ksb_framework_detail(request, identifier):
     updates = {
         'name': payload.get('name'),
         'ksb_profile_id': unique_ksb_profile_id(payload.get('ksbProfileId') or payload.get('ksb_profile_id'), [row.get('ksb_profile_id') for row in get_ksb_profile_rows() if clean_str(row.get('id')) != profile_id]) if any(key in payload for key in ('ksbProfileId', 'ksb_profile_id')) else None,
-        'programme_id': canonical_programme_id(payload.get('programmeId') or payload.get('programme_id'), payload.get('programmeName') or payload.get('programme')) if any(key in payload for key in ('programmeId', 'programme_id', 'programmeName', 'programme')) else None,
-        'programme_ids': json.dumps(payload_context_ids(payload, 'programmeIds', 'programme_ids', ('programmeId', 'programme_id'))) if any(key in payload for key in ('programmeIds', 'programme_ids', 'programmeId', 'programme_id')) else None,
-        'cohort_ids': json.dumps(payload_context_ids(payload, 'cohortIds', 'cohort_ids', ('cohortId', 'cohort_id'))) if any(key in payload for key in ('cohortIds', 'cohort_ids', 'cohortId', 'cohort_id')) else None,
-        'group_ids': json.dumps(payload_context_ids(payload, 'groupIds', 'group_ids', ('groupId', 'group_id'))) if any(key in payload for key in ('groupIds', 'group_ids', 'groupId', 'group_id')) else None,
-        'module_catalogue_ids': json.dumps(payload_context_ids(payload, 'moduleCatalogueIds', 'module_catalogue_ids', ('moduleCatalogueId', 'module_catalogue_id', 'catalogueId'))) if any(key in payload for key in ('moduleCatalogueIds', 'module_catalogue_ids', 'moduleCatalogueId', 'module_catalogue_id', 'catalogueId')) else None,
-        'programme_name': payload.get('programmeName') or payload.get('programme'),
+        'programme_ids': json.dumps(unique([
+            canonical_programme_id(payload.get('programmeId') or payload.get('programme_id'), payload.get('programmeName') or payload.get('programme')),
+            payload.get('programmeName'),
+            payload.get('programme'),
+            *payload_context_ids(payload, 'programmeIds', 'programme_ids', ('programmeId', 'programme_id')),
+        ])) if any(key in payload for key in ('programmeIds', 'programme_ids', 'programmeId', 'programme_id', 'programmeName', 'programme')) else None,
         'description': payload.get('description'),
         'knowledge_codes': json.dumps(payload.get('knowledgeCodes')) if 'knowledgeCodes' in payload else None,
         'skill_codes': json.dumps(payload.get('skillCodes')) if 'skillCodes' in payload else None,
@@ -11582,7 +12131,6 @@ def create_curriculum_group(payload):
             'end_date': payload.get('endDate') or format_date(cohort_row.get('end_date')),
             'schedule': requested_schedule if any(key in payload for key in ('weekDays', 'startTime', 'endTime')) else clean_str(duplicate.get('schedule')),
             'color': clean_str(payload.get('color')) if 'color' in payload else clean_str(duplicate.get('color')),
-            'mode': clean_str(payload.get('mode')) if 'mode' in payload else clean_str(duplicate.get('mode')) or 'Live',
             'status': clean_str(duplicate.get('status')) or 'planned',
         }
         update_group_fields(existing_id, updates)
@@ -11630,7 +12178,6 @@ def create_curriculum_group(payload):
         'endDate': payload.get('endDate') or format_date(cohort_row.get('end_date')),
         'schedule': requested_schedule,
         'color': payload.get('color') or '',
-        'mode': payload.get('mode') or 'Live',
         'status': 'planned',
         'modules': [payload.get('moduleName')] if clean_str(payload.get('moduleName')) else [],
     }
@@ -11748,8 +12295,6 @@ def curriculum_group_detail(request, identifier):
         )
     if 'color' in payload:
         updates['color'] = clean_str(payload.get('color'))
-    if 'mode' in payload and clean_str(payload.get('mode')):
-        updates['mode'] = clean_str(payload.get('mode'))
     if 'status' in payload and clean_str(payload.get('status')):
         updates['status'] = clean_str(payload.get('status'))
     previous_cohort_id = clean_str(group_row.get('cohort_id'))
@@ -12244,7 +12789,6 @@ def update_staffing_assignment(identifier, payload):
 def staff_profile_payload(role, payload, existing=None):
     existing = existing or {}
     name = clean_str(payload.get('name') if 'name' in payload else existing.get('name'))
-    specialisms = staff_payload_list_value(payload.get('specialisms') if 'specialisms' in payload else existing.get('specialisms'))
     profile = {
         'id': clean_str(existing.get('id') or payload.get('id')) or unique_prefixed_id(role.upper(), payload.get('name')),
         'name': name,
@@ -12255,8 +12799,6 @@ def staff_profile_payload(role, payload, existing=None):
             else payload.get('job_title') if 'job_title' in payload
             else existing.get('job_title')
         ),
-        'status': clean_str(payload.get('status') if 'status' in payload else existing.get('status')) or 'active',
-        'specialisms': json_db_value(specialisms),
         'notes': clean_str(payload.get('notes') if 'notes' in payload else existing.get('notes')),
         'is_archived': False,
     }
@@ -12420,6 +12962,123 @@ def sync_group_staff_profile_links(group_id, coach_name='', tutor_name='', modul
     add_staff_profile_assignments('tutor', tutor_name, 'assigned_module_ids', module_assignment_ids)
 
 
+def sync_module_tutor_profile_links(tutor_name='', module_assignment_ids=None):
+    module_assignment_ids = clean_assignment_ids(module_assignment_ids or [])
+    if not module_assignment_ids:
+        return
+    target_key = staff_assignment_key(tutor_name)
+    for row in get_tutor_rows():
+        row_name = staff_profile_name(row)
+        if not target_key or target_key == 'unassigned' or staff_assignment_key(row_name) != target_key:
+            remove_staff_profile_assignments('tutor', row_name, 'assigned_module_ids', module_assignment_ids)
+    add_staff_profile_assignments('tutor', tutor_name, 'assigned_module_ids', module_assignment_ids)
+
+
+def rebuild_staff_profile_assignments_from_authoring():
+    """Mirror staff assignments from normalized curriculum modules/groups."""
+    try:
+        ensure_module_authoring_tables()
+        ensure_staff_profile_tables()
+        module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
+        group_rows = authoring_fetch_all(GROUPS_TABLE)
+        valid_group_ids = {clean_str(row.get('group_id')) for row in group_rows if clean_str(row.get('group_id'))}
+        tutor_module_ids = defaultdict(list)
+        coach_group_ids = defaultdict(list)
+        tutor_names = {}
+        coach_names = {}
+        changed = False
+
+        for module in module_rows:
+            module_id = clean_str(module.get('module_catalogue_id'))
+            if module_id:
+                tutor_key = staff_assignment_key(module.get('tutor_name'))
+                if tutor_key and tutor_key != 'unassigned':
+                    tutor_names.setdefault(tutor_key, clean_str(module.get('tutor_name')))
+                    tutor_module_ids[tutor_key].append(module_id)
+            group_id = clean_str(module.get('group_id'))
+            coach_key = staff_assignment_key(module.get('coach_name'))
+            if coach_key and coach_key != 'unassigned' and group_id and (not valid_group_ids or group_id in valid_group_ids):
+                coach_names.setdefault(coach_key, clean_str(module.get('coach_name')))
+                coach_group_ids[coach_key].append(group_id)
+
+        for group in group_rows:
+            group_id = clean_str(group.get('group_id'))
+            coach_key = staff_assignment_key(group.get('coach_name'))
+            if coach_key and coach_key != 'unassigned' and group_id:
+                coach_names.setdefault(coach_key, clean_str(group.get('coach_name')))
+                coach_group_ids[coach_key].append(group_id)
+
+        tutor_table = staff_profile_table('tutor')
+        tutor_rows = get_staff_profile_rows('tutor', include_archived=True)
+        tutor_by_key = {staff_assignment_key(staff_profile_name(row)): row for row in tutor_rows}
+        tutor_ids = [clean_str(row.get('id')) for row in tutor_rows if clean_str(row.get('id'))]
+        for key, name in tutor_names.items():
+            if key in tutor_by_key:
+                continue
+            row = insert_row(tutor_table, {
+                'id': unique_prefixed_id('TUTOR', name, tutor_ids),
+                'name': name,
+                'email': '',
+                'phone': '',
+                'job_title': '',
+                'assigned_module_ids': json_db_value([]),
+                'notes': '',
+                'is_archived': False,
+            })
+            tutor_ids.append(clean_str(row.get('id')))
+            tutor_rows.append(row)
+            tutor_by_key[key] = row
+            changed = True
+
+        coach_table = staff_profile_table('coach')
+        coach_rows = get_staff_profile_rows('coach', include_archived=True)
+        coach_by_key = {staff_assignment_key(staff_profile_name(row)): row for row in coach_rows}
+        coach_ids = [clean_str(row.get('id')) for row in coach_rows if clean_str(row.get('id'))]
+        for key, name in coach_names.items():
+            if key in coach_by_key:
+                continue
+            row = insert_row(coach_table, {
+                'id': unique_prefixed_id('COACH', name, coach_ids),
+                'name': name,
+                'email': '',
+                'phone': '',
+                'job_title': '',
+                'assigned_group_ids': json_db_value([]),
+                'notes': '',
+                'is_archived': False,
+            })
+            coach_ids.append(clean_str(row.get('id')))
+            coach_rows.append(row)
+            coach_by_key[key] = row
+            changed = True
+
+        for tutor in tutor_rows:
+            key = staff_assignment_key(staff_profile_name(tutor))
+            next_ids = clean_assignment_ids(unique(tutor_module_ids.get(key, [])))
+            existing = clean_assignment_ids(as_json_value(tutor.get('assigned_module_ids'), []))
+            if next_ids != existing:
+                update_rows(tutor_table, 'id = %s', [tutor.get('id')], {
+                    'assigned_module_ids': json_db_value(next_ids),
+                    'updated_at': datetime.utcnow(),
+                })
+                changed = True
+
+        for coach in coach_rows:
+            key = staff_assignment_key(staff_profile_name(coach))
+            next_ids = clean_assignment_ids(unique(coach_group_ids.get(key, [])))
+            existing = clean_assignment_ids(as_json_value(coach.get('assigned_group_ids'), []))
+            if next_ids != existing:
+                update_rows(coach_table, 'id = %s', [coach.get('id')], {
+                    'assigned_group_ids': json_db_value(next_ids),
+                    'updated_at': datetime.utcnow(),
+                })
+                changed = True
+        if changed:
+            invalidate_curriculum_cache()
+    except (Exception, AssertionError):
+        logger.warning('Could not rebuild staff profile assignments from curriculum modules.', exc_info=True)
+
+
 def sync_staff_profile_module_assignments(role, staff_name, assigned_module_ids=None, previous_name='', clear_missing=False):
     return []
 
@@ -12440,17 +13099,10 @@ def current_staff_profile_payload(role, identifier):
 @csrf_exempt
 def curriculum_staff_profile_collection(request, role):
     if request.method == 'GET':
-        include_archived = request.GET.get('include_archived') in {'1', 'true', 'yes'}
-
-        def build_profiles():
-            return [
-                serialize_staff_profile(row, role, [])
-                for row in get_staff_profile_rows(role, include_archived=include_archived)
-            ]
-
+        visibility = curriculum_visibility(request)
         profiles = cached_curriculum_value(
-            f'staff-profiles:{role}:{"all" if include_archived else "active"}',
-            build_profiles,
+            f'staff-profiles:{role}:{visibility}:merged',
+            lambda: build_staff_profile_collection(role, visibility),
         )
         return curriculum_results_response(profiles)
     if request.method != 'POST':

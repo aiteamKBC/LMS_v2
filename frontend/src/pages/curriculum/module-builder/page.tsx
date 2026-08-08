@@ -28,6 +28,7 @@ import {
   makeAuthoringId,
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
+  restoreModuleTeamsMeeting,
   saveModuleStructure,
   uploadComponentResource,
   wizardDraftLocalIdFromKey,
@@ -169,6 +170,14 @@ function moduleSnapshot(module: ModuleCatalogueItem | null) {
   return module ? JSON.stringify(recalculateModule(module)) : '';
 }
 
+function moduleNeedsTeamsRestore(module: ModuleCatalogueItem | null) {
+  if (!module) return false;
+  return module.weekStructure.some(week => week.components.some(component => (
+    component.type === 'live-session'
+    && !String(component.settings?.liveSessionUrl || component.settings?.teamsMeetingUrl || '').trim()
+  )));
+}
+
 async function showBuilderDeleteSwal({
   title,
   message,
@@ -205,6 +214,7 @@ export default function ModuleBuilder() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsWizardModule, setSettingsWizardModule] = useState<ModuleCatalogueItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creatingQuickModule, setCreatingQuickModule] = useState(false);
   const [creatingQuickModuleComplete, setCreatingQuickModuleComplete] = useState(false);
@@ -235,6 +245,7 @@ export default function ModuleBuilder() {
   const [standardsLoading, setStandardsLoading] = useState(false);
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [restoringTeamsModuleId, setRestoringTeamsModuleId] = useState<string | null>(null);
   const [saveStartedAt, setSaveStartedAt] = useState<number | null>(null);
   const [saveElapsedSeconds, setSaveElapsedSeconds] = useState(0);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -385,6 +396,30 @@ export default function ModuleBuilder() {
     [resolveModuleScopeLock, workingModule],
   );
 
+  const settingsWizardProgramme = useMemo(() => {
+    if (!settingsWizardModule) return undefined;
+    const candidateKeys = [
+      settingsWizardModule.programmeId,
+      settingsWizardModule.programmeName,
+      settingsWizardModule.sourceModule?.programmeId,
+      settingsWizardModule.sourceModule?.programme,
+    ].map(normaliseDeepLinkValue).filter(Boolean);
+    return curriculumProgrammes.find(programme => [
+      programme.id,
+      programme.sourceId,
+      programme.name,
+    ].some(value => candidateKeys.includes(normaliseDeepLinkValue(value))));
+  }, [curriculumProgrammes, settingsWizardModule]);
+
+  const openSettingsWizard = useCallback((module: ModuleCatalogueItem) => {
+    setSettingsOpen(false);
+    setSettingsWizardModule(module);
+  }, []);
+
+  const closeSettingsWizard = useCallback(() => {
+    setSettingsWizardModule(null);
+  }, []);
+
   // Scope + module-scoped uploader passed to the shared week-builder editor.
   const weekScopeForModule = useMemo<WeekScope>(() => ({
     courseType: 'paid',
@@ -396,6 +431,55 @@ export default function ModuleBuilder() {
     (componentId, file, componentType) => uploadComponentResource({ moduleCatalogueId: workingModule?.catalogueId || '', componentId, componentType, file }),
     [workingModule?.catalogueId],
   );
+
+  const restoreTeamsMeetingForWorkingModule = useCallback(async () => {
+    const module = workingModule;
+    if (!module?.catalogueId || restoringTeamsModuleId) return;
+    setRestoringTeamsModuleId(module.catalogueId);
+    setActionMessage(null);
+    setNoticeAlert(null);
+    const wasDirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(module) !== savedModuleSnapshotRef.current);
+    try {
+      const result = await restoreModuleTeamsMeeting(module.catalogueId);
+      const meetingSettings = result.meeting as ModuleComponent['settings'];
+      let nextSnapshot = '';
+      setWorkingModule(current => {
+        if (!current || current.catalogueId !== module.catalogueId) return current;
+        const next = recalculateModule({
+          ...current,
+          deliveryMetadata: {
+            ...(current.deliveryMetadata || {}),
+            ...meetingSettings,
+          },
+          weekStructure: current.weekStructure.map(week => ({
+            ...week,
+            components: week.components.map(component => (
+              component.type === 'live-session'
+                ? { ...component, settings: { ...component.settings, ...meetingSettings } }
+                : component
+            )),
+          })),
+        });
+        nextSnapshot = moduleSnapshot(next);
+        return next;
+      });
+      if (!wasDirty && nextSnapshot) {
+        savedModuleSnapshotRef.current = nextSnapshot;
+      }
+      setStorageVersion(version => version + 1);
+      setNoticeAlert({
+        title: 'Teams data restored',
+        message: result.updatedComponents
+          ? `Restored the saved Teams meeting into ${result.updatedComponents} live session component${result.updatedComponents === 1 ? '' : 's'}.`
+          : 'Loaded the saved Teams meeting for this module.',
+      });
+      reload({ silent: true });
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Unable to restore saved Teams data.');
+    } finally {
+      setRestoringTeamsModuleId(null);
+    }
+  }, [reload, restoringTeamsModuleId, workingModule]);
 
   const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
@@ -450,7 +534,17 @@ export default function ModuleBuilder() {
         ksbProfileSourceId: scopeLock.ksbSourceId || base.ksbProfileSourceId,
       } as ModuleBuilderListItem;
       scopedBase.deliveryUsages = (module as ModuleBuilderListItem).deliveryUsages;
-      const next = recalculateModule(scopedBase);
+      let next = recalculateModule(scopedBase);
+      if (moduleNeedsTeamsRestore(next)) {
+        try {
+          const restored = await restoreModuleTeamsMeeting(next.catalogueId);
+          if (restored.module) {
+            next = recalculateModule({ ...next, ...restored.module, sourceModule: next.sourceModule || restored.module.sourceModule });
+          }
+        } catch (err) {
+          console.warn('No saved Teams data could be restored for this module.', err);
+        }
+      }
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
@@ -1244,6 +1338,8 @@ export default function ModuleBuilder() {
                   rulePoints={componentPointsByType[selectedComponent.type]}
                   weekScope={weekScopeForModule}
                   uploadResource={uploadComponentForModule}
+                  restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
+                  restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
                 />
               ) : selectedWeek ? (
                 <ModuleWeekPanel
@@ -1281,7 +1377,7 @@ export default function ModuleBuilder() {
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
             onPreview={() => setPreviewOpen(true)}
-            onSettings={() => setSettingsOpen(true)}
+            onSettings={() => openSettingsWizard(workingModule)}
             onDelete={() => confirmDeleteModule(workingModule)}
             onSave={persistWorkingModule}
           />
@@ -1303,6 +1399,20 @@ export default function ModuleBuilder() {
             onRemoveKsb={mappingId => updateWorkingModule(module => removeKsbMapping(module, { scope: 'module' }, mappingId))}
             onUpdateKsbWeight={(mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, { scope: 'module' }, mappingId, weight))}
             onUpdateKsbClassification={(mappingId, classification) => updateWorkingModule(module => updateKsbMappingClassification(module, { scope: 'module' }, mappingId, classification))}
+          />
+        )}
+        {settingsWizardModule && (
+          <AddCurriculumStructureWizard
+            isOpen={Boolean(settingsWizardModule)}
+            onClose={closeSettingsWizard}
+            onSaved={async () => {
+              closeSettingsWizard();
+              await reload({ silent: true });
+            }}
+            initialProgrammeId={settingsWizardProgramme?.sourceId || settingsWizardProgramme?.id || settingsWizardModule.programmeId || settingsWizardModule.programmeName}
+            initialProgramme={settingsWizardProgramme}
+            initialModuleId={moduleStructureIdentifier(settingsWizardModule) || settingsWizardModule.catalogueId || settingsWizardModule.title}
+            startStep="modules"
           />
         )}
         {previewOpen && <PreviewModal module={workingModule} onClose={() => setPreviewOpen(false)} />}
@@ -1465,7 +1575,7 @@ export default function ModuleBuilder() {
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
                     onBuild={() => openModule(module)}
-                    onSettings={() => openModule(module, true)}
+                    onSettings={() => openSettingsWizard(module)}
                     onDuplicate={() => duplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
                   />
@@ -1493,6 +1603,20 @@ export default function ModuleBuilder() {
             }}
             startStep="programme"
             modulePlacementMode
+          />
+        )}
+        {settingsWizardModule && (
+          <AddCurriculumStructureWizard
+            isOpen={Boolean(settingsWizardModule)}
+            onClose={closeSettingsWizard}
+            onSaved={async () => {
+              closeSettingsWizard();
+              await reload({ silent: true });
+            }}
+            initialProgrammeId={settingsWizardProgramme?.sourceId || settingsWizardProgramme?.id || settingsWizardModule.programmeId || settingsWizardModule.programmeName}
+            initialProgramme={settingsWizardProgramme}
+            initialModuleId={moduleStructureIdentifier(settingsWizardModule) || settingsWizardModule.catalogueId || settingsWizardModule.title}
+            startStep="modules"
           />
         )}
         {ksbMapDisplayModule && (
@@ -1685,7 +1809,7 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onSettings, onDelete,
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <IconButton label="Preview" icon="ri-eye-line" onClick={onPreview} />
-          <IconButton label="Module settings" icon="ri-settings-3-line" onClick={onSettings} />
+          <IconButton label="Module settings" icon="ri-edit-line" onClick={onSettings} />
           <IconButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
           <button onClick={onSave} disabled={saving} className={`inline-flex h-10 min-w-[120px] items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition-smooth disabled:opacity-70 whitespace-nowrap ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
             <i className={saveButtonIcon}></i>{saveButtonLabel}
