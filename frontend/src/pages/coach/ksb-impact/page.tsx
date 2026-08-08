@@ -272,40 +272,6 @@ function toKsbImpactRow(learner: CaseloadApiLearner): KsbImpactRow {
   };
 }
 
-function KsbMetricCard({
-  icon,
-  label,
-  value,
-  tone,
-  secondary,
-}: {
-  icon: string;
-  label: string;
-  value: string;
-  tone: 'purple' | 'blue' | 'amber' | 'green';
-  secondary?: string;
-}) {
-  const toneClasses = {
-    purple: 'bg-violet-50 text-violet-700',
-    blue: 'bg-sky-50 text-sky-700',
-    amber: 'bg-amber-50 text-amber-700',
-    green: 'bg-emerald-50 text-emerald-700',
-  };
-
-  return (
-    <div className="flex min-h-[92px] items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
-      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${toneClasses[tone]}`}>
-        <AppIcon className={`${icon} text-xl`} />
-      </span>
-      <div className="min-w-0">
-        <p className="text-xl font-bold leading-none text-slate-950 md:text-2xl">{value}</p>
-        {secondary && <p className="mt-1 text-[11px] font-semibold text-slate-500">{secondary}</p>}
-        <p className="mt-2 truncate text-[9px] font-bold uppercase tracking-[0.08em] text-slate-400">{label}</p>
-      </div>
-    </div>
-  );
-}
-
 function KsbValue({
   value,
   progress,
@@ -559,37 +525,6 @@ export default function CoachKsbImpact() {
               </span>
             </button>
           </div>
-        </section>
-
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <KsbMetricCard
-            icon="ri-pie-chart-line"
-            label="Overall progress"
-            value={formatKsbPercent(stats.averageOverall)}
-            secondary={formatKsbRatio(stats.totalCompleted, stats.totalTarget)}
-            tone="purple"
-          />
-          <KsbMetricCard
-            icon="ri-book-open-line"
-            label="Knowledge progress"
-            value={formatKsbPercent(stats.totalKnowledgeProgress)}
-            secondary={formatKsbRatio(stats.totalKnowledgeCompleted, stats.totalKnowledgeTarget)}
-            tone="blue"
-          />
-          <KsbMetricCard
-            icon="ri-tools-line"
-            label="Skills progress"
-            value={formatKsbPercent(stats.totalSkillsProgress)}
-            secondary={formatKsbRatio(stats.totalSkillsCompleted, stats.totalSkillsTarget)}
-            tone="amber"
-          />
-          <KsbMetricCard
-            icon="ri-user-heart-line"
-            label="Behaviours progress"
-            value={formatKsbPercent(stats.totalBehavioursProgress)}
-            secondary={formatKsbRatio(stats.totalBehavioursCompleted, stats.totalBehavioursTarget)}
-            tone="green"
-          />
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">

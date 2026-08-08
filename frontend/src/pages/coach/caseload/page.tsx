@@ -1026,18 +1026,19 @@ export default function CoachCaseload() {
             </div>
           </section>
 
-          <section className="flex gap-2 overflow-x-auto rounded-2xl border border-foreground-200/55 bg-white p-3 shadow-sm scrollbar-hide">
+          <section className="grid grid-cols-1 gap-3 rounded-2xl border border-foreground-200/55 bg-white p-3 shadow-sm sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
             <CaseloadStatusTab label="All Learners" count={summaryCounts.total} active={summaryFilter === 'all'} onClick={() => handleSummaryCardClick('all')} />
             <CaseloadStatusTab label="Active" count={summaryCounts.active} active={summaryFilter === 'active'} onClick={() => handleSummaryCardClick('active')} />
+            <CaseloadStatusTab label="On Break" count={summaryCounts.break} active={summaryFilter === 'break'} onClick={() => handleSummaryCardClick('break')} />
             <CaseloadStatusTab label="On Track" count={summaryCounts.onTrack} active={summaryFilter === 'on-track'} onClick={() => handleSummaryCardClick('on-track')} />
             <CaseloadStatusTab label="Need Attention" count={summaryCounts.needAttention} active={summaryFilter === 'need-attention'} onClick={() => handleSummaryCardClick('need-attention')} />
             <CaseloadStatusTab label="At Risk" count={summaryCounts.atRisk} active={summaryFilter === 'at-risk'} onClick={() => handleSummaryCardClick('at-risk')} />
-            <CaseloadStatusTab label="On Break" count={summaryCounts.break} active={summaryFilter === 'break'} onClick={() => handleSummaryCardClick('break')} />
           </section>
 
           <section className="rounded-2xl border border-foreground-200/60 bg-white p-3 shadow-sm">
-            <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-              <div className="relative w-full xl:max-w-[360px]">
+            <div className="space-y-3">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+                <div className="relative w-full xl:flex-1">
                 <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
                 <input
                   type="search"
@@ -1046,48 +1047,51 @@ export default function CoachCaseload() {
                   placeholder="Search by learner name or email..."
                   className="h-10 w-full rounded-xl border border-foreground-200 bg-background-100/70 pl-10 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-300 focus:bg-white focus:ring-2 focus:ring-primary-100"
                 />
-            </div>
-            <div className="flex flex-1 flex-wrap items-center gap-2">
-                <CaseloadMenuSelect
-                  value={sortKey}
-                  onChange={(value) => {
-                    const next = value as 'name' | 'progress' | 'attendance' | 'components' | 'ksb' | 'otjh';
-                    setSortKey(next);
-                    setSortDir(next === 'name' ? 'asc' : 'desc');
-                  }}
-                  options={[
-                    { value: 'name', label: 'Learner Name' },
-                    { value: 'progress', label: 'Overall Progress' },
-                    { value: 'otjh', label: 'OTJH' },
-                    { value: 'attendance', label: 'Attendance' },
-                    { value: 'components', label: 'Components' },
-                    { value: 'ksb', label: 'KSB' },
-                  ]}
-                  minWidth="min-w-[210px]"
-                  icon="ri-sort-asc"
-                  prefixLabel="Sort by"
-                />
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row xl:w-auto xl:items-center">
+                  <CaseloadMenuSelect
+                    value={sortKey}
+                    onChange={(value) => {
+                      const next = value as 'name' | 'progress' | 'attendance' | 'components' | 'ksb' | 'otjh';
+                      setSortKey(next);
+                      setSortDir(next === 'name' ? 'asc' : 'desc');
+                    }}
+                    options={[
+                      { value: 'name', label: 'Learner Name' },
+                      { value: 'progress', label: 'Overall Progress' },
+                      { value: 'otjh', label: 'OTJH' },
+                      { value: 'attendance', label: 'Attendance' },
+                      { value: 'components', label: 'Components' },
+                      { value: 'ksb', label: 'KSB' },
+                    ]}
+                    minWidth="w-full sm:min-w-[220px]"
+                    icon="ri-sort-asc"
+                    prefixLabel="Sort by"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearch('');
+                      setCohortFilter('all');
+                      setGroupFilter('all');
+                      setProgramStatusFilter('all');
+                      setCoachRagFilter('all');
+                      setEmployerFilter('all');
+                      setSummaryFilter('all');
+                      setCurrentPage(1);
+                    }}
+                    className="inline-flex h-10 items-center justify-center rounded-xl border border-transparent px-3.5 text-[11px] font-semibold text-foreground-500 transition hover:border-foreground-200 hover:bg-background-100 hover:text-foreground-800"
+                  >
+                    Clear Filters
+                  </button>
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
                 <FilterDropdown label="Cohort" value={cohortFilter} onChange={(value) => { setCohortFilter(value); setCurrentPage(1); }} options={cohortOptions} />
                 <FilterDropdown label="Group" value={groupFilter} onChange={(value) => { setGroupFilter(value); setCurrentPage(1); }} options={groupOptions} />
                 <FilterDropdown label="Programme" value={programStatusFilter} onChange={(value) => { setProgramStatusFilter(value); setCurrentPage(1); }} options={programStatusOptions} />
                 <FilterDropdown label="Employer" value={employerFilter} onChange={(value) => { setEmployerFilter(value); setCurrentPage(1); }} options={employerOptions} />
-                <FilterDropdown label="Learner Status" value={coachRagFilter} onChange={(value) => { setCoachRagFilter(value); setCurrentPage(1); }} options={coachRagOptions} />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearch('');
-                    setCohortFilter('all');
-                    setGroupFilter('all');
-                    setProgramStatusFilter('all');
-                    setCoachRagFilter('all');
-                    setEmployerFilter('all');
-                    setSummaryFilter('all');
-                    setCurrentPage(1);
-                  }}
-                  className="h-10 rounded-xl px-3 text-[11px] font-semibold text-foreground-400 transition hover:bg-background-100 hover:text-foreground-700"
-                >
-                  Clear Filters
-                </button>
+                <FilterDropdown label="Coach RAG" value={coachRagFilter} onChange={(value) => { setCoachRagFilter(value); setCurrentPage(1); }} options={coachRagOptions} />
               </div>
             </div>
           </section>
@@ -2035,12 +2039,17 @@ function CaseloadStatusTab({ label, count, active, onClick }: { label: string; c
     <button
       type="button"
       onClick={onClick}
-      className={`flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-2 text-[11px] font-semibold transition ${
-        active ? 'border-primary-600 bg-primary-600 text-white shadow-sm' : 'border-foreground-200 bg-white text-foreground-500 hover:border-primary-200 hover:text-primary-700'
+      className={`flex min-h-[72px] w-full items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition ${
+        active
+          ? 'border-primary-500 bg-primary-600 text-white shadow-[0_16px_30px_-24px_rgba(83,43,170,0.55)]'
+          : 'border-foreground-200 bg-background-50/90 text-foreground-600 hover:border-primary-200 hover:bg-primary-50/40 hover:text-primary-700'
       }`}
     >
-      {label}
-      <span className={`rounded-full px-1.5 py-0.5 text-[9px] ${active ? 'bg-white/20 text-white' : 'bg-background-100 text-foreground-400'}`}>{count}</span>
+      <div className="min-w-0">
+        <p className={`truncate text-[12px] font-semibold ${active ? 'text-white' : 'text-foreground-900'}`}>{label}</p>
+        <p className={`mt-1 text-[10px] ${active ? 'text-white/75' : 'text-foreground-400'}`}>{active ? 'Currently applied' : 'Tap to filter learners'}</p>
+      </div>
+      <span className={`inline-flex min-w-[34px] items-center justify-center rounded-full px-2 py-1 text-[10px] font-bold ${active ? 'bg-white/18 text-white' : 'bg-white text-foreground-500 shadow-sm'}`}>{count}</span>
     </button>
   );
 }
@@ -2182,7 +2191,7 @@ function ReferenceLearnerTable({
             {selectionMode && <th className="w-12 px-4 py-3 text-center">Select</th>}
             <th className="px-4 py-3">Learner</th>
             <th>Cohort / Group</th>
-            <th>Status</th>
+            <th>Coach RAG</th>
             <th>OTJH</th>
             <th>Attendance</th>
             <th>Components</th>
@@ -2195,6 +2204,9 @@ function ReferenceLearnerTable({
         <tbody className="divide-y divide-foreground-100">
           {learners.map((learner) => {
             const selected = selectedLearnerIds.has(learner.id);
+            const coachRagStyle = getCoachRagStyle(learner.coachRag);
+            const coachRagDot = getCoachRagDotClass(learner.coachRag);
+            const programStatusStyle = getProgramStatusStyle(learner.rawProgramStatus);
             return (
             <tr key={learner.id} className={`text-[11px] text-foreground-600 hover:bg-primary-50/25 ${selected ? 'bg-primary-50/35' : ''}`}>
               {selectionMode && (
@@ -2208,9 +2220,19 @@ function ReferenceLearnerTable({
                   />
                 </td>
               )}
-              <td className="px-4 py-3"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-50 text-[9px] font-bold text-primary-700">{learner.initials}</span><div><p className="font-bold text-foreground-900">{learner.name}</p><p className="text-[9px] text-foreground-400">{learner.email || learner.employer}</p></div></div></td>
+              <td className="px-4 py-3"><div className="flex items-center gap-2.5"><button type="button" onClick={(event) => { event.stopPropagation(); onOpen(learner); }} aria-label={`Open profile for ${learner.name}`} title="View profile" className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-50 text-[9px] font-bold text-primary-700 transition hover:bg-primary-100 hover:text-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-200">{learner.initials}</button><div><p className="font-bold text-foreground-900">{learner.name}</p><p className="text-[9px] text-foreground-400">{learner.email || learner.employer}</p></div></div></td>
               <td><p>{learner.cohortName}</p><p className="text-[9px] text-foreground-400">{learner.group}</p></td>
-              <td><span className={`rounded-full border px-2 py-1 text-[9px] ${getProgramStatusStyle(learner.rawProgramStatus).bg} ${getProgramStatusStyle(learner.rawProgramStatus).text}`}>{displayValue(learner.rawProgramStatus)}</span></td>
+              <td>
+                <div className="flex flex-col items-center gap-1">
+                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[9px] font-semibold ${coachRagStyle.bg} ${coachRagStyle.text}`}>
+                    <span className={`h-2 w-2 rounded-full ${coachRagDot}`}></span>
+                    {displayValue(learner.coachRag)}
+                  </span>
+                  <span className={`rounded-full border px-2 py-0.5 text-[8px] font-medium ${programStatusStyle.bg} ${programStatusStyle.text}`}>
+                    {displayValue(learner.rawProgramStatus)}
+                  </span>
+                </div>
+              </td>
               <td className="font-semibold">{formatHoursValue(learner.otjhCompleted)}/{formatHoursValue(learner.otjhTarget)}h</td>
               <td>
                 <p className="font-semibold">{formatPercentValue(learner.liveAttendanceRate)}</p>
@@ -2730,7 +2752,7 @@ function FilterDropdown({ label, value, onChange, options }: { label: string; va
       value={value}
       onChange={onChange}
       options={[{ value: 'all', label: allLabel }, ...options]}
-      minWidth={label === 'Programme' || label === 'Learner Status' ? 'min-w-[150px]' : 'min-w-[132px]'}
+      minWidth={label === 'Programme' || label === 'Learner Status' ? 'w-full min-w-[150px]' : 'w-full min-w-[132px]'}
     />
   );
 }
@@ -2739,7 +2761,7 @@ function CaseloadMenuSelect({
   value,
   onChange,
   options,
-  minWidth = 'min-w-[132px]',
+  minWidth = 'w-full min-w-[132px]',
   icon,
   prefixLabel,
 }: {
@@ -2777,10 +2799,10 @@ function CaseloadMenuSelect({
         onClick={() => setOpen((current) => !current)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`flex h-10 w-full items-center gap-2 rounded-xl border bg-white px-3.5 text-left text-[11px] font-semibold shadow-sm transition ${
+        className={`flex h-10 w-full items-center gap-2 rounded-xl border bg-background-50 px-3.5 text-left text-[11px] font-semibold shadow-sm transition ${
           open
-            ? 'border-primary-400 text-foreground-900 ring-2 ring-primary-100'
-            : 'border-foreground-200 text-foreground-600 hover:border-primary-300'
+            ? 'border-primary-400 bg-white text-foreground-900 ring-2 ring-primary-100'
+            : 'border-foreground-200 text-foreground-600 hover:border-primary-300 hover:bg-white'
         }`}
       >
         {icon && <AppIcon className={`${icon} text-[12px] text-foreground-400`}></AppIcon>}
