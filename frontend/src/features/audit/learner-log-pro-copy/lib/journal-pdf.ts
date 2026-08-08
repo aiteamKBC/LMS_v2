@@ -12,6 +12,8 @@ type JournalActivity = {
   delivery_method: string;
   activity_category: string;
   time_from_to: string | null;
+  time_from: string | null;
+  time_to: string | null;
   actual_lms_hours: number | null;
 };
 
@@ -212,20 +214,36 @@ export async function downloadLearnerJournalPdf(
     showHead: "everyPage",
     showFoot: "lastPage",
     rowPageBreak: "avoid",
-    head: [["Date", "Activity ID", "Section title", "Activity details", "Type", "Time", "Claimed", "Accepted", "Paid"]],
+    // Two header rows so "Time" can sit above its From / To pair; every other
+    // column spans both rows to keep the grid aligned.
+    head: [
+      [
+        { content: "Date", rowSpan: 2 },
+        { content: "Activity ID", rowSpan: 2 },
+        { content: "Section title", rowSpan: 2 },
+        { content: "Activity details", rowSpan: 2 },
+        { content: "Type", rowSpan: 2 },
+        { content: "Time", colSpan: 2, styles: { halign: "center" as const } },
+        { content: "Claimed", rowSpan: 2, styles: { halign: "right" as const } },
+        { content: "Accepted", rowSpan: 2, styles: { halign: "right" as const } },
+        { content: "Paid", rowSpan: 2, styles: { halign: "center" as const } },
+      ],
+      ["From", "To"],
+    ],
     body: rows.map((row) => [
       displayDate(row.learner_activity_date),
       compactId(row.plan_id || "-"),
       row.section_title || "-",
       activityDetails(row),
       row.delivery_method || row.activity_category || "-",
-      row.time_from_to ?? "-",
+      row.time_from ?? "-",
+      row.time_to ?? "-",
       hours(row.actual_lms_hours),
       hours(row.actual_lms_hours),
       "Yes",
     ]),
     foot: [[
-      { content: "MONTH TOTAL", colSpan: 6, styles: { halign: "right" as const } },
+      { content: "MONTH TOTAL", colSpan: 7, styles: { halign: "right" as const } },
       hours(learner.actual_hours), hours(learner.actual_hours), "",
     ]],
     styles: {
@@ -238,12 +256,14 @@ export async function downloadLearnerJournalPdf(
     alternateRowStyles: { fillColor: [247, 249, 252] },
     columnStyles: {
       0: { cellWidth: 23 }, 1: { cellWidth: 25 }, 2: { cellWidth: 38 }, 3: { cellWidth: 78 },
-      4: { cellWidth: 32 }, 5: { cellWidth: 24 },
-      6: { cellWidth: 19, halign: "right", fontStyle: "bold" },
-      7: { cellWidth: 20, halign: "right", fontStyle: "bold" }, 8: { cellWidth: 14, halign: "center" },
+      4: { cellWidth: 32 },
+      // The old 24mm "Time" column, split evenly between From and To.
+      5: { cellWidth: 12, halign: "center" }, 6: { cellWidth: 12, halign: "center" },
+      7: { cellWidth: 19, halign: "right", fontStyle: "bold" },
+      8: { cellWidth: 20, halign: "right", fontStyle: "bold" }, 9: { cellWidth: 14, halign: "center" },
     },
     didParseCell: (data) => {
-      if (data.section === "body" && data.column.index === 8) {
+      if (data.section === "body" && data.column.index === 9) {
         data.cell.styles.textColor = green;
         data.cell.styles.fontStyle = "bold";
       }

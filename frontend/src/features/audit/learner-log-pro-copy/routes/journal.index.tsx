@@ -118,6 +118,12 @@ function SignatureCapture({ label, signer, value, onChange, onRemove, canRemove,
   );
 }
 
+// Per-activity hours are shown as whole hours across the log tables; the month
+// totals stay exact, so a column can differ from its total by the remainder.
+function roundHours(value: number | null | undefined) {
+  return value == null ? "—" : String(Math.round(value));
+}
+
 function Stat({ label, value, tone = "navy" }: { label: string; value: string; tone?: "navy" | "purple" | "success" | "warning" }) {
   const accent = {
     navy: "bg-[#182d48]",
@@ -130,6 +136,58 @@ function Stat({ label, value, tone = "navy" }: { label: string; value: string; t
       <span className={`absolute inset-y-0 left-0 w-1.5 ${accent}`} />
       <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
       <p className="mt-2 font-mono text-xl font-semibold text-[#182d48]">{value}</p>
+    </div>
+  );
+}
+
+function otjhStatusLabel(status: string) {
+  switch ((status || "").toLowerCase()) {
+    case "over_target": return "Over target";
+    case "below_target": return "Below target";
+    case "happy_conflict": return "Conflict";
+    case "rebuilt": return "Rebuilt (in band)";
+    case "happy": return "In band";
+    case "skipped_empty": return "No activity";
+    default: return status || "—";
+  }
+}
+
+// Per-month off-the-job-hours adjustment: the engineered hour breakdown vs the
+// Aptem actual, plus the review flag.
+function OtjhCard({ otjh }: { otjh?: any }) {
+  if (!otjh) return null;
+  const hour = (value: number | null | undefined) =>
+    value == null ? "—" : `${Number(value).toFixed(2)} h`;
+  const flagged = Boolean(otjh.flagged);
+  return (
+    <div className={`rounded-lg border px-5 py-4 ${flagged ? "border-red-300 bg-red-50" : "border-border bg-[#f6f8fb]"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Off-the-job hours (engineered)</p>
+          {otjh.applied_date && <p className="mt-0.5 text-xs text-muted-foreground">Adjustment applied {otjh.applied_date}</p>}
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${flagged ? "bg-red-600 text-white" : "bg-emerald-600/10 text-emerald-700"}`}>
+          {flagged ? "⚑ " : ""}{otjhStatusLabel(otjh.status)}
+        </span>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        <div><p className="text-[10px] uppercase text-muted-foreground">Attendance</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.att_h)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted-foreground">Assignments</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.asg_h)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted-foreground">LMS</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.lms_h)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted-foreground">Computed total</p><p className="mt-0.5 font-mono text-sm font-semibold text-[#182d48]">{hour(otjh.computed_total_h)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted-foreground">Aptem actual</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.aptem_actual_h)}</p></div>
+      </div>
+      {(otjh.n_media != null || otjh.n_bundles != null || otjh.n_reading_items != null) && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          {otjh.n_media ?? 0} media · {otjh.n_bundles ?? 0} bundles · {otjh.n_reading_items ?? 0} reading items
+        </p>
+      )}
+      {flagged && (
+        <p className="mt-2 text-xs font-medium text-red-700">Flagged for manual review — best-effort engineered hours may not match the Aptem actual.</p>
+      )}
+      {otjh.note && (
+        <p className="mt-2 border-t border-border/60 pt-2 text-xs italic leading-5 text-muted-foreground">{otjh.note}</p>
+      )}
     </div>
   );
 }
@@ -333,7 +391,7 @@ function JournalPage() {
         </div>
       </header>
 
-      <main className="w-full space-y-6 px-6 py-8">
+      <main className="mx-auto w-full max-w-[1700px] space-y-6 px-6 py-8">
         <section className="overflow-hidden rounded-xl border border-border bg-card shadow-panel">
           <div className="h-1 bg-[#182d48]" />
           <div className="flex flex-wrap items-center justify-between gap-6 px-7 py-6">
@@ -386,6 +444,7 @@ function JournalPage() {
                 <Stat label="Accepted" value={`${learner.actual_hours.toFixed(2)} h`} tone="success" />
                 <Stat label="Variance" value={`${learner.gap_hours > 0 ? "+" : ""}${learner.gap_hours.toFixed(2)} h`} tone={learner.gap_hours < 0 ? "warning" : "success"} />
               </div>
+              <OtjhCard otjh={activities.data?.otjh} />
             </div>
           ) : null}
         </section>
@@ -400,7 +459,23 @@ function JournalPage() {
           </header>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader><TableRow className="border-0 bg-[#182d48] hover:bg-[#182d48]"><TableHead className="label-caps pl-7 text-white">Plan ID</TableHead><TableHead className="label-caps text-white">Date</TableHead><TableHead className="label-caps text-white">Activity</TableHead><TableHead className="label-caps text-white">Category</TableHead><TableHead className="label-caps text-white">Timestamp</TableHead><TableHead className="label-caps text-right text-white">Planned</TableHead><TableHead className="label-caps pr-7 text-right text-white">Actual</TableHead></TableRow></TableHeader>
+              <TableHeader>
+                {/* Two header rows: "Timestamp" spans the From / To pair, every
+                    other column spans both rows so the grid stays aligned. */}
+                <TableRow className="border-0 bg-[#182d48] hover:bg-[#182d48]">
+                  <TableHead rowSpan={2} className="label-caps pl-7 text-white">Plan ID</TableHead>
+                  <TableHead rowSpan={2} className="label-caps text-white">Date</TableHead>
+                  <TableHead rowSpan={2} className="label-caps text-white">Activity</TableHead>
+                  <TableHead rowSpan={2} className="label-caps text-white">Category</TableHead>
+                  <TableHead colSpan={2} className="label-caps h-auto border-b border-white/20 pb-1 pt-3 text-center text-white">Timestamp</TableHead>
+                  <TableHead rowSpan={2} className="label-caps text-right text-white">Planned</TableHead>
+                  <TableHead rowSpan={2} className="label-caps pr-7 text-right text-white">Actual</TableHead>
+                </TableRow>
+                <TableRow className="border-0 bg-[#182d48] hover:bg-[#182d48]">
+                  <TableHead className="label-caps h-auto pb-3 pt-1 text-center text-white/70">From</TableHead>
+                  <TableHead className="label-caps h-auto pb-3 pt-1 text-center text-white/70">To</TableHead>
+                </TableRow>
+              </TableHeader>
               <TableBody>
                 {activities.data?.items.map((row) => (
                   <TableRow
@@ -421,9 +496,10 @@ function JournalPage() {
                     <TableCell className="font-mono text-xs text-muted-foreground">{row.learner_activity_date ?? "—"}</TableCell>
                     <TableCell className="max-w-md"><p className="text-sm font-medium">{row.activity_unit}</p><p className="mt-1 text-xs text-muted-foreground">{row.activity_description}</p></TableCell>
                     <TableCell className="text-xs text-muted-foreground">{row.activity_category}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{row.time_from_to ?? "—"}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{row.planned_hours?.toFixed(2) ?? "—"}</TableCell>
-                    <TableCell className="pr-7 text-right font-mono text-sm font-medium text-success">{row.actual_lms_hours?.toFixed(2) ?? "—"}</TableCell>
+                    <TableCell className="text-center font-mono text-xs text-muted-foreground">{row.time_from ?? "—"}</TableCell>
+                    <TableCell className="text-center font-mono text-xs text-muted-foreground">{row.time_to ?? "—"}</TableCell>
+                    <TableCell className="text-right font-mono text-sm">{roundHours(row.planned_hours)}</TableCell>
+                    <TableCell className="pr-7 text-right font-mono text-sm font-medium text-success">{roundHours(row.actual_lms_hours)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

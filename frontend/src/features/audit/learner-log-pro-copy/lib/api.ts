@@ -10,6 +10,61 @@ export type Ksb = {
   reason: string | null;
 };
 
+export type BundleComponent = {
+  component_id: number | string | null;
+  title: string;
+  material_type: string;
+  material_format: string | null;
+  iframe_url: string | null;
+  status: string | null;
+  done: boolean;
+  activity_date: string | null;
+  planned_hours: number | null;
+  time_spent_formatted: string | null;
+  attempt_number: number | null;
+  highest_score: number | null;
+  score_percent: number | null;
+  answered_questions: number | null;
+  correct_answers: number | null;
+  incorrect_answers: number | null;
+  has_body: boolean;
+};
+
+export type QuizAnswerOption = {
+  option_text: string;
+  option_order: number;
+  is_correct: boolean;
+  is_selected: boolean;
+};
+
+export type QuizQuestion = {
+  question_id: number;
+  question_order: number;
+  question_text: string;
+  question_type: string;
+  is_correct: boolean;
+  answer_options: QuizAnswerOption[];
+  correct_answers: string[];
+  learner_selected_answers: string[];
+};
+
+export type QuizAttempt = {
+  title: string;
+  status: string;
+  quiz_body: { questions: QuizQuestion[] };
+};
+
+export type QuizAttemptResponse = {
+  component_id: string;
+  attempt: QuizAttempt | null;
+};
+
+// One learner's graded quiz body (from the quiz_attempts jsonb column).
+export function getQuizAttempt(params: { learner: string; component: string }) {
+  const query = new URLSearchParams({ learner: params.learner, component: params.component });
+  return getJson<QuizAttemptResponse>(`/quiz-attempt?${query}`);
+}
+
 export type LearnerActivity = {
   id: string;
   mre_id: string;
@@ -22,6 +77,8 @@ export type LearnerActivity = {
   learner_activity_date: string | null;
   activity_period: string | null;
   time_from_to: string | null;
+  time_from: string | null;
+  time_to: string | null;
   actual_lms_hours: number | null;
   activity_category: string;
   activity_unit: string;
@@ -36,6 +93,47 @@ export type LearnerActivity = {
   configured_duration: string | null;
   week: string | null;
   ksbs: Ksb[];
+  completion_records?: CompletionRecord[];
+  components?: BundleComponent[];
+  completed_count?: number;
+  component_total?: number;
+};
+
+export type CompletionRecord = {
+  record_id: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  time_spent_seconds: number | null;
+  time_spent_formatted: string | null;
+};
+
+export type OtjhMonth = {
+  status: string;
+  path?: string | null;
+  flagged: boolean;
+  applied_date?: string | null;
+  note?: string | null;
+  att_h?: number | null;
+  asg_h?: number | null;
+  lms_h?: number | null;
+  computed_total_h?: number | null;
+  aptem_actual_h?: number | null;
+  n_media?: number | null;
+  n_bundles?: number | null;
+  n_reading_items?: number | null;
+};
+
+export type OtjhSummary = {
+  adjusted: boolean;
+  applied_date: string | null;
+  note?: string | null;
+  flagged_count: number;
+  status_counts: Record<string, number>;
+  band_target_h: number[] | null;
+  band_correct_h: number[] | null;
+  flagged_months: Array<{ date: string; month: string; status: string }>;
+  month: OtjhMonth | null;
+  month_flagged: boolean;
 };
 
 export type LearnerActivitiesResponse = {
@@ -45,6 +143,7 @@ export type LearnerActivitiesResponse = {
   actual_total: number;
   limit: number;
   offset: number;
+  otjh?: OtjhMonth | null;
 };
 
 export type LearnerSummary = {
@@ -61,6 +160,7 @@ export type LearnerSummary = {
     name: string | null;
     email: string | null;
   };
+  otjh: OtjhSummary;
 };
 
 export type LearnersResponse = {
