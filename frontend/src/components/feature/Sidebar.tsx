@@ -101,6 +101,13 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   const key = `${id} ${label} ${sourceIcon}`.toLowerCase();
 
   if (/dashboard|overview/.test(key)) return LayoutDashboard;
+  // Curriculum workspace groups get distinct icons so the sidebar is scannable.
+  if (/programme\s*-?\s*design|programme-design/.test(key)) return Presentation;
+  if (/curriculum\s*-?\s*builder|curriculum-builder/.test(key)) return Workflow;
+  if (/assessment\s*-?\s*design|assessment-design/.test(key)) return ClipboardList;
+  if (/delivery\s*-?\s*planning|delivery-planning/.test(key)) return CalendarDays;
+  if (/quality\s*&?\s*publishing|quality.*publish/.test(key)) return ShieldCheck;
+  if (/^reports?$|\breports?\b/.test(key)) return FileText;
   if (/message|communication|feedback/.test(key)) return MessageSquare;
   if (/support|ticket|knowledge-base|help/.test(key)) return LifeBuoy;
   if (/permission|access|role|key/.test(key)) return KeyRound;
@@ -454,7 +461,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
                 <MobileNavGroup
                   item={item}
                   isActive={isActive}
-                  isExpanded={expandedGroups.has(item.id)}
+                  isExpanded={mobileOpen ? expandedGroups.has(item.id) : false}
                   onSubmenuChange={setSubmenuOpen}
                   onToggle={() => {
                     setExpandedGroups(prev => {
@@ -592,7 +599,7 @@ function NavGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
         )}
         {item.comingSoon && <SoonDot />}
         {anyChildActive && !isDropdownOpen && (
-          <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>
+          <span className="workspace-sidebar-active-marker absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>
         )}
       </button>
       {isDropdownOpen && dropdownStyle && createPortal(
@@ -665,7 +672,7 @@ function NavLink({ item, isActive }: {
       <span data-sidebar-icon={/dashboard|overview/i.test(item.id + ' ' + item.label) ? 'dashboard' : undefined} className="workspace-sidebar-nav-icon w-5 h-5 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />
       </span>
-      {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
+      {active && <span className="workspace-sidebar-active-marker absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
       {item.statusDot && !active && (
         <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-red-500"></span>
       )}
@@ -704,7 +711,7 @@ function SidebarBottomLink({ href, icon, label, isActive }: {
       <span className="w-5 h-5 flex items-center justify-center shrink-0">
         <SidebarIcon id={icon} label={label} sourceIcon={icon} size={15} />
       </span>
-      {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
+      {active && <span className="workspace-sidebar-active-marker absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
     </Link>
   );
 }
@@ -867,7 +874,7 @@ function MobileNavLink({ item, isActive }: {
   const active = isActive(item.href);
   const content = (
     <>
-      {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400 shadow-[0_0_6px_rgba(0,0,0,0.3)]"></span>}
+      {active && <span className="workspace-sidebar-active-marker absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400 shadow-[0_0_6px_rgba(0,0,0,0.3)]"></span>}
       <span data-sidebar-icon={/dashboard|overview/i.test(item.id + ' ' + item.label) ? 'dashboard' : undefined} className="workspace-sidebar-nav-icon w-5 h-5 flex items-center justify-center shrink-0">
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
       </span>
@@ -893,7 +900,7 @@ function MobileNavLink({ item, isActive }: {
 
 function SoonBadge() {
   return (
-    <span className="workspace-sidebar-flyout-badge workspace-sidebar-soon-badge rounded-full border border-white/10 bg-white/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/55">
+    <span className="workspace-sidebar-flyout-badge workspace-sidebar-soon-badge rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide">
       Soon
     </span>
   );
@@ -926,7 +933,7 @@ function MobileSidebarBottomLink({ href, icon, label, isActive }: {
       aria-current={active ? 'page' : undefined}
       className={`workspace-sidebar-hover-row workspace-sidebar-bottom-link flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs transition-all duration-200 ease-out group relative ${active ? 'bg-white/10 text-white' : 'text-white/45 hover:text-white/80 hover:bg-white/7'}`}
     >
-      {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
+      {active && <span className="workspace-sidebar-active-marker absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
       <span className="w-5 h-5 flex items-center justify-center shrink-0">
         <SidebarIcon id={icon} label={label} sourceIcon={icon} size={15} />
       </span>

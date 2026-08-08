@@ -120,7 +120,7 @@ export function WorkspaceShell({
   userName,
   userRole,
   workspaceLabel,
-  showBackButton = true,
+  showBackButton = false,
 }: WorkspaceShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
