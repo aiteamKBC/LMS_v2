@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
+import { fetchKsbProfile } from '@/api/curriculum';
 import OTJHTab from './components/OTJHTab';
 import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
@@ -653,8 +654,11 @@ function ReferenceProgrammeContent({ data }: { data: CoachLearnerCaseFileData })
 }
 
 function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) {
-  const [activeKsbCategory, setActiveKsbCategory] = useState<'All' | 'Knowledge' | 'Skills' | 'Behaviours'>('All');
+  const [activeKsbCategory, setActiveKsbCategory] = useState('All');
   const [ksbSearch, setKsbSearch] = useState('');
+  const [fallbackKsbs, setFallbackKsbs] = useState<Array<{ code: string; description: string; type: string; number: string }>>([]);
+  const [fallbackKsbsLoading, setFallbackKsbsLoading] = useState(false);
+  const [openKsbCategory, setOpenKsbCategory] = useState<string | null>(null);
   const completed = data.otjhCompleted;
   const target = data.otjhTarget;
   const programmeTotal = data.totalExpectedOtjh || null;
@@ -662,8 +666,62 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
   const otjhPercent = completed !== null && target !== null && target > 0
     ? Math.min(100, Math.round((completed / target) * 100))
     : null;
+  const primaryKsbs = data.detail?.ksbs || [];
+
+  useEffect(() => {
+    if (primaryKsbs.length > 0 || !data.programme) {
+      setFallbackKsbs([]);
+      setFallbackKsbsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setFallbackKsbsLoading(true);
+
+    fetchKsbProfile(data.programme)
+      .then((response) => {
+        if (cancelled) {
+          return;
+        }
+
+        const deduped = new Map<string, { code: string; description: string; type: string; number: string }>();
+        for (const item of response.results || []) {
+          const kind = String(item.kind || item.theme || '').trim() || 'Knowledge';
+          const description = String(item.title || '').trim();
+          for (const rawCode of item.codes || []) {
+            const code = String(rawCode || '').trim().toUpperCase();
+            if (!code || deduped.has(code)) {
+              continue;
+            }
+            deduped.set(code, {
+              code,
+              description: description || code,
+              type: kind,
+              number: code.replace(/^[A-Z]+/i, ''),
+            });
+          }
+        }
+
+        setFallbackKsbs(Array.from(deduped.values()));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFallbackKsbs([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setFallbackKsbsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [primaryKsbs.length, data.programme]);
+
   const touched = new Set(data.touchedKsbCodes.map((code) => code.toUpperCase()));
-  const sourceKsbs = buildDisplayKsbs(data);
+  const sourceKsbs = buildDisplayKsbs(data, fallbackKsbs);
   const ksbs = sourceKsbs
     .map((item) => {
       const code = String(item.code || '').toUpperCase();
@@ -677,7 +735,15 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
     .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));
   const linkedCount = ksbs.filter((item) => item.linked).length;
   const unlinkedCount = Math.max(0, ksbs.length - linkedCount);
-  const categorySummary = ['Knowledge', 'Skills', 'Behaviours'].map((category) => {
+  const categoryOrder = ['Knowledge', 'Skills', 'Behaviours', 'Other'];
+  const categoryOptions = Array.from(new Set(ksbs.map((item) => item.category))).sort((left, right) => {
+    const leftIndex = categoryOrder.indexOf(left);
+    const rightIndex = categoryOrder.indexOf(right);
+    const normalizedLeft = leftIndex === -1 ? categoryOrder.length : leftIndex;
+    const normalizedRight = rightIndex === -1 ? categoryOrder.length : rightIndex;
+    return normalizedLeft - normalizedRight || left.localeCompare(right);
+  });
+  const categorySummary = categoryOptions.map((category) => {
     const items = ksbs.filter((item) => item.category === category);
     const linked = items.filter((item) => item.linked).length;
     return { category, total: items.length, linked };
@@ -691,6 +757,15 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
       || item.category.toLowerCase().includes(normalizedSearch);
     return matchesCategory && matchesSearch;
   });
+  const visibleCategoryGroups = categoryOptions
+    .map((category) => {
+      const items = filteredKsbs.filter((item) => item.category === category);
+      const linked = items.filter((item) => item.linked).length;
+      return { category, items, total: items.length, linked };
+    })
+    .filter((group) => group.total > 0);
+  const hasActiveFilters = activeKsbCategory !== 'All' || normalizedSearch.length > 0;
+  const hasFocusedCategoryFilter = activeKsbCategory !== 'All' && !normalizedSearch;
   return (
     <div className="space-y-5">
       <ReferencePanel title="Off-the-Job Hours (OTJH)" icon="ri-time-line" tone="primary">
@@ -709,50 +784,32 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
         </div>
       </ReferencePanel>
       <ReferencePanel title="KSB Detailed Breakdown" icon="ri-file-list-3-line" tone="primary">
-        {ksbs.length === 0 ? <ProfileEmpty text="No learner KSB snapshot is available for this programme yet." /> : (
-          <div className="space-y-4">
+        {fallbackKsbsLoading && ksbs.length === 0 ? <ProfileEmpty text="Loading programme KSB framework..." /> : ksbs.length === 0 ? <ProfileEmpty text="No learner KSB snapshot or programme KSB framework is available yet." /> : (
+          <div className="space-y-5">
             <div className="grid gap-3 md:grid-cols-3">
               <KsbOverviewCard icon="ri-stack-line" label="Total KSBs" value={String(ksbs.length)} tone="primary" />
               <KsbOverviewCard icon="ri-links-line" label="Evidence linked" value={String(linkedCount)} tone="emerald" />
               <KsbOverviewCard icon="ri-focus-3-line" label="Not evidenced" value={String(unlinkedCount)} tone="muted" />
             </div>
 
-            <div className="rounded-2xl border border-foreground-200/60 bg-background-100/45 p-4">
-              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <p className="text-[12px] font-bold text-foreground-900">Browse all programme KSBs</p>
-                  <p className="mt-1 text-[11px] text-foreground-500">
-                    Filter by category or search by code and description while keeping the live evidence status visible.
-                  </p>
-                </div>
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-700">
-                  {linkedCount} of {ksbs.length} currently show Evidence linked
-                </div>
-              </div>
-
-              <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(320px,0.95fr)_minmax(0,1.25fr)]">
-                <div className="space-y-3 rounded-xl border border-primary-200/70 bg-primary-50/45 p-3.5">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white text-primary-700 shadow-sm">
-                          <AppIcon className="ri-filter-3-line text-sm"></AppIcon>
-                        </span>
-                        <div>
-                          <p className="text-[12px] font-bold text-foreground-900">Filter KSB list</p>
-                          <p className="mt-0.5 text-[11px] text-foreground-500">
-                            Narrow the list by category or search by code, label, and description.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    <span className="inline-flex items-center self-start rounded-full border border-primary-200 bg-white px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] text-primary-700">
-                      Filter
-                    </span>
+            <div className="grid gap-4 2xl:grid-cols-[minmax(330px,0.92fr)_minmax(0,1.35fr)]">
+              <div className="rounded-3xl border border-primary-200/70 bg-primary-50/35 p-5">
+                <div className="flex items-start gap-3">
+                  <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-white text-primary-700 shadow-sm">
+                    <AppIcon className="ri-filter-3-line text-lg"></AppIcon>
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[13px] font-bold text-foreground-900">Browse all programme KSBs</p>
+                    <p className="mt-1 text-[11px] leading-5 text-foreground-500">
+                      Search by code, category, or description, then review each KSB inside its own category section.
+                    </p>
                   </div>
+                </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    {(['All', 'Knowledge', 'Skills', 'Behaviours'] as const).map((category) => (
+                <div className="mt-4 rounded-2xl border border-white/80 bg-white/90 p-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-400">Quick filters</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {['All', ...categoryOptions].map((category) => (
                       <button
                         key={category}
                         type="button"
@@ -760,7 +817,7 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
                         className={`inline-flex items-center rounded-full px-3.5 py-1.5 text-[11px] font-semibold transition ${
                           activeKsbCategory === category
                             ? 'bg-primary-700 text-white shadow-sm'
-                            : 'bg-white text-foreground-600 ring-1 ring-foreground-200/70 hover:bg-background-100'
+                            : 'bg-background-50 text-foreground-600 ring-1 ring-foreground-200/70 hover:bg-background-100'
                         }`}
                       >
                         {category}
@@ -768,80 +825,201 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
                     ))}
                   </div>
 
-                  <div className="relative">
+                  <div className="relative mt-3">
                     <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
                     <input
                       type="text"
                       value={ksbSearch}
                       onChange={(event) => setKsbSearch(event.target.value)}
-                      placeholder="Filter by code, category, or description..."
-                      className="w-full rounded-xl border border-primary-200/70 bg-white py-2.5 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-400"
+                      placeholder="Search code, category, or description..."
+                      className="w-full rounded-2xl border border-primary-200/70 bg-white py-2.5 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition focus:border-primary-400"
                     />
                   </div>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-3">
+                {hasActiveFilters && (
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveKsbCategory('All');
+                        setKsbSearch('');
+                      }}
+                      className="inline-flex items-center rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                    >
+                      Reset filters
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-3xl border border-foreground-200/60 bg-background-100/45 p-5">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <p className="text-[13px] font-bold text-foreground-900">Coverage by category</p>
+                    <p className="mt-1 text-[11px] leading-5 text-foreground-500">
+                      Each section below keeps linked and not-evidenced KSBs separated in a cleaner way for review.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-foreground-200/70 bg-white px-3 py-2 text-right">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-400">Visible now</p>
+                    <p className="mt-1 text-[12px] font-bold text-foreground-900">{filteredKsbs.length} of {ksbs.length} KSBs</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   {categorySummary.map((group) => (
-                    <div key={group.category} className="rounded-xl border border-foreground-200/60 bg-white/80 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ksbCategoryBadge(group.category)}`}>
-                          {group.category}
-                        </span>
-                        <span className="text-[10px] font-semibold text-foreground-500">{group.linked}/{group.total}</span>
+                    <div key={group.category} className="rounded-2xl border border-foreground-200/70 bg-white px-4 py-3 shadow-[0_8px_24px_rgba(31,14,59,0.03)]">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${ksbCodeTone(group.category)}`}>
+                            <AppIcon className={`${ksbCategoryIcon(group.category)} text-sm`}></AppIcon>
+                          </span>
+                          <div>
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ksbCategoryBadge(group.category)}`}>
+                              {group.category}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-[11px] font-bold text-foreground-700">{group.linked}/{group.total}</span>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-background-200">
+                        <div
+                          className={`h-full rounded-full ${ksbCategoryProgressTone(group.category)}`}
+                          style={{ width: `${group.total ? (group.linked / group.total) * 100 : 0}%` }}
+                        ></div>
                       </div>
                       <p className="mt-3 text-[11px] text-foreground-600">
-                        {group.linked} linked and {Math.max(0, group.total - group.linked)} not evidenced
+                        {group.linked} linked and {Math.max(0, group.total - group.linked)} still awaiting evidence.
                       </p>
                     </div>
                   ))}
                 </div>
               </div>
-
-              <div className="mt-4 flex items-center justify-between gap-3 border-t border-foreground-200/60 pt-4">
-                <p className="text-[11px] font-semibold text-foreground-700">Showing {filteredKsbs.length} of {ksbs.length} KSBs</p>
-                {(activeKsbCategory !== 'All' || normalizedSearch) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveKsbCategory('All');
-                      setKsbSearch('');
-                    }}
-                    className="text-[10px] font-semibold text-primary-700 transition hover:text-primary-800"
-                  >
-                    Clear filters
-                  </button>
-                )}
-              </div>
-
-              {filteredKsbs.length === 0 ? <div className="mt-4"><ProfileEmpty text="No KSBs matched the current filter." /></div> : (
-                <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-                  {filteredKsbs.map((item) => (
-                    <article key={item.code} className="rounded-2xl border border-foreground-200/60 bg-white p-4 shadow-[0_8px_22px_rgba(31,14,59,0.04)]">
-                      <div className="flex flex-wrap items-start gap-2">
-                        <span className={`inline-flex h-10 min-w-10 items-center justify-center rounded-xl px-2 text-[11px] font-bold ${ksbCodeTone(item.category)}`}>
-                          {item.code}
-                        </span>
-                        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ksbCategoryBadge(item.category)}`}>
-                            {item.category}
-                          </span>
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-semibold ${item.linked ? 'bg-emerald-50 text-emerald-700' : 'bg-background-200 text-foreground-500'}`}>
-                            {item.linked ? 'Evidence linked' : 'Not evidenced'}
-                          </span>
-                        </div>
-                      </div>
-
-                      <p className="mt-3 text-[12px] font-semibold leading-5 text-foreground-900">{item.description}</p>
-                      <p className="mt-2 text-[10px] text-foreground-500">
-                        {item.linked
-                          ? 'This KSB has been surfaced in the learner evidence snapshot.'
-                          : 'No linked evidence has surfaced for this KSB yet.'}
-                      </p>
-                    </article>
-                  ))}
-                </div>
-              )}
             </div>
+
+            {filteredKsbs.length === 0 ? <ProfileEmpty text="No KSBs matched the current filter." /> : (
+              <div className="space-y-4">
+                {visibleCategoryGroups.map((group) => {
+                  const categoryTone = ksbCategorySectionTone(group.category);
+                  const isOpen = hasActiveFilters || openKsbCategory === group.category;
+                  const sectionScrollClass = hasFocusedCategoryFilter
+                    ? 'mt-4 max-h-[72vh] overflow-y-auto pr-1'
+                    : 'mt-4 max-h-[520px] overflow-y-auto pr-1';
+
+                  return (
+                    <section
+                      key={group.category}
+                      className={`overflow-hidden rounded-3xl border bg-white shadow-[0_12px_28px_rgba(31,14,59,0.04)] ${categoryTone.shell}`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (hasActiveFilters) {
+                            return;
+                          }
+                          setOpenKsbCategory(openKsbCategory === group.category ? null : group.category);
+                        }}
+                        className={`w-full border-b px-5 py-4 text-left transition ${categoryTone.header}`}
+                      >
+                        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                          <div className="flex items-start gap-3">
+                            <span className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl ${categoryTone.icon}`}>
+                              <AppIcon className={`${ksbCategoryIcon(group.category)} text-lg`}></AppIcon>
+                            </span>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h4 className="text-[14px] font-bold text-foreground-900">{group.category}</h4>
+                                <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ksbCategoryBadge(group.category)}`}>
+                                  {group.total} KSBs
+                                </span>
+                              </div>
+                              <p className="mt-1 text-[11px] text-foreground-500">
+                                {group.linked} evidenced and {Math.max(0, group.total - group.linked)} waiting for learner evidence.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+                            <div className="rounded-2xl border border-white/80 bg-white/90 px-4 py-3">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-400">Evidence linked</p>
+                              <p className="mt-1 text-[18px] font-bold text-foreground-900">{group.linked}</p>
+                            </div>
+                            <div className="rounded-2xl border border-white/80 bg-white/90 px-4 py-3">
+                              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-foreground-400">Coverage</p>
+                              <p className="mt-1 text-[18px] font-bold text-foreground-900">
+                                {group.total ? Math.round((group.linked / group.total) * 100) : 0}%
+                              </p>
+                            </div>
+                            {!hasActiveFilters && (
+                              <span className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/90 px-3 py-2 text-[10px] font-semibold text-foreground-600">
+                                {isOpen ? 'Collapse' : 'Expand'}
+                                <AppIcon className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></AppIcon>
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-white/80">
+                          <div
+                            className={`h-full rounded-full ${categoryTone.progress}`}
+                            style={{ width: `${group.total ? (group.linked / group.total) * 100 : 0}%` }}
+                          ></div>
+                        </div>
+                      </button>
+
+                      {isOpen && (
+                        <div className="p-5">
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground-200/70 pb-3">
+                            <p className="text-[11px] font-semibold text-foreground-600">
+                              Showing all {group.total} KSBs in this section
+                            </p>
+                            <span className="inline-flex items-center gap-2 rounded-full border border-foreground-200 bg-white px-3 py-1.5 text-[10px] font-semibold text-foreground-500">
+                              Scroll inside section
+                              <AppIcon className="ri-arrow-down-up-line text-sm"></AppIcon>
+                            </span>
+                          </div>
+
+                          <div className={sectionScrollClass}>
+                            <div className="grid gap-4 xl:grid-cols-2">
+                              {group.items.map((item) => (
+                                <article key={item.code} className="flex h-full flex-col rounded-2xl border border-foreground-200/70 bg-white p-4 shadow-[0_8px_22px_rgba(31,14,59,0.04)]">
+                                  <div className="flex items-start gap-3">
+                                    <span className={`inline-flex h-11 min-w-11 items-center justify-center rounded-2xl px-2 text-[11px] font-bold ${ksbCodeTone(item.category)}`}>
+                                      {item.code}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-bold uppercase tracking-[0.14em] ${ksbCategoryBadge(item.category)}`}>
+                                          {item.category}
+                                        </span>
+                                        <span className={`inline-flex rounded-full px-2.5 py-1 text-[9px] font-semibold ${item.linked ? 'bg-emerald-50 text-emerald-700' : 'bg-background-200 text-foreground-500'}`}>
+                                          {item.linked ? 'Evidence linked' : 'Not evidenced'}
+                                        </span>
+                                      </div>
+                                      <p className="mt-3 text-[12px] font-semibold leading-5 text-foreground-900">{item.description}</p>
+                                    </div>
+                                  </div>
+
+                                  <div className={`mt-3 flex items-center gap-2 rounded-xl border px-3 py-2 text-[10px] leading-5 ${item.linked ? 'border-emerald-100 bg-emerald-50/80 text-emerald-800' : 'border-foreground-200 bg-background-100/70 text-foreground-500'}`}>
+                                    <AppIcon className={`${item.linked ? 'ri-checkbox-circle-line' : 'ri-information-line'} text-sm`}></AppIcon>
+                                    <span>
+                                      {item.linked
+                                        ? 'Already surfaced in the learner evidence snapshot.'
+                                        : 'No learner evidence has surfaced for this KSB yet.'}
+                                    </span>
+                                  </div>
+                                </article>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </ReferencePanel>
@@ -849,8 +1027,11 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
   );
 }
 
-function buildDisplayKsbs(data: CoachLearnerCaseFileData) {
-  return data.detail?.ksbs || [];
+function buildDisplayKsbs(
+  data: CoachLearnerCaseFileData,
+  fallbackKsbs: Array<{ code: string; description: string; type: string; number: string }> = [],
+) {
+  return data.detail?.ksbs?.length ? data.detail.ksbs : fallbackKsbs;
 }
 
 function ksbCategoryFromCode(code: string) {
@@ -872,6 +1053,53 @@ function ksbCodeTone(category: string) {
   if (category === 'Skills') return 'bg-sky-100 text-sky-700';
   if (category === 'Behaviours') return 'bg-amber-100 text-amber-700';
   return 'bg-background-100 text-foreground-600';
+}
+
+function ksbCategoryIcon(category: string) {
+  if (category === 'Knowledge') return 'ri-book-open-line';
+  if (category === 'Skills') return 'ri-tools-line';
+  if (category === 'Behaviours') return 'ri-user-star-line';
+  return 'ri-award-line';
+}
+
+function ksbCategoryProgressTone(category: string) {
+  if (category === 'Knowledge') return 'bg-primary-600';
+  if (category === 'Skills') return 'bg-sky-500';
+  if (category === 'Behaviours') return 'bg-amber-500';
+  return 'bg-foreground-400';
+}
+
+function ksbCategorySectionTone(category: string) {
+  if (category === 'Knowledge') {
+    return {
+      shell: 'border-primary-200/70',
+      header: 'bg-primary-50/65',
+      icon: 'bg-primary-100 text-primary-700',
+      progress: 'bg-primary-600',
+    };
+  }
+  if (category === 'Skills') {
+    return {
+      shell: 'border-sky-200/70',
+      header: 'bg-sky-50/70',
+      icon: 'bg-sky-100 text-sky-700',
+      progress: 'bg-sky-500',
+    };
+  }
+  if (category === 'Behaviours') {
+    return {
+      shell: 'border-amber-200/80',
+      header: 'bg-amber-50/80',
+      icon: 'bg-amber-100 text-amber-700',
+      progress: 'bg-amber-500',
+    };
+  }
+  return {
+    shell: 'border-foreground-200/70',
+    header: 'bg-background-100/75',
+    icon: 'bg-background-100 text-foreground-600',
+    progress: 'bg-foreground-400',
+  };
 }
 
 function KsbOverviewCard({

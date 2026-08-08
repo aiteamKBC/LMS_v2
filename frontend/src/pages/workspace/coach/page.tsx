@@ -589,6 +589,30 @@ function formatCalendarDayNumber(value?: string | null) {
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit' }).format(date);
 }
 
+function formatCalendarWeekday(value?: string | null) {
+  const date = parseLocalDate(value);
+  if (!date) return EMPTY_VALUE;
+  return new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(date).toUpperCase();
+}
+
+function formatUpcomingLiveSessionDayLabel(value?: string | null) {
+  const date = parseLocalDate(value);
+  if (!date) return EMPTY_VALUE;
+  const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const tomorrow = new Date(startOfToday);
+  tomorrow.setDate(startOfToday.getDate() + 1);
+  if (targetDate.getTime() === startOfToday.getTime()) return 'Today';
+  if (targetDate.getTime() === tomorrow.getTime()) return 'Tomorrow';
+  return formatDateLabel(value);
+}
+
+function isRelativeUpcomingLiveSessionDayLabel(value?: string | null) {
+  const label = formatUpcomingLiveSessionDayLabel(value);
+  return label === 'Today' || label === 'Tomorrow';
+}
+
 function eventTypeLabel(event: CoachCalendarEvent) {
   if (event.source === 'progress-review') return eventPeriodLabel(event);
   if (event.source === 'mcr') return 'Monthly Coaching';
@@ -687,25 +711,34 @@ function LoadingBlock({ className = '' }: { className?: string }) {
 
 function UpcomingLiveSessionsSkeleton() {
   return (
-    <>
-      {Array.from({ length: 3 }, (_, index) => (
+    <div className="space-y-4">
+      {Array.from({ length: 2 }, (_, groupIndex) => (
         <div
-          key={`live-session-skeleton-${index}`}
-          className="rounded-2xl border border-sky-100/80 bg-sky-50/30 p-4"
+          key={`live-session-skeleton-group-${groupIndex}`}
+          className="rounded-2xl border border-foreground-200/60 bg-background-50/90 p-3"
         >
-          <div className="mb-4 flex items-start justify-between gap-3">
-            <LoadingBlock className="h-6 w-24 rounded-full bg-sky-100/80" />
-            <LoadingBlock className="h-5 w-20 rounded-full" />
+          <div className="flex items-center justify-between gap-3 border-b border-foreground-100/80 pb-2.5">
+            <LoadingBlock className="h-4 w-44" />
+            <LoadingBlock className="h-5 w-16 rounded-full" />
           </div>
-          <LoadingBlock className="h-5 w-4/5" />
-          <LoadingBlock className="mt-2 h-3.5 w-3/5" />
-          <div className="mt-4 grid grid-cols-2 gap-3 rounded-xl border border-background-200/70 bg-background-50/80 px-3 py-2.5">
-            <LoadingBlock className="h-3.5 w-24" />
-            <LoadingBlock className="ml-auto h-3.5 w-16" />
+          <div className="mt-3 space-y-3">
+            {Array.from({ length: 2 }, (_, rowIndex) => (
+            <div
+              key={`live-session-skeleton-${groupIndex}-${rowIndex}`}
+              className="grid grid-cols-[1fr,36px] items-center gap-3"
+            >
+              <div className="min-w-0">
+                <LoadingBlock className="h-4 w-4/5" />
+                <LoadingBlock className="mt-2 h-3 w-3/5" />
+                <LoadingBlock className="mt-2 h-8 w-40 rounded-xl bg-primary-50/70" />
+              </div>
+              <LoadingBlock className="h-8 w-8 rounded-full" />
+            </div>
+            ))}
           </div>
         </div>
       ))}
-    </>
+    </div>
   );
 }
 
@@ -962,6 +995,21 @@ export default function CoachDashboard() {
       return byGroup;
     }, new Map<string, CoachCalendarEvent>()).values(),
   ), [upcomingLiveSessions]);
+  const upcomingLiveSessionGroups = useMemo(() => {
+    const groupedSessions = new Map<string, CoachCalendarEvent[]>();
+    upcomingLiveSessionCards.forEach(event => {
+      const displayDate = parseLocalDate(eventDisplayDate(event));
+      if (!displayDate) return;
+      const dateKey = toIsoDate(displayDate);
+      const existingGroup = groupedSessions.get(dateKey);
+      if (existingGroup) {
+        existingGroup.push(event);
+      } else {
+        groupedSessions.set(dateKey, [event]);
+      }
+    });
+    return Array.from(groupedSessions.entries()).map(([date, events]) => ({ date, events }));
+  }, [upcomingLiveSessionCards]);
   const visibleCalendarEvents = useMemo(
     () => sortEvents([
       ...visibleCalendarSourceEvents.filter(isFutureCalendarEvent),
@@ -1102,50 +1150,85 @@ export default function CoachDashboard() {
             </SectionReveal>
 
             <div className="grid grid-cols-1 items-stretch gap-6 lg:h-[680px] lg:grid-cols-2">
-            {/* Upcoming Live Sessions */}
-            <SectionReveal delay={140} className="lg:min-h-0">
-              <section className={`${dashboardPanelClass} flex h-full min-h-0 flex-col p-4 md:p-5`}>
-                <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                  <div>
-                    <h2 className="text-lg font-heading font-semibold text-foreground-900">Upcoming Live Sessions</h2>
-                    <p className="mt-1 text-sm text-foreground-400">Live tutor-led sessions scheduled for your learners</p>
-                  </div>
-                  <Link to="/coach/timetable" className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-100">
-                    <AppIcon className="ri-calendar-line"></AppIcon> Full Calendar
-                  </Link>
-                </div>
-                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-                  {liveSessionsPanelLoading && <UpcomingLiveSessionsSkeleton />}
-                  {!liveSessionsPanelLoading && upcomingLiveSessionCards.map(event => {
-                    const sessionDate = eventDisplayDate(event);
-                    return (
-                      <Link
-                        to="/coach/timetable"
-                        state={buildTimetableFocusState(event)}
-                        key={event.eventKey || event.id}
-                        className="group flex flex-col rounded-2xl border border-sky-100/80 bg-sky-50/35 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_18px_45px_-32px_rgba(14,165,233,0.55)]"
-                      >
-                        <div className="mb-4 flex items-start justify-between gap-3">
-                          <span className="rounded-full border border-sky-100 bg-background-50 px-2.5 py-1 text-[9px] font-semibold text-sky-700"><AppIcon className="ri-live-line mr-1"></AppIcon>Live Session</span>
-                          <span className="rounded-full bg-background-50 px-2.5 py-1 text-[9px] font-semibold text-foreground-500">{formatDateLabel(sessionDate)}</span>
-                        </div>
-                        <p className="line-clamp-2 text-[15px] font-semibold leading-6 text-foreground-900">{displayValue(event.title)}</p>
-                        <p className="mt-1 truncate text-[10px] text-foreground-400">{upcomingLiveSessionMetaLabel(event)}</p>
-                        <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-background-200/70 bg-background-50/80 px-3 py-2.5 text-[10px]">
-                          <span className="text-foreground-600"><AppIcon className="ri-time-line mr-1 text-sky-500"></AppIcon>{upcomingLiveSessionTimeLabel(event)}</span>
-                          <span className="text-foreground-500"><AppIcon className="ri-video-line mr-1 text-sky-500"></AppIcon>{displayValue(event.platform)}</span>
-                        </div>
-                      </Link>
-                    );
-                  })}
-                  {!liveSessionsPanelLoading && !upcomingLiveSessionCards.length && (
-                    <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-6 text-center text-[11px] text-foreground-400 lg:col-span-2">
-                      {liveSessionsError || 'No upcoming live sessions scheduled.'}
+              {/* Upcoming Live Sessions */}
+              <SectionReveal delay={140} className="lg:min-h-0">
+                <section className={`${dashboardPanelClass} flex h-full min-h-0 flex-col p-4 md:p-5`}>
+                  <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-lg font-heading font-semibold text-foreground-900">Upcoming Live Sessions</h2>
+                        <span className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700">
+                          {liveSessionsPanelLoading ? 'Loading' : `${upcomingLiveSessionCards.length} upcoming`}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-foreground-400">Live tutor-led sessions scheduled for your learners</p>
                     </div>
-                  )}
-                </div>
-              </section>
-            </SectionReveal>
+                    <Link
+                      to="/coach/timetable"
+                      className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl border border-primary-100 bg-background-50 px-3.5 py-2 text-xs font-semibold text-primary-700 transition hover:border-primary-200 hover:bg-primary-50"
+                    >
+                      <AppIcon className="ri-calendar-line"></AppIcon> Full Calendar
+                    </Link>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-hidden rounded-[22px] border border-foreground-200/70 bg-gradient-to-b from-sky-50/40 via-background-50 to-background-50">
+                    <div className="min-h-0 h-full space-y-4 overflow-y-auto p-2.5 pr-1.5">
+                      {liveSessionsPanelLoading && <UpcomingLiveSessionsSkeleton />}
+                      {!liveSessionsPanelLoading && upcomingLiveSessionGroups.map(group => (
+                        <div key={`live-session-group-${group.date}`} className="rounded-2xl border border-foreground-200/70 bg-background-50/95 p-3 shadow-[0_16px_30px_-36px_rgba(15,23,42,0.45)]">
+                          <div className="flex items-center justify-between gap-3 border-b border-foreground-100/80 pb-2.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <p className="text-sm font-semibold text-foreground-900">{formatUpcomingLiveSessionDayLabel(group.date)}</p>
+                              <span className="text-[11px] text-foreground-300">&middot;</span>
+                              <span className="text-[11px] text-foreground-400">{formatCalendarWeekday(group.date)}</span>
+                              {isRelativeUpcomingLiveSessionDayLabel(group.date) && (
+                                <>
+                                  <span className="text-[11px] text-foreground-300">&middot;</span>
+                                  <span className="text-[11px] text-foreground-400">{formatDateLabel(group.date)}</span>
+                                </>
+                              )}
+                            </div>
+                            <span className="rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700">
+                              {group.events.length} {group.events.length === 1 ? 'session' : 'sessions'}
+                            </span>
+                          </div>
+                          <div className="mt-3 divide-y divide-foreground-100/80">
+                            {group.events.map((event, index) => (
+                              <Link
+                                to="/coach/timetable"
+                                state={buildTimetableFocusState(event)}
+                                key={event.eventKey || event.id}
+                                className={`group grid grid-cols-[1fr,auto] items-center gap-3 text-left transition-colors hover:text-primary-800 ${index === 0 ? 'pt-0' : 'pt-3'} ${index === group.events.length - 1 ? 'pb-0' : 'pb-3'}`}
+                              >
+                                <div className="min-w-0">
+                                  <p className="truncate text-[14px] font-semibold text-foreground-900">{displayValue(event.title)}</p>
+                                  <p className="mt-1 truncate text-[11px] text-foreground-500">{upcomingLiveSessionMetaLabel(event)}</p>
+                                  <div className="mt-2">
+                                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-primary-100/80 bg-primary-50/75 px-2.5 py-1.5 text-[10px] font-semibold text-primary-700">
+                                      <AppIcon className="ri-time-line"></AppIcon>
+                                      {upcomingLiveSessionTimeLabel(event)}
+                                      <span className="text-primary-300">&middot;</span>
+                                      <AppIcon className="ri-video-line"></AppIcon>
+                                      <span className="max-w-[120px] truncate">{displayValue(event.platform)}</span>
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-primary-100 bg-background-50 text-primary-700 transition group-hover:border-primary-200 group-hover:bg-primary-50">
+                                  <AppIcon className="ri-arrow-right-up-line"></AppIcon>
+                                </span>
+                              </Link>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                      {!liveSessionsPanelLoading && !upcomingLiveSessionGroups.length && (
+                        <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-foreground-200/70 bg-background-50/90 p-6 text-center text-[11px] text-foreground-400">
+                          {liveSessionsError || 'No upcoming live sessions scheduled.'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              </SectionReveal>
 
             {/* Coaching Calendar */}
             <SectionReveal delay={120} className="lg:min-h-0">

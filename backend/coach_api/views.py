@@ -4376,11 +4376,17 @@ def collect_generated_timetable(
         "Med Maher",
     )
     commercial_rows, enrolment_rows = fetch_source_schedule_rows(active_rows)
-    live_session_events = (
-        collect_live_session_events(owner_email, owner_name, start_date=start_date, end_date=end_date)
-        if include_live_sessions
-        else []
-    )
+    live_session_events = []
+    if include_live_sessions:
+        try:
+            live_session_events = collect_live_session_events(
+                owner_email,
+                owner_name,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        except Exception as exc:
+            logger.warning("Could not collect live session events for %s: %s", owner_email, exc)
 
     generated_events: list[dict] = []
     source_counts = {

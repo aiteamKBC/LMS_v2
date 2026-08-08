@@ -22,6 +22,12 @@ const CASELOAD_BASE = '/coach_api/coach/caseload';
 const ATTENDANCE_BASE = '/coach_api/coach/attendance';
 const MARKING_BASE = '/coach_api/coach/marking-queue';
 
+interface CoachCompletedKsbDetail {
+  code: string;
+  type?: string;
+  description?: string;
+}
+
 export interface CoachCaseloadLearner {
   id: string;
   name: string;
@@ -47,6 +53,7 @@ export interface CoachCaseloadLearner {
   ksbCompleted?: number;
   ksbTarget?: number;
   ksbStatus?: string;
+  ksbCompletedDetails?: CoachCompletedKsbDetail[];
   ksbProgress: number;
   evidenceCount: number;
   nextCoaching: string;
@@ -844,10 +851,13 @@ function buildCaseFileData(args: {
         ...(args.detail?.quizAttempts || []).flatMap((attempt) => attempt.ksbs || []),
         ...(args.detail?.videoProgress || []).flatMap((entry) => entry.ksbs || []),
         ...(args.detail?.componentProgress || []).flatMap((entry) => entry.ksbs || []),
-      ],
+        ...(args.snapshot?.ksbCompletedDetails || []).map((entry) => entry.code || ''),
+      ]
+        .map((code) => String(code || '').trim().toUpperCase())
+        .filter(Boolean),
     ),
   ).sort();
-  const programme = args.detail?.programme || args.snapshot?.cohortName || args.attendance?.programme || '';
+  const programme = args.detail?.programme || args.attendance?.programme || '';
   const group = args.detail?.group || args.snapshot?.group || args.attendance?.group || '';
   const email = args.detail?.email || args.snapshot?.email || args.attendance?.email || args.evidence?.email || '';
   const upcomingSessions = buildUpcomingLiveSessions(
@@ -902,7 +912,7 @@ function buildCaseFileData(args: {
     startDate: args.snapshot?.startDate || formatDisplayDate(args.detail?.quizAttempts[0]?.startedAt) || '--',
     gatewayReviewDate: args.snapshot?.gatewayReviewDate || '--',
     plannedEndDate: args.snapshot?.plannedEndDate || '--',
-    totalExpectedOtjh: args.detail?.totalExpectedOtjh || 0,
+    totalExpectedOtjh: detailPlannedHours ?? args.snapshot?.otjhPlanned ?? 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),
     upcomingSessions,
