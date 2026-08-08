@@ -458,7 +458,7 @@ export default function CheckpointsPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-check-double-line text-white text-2xl"></i>
+              <AppIcon className="ri-check-double-line text-white text-2xl"></AppIcon>
             </span>
             <div className="min-w-0 flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Monthly Checkpoint Assessments</h2>
@@ -502,10 +502,10 @@ export default function CheckpointsPage() {
                   : 'border-[#d8dde6] bg-white text-[#5b2dbb] hover:bg-[#f7f3ff]'
               }`}
             >
-              <i className={`${showArchive ? 'ri-arrow-go-back-line' : 'ri-archive-line'} mr-1`}></i>{showArchive ? 'Back to active' : 'Archive'}
+              <AppIcon className={`${showArchive ? 'ri-arrow-go-back-line' : 'ri-archive-line'} mr-1`}></AppIcon>{showArchive ? 'Back to active' : 'Archive'}
             </button>
             <button onClick={openCreateModal} className="h-10 w-full rounded-lg bg-primary-500 px-4 text-sm font-semibold text-white transition-smooth hover:bg-primary-600 sm:w-auto">
-              <i className="ri-upload-cloud-2-line mr-1"></i>Upload checkpoint quiz
+              <AppIcon className="ri-upload-cloud-2-line mr-1"></AppIcon>Upload checkpoint quiz
             </button>
           </div>
         </section>
@@ -562,22 +562,22 @@ export default function CheckpointsPage() {
                   {showArchive ? (
                     <>
                       <button onClick={() => updateCheckpointStatus(checkpoint, 'draft')} className="h-9 rounded-lg bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition-smooth hover:bg-emerald-100">
-                        <i className="ri-arrow-go-back-line mr-1"></i>Restore
+                        <AppIcon className="ri-arrow-go-back-line mr-1"></AppIcon>Restore
                       </button>
                       <button onClick={() => deleteCheckpoint(checkpoint)} className="h-9 rounded-lg bg-red-50 px-3 text-xs font-semibold text-red-700 transition-smooth hover:bg-red-100">
-                        <i className="ri-delete-bin-line mr-1"></i>Delete
+                        <AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Delete
                       </button>
                     </>
                   ) : (
                     <>
                       <button onClick={() => setSelectedCheckpoint(checkpoint)} className="h-9 rounded-lg bg-primary-500 px-3 text-xs font-semibold text-white transition-smooth hover:bg-primary-600">
-                        <i className="ri-team-line mr-1"></i>Manage students
+                        <AppIcon className="ri-team-line mr-1"></AppIcon>Manage students
                       </button>
                       <button onClick={() => openCheckpointEditor(checkpoint)} className="h-9 w-9 rounded-lg bg-background-100 border border-foreground-200/60 transition-smooth hover:bg-background-200" title="Edit checkpoint">
-                        <i className="ri-pencil-line"></i>
+                        <AppIcon className="ri-pencil-line"></AppIcon>
                       </button>
                       <button onClick={() => updateCheckpointStatus(checkpoint, 'trash')} className="h-9 w-9 rounded-lg bg-orange-50 text-orange-700 border border-orange-100 transition-smooth hover:bg-orange-100" title="Archive checkpoint">
-                        <i className="ri-archive-line"></i>
+                        <AppIcon className="ri-archive-line"></AppIcon>
                       </button>
                     </>
                   )}
@@ -599,7 +599,7 @@ export default function CheckpointsPage() {
                   <h3 className="text-lg font-heading font-bold text-[#0f172a]">{editingCheckpoint ? 'Edit checkpoint quiz' : 'Upload checkpoint quiz'}</h3>
                   <p className="text-sm text-[#647083]">{editingCheckpoint ? 'Update the checkpoint details, timing, file and publishing status.' : 'The quiz name will include the month and programme week automatically.'}</p>
                 </div>
-                <button type="button" onClick={closeCreateModal} className="h-9 w-9 rounded-lg bg-[#f8fafc] hover:bg-[#f1f5f9]"><i className="ri-close-line"></i></button>
+                <button type="button" onClick={closeCreateModal} className="h-9 w-9 rounded-lg bg-[#f8fafc] hover:bg-[#f1f5f9]"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <input value={form.quizTitle} onChange={event => setForm({ ...form, quizTitle: event.target.value })} placeholder="Quiz title" className="sm:col-span-2 h-11 rounded-lg border border-[#d8dde6] px-3 text-sm outline-none focus:border-[#8b5cf6]" />
@@ -611,19 +611,19 @@ export default function CheckpointsPage() {
                 <ThemedSelect value={form.status} options={checkpointStatusOptions} onChange={status => setForm({ ...form, status })} />
                 {editingCheckpoint ? (
                   <div className="flex h-11 items-center rounded-lg border border-[#d8dde6] bg-[#f8fafc] px-3 text-sm text-[#647083]">
-                    <i className="ri-file-list-line mr-1 text-[#5b2dbb]"></i>
+                    <AppIcon className="ri-file-list-line mr-1 text-[#5b2dbb]"></AppIcon>
                     <span className="truncate">{editingCheckpoint.sourceFile || `${editingCheckpoint.packageType || 'Quiz'} package`}</span>
                   </div>
                 ) : (
                   <button type="button" onClick={() => checkpointFileInputRef.current?.click()} className="h-11 rounded-lg border border-dashed border-[#c4b5fd] bg-[#f7f2ff] px-3 text-sm font-semibold text-[#5b2dbb] hover:bg-[#f2edff]">
-                    <i className="ri-file-upload-line mr-1"></i>{selectedQuizFile ? 'Change quiz file' : 'Choose quiz file'}
+                    <AppIcon className="ri-file-upload-line mr-1"></AppIcon>{selectedQuizFile ? 'Change quiz file' : 'Choose quiz file'}
                   </button>
                 )}
               </div>
               {!editingCheckpoint && selectedQuizFile && (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#c4b5fd] bg-[#f7f2ff] px-3 py-2 text-sm text-[#4c1d95]">
                   <span className="min-w-0 truncate font-semibold">
-                    <i className="ri-file-check-line mr-1"></i>{selectedQuizFile.name}
+                    <AppIcon className="ri-file-check-line mr-1"></AppIcon>{selectedQuizFile.name}
                   </span>
                   <span className="rounded-full bg-white px-2.5 py-1 text-xs font-bold text-[#5b2dbb]">
                     {checkpointPackageType(selectedQuizFile.name) || 'File'}
@@ -659,7 +659,7 @@ export default function CheckpointsPage() {
                   <h3 className="text-lg font-heading font-bold text-[#0f172a]">{selectedCheckpoint.displayName}</h3>
                   <p className="text-sm text-[#647083]">{selectedCheckpoint.programme} - {selectedCheckpoint.module}</p>
                 </div>
-                <button onClick={() => setSelectedCheckpoint(null)} className="h-9 w-9 rounded-lg bg-[#f8fafc] hover:bg-[#f1f5f9]"><i className="ri-close-line"></i></button>
+                <button onClick={() => setSelectedCheckpoint(null)} className="h-9 w-9 rounded-lg bg-[#f8fafc] hover:bg-[#f1f5f9]"><AppIcon className="ri-close-line"></AppIcon></button>
               </div>
               <div className="max-h-[calc(90vh-92px)] overflow-y-auto p-5 quiz-preview-scroll">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-4 mb-5">
@@ -672,7 +672,7 @@ export default function CheckpointsPage() {
                 {selectedCheckpoint.students.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-[#d8dde6] bg-[#f8fafc] p-10 text-center">
                     <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#f2f0ff] text-[#5b2dbb]">
-                      <i className="ri-team-line text-xl"></i>
+                      <AppIcon className="ri-team-line text-xl"></AppIcon>
                     </span>
                     <p className="text-sm font-semibold text-[#0f172a]">No student attempts yet</p>
                     <p className="mt-1 text-xs text-[#647083]">Learners will appear here after they start or complete this checkpoint quiz.</p>

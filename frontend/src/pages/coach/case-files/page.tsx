@@ -122,7 +122,7 @@ export default function CoachCaseFiles() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-folder-line text-white text-2xl"></i>
+              <AppIcon className="ri-folder-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Learner Case Files</h2>
@@ -150,7 +150,7 @@ export default function CoachCaseFiles() {
         {/* Search */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search case files..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
         </div>
@@ -179,7 +179,7 @@ export default function CoachCaseFiles() {
                     <span>{cf.documents.filter(d => d.status === 'complete').length} complete</span>
                     <span>Updated: {cf.lastUpdated}</span>
                   </div>
-                  <i className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300`}></i>
+                  <AppIcon className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-foreground-300`}></AppIcon>
                 </div>
                 {isOpen && (
                   <div className="mt-4 ml-14 pt-3 border-t border-background-200/30">
@@ -189,7 +189,7 @@ export default function CoachCaseFiles() {
                         return (
                           <div key={doc.id} className="flex items-center gap-3 p-3 bg-background-100/50 rounded-lg">
                             <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${dc.bg}`}>
-                              <i className={`${dc.icon} ${dc.color} text-sm`}></i>
+                              <AppIcon className={`${dc.icon} ${dc.color} text-sm`}></AppIcon>
                             </span>
                             <div className="flex-1 min-w-0">
                               <p className="text-[12px] font-medium text-foreground-900 truncate">{doc.name}</p>
@@ -204,8 +204,8 @@ export default function CoachCaseFiles() {
                       })}
                     </div>
                     <div className="flex items-center gap-2 mt-3">
-                      <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-file-add-line mr-1"></i> Add Document</button>
-                      <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-download-line mr-1"></i> Download All</button>
+                      <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-file-add-line mr-1"></AppIcon> Add Document</button>
+                      <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line mr-1"></AppIcon> Download All</button>
                     </div>
                   </div>
                 )}

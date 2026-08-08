@@ -263,7 +263,7 @@ export default function WeekDetailPage() {
             disabled={weekNum <= 1}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-smooth cursor-pointer whitespace-nowrap ${weekNum <= 1 ? 'text-foreground-300 cursor-not-allowed' : 'text-foreground-600 hover:bg-background-100'}`}
           >
-            <i className="ri-arrow-left-line"></i>
+            <AppIcon className="ri-arrow-left-line"></AppIcon>
             <span className="hidden sm:inline">Week {weekNum - 1}</span>
           </button>
 
@@ -290,7 +290,7 @@ export default function WeekDetailPage() {
             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-smooth cursor-pointer whitespace-nowrap ${weekNum >= TOTAL_WEEKS ? 'text-foreground-300 cursor-not-allowed' : 'text-foreground-600 hover:bg-background-100'}`}
           >
             <span className="hidden sm:inline">Week {weekNum + 1}</span>
-            <i className="ri-arrow-right-line"></i>
+            <AppIcon className="ri-arrow-right-line"></AppIcon>
           </button>
         </div>
 
@@ -342,7 +342,7 @@ export default function WeekDetailPage() {
                     <span className="text-[9px] text-white/25">Coach</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <i className="ri-presentation-line text-white/30 text-xs w-5 h-5 flex items-center justify-center shrink-0"></i>
+                    <AppIcon className="ri-presentation-line text-white/30 text-xs w-5 h-5 flex items-center justify-center shrink-0"></AppIcon>
                     <span className="text-xs text-white/50 truncate">Live: {p.nextLiveSession.day} {p.nextLiveSession.time}</span>
                   </div>
                 </div>
@@ -373,7 +373,7 @@ export default function WeekDetailPage() {
               <div className="relative p-5 md:p-6">
                 <div className="flex items-center gap-2 mb-4">
                   <span className="w-6 h-6 rounded-full bg-accent-500 flex items-center justify-center">
-                    <i className="ri-flashlight-line text-foreground-950 text-xs"></i>
+                    <AppIcon className="ri-flashlight-line text-foreground-950 text-xs"></AppIcon>
                   </span>
                   <span className="text-xs font-semibold text-accent-700 uppercase tracking-widest font-label">Current Priority</span>
                   {priority.isLive && (
@@ -386,19 +386,19 @@ export default function WeekDetailPage() {
                     <h2 className="text-lg md:text-xl font-heading font-bold text-foreground-900 tracking-tight mb-2">{priority.title}</h2>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-foreground-500">
                       <span className="flex items-center gap-1.5">
-                        <i className="ri-calendar-line text-accent-500"></i> {priority.dueDate}
+                        <AppIcon className="ri-calendar-line text-accent-500"></AppIcon> {priority.dueDate}
                       </span>
                       <span className="text-foreground-300">&middot;</span>
                       <span className="flex items-center gap-1.5">
-                        <i className="ri-time-line text-accent-500"></i> {priority.duration}
+                        <AppIcon className="ri-time-line text-accent-500"></AppIcon> {priority.duration}
                       </span>
                       <span className="text-foreground-300">&middot;</span>
                       <span className="flex items-center gap-1.5">
-                        <i className="ri-user-line text-accent-500"></i> Tutor: {p.tutor.name}
+                        <AppIcon className="ri-user-line text-accent-500"></AppIcon> Tutor: {p.tutor.name}
                       </span>
                       <span className="text-foreground-300">&middot;</span>
                       <span className="flex items-center gap-1.5">
-                        <i className="ri-hourglass-line text-accent-500"></i> {priority.plannedOTJH} OTJH
+                        <AppIcon className="ri-hourglass-line text-accent-500"></AppIcon> {priority.plannedOTJH} OTJH
                       </span>
                     </div>
                     <p className="text-sm text-foreground-400 mt-2">KSBs Developed: {priority.ksbCodes.join(', ')}</p>
@@ -412,14 +412,14 @@ export default function WeekDetailPage() {
                         rel="noopener noreferrer"
                         className="px-5 py-3 rounded-xl bg-accent-500 text-foreground-950 text-sm font-semibold font-label hover:bg-accent-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 shadow-sm shadow-accent-500/15"
                       >
-                        <i className="ri-microsoft-line"></i> Join Teams Session
+                        <AppIcon className="ri-microsoft-line"></AppIcon> Join Teams Session
                       </a>
                     )}
                     <button
                       onClick={() => handleCtaClick(priority)}
                       className="px-5 py-3 rounded-xl border border-background-200 text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2"
                     >
-                      <i className={`${priority.primaryIcon}`}></i> {priority.primaryAction}
+                      <AppIcon className={`${priority.primaryIcon}`}></AppIcon> {priority.primaryAction}
                     </button>
                   </div>
                 </div>
@@ -443,7 +443,7 @@ export default function WeekDetailPage() {
               {['Learn', 'Apply', 'Reflect', 'Evidence', 'Complete'].map((step, i) => (
                 <div key={step} className="flex items-center gap-2 shrink-0">
                   <span className={`text-xs font-semibold whitespace-nowrap ${i <= 1 ? 'text-foreground-700' : 'text-foreground-400'}`}>{step}</span>
-                  {i < 4 && <i className="ri-arrow-right-s-line text-foreground-300 text-xs"></i>}
+                  {i < 4 && <AppIcon className="ri-arrow-right-s-line text-foreground-300 text-xs"></AppIcon>}
                 </div>
               ))}
             </div>
@@ -490,7 +490,7 @@ export default function WeekDetailPage() {
 
             {stats.totalPlanned - stats.totalClaimed > 2 && (
               <div className="flex items-start gap-2.5 p-3.5 rounded-lg bg-amber-50/60 border border-amber-200/50">
-                <i className="ri-alert-line text-amber-500 mt-0.5 shrink-0"></i>
+                <AppIcon className="ri-alert-line text-amber-500 mt-0.5 shrink-0"></AppIcon>
                 <div>
                   <p className="text-sm font-semibold text-amber-800 mb-0.5">You are currently {(stats.totalPlanned - stats.totalClaimed).toFixed(1)} hours behind this week&apos;s planned OTJH.</p>
                   <p className="text-xs text-amber-600">Please complete the remaining learning components or speak to your coach.</p>
@@ -569,7 +569,7 @@ export default function WeekDetailPage() {
             <div className="flex items-center justify-between">
               <h2 className="text-base font-heading font-semibold text-foreground-900">KSB Development</h2>
               <Link to="/learner/ksbs" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                View all KSBs <i className="ri-arrow-right-line ml-0.5"></i>
+                View all KSBs <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
               </Link>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 md:gap-4">
@@ -751,7 +751,7 @@ function CompactComponentCard({
       <div className="flex items-start gap-4">
         {/* Type icon */}
         <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${ts.iconBg} ${ts.iconText}`}>
-          <i className={`${c.typeIcon} text-lg`}></i>
+          <AppIcon className={`${c.typeIcon} text-lg`}></AppIcon>
         </div>
 
         <div className="flex-1 min-w-0">
@@ -766,7 +766,7 @@ function CompactComponentCard({
             )}
             {isCompleted && (
               <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
-                <i className="ri-check-line"></i> Done
+                <AppIcon className="ri-check-line"></AppIcon> Done
               </span>
             )}
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ml-auto ${ss.bg} ${ss.text}`}>
@@ -780,15 +780,15 @@ function CompactComponentCard({
 
           {/* Compact meta row */}
           <div className="flex items-center gap-x-4 gap-y-1 text-xs text-foreground-400 flex-wrap">
-            <span className="flex items-center gap-1"><i className="ri-timer-line"></i> {c.duration}</span>
-            <span className="flex items-center gap-1"><i className="ri-time-line"></i> {c.plannedOTJH}h OTJH</span>
+            <span className="flex items-center gap-1"><AppIcon className="ri-timer-line"></AppIcon> {c.duration}</span>
+            <span className="flex items-center gap-1"><AppIcon className="ri-time-line"></AppIcon> {c.plannedOTJH}h OTJH</span>
             {c.actualOTJH > 0 && (
               <span className="flex items-center gap-1 text-emerald-600">
-                <i className="ri-check-line"></i> {c.actualOTJH}h logged
+                <AppIcon className="ri-check-line"></AppIcon> {c.actualOTJH}h logged
               </span>
             )}
-            <span className="flex items-center gap-1"><i className="ri-calendar-line"></i> {c.dueDate}</span>
-            <span className="flex items-center gap-1 text-amber-600"><i className="ri-coin-line"></i> {c.points} pts</span>
+            <span className="flex items-center gap-1"><AppIcon className="ri-calendar-line"></AppIcon> {c.dueDate}</span>
+            <span className="flex items-center gap-1 text-amber-600"><AppIcon className="ri-coin-line"></AppIcon> {c.points} pts</span>
           </div>
         </div>
 
@@ -809,7 +809,7 @@ function CompactComponentCard({
           }}
           title="Share"
         >
-          <i className="ri-share-forward-line text-sm"></i>
+          <AppIcon className="ri-share-forward-line text-sm"></AppIcon>
         </button>
       </div>
     </div>
@@ -845,7 +845,7 @@ function ComponentDetailPanel({ component: c, onCtaClick }: { component: ReturnT
       <div>
         <div className="flex items-center gap-2 mb-3">
           <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full ${ts.chip}`}>
-            <i className={`${c.typeIcon} text-xs`}></i>
+            <AppIcon className={`${c.typeIcon} text-xs`}></AppIcon>
             {c.type}
           </span>
           {c.isLive && (
@@ -966,7 +966,7 @@ function ComponentDetailPanel({ component: c, onCtaClick }: { component: ReturnT
         <div className="bg-red-50/60 border border-red-200/50 rounded-xl p-4 space-y-3">
           <div className="flex items-center gap-2">
             <span className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-              <i className="ri-arrow-go-back-line text-red-600 text-sm"></i>
+              <AppIcon className="ri-arrow-go-back-line text-red-600 text-sm"></AppIcon>
             </span>
             <h3 className="text-sm font-semibold text-red-800">Submission Referred</h3>
           </div>
@@ -1026,7 +1026,7 @@ function ComponentDetailPanel({ component: c, onCtaClick }: { component: ReturnT
         onClick={onCtaClick}
         className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap ${cta.bg} ${cta.hoverBg} ${cta.textColor || ''} ${cta.border || ''}`}
       >
-        <i className={`${ctaInfo.icon} text-sm`}></i>
+        <AppIcon className={`${ctaInfo.icon} text-sm`}></AppIcon>
         {ctaInfo.label}
       </button>
     </div>
@@ -1063,7 +1063,7 @@ function FeedbackPanel({
       >
         <div className="flex items-center gap-2.5 min-w-0">
           <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${clr.iconBg} ${clr.iconText}`}>
-            <i className={`${icon} text-sm`}></i>
+            <AppIcon className={`${icon} text-sm`}></AppIcon>
           </span>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-foreground-900 truncate">{label}</p>
@@ -1074,7 +1074,7 @@ function FeedbackPanel({
           {score !== undefined && (
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${clr.badge}`}>{score}%</span>
           )}
-          <i className={`${arrowIcon} text-foreground-400 text-sm`}></i>
+          <AppIcon className={`${arrowIcon} text-foreground-400 text-sm`}></AppIcon>
         </div>
       </button>
       {isExpanded && (
@@ -1112,7 +1112,7 @@ function SnapshotCard({ icon, label, value, detail, color }: { icon: string; lab
   return (
     <div className={`rounded-xl border ${c.border} ${c.bg} p-4 card-premium`}>
       <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText} mb-3`}>
-        <i className={`${icon} text-sm`}></i>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
       </span>
       <p className="text-xs text-foreground-400 mb-1">{label}</p>
       <p className={`text-xl font-heading font-bold ${c.accent} leading-tight`}>{value}</p>
@@ -1133,7 +1133,7 @@ function OTJHStatCard({ label, value, icon, color }: { label: string; value: str
     <div className={`rounded-xl border ${c.border} ${c.bg} p-4`}>
       <div className="flex items-center gap-2.5 mb-2">
         <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${c.iconBg} ${c.iconText}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <span className="text-xs text-foreground-400">{label}</span>
       </div>
@@ -1193,7 +1193,7 @@ function DeadlineRow({ deadline }: { deadline: ReturnType<typeof getWeekData>['d
       </div>
       <div className="flex items-center gap-3 shrink-0">
         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${p.badge} flex items-center gap-1`}>
-          <i className={`${p.icon} text-[9px]`}></i>
+          <AppIcon className={`${p.icon} text-[9px]`}></AppIcon>
           {p.label}
         </span>
         <span className="text-xs text-foreground-400 w-20 text-right">{deadline.date}</span>
@@ -1216,7 +1216,7 @@ function ResourceCard({ resource }: { resource: ReturnType<typeof getWeekData>['
         resource.type === 'Podcast' ? 'bg-secondary-100 text-secondary-600' :
         'bg-background-100 text-foreground-500'
       }`}>
-        <i className={`${resource.icon} text-sm`}></i>
+        <AppIcon className={`${resource.icon} text-sm`}></AppIcon>
       </span>
       <div className="min-w-0">
         <p className="text-sm font-medium text-foreground-900 group-hover:text-primary-700 transition-smooth leading-snug mb-0.5">{resource.title}</p>

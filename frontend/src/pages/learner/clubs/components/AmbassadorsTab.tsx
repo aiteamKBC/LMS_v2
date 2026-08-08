@@ -21,7 +21,7 @@ export function AmbassadorsTab() {
       <div className="bg-background-50 rounded-xl border border-background-200/50 p-5 card-premium">
         <div className="flex items-start gap-4 mb-5">
           <span className="w-12 h-12 rounded-xl bg-accent-100 text-accent-600 flex items-center justify-center shrink-0">
-            <i className="ri-shield-star-line text-xl"></i>
+            <AppIcon className="ri-shield-star-line text-xl"></AppIcon>
           </span>
           <div>
             <h4 className="text-sm font-heading font-semibold text-foreground-900">Become A Club Ambassador</h4>
@@ -48,7 +48,7 @@ export function AmbassadorsTab() {
             return (
               <div key={req.id} className={`flex items-center gap-4 p-3 rounded-xl transition-all ${done ? 'bg-emerald-50/60 ring-1 ring-emerald-200/40' : c.bg}`}>
                 <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${done ? 'bg-emerald-100 text-emerald-600' : `bg-white/80 ${c.icon}`}`}>
-                  <i className={`${done ? 'ri-check-double-line' : req.icon} text-lg`}></i>
+                  <AppIcon className={`${done ? 'ri-check-double-line' : req.icon} text-lg`}></AppIcon>
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
@@ -74,10 +74,10 @@ export function AmbassadorsTab() {
           {allRequirementsMet ? (
             <>
               <p className="text-sm font-semibold text-emerald-700 mb-2">
-                <i className="ri-check-double-line mr-1"></i> Eligible For Ambassador Application
+                <AppIcon className="ri-check-double-line mr-1"></AppIcon> Eligible For Ambassador Application
               </p>
               <button className="px-6 py-2.5 bg-accent-500 text-foreground-950 rounded-lg text-sm font-semibold hover:bg-accent-400 transition-smooth cursor-pointer whitespace-nowrap shadow-sm shadow-accent-500/15">
-                <i className="ri-shield-star-line mr-1.5"></i> Apply To Become Ambassador
+                <AppIcon className="ri-shield-star-line mr-1.5"></AppIcon> Apply To Become Ambassador
               </button>
             </>
           ) : (
@@ -109,11 +109,11 @@ export function AmbassadorsTab() {
                   <h4 className="text-sm font-semibold text-foreground-900">{amb.name}</h4>
                   <p className="text-xs text-primary-600 font-medium mt-0.5">{amb.role} — {amb.club}</p>
                   <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                    <span className="text-xs text-foreground-400"><i className="ri-calendar-line mr-0.5"></i>Since {amb.joined}</span>
+                    <span className="text-xs text-foreground-400"><AppIcon className="ri-calendar-line mr-0.5"></AppIcon>Since {amb.joined}</span>
                     <span className="text-[8px] text-foreground-300">&middot;</span>
-                    <span className="text-xs text-foreground-400"><i className="ri-presentation-line mr-0.5"></i>{amb.sessionsHosted} sessions</span>
+                    <span className="text-xs text-foreground-400"><AppIcon className="ri-presentation-line mr-0.5"></AppIcon>{amb.sessionsHosted} sessions</span>
                     <span className="text-[8px] text-foreground-300">&middot;</span>
-                    <span className="text-xs text-foreground-400"><i className="ri-star-line mr-0.5"></i>{amb.contributions} contributions</span>
+                    <span className="text-xs text-foreground-400"><AppIcon className="ri-star-line mr-0.5"></AppIcon>{amb.contributions} contributions</span>
                   </div>
                 </div>
               </div>
@@ -171,7 +171,7 @@ export function AmbassadorsTab() {
                 className={`rounded-xl border p-4 text-center transition-all ${badge.earned ? 'bg-background-50 border-background-200/60 hover:border-primary-300/50 cursor-pointer' : 'bg-background-100/50 border-background-200/30 opacity-70 cursor-pointer hover:opacity-90'}`}
               >
                 <span className={`w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-2 ${c.bg} ${c.text} ${badge.earned ? '' : 'opacity-50'}`}>
-                  <i className={`${badge.icon} text-lg`}></i>
+                  <AppIcon className={`${badge.icon} text-lg`}></AppIcon>
                 </span>
                 <p className={`text-xs font-semibold leading-snug ${badge.earned ? 'text-foreground-900' : 'text-foreground-400'}`}>
                   {badge.title}

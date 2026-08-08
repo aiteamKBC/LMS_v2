@@ -75,7 +75,7 @@ export function LearningStylePanel({ profile, supportRequirements, diagnosticSum
             <div className="space-y-1.5">
               {profile.recommendations.map((rec, i) => (
                 <div key={i} className="flex items-start gap-2 text-[12px] text-foreground-600">
-                  <i className="ri-lightbulb-line text-amber-500 text-sm shrink-0 mt-0.5"></i>
+                  <AppIcon className="ri-lightbulb-line text-amber-500 text-sm shrink-0 mt-0.5"></AppIcon>
                   <span>{rec}</span>
                 </div>
               ))}

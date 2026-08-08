@@ -73,7 +73,7 @@ export function JourneyTimeline({ learner }: JourneyTimelineProps) {
                     isCurrent && status === 'N/A' ? 'bg-background-100 text-foreground-300' :
                     'bg-background-100 text-foreground-400'
                   }`}>
-                    <i className={`${stage.icon} text-xs`}></i>
+                    <AppIcon className={`${stage.icon} text-xs`}></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -137,7 +137,7 @@ function StageStatusBadge({ status }: { status: string }) {
   const c = config[status] || config['Not Started'];
   return (
     <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full inline-flex items-center gap-1 whitespace-nowrap ${c.bg} ${c.text}`}>
-      <i className={`${c.icon} text-[9px]`}></i>
+      <AppIcon className={`${c.icon} text-[9px]`}></AppIcon>
       {status}
     </span>
   );

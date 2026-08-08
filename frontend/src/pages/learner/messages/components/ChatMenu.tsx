@@ -68,7 +68,7 @@ export default function ChatMenu({ contactName, onClearChat, onMuteChat, onBlock
         onClick={handleToggle}
         className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
       >
-        <i className="ri-more-2-fill text-sm"></i>
+        <AppIcon className="ri-more-2-fill text-sm"></AppIcon>
       </button>
 
       {isOpen && (
@@ -81,7 +81,7 @@ export default function ChatMenu({ contactName, onClearChat, onMuteChat, onBlock
             onClick={handleMute}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground-600 hover:bg-background-100 transition-smooth text-left cursor-pointer"
           >
-            <i className={`${muted ? 'ri-notification-off-line' : 'ri-notification-3-line'} text-foreground-400 text-sm w-4 flex items-center justify-center`}></i>
+            <AppIcon className={`${muted ? 'ri-notification-off-line' : 'ri-notification-3-line'} text-foreground-400 text-sm w-4 flex items-center justify-center`}></AppIcon>
             {muted ? 'Unmute Notifications' : 'Mute Notifications'}
           </button>
 
@@ -89,7 +89,7 @@ export default function ChatMenu({ contactName, onClearChat, onMuteChat, onBlock
             onClick={handleClear}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground-600 hover:bg-background-100 transition-smooth text-left cursor-pointer"
           >
-            <i className="ri-delete-bin-line text-foreground-400 text-sm w-4 flex items-center justify-center"></i>
+            <AppIcon className="ri-delete-bin-line text-foreground-400 text-sm w-4 flex items-center justify-center"></AppIcon>
             Clear Chat
           </button>
 
@@ -99,7 +99,7 @@ export default function ChatMenu({ contactName, onClearChat, onMuteChat, onBlock
             onClick={handleBlock}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-foreground-600 hover:bg-background-100 transition-smooth text-left cursor-pointer"
           >
-            <i className={`${blocked ? 'ri-user-add-line' : 'ri-user-forbid-line'} text-foreground-400 text-sm w-4 flex items-center justify-center`}></i>
+            <AppIcon className={`${blocked ? 'ri-user-add-line' : 'ri-user-forbid-line'} text-foreground-400 text-sm w-4 flex items-center justify-center`}></AppIcon>
             {blocked ? 'Unblock' : 'Block'}
           </button>
 
@@ -107,7 +107,7 @@ export default function ChatMenu({ contactName, onClearChat, onMuteChat, onBlock
             onClick={handleReport}
             className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-500 hover:bg-red-50/50 transition-smooth text-left cursor-pointer"
           >
-            <i className="ri-flag-line text-red-400 text-sm w-4 flex items-center justify-center"></i>
+            <AppIcon className="ri-flag-line text-red-400 text-sm w-4 flex items-center justify-center"></AppIcon>
             Report
           </button>
         </div>
@@ -116,7 +116,7 @@ export default function ChatMenu({ contactName, onClearChat, onMuteChat, onBlock
       {/* Toast */}
       {showToast && (
         <div className="absolute right-0 top-14 w-56 bg-foreground-900 text-white text-xs px-3 py-2 rounded-lg shadow-lg z-50 animate-in fade-in slide-in-from-top-2 duration-200">
-          <i className="ri-check-line mr-1 text-emerald-400"></i>
+          <AppIcon className="ri-check-line mr-1 text-emerald-400"></AppIcon>
           {showToast}
         </div>
       )}

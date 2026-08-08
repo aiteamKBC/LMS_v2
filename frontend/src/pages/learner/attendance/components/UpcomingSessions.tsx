@@ -12,7 +12,7 @@ export default function UpcomingSessions() {
     <section className="bg-background-50 rounded-2xl border border-background-200/60 overflow-hidden">
       <div className="p-4 border-b border-background-200/60 flex items-center gap-2.5">
         <span className="w-8 h-8 rounded-xl bg-accent-100 flex items-center justify-center">
-          <i className="ri-calendar-event-line text-accent-600 text-sm"></i>
+          <AppIcon className="ri-calendar-event-line text-accent-600 text-sm"></AppIcon>
         </span>
         <h3 className="text-sm font-heading font-semibold text-foreground-900">Upcoming</h3>
       </div>
@@ -33,11 +33,11 @@ export default function UpcomingSessions() {
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-foreground-400 flex-wrap">
-                  <span className="flex items-center gap-1"><i className="ri-book-open-line text-[10px]"></i> {s.module}</span>
+                  <span className="flex items-center gap-1"><AppIcon className="ri-book-open-line text-[10px]"></AppIcon> {s.module}</span>
                 </div>
               </div>
               <a href={s.teamsLink} className="shrink-0 inline-flex items-center gap-1 text-[11px] font-medium text-primary-600 hover:text-primary-700 whitespace-nowrap cursor-pointer">
-                <i className="ri-links-line text-[10px]"></i> Join
+                <AppIcon className="ri-links-line text-[10px]"></AppIcon> Join
               </a>
             </div>
           </div>

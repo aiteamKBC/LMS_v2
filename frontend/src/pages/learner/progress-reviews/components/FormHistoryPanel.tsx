@@ -55,7 +55,7 @@ export default function FormHistoryPanel() {
     return (
       <div className="text-center py-12">
         <div className="w-14 h-14 mx-auto rounded-full bg-background-100 flex items-center justify-center mb-4">
-          <i className="ri-draft-line text-foreground-400 text-2xl" />
+          <AppIcon className="ri-draft-line text-foreground-400 text-2xl" />
         </div>
         <h3 className="text-base font-heading font-semibold text-foreground-900 mb-1">
           No Form History
@@ -72,7 +72,7 @@ export default function FormHistoryPanel() {
     <div className="space-y-4">
       <div className="flex items-center gap-3 mb-2">
         <div className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center">
-          <i className="ri-file-list-3-line text-accent-600 text-sm" />
+          <AppIcon className="ri-file-list-3-line text-accent-600 text-sm" />
         </div>
         <div>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">
@@ -114,7 +114,7 @@ export default function FormHistoryPanel() {
                       {form.reviewDate} · {form.programme}
                     </p>
                     <p className="text-xs text-foreground-400 mt-0.5">
-                      <i className="ri-time-line mr-0.5 text-xs" />
+                      <AppIcon className="ri-time-line mr-0.5 text-xs" />
                       Submitted {time.date} at {time.time}
                     </p>
                   </div>
@@ -130,7 +130,7 @@ export default function FormHistoryPanel() {
                     onClick={() => toggleExpand(form.id)}
                     className="inline-flex items-center gap-1 px-2.5 py-1 bg-background-100 text-foreground-600 rounded-lg text-[11px] font-semibold border border-background-200/50 hover:bg-background-200 transition-all cursor-pointer whitespace-nowrap"
                   >
-                    <i className={isExpanded ? 'ri-eye-off-line' : 'ri-eye-line'} />
+                    <AppIcon className={isExpanded ? 'ri-eye-off-line' : 'ri-eye-line'} />
                     {isExpanded ? 'Hide' : 'View'}
                   </button>
                 </div>
@@ -140,7 +140,7 @@ export default function FormHistoryPanel() {
               {form.coachComment && (
                 <div className="mt-3 bg-primary-50/50 rounded-lg p-3 border border-primary-200/30">
                   <div className="flex items-start gap-2">
-                    <i className="ri-chat-1-line text-primary-500 mt-0.5 shrink-0 text-sm" />
+                    <AppIcon className="ri-chat-1-line text-primary-500 mt-0.5 shrink-0 text-sm" />
                     <div>
                       <p className="text-xs font-semibold text-primary-700 mb-0.5">
                         Coach Comment
@@ -157,7 +157,7 @@ export default function FormHistoryPanel() {
               {form.status === 'new' && !form.coachComment && (
                 <div className="mt-3 bg-amber-50/50 rounded-lg p-3 border border-amber-200/30">
                   <div className="flex items-center gap-2">
-                    <i className="ri-time-line text-amber-500 text-sm" />
+                    <AppIcon className="ri-time-line text-amber-500 text-sm" />
                     <p className="text-sm text-amber-700">
                       Awaiting coach review — no comment yet
                     </p>

@@ -64,28 +64,28 @@ export default function PaymentsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><i className="ri-check-double-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-check-double-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Received & Reconciled</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalReceived.toLocaleString()}</p>
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><i className="ri-time-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><AppIcon className="ri-time-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Pending</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{pendingAmount.toLocaleString()}</p>
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center"><i className="ri-error-warning-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-red-50 text-red-600 flex items-center justify-center"><AppIcon className="ri-error-warning-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Failed</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{failedAmount.toLocaleString()}</p>
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><i className="ri-percent-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><AppIcon className="ri-percent-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Reconciliation Rate</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">{reconciliationRate}%</p>

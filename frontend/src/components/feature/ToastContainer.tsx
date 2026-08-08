@@ -52,7 +52,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
       <div className="flex items-start gap-3 p-4 pt-4.5">
         {/* Icon */}
         <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${cfg.iconBg}`}>
-          <i className={`${cfg.icon} text-sm ${cfg.iconColor}`}></i>
+          <AppIcon className={`${cfg.icon} text-sm ${cfg.iconColor}`}></AppIcon>
         </div>
 
         {/* Content */}
@@ -68,7 +68,7 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
           onClick={onDismiss}
           className="w-6 h-6 flex items-center justify-center rounded-md text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer shrink-0"
         >
-          <i className="ri-close-line text-xs"></i>
+          <AppIcon className="ri-close-line text-xs"></AppIcon>
         </button>
       </div>
     </div>

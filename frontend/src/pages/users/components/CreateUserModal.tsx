@@ -507,7 +507,7 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
         <>
           <button type="button" className={btnSecondary} onClick={onClose} disabled={submitting}>Close</button>
           <button type="button" className={btnPrimary} onClick={() => handleSubmit()} disabled={submitting}>
-            {submitting ? <><i className="ri-loader-4-line animate-spin" />Saving…</> : <><i className="ri-user-add-line" />Create</>}
+            {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-user-add-line" />Create</>}
           </button>
         </>
       }
@@ -519,18 +519,18 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
           return (
             <section key={section.title} className="rounded-xl border border-foreground-200/70 overflow-hidden">
               <header className="flex items-center gap-2 px-4 py-2.5 bg-background-100/70 border-b border-foreground-200/60">
-                <i className={`${section.icon} text-primary-500`} />
+                <AppIcon className={`${section.icon} text-primary-500`} />
                 <h3 className="text-[12px] font-semibold uppercase tracking-wider text-foreground-600">{section.title}</h3>
               </header>
               <div className="divide-y divide-foreground-100">{fields.map(renderField)}</div>
               {section.title === 'Programme' && lookupError && (
                 <p className="px-4 py-2 text-[11px] text-red-600 border-t border-foreground-100">
-                  <i className="ri-error-warning-line mr-1" />Could not load curriculum options: {lookupError}
+                  <AppIcon className="ri-error-warning-line mr-1" />Could not load curriculum options: {lookupError}
                 </p>
               )}
               {section.title === 'Delivery & employer' && staffError && (
                 <p className="px-4 py-2 text-[11px] text-red-600 border-t border-foreground-100">
-                  <i className="ri-error-warning-line mr-1" />Could not load case owners: {staffError}
+                  <AppIcon className="ri-error-warning-line mr-1" />Could not load case owners: {staffError}
                 </p>
               )}
               {section.title === 'Delivery & employer' && employerError && (
@@ -548,7 +548,7 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
             that decides which table the row is written to. */}
         <section className="rounded-xl border-2 border-primary-200 overflow-hidden">
           <header className="flex items-center gap-2 px-4 py-2.5 bg-primary-50 border-b border-primary-200/60">
-            <i className="ri-git-branch-line text-primary-500" />
+            <AppIcon className="ri-git-branch-line text-primary-500" />
             <h3 className="text-[12px] font-semibold uppercase tracking-wider text-primary-700">Learner type</h3>
           </header>
           <div className="p-4 space-y-2.5">

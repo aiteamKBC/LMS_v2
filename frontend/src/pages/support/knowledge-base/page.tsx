@@ -48,7 +48,7 @@ export default function SupportKnowledgeBase() {
       <div className="p-3 md:p-6 space-y-4 md:space-y-6">
         {/* Search */}
         <div className="relative">
-          <i className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-base"></i>
+          <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-base"></AppIcon>
           <input
             type="text"
             value={search}
@@ -87,7 +87,7 @@ export default function SupportKnowledgeBase() {
               >
                 <div className="flex items-start gap-3">
                   <span className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center shrink-0 mt-0.5">
-                    <i className="ri-book-read-line text-accent-600 text-sm"></i>
+                    <AppIcon className="ri-book-read-line text-accent-600 text-sm"></AppIcon>
                   </span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
@@ -100,7 +100,7 @@ export default function SupportKnowledgeBase() {
                         <span key={tag} className="text-[9px] px-1.5 py-0.5 rounded-md bg-background-100 text-foreground-400">{tag}</span>
                       ))}
                       <span className="text-[9px] text-foreground-300 ml-auto flex items-center gap-1">
-                        <i className="ri-eye-line"></i> {article.usedCount}
+                        <AppIcon className="ri-eye-line"></AppIcon> {article.usedCount}
                       </span>
                       <span className="text-[9px] text-foreground-300">{article.updated}</span>
                     </div>
@@ -120,16 +120,16 @@ export default function SupportKnowledgeBase() {
                     onClick={() => setSelectedArticle(null)}
                     className="w-6 h-6 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
                   >
-                    <i className="ri-close-line text-xs"></i>
+                    <AppIcon className="ri-close-line text-xs"></AppIcon>
                   </button>
                 </div>
 
                 <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-3">{selectedArticle.title}</h3>
 
                 <div className="flex items-center gap-3 text-[10px] text-foreground-400 mb-4">
-                  <span className="flex items-center gap-1"><i className="ri-user-line"></i> {selectedArticle.author}</span>
-                  <span className="flex items-center gap-1"><i className="ri-time-line"></i> {selectedArticle.updated}</span>
-                  <span className="flex items-center gap-1"><i className="ri-eye-line"></i> Used {selectedArticle.usedCount}×</span>
+                  <span className="flex items-center gap-1"><AppIcon className="ri-user-line"></AppIcon> {selectedArticle.author}</span>
+                  <span className="flex items-center gap-1"><AppIcon className="ri-time-line"></AppIcon> {selectedArticle.updated}</span>
+                  <span className="flex items-center gap-1"><AppIcon className="ri-eye-line"></AppIcon> Used {selectedArticle.usedCount}×</span>
                 </div>
 
                 <div className="bg-background-100/70 rounded-lg p-3 mb-4">
@@ -144,17 +144,17 @@ export default function SupportKnowledgeBase() {
 
                 <div className="flex gap-2 pt-3 border-t border-background-100">
                   <button className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1">
-                    <i className="ri-file-copy-line"></i> Copy to Ticket
+                    <AppIcon className="ri-file-copy-line"></AppIcon> Copy to Ticket
                   </button>
                   <button className="px-3 py-2 bg-background-100 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1">
-                    <i className="ri-pencil-line"></i> Edit
+                    <AppIcon className="ri-pencil-line"></AppIcon> Edit
                   </button>
                 </div>
               </div>
             ) : (
               <div className="bg-background-50 rounded-xl border border-background-200/50 p-6 text-center">
                 <div className="w-12 h-12 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-book-open-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-book-open-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-[13px] text-foreground-500">Select an article to read</p>
                 <p className="text-[11px] text-foreground-300 mt-1">12 articles in the knowledge base</p>

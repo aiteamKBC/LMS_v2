@@ -22,7 +22,7 @@ export default function AdminSystemSettingsPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-settings-3-line text-white text-2xl"></i>
+              <AppIcon className="ri-settings-3-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">System Control</h2>
@@ -113,13 +113,13 @@ export default function AdminSystemSettingsPage() {
         {/* Actions */}
         <div className="flex items-center gap-3">
           <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-save-line mr-1.5"></i> Save Changes
+            <AppIcon className="ri-save-line mr-1.5"></AppIcon> Save Changes
           </button>
           <button className="px-4 py-2.5 bg-background-100 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-refresh-line mr-1.5"></i> Restart Services
+            <AppIcon className="ri-refresh-line mr-1.5"></AppIcon> Restart Services
           </button>
           <button className="px-4 py-2.5 bg-background-100 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-download-line mr-1.5"></i> Download Logs
+            <AppIcon className="ri-download-line mr-1.5"></AppIcon> Download Logs
           </button>
         </div>
       </div>
@@ -136,7 +136,7 @@ function StatusCard({ label, status, detail, icon }: { label: string; status: st
         <span className={`w-2 h-2 rounded-full ${statusColor}`}></span>
       </div>
       <div className="flex items-center gap-2">
-        <i className={`${icon} text-foreground-400 text-sm`}></i>
+        <AppIcon className={`${icon} text-foreground-400 text-sm`}></AppIcon>
         <span className="text-[12px] text-foreground-500">{detail}</span>
       </div>
     </div>
@@ -166,11 +166,11 @@ function NumberRow({ label, value, onChange, unit, min, max }: { label: string; 
       <span className="text-[12px] text-foreground-600">{label}</span>
       <div className="flex items-center gap-2">
         <button onClick={() => onChange(Math.max(min, value - 1))} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-foreground-500 hover:bg-background-200 transition-smooth cursor-pointer">
-          <i className="ri-subtract-line text-xs"></i>
+          <AppIcon className="ri-subtract-line text-xs"></AppIcon>
         </button>
         <span className="text-[13px] font-semibold text-foreground-900 w-12 text-center">{value}</span>
         <button onClick={() => onChange(Math.min(max, value + 1))} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-foreground-500 hover:bg-background-200 transition-smooth cursor-pointer">
-          <i className="ri-add-line text-xs"></i>
+          <AppIcon className="ri-add-line text-xs"></AppIcon>
         </button>
         <span className="text-[11px] text-foreground-400 w-16">{unit}</span>
       </div>
@@ -183,7 +183,7 @@ function SecurityRow({ label, status, detail, icon }: { label: string; status: s
   return (
     <div className="flex items-start gap-3 py-2 border-b border-background-100 last:border-0">
       <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isEnabled ? 'bg-emerald-100 text-emerald-600' : 'bg-background-100 text-foreground-400'}`}>
-        <i className={`${icon} text-sm`}></i>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
       </span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center justify-between">

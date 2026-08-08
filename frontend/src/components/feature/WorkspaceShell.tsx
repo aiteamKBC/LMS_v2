@@ -121,7 +121,7 @@ export function WorkspaceShell({
   userName,
   userRole,
   workspaceLabel,
-  showBackButton = true,
+  showBackButton = false,
 }: WorkspaceShellProps) {
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
@@ -190,7 +190,7 @@ export function WorkspaceShell({
   };
 
   return (
-    <div className="flex h-screen bg-background-200 overflow-hidden">
+    <div className="dashboard-theme workspace-shell flex h-screen bg-background-200 overflow-hidden">
       <Sidebar
         role={role}
         roleLabel={roleLabel}
@@ -201,7 +201,7 @@ export function WorkspaceShell({
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />
-      <div className="flex-1 flex flex-col min-w-0 ml-0 bg-background-200 lg:ml-[56px] transition-[margin] duration-300 ease-out">
+      <div className="workspace-viewport flex-1 flex flex-col min-w-0 ml-0 bg-background-200 lg:ml-[56px] transition-[margin] duration-300 ease-out">
         <Header
           pageTitle={pageTitle}
           pageSubtitle={pageSubtitle}
@@ -212,12 +212,12 @@ export function WorkspaceShell({
 
         {/* Breadcrumbs */}
         {breadcrumbs.length > 0 && (
-          <div className="flex h-8 shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5">
+          <div className="workspace-breadcrumbs flex h-8 shrink-0 items-center overflow-hidden border-b border-background-300/40 bg-background-200 px-3 md:px-5">
             <nav className="flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" aria-label="Breadcrumb">
               <Link to="/" className="text-foreground-300 hover:text-foreground-500 transition-smooth">
-                <i className="ri-home-3-line text-xs"></i>
+                <AppIcon className="ri-home-3-line text-base"></AppIcon>
               </Link>
-              <i className="ri-arrow-right-s-line text-foreground-200 text-xs"></i>
+              <AppIcon className="ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>
               {breadcrumbs.map((crumb, index) => (
                 <span key={`${crumb.href}-${index}`} className="flex items-center gap-1.5">
                   {index < breadcrumbs.length - 1 ? (
@@ -229,7 +229,7 @@ export function WorkspaceShell({
                       ) : (
                         <span className="text-foreground-400 whitespace-nowrap">{crumb.label}</span>
                       )}
-                      <i className="ri-arrow-right-s-line text-foreground-200 text-xs"></i>
+                      <AppIcon className="ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>
                     </>
                   ) : (
                     <span className="text-foreground-700 font-medium whitespace-nowrap">{crumb.label}</span>
@@ -243,7 +243,7 @@ export function WorkspaceShell({
         {/* Main content with page transition */}
         <main
           key={displayKey}
-          className={`flex-1 overflow-y-auto bg-background-200 transition-opacity duration-200 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}
+          className={`workspace-main flex-1 overflow-y-auto bg-background-200 transition-opacity duration-200 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}
         >
           {children}
         </main>
@@ -256,7 +256,7 @@ export function WorkspaceShell({
           className="fixed right-4 top-20 z-50 hidden h-10 items-center gap-2 rounded-xl border border-primary-200 bg-background-50 px-3 text-[12px] font-bold text-primary-700 shadow-lg shadow-primary-950/10 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-300 sm:inline-flex"
           title={previousRoute ? 'Back to the previous screen' : 'Back'}
         >
-          <i className="ri-arrow-go-back-line text-base"></i>
+          <AppIcon className="ri-arrow-go-back-line text-base"></AppIcon>
           <span className="hidden sm:inline">Back</span>
         </button>
       )}

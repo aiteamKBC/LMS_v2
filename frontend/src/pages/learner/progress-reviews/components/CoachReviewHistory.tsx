@@ -17,7 +17,7 @@ export default function CoachReviewHistory() {
             <ul className="space-y-1">
               {d.coachSummary.strengths.map((s, i) => (
                 <li key={i} className="text-sm text-foreground-700 flex items-center gap-2">
-                  <i className="ri-check-line text-emerald-500" /> {s}
+                  <AppIcon className="ri-check-line text-emerald-500" /> {s}
                 </li>
               ))}
             </ul>
@@ -27,7 +27,7 @@ export default function CoachReviewHistory() {
             <ul className="space-y-1">
               {d.coachSummary.areasForDevelopment.map((s, i) => (
                 <li key={i} className="text-sm text-foreground-700 flex items-center gap-2">
-                  <i className="ri-arrow-up-line text-primary-500" /> {s}
+                  <AppIcon className="ri-arrow-up-line text-primary-500" /> {s}
                 </li>
               ))}
             </ul>
@@ -45,7 +45,7 @@ export default function CoachReviewHistory() {
             <ul className="space-y-1">
               {d.coachSummary.ksbGaps.map((s, i) => (
                 <li key={i} className="text-sm text-foreground-700 flex items-center gap-2">
-                  <i className="ri-error-warning-line text-amber-500" /> {s}
+                  <AppIcon className="ri-error-warning-line text-amber-500" /> {s}
                 </li>
               ))}
             </ul>

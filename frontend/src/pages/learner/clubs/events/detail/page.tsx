@@ -112,7 +112,7 @@ export default function EventDetailPage() {
       {toast && (
         <div className="fixed top-20 right-6 z-50 bg-background-50 rounded-xl border border-primary-200/60 shadow-lg px-4 py-3 flex items-center gap-3 animate-in slide-in-from-right-4 duration-300">
           <span className="w-8 h-8 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
-            <i className="ri-bell-line"></i>
+            <AppIcon className="ri-bell-line"></AppIcon>
           </span>
           <p className="text-sm font-semibold text-foreground-900">{toast}</p>
         </div>
@@ -130,14 +130,14 @@ export default function EventDetailPage() {
             <div className="p-5 border-b border-background-200/50">
               <div className="flex items-center justify-between mb-1">
                 <h3 className="text-base font-heading font-bold text-foreground-900 flex items-center gap-2">
-                  <i className="ri-notification-3-line text-primary-500"></i>
+                  <AppIcon className="ri-notification-3-line text-primary-500"></AppIcon>
                   Reminder Settings
                 </h3>
                 <button
                   onClick={() => setNotificationPanelOpen(false)}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"
                 >
-                  <i className="ri-close-line"></i>
+                  <AppIcon className="ri-close-line"></AppIcon>
                 </button>
               </div>
               <p className="text-xs text-foreground-400">Set when you want to be reminded about this event</p>
@@ -147,7 +147,7 @@ export default function EventDetailPage() {
             <div className="p-4 bg-primary-50/50 border-b border-primary-200/30">
               <p className="text-xs font-bold text-foreground-900 line-clamp-1">{event.title}</p>
               <p className="text-xs text-foreground-500 mt-0.5">
-                <i className="ri-calendar-line mr-1"></i>{event.date} at {event.time}
+                <AppIcon className="ri-calendar-line mr-1"></AppIcon>{event.date} at {event.time}
               </p>
             </div>
 
@@ -167,12 +167,12 @@ export default function EventDetailPage() {
                     }`}
                   >
                     <span className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${isActive ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-400'}`}>
-                      <i className={`${opt.icon} text-sm`}></i>
+                      <AppIcon className={`${opt.icon} text-sm`}></AppIcon>
                     </span>
                     <span className="text-sm font-semibold">{opt.label}</span>
                     {isActive && (
                       <span className="ml-auto w-5 h-5 rounded-full bg-primary-500 text-white flex items-center justify-center shrink-0">
-                        <i className="ri-check-line text-xs"></i>
+                        <AppIcon className="ri-check-line text-xs"></AppIcon>
                       </span>
                     )}
                   </button>
@@ -181,7 +181,7 @@ export default function EventDetailPage() {
 
               <div className="mt-4 p-3 bg-accent-50 rounded-xl border border-accent-200/50">
                 <p className="text-xs text-accent-700 flex items-start gap-2">
-                  <i className="ri-information-line mt-0.5 shrink-0"></i>
+                  <AppIcon className="ri-information-line mt-0.5 shrink-0"></AppIcon>
                   <span>Reminders are sent to your notification centre and email. You can set multiple reminders for this event.</span>
                 </p>
               </div>
@@ -201,9 +201,9 @@ export default function EventDetailPage() {
                 }`}
               >
                 {reminderSaved ? (
-                  <><i className="ri-check-double-line mr-2"></i>Saved!</>
+                  <><AppIcon className="ri-check-double-line mr-2"></AppIcon>Saved!</>
                 ) : (
-                  <><i className="ri-save-line mr-2"></i>Save Reminders</>
+                  <><AppIcon className="ri-save-line mr-2"></AppIcon>Save Reminders</>
                 )}
               </button>
             </div>
@@ -218,7 +218,7 @@ export default function EventDetailPage() {
             onClick={() => navigate('/learner/clubs/events')}
             className="flex items-center gap-1.5 text-xs text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer whitespace-nowrap"
           >
-            <i className="ri-arrow-left-s-line"></i> Back to Events
+            <AppIcon className="ri-arrow-left-s-line"></AppIcon> Back to Events
           </button>
           <span className="text-foreground-200">/</span>
           <span className="text-xs text-foreground-500 truncate">{event.title}</span>
@@ -240,22 +240,22 @@ export default function EventDetailPage() {
               <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/20 text-white backdrop-blur-sm">{event.format}</span>
               {event.joined && (
                 <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-500/80 text-white backdrop-blur-sm">
-                  <i className="ri-check-line mr-1"></i>Attending
+                  <AppIcon className="ri-check-line mr-1"></AppIcon>Attending
                 </span>
               )}
             </div>
             <h1 className="text-2xl font-heading font-bold text-white leading-tight">{event.title}</h1>
             <div className="flex flex-wrap items-center gap-3 mt-2">
               <span className="text-sm text-white/80 flex items-center gap-1">
-                <i className="ri-calendar-line text-xs"></i>{event.date}
+                <AppIcon className="ri-calendar-line text-xs"></AppIcon>{event.date}
               </span>
               <span className="text-white/40">·</span>
               <span className="text-sm text-white/80 flex items-center gap-1">
-                <i className="ri-time-line text-xs"></i>{event.time}
+                <AppIcon className="ri-time-line text-xs"></AppIcon>{event.time}
               </span>
               <span className="text-white/40">·</span>
               <span className="text-sm text-white/80 flex items-center gap-1">
-                <i className="ri-map-pin-line text-xs"></i>{event.location}
+                <AppIcon className="ri-map-pin-line text-xs"></AppIcon>{event.location}
               </span>
               {club && (
                 <>
@@ -273,7 +273,7 @@ export default function EventDetailPage() {
               onClick={() => setNotificationPanelOpen(true)}
               className="px-3 py-2 bg-white/20 backdrop-blur-sm text-white rounded-lg text-xs font-semibold hover:bg-white/30 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1.5"
             >
-              <i className="ri-bell-line"></i>
+              <AppIcon className="ri-bell-line"></AppIcon>
               Set Reminder
               {selectedReminders.size > 0 && (
                 <span className="w-4 h-4 rounded-full bg-primary-500 text-white text-[9px] font-bold flex items-center justify-center">{selectedReminders.size}</span>
@@ -303,7 +303,7 @@ export default function EventDetailPage() {
               <>
                 <div className="flex items-center justify-center gap-0.5">
                   {[1,2,3,4,5].map((s) => (
-                    <i key={s} className={`text-sm ${s <= Math.round(avgRating) ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-300'}`}></i>
+                    <AppIcon key={s} className={`text-sm ${s <= Math.round(avgRating) ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-300'}`}></AppIcon>
                   ))}
                 </div>
                 <p className="text-xs text-foreground-400 mt-0.5">{avgRating} avg ({feedbacks.length} reviews)</p>
@@ -338,18 +338,18 @@ export default function EventDetailPage() {
         <div className="flex flex-wrap items-center gap-3">
           {event.joined ? (
             <span className="px-5 py-2.5 bg-emerald-100 text-emerald-700 rounded-xl text-sm font-bold whitespace-nowrap">
-              <i className="ri-check-line mr-1.5"></i>You are attending
+              <AppIcon className="ri-check-line mr-1.5"></AppIcon>You are attending
             </span>
           ) : isFull ? (
             <span className="px-5 py-2.5 bg-rose-100 text-rose-600 rounded-xl text-sm font-bold whitespace-nowrap cursor-not-allowed">
-              <i className="ri-lock-line mr-1.5"></i>Event Full
+              <AppIcon className="ri-lock-line mr-1.5"></AppIcon>Event Full
             </span>
           ) : (
             <button
               onClick={() => showToast('RSVP submitted! Redirecting to events page...')}
               className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-bold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-add-line mr-1.5"></i>RSVP Now
+              <AppIcon className="ri-add-line mr-1.5"></AppIcon>RSVP Now
             </button>
           )}
           <button
@@ -360,14 +360,14 @@ export default function EventDetailPage() {
                 : 'bg-background-100 text-foreground-600 hover:bg-background-200 border border-background-200'
             }`}
           >
-            <i className="ri-bell-line"></i>
+            <AppIcon className="ri-bell-line"></AppIcon>
             {selectedReminders.size > 0 ? `${selectedReminders.size} Reminder${selectedReminders.size > 1 ? 's' : ''} Set` : 'Set Reminder'}
           </button>
           <Link
             to="/learner/clubs/events/schedule"
             className="px-4 py-2.5 bg-background-100 text-foreground-600 hover:bg-background-200 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1.5 border border-background-200"
           >
-            <i className="ri-calendar-todo-line"></i> My Schedule
+            <AppIcon className="ri-calendar-todo-line"></AppIcon> My Schedule
           </Link>
         </div>
 
@@ -383,7 +383,7 @@ export default function EventDetailPage() {
                   : 'text-foreground-500 hover:text-foreground-700'
               }`}
             >
-              <i className={`${tab.icon} text-sm`}></i>
+              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
               {tab.label}
               {tab.count !== undefined && (
                 <span className={`text-xs px-1.5 py-0.5 rounded-full leading-none ${activeTab === tab.key ? 'bg-primary-100 text-primary-600' : 'bg-background-200 text-foreground-500'}`}>
@@ -408,7 +408,7 @@ export default function EventDetailPage() {
               {detail?.outcomes && detail.outcomes.length > 0 && (
                 <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
                   <h3 className="text-sm font-heading font-bold text-foreground-900 mb-3 flex items-center gap-2">
-                    <i className="ri-trophy-line text-accent-500"></i>
+                    <AppIcon className="ri-trophy-line text-accent-500"></AppIcon>
                     What You Will Learn
                   </h3>
                   <ul className="space-y-2">
@@ -426,12 +426,12 @@ export default function EventDetailPage() {
               {detail?.prerequisites && detail.prerequisites.length > 0 && (
                 <div className="bg-amber-50 rounded-xl border border-amber-200/50 p-4">
                   <h3 className="text-sm font-heading font-semibold text-amber-800 mb-2 flex items-center gap-2">
-                    <i className="ri-information-line"></i>Prerequisites
+                    <AppIcon className="ri-information-line"></AppIcon>Prerequisites
                   </h3>
                   <ul className="space-y-1">
                     {detail.prerequisites.map((pre, i) => (
                       <li key={i} className="text-sm text-amber-700 flex items-center gap-2">
-                        <i className="ri-arrow-right-s-line text-xs"></i>{pre}
+                        <AppIcon className="ri-arrow-right-s-line text-xs"></AppIcon>{pre}
                       </li>
                     ))}
                   </ul>
@@ -453,7 +453,7 @@ export default function EventDetailPage() {
               {feedbacks.length > 0 && (
                 <div className="bg-background-50 rounded-xl border border-background-200/50 p-5">
                   <h3 className="text-sm font-heading font-bold text-foreground-900 mb-3 flex items-center gap-2">
-                    <i className="ri-star-fill text-amber-400"></i>
+                    <AppIcon className="ri-star-fill text-amber-400"></AppIcon>
                     Attendee Reviews
                     <span className="text-xs text-foreground-400">({feedbacks.length})</span>
                   </h3>
@@ -464,7 +464,7 @@ export default function EventDetailPage() {
                           <span className="text-xs font-semibold text-foreground-800">{fb.submittedBy}</span>
                           <div className="flex items-center gap-1">
                             {[1,2,3,4,5].map((s) => (
-                              <i key={s} className={`text-[10px] ${s <= fb.rating ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-300'}`}></i>
+                              <AppIcon key={s} className={`text-[10px] ${s <= fb.rating ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-300'}`}></AppIcon>
                             ))}
                           </div>
                         </div>
@@ -511,7 +511,7 @@ export default function EventDetailPage() {
                     </div>
                     <div className="text-center">
                       <div className="flex items-center justify-center gap-0.5">
-                        <i className="ri-star-fill text-amber-400 text-sm"></i>
+                        <AppIcon className="ri-star-fill text-amber-400 text-sm"></AppIcon>
                         <span className="text-base font-bold text-foreground-800">{detail.hostBio.avgRating}</span>
                       </div>
                       <p className="text-[10px] text-foreground-400">Avg rating</p>
@@ -524,7 +524,7 @@ export default function EventDetailPage() {
                           rel="nofollow noopener noreferrer"
                           className="text-xs text-primary-500 hover:text-primary-700 flex items-center gap-1 font-medium transition-smooth"
                         >
-                          <i className="ri-linkedin-box-line text-base"></i> LinkedIn
+                          <AppIcon className="ri-linkedin-box-line text-base"></AppIcon> LinkedIn
                         </a>
                       </div>
                     )}
@@ -537,7 +537,7 @@ export default function EventDetailPage() {
                 <h3 className="text-xs font-semibold text-foreground-400 uppercase tracking-wide">Event Info</h3>
                 <div className="flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center shrink-0">
-                    <i className="ri-calendar-line text-foreground-400 text-sm"></i>
+                    <AppIcon className="ri-calendar-line text-foreground-400 text-sm"></AppIcon>
                   </span>
                   <div>
                     <p className="text-xs font-semibold text-foreground-800">{event.date}</p>
@@ -546,7 +546,7 @@ export default function EventDetailPage() {
                 </div>
                 <div className="flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center shrink-0">
-                    <i className="ri-time-line text-foreground-400 text-sm"></i>
+                    <AppIcon className="ri-time-line text-foreground-400 text-sm"></AppIcon>
                   </span>
                   <div>
                     <p className="text-xs font-semibold text-foreground-800">{event.time}</p>
@@ -555,7 +555,7 @@ export default function EventDetailPage() {
                 </div>
                 <div className="flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center shrink-0">
-                    <i className="ri-map-pin-line text-foreground-400 text-sm"></i>
+                    <AppIcon className="ri-map-pin-line text-foreground-400 text-sm"></AppIcon>
                   </span>
                   <div>
                     <p className="text-xs font-semibold text-foreground-800">{event.location}</p>
@@ -564,7 +564,7 @@ export default function EventDetailPage() {
                 </div>
                 <div className="flex items-center gap-2.5">
                   <span className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center shrink-0">
-                    <i className="ri-coins-line text-foreground-400 text-sm"></i>
+                    <AppIcon className="ri-coins-line text-foreground-400 text-sm"></AppIcon>
                   </span>
                   <div>
                     <p className="text-xs font-bold text-accent-600">+{event.points} pts</p>
@@ -582,7 +582,7 @@ export default function EventDetailPage() {
             {detail?.agenda && detail.agenda.length > 0 ? (
               <div className="space-y-3">
                 <div className="bg-accent-50 border border-accent-200/40 rounded-xl p-4 flex items-center gap-3">
-                  <i className="ri-information-line text-accent-600"></i>
+                  <AppIcon className="ri-information-line text-accent-600"></AppIcon>
                   <p className="text-xs text-accent-700 font-medium">
                     This is a provisional agenda — timings may vary on the day. All sessions start at the registered event time.
                   </p>
@@ -609,7 +609,7 @@ export default function EventDetailPage() {
                             <div className={`bg-background-50 rounded-xl border border-background-200/50 p-4 group-hover:border-background-300/50 transition-smooth`}>
                               <div className="flex items-start gap-3">
                                 <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${typeStyle.bg}`}>
-                                  <i className={`${typeStyle.icon} text-sm ${typeStyle.color}`}></i>
+                                  <AppIcon className={`${typeStyle.icon} text-sm ${typeStyle.color}`}></AppIcon>
                                 </span>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center gap-2 flex-wrap">
@@ -620,7 +620,7 @@ export default function EventDetailPage() {
                                   </div>
                                   {item.speaker && (
                                     <p className="text-xs text-foreground-400 mt-0.5">
-                                      <i className="ri-user-line mr-1"></i>{item.speaker}
+                                      <AppIcon className="ri-user-line mr-1"></AppIcon>{item.speaker}
                                     </p>
                                   )}
                                   <p className="text-xs text-foreground-600 mt-1.5 leading-relaxed">{item.description}</p>
@@ -637,7 +637,7 @@ export default function EventDetailPage() {
             ) : (
               <div className="text-center py-16 bg-background-50 rounded-xl border border-background-200/50">
                 <span className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-list-ordered text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-list-ordered text-foreground-300 text-xl"></AppIcon>
                 </span>
                 <p className="text-sm font-semibold text-foreground-600">Agenda not yet published</p>
                 <p className="text-xs text-foreground-400 mt-1">The host will publish the agenda before the event</p>
@@ -683,7 +683,7 @@ export default function EventDetailPage() {
             ) : (
               <div className="text-center py-16 bg-background-50 rounded-xl border border-background-200/50">
                 <span className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-mic-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-mic-line text-foreground-300 text-xl"></AppIcon>
                 </span>
                 <p className="text-sm font-semibold text-foreground-600">Speaker details coming soon</p>
                 <p className="text-xs text-foreground-400 mt-1">Check back closer to the event date</p>
@@ -701,7 +701,7 @@ export default function EventDetailPage() {
               </p>
               {event.waitlist.length > 0 && (
                 <span className="text-xs text-amber-600 font-medium bg-amber-50 px-2 py-1 rounded-full border border-amber-200/50">
-                  <i className="ri-hourglass-line mr-1"></i>{event.waitlist.length} on waitlist
+                  <AppIcon className="ri-hourglass-line mr-1"></AppIcon>{event.waitlist.length} on waitlist
                 </span>
               )}
             </div>
@@ -719,7 +719,7 @@ export default function EventDetailPage() {
                       </div>
                       {att.joined && (
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
-                          <i className="ri-check-line mr-0.5"></i>Attending
+                          <AppIcon className="ri-check-line mr-0.5"></AppIcon>Attending
                         </span>
                       )}
                     </div>
@@ -728,7 +728,7 @@ export default function EventDetailPage() {
                   Array.from({ length: Math.min(event.rsvpCount, 8) }, (_, i) => (
                     <div key={i} className="p-3.5 flex items-center gap-3">
                       <div className="w-9 h-9 rounded-full bg-background-100 text-foreground-400 text-xs font-bold flex items-center justify-center shrink-0">
-                        <i className="ri-user-line text-sm"></i>
+                        <AppIcon className="ri-user-line text-sm"></AppIcon>
                       </div>
                       <div className="flex-1">
                         <div className="w-24 h-3 bg-background-200 rounded animate-pulse" />

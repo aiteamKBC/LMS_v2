@@ -43,7 +43,7 @@ export function FeedCard({ item, onToggleLike, onToggleComments, onAddComment, c
             <span className="text-sm font-semibold text-foreground-900">{item.user}</span>
             <span className="text-xs text-foreground-400">{item.userRole}</span>
             <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${typeConfig.bg} ${typeConfig.text} flex items-center gap-1`}>
-              <i className={`${typeConfig.icon} text-[9px]`}></i>
+              <AppIcon className={`${typeConfig.icon} text-[9px]`}></AppIcon>
               {item.type.replace('-', ' ').replace(/\b\w/g, (c) => c.toUpperCase())}
             </span>
           </div>
@@ -63,16 +63,16 @@ export function FeedCard({ item, onToggleLike, onToggleComments, onAddComment, c
               onClick={() => onToggleLike(item.id)}
               className={`text-xs transition-smooth cursor-pointer flex items-center gap-1 ${liked ? 'text-red-500 font-semibold' : 'text-foreground-400 hover:text-red-400'}`}
             >
-              <i className={`${liked ? 'ri-heart-fill' : 'ri-heart-line'}`}></i> {item.likes + (liked ? 1 : 0)}
+              <AppIcon className={`${liked ? 'ri-heart-fill' : 'ri-heart-line'}`}></AppIcon> {item.likes + (liked ? 1 : 0)}
             </button>
             <button
               onClick={() => onToggleComments(item.id)}
               className="text-xs text-foreground-400 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1"
             >
-              <i className="ri-chat-1-line"></i> {item.comments + comments.length}
+              <AppIcon className="ri-chat-1-line"></AppIcon> {item.comments + comments.length}
             </button>
             <button className="text-xs text-foreground-400 hover:text-primary-600 transition-smooth cursor-pointer flex items-center gap-1 ml-auto">
-              <i className="ri-share-forward-line"></i> Share
+              <AppIcon className="ri-share-forward-line"></AppIcon> Share
             </button>
           </div>
 

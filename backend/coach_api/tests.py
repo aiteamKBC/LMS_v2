@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,8 +10,10 @@ from coach_api.views import (
     build_otjh_completed_entries,
     build_monthly_activity_learner,
     coach_caseload,
+    collect_generated_timetable,
     completed_ksb_codes,
     fetch_source_schedule_rows,
+    iterate_generated_schedule_dates,
     reported_minutes,
     route_absence_report_evidence,
     serialize_caseload_learner,
@@ -58,6 +60,28 @@ class CoachCaseloadViewTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
 
+    @patch("coach_api.views.serialize_caseload_dashboard_learner")
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_coach_caseload_can_return_dashboard_summary_snapshots(
+        self,
+        fetch_rows,
+        serialize_learner,
+    ):
+        row = SimpleNamespace(id=2)
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
+
+        response = coach_caseload(
+            self.factory.get(
+                "/coach_api/coach/caseload",
+                {"owner_email": "coach@example.com", "summary": "1"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        fetch_rows.assert_called_once_with("coach@example.com")
+        serialize_learner.assert_called_once_with(row)
+
     @patch("coach_api.views.serialize_caseload_learner")
     @patch("coach_api.views.fetch_caseload_learner_profiles")
     def test_coach_caseload_uses_cached_snapshots_by_default(
@@ -99,6 +123,53 @@ class CoachCaseloadViewTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         serialize_learner.assert_called_once_with(row, refresh_live_snapshots=True)
+
+
+class CoachTimetableWindowTests(SimpleTestCase):
+    def test_generated_schedule_dates_respect_requested_window(self):
+        generated_dates = list(
+            iterate_generated_schedule_dates(
+                date(2026, 1, 1),
+                date(2026, 2, 28),
+                timedelta(days=7),
+                range_start=date(2026, 1, 20),
+                range_end=date(2026, 2, 2),
+            )
+        )
+
+        self.assertEqual(
+            generated_dates,
+            [
+                (3, date(2026, 1, 22)),
+                (4, date(2026, 1, 29)),
+            ],
+        )
+
+    @patch("coach_api.views.fetch_calendar_event_records", return_value={})
+    @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
+    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.build_learner_profile_map", return_value={})
+    @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
+    @patch("coach_api.views.collect_live_session_events", side_effect=RuntimeError("legacy staff profile schema"))
+    def test_collect_generated_timetable_ignores_live_session_errors(
+        self,
+        collect_live_session_events,
+        fetch_owner_active_learner_profiles,
+        build_learner_profile_map,
+        fetch_source_schedule_rows,
+        fetch_standalone_event_records,
+        fetch_calendar_event_records,
+    ):
+        payload = collect_generated_timetable("coach@example.com")
+
+        self.assertEqual(payload["events"], [])
+        self.assertEqual(payload["summary"]["sourceCounts"]["liveSessionRows"], 0)
+        collect_live_session_events.assert_called_once()
+        fetch_owner_active_learner_profiles.assert_called_once_with("coach@example.com")
+        build_learner_profile_map.assert_called_once_with([])
+        fetch_source_schedule_rows.assert_called_once_with([])
+        fetch_standalone_event_records.assert_called_once_with("coach@example.com")
+        fetch_calendar_event_records.assert_called_once_with("coach@example.com", [])
 
 
 @override_settings(

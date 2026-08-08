@@ -107,7 +107,7 @@ export default function MisCalendarPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'primary' ? 'bg-primary-100 text-primary-600' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : 'bg-secondary-100 text-secondary-600'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -124,11 +124,11 @@ export default function MisCalendarPage() {
             </div>
             <div className="flex items-center gap-1">
               <button onClick={() => setMonthOffset(monthOffset - 1)} className="w-8 h-8 flex items-center justify-center bg-background-100 rounded-lg hover:bg-background-200 cursor-pointer">
-                <i className="ri-arrow-left-s-line text-foreground-500"></i>
+                <AppIcon className="ri-arrow-left-s-line text-foreground-500"></AppIcon>
               </button>
               <span className="text-sm font-semibold text-foreground-900 min-w-[140px] text-center">{monthName}</span>
               <button onClick={() => setMonthOffset(monthOffset + 1)} className="w-8 h-8 flex items-center justify-center bg-background-100 rounded-lg hover:bg-background-200 cursor-pointer">
-                <i className="ri-arrow-right-s-line text-foreground-500"></i>
+                <AppIcon className="ri-arrow-right-s-line text-foreground-500"></AppIcon>
               </button>
               <button onClick={() => setMonthOffset(0)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 cursor-pointer whitespace-nowrap">Today</button>
             </div>
@@ -243,7 +243,7 @@ export default function MisCalendarPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-base font-heading font-semibold text-foreground-900">{showEvent.title}</h2>
               <button onClick={() => setShowEvent(null)} className="w-8 h-8 flex items-center justify-center rounded-lg bg-background-100 hover:bg-background-200 cursor-pointer">
-                <i className="ri-close-line text-foreground-500"></i>
+                <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
               </button>
             </div>
             <div className="space-y-3 text-[12px] text-foreground-600">
@@ -279,10 +279,10 @@ export default function MisCalendarPage() {
               </div>
               <div className="flex items-center gap-3 mt-4">
                 <Link to="/mis/timetables" className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer text-center whitespace-nowrap">
-                  <i className="ri-calendar-line mr-1"></i> View Timetable
+                  <AppIcon className="ri-calendar-line mr-1"></AppIcon> View Timetable
                 </Link>
                 <button className="flex-1 px-3 py-2 border border-background-300 bg-background-50 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer whitespace-nowrap">
-                  <i className="ri-notification-3-line mr-1"></i> Remind Me
+                  <AppIcon className="ri-notification-3-line mr-1"></AppIcon> Remind Me
                 </button>
               </div>
             </div>

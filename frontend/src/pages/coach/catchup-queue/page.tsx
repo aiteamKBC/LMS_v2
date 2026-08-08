@@ -341,7 +341,7 @@ function FilterDropdown({ label, value, onChange, options, allLabel }: { label: 
         <option value="all">{allLabel || `All ${label}s`}</option>
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      <i className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs pointer-events-none"></i>
+      <AppIcon className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs pointer-events-none"></AppIcon>
     </div>
   );
 }
@@ -527,7 +527,7 @@ export default function CoachCatchupQueue() {
           <div className="relative p-6 sm:p-8">
             <div className="flex flex-col lg:flex-row items-start lg:items-center gap-5">
               <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-                <i className="ri-timer-line text-white text-2xl"></i>
+                <AppIcon className="ri-timer-line text-white text-2xl"></AppIcon>
               </span>
               <div className="flex-1">
                 <h2 className="text-lg font-heading font-bold text-white mb-1">Catch-up Queue</h2>
@@ -624,7 +624,7 @@ export default function CoachCatchupQueue() {
             >
               <div className="flex items-center justify-between">
                 <span className={`w-9 h-9 rounded-lg ${card.iconBg} flex items-center justify-center`}>
-                  <i className={`${card.icon} ${card.iconColor} text-sm`}></i>
+                  <AppIcon className={`${card.icon} ${card.iconColor} text-sm`}></AppIcon>
                 </span>
                 {card.sparkline ? (
                   <div className="w-20 h-8">{card.sparkline}</div>
@@ -637,7 +637,7 @@ export default function CoachCatchupQueue() {
                 <p className="text-[10px] text-foreground-400">{card.label}</p>
                 {card.trend && (
                   <div className="flex items-center gap-1 mt-1">
-                    <i className={`${card.trendIcon} text-[10px]`}></i>
+                    <AppIcon className={`${card.trendIcon} text-[10px]`}></AppIcon>
                     <span className={`text-[10px] font-medium ${card.trendColor}`}>{card.trend}</span>
                   </div>
                 )}
@@ -655,7 +655,7 @@ export default function CoachCatchupQueue() {
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
                 <div className="flex items-center gap-3">
                   <span className="w-8 h-8 rounded-lg bg-accent-100 flex items-center justify-center">
-                    <i className="ri-bar-chart-grouped-line text-accent-600 text-sm"></i>
+                    <AppIcon className="ri-bar-chart-grouped-line text-accent-600 text-sm"></AppIcon>
                   </span>
                   <div>
                     <h3 className="text-sm font-heading font-semibold text-foreground-900">Catch-up Volume Trend</h3>
@@ -700,7 +700,7 @@ export default function CoachCatchupQueue() {
             <div className="p-5 flex flex-col items-center h-full">
               <div className="flex items-center gap-2.5 mb-4 self-start">
                 <span className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
-                  <i className="ri-pie-chart-line text-red-600 text-sm"></i>
+                  <AppIcon className="ri-pie-chart-line text-red-600 text-sm"></AppIcon>
                 </span>
                 <div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Status Distribution</h3>
@@ -729,10 +729,10 @@ export default function CoachCatchupQueue() {
           </div>
           <div className="flex items-center gap-2">
             <button onClick={handleExportCSV} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1.5">
-              <i className="ri-file-download-line text-sm"></i> Export CSV
+              <AppIcon className="ri-file-download-line text-sm"></AppIcon> Export CSV
             </button>
             <button onClick={handleExportPDF} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1.5">
-              <i className="ri-file-pdf-line text-sm"></i> Export PDF
+              <AppIcon className="ri-file-pdf-line text-sm"></AppIcon> Export PDF
             </button>
           </div>
         </div>
@@ -741,11 +741,11 @@ export default function CoachCatchupQueue() {
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
           <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
             <div className="relative flex-1 w-full">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
               <input type="text" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }} placeholder="Search learners, sessions, tutors..." className="w-full pl-9 pr-3 py-2 bg-background-100 border border-foreground-200 rounded-lg text-xs text-foreground-700 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50" />
               {searchQuery && (
                 <button onClick={() => { setSearchQuery(''); setCurrentPage(1); }} className="absolute right-3 top-1/2 -translate-y-1/2 text-foreground-400 hover:text-foreground-600 cursor-pointer">
-                  <i className="ri-close-line text-xs"></i>
+                  <AppIcon className="ri-close-line text-xs"></AppIcon>
                 </button>
               )}
             </div>
@@ -759,11 +759,11 @@ export default function CoachCatchupQueue() {
                   <option value="medium">Medium</option>
                   <option value="low">Low</option>
                 </select>
-                <i className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs pointer-events-none"></i>
+                <AppIcon className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs pointer-events-none"></AppIcon>
               </div>
               {(filter !== 'all' || cohortFilter !== 'all' || programmeFilter !== 'all' || priorityFilter !== 'all' || searchQuery) && (
                 <button onClick={() => { setFilter('all'); setCohortFilter('all'); setProgrammeFilter('all'); setPriorityFilter('all'); setSearchQuery(''); setCurrentPage(1); }} className="px-2 py-2 rounded-lg text-[11px] text-foreground-400 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-close-line mr-1"></i>Clear
+                  <AppIcon className="ri-close-line mr-1"></AppIcon>Clear
                 </button>
               )}
             </div>
@@ -775,25 +775,25 @@ export default function CoachCatchupQueue() {
               {filter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {filter.charAt(0).toUpperCase() + filter.slice(1)}
-                  <button onClick={() => { setFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
               {cohortFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {cohortFilter}
-                  <button onClick={() => { setCohortFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setCohortFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
               {programmeFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {programmeFilter}
-                  <button onClick={() => { setProgrammeFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setProgrammeFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
               {priorityFilter !== 'all' && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 flex items-center gap-1">
                   {priorityFilter.charAt(0).toUpperCase() + priorityFilter.slice(1)} Priority
-                  <button onClick={() => { setPriorityFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><i className="ri-close-line"></i></button>
+                  <button onClick={() => { setPriorityFilter('all'); setCurrentPage(1); }} className="hover:text-primary-900 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
                 </span>
               )}
             </div>
@@ -820,14 +820,14 @@ export default function CoachCatchupQueue() {
                 {queueLoading ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-14 text-center">
-                      <i className="ri-loader-4-line text-primary-500 text-2xl animate-spin inline-block mb-2"></i>
+                      <AppIcon className="ri-loader-4-line text-primary-500 text-2xl animate-spin inline-block mb-2"></AppIcon>
                       <p className="text-sm text-foreground-400">Loading catch-up sessions...</p>
                     </td>
                   </tr>
                 ) : queueError ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-14 text-center">
-                      <i className="ri-error-warning-line text-red-500 text-2xl mb-2 block"></i>
+                      <AppIcon className="ri-error-warning-line text-red-500 text-2xl mb-2 block"></AppIcon>
                       <p className="text-sm font-medium text-red-600">Could not load catch-up sessions</p>
                       <p className="text-[11px] text-foreground-400 mt-1">{queueError}</p>
                     </td>
@@ -866,7 +866,7 @@ export default function CoachCatchupQueue() {
                         )}
                       </td>
                       <td className="pr-4 py-2.5 text-center">
-                        <i className={`text-foreground-300 text-sm transition-transform duration-300 ${isSel ? 'ri-arrow-up-s-line rotate-180' : 'ri-arrow-down-s-line'}`}></i>
+                        <AppIcon className={`text-foreground-300 text-sm transition-transform duration-300 ${isSel ? 'ri-arrow-up-s-line rotate-180' : 'ri-arrow-down-s-line'}`}></AppIcon>
                       </td>
                     </tr>
                   );
@@ -876,7 +876,7 @@ export default function CoachCatchupQueue() {
           </div>
           {!queueLoading && !queueError && filtered.length === 0 && (
             <div className="py-12 text-center">
-              <i className="ri-search-line text-foreground-300 text-3xl mb-2 block"></i>
+              <AppIcon className="ri-search-line text-foreground-300 text-3xl mb-2 block"></AppIcon>
               <p className="text-sm text-foreground-400">No catch-up items match your filter</p>
               <button onClick={() => { setFilter('all'); setCohortFilter('all'); setProgrammeFilter('all'); setPriorityFilter('all'); setSearchQuery(''); setCurrentPage(1); }} className="mt-2 text-[11px] font-medium text-primary-600 hover:text-primary-700 cursor-pointer">Clear all filters</button>
             </div>
@@ -897,10 +897,10 @@ export default function CoachCatchupQueue() {
                 <option value={20}>20</option>
               </select>
               <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                <i className="ri-skip-back-line"></i>
+                <AppIcon className="ri-skip-back-line"></AppIcon>
               </button>
               <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                <i className="ri-arrow-left-s-line"></i>
+                <AppIcon className="ri-arrow-left-s-line"></AppIcon>
               </button>
               <div className="flex items-center gap-1">
                 {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
@@ -914,10 +914,10 @@ export default function CoachCatchupQueue() {
                 })}
               </div>
               <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                <i className="ri-arrow-right-s-line"></i>
+                <AppIcon className="ri-arrow-right-s-line"></AppIcon>
               </button>
               <button onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} className="w-7 h-7 rounded-lg bg-background-100 flex items-center justify-center text-[11px] text-foreground-500 hover:text-foreground-700 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                <i className="ri-skip-forward-line"></i>
+                <AppIcon className="ri-skip-forward-line"></AppIcon>
               </button>
             </div>
           </div>}
@@ -946,7 +946,7 @@ export default function CoachCatchupQueue() {
             {/* Status Alert */}
             {selectedItem.status === 'overdue' && (
               <div className="bg-red-50/50 rounded-xl border border-red-200/30 p-4">
-                <h4 className="text-[11px] font-semibold text-red-700 mb-2 flex items-center gap-1.5"><i className="ri-alert-line"></i> Overdue Alert</h4>
+                <h4 className="text-[11px] font-semibold text-red-700 mb-2 flex items-center gap-1.5"><AppIcon className="ri-alert-line"></AppIcon> Overdue Alert</h4>
                 <div className="flex flex-wrap gap-1.5">
                   <span className="text-[10px] font-medium px-2 py-1 rounded-full bg-red-100 text-red-700 border border-red-200/50">{selectedItem.daysOverdue} days overdue</span>
                   <span className="text-[10px] font-medium px-2 py-1 rounded-full bg-red-100 text-red-700 border border-red-200/50">Missed: {selectedItem.missedDate}</span>
@@ -1038,39 +1038,39 @@ export default function CoachCatchupQueue() {
               {/* Status-aware action button */}
               {selectedItem.status === 'overdue' && (
                 <button onClick={() => { setShowEscalateModal(true); setEscalateSubmitted(false); setEscalateReason(''); setEscalateTo(''); }} className="w-full px-4 py-2.5 bg-red-600 text-white rounded-lg text-[13px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 animate-fade-up">
-                  <i className="ri-alert-line"></i> Escalate
+                  <AppIcon className="ri-alert-line"></AppIcon> Escalate
                 </button>
               )}
               {selectedItem.status === 'scheduled' && (
                 <button onClick={() => { info(`1:1 Session started for ${selectedItem.learner}`, 'Redirecting to Zoom...'); window.open('https://zoom.us/start/videomeeting', '_blank'); }} className="w-full px-4 py-2.5 bg-amber-600 text-white rounded-lg text-[13px] font-semibold hover:bg-amber-700 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 animate-fade-up">
-                  <i className="ri-video-line"></i> Start 1:1 Session
+                  <AppIcon className="ri-video-line"></AppIcon> Start 1:1 Session
                 </button>
               )}
 
               <button onClick={() => handleViewProfile(selectedItem)} className="w-full px-4 py-2.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5">
-                <i className="ri-file-chart-line"></i> View Full Profile
+                <AppIcon className="ri-file-chart-line"></AppIcon> View Full Profile
               </button>
               <div className="relative">
                 <button onClick={() => setShowEmployerDropdown(!showEmployerDropdown)} className="w-full px-4 py-2.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap flex items-center justify-center gap-1">
-                  <i className="ri-building-2-line mr-1.5"></i> Contact Employer
-                  <i className={`ri-arrow-down-s-line text-xs transition-transform ${showEmployerDropdown ? 'rotate-180' : ''}`}></i>
+                  <AppIcon className="ri-building-2-line mr-1.5"></AppIcon> Contact Employer
+                  <AppIcon className={`ri-arrow-down-s-line text-xs transition-transform ${showEmployerDropdown ? 'rotate-180' : ''}`}></AppIcon>
                 </button>
                 {showEmployerDropdown && (
                   <div className="absolute bottom-full left-0 right-0 mb-1 bg-background-50 rounded-xl border border-background-200 shadow-xl overflow-hidden z-50">
                     <button onClick={() => handleSendMessage(selectedItem)} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer">
-                      <span className="w-7 h-7 rounded-lg bg-primary-100 flex items-center justify-center text-primary-600"><i className="ri-message-3-line text-xs"></i></span>
+                      <span className="w-7 h-7 rounded-lg bg-primary-100 flex items-center justify-center text-primary-600"><AppIcon className="ri-message-3-line text-xs"></AppIcon></span>
                       <div><p className="font-medium">Send Message</p><p className="text-[10px] text-foreground-400">Open in-app chat</p></div>
                     </button>
                     <button onClick={() => handleEmailEmployer(selectedItem)} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer border-t border-background-200/30">
-                      <span className="w-7 h-7 rounded-lg bg-accent-100 flex items-center justify-center text-accent-600"><i className="ri-mail-send-line text-xs"></i></span>
+                      <span className="w-7 h-7 rounded-lg bg-accent-100 flex items-center justify-center text-accent-600"><AppIcon className="ri-mail-send-line text-xs"></AppIcon></span>
                       <div><p className="font-medium">Email</p><p className="text-[10px] text-foreground-400">hr@{selectedItem.employer.toLowerCase().replace(/\s+/g, '')}.co.uk</p></div>
                     </button>
                     <button onClick={handleZoomCall} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer border-t border-background-200/30">
-                      <span className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600"><i className="ri-video-line text-xs"></i></span>
+                      <span className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center text-emerald-600"><AppIcon className="ri-video-line text-xs"></AppIcon></span>
                       <div><p className="font-medium">Call via Zoom</p><p className="text-[10px] text-foreground-400">Start video meeting</p></div>
                     </button>
                     <button onClick={handleOutlookCall} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer border-t border-background-200/30">
-                      <span className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600"><i className="ri-calendar-event-line text-xs"></i></span>
+                      <span className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center text-blue-600"><AppIcon className="ri-calendar-event-line text-xs"></AppIcon></span>
                       <div><p className="font-medium">Schedule via Outlook</p><p className="text-[10px] text-foreground-400">Book calendar meeting</p></div>
                     </button>
                   </div>
@@ -1088,7 +1088,7 @@ export default function CoachCatchupQueue() {
                       <div className="p-5 border-b border-foreground-200/60">
                         <div className="flex items-center gap-3">
                           <span className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
-                            <i className="ri-alert-line text-red-600 text-lg"></i>
+                            <AppIcon className="ri-alert-line text-red-600 text-lg"></AppIcon>
                           </span>
                           <div>
                             <h3 className="text-sm font-heading font-semibold text-foreground-900">Escalate Catch-up</h3>
@@ -1115,7 +1115,7 @@ export default function CoachCatchupQueue() {
                                     : 'border-foreground-200/60 text-foreground-600 hover:bg-background-100'
                                 }`}
                               >
-                                <i className={`${opt.icon} text-sm`}></i>
+                                <AppIcon className={`${opt.icon} text-sm`}></AppIcon>
                                 {opt.label}
                               </button>
                             ))}
@@ -1137,7 +1137,7 @@ export default function CoachCatchupQueue() {
                         </div>
                         <div className="bg-red-50/50 rounded-lg border border-red-200/30 p-3">
                           <div className="flex items-start gap-2">
-                            <i className="ri-information-line text-red-500 text-sm mt-0.5"></i>
+                            <AppIcon className="ri-information-line text-red-500 text-sm mt-0.5"></AppIcon>
                             <p className="text-[11px] text-red-600 leading-relaxed">This will notify the selected team and add a flag to the learner's record. The escalation will be tracked in the system.</p>
                           </div>
                         </div>
@@ -1165,7 +1165,7 @@ export default function CoachCatchupQueue() {
                   ) : (
                     <div className="p-8 flex flex-col items-center text-center animate-fade-in">
                       <div className="w-14 h-14 rounded-full bg-red-100 flex items-center justify-center mb-3">
-                        <i className="ri-check-line text-red-600 text-2xl"></i>
+                        <AppIcon className="ri-check-line text-red-600 text-2xl"></AppIcon>
                       </div>
                       <h3 className="text-sm font-heading font-semibold text-foreground-900 mb-1">Escalation Sent</h3>
                       <p className="text-[12px] text-foreground-500 mb-4">{selectedItem.learner} has been escalated to {escalateTo.replace('-', ' ').replace(/\b\w/g, (l) => l.toUpperCase())}</p>

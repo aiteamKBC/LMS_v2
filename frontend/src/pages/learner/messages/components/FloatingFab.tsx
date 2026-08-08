@@ -88,7 +88,7 @@ export default function FloatingFab({ onClick, icon, tooltip }: FloatingFabProps
 
       {/* FAB */}
       <div className="w-12 h-12 rounded-full bg-primary-500 hover:bg-primary-600 text-white flex items-center justify-center shadow-lg hover:shadow-xl transition-all duration-200 active:scale-95">
-        <i className={`${icon} text-lg`}></i>
+        <AppIcon className={`${icon} text-lg`}></AppIcon>
       </div>
 
       {/* Drag hint - subtle dots on edges */}

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { Bell, ClipboardList, CirclePlus, Mail, MailOpen } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
 
@@ -17,14 +18,14 @@ function SignOutConfirmModal({ onClose, onConfirm }: { onClose: () => void; onCo
       <div className="relative w-full max-w-xs bg-background-50 rounded-2xl border border-foreground-200 shadow-2xl shadow-foreground-950/15 overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="p-5 text-center">
           <div className="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center mx-auto mb-3">
-            <i className="ri-logout-box-line text-red-600 text-xl"></i>
+            <AppIcon className="ri-logout-box-line text-red-600 text-xl"></AppIcon>
           </div>
           <h3 className="text-sm font-bold text-foreground-900 mb-1">Sign Out?</h3>
           <p className="text-sm text-foreground-500 mb-5">Are you sure you want to sign out of your account? Any unsaved changes will be lost.</p>
           <div className="flex gap-2">
             <button onClick={onClose} className="flex-1 px-3 py-2.5 border border-background-200 rounded-lg text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
             <button onClick={onConfirm} className="flex-1 px-3 py-2.5 bg-red-500 text-white rounded-lg text-sm font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-logout-box-line mr-1"></i> Sign Out
+              <AppIcon className="ri-logout-box-line mr-1"></AppIcon> Sign Out
             </button>
           </div>
         </div>
@@ -152,19 +153,19 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
   return (
     <>
-    <header className="flex h-14 shrink-0 items-center gap-1.5 border-b border-background-300/70 bg-background-200 px-2 shadow-sm shadow-foreground-950/5 sm:px-3 md:gap-3 md:px-4">
+    <header className="workspace-topbar flex h-14 shrink-0 items-center gap-1.5 border-b border-background-300/70 bg-background-200 px-2 shadow-sm shadow-foreground-950/5 sm:px-3 md:gap-3 md:px-4">
       {/* Hamburger — mobile only */}
       <button
         onClick={onToggleMobileSidebar}
         className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-700 lg:hidden"
         title="Toggle menu"
       >
-        <i className="ri-menu-line text-lg"></i>
+        <AppIcon className="ri-menu-line text-lg"></AppIcon>
       </button>
 
       {/* Provider Logo */}
       <a href="/" className="hidden shrink-0 sm:flex">
-        <BrandLockup size="compact" />
+        <BrandLockup size="compact" className="!h-16 !w-32" />
       </a>
 
       {/* Spacer */}
@@ -176,7 +177,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         className="hidden md:flex items-center gap-2.5 px-3.5 py-2 rounded-xl border border-foreground-200 bg-background-100/80 hover:border-primary-300/50 hover:bg-primary-50/40 hover:shadow-sm hover:shadow-primary-500/5 transition-smooth min-w-[200px] lg:min-w-[280px] max-w-[400px] cursor-pointer group"
       >
         <span className="w-6 h-6 rounded-md bg-primary-100 flex items-center justify-center">
-          <i className="ri-search-line text-sm text-primary-600"></i>
+          <AppIcon className="ri-search-line text-sm text-primary-600"></AppIcon>
         </span>
         <span className="flex-1 text-left text-sm text-foreground-400 group-hover:text-foreground-600 transition-smooth">Search anything...</span>
         <span className="text-xs text-foreground-300 bg-background-200/60 px-1.5 py-0.5 rounded font-medium whitespace-nowrap">⌘K</span>
@@ -188,7 +189,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         className="md:hidden w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer shrink-0"
         title="Search"
       >
-        <i className="ri-search-line text-lg"></i>
+        <AppIcon className="ri-search-line text-lg"></AppIcon>
       </button>
 
       {/* Spacer */}
@@ -205,7 +206,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             }`}
             title="Messages"
           >
-            <i className={`${newMsgFlashed ? 'ri-mail-unread-line' : 'ri-mail-line'} text-lg`}></i>
+            {newMsgFlashed ? <MailOpen size={18} strokeWidth={1.8} /> : <Mail size={18} strokeWidth={1.8} />}
             {unreadMessages > 0 && (
               <span className="absolute top-1 right-1 min-w-[14px] h-3.5 rounded-full bg-primary-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">{unreadMessages}</span>
             )}
@@ -238,7 +239,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             className="relative w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
             title="Tasks"
           >
-            <i className="ri-task-line text-lg"></i>
+            <ClipboardList size={18} strokeWidth={1.8} />
             {highPriorityTasks > 0 && (
               <span className="absolute top-1 right-1 min-w-[14px] h-3.5 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">{highPriorityTasks}</span>
             )}
@@ -270,7 +271,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             className="relative w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
             title="Notifications"
           >
-            <i className="ri-notification-3-line text-lg"></i>
+            <Bell size={18} strokeWidth={1.8} />
             {unreadNotifs > 0 && (
               <span className="absolute top-1 right-1 min-w-[14px] h-3.5 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">{unreadNotifs}</span>
             )}
@@ -308,7 +309,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer"
             title="Quick Create"
           >
-            <i className="ri-add-circle-line text-lg"></i>
+            <CirclePlus size={18} strokeWidth={1.8} />
           </button>
           {quickCreateOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-56 bg-background-50 rounded-xl border border-background-200 shadow-lg shadow-foreground-950/5 z-50 py-1 overflow-hidden">
@@ -322,7 +323,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
                   className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth cursor-pointer"
                   onClick={e => { e.preventDefault(); setQuickCreateOpen(false); }}
                 >
-                  <i className={`${item.icon} text-foreground-400`}></i>
+                  <AppIcon className={`${item.icon} text-foreground-400`}></AppIcon>
                   {item.label}
                 </a>
               ))}
@@ -337,22 +338,22 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
             title="Help & Support"
           >
-            <i className="ri-question-line text-lg"></i>
+            <AppIcon className="ri-question-line text-lg"></AppIcon>
           </button>
           {helpOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-48 bg-background-50 rounded-xl border border-background-200 shadow-lg shadow-foreground-950/5 z-50 py-1 overflow-hidden">
               <a href="/help" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
-                <i className="ri-book-open-line text-foreground-400"></i> Knowledge Base
+                <AppIcon className="ri-book-open-line text-foreground-400"></AppIcon> Knowledge Base
               </a>
               <a href="/help/guides" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
-                <i className="ri-guide-line text-foreground-400"></i> User Guides
+                <AppIcon className="ri-guide-line text-foreground-400"></AppIcon> User Guides
               </a>
               <a href="/help/support" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
-                <i className="ri-customer-service-line text-foreground-400"></i> Contact Support
+                <AppIcon className="ri-customer-service-line text-foreground-400"></AppIcon> Contact Support
               </a>
               <div className="border-t border-background-100 my-1"></div>
               <a href="/help/release-notes" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
-                <i className="ri-rocket-line text-foreground-400"></i> What's New
+                <AppIcon className="ri-rocket-line text-foreground-400"></AppIcon> What's New
               </a>
             </div>
           )}
@@ -365,7 +366,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
             title="Settings"
           >
-            <i className="ri-settings-3-line text-lg"></i>
+            <AppIcon className="ri-settings-3-line text-lg"></AppIcon>
           </a>
         )}
 
@@ -378,7 +379,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center ring-1 ring-primary-200/50">
               <span className="text-primary-700 text-xs font-semibold">{displayName.charAt(0)}</span>
             </div>
-            <i className="ri-arrow-down-s-line hidden text-xs text-foreground-300 sm:inline"></i>
+            <AppIcon className="ri-arrow-down-s-line hidden text-xs text-foreground-300 sm:inline"></AppIcon>
           </button>
           {profileOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-52 bg-background-50 rounded-xl border border-background-200 shadow-lg shadow-foreground-950/5 z-50 py-1 overflow-hidden">
@@ -387,17 +388,17 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
                 <p className="text-xs text-foreground-400">{auth.user?.email || 'User'}</p>
               </div>
               <a href="/profile" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
-                <i className="ri-user-line text-foreground-400"></i> My Profile
+                <AppIcon className="ri-user-line text-foreground-400"></AppIcon> My Profile
               </a>
               <a href="/profile/preferences" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
-                <i className="ri-equalizer-line text-foreground-400"></i> Preferences
+                <AppIcon className="ri-equalizer-line text-foreground-400"></AppIcon> Preferences
               </a>
               <div className="border-t border-background-100 my-1"></div>
               <button
                 onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50/50 transition-smooth text-left cursor-pointer"
               >
-                <i className="ri-logout-box-line"></i> Sign Out
+                <AppIcon className="ri-logout-box-line"></AppIcon> Sign Out
               </button>
             </div>
           )}

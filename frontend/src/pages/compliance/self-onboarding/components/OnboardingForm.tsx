@@ -316,7 +316,7 @@ export function OnboardingForm({ learner }: OnboardingFormProps) {
                   <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                     isComplete ? 'bg-emerald-50 text-emerald-600' : filledCount > 0 ? 'bg-primary-50 text-primary-600' : 'bg-background-100 text-foreground-400'
                   }`}>
-                    <i className={`${section.icon} text-sm`}></i>
+                    <AppIcon className={`${section.icon} text-sm`}></AppIcon>
                   </span>
                   <div>
                     <p className="text-[15px] font-heading font-semibold text-foreground-800">{section.title}</p>
@@ -329,7 +329,7 @@ export function OnboardingForm({ learner }: OnboardingFormProps) {
                   }`}>
                     {isComplete ? 'Complete' : filledCount > 0 ? 'In Progress' : 'Pending'}
                   </span>
-                  <i className={`text-foreground-300 text-sm ${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></i>
+                  <AppIcon className={`text-foreground-300 text-sm ${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`}></AppIcon>
                 </div>
               </button>
 
@@ -365,7 +365,7 @@ function renderFieldValue(field: FieldDef, val: string | boolean | number | stri
     const boolVal = val as boolean;
     return (
       <span className={`inline-flex items-center gap-1.5 text-[12px] font-medium ${boolVal ? 'text-emerald-600' : 'text-red-500'}`}>
-        <i className={`${boolVal ? 'ri-checkbox-circle-fill' : 'ri-close-circle-fill'} text-sm`}></i>
+        <AppIcon className={`${boolVal ? 'ri-checkbox-circle-fill' : 'ri-close-circle-fill'} text-sm`}></AppIcon>
         {boolVal ? 'Yes' : 'No'}
       </span>
     );

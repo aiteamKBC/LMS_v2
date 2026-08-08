@@ -58,7 +58,7 @@ export default function FundingOverviewPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><i className="ri-money-pound-circle-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-primary-50 text-primary-600 flex items-center justify-center"><AppIcon className="ri-money-pound-circle-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Total Funding</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalFunding.toLocaleString()}</p>
@@ -66,7 +66,7 @@ export default function FundingOverviewPage() {
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><i className="ri-bank-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center"><AppIcon className="ri-bank-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Co-investment</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalCoInvestment.toLocaleString()}</p>
@@ -74,7 +74,7 @@ export default function FundingOverviewPage() {
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><i className="ri-government-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-government-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">DAS Commitments</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">£{totalDas.toLocaleString()}</p>
@@ -82,7 +82,7 @@ export default function FundingOverviewPage() {
           </div>
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
             <div className="flex items-center gap-2 mb-2">
-              <span className="w-8 h-8 rounded-lg bg-accent-50 text-accent-600 flex items-center justify-center"><i className="ri-user-line text-xs"></i></span>
+              <span className="w-8 h-8 rounded-lg bg-accent-50 text-accent-600 flex items-center justify-center"><AppIcon className="ri-user-line text-xs"></AppIcon></span>
               <span className="text-[11px] text-foreground-400">Active Learners</span>
             </div>
             <p className="text-xl font-heading font-semibold text-foreground-900">{totalLearners}</p>
@@ -92,7 +92,7 @@ export default function FundingOverviewPage() {
 
         {/* Search */}
         <div className="relative max-w-sm">
-          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
           <input type="text" placeholder="Search programmes..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
         </div>
 

@@ -43,7 +43,6 @@ from learner_api.models import (
 from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
-    cached_learner_busy_slots,
 )
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
 from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
@@ -1133,6 +1132,39 @@ def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | S
     return rows
 
 
+def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
+    """Return a lean learner snapshot for the coach dashboard first paint."""
+    requested_owner = normalize_email(owner_email)
+    queryset = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(coach_email_key=requested_owner)
+        .only(
+            "id",
+            "full_name",
+            "email",
+            "programme",
+            "programme_status",
+            "cohort",
+            "group_name",
+            "completed_hours",
+            "target_hours",
+            "minimum_hours",
+            "planned_hours",
+            "progress_hours",
+            "progress_variance",
+            "otjh_status",
+            "coach_name",
+            "coach_email",
+            "coach_rag",
+            "start_date",
+            "end_date",
+            "gateway_review_date",
+        )
+        .order_by("full_name", "id")
+    )
+    return [row for row in queryset if clean_text(row.username)]
+
+
 def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     queryset = (
@@ -1168,12 +1200,32 @@ def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
 
 def fetch_owner_active_learner_profiles(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
-    rows = [
-        row
-        for row in LearnerProfile.objects.filter(lifecycle_status="active").order_by("full_name", "id")
-        if clean_text(row.username) and normalize_email(row.coach_email) == requested_owner
-    ]
-    return rows
+    queryset = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(lifecycle_status="active", coach_email_key=requested_owner)
+        .only(
+            "id",
+            "full_name",
+            "email",
+            "programme",
+            "cohort",
+            "group_name",
+            "coach_name",
+            "coach_email",
+            "start_date",
+            "end_date",
+            "gateway_review_date",
+            "minimum_hours",
+            "planned_hours",
+            "completed_hours",
+            "target_hours",
+            "otjh_status",
+            "programme_status",
+            "lifecycle_status",
+        )
+        .order_by("full_name", "id")
+    )
+    return [row for row in queryset if clean_text(row.username)]
 
 
 def fetch_source_schedule_rows(
@@ -1477,6 +1529,91 @@ def serialize_caseload_learner(
         "plannedEndDate": format_date(getattr(row, "end_date", None)),
         "coachName": clean_text(row.coach_name) or None,
         "coachEmail": clean_text(row.coach_email) or None,
+        "rawProgramStatus": program_status or "--",
+        "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
+    }
+
+
+def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) -> dict:
+    """Serialize only the fields the coach dashboard needs immediately."""
+    target_hours_value = (
+        clean_text(getattr(row, "target_hours", None))
+        or clean_text(getattr(row, "minimum_hours", None))
+        or clean_text(getattr(row, "planned_hours", None))
+    )
+    hours_available = bool(clean_text(getattr(row, "completed_hours", None)) or target_hours_value)
+    hours_progress = percentage(getattr(row, "completed_hours", None), target_hours_value) if target_hours_value else 0
+    otjh_status = clean_text(getattr(row, "otjh_status", None))
+    progress_variance = clean_text(getattr(row, "progress_variance", None))
+    program_status = get_lms_row_program_status(row)
+    performance_status = determine_active_user_status(
+        program_status=program_status,
+        otjh_status=otjh_status,
+        progress_variance=progress_variance,
+        hours_progress=hours_progress,
+        hours_available=hours_available,
+        ksb_progress=0,
+        ksb_available=False,
+        component_progress=0,
+        component_available=False,
+    )
+    risk_flags = build_active_user_risk_flags(
+        otjh_status=otjh_status,
+        ksb_status="",
+        progress_variance=progress_variance,
+        hours_progress=hours_progress,
+        hours_available=hours_available,
+        ksb_progress=0,
+        ksb_available=False,
+        component_progress=0,
+        component_available=False,
+    )
+    cohort_name = clean_text(getattr(row, "cohort", None)) or "--"
+    group_name = clean_text(getattr(row, "group", None)) or "--"
+    programme_name = clean_text(getattr(row, "programme", None)) or cohort_name
+    cohort_id = re.sub(r"[^a-z0-9]+", "-", cohort_name.lower()).strip("-") or "unassigned"
+
+    return {
+        "id": str(row.id),
+        "name": clean_text(row.username) or "Unknown learner",
+        "initials": build_initials(row.username),
+        "employer": "--",
+        "cohortId": cohort_id,
+        "cohortName": cohort_name,
+        "programme": programme_name,
+        "group": group_name,
+        "status": performance_status,
+        "enrollmentStatus": normalize_program_status(program_status),
+        "riskFlags": risk_flags,
+        "overallProgress": hours_progress,
+        "overallProgressAvailable": hours_available,
+        "attendanceRate": 0,
+        "attendanceRateAvailable": False,
+        "otjhCompleted": to_number(getattr(row, "completed_hours", None)),
+        "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
+        "otjhMinimum": to_number(getattr(row, "minimum_hours", None)),
+        "otjhPlanned": to_number(getattr(row, "planned_hours", None)),
+        "otjhProgressHours": clean_text(getattr(row, "progress_hours", None)) or "--",
+        "otjhStatus": otjh_status,
+        "ksbCompleted": None,
+        "ksbTarget": None,
+        "ksbStatus": "",
+        "ksbProgress": 0,
+        "ksbProgressAvailable": False,
+        "evidenceCount": 0,
+        "evidenceCompletedCount": 0,
+        "evidenceCountAvailable": False,
+        "nextCoaching": "--",
+        "nextReview": "--",
+        "lastContact": "--",
+        "recentFlag": risk_flags[0] if risk_flags else None,
+        "email": clean_text(getattr(row, "email", None)) or None,
+        "progressVariance": progress_variance or "--",
+        "startDate": format_date(getattr(row, "start_date", None)),
+        "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
+        "plannedEndDate": format_date(getattr(row, "end_date", None)),
+        "coachName": clean_text(getattr(row, "coach_name", None)) or None,
+        "coachEmail": clean_text(getattr(row, "coach_email", None)) or None,
         "rawProgramStatus": program_status or "--",
         "coachRag": format_coach_rag_value(getattr(row, "coach_rag", None)),
     }
@@ -3225,10 +3362,28 @@ def build_timetable_summary(
     return summary
 
 
-def iterate_generated_schedule_dates(start_date: date, end_date: date, interval: timedelta):
+def iterate_generated_schedule_dates(
+    start_date: date,
+    end_date: date,
+    interval: timedelta,
+    *,
+    range_start: date | None = None,
+    range_end: date | None = None,
+):
     current = start_date + interval
     sequence = 1
+    if range_start and current < range_start:
+        interval_days = max(int(interval.days), 1)
+        skipped_steps = max((range_start - current).days // interval_days, 0)
+        if skipped_steps:
+            current += interval * skipped_steps
+            sequence += skipped_steps
+        while current < range_start:
+            current += interval
+            sequence += 1
     while current <= end_date:
+        if range_end and current > range_end:
+            break
         yield sequence, current
         current += interval
         sequence += 1
@@ -3267,6 +3422,40 @@ def calendar_record_has_launch_url(record: CoachCalendarEvent) -> bool:
     return bool(clean_text(record.meeting_link) or clean_text(record.graph_web_link))
 
 
+TEAMS_SYNC_PERMISSION_MESSAGE = (
+    "Teams calendar sync needs updated Microsoft permissions. "
+    "The event was saved locally only; reconnect Microsoft Calendar or ask an admin to refresh access."
+)
+TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = "Teams calendar sync is not configured. The event was saved locally only."
+TEAMS_SYNC_TEMPORARY_MESSAGE = (
+    "Teams calendar sync could not be completed. "
+    "The event was saved locally only; try again later or ask an admin to check Microsoft permissions."
+)
+TEAMS_SYNC_LINK_MISSING_MESSAGE = (
+    "Teams did not return a meeting link, so this event was moved back to Needs Schedule. "
+    "Try scheduling again after Microsoft sync is available."
+)
+
+
+def public_graph_sync_warning(raw_message: str | None) -> str:
+    """Convert low-level Microsoft Graph errors into safe coach-facing copy."""
+    message = clean_text(raw_message)
+    if not message:
+        return ""
+    lowered = message.casefold()
+    if "credentials are not configured" in lowered:
+        return TEAMS_SYNC_NOT_CONFIGURED_MESSAGE
+    if "erroraccessdenied" in lowered or "access is denied" in lowered or " 403 " in f" {lowered} ":
+        return TEAMS_SYNC_PERMISSION_MESSAGE
+    if "did not return a teams meeting link" in lowered or (
+        "did not return" in lowered and "teams" in lowered
+    ):
+        return TEAMS_SYNC_LINK_MISSING_MESSAGE
+    if "microsoft graph" in lowered or "microsoft token" in lowered:
+        return TEAMS_SYNC_TEMPORARY_MESSAGE
+    return message
+
+
 def calendar_record_needs_schedule_repair(record: CoachCalendarEvent) -> bool:
     if record.status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}:
         return False
@@ -3292,7 +3481,7 @@ def repair_calendar_record_to_needs_schedule(
     record.meeting_link = ""
     record.graph_web_link = ""
     record.graph_event_id = ""
-    record.last_graph_sync_error = clean_text(reason) or default_reason
+    record.last_graph_sync_error = public_graph_sync_warning(reason) or default_reason
     record.save()
     return record
 
@@ -3320,8 +3509,9 @@ def build_catchup_note_lines(record: CoachCalendarEvent, target_date: date) -> l
         )
     if clean_text(record.notes):
         lines.append(clean_text(record.notes))
-    if clean_text(record.last_graph_sync_error):
-        lines.append(f"Microsoft sync warning: {clean_text(record.last_graph_sync_error)}")
+    sync_warning = public_graph_sync_warning(record.last_graph_sync_error)
+    if sync_warning:
+        lines.append(f"Microsoft sync warning: {sync_warning}")
     return lines
 
 
@@ -3464,7 +3654,7 @@ def build_catchup_calendar_event(
         "graphWebLink": graph_web_link,
         "platform": meeting_provider or ("Microsoft Teams" if meeting_link else "--"),
         "location": "Online" if meeting_link else "--",
-        "syncWarning": clean_text(record.last_graph_sync_error),
+        "syncWarning": public_graph_sync_warning(record.last_graph_sync_error),
     }
 
 
@@ -3650,8 +3840,9 @@ def event_note_lines(base_event: dict, record: CoachCalendarEvent | None) -> lis
         )
     if record and clean_text(record.notes):
         lines.append(clean_text(record.notes))
-    if record and clean_text(record.last_graph_sync_error):
-        lines.append(f"Microsoft sync warning: {clean_text(record.last_graph_sync_error)}")
+    sync_warning = public_graph_sync_warning(record.last_graph_sync_error) if record else ""
+    if sync_warning:
+        lines.append(f"Microsoft sync warning: {sync_warning}")
     return lines
 
 
@@ -3714,7 +3905,7 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "managerSignedAt": record.manager_signed_at.isoformat() if record and record.manager_signed_at else None,
             "managerSignedBy": clean_text(record.manager_signed_by) if record else "",
             "priority": generated_event_priority(status, target_date, display_date),
-            "syncWarning": clean_text(record.last_graph_sync_error) if record else "",
+            "syncWarning": public_graph_sync_warning(record.last_graph_sync_error) if record else "",
         }
     )
     return event
@@ -3839,7 +4030,7 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
         record.meeting_provider = ""
         record.meeting_link = ""
         record.graph_web_link = ""
-        return "Microsoft Graph credentials are not configured; event was saved locally only."
+        return TEAMS_SYNC_NOT_CONFIGURED_MESSAGE
 
     payload = build_graph_event_payload(record, base_event)
     organizer_mailbox = graph_organizer_mailbox(record, base_event)
@@ -3864,10 +4055,11 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
                 payload=payload,
             )
     except RuntimeError as exc:
+        logger.warning("Unable to sync coach timetable event to Microsoft Graph: %s", exc)
         record.meeting_provider = ""
         record.meeting_link = ""
         record.graph_web_link = ""
-        return str(exc)
+        return public_graph_sync_warning(str(exc))
 
     response_event_id = clean_text(response.get("id")) or clean_text(record.graph_event_id)
     online_meeting = response.get("onlineMeeting") or {}
@@ -3912,7 +4104,8 @@ def delete_calendar_event_from_graph(record: CoachCalendarEvent) -> str:
     try:
         microsoft_graph_request("DELETE", f"users/{owner_key}/events/{event_key}")
     except RuntimeError as exc:
-        return str(exc)
+        logger.warning("Unable to delete coach timetable event from Microsoft Graph: %s", exc)
+        return public_graph_sync_warning(str(exc))
     return ""
 
 
@@ -4168,7 +4361,14 @@ def collect_live_session_events(
     return events
 
 
-def collect_generated_timetable(owner_email: str, start_date: date | None = None, end_date: date | None = None) -> dict:
+def collect_generated_timetable(
+    owner_email: str,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    *,
+    include_live_sessions: bool = True,
+    include_scheduler_queues: bool = True,
+) -> dict:
     active_rows = fetch_owner_active_learner_profiles(owner_email)
     learner_profile_map = build_learner_profile_map(active_rows)
     owner_name = next(
@@ -4176,9 +4376,17 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         "Med Maher",
     )
     commercial_rows, enrolment_rows = fetch_source_schedule_rows(active_rows)
-    live_session_events = collect_live_session_events(
-        owner_email, owner_name, start_date=start_date, end_date=end_date
-    )
+    live_session_events = []
+    if include_live_sessions:
+        try:
+            live_session_events = collect_live_session_events(
+                owner_email,
+                owner_name,
+                start_date=start_date,
+                end_date=end_date,
+            )
+        except Exception as exc:
+            logger.warning("Could not collect live session events for %s: %s", owner_email, exc)
 
     generated_events: list[dict] = []
     source_counts = {
@@ -4199,6 +4407,8 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
             learner_start_date,
             learner_end_date,
             TIMETABLE_MCR_INTERVAL,
+            range_start=start_date,
+            range_end=end_date,
         ):
             generated_events.append(
                 build_generated_calendar_event(
@@ -4216,6 +4426,8 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
             learner_start_date,
             learner_end_date,
             TIMETABLE_PROGRESS_REVIEW_INTERVAL,
+            range_start=start_date,
+            range_end=end_date,
         ):
             generated_events.append(
                 build_generated_calendar_event(
@@ -4238,18 +4450,20 @@ def collect_generated_timetable(owner_email: str, start_date: date | None = None
         )
         for record in persisted_standalone_records
     ]
-    persisted_catchup_records = [
-        record
-        for record in persisted_standalone_records
-        if clean_text(record.event_type).lower() == CATCH_UP_EVENT_TYPE
-    ]
-    scheduler_catchups = build_catchup_scheduler_events(
-        owner_email,
-        owner_name,
-        active_rows,
-        learner_profile_map,
-        persisted_catchup_records,
-    )
+    scheduler_catchups: list[dict] = []
+    if include_scheduler_queues:
+        persisted_catchup_records = [
+            record
+            for record in persisted_standalone_records
+            if clean_text(record.event_type).lower() == CATCH_UP_EVENT_TYPE
+        ]
+        scheduler_catchups = build_catchup_scheduler_events(
+            owner_email,
+            owner_name,
+            active_rows,
+            learner_profile_map,
+            persisted_catchup_records,
+        )
     source_counts["catchUpRows"] = sum(1 for event in persisted_standalone_events if event["source"] == CATCH_UP_EVENT_TYPE)
 
     record_map = fetch_calendar_event_records(owner_email, [event["eventKey"] for event in generated_events])
@@ -4396,10 +4610,10 @@ def coach_timetable_schedule_event(request):
         )
         warning = sync_calendar_event_to_graph(catchup_record, base_event)
         if not calendar_record_has_launch_url(catchup_record):
-            warning = warning or "Microsoft Graph did not return a Teams meeting link, so the booking was moved back to Needs Schedule."
+            warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
             catchup_record = repair_calendar_record_to_needs_schedule(catchup_record, reason=warning)
         else:
-            catchup_record.last_graph_sync_error = warning
+            catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
             catchup_record.save()
 
         updated_event = build_catchup_calendar_event(
@@ -4454,10 +4668,10 @@ def coach_timetable_schedule_event(request):
         )
         warning = sync_calendar_event_to_graph(record, base_event)
         if not calendar_record_has_launch_url(record):
-            warning = warning or "Microsoft Graph did not return a Teams meeting link, so the booking was moved back to Needs Schedule."
+            warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
             record = repair_calendar_record_to_needs_schedule(record, reason=warning)
         else:
-            record.last_graph_sync_error = warning
+            record.last_graph_sync_error = public_graph_sync_warning(warning)
             record.save()
 
         updated_event = build_catchup_calendar_event(
@@ -4521,10 +4735,10 @@ def coach_timetable_schedule_event(request):
 
     warning = sync_calendar_event_to_graph(record, base_event)
     if not calendar_record_has_launch_url(record):
-        warning = warning or "Microsoft Graph did not return a Teams meeting link, so the booking was moved back to Needs Schedule."
+        warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
         record = repair_calendar_record_to_needs_schedule(record, reason=warning)
     else:
-        record.last_graph_sync_error = warning
+        record.last_graph_sync_error = public_graph_sync_warning(warning)
         record.save()
 
     updated_event = overlay_calendar_record(base_event, record)
@@ -4602,7 +4816,7 @@ def coach_timetable_book_event(request):
             notes=notes,
         )
         warning = sync_calendar_event_to_graph(record, build_booked_calendar_event(record))
-        record.last_graph_sync_error = warning
+        record.last_graph_sync_error = public_graph_sync_warning(warning)
         record.save()
     except Exception as exc:  # noqa: BLE001
         return JsonResponse({"detail": "Unable to create coach session.", "error": str(exc)}, status=500)
@@ -4657,7 +4871,7 @@ def coach_timetable_event_action(request):
             catchup_record.meeting_provider = ""
 
         catchup_record.owner_name = owner_name or catchup_record.owner_name
-        catchup_record.last_graph_sync_error = warning
+        catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
         catchup_record.save()
 
         learner = fetch_owner_active_learner_profiles(owner_email)
@@ -4837,7 +5051,7 @@ def coach_timetable_event_action(request):
         record.graph_event_id = ""
         record.meeting_provider = ""
 
-    record.last_graph_sync_error = warning
+    record.last_graph_sync_error = public_graph_sync_warning(warning)
     record.save()
     updated_event = overlay_calendar_record(base_event, record)
     return JsonResponse({"event": updated_event, "warning": warning})
@@ -4982,13 +5196,21 @@ def coach_timetable(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
     start_date = parse_date_value(request.GET.get("start"))
     end_date = parse_date_value(request.GET.get("end"))
+    include_live_sessions = clean_text(request.GET.get("include_live_sessions", "1")).casefold() not in {"0", "false", "no", "off"}
+    include_scheduler_queues = clean_text(request.GET.get("include_scheduler_queues", "1")).casefold() not in {"0", "false", "no", "off"}
     if isinstance(start_date, datetime):
         start_date = start_date.date()
     if isinstance(end_date, datetime):
         end_date = end_date.date()
 
     try:
-        timetable_payload = collect_generated_timetable(owner_email, start_date=start_date, end_date=end_date)
+        timetable_payload = collect_generated_timetable(
+            owner_email,
+            start_date=start_date,
+            end_date=end_date,
+            include_live_sessions=include_live_sessions,
+            include_scheduler_queues=include_scheduler_queues,
+        )
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach timetable data.", "error": str(exc)},
@@ -5003,66 +5225,6 @@ def coach_timetable(request):
             "schedulerQueues": timetable_payload.get("schedulerQueues", {}),
         }
     )
-
-
-@require_GET
-def coach_learner_busy_slots(request, learner_id=None):
-    """Return privacy-safe cached busy blocks for learners in this coach's caseload."""
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
-    requested_learner_id = learner_id or parse_int(request.GET.get("learner_id"), 0)
-    start = clean_text(request.GET.get("start"))
-    end = clean_text(request.GET.get("end"))
-    if not start or not end:
-        return JsonResponse({"detail": "start and end are required ISO-8601 datetimes."}, status=400)
-
-    try:
-        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
-        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
-    except ValueError:
-        return JsonResponse({"detail": "start and end must be ISO-8601 datetimes."}, status=400)
-    if end_dt <= start_dt or (end_dt - start_dt).days > 31:
-        return JsonResponse({"detail": "Busy-slot range must be between 0 and 31 days."}, status=400)
-
-    learners = fetch_owner_active_learner_profiles(owner_email)
-    if requested_learner_id:
-        learners = [row for row in learners if int(getattr(row, "id", 0) or 0) == requested_learner_id]
-        if not learners:
-            return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
-
-    commercial_rows, enrolment_rows = fetch_source_schedule_rows(learners)
-    slots = []
-    seen_slots = set()
-    try:
-        for learner in learners:
-            identity = learner_calendar_source_identity(
-                learner,
-                commercial_rows=commercial_rows,
-                enrolment_rows=enrolment_rows,
-            )
-            if not identity:
-                continue
-            kind, source_id = identity
-            for slot in cached_learner_busy_slots(kind, source_id, start, end):
-                slot_key = (str(learner.id), slot["start"], slot["end"])
-                if slot_key in seen_slots:
-                    continue
-                seen_slots.add(slot_key)
-                slots.append(
-                    {
-                        "id": slot["id"],
-                        "learnerId": str(learner.id),
-                        "learnerName": clean_text(getattr(learner, "username", "")) or "Learner",
-                        "start": slot["start"],
-                        "end": slot["end"],
-                        "status": "busy",
-                        "syncedAt": slot["syncedAt"],
-                    }
-                )
-    except Exception as exc:
-        return JsonResponse({"detail": "Unable to load learner busy slots.", "error": str(exc)}, status=503)
-
-    return JsonResponse({"busy": slots})
-
 
 @require_GET
 def coach_monthly_activity(request):
@@ -5135,13 +5297,18 @@ def coach_monthly_activity(request):
 def coach_caseload(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
+    summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
 
     try:
-        rows = fetch_caseload_learner_profiles(owner_email)
-        learners = [
-            serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
-            for row in rows
-        ]
+        if summary_only:
+            rows = fetch_caseload_dashboard_profiles(owner_email)
+            learners = [serialize_caseload_dashboard_learner(row) for row in rows]
+        else:
+            rows = fetch_caseload_learner_profiles(owner_email)
+            learners = [
+                serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
+                for row in rows
+            ]
     except Exception as exc:
         return JsonResponse(
             {"detail": "Unable to load coach caseload data.", "error": str(exc)},

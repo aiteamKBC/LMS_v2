@@ -255,7 +255,7 @@ export default function TrainingPlanPage() {
             {/* Search input */}
             <div className="relative flex-1 min-w-0">
               <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
-                <i className="ri-search-line text-foreground-400 text-base"></i>
+                <AppIcon className="ri-search-line text-foreground-400 text-base"></AppIcon>
               </div>
               <input
                 type="text"
@@ -270,7 +270,7 @@ export default function TrainingPlanPage() {
                   className="absolute inset-y-0 right-0 flex items-center pr-3"
                 >
                   <div className="w-5 h-5 flex items-center justify-center rounded-md hover:bg-background-100 transition-colors cursor-pointer">
-                    <i className="ri-close-line text-foreground-400 text-sm"></i>
+                    <AppIcon className="ri-close-line text-foreground-400 text-sm"></AppIcon>
                   </div>
                 </button>
               )}
@@ -320,7 +320,7 @@ export default function TrainingPlanPage() {
                   }}
                   className="flex items-center gap-1.5 h-11 px-3 bg-red-50 border border-red-200 rounded-xl text-xs font-medium text-red-600 hover:bg-red-100 transition-all duration-200 cursor-pointer whitespace-nowrap"
                 >
-                  <i className="ri-close-line text-[13px]"></i> Clear
+                  <AppIcon className="ri-close-line text-[13px]"></AppIcon> Clear
                 </button>
               )}
             </div>
@@ -331,10 +331,10 @@ export default function TrainingPlanPage() {
             <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-background-300">
               {searchQuery && (
                 <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 bg-primary-100 text-primary-700 rounded-lg border border-primary-200">
-                  <i className="ri-search-line text-[10px]"></i>
+                  <AppIcon className="ri-search-line text-[10px]"></AppIcon>
                   "{searchQuery}"
                   <button onClick={() => setSearchQuery('')} className="ml-1 w-4 h-4 flex items-center justify-center rounded hover:bg-primary-200 cursor-pointer">
-                    <i className="ri-close-line text-[10px]"></i>
+                    <AppIcon className="ri-close-line text-[10px]"></AppIcon>
                   </button>
                 </span>
               )}
@@ -395,7 +395,7 @@ export default function TrainingPlanPage() {
         {monthGroups.length === 0 && (
           <div className="py-20 text-center">
             <div className="w-16 h-16 flex items-center justify-center mx-auto bg-background-100 rounded-2xl mb-4">
-              <i className="ri-search-line text-3xl text-foreground-400"></i>
+              <AppIcon className="ri-search-line text-3xl text-foreground-400"></AppIcon>
             </div>
             <p className="text-base font-semibold text-foreground-600">No weeks match your filters</p>
             <p className="text-sm text-foreground-400 mt-1.5">Try adjusting your search or clearing filters</p>
@@ -456,7 +456,7 @@ function MonthSection({
         <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
           isCurrentMonth ? 'bg-primary-100' : 'bg-background-100'
         }`}>
-          <i className={`${isCurrentMonth ? 'ri-calendar-line text-primary-600' : 'ri-calendar-line text-foreground-600'} text-base`}></i>
+          <AppIcon className={`${isCurrentMonth ? 'ri-calendar-line text-primary-600' : 'ri-calendar-line text-foreground-600'} text-base`}></AppIcon>
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -473,7 +473,7 @@ function MonthSection({
             <span className="text-xs font-semibold text-foreground-500 w-[32px] text-right">{progress}%</span>
           </div>
           <div className="w-7 h-7 flex items-center justify-center rounded-lg bg-background-100">
-            <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform text-sm ${collapsed ? '' : 'rotate-180'}`}></i>
+            <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform text-sm ${collapsed ? '' : 'rotate-180'}`}></AppIcon>
           </div>
         </div>
       </button>
@@ -615,7 +615,7 @@ function TimelineWeekCard({
 
           {/* Toggle icon */}
           <div className="flex items-center justify-center rounded-lg bg-background-100 shrink-0 w-6 h-6">
-            <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''} text-xs`}></i>
+            <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''} text-xs`}></AppIcon>
           </div>
         </button>
 
@@ -671,7 +671,7 @@ function ActivityRow({ activity, onClick }: { activity: TrainingActivity; onClic
     >
       {/* Type icon */}
       <div className={`${iconBox} rounded-lg flex items-center justify-center shrink-0 ${typeMeta.bg}`}>
-        <i className={`${activity.typeIcon || typeMeta.icon} text-[13px] ${typeMeta.color}`}></i>
+        <AppIcon className={`${activity.typeIcon || typeMeta.icon} text-[13px] ${typeMeta.color}`}></AppIcon>
       </div>
 
       {/* Info */}
@@ -680,7 +680,7 @@ function ActivityRow({ activity, onClick }: { activity: TrainingActivity; onClic
           <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{typeMeta.label}</span>
           {isOverdue && <span className="text-[10px] font-bold text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full">Overdue</span>}
           {isReferred && <span className="text-[10px] font-bold text-red-700 bg-red-100 border border-red-200 px-1.5 py-0.5 rounded-full">Referred</span>}
-          {isCompleted && !isSpecial && <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full"><i className="ri-check-line text-[9px] mr-0.5"></i>Done</span>}
+          {isCompleted && !isSpecial && <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded-full"><AppIcon className="ri-check-line text-[9px] mr-0.5"></AppIcon>Done</span>}
           {isInProgress && <span className="text-[10px] font-bold text-accent-600 bg-accent-100 px-1.5 py-0.5 rounded-full">Active</span>}
           {activity.isLive && <span className="text-[10px] font-bold text-red-600 bg-red-100 px-1.5 py-0.5 rounded-full animate-pulse">Live</span>}
         </div>
@@ -693,10 +693,10 @@ function ActivityRow({ activity, onClick }: { activity: TrainingActivity; onClic
           </p>
         )}
         <div className="flex items-center gap-x-2.5 gap-y-1 text-[11px] text-foreground-400 mt-1 flex-wrap">
-          <span className="flex items-center gap-1"><i className="ri-timer-line text-[10px]"></i>{activity.duration}</span>
-          {activity.plannedOTJH > 0 && <span className="flex items-center gap-1"><i className="ri-time-line text-[10px]"></i>{activity.plannedOTJH}h</span>}
-          <span className="flex items-center gap-1"><i className="ri-calendar-line text-[10px]"></i>{activity.dueDate}</span>
-          {activity.points > 0 && <span className="flex items-center gap-1 text-amber-600"><i className="ri-coin-line text-[10px]"></i>{activity.points} pts</span>}
+          <span className="flex items-center gap-1"><AppIcon className="ri-timer-line text-[10px]"></AppIcon>{activity.duration}</span>
+          {activity.plannedOTJH > 0 && <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]"></AppIcon>{activity.plannedOTJH}h</span>}
+          <span className="flex items-center gap-1"><AppIcon className="ri-calendar-line text-[10px]"></AppIcon>{activity.dueDate}</span>
+          {activity.points > 0 && <span className="flex items-center gap-1 text-amber-600"><AppIcon className="ri-coin-line text-[10px]"></AppIcon>{activity.points} pts</span>}
           {activity.ksbs && activity.ksbs.length > 0 && activity.ksbs.slice(0, 2).map(k => (
             <span key={k} className="text-[10px] px-1.5 py-0.5 font-medium bg-accent-100 text-accent-700 rounded">{k}</span>
           ))}
@@ -716,7 +716,7 @@ function ActivityRow({ activity, onClick }: { activity: TrainingActivity; onClic
         {isCompleted && !isSpecial ? 'Done' : isInProgress ? 'Active' : isReferred ? 'Referred' : isOverdue ? 'Overdue' : activity.status === 'Evidence Submitted' ? 'Submitted' : activity.status === 'Evidence Required' ? 'Evidence' : 'Pending'}
       </span>
 
-      <i className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-400 text-sm shrink-0 transition-colors"></i>
+      <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-400 text-sm shrink-0 transition-colors"></AppIcon>
     </button>
   );
 }
@@ -755,9 +755,9 @@ function DropdownFilter({ label, icon, value, options, onChange }: {
             : 'bg-background-50 border-background-200 text-foreground-600 hover:border-background-300 hover:bg-background-100'
         }`}
       >
-        <i className={`${icon} text-base ${value ? 'text-primary-500' : 'text-foreground-400'}`}></i>
+        <AppIcon className={`${icon} text-base ${value ? 'text-primary-500' : 'text-foreground-400'}`}></AppIcon>
         <span>{selected ? selected.label : label}</span>
-        <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></i>
+        <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform ${open ? 'rotate-180' : ''}`}></AppIcon>
       </button>
 
       {open && (
@@ -774,7 +774,7 @@ function DropdownFilter({ label, icon, value, options, onChange }: {
                 }`}
               >
                 {value === option.value && (
-                  <i className="ri-check-line text-primary-500 text-xs"></i>
+                  <AppIcon className="ri-check-line text-primary-500 text-xs"></AppIcon>
                 )}
                 <span className={value === option.value ? 'ml-0' : 'ml-5'}>{option.label}</span>
               </button>
@@ -794,7 +794,7 @@ function FilterChip({ label, onRemove }: { label: string; onRemove: () => void }
     <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 bg-secondary-100 text-secondary-800 rounded-lg border border-secondary-200/50">
       {label}
       <button onClick={onRemove} className="w-4 h-4 flex items-center justify-center rounded hover:bg-secondary-200 cursor-pointer">
-        <i className="ri-close-line text-[10px]"></i>
+        <AppIcon className="ri-close-line text-[10px]"></AppIcon>
       </button>
     </span>
   );

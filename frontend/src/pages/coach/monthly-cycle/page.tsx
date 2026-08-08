@@ -845,7 +845,7 @@ export default function CoachMonthlyCycle() {
               <div className="flex flex-col lg:flex-row lg:items-center gap-6">
                 <div className="flex items-start gap-5 flex-1">
                   <div className="w-14 h-14 rounded-2xl bg-white/12 ring-1 ring-white/15 flex items-center justify-center shrink-0">
-                    <i className="ri-radar-line text-white text-2xl"></i>
+                    <AppIcon className="ri-radar-line text-white text-2xl"></AppIcon>
                   </div>
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary-200 mb-2">Monthly learner activity</p>
@@ -866,7 +866,7 @@ export default function CoachMonthlyCycle() {
           <div className="flex flex-col xl:flex-row xl:items-center gap-4 justify-between">
             <div className="flex items-center gap-2 bg-background-50 border border-foreground-200/70 rounded-2xl p-1 shadow-sm w-fit">
               <button type="button" onClick={() => setSelectedMonth((value) => shiftMonthKey(value, -1))} className="w-9 h-9 rounded-xl text-foreground-500 hover:bg-background-100 hover:text-primary-700 transition-smooth cursor-pointer">
-                <i className="ri-arrow-left-s-line text-lg"></i>
+                <AppIcon className="ri-arrow-left-s-line text-lg"></AppIcon>
               </button>
               <input
                 type="month"
@@ -875,7 +875,7 @@ export default function CoachMonthlyCycle() {
                 className="h-9 px-3 rounded-xl bg-background-100 border border-transparent text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
               />
               <button type="button" onClick={() => setSelectedMonth((value) => shiftMonthKey(value, 1))} className="w-9 h-9 rounded-xl text-foreground-500 hover:bg-background-100 hover:text-primary-700 transition-smooth cursor-pointer">
-                <i className="ri-arrow-right-s-line text-lg"></i>
+                <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
               </button>
             </div>
             <p className="text-xs text-foreground-500">
@@ -894,14 +894,14 @@ export default function CoachMonthlyCycle() {
 
           {loading && (
             <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 text-center shadow-sm">
-              <i className="ri-loader-4-line text-primary-600 text-3xl animate-spin inline-block mb-3"></i>
+              <AppIcon className="ri-loader-4-line text-primary-600 text-3xl animate-spin inline-block mb-3"></AppIcon>
               <p className="text-sm font-semibold text-foreground-700">Loading monthly activity...</p>
             </div>
           )}
 
           {!loading && error && (
             <div className="bg-red-50 border border-red-200 rounded-2xl p-8 text-center">
-              <i className="ri-error-warning-line text-red-500 text-3xl block mb-3"></i>
+              <AppIcon className="ri-error-warning-line text-red-500 text-3xl block mb-3"></AppIcon>
               <p className="text-sm font-semibold text-red-700">Unable to load monthly activity</p>
               <p className="text-xs text-red-600 mt-1">{error}</p>
             </div>
@@ -917,7 +917,7 @@ export default function CoachMonthlyCycle() {
                   </div>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full 2xl:w-auto">
                     <div className="relative w-full sm:w-80">
-                      <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                      <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                       <input
                         type="search"
                         value={learnerSearch}
@@ -933,7 +933,7 @@ export default function CoachMonthlyCycle() {
                           aria-label="Clear learner search"
                           className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
                         >
-                          <i className="ri-close-line text-base"></i>
+                          <AppIcon className="ri-close-line text-base"></AppIcon>
                         </button>
                       )}
                     </div>
@@ -945,7 +945,7 @@ export default function CoachMonthlyCycle() {
 
                 {learners.length === 0 && (
                   <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 text-center shadow-sm">
-                    <i className="ri-user-search-line text-foreground-300 text-3xl block mb-3"></i>
+                    <AppIcon className="ri-user-search-line text-foreground-300 text-3xl block mb-3"></AppIcon>
                     <p className="text-sm font-semibold text-foreground-700">No active learners found</p>
                     <p className="text-xs text-foreground-400 mt-1">There are no active learners assigned to this coach for the selected month.</p>
                   </div>
@@ -953,7 +953,7 @@ export default function CoachMonthlyCycle() {
 
                 {learners.length > 0 && filteredLearners.length === 0 && (
                   <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 text-center shadow-sm">
-                    <i className="ri-user-search-line text-foreground-300 text-3xl block mb-3"></i>
+                    <AppIcon className="ri-user-search-line text-foreground-300 text-3xl block mb-3"></AppIcon>
                     <p className="text-sm font-semibold text-foreground-700">No learners match this search</p>
                     <p className="text-xs text-foreground-400 mt-1">Try a different learner name for {monthLabel}.</p>
                   </div>
@@ -982,7 +982,7 @@ export default function CoachMonthlyCycle() {
                           </button>
                           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
                             <button type="button" onClick={() => handleOpenLearnerOverview(learner.id)} className="px-3 py-2 rounded-xl border border-primary-200 bg-primary-50 text-primary-700 text-[11px] font-semibold hover:bg-primary-100 transition-smooth cursor-pointer">
-                              <i className="ri-layout-right-line mr-1.5"></i>
+                              <AppIcon className="ri-layout-right-line mr-1.5"></AppIcon>
                               Overview
                             </button>
                             <button type="button" onClick={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`)} className="px-3 py-2 rounded-xl bg-primary-600 text-white text-[11px] font-semibold hover:bg-primary-700 transition-smooth cursor-pointer">
@@ -994,7 +994,7 @@ export default function CoachMonthlyCycle() {
                               aria-label={expanded ? 'Collapse learner monthly cycle' : 'Open learner monthly cycle'}
                               className="w-9 h-9 rounded-xl border border-foreground-200 text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"
                             >
-                              <i className={`${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></i>
+                              <AppIcon className={`${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></AppIcon>
                             </button>
                           </div>
                         </div>
@@ -1032,7 +1032,7 @@ export default function CoachMonthlyCycle() {
                         disabled={visibleLearnerPage === 1}
                         className="h-9 px-3 rounded-xl border border-foreground-200 bg-white text-xs font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                       >
-                        <i className="ri-arrow-left-s-line mr-1"></i>
+                        <AppIcon className="ri-arrow-left-s-line mr-1"></AppIcon>
                         Previous
                       </button>
                       <button
@@ -1042,7 +1042,7 @@ export default function CoachMonthlyCycle() {
                         className="h-9 px-3 rounded-xl border border-foreground-200 bg-white text-xs font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                       >
                         Next
-                        <i className="ri-arrow-right-s-line ml-1"></i>
+                        <AppIcon className="ri-arrow-right-s-line ml-1"></AppIcon>
                       </button>
                     </div>
                   </div>
@@ -1066,7 +1066,7 @@ export default function CoachMonthlyCycle() {
                   </div>
                   {learnersNeedingAction.length === 0 ? (
                     <div className="rounded-2xl bg-emerald-50 p-4 text-center">
-                      <i className="ri-check-double-line text-emerald-600 text-2xl block mb-2"></i>
+                      <AppIcon className="ri-check-double-line text-emerald-600 text-2xl block mb-2"></AppIcon>
                       <p className="text-xs font-semibold text-emerald-800">No action gaps for this month.</p>
                     </div>
                   ) : (
@@ -1150,7 +1150,7 @@ function CoachDeliveryPanel({
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <span className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">
-            <i className="ri-user-voice-line text-emerald-600"></i>
+            <AppIcon className="ri-user-voice-line text-emerald-600"></AppIcon>
             Coaching session status
           </span>
           <h3 className="mt-2 text-lg font-heading font-bold text-foreground-900">MCR, PR, catch-up and support in {monthLabel}</h3>
@@ -1205,7 +1205,7 @@ function CoachDeliveryKindCard({
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone.icon}`}>
-              <i className={`${config.icon} text-base`}></i>
+              <AppIcon className={`${config.icon} text-base`}></AppIcon>
             </span>
             <div>
               <h4 className="text-sm font-heading font-bold text-foreground-900">{config.label}</h4>
@@ -1223,7 +1223,7 @@ function CoachDeliveryKindCard({
 
         {items.length === 0 ? (
           <div className="mt-3 flex items-center gap-2 rounded-xl border border-dashed border-foreground-200 bg-background-50 px-3 py-3">
-            <i className={`${config.icon} text-lg text-foreground-300`}></i>
+            <AppIcon className={`${config.icon} text-lg text-foreground-300`}></AppIcon>
             <p className="text-xs font-semibold text-foreground-700">No {config.label.toLowerCase()} activity in {monthLabel}.</p>
           </div>
         ) : (
@@ -1282,7 +1282,7 @@ function CoachDeliveryRecentItem({
           <p className="mt-1 truncate text-xs font-bold text-foreground-900">{item.learnerName}</p>
           <p className="mt-0.5 truncate text-[11px] text-foreground-500">{item.title}</p>
         </div>
-        <i className="ri-arrow-right-s-line shrink-0 text-lg text-foreground-300"></i>
+        <AppIcon className="ri-arrow-right-s-line shrink-0 text-lg text-foreground-300"></AppIcon>
       </div>
     </button>
   );
@@ -1302,7 +1302,7 @@ function CoachLearnerMonthlyCycleSummary({
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-primary-700">
-            <i className="ri-sparkling-2-line text-primary-600"></i>
+            <AppIcon className="ri-sparkling-2-line text-primary-600"></AppIcon>
             Learner monthly cycle
           </span>
           <h4 className="mt-3 text-xl font-heading font-bold text-foreground-900">{monthLabel} activity</h4>
@@ -1313,7 +1313,7 @@ function CoachLearnerMonthlyCycleSummary({
           onClick={() => downloadLearnerMonthlyCyclePdf(learner, monthLabel, monthKey)}
           className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-white px-4 text-xs font-bold text-primary-700 shadow-sm transition-smooth hover:bg-primary-50 cursor-pointer"
         >
-          <i className="ri-file-pdf-line text-sm"></i>
+          <AppIcon className="ri-file-pdf-line text-sm"></AppIcon>
           Download PDF
         </button>
       </div>
@@ -1376,14 +1376,14 @@ function CoachLearnerMonthlyCycleInline({
                 onClick={() => onFilterChange(item.key)}
                 className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition-smooth cursor-pointer ${filter === item.key ? 'bg-primary-600 text-white shadow-sm' : 'bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-700'}`}
               >
-                <i className={`${item.icon} text-sm`}></i>
+                <AppIcon className={`${item.icon} text-sm`}></AppIcon>
                 {item.label}
                 <span className={filter === item.key ? 'text-white/70' : 'text-foreground-400'}>{filterCounts[item.key]}</span>
               </button>
             ))}
           </div>
           <div className="relative w-full xl:w-72">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input
               value={query}
               onChange={(event) => onQueryChange(event.target.value)}
@@ -1397,13 +1397,13 @@ function CoachLearnerMonthlyCycleInline({
                 aria-label="Clear monthly cycle search"
                 className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
               >
-                <i className="ri-close-line text-base"></i>
+                <AppIcon className="ri-close-line text-base"></AppIcon>
               </button>
             )}
           </div>
         </div>
         <div className="mt-3 flex items-start gap-2 rounded-xl bg-primary-50/70 px-3 py-2 text-xs text-primary-800">
-          <i className="ri-information-line mt-0.5 shrink-0 text-primary-600"></i>
+          <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
           <p><span className="font-semibold">{filter === 'all' ? 'All activity' : INLINE_FILTERS.find((item) => item.key === filter)?.label}:</span> {filteredActivities.length} matching item{filteredActivities.length === 1 ? '' : 's'} in {monthLabel}.</p>
         </div>
       </section>
@@ -1411,7 +1411,7 @@ function CoachLearnerMonthlyCycleInline({
       <section className="mt-5">
         {groupedActivities.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-foreground-300 bg-background-50 px-6 py-12 text-center">
-            <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-background-100 text-foreground-400"><i className="ri-calendar-line text-xl"></i></span>
+            <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-background-100 text-foreground-400"><AppIcon className="ri-calendar-line text-xl"></AppIcon></span>
             <h4 className="mt-3 text-sm font-semibold text-foreground-800">No matching activity</h4>
             <p className="mt-1 text-xs text-foreground-500">Try another filter or search.</p>
           </div>
@@ -1450,7 +1450,7 @@ function MonthlyCycleStat({ icon, label, value, tone }: { icon: string; label: s
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-white p-3 shadow-[0_1px_8px_rgba(15,23,42,0.035)]">
       <span className={`hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl sm:flex ${palette.icon}`}>
-        <i className={`${icon} text-sm`}></i>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
       </span>
       <div>
         <p className="text-xl font-bold text-foreground-900">{typeof value === 'number' ? formatNumber(value) : value}</p>
@@ -1466,7 +1466,7 @@ function InlineActivityCard({ activity }: { activity: MonthlyActivityItem }) {
     <article className={`rounded-2xl border border-l-[3px] border-foreground-200/70 bg-background-50 p-4 shadow-[0_2px_10px_rgba(25,12,56,0.035)] transition-smooth hover:border-foreground-300 hover:shadow-md ${activity.tone === 'amber' ? 'border-l-amber-400' : activity.tone === 'red' ? 'border-l-red-400' : activity.tone === 'emerald' ? 'border-l-emerald-400' : 'border-l-primary-500'}`}>
       <div className="flex items-start gap-3">
         <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone.icon}`}>
-          <i className={`${activityIcon(activity.type)} text-base`}></i>
+          <AppIcon className={`${activityIcon(activity.type)} text-base`}></AppIcon>
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -1529,7 +1529,7 @@ function LearnerOverviewPanel(
               disabled={isExporting}
               className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 text-[12px] font-semibold text-white hover:bg-red-700 transition-smooth cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed sm:ml-auto"
             >
-              <i className={`${isExporting ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-line'} text-sm`}></i>
+              <AppIcon className={`${isExporting ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-line'} text-sm`}></AppIcon>
               {isExporting ? 'Preparing PDF...' : 'Download PDF'}
             </button>
           </div>
@@ -1571,7 +1571,7 @@ function LearnerOverviewPanel(
         <p className="text-[11px] text-foreground-500 mt-1">Anything needing follow-up for this learner this month.</p>
         {learner.needsAction.length === 0 ? (
           <div className="mt-4 rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-center">
-            <i className="ri-check-double-line text-emerald-600 text-2xl block mb-2"></i>
+            <AppIcon className="ri-check-double-line text-emerald-600 text-2xl block mb-2"></AppIcon>
             <p className="text-xs font-semibold text-emerald-800">No action gaps recorded.</p>
           </div>
         ) : (
@@ -1596,7 +1596,7 @@ function LearnerOverviewPanel(
 
         {learner.activities.length === 0 ? (
           <div className="mt-4 rounded-2xl border border-dashed border-foreground-200 bg-background-100 p-6 text-center">
-            <i className="ri-inbox-line text-foreground-300 text-2xl block mb-2"></i>
+            <AppIcon className="ri-inbox-line text-foreground-300 text-2xl block mb-2"></AppIcon>
             <p className="text-xs font-semibold text-foreground-700">No activity captured for {monthLabel}</p>
             <p className="text-[11px] text-foreground-400 mt-1">This learner has no progress log, activity feed, or coach calendar item in the selected month.</p>
           </div>
@@ -1608,7 +1608,7 @@ function LearnerOverviewPanel(
                 <div key={activity.id} className="rounded-2xl bg-background-100/70 border border-foreground-200/60 p-4">
                   <div className="flex items-start gap-3">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tone.icon}`}>
-                      <i className={`${activityIcon(activity.type)} text-base`}></i>
+                      <AppIcon className={`${activityIcon(activity.type)} text-base`}></AppIcon>
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -1645,7 +1645,7 @@ function OverviewMonthlyCycleSummary({ learner, monthLabel }: { learner: Monthly
       <div className="absolute inset-y-0 left-0 w-1.5 bg-primary-600"></div>
       <div className="p-5 pl-6">
         <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-primary-700">
-          <i className="ri-sparkling-2-line text-primary-600"></i>
+          <AppIcon className="ri-sparkling-2-line text-primary-600"></AppIcon>
           Monthly cycle summary
         </span>
         <h4 className="mt-3 text-lg font-heading font-bold text-foreground-900">{monthLabel} activity</h4>
@@ -1667,7 +1667,7 @@ function SummaryCard({ icon, label, value, detail, accent }: { icon: string; lab
   return (
     <div className="bg-background-50 rounded-2xl border border-foreground-200/70 p-4 shadow-sm">
       <div className={`w-9 h-9 rounded-xl flex items-center justify-center mb-4 ${tone.icon}`}>
-        <i className={`${icon} text-base`}></i>
+        <AppIcon className={`${icon} text-base`}></AppIcon>
       </div>
       <p className="text-[11px] font-semibold text-foreground-500">{label}</p>
       <p className="text-2xl font-heading font-bold text-foreground-900 mt-1">{typeof value === 'number' ? formatNumber(value) : value}</p>

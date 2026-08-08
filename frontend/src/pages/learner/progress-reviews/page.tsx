@@ -108,11 +108,11 @@ function SavedReviewAnswers({
           {item.type === 'rating' ? (
             <div className="mt-2 flex items-center gap-2">
               <span className="text-lg font-bold text-primary-700">{item.answer}/5</span>
-              <div className="flex gap-1">{[1, 2, 3, 4, 5].map((rating) => <i key={rating} className={`${rating <= Number(item.answer) ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-300'}`}></i>)}</div>
+              <div className="flex gap-1">{[1, 2, 3, 4, 5].map((rating) => <AppIcon key={rating} className={`${rating <= Number(item.answer) ? 'ri-star-fill text-amber-400' : 'ri-star-line text-foreground-300'}`}></AppIcon>)}</div>
             </div>
           ) : item.type === 'rag' ? (
             <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold ${item.answer.toLowerCase() === 'green' ? 'bg-emerald-100 text-emerald-700' : item.answer.toLowerCase() === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-              <i className="ri-circle-fill text-[8px]"></i>{item.answer}
+              <AppIcon className="ri-circle-fill text-[8px]"></AppIcon>{item.answer}
             </span>
           ) : (
             <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground-700">{item.answer}</p>
@@ -127,7 +127,7 @@ function PersonCard({ role, name, icon, tone }: { role: string; name?: string; i
   return (
     <div className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3.5">
       <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xs font-bold ${tone}`}>
-        {name ? initials(name) : <i className={icon} />}
+        {name ? initials(name) : <AppIcon className={icon} />}
       </span>
       <div className="min-w-0">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{role}</p>
@@ -158,14 +158,14 @@ function Accordion({
     <section className={`overflow-hidden rounded-2xl border bg-background-50 transition-all duration-200 ${open ? 'border-primary-200 shadow-[0_10px_30px_rgba(69,26,128,0.08)]' : 'border-foreground-200/70 shadow-[0_3px_12px_rgba(25,12,50,0.035)] hover:border-primary-200 hover:shadow-md'}`}>
       <button type="button" onClick={() => onToggle(id)} aria-expanded={open} className={`flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors sm:px-5 sm:py-4 ${open ? 'bg-gradient-to-r from-primary-50/90 to-secondary-50/30' : 'hover:bg-primary-50/35'}`}>
         <span className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${open ? 'bg-primary-600 text-white shadow-md shadow-primary-600/20' : id === 'rag' ? 'bg-amber-50 text-amber-700' : 'bg-primary-50 text-primary-700'}`}>
-          <i className={`${icon} text-base`} />
+          <AppIcon className={`${icon} text-base`} />
           <span className={`absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full border-2 border-white px-1 text-[8px] font-extrabold ${open ? 'bg-secondary-500' : 'bg-primary-700'} text-white`}>{step}</span>
         </span>
         <span className="min-w-0 flex-1">
           <span className={`block text-[9px] font-bold uppercase tracking-[0.12em] ${open ? 'text-primary-600' : 'text-foreground-400'}`}>Review section {step} of 9</span>
           <span className="mt-0.5 block text-sm font-bold text-foreground-900 sm:text-[15px]">{title}</span>
         </span>
-        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${open ? 'rotate-180 bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><i className="ri-arrow-down-s-line text-lg" /></span>
+        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all ${open ? 'rotate-180 bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'}`}><AppIcon className="ri-arrow-down-s-line text-lg" /></span>
       </button>
       {open && <div className="border-t border-primary-100 bg-white p-4 sm:p-6">{children}</div>}
     </section>
@@ -220,13 +220,13 @@ export function ProgressReviewsListPage() {
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >
       <main className="w-full space-y-5 p-3 sm:p-4 md:p-6">
-        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><i className="ri-error-warning-line mr-2" />{error}</div>}
+        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
 
         <section className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-4 text-white shadow-xl shadow-primary-950/10 sm:rounded-3xl sm:p-6 md:p-7">
           <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><i className="ri-team-line text-secondary-300" />Formal review</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-100"><AppIcon className="ri-team-line text-secondary-300" />Formal review</span>
               <h1 className="mt-3 text-[22px] font-bold leading-tight text-white sm:text-2xl md:text-3xl">Progress reviews</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-white/70">Review your learning, progress and next actions with {reviewerName} and your line manager.</p>
             </div>
@@ -236,15 +236,15 @@ export function ProgressReviewsListPage() {
                 ['Scheduled', scheduledCount, 'ri-calendar-check-line', 'text-blue-300'],
                 ['Completed', completedCount, 'ri-checkbox-circle-line', 'text-emerald-300'],
                 ['To plan', planningCount, 'ri-time-line', 'text-amber-300'],
-              ].map(([label, value, icon, colour]) => <div key={String(label)} className="rounded-xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur sm:rounded-2xl"><i className={`${icon} ${colour} text-sm`} /><p className="mt-1 text-xl font-bold text-white">{value}</p><p className="text-[10px] text-white/55">{label}</p></div>)}
+              ].map(([label, value, icon, colour]) => <div key={String(label)} className="rounded-xl border border-white/[0.08] bg-white/[0.07] p-3 backdrop-blur sm:rounded-2xl"><AppIcon className={`${icon} ${colour} text-sm`} /><p className="mt-1 text-xl font-bold text-white">{value}</p><p className="text-[10px] text-white/55">{label}</p></div>)}
             </div>
           </div>
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_8px_30px_rgba(27,12,52,0.06)]">
           <div className="flex flex-col gap-3 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><i className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Progress review sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full PR record.</p></div></div>
-            <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><i className="ri-calendar-2-line" />Open calendar</Link>
+            <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Progress review sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full PR record.</p></div></div>
+            <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
           </div>
           {loading ? <div className="p-10 text-center text-sm text-foreground-400">Loading progress reviews...</div> : reviews.length === 0 ? <div className="p-5"><Empty>No progress review sessions were found.</Empty></div> : (
             <>
@@ -262,7 +262,7 @@ export function ProgressReviewsListPage() {
                               <p className="mt-1 text-[11px] text-foreground-500">Formal progress review</p>
                             </div>
                             <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}>
-                              <i className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}
+                              <AppIcon className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}
                             </span>
                           </div>
                         </div>
@@ -274,14 +274,14 @@ export function ProgressReviewsListPage() {
                           <div className="min-w-0"><p className="text-[9px] uppercase text-foreground-400">Reviewer</p><p className="truncate text-xs font-semibold text-foreground-800">{review.coachName || '-'}</p></div>
                         </div>
                         <div className="flex min-w-0 items-center gap-2 rounded-xl bg-background-100/70 p-2.5">
-                          <i className="ri-calendar-line shrink-0 text-primary-500" />
+                          <AppIcon className="ri-calendar-line shrink-0 text-primary-500" />
                           <div className="min-w-0"><p className="text-[9px] uppercase text-foreground-400">{isBooked ? 'Scheduled' : 'Planned'}</p><p className="truncate text-xs font-semibold text-foreground-800">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="text-[10px] text-foreground-400">{formatTime(review.scheduledTime)}</p>}</div>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-2">
-                        <Link to="/learner/calendar" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><i className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link>
-                        <Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700">View review <i className="ri-arrow-right-line" /></Link>
+                        <Link to="/learner/calendar" className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link>
+                        <Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}`} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700">View review <AppIcon className="ri-arrow-right-line" /></Link>
                       </div>
                     </article>
                   );
@@ -299,10 +299,10 @@ export function ProgressReviewsListPage() {
                       <tr key={review.id} className="group transition-colors hover:bg-primary-50/35">
                         <td className="px-5 py-4"><div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-xs font-extrabold text-primary-700 transition group-hover:bg-primary-100">#{review.sequence}</span><div><p className="text-xs font-bold text-foreground-900">Progress Review #{review.sequence}</p><p className="mt-1 text-[10px] text-foreground-400">Formal progress review</p></div></div></td>
                         <td className="px-5 py-4"><div className="flex items-center gap-2.5"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary-100 text-[9px] font-bold text-secondary-700">{initials(review.coachName)}</span><span className="text-xs font-semibold text-foreground-700">{review.coachName || '-'}</span></div></td>
-                        <td className="px-5 py-4"><div className="flex items-center gap-2"><i className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(review.scheduledTime)}</p>}</div></div></td>
-                        <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}><i className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}</span></td>
-                        <td className="px-5 py-4"><Link to="/learner/calendar" className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><i className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link></td>
-                        <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <i className="ri-arrow-right-line" /></Link></div></td>
+                        <td className="px-5 py-4"><div className="flex items-center gap-2"><AppIcon className="ri-calendar-line text-primary-500" /><div><p className="text-xs font-semibold text-foreground-700">{formatDate(isBooked ? review.scheduledDate : review.targetDate)}</p>{isBooked && <p className="mt-1 text-[10px] text-foreground-400">at {formatTime(review.scheduledTime)}</p>}</div></div></td>
+                        <td className="px-5 py-4"><span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${statusStyle(review.status)}`}><AppIcon className={review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'cancelled' ? 'ri-close-circle-line' : review.status === 'scheduled' ? 'ri-calendar-check-line' : 'ri-time-line'} />{review.status === 'not-scheduled' ? 'Not Scheduled' : statusLabel(review.status)}</span></td>
+                        <td className="px-5 py-4"><Link to="/learner/calendar" className="inline-flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-foreground-600 transition hover:bg-primary-50 hover:text-primary-700"><AppIcon className="ri-calendar-2-line" />{isBooked ? 'Reschedule' : 'Schedule'}</Link></td>
+                        <td className="px-5 py-4"><div className="flex items-center justify-end"><Link to={`/learner/progress-reviews/${encodeURIComponent(review.id)}`} className="inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 hover:shadow-md">View <AppIcon className="ri-arrow-right-line" /></Link></div></td>
                       </tr>
                     );
                   })}
@@ -311,11 +311,11 @@ export function ProgressReviewsListPage() {
               </div>
               <div className="flex flex-col gap-3 border-t border-background-200 bg-background-50 px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                 <div className="flex items-center gap-1.5">
-                  <button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-skip-left-line" /></button>
-                  <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-arrow-left-s-line" /></button>
+                  <button type="button" onClick={() => setPage(1)} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-left-line" /></button>
+                  <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line" /></button>
                   {Array.from({ length: totalPages }, (_, index) => index + 1).slice(0, 5).map((number) => <button key={number} type="button" onClick={() => setPage(number)} className={`h-8 min-w-8 rounded-lg border px-2 text-xs font-bold ${page === number ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-foreground-600'}`}>{number}</button>)}
-                  <button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-arrow-right-s-line" /></button>
-                  <button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><i className="ri-skip-right-line" /></button>
+                  <button type="button" onClick={() => setPage((value) => Math.min(totalPages, value + 1))} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line" /></button>
+                  <button type="button" onClick={() => setPage(totalPages)} disabled={page === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-300 bg-white text-xs text-foreground-500 disabled:opacity-40"><AppIcon className="ri-skip-right-line" /></button>
                   <span className="ml-2 hidden text-[10px] text-foreground-400 sm:inline">10 items per page</span>
                 </div>
                 <p className="text-[10px] text-foreground-500">{(page - 1) * pageSize + 1} - {Math.min(page * pageSize, reviews.length)} of {reviews.length} items</p>
@@ -458,17 +458,17 @@ export default function ProgressReviewsPage() {
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >
       <div className="space-y-5 p-4 md:p-6">
-        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><i className="ri-error-warning-line mr-2" />{error}</div>}
+        {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
 
         <Link to="/learner/progress-reviews" className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:-translate-x-0.5 hover:bg-primary-100">
-          <i className="ri-arrow-left-line" /> Back to progress reviews
+          <AppIcon className="ri-arrow-left-line" /> Back to progress reviews
         </Link>
 
         <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-5 text-white shadow-xl shadow-primary-950/10 sm:p-6">
           <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
           <div className="relative flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
             <div className="flex items-start gap-4">
-              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-xl text-secondary-200 shadow-lg"><i className="ri-team-line" /></span>
+              <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-xl text-secondary-200 shadow-lg"><AppIcon className="ri-team-line" /></span>
               <div>
                 <div className="mb-1.5 flex flex-wrap items-center gap-2">
                   <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-secondary-200">Formal progress review</span>
@@ -485,7 +485,7 @@ export default function ProgressReviewsPage() {
                 { label: 'All PRs', value: loading ? '-' : reviews.length, color: 'text-foreground-900', icon: 'ri-stack-line' },
               ] as const).map(({ label, value, color, icon }) => (
                 <div key={label} className="rounded-2xl border border-white/[0.08] bg-white/[0.07] px-3 py-3 text-center backdrop-blur">
-                  <i className={`${icon} ${color === 'text-foreground-900' ? 'text-secondary-200' : color.replace('600', '300')} text-sm`} />
+                  <AppIcon className={`${icon} ${color === 'text-foreground-900' ? 'text-secondary-200' : color.replace('600', '300')} text-sm`} />
                   <p className="mt-0.5 text-xl font-bold text-white">{value}</p>
                   <p className="text-[9px] font-semibold uppercase tracking-wider text-white/45">{label}</p>
                 </div>
@@ -499,29 +499,7 @@ export default function ProgressReviewsPage() {
         ) : reviews.length === 0 ? (
           <section className="rounded-2xl border border-background-200 bg-background-50 p-6"><Empty>No progress reviews have been created for this learner.</Empty></section>
         ) : (
-          <div className={`grid items-start gap-5 ${reviews.length > 1 ? 'lg:grid-cols-[300px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
-            {reviews.length > 1 && <aside className="rounded-2xl border border-background-200 bg-background-50 p-3 shadow-sm lg:sticky lg:top-4">
-              <div className="px-2 pb-3 pt-1">
-                <h2 className="text-sm font-bold text-foreground-900">All progress reviews</h2>
-                <p className="mt-0.5 text-xs text-foreground-400">Completed and planned sessions</p>
-              </div>
-              <div className="space-y-2">
-                {reviews.map((review) => {
-                  const active = selected?.id === review.id;
-                  return (
-                    <button key={review.id} type="button" onClick={() => { setSelectedId(review.id); setOpenSections(['learning']); }} className={`w-full rounded-xl border p-3.5 text-left transition ${active ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-50 hover:bg-background-100'}`}>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm font-bold text-foreground-900">Progress Review #{review.sequence}</span>
-                        <i className={`ri-arrow-right-s-line ${active ? 'text-primary-600' : 'text-foreground-300'}`} />
-                      </div>
-                      <p className="mt-1 text-xs text-foreground-500">{formatDate(reviewDate(review))}</p>
-                      <span className={`mt-2 inline-flex rounded-full border px-2 py-0.5 text-[9px] font-bold ${statusStyle(review.status)}`}>{statusLabel(review.status)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </aside>}
-
+          <div>
             <main className="space-y-4">
               <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_10px_35px_rgba(25,12,50,0.07)]">
                 <div className="relative overflow-hidden border-b border-white/10 bg-gradient-to-r from-[#10021f] via-primary-950 to-[#35105e] p-5 text-white sm:p-6">
@@ -533,8 +511,8 @@ export default function ProgressReviewsPage() {
                       <p className="mt-1 text-sm text-white/60">{formatDate(reviewDate(selected), true)} at {formatTime(selected?.scheduledTime)}</p>
                     </div>
                     <div className="flex gap-2">
-                      {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-white px-3.5 py-2 text-xs font-bold text-primary-800"><i className="ri-video-chat-line mr-1.5" />Join meeting</a>}
-                      <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-white/15 bg-white/10 px-3.5 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><i className="ri-calendar-check-line mr-1.5" />Add to calendar</button>
+                      {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-white px-3.5 py-2 text-xs font-bold text-primary-800"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
+                      <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-white/15 bg-white/10 px-3.5 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-check-line mr-1.5" />Add to calendar</button>
                     </div>
                   </div>
                 </div>
@@ -557,7 +535,7 @@ export default function ProgressReviewsPage() {
                       ['Review window', previousReview ? `Since PR #${previousReview.sequence}` : 'Programme to date', 'ri-history-line'],
                     ].map(([label, value, icon]) => (
                       <div key={label} className="rounded-xl bg-background-100 p-3.5">
-                        <i className={`${icon} text-primary-500`} />
+                        <AppIcon className={`${icon} text-primary-500`} />
                         <p className="mt-2 text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>
                         <p className="mt-0.5 text-xs font-bold text-foreground-800">{value}</p>
                       </div>
@@ -587,7 +565,7 @@ export default function ProgressReviewsPage() {
                     <div className="divide-y divide-background-200 rounded-xl border border-background-200">
                       {learningItems.slice(0, 8).map((activity) => (
                         <div key={activity.key} className="flex items-start gap-3 p-3.5">
-                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><i className="ri-checkbox-circle-line" /></span>
+                          <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><AppIcon className="ri-checkbox-circle-line" /></span>
                           <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-foreground-800">{activity.title}</p><p className="mt-0.5 text-xs text-foreground-400">{activity.detail}</p></div>
                           <span className="shrink-0 text-[10px] text-foreground-400">{new Date(activity.at).toLocaleDateString('en-GB')}</span>
                         </div>

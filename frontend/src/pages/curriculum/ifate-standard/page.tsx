@@ -74,7 +74,7 @@ function MissingStandardState({ id, message }: { id: string; message: string | n
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <span className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white px-2.5 py-1 text-[10px] font-black uppercase text-amber-700">
-            <i className="ri-link-unlink-m text-xs" />
+            <AppIcon className="ri-link-unlink-m text-xs" />
             Standard not linked
           </span>
           <h2 className="mt-3 font-heading text-lg font-black text-foreground-950">No Skills England standard found for "{id}"</h2>
@@ -84,7 +84,7 @@ function MissingStandardState({ id, message }: { id: string; message: string | n
           {message && <p className="mt-2 text-[11px] font-semibold text-amber-700">{message}</p>}
         </div>
         <Link to="/curriculum/standards" className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-          <i className="ri-file-list-3-line text-sm" />
+          <AppIcon className="ri-file-list-3-line text-sm" />
           Browse Standards
         </Link>
       </div>
@@ -152,7 +152,7 @@ export default function IfateStandardPage() {
       <div className="p-5 sm:p-6 space-y-5">
         <div className="flex items-center gap-2 text-[11px] font-medium text-foreground-400">
           <Link to="/curriculum/standards" className="transition-smooth hover:text-primary-600">Standards</Link>
-          <i className="ri-arrow-right-s-line text-[12px]" />
+          <AppIcon className="ri-arrow-right-s-line text-[12px]" />
           <span className="text-foreground-700">{standard?.code || id}</span>
         </div>
 
@@ -197,7 +197,7 @@ export default function IfateStandardPage() {
                           { icon: 'ri-history-line', label: `Synced ${shortDate(standard.lastSynced)}` },
                         ].map(item => (
                           <span key={item.label} className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border border-white/30 bg-white px-3 text-[11px] font-black text-primary-950 shadow-sm">
-                            <i className={`${item.icon} text-[13px] text-primary-700`} />
+                            <AppIcon className={`${item.icon} text-[13px] text-primary-700`} />
                             <span className="truncate">{item.label}</span>
                           </span>
                         ))}
@@ -229,7 +229,7 @@ export default function IfateStandardPage() {
                   <div key={type} className={`rounded-xl border ${meta.border} ${meta.bg} p-4 shadow-sm`}>
                     <div className="flex items-center justify-between">
                       <span className={`flex h-9 w-9 items-center justify-center rounded-lg bg-white/70 ${meta.text}`}>
-                        <i className={`${meta.icon} text-lg`} />
+                        <AppIcon className={`${meta.icon} text-lg`} />
                       </span>
                       <p className={`text-2xl font-black ${meta.text}`}>{value}</p>
                     </div>
@@ -247,7 +247,7 @@ export default function IfateStandardPage() {
                 <div className="rounded-xl border border-foreground-300/70 bg-white p-4 shadow-sm">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center">
                     <label className="relative block flex-1">
-                      <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
+                      <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400" />
                       <input
                         type="text"
                         value={search}
@@ -276,7 +276,7 @@ export default function IfateStandardPage() {
                       { icon: 'ri-focus-3-line', label: `${filteredKsbs.length} visible`, tone: 'bg-amber-50 text-amber-800 border-amber-200' },
                     ].map(item => (
                       <span key={item.label} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-black ${item.tone}`}>
-                        <i className={`${item.icon} text-[12px]`} />
+                        <AppIcon className={`${item.icon} text-[12px]`} />
                         {item.label}
                       </span>
                     ))}
@@ -304,7 +304,7 @@ export default function IfateStandardPage() {
                             </div>
                             <p className={`mt-1 text-[13px] font-medium leading-6 text-foreground-900 ${isExpanded ? '' : 'line-clamp-2'}`}>{ksb.description}</p>
                           </div>
-                          <i className={`ri-arrow-down-s-line mt-1 text-foreground-400 transition-smooth ${isExpanded ? 'rotate-180' : ''}`} />
+                          <AppIcon className={`ri-arrow-down-s-line mt-1 text-foreground-400 transition-smooth ${isExpanded ? 'rotate-180' : ''}`} />
                         </button>
                       </article>
                     );
@@ -337,7 +337,7 @@ export default function IfateStandardPage() {
                   <p className="mt-2 break-words text-[11px] font-medium leading-5 text-foreground-700">{standard.sourceUrl || 'No source URL stored'}</p>
                   {standard.sourceUrl && (
                     <a href={standard.sourceUrl} target="_blank" rel="noreferrer" className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
-                      <i className="ri-external-link-line text-sm" />
+                      <AppIcon className="ri-external-link-line text-sm" />
                       Open source
                     </a>
                   )}

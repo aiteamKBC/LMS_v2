@@ -55,7 +55,7 @@ export default function LearnerWellbeingPage() {
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     kase.concernType === 'Mental Health Concern' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
                   }`}>
-                    <i className={`${kase.concernType === 'Mental Health Concern' ? 'ri-psychotherapy-line' : 'ri-heart-line'} text-lg`}></i>
+                    <AppIcon className={`${kase.concernType === 'Mental Health Concern' ? 'ri-psychotherapy-line' : 'ri-heart-line'} text-lg`}></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between">
@@ -94,7 +94,7 @@ export default function LearnerWellbeingPage() {
               <div key={kase.id} className="bg-background-50 rounded-xl border border-background-200/40 p-4">
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
-                    <i className="ri-hand-heart-line text-secondary-600 text-lg"></i>
+                    <AppIcon className="ri-hand-heart-line text-secondary-600 text-lg"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-semibold text-foreground-800">{kase.learnerName}</p>
@@ -118,7 +118,7 @@ export default function LearnerWellbeingPage() {
           <div className="space-y-3">
             <div className="bg-red-50 border border-red-200/50 rounded-xl p-4 flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
-                <i className="ri-user-heart-line text-red-600 text-lg"></i>
+                <AppIcon className="ri-user-heart-line text-red-600 text-lg"></AppIcon>
               </div>
               <div>
                 <p className="text-sm font-heading font-semibold text-red-900">Active Monitoring — {VULNERABLE_LEARNERS.length} Learners</p>
@@ -131,7 +131,7 @@ export default function LearnerWellbeingPage() {
                   <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                     vl.risk.includes('Immediate') ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
                   }`}>
-                    <i className="ri-shield-user-line text-lg"></i>
+                    <AppIcon className="ri-shield-user-line text-lg"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-semibold text-foreground-800">{vl.name}</p>
@@ -194,7 +194,7 @@ function StatCard({ label, value, icon, colour }: { label: string; value: number
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">
       <span className={`w-7 h-7 rounded-lg flex items-center justify-center ${colourMap[colour]} mb-2`}>
-        <i className={`${icon} text-xs`}></i>
+        <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <p className="text-xl font-heading font-semibold text-foreground-900">{value}</p>
       <p className="text-[10px] text-foreground-400 mt-1">{label}</p>

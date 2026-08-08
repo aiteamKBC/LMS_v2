@@ -103,7 +103,7 @@ export default function QAEvidencePage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${s.color === 'amber' ? 'bg-amber-100 text-amber-700' : s.color === 'accent' ? 'bg-accent-100 text-accent-700' : s.color === 'emerald' ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                <i className={`${s.icon} text-sm`}></i>
+                <AppIcon className={`${s.icon} text-sm`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium">{s.label}</p>
               <p className="text-xl font-heading font-semibold text-foreground-900">{s.value}</p>
@@ -147,7 +147,7 @@ export default function QAEvidencePage() {
                   <div className="flex items-center gap-3">
                     <input type="checkbox" checked={selected} onChange={() => toggleSelect(item.id)} className="w-4 h-4 rounded accent-primary-500 shrink-0" />
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${qaStatusConfig[item.qaStatus].bg} ${qaStatusConfig[item.qaStatus].text}`}>
-                      <i className={`${qaStatusConfig[item.qaStatus].icon} text-sm`}></i>
+                      <AppIcon className={`${qaStatusConfig[item.qaStatus].icon} text-sm`}></AppIcon>
                     </span>
                   </div>
                   <div className="flex-1 min-w-0">

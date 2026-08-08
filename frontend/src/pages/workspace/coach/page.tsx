@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { fetchCurriculumOverview, type CurriculumGroup, type CurriculumOverview, type CurriculumSession, type CurriculumStaffProfile } from '@/lib/curriculumApi';
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { roleNavMap } from '@/mocks/navigation';
 import {
@@ -29,10 +29,30 @@ type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
 
 const EMPTY_VALUE = '--';
 const CASELOAD_ENDPOINT = `/coach_api/coach/caseload?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
-const ATTENDANCE_ENDPOINT = `/coach_api/coach/attendance?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
-const ABSENCE_REPORTS_ENDPOINT = `/coach_api/coach/absence-reports?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
-const EVIDENCE_AWAITING_REVIEW_ENDPOINT = `/coach_api/coach/evidence-awaiting-review?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
+const CASELOAD_SUMMARY_ENDPOINT = `${CASELOAD_ENDPOINT}&summary=1`;
 const AT_RISK_SCROLL_THRESHOLD = 8;
+const COACHING_CALENDAR_WINDOW_DAYS = 7;
+
+function buildCoachOwnedEndpoint(basePath: string, ownerEmail: string) {
+  return `${basePath}?owner_email=${encodeURIComponent(ownerEmail || DEFAULT_COACH_EMAIL)}`;
+}
+
+function toIsoDate(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function buildCoachingCalendarWindow(referenceDate = new Date()) {
+  const start = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  const end = new Date(start);
+  end.setDate(start.getDate() + COACHING_CALENDAR_WINDOW_DAYS - 1);
+  return {
+    start: toIsoDate(start),
+    end: toIsoDate(end),
+  };
+}
 
 interface CoachLearner {
   id: string;
@@ -98,6 +118,11 @@ function displayValue(value?: string | number | null): string {
   return text;
 }
 
+function optionalDisplayValue(value?: string | number | null): string | undefined {
+  const text = displayValue(value);
+  return text === EMPTY_VALUE ? undefined : text;
+}
+
 function normalizeIdentity(value?: string | number | null): string {
   return displayValue(value)
     .toLowerCase()
@@ -145,23 +170,6 @@ function normalizeOtjhStatus(value?: string | null): OtjhStatusKey {
   if (normalized === 'needattention' || normalized === 'needsattention') return 'need-attention';
   if (normalized === 'ontrack') return 'on-track';
   return 'unknown';
-}
-
-interface CoachAbsenceReport {
-  id: string;
-  learnerId: string;
-  learner: string;
-  sessionTitle: string;
-  sessionDate: string;
-  sessionTime?: string | null;
-  reasonCategory: string;
-  reason: string;
-  status: 'pending' | 'approved' | 'declined';
-  evidenceProvided: boolean;
-}
-
-interface AbsenceReportsResponse {
-  items?: CoachAbsenceReport[];
 }
 
 interface EvidenceQueueLearner {
@@ -330,6 +338,34 @@ function mergeAttendanceRates(learners: CoachLearner[], attendanceLearners: Atte
   });
 }
 
+function mergeEvidenceQueueIntoLearners(learners: CoachLearner[], queue: EvidenceQueueLearner[]): CoachLearner[] {
+  const byId = new Map<string, EvidenceQueueLearner>();
+  const byEmail = new Map<string, EvidenceQueueLearner>();
+  const byName = new Map<string, EvidenceQueueLearner>();
+
+  queue.forEach((item) => {
+    const learnerId = normalizeIdentity(item.learnerId || item.id);
+    const learnerEmail = normalizeIdentity(item.email);
+    const learnerName = normalizeIdentity(item.learner);
+    if (learnerId) byId.set(learnerId, item);
+    if (learnerEmail) byEmail.set(learnerEmail, item);
+    if (learnerName) byName.set(learnerName, item);
+  });
+
+  return learners.map((learner) => {
+    const match = byId.get(normalizeIdentity(learner.id))
+      || byEmail.get(normalizeIdentity(learner.email))
+      || byName.get(normalizeIdentity(learner.name));
+    if (!match) return learner;
+    return {
+      ...learner,
+      evidenceCount: toNumber(match.pendingEvidence),
+      evidenceCountAvailable: true,
+      evidenceCompletedCount: toNumber(match.acceptedEvidence),
+    };
+  });
+}
+
 function normalizeEvidenceQueueLearner(item: Partial<EvidenceQueueLearner>, index: number): EvidenceQueueLearner {
   const learnerName = displayValue(item.learner);
   const fallbackName = learnerName === EMPTY_VALUE ? `Learner ${index + 1}` : learnerName;
@@ -368,6 +404,37 @@ function eventMatchesLearner(event: CoachCalendarEvent, learner: CoachLearner) {
   if (eventEmail !== EMPTY_VALUE && learnerEmail !== EMPTY_VALUE && eventEmail === learnerEmail) return true;
 
   return displayValue(event.learner).toLowerCase() === learner.name.toLowerCase();
+}
+
+function learnerIdentityIndex(learners: CoachLearner[]) {
+  const learnerIds = new Set<string>();
+  const learnerEmails = new Set<string>();
+  const learnerNames = new Set<string>();
+
+  learners.forEach((learner) => {
+    const learnerId = displayValue(learner.id);
+    const learnerEmail = displayValue(learner.email).toLowerCase();
+    const learnerName = displayValue(learner.name).toLowerCase();
+    if (learnerId !== EMPTY_VALUE) learnerIds.add(learnerId);
+    if (learnerEmail !== EMPTY_VALUE) learnerEmails.add(learnerEmail);
+    if (learnerName !== EMPTY_VALUE) learnerNames.add(learnerName);
+  });
+
+  return { learnerIds, learnerEmails, learnerNames };
+}
+
+function eventMatchesLearnerIndex(
+  event: CoachCalendarEvent,
+  index: ReturnType<typeof learnerIdentityIndex>,
+) {
+  const eventLearnerId = displayValue(event.learnerId);
+  if (eventLearnerId !== EMPTY_VALUE && index.learnerIds.has(eventLearnerId)) return true;
+
+  const eventEmail = displayValue(event.email).toLowerCase();
+  if (eventEmail !== EMPTY_VALUE && index.learnerEmails.has(eventEmail)) return true;
+
+  const learnerName = displayValue(event.learner).toLowerCase();
+  return learnerName !== EMPTY_VALUE && index.learnerNames.has(learnerName);
 }
 
 function scheduleDateForEvent(event: CoachCalendarEvent): { value: string; status: Exclude<ScheduleStatus, 'none'>; time: number } | null {
@@ -469,51 +536,8 @@ function isFutureCalendarEvent(event: CoachCalendarEvent) {
   return date.getTime() >= start.getTime();
 }
 
-function parseTimeHour(value?: string | null): number | undefined {
-  const [hour] = displayValue(value).split(':').map(Number);
-  return Number.isFinite(hour) ? hour : undefined;
-}
-
-function coachMatchesGroup(group: CurriculumGroup, ownerName: string): boolean {
-  return normalizeIdentity(group.coach) === normalizeIdentity(ownerName);
-}
-
-function curriculumStaffName(profile: CurriculumStaffProfile): string {
-  const legacyCoachName = typeof profile.Coach_name === 'string' ? profile.Coach_name : undefined;
-  return displayValue(profile.name || legacyCoachName || profile.email);
-}
-
-function coachMatchesProfile(profile: CurriculumStaffProfile, ownerName: string, ownerEmail: string): boolean {
-  const profileEmail = normalizeIdentity(profile.email);
-  if (profileEmail && profileEmail === normalizeIdentity(ownerEmail)) return true;
-  return normalizeIdentity(curriculumStaffName(profile)) === normalizeIdentity(ownerName);
-}
-
-function curriculumSessionToCalendarEvent(session: CurriculumSession): CoachCalendarEvent {
-  const title = displayValue(session.title);
-  const moduleName = displayValue(session.module);
-  const groupName = displayValue(session.group);
-
-  return {
-    id: `curriculum-${session.id}`,
-    eventKey: `curriculum-${session.id}`,
-    title: title === EMPTY_VALUE ? moduleName : title,
-    type: 'live-session',
-    date: session.date,
-    scheduledDate: session.date || null,
-    scheduledTime: session.startTime || null,
-    startHour: parseTimeHour(session.startTime),
-    endHour: parseTimeHour(session.endTime),
-    timeLabel: session.startTime && session.endTime ? `${session.startTime} - ${session.endTime}` : session.startTime || 'Time TBC',
-    learner: groupName,
-    programme: session.programme,
-    cohort: session.cohort,
-    status: session.status === 'completed' || session.status === 'cancelled' ? session.status : 'scheduled',
-    source: 'live-session',
-    platform: displayValue(session.venue) === EMPTY_VALUE ? 'LMS' : displayValue(session.venue),
-    location: groupName,
-    notes: moduleName === EMPTY_VALUE ? '' : `Module: ${moduleName}${session.week ? ` · Week ${session.week}` : ''}`,
-  };
+function isWithinCalendarPreviewWindow(event: CoachCalendarEvent) {
+  return isWithinNextDays(event, COACHING_CALENDAR_WINDOW_DAYS - 1);
 }
 
 function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
@@ -526,6 +550,33 @@ function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
   return 'Time TBC';
 }
 
+function upcomingLiveSessionMetaLabel(event: CoachCalendarEvent) {
+  return [
+    optionalDisplayValue(event.programme),
+    optionalDisplayValue(event.cohort),
+    optionalDisplayValue(event.group || event.learner),
+  ].filter(Boolean).join(' · ') || EMPTY_VALUE;
+}
+
+function liveSessionGroupingKey(event: CoachCalendarEvent) {
+  return normalizeIdentity(event.group || event.learner || `${event.programme}-${event.cohort}-${event.title}`);
+}
+
+function buildTimetableFocusState(event: CoachCalendarEvent) {
+  return {
+    focusEvent: {
+      source: event.source || event.type,
+      eventKey: optionalDisplayValue(event.eventKey || event.id),
+      date: optionalDisplayValue(eventDisplayDate(event)),
+      title: optionalDisplayValue(event.title),
+      scheduledTime: event.scheduledTime ? event.scheduledTime.slice(0, 5) : undefined,
+      programme: optionalDisplayValue(event.programme),
+      cohort: optionalDisplayValue(event.cohort),
+      group: optionalDisplayValue(event.location || event.group),
+    },
+  };
+}
+
 function formatCalendarMonth(value?: string | null) {
   const date = parseLocalDate(value);
   if (!date) return EMPTY_VALUE;
@@ -536,6 +587,30 @@ function formatCalendarDayNumber(value?: string | null) {
   const date = parseLocalDate(value);
   if (!date) return EMPTY_VALUE;
   return new Intl.DateTimeFormat('en-GB', { day: '2-digit' }).format(date);
+}
+
+function formatCalendarWeekday(value?: string | null) {
+  const date = parseLocalDate(value);
+  if (!date) return EMPTY_VALUE;
+  return new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(date).toUpperCase();
+}
+
+function formatUpcomingLiveSessionDayLabel(value?: string | null) {
+  const date = parseLocalDate(value);
+  if (!date) return EMPTY_VALUE;
+  const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const tomorrow = new Date(startOfToday);
+  tomorrow.setDate(startOfToday.getDate() + 1);
+  if (targetDate.getTime() === startOfToday.getTime()) return 'Today';
+  if (targetDate.getTime() === tomorrow.getTime()) return 'Tomorrow';
+  return formatDateLabel(value);
+}
+
+function isRelativeUpcomingLiveSessionDayLabel(value?: string | null) {
+  const label = formatUpcomingLiveSessionDayLabel(value);
+  return label === 'Today' || label === 'Tomorrow';
 }
 
 function eventTypeLabel(event: CoachCalendarEvent) {
@@ -630,92 +705,220 @@ function ProgressBar({ pct, color, height = 3 }: { pct: number; color: string; h
   );
 }
 
+function LoadingBlock({ className = '' }: { className?: string }) {
+  return <div aria-hidden="true" className={`animate-pulse rounded-xl bg-background-100/90 ${className}`}></div>;
+}
+
+function UpcomingLiveSessionsSkeleton() {
+  return (
+    <div className="space-y-4">
+      {Array.from({ length: 2 }, (_, groupIndex) => (
+        <div
+          key={`live-session-skeleton-group-${groupIndex}`}
+          className="rounded-2xl border border-foreground-200/60 bg-background-50/90 p-3"
+        >
+          <div className="flex items-center justify-between gap-3 border-b border-foreground-100/80 pb-2.5">
+            <LoadingBlock className="h-4 w-44" />
+            <LoadingBlock className="h-5 w-16 rounded-full" />
+          </div>
+          <div className="mt-3 space-y-3">
+            {Array.from({ length: 2 }, (_, rowIndex) => (
+            <div
+              key={`live-session-skeleton-${groupIndex}-${rowIndex}`}
+              className="grid grid-cols-[1fr,36px] items-center gap-3"
+            >
+              <div className="min-w-0">
+                <LoadingBlock className="h-4 w-4/5" />
+                <LoadingBlock className="mt-2 h-3 w-3/5" />
+                <LoadingBlock className="mt-2 h-8 w-40 rounded-xl bg-primary-50/70" />
+              </div>
+              <LoadingBlock className="h-8 w-8 rounded-full" />
+            </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CoachingCalendarSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 5 }, (_, index) => (
+        <div
+          key={`calendar-skeleton-${index}`}
+          className="flex items-start gap-3 rounded-2xl border border-foreground-200/50 bg-background-100/45 p-3"
+        >
+          <div className="min-w-[50px] shrink-0 rounded-xl bg-background-50/90 px-2 py-2">
+            <LoadingBlock className="mx-auto h-3 w-7" />
+            <LoadingBlock className="mx-auto mt-2 h-5 w-6" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <LoadingBlock className="h-4 w-40 max-w-[70%]" />
+            <div className="mt-2 flex items-center gap-2">
+              <LoadingBlock className="h-3 w-20" />
+              <LoadingBlock className="h-3 w-3 rounded-full" />
+              <LoadingBlock className="h-5 w-24 rounded-full" />
+            </div>
+          </div>
+          <LoadingBlock className="mt-1 h-4 w-4 shrink-0 rounded-full" />
+        </div>
+      ))}
+    </>
+  );
+}
+
 export default function CoachDashboard() {
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
   const [ownerName, setOwnerName] = useState('Med Maher');
-  const [ownerEmail, setOwnerEmail] = useState(DEFAULT_COACH_EMAIL);
   const [learners, setLearners] = useState<CoachLearner[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
-  const [curriculumOverview, setCurriculumOverview] = useState<CurriculumOverview | null>(null);
-  const [absenceReports, setAbsenceReports] = useState<CoachAbsenceReport[]>([]);
+  const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>([]);
+  const [liveSessionEvents, setLiveSessionEvents] = useState<CoachCalendarEvent[]>([]);
   const [evidenceQueue, setEvidenceQueue] = useState<EvidenceQueueLearner[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
+  const [calendarLoading, setCalendarLoading] = useState(true);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [liveSessionsLoading, setLiveSessionsLoading] = useState(true);
+  const [liveSessionsError, setLiveSessionsError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
+    let secondaryTimer: number | null = null;
+    let calendarHydrationTimer: number | null = null;
 
-    async function loadDashboard() {
-      setLoading(true);
-      setLoadWarning(null);
-      const warnings: string[] = [];
+    async function loadFullCalendarData(resolvedOwnerEmail: string) {
+      try {
+        const fullCalendar = await fetchCoachCalendarEvents(controller.signal, resolvedOwnerEmail, {
+          includeLiveSessions: false,
+          includeSchedulerQueues: false,
+        });
+        if (controller.signal.aborted) return;
+        setCalendarEvents(sortEvents(fullCalendar.events || []));
+        if (displayValue(fullCalendar.owner?.name) !== EMPTY_VALUE) {
+          setOwnerName(String(fullCalendar.owner?.name));
+        }
+      } catch {
+        if (controller.signal.aborted) return;
+        setCalendarEvents([]);
+      }
+    }
 
-      const [caseloadResult, attendanceResult, timetableResult, absenceResult, curriculumResult, markingResult] = await Promise.allSettled([
-        fetchSharedJsonGet<CaseloadApiResponse>(CASELOAD_ENDPOINT, { signal: controller.signal }),
-        fetchSharedJsonGet<AttendanceApiResponse>(ATTENDANCE_ENDPOINT, { signal: controller.signal }),
-        fetchCoachCalendarEvents(controller.signal),
-        fetchSharedJsonGet<AbsenceReportsResponse>(ABSENCE_REPORTS_ENDPOINT, { signal: controller.signal }),
-        fetchCurriculumOverview(controller.signal),
-        fetchSharedJsonGet<MarkingQueueResponse>(EVIDENCE_AWAITING_REVIEW_ENDPOINT, { signal: controller.signal }),
+    async function loadLiveSessionData(resolvedOwnerEmail: string) {
+      try {
+        const liveSessionsCalendar = await fetchCoachCalendarEvents(controller.signal, resolvedOwnerEmail, {
+          includeLiveSessions: true,
+          includeSchedulerQueues: false,
+        });
+        if (controller.signal.aborted) return;
+        setLiveSessionEvents(sortEvents(
+          (liveSessionsCalendar.events || []).filter(event => event.source === 'live-session'),
+        ));
+        if (displayValue(liveSessionsCalendar.owner?.name) !== EMPTY_VALUE) {
+          setOwnerName(String(liveSessionsCalendar.owner?.name));
+        }
+        setLiveSessionsError(null);
+      } catch {
+        if (controller.signal.aborted) return;
+        setLiveSessionEvents([]);
+        setLiveSessionsError('Live sessions unavailable right now.');
+      }
+      if (!controller.signal.aborted) {
+        setLiveSessionsLoading(false);
+      }
+    }
+
+    async function loadSecondaryData(resolvedOwnerEmail: string) {
+      const currentOwnerEmail = resolvedOwnerEmail || DEFAULT_COACH_EMAIL;
+      const calendarWindow = buildCoachingCalendarWindow();
+      const [
+        attendanceResult,
+        timetableResult,
+        evidenceResult,
+      ] = await Promise.allSettled([
+        fetchSharedJsonGet<AttendanceApiResponse>(buildCoachOwnedEndpoint('/coach_api/coach/attendance', currentOwnerEmail), { signal: controller.signal }),
+        fetchCoachCalendarEvents(controller.signal, currentOwnerEmail, {
+          ...calendarWindow,
+          includeLiveSessions: false,
+          includeSchedulerQueues: false,
+        }),
+        fetchSharedJsonGet<MarkingQueueResponse>(buildCoachOwnedEndpoint('/coach_api/coach/evidence-awaiting-review', currentOwnerEmail), { signal: controller.signal }),
       ]);
 
       if (controller.signal.aborted) return;
 
-      if (caseloadResult.status === 'fulfilled') {
-        setOwnerName(displayValue(caseloadResult.value.owner?.name) === EMPTY_VALUE ? 'Med Maher' : String(caseloadResult.value.owner?.name));
-        setOwnerEmail(displayValue(caseloadResult.value.owner?.email) === EMPTY_VALUE ? DEFAULT_COACH_EMAIL : String(caseloadResult.value.owner?.email));
-        const normalizedLearners = (caseloadResult.value.learners || []).map(normalizeLearner);
-        if (attendanceResult.status === 'fulfilled') {
-          setLearners(mergeAttendanceRates(normalizedLearners, attendanceResult.value.learners || []));
-        } else {
-          setLearners(normalizedLearners);
-          warnings.push('attendance');
-        }
-      } else {
-        setLearners([]);
-        warnings.push('caseload');
-        if (attendanceResult.status === 'rejected') {
-          warnings.push('attendance');
-        }
+      if (attendanceResult.status === 'fulfilled') {
+        setLearners((currentLearners) => mergeAttendanceRates(currentLearners, attendanceResult.value.learners || []));
       }
 
       if (timetableResult.status === 'fulfilled') {
-        setCalendarEvents(sortEvents(timetableResult.value.events || []));
+        setCalendarPreviewEvents(sortEvents(timetableResult.value.events || []));
         if (displayValue(timetableResult.value.owner?.name) !== EMPTY_VALUE) {
           setOwnerName(String(timetableResult.value.owner?.name));
         }
+        setCalendarError(null);
       } else {
-        setCalendarEvents([]);
-        warnings.push('calendar');
+        setCalendarPreviewEvents([]);
+        setCalendarError('Calendar unavailable right now.');
       }
+      setCalendarLoading(false);
 
-      if (absenceResult.status === 'fulfilled') {
-        setAbsenceReports(absenceResult.value.items || []);
-      } else {
-        setAbsenceReports([]);
-        warnings.push('absence reports');
-      }
-
-      if (curriculumResult.status === 'fulfilled') {
-        setCurriculumOverview(curriculumResult.value);
-      } else {
-        setCurriculumOverview(null);
-        warnings.push('curriculum sessions');
-      }
-
-      if (markingResult.status === 'fulfilled') {
-        setEvidenceQueue((markingResult.value.items || []).map(normalizeEvidenceQueueLearner));
+      if (evidenceResult.status === 'fulfilled') {
+        const queueItems = (evidenceResult.value.items || []).map(normalizeEvidenceQueueLearner);
+        setEvidenceQueue(queueItems);
+        setLearners((currentLearners) => mergeEvidenceQueueIntoLearners(currentLearners, queueItems));
       } else {
         setEvidenceQueue([]);
-        warnings.push('evidence queue');
       }
 
-      setLoadWarning(warnings.length ? `Unable to load ${warnings.join(', ')} data right now.` : null);
-      setLoading(false);
+      calendarHydrationTimer = window.setTimeout(() => {
+        void loadFullCalendarData(currentOwnerEmail);
+      }, 0);
+    }
+
+    async function loadDashboard() {
+      setLoading(true);
+      setLoadWarning(null);
+      setCalendarLoading(true);
+      setCalendarError(null);
+      setLiveSessionsLoading(true);
+      setLiveSessionsError(null);
+
+      try {
+        const caseload = await fetchSharedJsonGet<CaseloadApiResponse>(CASELOAD_SUMMARY_ENDPOINT, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+
+        const resolvedOwnerName = displayValue(caseload.owner?.name) === EMPTY_VALUE ? 'Med Maher' : String(caseload.owner?.name);
+        const resolvedOwnerEmail = displayValue(caseload.owner?.email) === EMPTY_VALUE ? DEFAULT_COACH_EMAIL : String(caseload.owner?.email);
+        setOwnerName(resolvedOwnerName);
+        setLearners((caseload.learners || []).map(normalizeLearner));
+        setLoading(false);
+
+        secondaryTimer = window.setTimeout(() => {
+          void loadSecondaryData(resolvedOwnerEmail);
+          void loadLiveSessionData(resolvedOwnerEmail);
+        }, 0);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setLearners([]);
+        setLoadWarning(error instanceof Error ? error.message : 'Unable to load coach dashboard data right now.');
+        setLoading(false);
+
+        secondaryTimer = window.setTimeout(() => {
+          void loadSecondaryData(DEFAULT_COACH_EMAIL);
+          void loadLiveSessionData(DEFAULT_COACH_EMAIL);
+        }, 0);
+      }
     }
 
     loadDashboard();
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      if (secondaryTimer !== null) window.clearTimeout(secondaryTimer);
+      if (calendarHydrationTimer !== null) window.clearTimeout(calendarHydrationTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -730,55 +933,94 @@ export default function CoachDashboard() {
   }, [selectedKpi]);
 
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
-  const activeLearners = enrichedLearners.filter(isActiveLearner);
-  const onBreakLearners = enrichedLearners.filter(isOnBreakLearner);
-  const gatewayLearners = enrichedLearners.filter(isGatewayLearner);
-  const epaLearners = enrichedLearners.filter(isEpaLearner);
-
-  const atRiskLearners = activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk');
-  const needAttentionLearners = activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention');
-  const onTrackLearners = activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'on-track');
+  const activeLearners = useMemo(() => enrichedLearners.filter(isActiveLearner), [enrichedLearners]);
+  const onBreakLearners = useMemo(() => enrichedLearners.filter(isOnBreakLearner), [enrichedLearners]);
+  const gatewayLearners = useMemo(() => enrichedLearners.filter(isGatewayLearner), [enrichedLearners]);
+  const epaLearners = useMemo(() => enrichedLearners.filter(isEpaLearner), [enrichedLearners]);
+  const atRiskLearners = useMemo(
+    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'at-risk'),
+    [activeLearners],
+  );
+  const needAttentionLearners = useMemo(
+    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'need-attention'),
+    [activeLearners],
+  );
+  const onTrackLearners = useMemo(
+    () => activeLearners.filter(learner => normalizeOtjhStatus(learner.otjhStatus) === 'on-track'),
+    [activeLearners],
+  );
   const atRiskCaseloadHasOverflow = atRiskLearners.length > AT_RISK_SCROLL_THRESHOLD;
-  const evidenceLearners = evidenceQueue
-    .filter(learner => learner.pendingEvidence > 0)
-    .sort((a, b) => b.pendingEvidence - a.pendingEvidence || a.learner.localeCompare(b.learner));
+  const evidenceLearners = useMemo(
+    () => evidenceQueue
+      .filter(learner => learner.pendingEvidence > 0)
+      .sort((a, b) => b.pendingEvidence - a.pendingEvidence || a.learner.localeCompare(b.learner)),
+    [evidenceQueue],
+  );
   const atRiskCount = atRiskLearners.length;
   const needAttentionCount = needAttentionLearners.length;
   const onTrackCount = onTrackLearners.length;
   const totalCaseload = enrichedLearners.length;
-  const pendingEvidence = evidenceLearners.reduce((total, learner) => total + learner.pendingEvidence, 0);
-  const completedEvidence = evidenceLearners.reduce((total, learner) => total + learner.acceptedEvidence, 0);
-  const activeCalendarEvents = calendarEvents.filter(event => event.source === 'live-session' || activeLearners.some(learner => eventMatchesLearner(event, learner)));
-  const visibleCalendarEvents = sortEvents(activeCalendarEvents.filter(isFutureCalendarEvent));
-  const curriculumCoachGroupIds = useMemo(() => new Set(
-    (curriculumOverview?.coaches || [])
-      .filter(profile => coachMatchesProfile(profile, ownerName, ownerEmail))
-      .flatMap(profile => profile.assignedGroupIds || []),
-  ), [curriculumOverview, ownerEmail, ownerName]);
-  const legacyCoachGroupIds = useMemo(() => new Set(
-    (curriculumOverview?.groups || [])
-      .filter(group => coachMatchesGroup(group, ownerName))
-      .map(group => group.id),
-  ), [curriculumOverview, ownerName]);
-  const assignedCurriculumGroupIds = curriculumCoachGroupIds.size ? curriculumCoachGroupIds : legacyCoachGroupIds;
+  const pendingEvidence = useMemo(
+    () => evidenceLearners.reduce((total, learner) => total + learner.pendingEvidence, 0),
+    [evidenceLearners],
+  );
+  const completedEvidence = useMemo(
+    () => evidenceLearners.reduce((total, learner) => total + learner.acceptedEvidence, 0),
+    [evidenceLearners],
+  );
+  const activeLearnerIndex = useMemo(() => learnerIdentityIndex(activeLearners), [activeLearners]);
+  const activeCalendarEvents = useMemo(
+    () => calendarEvents.filter(event => eventMatchesLearnerIndex(event, activeLearnerIndex)),
+    [activeLearnerIndex, calendarEvents],
+  );
+  const visibleCalendarSourceEvents = useMemo(
+    () => calendarPreviewEvents.filter(event => eventMatchesLearnerIndex(event, activeLearnerIndex)),
+    [activeLearnerIndex, calendarPreviewEvents],
+  );
   const upcomingLiveSessions = useMemo(() => sortEvents(
-    (curriculumOverview?.sessions || [])
-      .filter(session => assignedCurriculumGroupIds.has(session.groupId || ''))
-      .map(curriculumSessionToCalendarEvent)
+    liveSessionEvents
+      .filter(event => event.source === 'live-session')
       .filter(event => !['completed', 'cancelled'].includes(event.status) && isFutureCalendarEvent(event)),
-  ), [assignedCurriculumGroupIds, curriculumOverview]);
-  const upcomingLiveSessionCards = Array.from(
+  ), [liveSessionEvents]);
+  const coachingCalendarLiveSessions = useMemo(
+    () => upcomingLiveSessions.filter(isWithinCalendarPreviewWindow),
+    [upcomingLiveSessions],
+  );
+  const upcomingLiveSessionCards = useMemo(() => Array.from(
     upcomingLiveSessions.reduce((byGroup, event) => {
-      const groupKey = normalizeIdentity(`${event.programme}-${event.cohort}-${event.location}`);
+      const groupKey = liveSessionGroupingKey(event);
       if (!byGroup.has(groupKey)) {
         byGroup.set(groupKey, event);
       }
       return byGroup;
     }, new Map<string, CoachCalendarEvent>()).values(),
+  ), [upcomingLiveSessions]);
+  const upcomingLiveSessionGroups = useMemo(() => {
+    const groupedSessions = new Map<string, CoachCalendarEvent[]>();
+    upcomingLiveSessionCards.forEach(event => {
+      const displayDate = parseLocalDate(eventDisplayDate(event));
+      if (!displayDate) return;
+      const dateKey = toIsoDate(displayDate);
+      const existingGroup = groupedSessions.get(dateKey);
+      if (existingGroup) {
+        existingGroup.push(event);
+      } else {
+        groupedSessions.set(dateKey, [event]);
+      }
+    });
+    return Array.from(groupedSessions.entries()).map(([date, events]) => ({ date, events }));
+  }, [upcomingLiveSessionCards]);
+  const visibleCalendarEvents = useMemo(
+    () => sortEvents([
+      ...visibleCalendarSourceEvents.filter(isFutureCalendarEvent),
+      ...coachingCalendarLiveSessions,
+    ]),
+    [coachingCalendarLiveSessions, visibleCalendarSourceEvents],
   );
-  const riskSummary = buildRiskSummary(atRiskLearners);
-  const pendingAbsenceReports = absenceReports.filter(report => report.status === 'pending');
+  const riskSummary = useMemo(() => buildRiskSummary(atRiskLearners), [atRiskLearners]);
   const dashboardPanelClass = 'rounded-[24px] border border-foreground-200/70 bg-background-50/95 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.28)] backdrop-blur-sm';
+  const liveSessionsPanelLoading = liveSessionsLoading && !upcomingLiveSessionCards.length;
+  const calendarPanelLoading = (calendarLoading || liveSessionsLoading) && !visibleCalendarEvents.length;
 
   const openCaseloadFilter = (_filter: OtjhFilter) => {
     window.requestAnimationFrame(() => {
@@ -852,7 +1094,7 @@ export default function CoachDashboard() {
           <SectionReveal delay={80}>
             <div className="rounded-xl border border-red-200/50 bg-red-50/70 p-3 md:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
               <span className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
-                <i className="ri-alert-fill text-red-600 text-base"></i>
+                <AppIcon className="ri-alert-fill text-red-600 text-base"></AppIcon>
               </span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-red-800">Risk Alert: {atRiskCount} learners need immediate attention</p>
@@ -886,7 +1128,7 @@ export default function CoachDashboard() {
                       to="/coach/caseload"
                       className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 transition-colors hover:bg-primary-100"
                     >
-                      <i className="ri-group-line"></i>
+                      <AppIcon className="ri-group-line"></AppIcon>
                       All Learners
                     </Link>
                   </div>
@@ -908,42 +1150,85 @@ export default function CoachDashboard() {
             </SectionReveal>
 
             <div className="grid grid-cols-1 items-stretch gap-6 lg:h-[680px] lg:grid-cols-2">
-            {/* Upcoming Live Sessions */}
-            <SectionReveal delay={140} className="lg:min-h-0">
-              <section className={`${dashboardPanelClass} flex h-full min-h-0 flex-col p-4 md:p-5`}>
-                <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                  <div>
-                    <h2 className="text-lg font-heading font-semibold text-foreground-900">Upcoming Live Sessions</h2>
-                    <p className="mt-1 text-sm text-foreground-400">Live tutor-led sessions scheduled for your learners</p>
+              {/* Upcoming Live Sessions */}
+              <SectionReveal delay={140} className="lg:min-h-0">
+                <section className={`${dashboardPanelClass} flex h-full min-h-0 flex-col p-4 md:p-5`}>
+                  <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="text-lg font-heading font-semibold text-foreground-900">Upcoming Live Sessions</h2>
+                        <span className="rounded-full border border-sky-100 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-700">
+                          {liveSessionsPanelLoading ? 'Loading' : `${upcomingLiveSessionCards.length} upcoming`}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-sm text-foreground-400">Live tutor-led sessions scheduled for your learners</p>
+                    </div>
+                    <Link
+                      to="/coach/timetable"
+                      className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl border border-primary-100 bg-background-50 px-3.5 py-2 text-xs font-semibold text-primary-700 transition hover:border-primary-200 hover:bg-primary-50"
+                    >
+                      <AppIcon className="ri-calendar-line"></AppIcon> Full Calendar
+                    </Link>
                   </div>
-                  <Link to="/coach/timetable" className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-100">
-                    <i className="ri-calendar-line"></i> Full Calendar
-                  </Link>
-                </div>
-                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-                  {upcomingLiveSessionCards.map(event => {
-                    const sessionDate = eventDisplayDate(event);
-                    return (
-                      <Link to="/coach/timetable" key={event.eventKey || event.id} className="group flex flex-col rounded-2xl border border-sky-100/80 bg-sky-50/35 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-sky-200 hover:shadow-[0_18px_45px_-32px_rgba(14,165,233,0.55)]">
-                        <div className="mb-4 flex items-start justify-between gap-3">
-                          <span className="rounded-full border border-sky-100 bg-background-50 px-2.5 py-1 text-[9px] font-semibold text-sky-700"><i className="ri-live-line mr-1"></i>Live Session</span>
-                          <span className="rounded-full bg-background-50 px-2.5 py-1 text-[9px] font-semibold text-foreground-500">{formatDateLabel(sessionDate)}</span>
+                  <div className="min-h-0 flex-1 overflow-hidden rounded-[22px] border border-foreground-200/70 bg-gradient-to-b from-sky-50/40 via-background-50 to-background-50">
+                    <div className="min-h-0 h-full space-y-4 overflow-y-auto p-2.5 pr-1.5">
+                      {liveSessionsPanelLoading && <UpcomingLiveSessionsSkeleton />}
+                      {!liveSessionsPanelLoading && upcomingLiveSessionGroups.map(group => (
+                        <div key={`live-session-group-${group.date}`} className="rounded-2xl border border-foreground-200/70 bg-background-50/95 p-3 shadow-[0_16px_30px_-36px_rgba(15,23,42,0.45)]">
+                          <div className="flex items-center justify-between gap-3 border-b border-foreground-100/80 pb-2.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <p className="text-sm font-semibold text-foreground-900">{formatUpcomingLiveSessionDayLabel(group.date)}</p>
+                              <span className="text-[11px] text-foreground-300">&middot;</span>
+                              <span className="text-[11px] text-foreground-400">{formatCalendarWeekday(group.date)}</span>
+                              {isRelativeUpcomingLiveSessionDayLabel(group.date) && (
+                                <>
+                                  <span className="text-[11px] text-foreground-300">&middot;</span>
+                                  <span className="text-[11px] text-foreground-400">{formatDateLabel(group.date)}</span>
+                                </>
+                              )}
+                            </div>
+                            <span className="rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700">
+                              {group.events.length} {group.events.length === 1 ? 'session' : 'sessions'}
+                            </span>
+                          </div>
+                          <div className="mt-3 divide-y divide-foreground-100/80">
+                            {group.events.map((event, index) => (
+                              <Link
+                                to="/coach/timetable"
+                                state={buildTimetableFocusState(event)}
+                                key={event.eventKey || event.id}
+                                className={`group grid grid-cols-[1fr,auto] items-center gap-3 text-left transition-colors hover:text-primary-800 ${index === 0 ? 'pt-0' : 'pt-3'} ${index === group.events.length - 1 ? 'pb-0' : 'pb-3'}`}
+                              >
+                                <div className="min-w-0">
+                                  <p className="truncate text-[14px] font-semibold text-foreground-900">{displayValue(event.title)}</p>
+                                  <p className="mt-1 truncate text-[11px] text-foreground-500">{upcomingLiveSessionMetaLabel(event)}</p>
+                                  <div className="mt-2">
+                                    <span className="inline-flex items-center gap-1.5 rounded-xl border border-primary-100/80 bg-primary-50/75 px-2.5 py-1.5 text-[10px] font-semibold text-primary-700">
+                                      <AppIcon className="ri-time-line"></AppIcon>
+                                      {upcomingLiveSessionTimeLabel(event)}
+                                      <span className="text-primary-300">&middot;</span>
+                                      <AppIcon className="ri-video-line"></AppIcon>
+                                      <span className="max-w-[120px] truncate">{displayValue(event.platform)}</span>
+                                    </span>
+                                  </div>
+                                </div>
+                                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-primary-100 bg-background-50 text-primary-700 transition group-hover:border-primary-200 group-hover:bg-primary-50">
+                                  <AppIcon className="ri-arrow-right-up-line"></AppIcon>
+                                </span>
+                              </Link>
+                            ))}
+                          </div>
                         </div>
-                        <p className="line-clamp-2 text-[15px] font-semibold leading-6 text-foreground-900">{displayValue(event.title)}</p>
-                        <p className="mt-1 truncate text-[10px] text-foreground-400">{displayValue(event.programme)} · {displayValue(event.cohort)}{event.location ? ` · ${event.location}` : ''}</p>
-                        <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-background-200/70 bg-background-50/80 px-3 py-2.5 text-[10px]">
-                          <span className="text-foreground-600"><i className="ri-time-line mr-1 text-sky-500"></i>{upcomingLiveSessionTimeLabel(event)}</span>
-                          <span className="text-foreground-500"><i className="ri-video-line mr-1 text-sky-500"></i>{displayValue(event.platform)}</span>
+                      ))}
+                      {!liveSessionsPanelLoading && !upcomingLiveSessionGroups.length && (
+                        <div className="flex h-full min-h-[240px] items-center justify-center rounded-2xl border border-dashed border-foreground-200/70 bg-background-50/90 p-6 text-center text-[11px] text-foreground-400">
+                          {liveSessionsError || 'No upcoming live sessions scheduled.'}
                         </div>
-                      </Link>
-                    );
-                  })}
-                  {!upcomingLiveSessionCards.length && (
-                    <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-6 text-center text-[11px] text-foreground-400 lg:col-span-2">No upcoming live sessions scheduled.</div>
-                  )}
-                </div>
-              </section>
-            </SectionReveal>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              </SectionReveal>
 
             {/* Coaching Calendar */}
             <SectionReveal delay={120} className="lg:min-h-0">
@@ -953,19 +1238,27 @@ export default function CoachDashboard() {
                     <h3 className="text-base font-heading font-semibold text-foreground-900">Coaching Calendar</h3>
                     <p className="mt-1 text-[11px] text-foreground-400">Upcoming learner sessions and review activity</p>
                   </div>
-                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] text-foreground-500">{visibleCalendarEvents.length} sessions</span>
+                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] text-foreground-500">
+                    {calendarPanelLoading ? 'Loading...' : `${visibleCalendarEvents.length} sessions`}
+                  </span>
                 </div>
                 <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto pr-1">
-                  {visibleCalendarEvents.length === 0 && (
+                  {calendarPanelLoading && <CoachingCalendarSkeleton />}
+                  {!calendarPanelLoading && visibleCalendarEvents.length === 0 && (
                     <div className="p-6 text-center text-[12px] text-foreground-400">
-                      {loading ? 'Loading calendar...' : 'No calendar events found.'}
+                      {calendarLoading ? 'Loading calendar...' : calendarError || liveSessionsError || 'No calendar events found.'}
                     </div>
                   )}
-                  {visibleCalendarEvents.map(event => {
+                  {!calendarPanelLoading && visibleCalendarEvents.map(event => {
                     const classes = eventStatusClasses(event);
                     const displayDate = eventDisplayDate(event);
                     return (
-                      <div key={event.eventKey || event.id} className={`flex items-start gap-3 rounded-2xl border border-foreground-200/50 p-3 transition-smooth cursor-pointer ${classes.row}`}>
+                      <Link
+                        to="/coach/timetable"
+                        state={buildTimetableFocusState(event)}
+                        key={event.eventKey || event.id}
+                        className={`flex items-start gap-3 rounded-2xl border border-foreground-200/50 p-3 transition-smooth cursor-pointer ${classes.row}`}
+                      >
                         <div className="min-w-[50px] shrink-0 rounded-xl bg-background-50/90 py-2 text-center">
                           <p className={`text-[10px] font-semibold uppercase tracking-wider ${classes.date}`}>{formatCalendarMonth(displayDate)}</p>
                           <p className={`text-base font-bold ${isAtRiskEvent(event) ? 'text-red-700' : 'text-foreground-900'}`}>{formatCalendarDayNumber(displayDate)}</p>
@@ -978,8 +1271,8 @@ export default function CoachDashboard() {
                             <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${classes.badge}`}>{eventTypeLabel(event)}</span>
                           </div>
                         </div>
-                        <i className={`text-sm shrink-0 ${classes.icon}`}></i>
-                      </div>
+                        <AppIcon className={`text-sm shrink-0 ${classes.icon}`}></AppIcon>
+                      </Link>
                     );
                   })}
                 </div>
@@ -987,22 +1280,7 @@ export default function CoachDashboard() {
             </SectionReveal>
             </div>
 
-            {/* Evidence Queue */}
-            <SectionReveal delay={180}>
-              <section className={`${dashboardPanelClass} p-4 md:p-5`}>
-                <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-lg font-heading font-semibold text-foreground-900">Evidence Awaiting Review</h2>
-                      <span className="rounded-full bg-secondary-50 px-2 py-0.5 text-[10px] font-semibold text-secondary-700">{evidenceLearners.length}</span>
-                    </div>
-                    <p className="mt-1 text-sm text-foreground-400">Learners with evidence waiting to be reviewed</p>
-                  </div>
-                  <Link to="/coach/marking-queue" className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-primary-100 bg-primary-50 px-3.5 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-100 cursor-pointer">
-                    View All <i className="ri-arrow-right-line"></i>
-                  </Link>
-                </div>
-                <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
+                {/* evidence awaiting review removed from dashboard
                   {evidenceLearners.map(learner => (
                     <Link
                       key={learner.id}
@@ -1010,7 +1288,7 @@ export default function CoachDashboard() {
                       state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence' }}
                       className="flex items-center gap-3 rounded-2xl border border-foreground-200/60 bg-background-100/70 p-3.5 transition-all hover:-translate-y-0.5 hover:border-secondary-200 hover:bg-secondary-50/30"
                     >
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary-50 text-secondary-600"><i className="ri-file-list-3-line"></i></span>
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary-50 text-secondary-600"><AppIcon className="ri-file-list-3-line"></AppIcon></span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[13px] font-semibold text-foreground-900">{learner.learner}</p>
                         <p className="truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p>
@@ -1020,44 +1298,48 @@ export default function CoachDashboard() {
                         <span className="block text-[8px] text-foreground-400">Pending / Total</span>
                         {learner.lastSubmission !== EMPTY_VALUE && <span className="block text-[8px] text-foreground-400">Last {learner.lastSubmission}</span>}
                       </span>
-                      <i className="ri-arrow-right-s-line text-foreground-300"></i>
+                      <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
                     </Link>
                   ))}
-                  {!evidenceLearners.length && <ModalEmpty icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />}
-                </div>
-              </section>
-            </SectionReveal>
+                  {!evidenceLearners.length && (
+                    <ModalEmpty
+                      icon="ri-file-search-line"
+                      title={
+                        evidenceQueueLoading
+                          ? 'Loading evidence queue'
+                          : evidenceQueueError
+                            ? 'Evidence queue unavailable'
+                            : 'No evidence awaiting review'
+                      }
+                      description={
+                        evidenceQueueLoading
+                          ? 'Evidence waiting for review will appear here shortly.'
+                          : evidenceQueueError || 'Learners will appear here when submitted evidence needs marking.'
+                      }
+                    />
+                  )}
+                </div> */}
           </div>
 
           {/* ─────── Right Column (1/3) ─────── */}
-          <div className="space-y-5">
-            {/* Absence Reports */}
-            <SectionReveal delay={160}>
-              <section className={`${dashboardPanelClass} p-4 md:p-5`}>
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-base font-heading font-semibold text-foreground-900">
-                    Absence Reports
-                    <span className="ml-2 text-[10px] font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">{pendingAbsenceReports.length} pending</span>
-                  </h3>
-                  <Link to="/coach/absence-reports" className="text-[10px] font-semibold text-primary-600 hover:text-primary-700">View All <i className="ri-arrow-right-s-line"></i></Link>
-                </div>
-                <div className="space-y-2.5">
-                  {pendingAbsenceReports.slice(0, 4).map(report => (
-                    <Link key={report.id} to="/coach/absence-reports" className="flex items-center gap-3 rounded-2xl border border-foreground-200/60 bg-background-100/60 p-3 transition-colors hover:bg-background-100">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600"><i className="ri-emotion-sad-line text-sm"></i></span>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[12px] font-semibold text-foreground-900">{report.learner}</p>
+          
+                  {/* absence reports removed from dashboard
+
                         <p className="truncate text-[10px] text-foreground-400">{formatDateLabel(report.sessionDate)} · {report.reason}</p>
                       </div>
                       <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[8px] font-semibold capitalize text-amber-700">{report.reasonCategory}</span>
                     </Link>
                   ))}
-                  {!pendingAbsenceReports.length && <div className="rounded-lg bg-background-100/50 p-5 text-center text-[10px] text-foreground-400">{loading ? 'Loading absence reports...' : 'No pending absence reports.'}</div>}
+                  {!pendingAbsenceReports.length && (
+                    <div className="rounded-lg bg-background-100/50 p-5 text-center text-[10px] text-foreground-400">
+                      {absenceReportsLoading ? 'Loading absence reports...' : absenceReportsError || 'No pending absence reports.'}
+                    </div>
+                  )}
                 </div>
               </section>
             </SectionReveal>
 
-          </div>
+                  */}
         </div>
 
       </div>
@@ -1093,6 +1375,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
   onClose: () => void;
   onFilter: (filter: OtjhFilter) => void;
 }) {
+  const navigate = useNavigate();
   const meta: Record<DashboardKpi, { title: string; subtitle: string; icon: string; iconStyle: string }> = {
     caseload: { title: 'Learner caseload', subtitle: 'All learners currently assigned to you', icon: 'ri-group-line', iconStyle: 'bg-primary-100 text-primary-600' },
     active: { title: 'Active learners', subtitle: 'Learners currently active on their programme', icon: 'ri-user-follow-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
@@ -1123,13 +1406,20 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
   const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
   const evidenceLearners = evidenceQueue;
 
+  const openLearnerProfile = (learner: CoachLearner) => {
+    navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`, {
+      state: { learnerId: learner.id, learnerName: learner.name },
+    });
+    onClose();
+  };
+
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title">
       <button type="button" onClick={onClose} className="absolute inset-0 bg-foreground-950/45 backdrop-blur-[5px]" aria-label="Close popup"></button>
       <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-foreground-200/70 bg-background-50/95 shadow-[0_36px_90px_-38px_rgba(15,23,42,0.5)]">
         <header className="flex items-start justify-between gap-4 border-b border-foreground-100/80 bg-background-50/95 px-5 py-5 md:px-6">
           <div className="flex items-center gap-3">
-            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-[0_10px_24px_-18px_rgba(15,23,42,0.35)] ${current.iconStyle}`}><i className={`${current.icon} text-lg`}></i></span>
+            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-[0_10px_24px_-18px_rgba(15,23,42,0.35)] ${current.iconStyle}`}><AppIcon className={`${current.icon} text-lg`}></AppIcon></span>
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 id="kpi-modal-title" className="font-heading text-lg font-bold text-foreground-900">{current.title}</h2>
@@ -1138,7 +1428,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
               <p className="mt-1 text-[11px] text-foreground-400">{current.subtitle}</p>
             </div>
           </div>
-          <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-foreground-400 transition-colors hover:border-foreground-200 hover:bg-background-100 hover:text-foreground-700" aria-label="Close"><i className="ri-close-line text-lg"></i></button>
+          <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-foreground-400 transition-colors hover:border-foreground-200 hover:bg-background-100 hover:text-foreground-700" aria-label="Close"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
         </header>
 
         <div className="flex-1 overflow-y-auto bg-gradient-to-b from-background-50 to-background-100/35 p-4 md:p-5">
@@ -1152,10 +1442,25 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                 return (
                   <div key={learner.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition-all hover:-translate-y-px hover:border-foreground-300/70 hover:shadow-[0_14px_32px_-24px_rgba(15,23,42,0.28)]">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center">
-                    <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${badge.avatarClass}`}><span>{learner.initials}</span></span>
+                    <button
+                      type="button"
+                      onClick={() => openLearnerProfile(learner)}
+                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition-transform hover:scale-[1.04] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 ${badge.avatarClass}`}
+                      title={`Open ${learner.name}'s profile`}
+                      aria-label={`Open ${learner.name}'s profile`}
+                    >
+                      <span>{learner.initials}</span>
+                    </button>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-[12px] font-semibold text-foreground-900">{learner.name}</p>
+                        <button
+                          type="button"
+                          onClick={() => openLearnerProfile(learner)}
+                          className="truncate text-left text-[12px] font-semibold text-foreground-900 transition-colors hover:text-primary-700 focus:outline-none focus:text-primary-700"
+                          title={`Open ${learner.name}'s profile`}
+                        >
+                          {learner.name}
+                        </button>
                         {type === 'active' || type === 'on-break' ? (
                           <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${isActiveLearner(learner) ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>{displayValue(learner.rawProgramStatus)}</span>
                         ) : type === 'gateway' || type === 'epa' ? (
@@ -1192,7 +1497,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary-50 text-[10px] font-bold text-secondary-700">{learner.initials}</span>
                   <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{learner.learner}</p><p className="mt-0.5 truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p></div>
                   <div className="text-right"><p className="text-sm font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</p><p className="text-[8px] text-foreground-400">Pending / Total</p>{learner.isOverdue && <p className="mt-0.5 text-[8px] font-semibold text-red-600">Overdue</p>}</div>
-                  <i className="ri-arrow-right-s-line text-foreground-300"></i>
+                  <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
                 </Link>
               ))}
               {!evidenceLearners.length && <ModalEmpty icon="ri-file-search-line" title="No evidence awaiting review" description="Learners will appear here when submitted evidence needs marking." />}
@@ -1203,7 +1508,7 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
             <div className="space-y-2">
               {reviews.map(event => {
                 const date = eventDisplayDate(event);
-                return <div key={event.eventKey || event.id} className="flex items-center gap-3 rounded-xl border border-foreground-100 p-3"><span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-primary-50 text-primary-700"><span className="text-[7px] font-bold uppercase">{formatCalendarMonth(date)}</span><span className="text-sm font-bold leading-none">{formatCalendarDayNumber(date)}</span></span><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{displayValue(event.learner)}</p><p className="mt-0.5 text-[9px] text-foreground-400">{formatTimeLabel(event)} · {eventTypeLabel(event)}</p></div><i className="ri-arrow-right-s-line text-foreground-300"></i></div>;
+                return <div key={event.eventKey || event.id} className="flex items-center gap-3 rounded-xl border border-foreground-100 p-3"><span className="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-primary-50 text-primary-700"><span className="text-[7px] font-bold uppercase">{formatCalendarMonth(date)}</span><span className="text-sm font-bold leading-none">{formatCalendarDayNumber(date)}</span></span><div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-foreground-900">{displayValue(event.learner)}</p><p className="mt-0.5 text-[9px] text-foreground-400">{formatTimeLabel(event)} · {eventTypeLabel(event)}</p></div><AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon></div>;
               })}
               {!reviews.length && <ModalEmpty icon="ri-calendar-check-line" title="No reviews due" description="There are no progress reviews scheduled in the next 14 days." />}
             </div>
@@ -1241,7 +1546,7 @@ function ModalMiniMetric({ label, value, tone = 'neutral' }: { label: string; va
 }
 
 function ModalEmpty({ icon, title, description }: { icon: string; title: string; description: string }) {
-  return <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50/80 py-12 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-background-100 text-foreground-400"><i className={`${icon} text-lg`}></i></span><p className="mt-3 text-xs font-semibold text-foreground-700">{title}</p><p className="mx-auto mt-1 max-w-sm text-[10px] leading-4 text-foreground-400">{description}</p></div>;
+  return <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50/80 py-12 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-background-100 text-foreground-400"><AppIcon className={`${icon} text-lg`}></AppIcon></span><p className="mt-3 text-xs font-semibold text-foreground-700">{title}</p><p className="mx-auto mt-1 max-w-sm text-[10px] leading-4 text-foreground-400">{description}</p></div>;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -1270,10 +1575,10 @@ function StatCard({ label, value, sub, icon, color, active = false, onClick }: {
       <span className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r ${c.glow}`}></span>
       <div className="mb-3 flex items-center gap-3">
         <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${c.iconBg} ${c.iconText}`}>
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">{label}</span>
-        <i className="ri-arrow-right-up-line ml-auto text-[11px] text-foreground-300 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary-500"></i>
+        <AppIcon className="ri-arrow-right-up-line ml-auto text-[11px] text-foreground-300 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary-500"></AppIcon>
       </div>
       <p className={`text-2xl font-heading font-bold leading-tight ${c.accent}`}>{value}</p>
       <p className="mt-2 text-[11px] leading-5 text-foreground-400">{sub}</p>
@@ -1349,7 +1654,7 @@ function MiniScheduleTile({ label, value }: { label: string; value: string; stat
     <div className="rounded-2xl border border-foreground-200/60 bg-white px-3 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       <div className="mb-1.5 flex items-center justify-between gap-2">
         <p className="text-[11px] font-medium text-foreground-500">{label}</p>
-        <i className={`${label === 'PR' ? 'ri-calendar-event-line' : 'ri-user-voice-line'} text-[12px] text-foreground-400`}></i>
+        <AppIcon className={`${label === 'PR' ? 'ri-calendar-event-line' : 'ri-user-voice-line'} text-[12px] text-foreground-400`}></AppIcon>
       </div>
       <p className="text-[11px] font-semibold text-foreground-700">{value}</p>
     </div>
@@ -1473,7 +1778,7 @@ function LearnerRow({ learner }: { learner: CoachLearner }) {
             aria-label={`Open ${learner.name} profile`}
             className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-all hover:scale-105 hover:shadow-sm ${badge.arrowClass}`}
           >
-            <i className="ri-arrow-right-s-line text-lg"></i>
+            <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
           </Link>
         </div>
       </div>
@@ -1504,7 +1809,7 @@ function LearnerRow({ learner }: { learner: CoachLearner }) {
       {primaryRisk && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
           <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[9px] font-semibold ${riskFlagClass(primaryRisk)}`}>
-            <i className="ri-error-warning-fill text-[10px]"></i>
+            <AppIcon className="ri-error-warning-fill text-[10px]"></AppIcon>
             {primaryRisk}
           </span>
           {visibleFlags.map(flag => (

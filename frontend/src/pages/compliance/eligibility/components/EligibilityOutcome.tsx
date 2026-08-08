@@ -19,7 +19,7 @@ export function EligibilityOutcome({ record }: EligibilityOutcomeProps) {
         <div className={`px-4 py-4 rounded-xl border ${decisionConfig.border} ${decisionConfig.bg}`}>
           <div className="flex items-center gap-3">
             <span className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${decisionConfig.iconBg}`}>
-              <i className={`${decisionConfig.icon} ${decisionConfig.iconColor} text-lg`}></i>
+              <AppIcon className={`${decisionConfig.icon} ${decisionConfig.iconColor} text-lg`}></AppIcon>
             </span>
             <div>
               <p className={`text-[15px] font-heading font-semibold ${decisionConfig.textColor}`}>
@@ -44,7 +44,7 @@ export function EligibilityOutcome({ record }: EligibilityOutcomeProps) {
             <ul className="space-y-1.5">
               {eligibilityOutcome.conditions.map((c, i) => (
                 <li key={i} className="flex items-start gap-2 text-[12px] text-amber-700">
-                  <i className="ri-checkbox-blank-circle-fill text-[6px] text-amber-400 mt-1.5 shrink-0"></i>
+                  <AppIcon className="ri-checkbox-blank-circle-fill text-[6px] text-amber-400 mt-1.5 shrink-0"></AppIcon>
                   {c}
                 </li>
               ))}
@@ -56,7 +56,7 @@ export function EligibilityOutcome({ record }: EligibilityOutcomeProps) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div className="px-4 py-3 rounded-lg border border-background-200/50">
             <div className="flex items-center gap-2 mb-2">
-              <i className="ri-passport-line text-foreground-400"></i>
+              <AppIcon className="ri-passport-line text-foreground-400"></AppIcon>
               <p className="text-[12px] font-semibold text-foreground-800">Right to Work</p>
             </div>
             <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${
@@ -69,7 +69,7 @@ export function EligibilityOutcome({ record }: EligibilityOutcomeProps) {
           </div>
           <div className="px-4 py-3 rounded-lg border border-background-200/50">
             <div className="flex items-center gap-2 mb-2">
-              <i className="ri-calendar-line text-foreground-400"></i>
+              <AppIcon className="ri-calendar-line text-foreground-400"></AppIcon>
               <p className="text-[12px] font-semibold text-foreground-800">Age Validation</p>
             </div>
             <div className="flex items-center gap-3">

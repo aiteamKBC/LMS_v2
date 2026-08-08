@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardGridSkeleton } from '@/components/feature/CurriculumSkeletons';
@@ -75,8 +75,9 @@ type LearnerKsbAchievement = {
 
 const COLOR_PRESETS = ['#6d28d9', '#2563eb', '#0f766e', '#16a34a', '#ea580c', '#dc2626', '#be123c', '#334155'];
 const WEEKDAY_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const PROGRAMMES_PER_PAGE = 6;
 
-type SelectOption = { value: string; label: string; meta?: string; color?: string };
+type SelectOption = { value: string; label: string; meta?: string; color?: string; aliases?: string[] };
 type StructureWizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'review';
 
 function showProgrammeSwalToast(title: string, text: string, icon: 'success' | 'error' | 'info' = 'success') {
@@ -91,6 +92,7 @@ function showProgrammeSwalToast(title: string, text: string, icon: 'success' | '
 
 export default function CurriculumProgrammes() {
   const [search, setSearch] = useState('');
+  const [programmePage, setProgrammePage] = useState(1);
   const [editingProgramme, setEditingProgramme] = useState<CurriculumProgramme | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardProgrammeId, setWizardProgrammeId] = useState<string | undefined>();
@@ -134,6 +136,19 @@ export default function CurriculumProgrammes() {
     if (needle && !p.name.toLowerCase().includes(needle)) return false;
     return true;
   });
+  const totalProgrammePages = Math.max(1, Math.ceil(filtered.length / PROGRAMMES_PER_PAGE));
+  const paginatedProgrammes = filtered.slice(
+    (programmePage - 1) * PROGRAMMES_PER_PAGE,
+    programmePage * PROGRAMMES_PER_PAGE,
+  );
+
+  useEffect(() => {
+    setProgrammePage(1);
+  }, [search]);
+
+  useEffect(() => {
+    setProgrammePage(currentPage => Math.min(currentPage, totalProgrammePages));
+  }, [totalProgrammePages]);
 
   const totalProgrammes = programmes.length;
   const totalLearners = programmes.reduce((a, b) => a + (b.learners || 0), 0);
@@ -400,7 +415,7 @@ export default function CurriculumProgrammes() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programmes" pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-4 sm:p-6 space-y-5">
+      <div className="programmes-page min-h-full bg-background-50 p-4 sm:p-6 space-y-5">
         <section className="overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl">
           <div className="relative p-5 sm:p-7">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
@@ -426,7 +441,7 @@ export default function CurriculumProgrammes() {
                   }}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50"
                 >
-                  <i className="ri-add-line text-base"></i>
+                  <AppIcon className="ri-add-line text-base"></AppIcon>
                   Create Programme Structure
                 </button>
                 <button
@@ -434,7 +449,7 @@ export default function CurriculumProgrammes() {
                   onClick={() => reload()}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
                 >
-                  <i className="ri-refresh-line text-base"></i>
+                  <AppIcon className="ri-refresh-line text-base"></AppIcon>
                   Refresh
                 </button>
               </div>
@@ -460,10 +475,10 @@ export default function CurriculumProgrammes() {
           </div>
         )}
 
-        <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
+        <section className="programmes-search-panel rounded-2xl border border-primary-100/70 bg-background-50 p-3 shadow-sm">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="relative flex-1">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
               <input
                 type="text"
                 value={search}
@@ -473,7 +488,7 @@ export default function CurriculumProgrammes() {
               />
               {search && (
                 <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700" aria-label="Clear search">
-                  <i className="ri-close-line"></i>
+                  <AppIcon className="ri-close-line"></AppIcon>
                 </button>
               )}
             </div>
@@ -483,24 +498,26 @@ export default function CurriculumProgrammes() {
         {loading ? (
           <CardGridSkeleton count={6} />
         ) : filtered.length ? (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
-            {filtered.map(prog => {
+          <>
+          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 2xl:grid-cols-3">
+            {paginatedProgrammes.map(prog => {
               const appliedSource = programmeKsbSources.get(prog.sourceId || prog.id) || resolveProgrammeAppliedKsbSource(prog, ksbSets, standards);
               const hasAppliedKsbSource = Boolean(appliedSource.value);
               const coverage = hasAppliedKsbSource && prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
+              const cardColor = normaliseHex(prog.color || '#6941c6');
               return (
-              <article key={prog.id} className="group relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200/80 hover:shadow-lg">
-                <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: prog.color || '#6941c6' }} />
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: prog.color || '#6941c6' }}>
-                      <i className="ri-book-2-line text-base"></i>
+              <article key={prog.id} className="programmes-card programme-color-card group relative overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-3 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg" style={{ '--programme-card-color': cardColor } as CSSProperties}>
+                <div className="programme-card-accent absolute inset-x-0 top-0 h-1" />
+                <div className="mb-2.5 flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="programme-card-icon flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: cardColor }}>
+                      <AppIcon className="ri-book-2-line text-base"></AppIcon>
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
                       <p className="text-[11px] text-foreground-400">Level: {prog.level || 'Not set'}</p>
-                      <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
-                        <i className="ri-calendar-event-line text-[10px]"></i>
+                        <span className="programme-type-badge mt-1 inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary-700 ring-1 ring-primary-100">
+                        <AppIcon className="ri-calendar-event-line text-[10px]"></AppIcon>
                         Programme
                       </span>
                     </div>
@@ -509,12 +526,12 @@ export default function CurriculumProgrammes() {
                 <button
                   type="button"
                   onClick={e => { e.stopPropagation(); openAppliedKsbSourceReview(prog, appliedSource); }}
-                  className={`mb-4 w-full rounded-xl border px-3 py-2.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${appliedSource.value ? 'border-primary-100 bg-primary-50/70 hover:border-primary-200 hover:bg-primary-50' : 'border-amber-100 bg-amber-50/70 hover:border-amber-200 hover:bg-amber-50'}`}
+                  className={`programme-source-button mb-2.5 w-full rounded-xl border px-2 py-1.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${appliedSource.value ? 'programme-source-applied' : 'programme-source-missing'}`}
                   aria-label={appliedSource.value ? `View KSBs for ${appliedSource.title}` : 'Choose KSB source'}
                 >
                   <div className="flex items-start gap-2">
-                    <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${appliedSource.value ? 'bg-primary-600 text-white' : 'bg-amber-500 text-white'}`}>
-                      <i className={appliedSource.value ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></i>
+                    <span className={`programme-source-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${appliedSource.value ? 'programme-source-applied' : 'programme-source-missing'}`}>
+                      <AppIcon className={appliedSource.value ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></AppIcon>
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className={`text-[9px] font-black uppercase tracking-wide ${appliedSource.value ? 'text-primary-700' : 'text-amber-700'}`}>
@@ -524,11 +541,11 @@ export default function CurriculumProgrammes() {
                       <p className="mt-0.5 truncate text-[10px] font-semibold text-foreground-500">{appliedSource.detail || appliedSource.subtitle}</p>
                     </div>
                     <span className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-primary-600">
-                      <i className={appliedSource.value ? 'ri-arrow-right-s-line' : 'ri-add-line'}></i>
+                      <AppIcon className={appliedSource.value ? 'ri-arrow-right-s-line' : 'ri-add-line'}></AppIcon>
                     </span>
                   </div>
                 </button>
-                <div className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-background-200/70 bg-background-100/60 p-3 sm:grid-cols-5">
+                <div className="programmes-metrics mb-2.5 grid grid-cols-2 gap-1.5 rounded-xl border border-primary-100/70 bg-primary-50/65 p-2 sm:grid-cols-5">
                   <Metric label="Cohorts" value={String(prog.cohorts)} />
                   <Metric label="Groups" value={String(prog.groups || 0)} />
                   <Metric label="Modules" value={String(prog.modules)} />
@@ -544,27 +561,27 @@ export default function CurriculumProgrammes() {
                     </div>
                   </div>
                 </div>
-                {prog.description && <p className="mb-4 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
-                <div className="flex flex-wrap items-center gap-2 border-t border-background-200/70 pt-4">
-                  <button className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
-                    <i className="ri-eye-line"></i>
+                {prog.description && <p className="mb-2.5 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
+                <div className="flex flex-wrap items-center gap-1 border-t border-primary-100/70 pt-2.5">
+                  <button className="programme-action-button programme-action-open inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1 text-[10px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
+                    <AppIcon className="ri-eye-line"></AppIcon>
                     Open
                   </button>
-                  <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
-                    <i className="ri-node-tree text-sm"></i>KSB source
+                  <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
+                    <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB source
                   </button>
-                  <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
-                    <i className="ri-user-follow-line text-sm"></i>Learners
+                  <button className="programme-action-button programme-action-learners inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-1.5 py-1 text-[10px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
+                    <AppIcon className="ri-user-follow-line text-sm"></AppIcon>Learners
                   </button>
-                  <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
-                    <i className="ri-pencil-line text-sm"></i>Edit
+                  <button className="programme-action-button programme-action-edit inline-flex items-center justify-center gap-1 rounded-lg border border-background-200 bg-background-50 px-1.5 py-1 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
+                    <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
                   </button>
                   <button
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                     disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
                     onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
                   >
-                    <i className={deletingProgrammeId === (prog.sourceId || prog.id) ? 'ri-loader-4-line animate-spin text-sm' : 'ri-delete-bin-6-line text-sm'}></i>
+                    <AppIcon className={deletingProgrammeId === (prog.sourceId || prog.id) ? 'ri-loader-4-line animate-spin text-sm' : 'ri-delete-bin-6-line text-sm'}></AppIcon>
                     Delete
                   </button>
                 </div>
@@ -572,6 +589,14 @@ export default function CurriculumProgrammes() {
             );
             })}
           </div>
+          {totalProgrammePages > 1 && (
+            <ProgrammePagination
+              currentPage={programmePage}
+              totalPages={totalProgrammePages}
+              onPageChange={setProgrammePage}
+            />
+          )}
+          </>
         ) : (
           <ProgrammesEmptyState
             hasSearch={Boolean(search.trim())}
@@ -705,7 +730,7 @@ function ProgrammeLearnerImpactModal({
   return createPortal(
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
       <div className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
-        <div className="flex items-start justify-between gap-4 bg-[#070112] px-6 py-5 text-white">
+        <div className="flex items-start justify-between gap-4 bg-gradient-to-br from-primary-700 via-primary-900 to-primary-950 px-6 py-5 text-white">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200">Enrolled Learners</p>
             <h3 className="mt-2 truncate text-xl font-heading font-bold">{programme.name}</h3>
@@ -714,7 +739,7 @@ function ProgrammeLearnerImpactModal({
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close learner impact">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
 
@@ -727,7 +752,7 @@ function ProgrammeLearnerImpactModal({
 
         <div className="border-b border-background-200 bg-background-50 p-4">
           <div className="relative">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -793,7 +818,7 @@ function ProgrammeLearnerImpactRow({
           <LearnerMiniMetric label="KSB weight achieved" value={formatMetricNumber(achievedWeight)} detail="Total consumed weight" />
           <LearnerMiniMetric label="Achieved KSBs" value={String(achievements.length)} detail={`${achievedCount} record${achievedCount === 1 ? '' : 's'}`} />
           <button type="button" onClick={() => setExpanded(value => !value)} className="inline-flex h-full min-h-14 items-center justify-center gap-2 rounded-xl border border-background-200 bg-background-100 px-3 text-[11px] font-black text-foreground-700 transition-smooth hover:bg-background-200">
-            <i className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></i>
+            <AppIcon className={expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}></AppIcon>
             Details
           </button>
         </div>
@@ -888,7 +913,7 @@ function ImpactStat({ icon, label, value, detail }: { icon: string; label: strin
   return (
     <div className="rounded-xl border border-background-200 bg-background-100 p-3">
       <div className="flex items-center gap-2 text-foreground-500">
-        <i className={`${icon} text-sm`}></i>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
       </div>
       <p className="mt-2 text-2xl font-heading font-bold text-foreground-950">{value}</p>
@@ -907,8 +932,8 @@ function LearnerMiniMetric({ label, value, detail }: { label: string; value: str
   );
 }
 
-function ProgressStrip({ label, value, tone, compact = false }: { label: string; value: number; tone: 'primary' | 'emerald' | 'amber' | 'red'; compact?: boolean }) {
-  const color = tone === 'emerald' ? 'bg-emerald-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'red' ? 'bg-red-500' : 'bg-primary-600';
+function ProgressStrip({ label, value, compact = false }: { label: string; value: number; tone?: 'primary' | 'emerald' | 'amber' | 'red'; compact?: boolean }) {
+  const color = value >= 80 ? 'bg-emerald-500' : value >= 50 ? 'bg-amber-500' : 'bg-red-500';
   return (
     <div className={compact ? 'mt-2' : ''}>
       {label && <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-foreground-400"><span>{label}</span><span>{value}%</span></div>}
@@ -995,13 +1020,13 @@ function ProgrammeKsbReviewModal({
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB review">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
 
         <div className="border-b border-background-200 bg-background-50 p-4">
           <div className="relative">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -1068,13 +1093,13 @@ function ProgrammeKsbSourceModal({ review, onClose }: { review: ProgrammeKsbSour
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB profile">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
 
         <div className="border-b border-background-200 bg-background-50 p-4">
           <div className="relative">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -1190,7 +1215,7 @@ function ApplyProgrammeKsbSourceModal({
             <p className="mt-1 text-[12px] font-semibold text-white/70">Choose the profile or Skills Standard this programme must be measured against.</p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB source">
-            <i className="ri-close-line text-lg"></i>
+            <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto p-5">
@@ -1238,7 +1263,7 @@ function ApplyProgrammeKsbSourceModal({
           <div>
             {currentSource.value && (
               <button type="button" disabled={applying} onClick={onUnapply} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50">
-                <i className={applying ? 'ri-loader-4-line animate-spin' : 'ri-link-unlink-m'}></i>
+                <AppIcon className={applying ? 'ri-loader-4-line animate-spin' : 'ri-link-unlink-m'}></AppIcon>
                 Unapply source
               </button>
             )}
@@ -1248,7 +1273,7 @@ function ApplyProgrammeKsbSourceModal({
               Cancel
             </button>
             <button type="button" disabled={!selectedSource || applying || selectedIsCurrent} onClick={() => onApply(selectedSource)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
-              <i className={applying ? 'ri-loader-4-line animate-spin' : selectedIsCurrent ? 'ri-checkbox-circle-line' : 'ri-check-line'}></i>
+              <AppIcon className={applying ? 'ri-loader-4-line animate-spin' : selectedIsCurrent ? 'ri-checkbox-circle-line' : 'ri-check-line'}></AppIcon>
               {applying ? 'Applying...' : selectedIsCurrent ? 'Applied' : 'Apply source'}
             </button>
           </div>
@@ -1325,7 +1350,7 @@ function ProgrammeKsbCard({ item, descriptions }: { item: CurriculumKsbCoverageI
 function ProgrammeKsbEmptyState({ icon, title, message }: { icon: string; title: string; message: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-100 px-6 py-12 text-center">
-      <i className={`${icon} text-3xl text-foreground-400`}></i>
+      <AppIcon className={`${icon} text-3xl text-foreground-400`}></AppIcon>
       <h4 className="mt-3 text-sm font-heading font-bold text-foreground-950">{title}</h4>
       <p className="mt-2 text-[13px] text-foreground-500">{message}</p>
     </div>
@@ -1336,12 +1361,61 @@ function DashboardStat({ icon, label, value, detail }: { icon: string; label: st
   return (
     <div className="rounded-xl border border-white/10 bg-white/10 p-3 backdrop-blur-sm">
       <div className="flex items-center gap-2 text-white/70">
-        <i className={`${icon} text-sm`}></i>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
         <span className="truncate text-[10px] font-bold uppercase tracking-wide">{label}</span>
       </div>
       <p className="mt-2 text-2xl font-heading font-bold text-white">{value}</p>
       <p className="mt-0.5 truncate text-[11px] font-semibold text-white/60">{detail}</p>
     </div>
+  );
+}
+
+function ProgrammePagination({ currentPage, totalPages, onPageChange }: {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <nav aria-label="Programme pages" className="flex flex-col gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-xs font-semibold text-foreground-500">
+        Page {currentPage} of {totalPages}
+      </span>
+      <div className="flex items-center justify-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          aria-label="Previous page"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <AppIcon className="ri-arrow-left-s-line" />
+          Previous
+        </button>
+        {Array.from({ length: totalPages }, (_, index) => index + 1).map(page => (
+          <button
+            key={page}
+            type="button"
+            onClick={() => onPageChange(page)}
+            aria-current={page === currentPage ? 'page' : undefined}
+            className={page === currentPage
+              ? 'inline-flex h-9 min-w-9 items-center justify-center rounded-lg bg-primary-600 px-2.5 text-xs font-bold text-white shadow-sm transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-300'
+              : 'inline-flex h-9 min-w-9 items-center justify-center rounded-lg border border-foreground-200 bg-background-50 px-2.5 text-xs font-bold text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300'}
+          >
+            {page}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage === totalPages}
+          aria-label="Next page"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Next
+          <AppIcon className="ri-arrow-right-s-line" />
+        </button>
+      </div>
+    </nav>
   );
 }
 
@@ -1362,19 +1436,19 @@ function ProgrammesEmptyState({
   return (
     <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50 px-6 py-14 text-center shadow-sm">
       <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-700 ring-1 ring-primary-100">
-        <i className={`${hasSearch ? 'ri-search-line' : 'ri-stack-line'} text-2xl`}></i>
+        <AppIcon className={`${hasSearch ? 'ri-search-line' : 'ri-stack-line'} text-2xl`}></AppIcon>
       </span>
       <h3 className="mt-4 text-base font-heading font-bold text-foreground-950">{title}</h3>
       <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-foreground-500">{message}</p>
       <div className="mt-5 flex flex-col items-center justify-center gap-2 sm:flex-row">
         {hasSearch && (
           <button type="button" onClick={onClear} className="inline-flex h-10 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
-            <i className="ri-filter-off-line"></i>
+            <AppIcon className="ri-filter-off-line"></AppIcon>
             Clear search
           </button>
         )}
         <button type="button" onClick={onCreate} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-          <i className="ri-add-line"></i>
+          <AppIcon className="ri-add-line"></AppIcon>
           Create programme
         </button>
       </div>
@@ -1400,6 +1474,21 @@ function TextAreaField({ label, value, onChange, rows = 3 }: { label: string; va
   );
 }
 
+function selectOptionMatchesValue(option: SelectOption, value: string) {
+  const requested = normalise(value);
+  if (!requested || requested === 'unassigned') return false;
+  return [option.value, option.label, option.meta, ...(option.aliases || [])].some(candidate => normalise(candidate) === requested);
+}
+
+function findSelectOption(options: SelectOption[], value: string) {
+  const current = String(value || '').trim();
+  if (!current) return undefined;
+  const direct = options.find(option => option.value === current);
+  if (direct) return direct;
+  const matches = options.filter(option => selectOptionMatchesValue(option, current));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 function ChoiceSelect({
   label,
   value,
@@ -1422,12 +1511,13 @@ function ChoiceSelect({
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0, width: 280, maxHeight: 300 });
   const selectRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const hasCurrentValue = value && !options.some(option => option.value === value);
+  const matchedOption = findSelectOption(options, value);
+  const hasCurrentValue = Boolean(value && !matchedOption);
   const visibleOptions = useMemo(
-    () => hasCurrentValue ? [{ value, label: value, meta: 'Current value' }, ...options] : options,
+    () => hasCurrentValue ? [{ value, label: value, meta: 'Current value', aliases: [value] }, ...options] : options,
     [hasCurrentValue, options, value],
   );
-  const selectedOption = visibleOptions.find(option => option.value === value);
+  const selectedOption = findSelectOption(visibleOptions, value);
   const filteredOptions = useMemo(() => {
     const search = normalise(query);
     if (!search) return visibleOptions;
@@ -1435,6 +1525,7 @@ function ChoiceSelect({
       normalise(option.label).includes(search)
       || normalise(option.meta).includes(search)
       || normalise(option.value).includes(search)
+      || (option.aliases || []).some(alias => normalise(alias).includes(search))
     ));
   }, [query, visibleOptions]);
 
@@ -1516,7 +1607,7 @@ function ChoiceSelect({
               {selectedOption?.label || placeholder}
             </span>
           </span>
-          <i className={`ri-arrow-down-s-line shrink-0 text-lg text-foreground-400 transition-transform ${open ? 'rotate-180 text-primary-500' : ''}`}></i>
+          <AppIcon className={`ri-arrow-down-s-line shrink-0 text-lg text-foreground-400 transition-transform ${open ? 'rotate-180 text-primary-500' : ''}`}></AppIcon>
         </span>
       </button>
       {selectedOption?.meta ? <p className="mt-1 text-[11px] font-medium text-foreground-400 truncate">{selectedOption.meta}</p> : null}
@@ -1528,7 +1619,7 @@ function ChoiceSelect({
           role="listbox"
         >
           <div className="relative mb-2">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
             <input
               value={query}
               onChange={event => setQuery(event.target.value)}
@@ -1547,10 +1638,10 @@ function ChoiceSelect({
                 aria-selected={!value}
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
-                  <i className="ri-close-circle-line text-sm"></i>
+                  <AppIcon className="ri-close-circle-line text-sm"></AppIcon>
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[13px] font-semibold">{placeholder}</span>
-                {!value ? <i className="ri-check-line shrink-0 text-primary-600"></i> : null}
+                {!value ? <AppIcon className="ri-check-line shrink-0 text-primary-600"></AppIcon> : null}
               </button>
             ) : null}
             {filteredOptions.map(option => {
@@ -1565,13 +1656,13 @@ function ChoiceSelect({
                   aria-selected={selected}
                 >
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500">
-                    {option.color ? <span className="h-4 w-4 rounded-[5px] ring-1 ring-black/10" style={{ backgroundColor: option.color }} /> : <i className="ri-arrow-right-up-line text-sm"></i>}
+                    {option.color ? <span className="h-4 w-4 rounded-[5px] ring-1 ring-black/10" style={{ backgroundColor: option.color }} /> : <AppIcon className="ri-arrow-right-up-line text-sm"></AppIcon>}
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-bold" title={option.label}>{option.label}</span>
                     {option.meta ? <span className="mt-0.5 block truncate text-[11px] font-medium text-foreground-400" title={option.meta}>{option.meta}</span> : null}
                   </span>
-                  {selected ? <i className="ri-check-line shrink-0 text-primary-600"></i> : null}
+                  {selected ? <AppIcon className="ri-check-line shrink-0 text-primary-600"></AppIcon> : null}
                 </button>
               );
             })}
@@ -1981,19 +2072,29 @@ function staffName(profile: CurriculumStaffProfile) {
   return String(profile.name || profile.Tutor_name || profile.Coach_name || profile.email || '').trim();
 }
 
-function uniqueStaffNames(profiles: CurriculumStaffProfile[] = []) {
-  const names = new Map<string, string>();
-  profiles.forEach(profile => {
-    const name = staffName(profile);
-    const key = normalise(name);
-    if (!key || key === 'unassigned' || names.has(key)) return;
-    names.set(key, name);
-  });
-  return Array.from(names.values()).sort((left, right) => left.localeCompare(right));
+function staffEmail(profile: CurriculumStaffProfile) {
+  return String(profile.email || '').trim();
 }
 
-function staffOptions(names: string[]): SelectOption[] {
-  return names.map(name => ({ value: name, label: name }));
+function staffOptions(profiles: CurriculumStaffProfile[] = []): SelectOption[] {
+  const options = new Map<string, SelectOption>();
+  profiles.forEach(profile => {
+    const name = staffName(profile);
+    const email = staffEmail(profile);
+    const value = email || name;
+    const key = normalise(value);
+    if (!key || key === 'unassigned' || options.has(key)) return;
+    const label = email && name && normalise(name) !== normalise(email)
+      ? `${name} - ${email}`
+      : name || email;
+    options.set(key, {
+      value,
+      label,
+      meta: email && name && normalise(name) !== normalise(email) ? email : undefined,
+      aliases: [name, email, label].filter(Boolean),
+    });
+  });
+  return Array.from(options.values()).sort((left, right) => left.label.localeCompare(right.label));
 }
 
 function moduleOptions(items: CurriculumModule[] = []): SelectOption[] {
@@ -2048,8 +2149,8 @@ function ProgrammeStructureEditor({
   const groups = useMemo(() => (data?.groups ?? []).filter(group => cohortIds.has(group.cohortId) || matchesProgramme(liveProgramme, group.programme)), [cohortIds, data?.groups, liveProgramme]);
   const modules = useMemo(() => (data?.modules ?? []).filter(module => matchesProgramme(liveProgramme, module.programme)), [data?.modules, liveProgramme]);
   const sessions = data?.sessions ?? [];
-  const tutorOptions = useMemo(() => staffOptions(uniqueStaffNames(staffTutors)), [staffTutors]);
-  const coachOptions = useMemo(() => staffOptions(uniqueStaffNames(staffCoaches)), [staffCoaches]);
+  const tutorOptions = useMemo(() => staffOptions(staffTutors), [staffTutors]);
+  const coachOptions = useMemo(() => staffOptions(staffCoaches), [staffCoaches]);
   const catalogueModuleOptions = useMemo(() => moduleOptions(data?.modules ?? []), [data?.modules]);
 
   const refresh = async (message: string) => {
@@ -2103,10 +2204,10 @@ function ProgrammeStructureEditor({
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => onOpenAddStructure(addAction.step, addAction.cohortId, addAction.groupId)} className="px-4 py-2.5 rounded-lg bg-emerald-500 text-white text-[12px] font-bold hover:bg-emerald-600 transition-smooth shadow-sm">
-              <i className={`${addAction.icon} mr-1`}></i>{addAction.label}
+              <AppIcon className={`${addAction.icon} mr-1`}></AppIcon>{addAction.label}
             </button>
             <button onClick={onClose} className="w-9 h-9 rounded-lg bg-background-100 border border-background-200 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer">
-              <i className="ri-close-line text-foreground-500"></i>
+              <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
             </button>
           </div>
         </div>
@@ -2168,7 +2269,7 @@ function EmptyStructure({ label }: { label: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-100/70 px-4 py-10 text-center">
       <span className="mx-auto mb-3 flex w-11 h-11 items-center justify-center rounded-xl bg-background-50 border border-background-200 text-primary-600 shadow-sm">
-        <i className="ri-stack-line text-lg"></i>
+        <AppIcon className="ri-stack-line text-lg"></AppIcon>
       </span>
       <p className="text-[13px] font-semibold text-foreground-700">{label}</p>
     </div>
@@ -2192,7 +2293,7 @@ function EditorCardHeader({
     <div className="flex flex-col gap-3 border-b border-background-200/70 bg-background-100/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 items-center gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: normaliseHex(color || '#6941c6') }}>
-          <i className={`${icon} text-base`}></i>
+          <AppIcon className={`${icon} text-base`}></AppIcon>
         </span>
         <div className="min-w-0">
           <p className="truncate text-sm font-heading font-bold text-foreground-950">{title || 'Untitled'}</p>
@@ -2207,7 +2308,7 @@ function EditorCardHeader({
 function SummaryPill({ icon, label }: { icon: string; label: string }) {
   return (
     <span className="inline-flex h-7 items-center gap-1.5 rounded-full border border-background-200 bg-background-50 px-2.5 text-[11px] font-bold text-foreground-600 shadow-sm">
-      <i className={`${icon} text-[13px] text-primary-600`}></i>
+      <AppIcon className={`${icon} text-[13px] text-primary-600`}></AppIcon>
       {label}
     </span>
   );
@@ -2349,7 +2450,11 @@ function GroupEditorRow({ group, tutors, coaches, onRefreshStaffProfiles, onSave
         <EditorCardHeader
           icon="ri-team-line"
           title={form.name || group.name}
-          meta={[form.coach ? `Coach: ${form.coach}` : 'No coach', form.tutor ? `Tutor: ${form.tutor}` : 'No tutor', selectedWeekDays(form.weekDays).join(', ') || 'No days'].join(' - ')}
+          meta={[
+            form.coach ? `Coach: ${findSelectOption(coaches, form.coach)?.label || form.coach}` : 'No coach',
+            form.tutor ? `Tutor: ${findSelectOption(tutors, form.tutor)?.label || form.tutor}` : 'No tutor',
+            selectedWeekDays(form.weekDays).join(', ') || 'No days',
+          ].join(' - ')}
           color="#1f2a44"
           actions={<RowActions saving={saving} onDelete={() => setConfirmArchive(true)} />}
         />
@@ -2404,8 +2509,8 @@ function ModuleEditorRow({
     notes: cleanEditorNotes(module.notes),
     startDate: firstSession?.date || '',
     endDate: lastSession?.date || '',
-    tutor: firstSession?.tutor || '',
-    coach: '',
+    tutor: firstSession?.tutor || module.tutor || '',
+    coach: module.coach || '',
     weekDays: firstSession?.day || '',
     startTime: firstSession?.startTime || '',
     endTime: firstSession?.endTime || '',
@@ -2454,7 +2559,12 @@ function ModuleEditorRow({
         <EditorCardHeader
           icon="ri-book-open-line"
           title={form.name || module.name}
-          meta={[`${form.weeks || 0} sessions`, form.startDate || 'No start', form.endDate || 'No end', form.tutor ? `Tutor: ${form.tutor}` : 'No tutor'].join(' - ')}
+          meta={[
+            `${form.weeks || 0} sessions`,
+            form.startDate || 'No start',
+            form.endDate || 'No end',
+            form.tutor ? `Tutor: ${findSelectOption(tutors, form.tutor)?.label || form.tutor}` : 'No tutor',
+          ].join(' - ')}
           color={form.color}
           actions={<RowActions saving={saving} onDelete={() => setConfirmArchive(true)} />}
         />
@@ -2493,10 +2603,10 @@ function RowActions({ saving, onDelete, align = 'end' }: { saving: boolean; onDe
   return (
     <div className={`flex items-end gap-2 ${align === 'right' ? 'justify-end' : ''}`}>
       <button type="submit" disabled={saving} className="h-10 px-4 rounded-lg bg-primary-500 text-white text-[12px] font-bold hover:bg-primary-600 disabled:opacity-50 shadow-sm transition-smooth">
-        {saving ? 'Saving...' : <><i className="ri-save-3-line mr-1"></i>Save</>}
+        {saving ? 'Saving...' : <><AppIcon className="ri-save-3-line mr-1"></AppIcon>Save</>}
       </button>
       <button type="button" onClick={onDelete} disabled={saving} className="h-10 px-4 rounded-lg bg-red-50 text-red-600 border border-red-200/70 text-[12px] font-bold hover:bg-red-100 disabled:opacity-50 transition-smooth">
-        <i className="ri-archive-line mr-1"></i>Archive
+        <AppIcon className="ri-archive-line mr-1"></AppIcon>Archive
       </button>
     </div>
   );
@@ -2559,7 +2669,7 @@ function ArchiveConfirmDialog({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-background-200/80">
+    <div className="programmes-metric min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-primary-100/80">
       <p className="truncate text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
       <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{value}</p>
     </div>

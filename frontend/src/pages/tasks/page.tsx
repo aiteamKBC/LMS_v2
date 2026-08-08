@@ -151,11 +151,11 @@ export default function TasksPage() {
         {/* Role indicator */}
         <div className="px-6 py-2 flex items-center gap-2">
           <div className="flex items-center gap-2 bg-primary-50 border border-primary-200/50 px-3 py-1.5 rounded-xl">
-            <i className="ri-user-line text-primary-500 text-xs"></i>
+            <AppIcon className="ri-user-line text-primary-500 text-xs"></AppIcon>
             <span className="text-xs font-semibold text-primary-700">Tasks for {nav.label}</span>
           </div>
           <div className="flex items-center gap-2 bg-background-100 border border-foreground-200/60 px-3 py-1.5 rounded-xl">
-            <i className="ri-lock-line text-foreground-400 text-xs"></i>
+            <AppIcon className="ri-lock-line text-foreground-400 text-xs"></AppIcon>
             <span className="text-xs text-foreground-500">Personal — visible only to you</span>
           </div>
         </div>
@@ -193,7 +193,7 @@ export default function TasksPage() {
             </div>
             <div className="flex items-center gap-2">
               <div className="relative">
-                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-300"></i>
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-300"></AppIcon>
                 <input
                   type="text"
                   value={searchQuery}
@@ -231,7 +231,7 @@ export default function TasksPage() {
           {filtered.length === 0 ? (
             <div className="text-center py-16 animate-in fade-in duration-500">
               <div className="w-14 h-14 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-4">
-                <i className="ri-task-line text-2xl text-foreground-300"></i>
+                <AppIcon className="ri-task-line text-2xl text-foreground-300"></AppIcon>
               </div>
               <p className="text-sm text-foreground-500 font-medium">No tasks found</p>
               <p className="text-xs text-foreground-300 mt-1">Try adjusting your filters</p>
@@ -265,8 +265,8 @@ export default function TasksPage() {
                             : 'border-background-300 hover:border-primary-400'
                         }`}
                       >
-                        {t.status === 'completed' && <i className="ri-check-line text-white text-[10px]"></i>}
-                        {t.status === 'in-progress' && <i className="ri-loader-4-line text-white text-[10px] animate-spin"></i>}
+                        {t.status === 'completed' && <AppIcon className="ri-check-line text-white text-[10px]"></AppIcon>}
+                        {t.status === 'in-progress' && <AppIcon className="ri-loader-4-line text-white text-[10px] animate-spin"></AppIcon>}
                       </button>
 
                       <div className="flex-1 min-w-0">
@@ -275,11 +275,11 @@ export default function TasksPage() {
                             {t.priority.charAt(0).toUpperCase() + t.priority.slice(1)}
                           </span>
                           <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500 border border-foreground-200/60">
-                            <i className={`${categoryIcons[t.category] || 'ri-task-line'} text-[9px] mr-1`}></i>
+                            <AppIcon className={`${categoryIcons[t.category] || 'ri-task-line'} text-[9px] mr-1`}></AppIcon>
                             {t.category}
                           </span>
                           <span className={`text-[10px] font-medium ${status.color}`}>
-                            <i className={`${status.icon} text-[9px] mr-0.5`}></i>
+                            <AppIcon className={`${status.icon} text-[9px] mr-0.5`}></AppIcon>
                             {status.label}
                           </span>
                         </div>
@@ -290,7 +290,7 @@ export default function TasksPage() {
 
                       <div className="flex items-center gap-3 shrink-0">
                         <div className="flex items-center gap-2 text-[11px] text-foreground-400">
-                          <i className="ri-calendar-line text-xs"></i>
+                          <AppIcon className="ri-calendar-line text-xs"></AppIcon>
                           {t.due}
                         </div>
                         <div className="flex items-center gap-1.5">
@@ -303,13 +303,13 @@ export default function TasksPage() {
                           onClick={() => setExpandedTask(isExpanded ? null : t.id)}
                           className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-300 hover:text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer"
                         >
-                          <i className={`${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></i>
+                          <AppIcon className={`${isExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-sm`}></AppIcon>
                         </button>
                         <button
                           onClick={() => deleteTask(t.id)}
                           className="w-7 h-7 rounded-lg flex items-center justify-center text-foreground-300 hover:text-red-600 hover:bg-red-50 transition-smooth cursor-pointer opacity-0 group-hover:opacity-100"
                         >
-                          <i className="ri-delete-bin-line text-sm"></i>
+                          <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
                         </button>
                       </div>
                     </div>

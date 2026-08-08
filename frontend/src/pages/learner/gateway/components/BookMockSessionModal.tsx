@@ -61,7 +61,7 @@ export function BookMockSessionModal({ isOpen, onClose, coachName, coachEmail }:
         <div className="sticky top-0 bg-background-50 rounded-t-2xl border-b border-background-200/50 px-5 py-4 flex items-center justify-between z-10">
           <div className="flex items-center gap-3">
             <span className="w-9 h-9 rounded-lg bg-primary-100 flex items-center justify-center">
-              <i className="ri-calendar-check-line text-primary-600"></i>
+              <AppIcon className="ri-calendar-check-line text-primary-600"></AppIcon>
             </span>
             <div>
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Book Mock Session</h3>
@@ -69,7 +69,7 @@ export function BookMockSessionModal({ isOpen, onClose, coachName, coachEmail }:
             </div>
           </div>
           <button onClick={handleClose} className="w-8 h-8 rounded-lg hover:bg-background-100 flex items-center justify-center transition-smooth cursor-pointer">
-            <i className="ri-close-line text-foreground-400"></i>
+            <AppIcon className="ri-close-line text-foreground-400"></AppIcon>
           </button>
         </div>
 
@@ -77,7 +77,7 @@ export function BookMockSessionModal({ isOpen, onClose, coachName, coachEmail }:
           /* Success State */
           <div className="p-8 text-center">
             <div className="w-16 h-16 rounded-2xl bg-emerald-100 flex items-center justify-center mx-auto mb-4 animate-in zoom-in duration-300">
-              <i className="ri-check-line text-emerald-600 text-2xl"></i>
+              <AppIcon className="ri-check-line text-emerald-600 text-2xl"></AppIcon>
             </div>
             <h4 className="text-base font-heading font-semibold text-foreground-900 mb-2">Session Requested!</h4>
             <p className="text-sm text-foreground-500 leading-relaxed mb-1">
@@ -145,7 +145,7 @@ export function BookMockSessionModal({ isOpen, onClose, coachName, coachEmail }:
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
                       sessionType === type.value ? 'bg-primary-200/50 text-primary-700' : 'bg-background-100 text-foreground-400'
                     }`}>
-                      <i className={`${type.icon} text-sm`}></i>
+                      <AppIcon className={`${type.icon} text-sm`}></AppIcon>
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-semibold ${sessionType === type.value ? 'text-primary-900' : 'text-foreground-900'}`}>
@@ -154,7 +154,7 @@ export function BookMockSessionModal({ isOpen, onClose, coachName, coachEmail }:
                       <p className="text-xs text-foreground-400 mt-0.5">{type.desc}</p>
                     </div>
                     {sessionType === type.value && (
-                      <i className="ri-checkbox-circle-fill text-primary-500 shrink-0 mt-1"></i>
+                      <AppIcon className="ri-checkbox-circle-fill text-primary-500 shrink-0 mt-1"></AppIcon>
                     )}
                   </button>
                 ))}
@@ -223,12 +223,12 @@ export function BookMockSessionModal({ isOpen, onClose, coachName, coachEmail }:
             >
               {submitting ? (
                 <>
-                  <i className="ri-loader-4-line animate-spin"></i>
+                  <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
                   Sending Request...
                 </>
               ) : (
                 <>
-                  <i className="ri-send-plane-line"></i>
+                  <AppIcon className="ri-send-plane-line"></AppIcon>
                   Request Mock Session
                 </>
               )}

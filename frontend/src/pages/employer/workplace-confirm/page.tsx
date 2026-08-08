@@ -38,7 +38,7 @@ export default function EmployerWorkplaceConfirmations() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-building-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-building-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Workplace Confirmations</h2>
               <p className="text-[13px] text-white/80 leading-relaxed"><strong>{CONFIRMATIONS.length} confirmations</strong> · {pending} pending</p>
@@ -49,7 +49,7 @@ export default function EmployerWorkplaceConfirmations() {
 
         {pending > 0 && (
           <div className="bg-amber-50 border border-amber-200/50 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
-            <span className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0"><i className="ri-alert-line text-amber-600 text-base"></i></span>
+            <span className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center shrink-0"><AppIcon className="ri-alert-line text-amber-600 text-base"></AppIcon></span>
             <div className="flex-1"><p className="text-sm font-semibold text-amber-800">{pending} workplace confirmations need your attention</p><p className="text-[12px] text-amber-600 mt-0.5">These confirmations are required for funding compliance and apprenticeship progress</p></div>
           </div>
         )}
@@ -74,17 +74,17 @@ export default function EmployerWorkplaceConfirmations() {
                 <p className="text-sm font-semibold text-foreground-900 mb-1">{item.apprentice}</p>
                 <p className="text-[12px] text-foreground-500 mb-2">{item.description}</p>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-foreground-400">
-                  <span>Requested: {item.requestedBy}</span><span>{item.requestedDate}</span><span className="flex items-center gap-1"><i className="ri-calendar-line text-[10px]"></i> Due: {item.dueDate}</span>
+                  <span>Requested: {item.requestedBy}</span><span>{item.requestedDate}</span><span className="flex items-center gap-1"><AppIcon className="ri-calendar-line text-[10px]"></AppIcon> Due: {item.dueDate}</span>
                 </div>
               </div>
               {item.status === 'pending' && (
                 <div className="flex items-center gap-2 shrink-0">
-                  <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-check-line mr-1"></i> Confirm</button>
+                  <button className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-check-line mr-1"></AppIcon> Confirm</button>
                   <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Decline</button>
                 </div>
               )}
               {item.status === 'confirmed' && (
-                <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1 shrink-0"><i className="ri-check-double-line"></i> Confirmed</span>
+                <span className="text-[10px] font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1 shrink-0"><AppIcon className="ri-check-double-line"></AppIcon> Confirmed</span>
               )}
             </div>
           ))}

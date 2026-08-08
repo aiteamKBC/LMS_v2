@@ -40,7 +40,7 @@ export default function ReferralsPage() {
           <div className="space-y-3">
             <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-4">
               <p className="text-[12px] text-amber-800">
-                <i className="ri-information-line mr-1"></i>
+                <AppIcon className="ri-information-line mr-1"></AppIcon>
                 Internal escalations track when concerns are raised by one team and escalated to Safeguarding. All escalations must be acknowledged within 4 hours.
               </p>
             </div>
@@ -60,7 +60,7 @@ export default function ReferralsPage() {
                     <tr key={esc.id} className="border-b border-background-100/50 hover:bg-red-50/20 transition-smooth">
                       <td className="px-4 py-2.5">
                         <span className="text-foreground-600">{esc.from}</span>
-                        <i className="ri-arrow-right-line text-[10px] mx-1.5 text-red-400"></i>
+                        <AppIcon className="ri-arrow-right-line text-[10px] mx-1.5 text-red-400"></AppIcon>
                         <span className="text-red-600 font-medium">{esc.to}</span>
                       </td>
                       <td className="px-4 py-2.5">
@@ -86,7 +86,7 @@ export default function ReferralsPage() {
           <div className="space-y-3">
             <div className="bg-red-50 border border-red-200/60 rounded-xl p-4">
               <p className="text-[12px] text-red-800">
-                <i className="ri-error-warning-line mr-1"></i>
+                <AppIcon className="ri-error-warning-line mr-1"></AppIcon>
                 External referrals involve statutory agencies and external organisations. All external referrals must be authorised by DSL.
               </p>
             </div>
@@ -102,7 +102,7 @@ export default function ReferralsPage() {
                         ref.type === 'LADO' ? 'bg-red-100 text-red-600' :
                         'bg-secondary-100 text-secondary-600'
                       }`}>
-                        <i className={`${ref.type === 'MARAC' ? 'ri-alert-line' : ref.type === 'Police' ? 'ri-police-car-line' : ref.type === 'Prevent/Channel' ? 'ri-radar-line' : ref.type === 'LADO' ? 'ri-shield-user-line' : 'ri-building-line'} text-xs`}></i>
+                        <AppIcon className={`${ref.type === 'MARAC' ? 'ri-alert-line' : ref.type === 'Police' ? 'ri-police-car-line' : ref.type === 'Prevent/Channel' ? 'ri-radar-line' : ref.type === 'LADO' ? 'ri-shield-user-line' : 'ri-building-line'} text-xs`}></AppIcon>
                       </div>
                       <div>
                         <p className="text-[12px] font-semibold text-foreground-800">{ref.type}</p>
@@ -133,7 +133,7 @@ export default function ReferralsPage() {
               <div key={kase.id} className="bg-background-50 rounded-xl border border-background-200/40 p-4">
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
-                    <i className="ri-building-2-line text-secondary-600 text-lg"></i>
+                    <AppIcon className="ri-building-2-line text-secondary-600 text-lg"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-semibold text-foreground-800">{kase.learnerName} — {kase.employer}</p>
@@ -157,7 +157,7 @@ export default function ReferralsPage() {
             <div className="bg-red-500 rounded-xl p-5 text-white">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center">
-                  <i className="ri-alarm-warning-line text-2xl"></i>
+                  <AppIcon className="ri-alarm-warning-line text-2xl"></AppIcon>
                 </div>
                 <div>
                   <p className="text-base font-heading font-bold">Emergency Actions Protocol</p>
@@ -169,7 +169,7 @@ export default function ReferralsPage() {
               <div key={kase.id} className="bg-background-50 rounded-xl border-2 border-red-300 p-4">
                 <div className="flex items-start gap-3">
                   <div className="w-10 h-10 rounded-xl bg-red-500 flex items-center justify-center shrink-0">
-                    <i className="ri-alarm-warning-line text-white text-lg"></i>
+                    <AppIcon className="ri-alarm-warning-line text-white text-lg"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-heading font-semibold text-red-900">{kase.caseRef} — {kase.learnerName}</p>

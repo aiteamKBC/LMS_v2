@@ -44,7 +44,7 @@ export default function EmployerReports() {
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><i className="ri-bar-chart-box-line text-white text-2xl"></i></span>
+            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-bar-chart-box-line text-white text-2xl"></AppIcon></span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Reports</h2>
               <p className="text-[13px] text-white/80 leading-relaxed"><strong>{REPORTS.length} reports</strong> available across {categories.length} categories</p>
@@ -54,7 +54,7 @@ export default function EmployerReports() {
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search reports..." className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:border-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 flex-wrap">
@@ -70,7 +70,7 @@ export default function EmployerReports() {
             return (
               <div key={report.id} className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 card-premium hover:border-primary-200/50 transition-smooth">
                 <div className="flex items-start gap-3 mb-3">
-                  <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0"><i className={`${catIcon} text-lg`}></i></span>
+                  <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0"><AppIcon className={`${catIcon} text-lg`}></AppIcon></span>
                   <div>
                     <h3 className="text-sm font-semibold text-foreground-900">{report.title}</h3>
                     <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-background-100 text-foreground-500">{report.category}</span>
@@ -78,12 +78,12 @@ export default function EmployerReports() {
                 </div>
                 <p className="text-[12px] text-foreground-500 mb-4">{report.description}</p>
                 <div className="flex items-center gap-x-4 gap-y-1 text-[10px] text-foreground-400 mb-3 flex-wrap">
-                  <span><i className="ri-calendar-line mr-0.5"></i> {report.lastGenerated}</span>
-                  <span><i className="ri-file-line mr-0.5"></i> {report.format}</span>
-                  <span><i className="ri-loop-left-line mr-0.5"></i> {report.frequency}</span>
+                  <span><AppIcon className="ri-calendar-line mr-0.5"></AppIcon> {report.lastGenerated}</span>
+                  <span><AppIcon className="ri-file-line mr-0.5"></AppIcon> {report.format}</span>
+                  <span><AppIcon className="ri-loop-left-line mr-0.5"></AppIcon> {report.frequency}</span>
                 </div>
                 <button className="w-full px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-download-line mr-1"></i> Generate Report
+                  <AppIcon className="ri-download-line mr-1"></AppIcon> Generate Report
                 </button>
               </div>
             );

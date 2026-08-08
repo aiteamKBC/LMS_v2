@@ -101,7 +101,7 @@ export default function AccessLogsPage() {
           <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,0.03) 2px, rgba(255,255,255,0.03) 4px)' }}></div>
           <div className="relative z-10 p-5 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-accent-500 shadow-lg shadow-accent-500/20 flex items-center justify-center shrink-0">
-              <i className="ri-door-lock-line text-foreground-950 text-2xl"></i>
+              <AppIcon className="ri-door-lock-line text-foreground-950 text-2xl"></AppIcon>
             </span>
             <div className="flex-1 min-w-0">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Access Logs</h2>
@@ -131,7 +131,7 @@ export default function AccessLogsPage() {
         {/* ================================================================ */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
           <div className="relative flex-1 w-full lg:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input
               type="text"
               placeholder="Search by user, email, resource, or IP..."
@@ -160,7 +160,7 @@ export default function AccessLogsPage() {
               {uniqueTenants.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
             <button className="px-3 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-download-line mr-1"></i> Export
+              <AppIcon className="ri-download-line mr-1"></AppIcon> Export
             </button>
           </div>
         </div>
@@ -179,7 +179,7 @@ export default function AccessLogsPage() {
                 className={`bg-background-50 rounded-xl border p-3 cursor-pointer transition-smooth text-left ${typeFilter === type ? `border-${colorKey}-300 ring-1 ring-${colorKey}-200/50` : 'border-foreground-200/60 hover:border-background-300/60'}`}
               >
                 <span className={`w-7 h-7 rounded-lg flex items-center justify-center mb-2 bg-${colorKey}-100 text-${colorKey}-600`}>
-                  <i className={`${type === 'page' ? 'ri-globe-line' : type === 'api' ? 'ri-terminal-box-line' : type === 'data' ? 'ri-database-2-line' : type === 'file' ? 'ri-file-download-line' : 'ri-shield-keyhole-line'} text-xs`}></i>
+                  <AppIcon className={`${type === 'page' ? 'ri-globe-line' : type === 'api' ? 'ri-terminal-box-line' : type === 'data' ? 'ri-database-2-line' : type === 'file' ? 'ri-file-download-line' : 'ri-shield-keyhole-line'} text-xs`}></AppIcon>
                 </span>
                 <p className="text-lg font-heading font-semibold text-foreground-900">{count}</p>
                 <p className="text-[10px] text-foreground-400 capitalize">{type} access</p>
@@ -240,7 +240,7 @@ export default function AccessLogsPage() {
             {filtered.length === 0 && (
               <div className="text-center py-12">
                 <div className="w-10 h-10 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-2">
-                  <i className="ri-search-line text-foreground-300"></i>
+                  <AppIcon className="ri-search-line text-foreground-300"></AppIcon>
                 </div>
                 <p className="text-sm text-foreground-400">No matching access logs found</p>
               </div>
@@ -284,7 +284,7 @@ export default function AccessLogsPage() {
 
                 {selected.status === 'denied' && (
                   <div className="bg-red-50 border border-red-200/50 rounded-lg p-3 flex items-start gap-2">
-                    <i className="ri-error-warning-line text-red-600 text-sm mt-0.5"></i>
+                    <AppIcon className="ri-error-warning-line text-red-600 text-sm mt-0.5"></AppIcon>
                     <div>
                       <p className="text-[11px] font-semibold text-red-800">Access Denied</p>
                       <p className="text-[10px] text-red-600">This user does not have permission to access this resource. Flag for review if repeated.</p>
@@ -295,14 +295,14 @@ export default function AccessLogsPage() {
                 <div className="flex gap-2 pt-1">
                   <button className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Investigate</button>
                   <button className="px-3 py-2 border border-background-200 rounded-lg text-[11px] text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-file-copy-line"></i>
+                    <AppIcon className="ri-file-copy-line"></AppIcon>
                   </button>
                 </div>
               </div>
             ) : (
               <div className="text-center py-8">
                 <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-file-search-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-file-search-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-sm text-foreground-500">Select an access log entry</p>
                 <p className="text-[11px] text-foreground-300 mt-1">View full details including IP, location, device, and session duration</p>

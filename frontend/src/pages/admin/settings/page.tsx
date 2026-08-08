@@ -98,7 +98,7 @@ export default function SettingsHub() {
           <div className="absolute inset-0 opacity-[0.015]" style={{ backgroundImage: 'linear-gradient(oklch(var(--background-100)) 1px, transparent 1px), linear-gradient(90deg, oklch(var(--background-100)) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-settings-3-line text-white text-2xl"></i>
+              <AppIcon className="ri-settings-3-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Settings Hub</h2>
@@ -141,7 +141,7 @@ export default function SettingsHub() {
         {/* Search & View Toggle */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
           <div className="relative flex-1 w-full lg:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input
               type="text"
               placeholder="Search settings categories..."
@@ -152,10 +152,10 @@ export default function SettingsHub() {
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1">
             <button onClick={() => setViewMode('grid')} className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-smooth cursor-pointer ${viewMode === 'grid' ? 'bg-white text-foreground-900' : 'text-foreground-500'}`}>
-              <i className="ri-grid-line mr-1"></i> Grid
+              <AppIcon className="ri-grid-line mr-1"></AppIcon> Grid
             </button>
             <button onClick={() => setViewMode('list')} className={`px-3 py-1.5 rounded-lg text-[12px] font-medium transition-smooth cursor-pointer ${viewMode === 'list' ? 'bg-white text-foreground-900' : 'text-foreground-500'}`}>
-              <i className="ri-list-check mr-1"></i> List
+              <AppIcon className="ri-list-check mr-1"></AppIcon> List
             </button>
           </div>
         </div>
@@ -186,11 +186,11 @@ export default function SettingsHub() {
                           >
                             <div className="flex items-start justify-between mb-2">
                               <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${activeCategory === cat.id ? 'bg-primary-100 text-primary-600' : 'bg-secondary-100 text-secondary-600'}`}>
-                                <i className={`${cat.icon} text-sm`}></i>
+                                <AppIcon className={`${cat.icon} text-sm`}></AppIcon>
                               </span>
                               {isComplete ? (
                                 <span className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center">
-                                  <i className="ri-check-line text-emerald-600 text-xs"></i>
+                                  <AppIcon className="ri-check-line text-emerald-600 text-xs"></AppIcon>
                                 </span>
                               ) : (
                                 <span className="text-[10px] font-semibold text-accent-600">{pct}%</span>
@@ -217,7 +217,7 @@ export default function SettingsHub() {
                             className={`w-full flex items-center gap-4 p-3 rounded-xl border text-left transition-smooth cursor-pointer ${activeCategory === cat.id ? 'border-primary-300 bg-primary-50/50 ring-1 ring-primary-200/50' : 'border-foreground-200/60 bg-background-50 hover:border-background-300/60'}`}
                           >
                             <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${activeCategory === cat.id ? 'bg-primary-100 text-primary-600' : 'bg-secondary-100 text-secondary-600'}`}>
-                              <i className={`${cat.icon} text-sm`}></i>
+                              <AppIcon className={`${cat.icon} text-sm`}></AppIcon>
                             </span>
                             <div className="flex-1 min-w-0">
                               <p className="text-[13px] font-semibold text-foreground-900">{cat.label}</p>
@@ -266,7 +266,7 @@ function SettingsContent({ categoryId }: { categoryId: string }) {
       <div className="mb-4">
         <div className="flex items-center gap-2 mb-1">
           <span className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-            <i className={`${category.icon} text-primary-600 text-sm`}></i>
+            <AppIcon className={`${category.icon} text-primary-600 text-sm`}></AppIcon>
           </span>
           <h2 className="text-sm font-heading font-semibold text-foreground-950">{category.label}</h2>
         </div>
@@ -304,7 +304,7 @@ function GenericSettingsPlaceholder({ label }: { label: string }) {
   return (
     <div className="bg-background-100 rounded-xl border border-foreground-200/60 p-6 text-center">
       <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center mx-auto mb-3">
-        <i className="ri-settings-3-line text-primary-500 text-lg"></i>
+        <AppIcon className="ri-settings-3-line text-primary-500 text-lg"></AppIcon>
       </div>
       <h3 className="text-[13px] font-semibold text-foreground-900 mb-1">{label} Configuration</h3>
       <p className="text-[11px] text-foreground-500">
@@ -385,7 +385,7 @@ function UsersSettingsContent() {
             <div key={role.name} className="flex items-center justify-between bg-background-100 rounded-lg border border-foreground-200/60 p-2.5 hover:border-background-300/60 transition-smooth cursor-pointer">
               <div className="flex items-center gap-2">
                 <span className={`w-6 h-6 rounded-md flex items-center justify-center ${role.color === 'primary' ? 'bg-primary-100 text-primary-600' : role.color === 'accent' ? 'bg-accent-100 text-accent-600' : 'bg-secondary-100 text-secondary-600'}`}>
-                  <i className="ri-shield-user-line text-xs"></i>
+                  <AppIcon className="ri-shield-user-line text-xs"></AppIcon>
                 </span>
                 <span className="text-[12px] font-medium text-foreground-900">{role.name}</span>
               </div>
@@ -432,7 +432,7 @@ function PermissionsSettingsContent() {
                   {(['learner', 'coach', 'tutor', 'employer', 'admin'] as const).map(role => (
                     <td key={role} className="text-center py-1.5 px-1">
                       <span className={`inline-flex items-center justify-center w-5 h-5 rounded ${row[role] ? 'bg-emerald-100 text-emerald-600' : 'bg-background-100 text-foreground-300'}`}>
-                        <i className={`${row[role] ? 'ri-check-line' : 'ri-subtract-line'} text-[10px]`}></i>
+                        <AppIcon className={`${row[role] ? 'ri-check-line' : 'ri-subtract-line'} text-[10px]`}></AppIcon>
                       </span>
                     </td>
                   ))}
@@ -455,7 +455,7 @@ function ProgrammeSettingsContent() {
             <div key={std} className="flex items-center justify-between bg-background-100 rounded-lg border border-foreground-200/60 p-2.5 hover:border-background-300/60 transition-smooth cursor-pointer">
               <div className="flex items-center gap-2">
                 <span className="w-6 h-6 rounded-md bg-primary-100 flex items-center justify-center">
-                  <i className="ri-book-2-line text-primary-600 text-xs"></i>
+                  <AppIcon className="ri-book-2-line text-primary-600 text-xs"></AppIcon>
                 </span>
                 <span className="text-[12px] font-medium text-foreground-900">{std}</span>
               </div>

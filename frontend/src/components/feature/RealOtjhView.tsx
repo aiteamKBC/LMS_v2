@@ -110,7 +110,7 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
             </div>
             <div className="flex w-full shrink-0 items-center gap-4 rounded-2xl border border-white/15 bg-white/10 p-4 shadow-lg shadow-black/10 backdrop-blur-md md:w-auto md:min-w-[260px]">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-emerald-300">
-                <i className="ri-time-line text-xl" />
+                <AppIcon className="ri-time-line text-xl" />
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-end justify-between gap-3">
@@ -157,7 +157,7 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
           <section className="overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-sm lg:col-span-2">
             <div className="flex items-center justify-between border-b border-foreground-100 bg-background-50 px-4 py-3.5 md:px-5">
               <div className="flex items-center gap-2.5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-100 text-primary-600"><i className="ri-history-line text-sm" /></span>
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-100 text-primary-600"><AppIcon className="ri-history-line text-sm" /></span>
                 <div>
                   <h2 className="text-sm font-heading font-bold text-foreground-900">Activity Log</h2>
                   <p className="text-[10px] text-foreground-400">Recorded learning activity and submitted time</p>
@@ -174,7 +174,7 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
                 {rows.map((r, i) => (
                   <div key={i} className="group flex items-center gap-3 px-4 py-3 transition-colors hover:bg-primary-50/25 md:px-5">
                     <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${r.tint}`}>
-                      <i className={`${r.icon} text-[15px]`} />
+                      <AppIcon className={`${r.icon} text-[15px]`} />
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-[13px] font-semibold text-foreground-900 truncate">{r.title}</p>
@@ -202,7 +202,7 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
 
           <section className="rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm lg:col-span-1 md:p-5">
             <div className="mb-5 flex items-center gap-2.5">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-secondary-100 text-secondary-600"><i className="ri-pie-chart-line text-sm" /></span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-secondary-100 text-secondary-600"><AppIcon className="ri-pie-chart-line text-sm" /></span>
               <div>
                 <h2 className="text-sm font-heading font-bold text-foreground-900">By activity type</h2>
                 <p className="text-[10px] text-foreground-400">Logged time distribution</p>
@@ -236,8 +236,8 @@ function StatCard({ icon, iconTint, label, value, sub }: { icon: string; iconTin
   return (
     <div className="group rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
       <div className="mb-3 flex items-center justify-between">
-        <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${iconTint}`}><i className={`${icon} text-sm`} /></span>
-        <i className="ri-more-line text-sm text-foreground-200" />
+        <span className={`flex h-9 w-9 items-center justify-center rounded-xl ${iconTint}`}><AppIcon className={`${icon} text-sm`} /></span>
+        <AppIcon className="ri-more-line text-sm text-foreground-200" />
       </div>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>
       <p className="mt-1 text-xl font-heading font-bold leading-tight text-foreground-900 tabular-nums">{value}</p>

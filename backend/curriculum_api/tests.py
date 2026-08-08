@@ -9,6 +9,58 @@ from . import views
 from .ksb_coverage import build_coverage
 
 
+class CurriculumGroupModuleMatchingTests(SimpleTestCase):
+    def test_module_belongs_to_group_uses_stored_module_ids(self):
+        group = {
+            'id': 'GROUP-1',
+            'name': 'G1',
+            'moduleIds': ['MOD-20260805143221794F2NN00'],
+            'modules': ['Module'],
+        }
+        module = {
+            'id': 'module-MOD-20260805143221794F2NN00',
+            'moduleCatalogueId': 'MOD-20260805143221794F2NN00',
+            'name': 'Renamed in catalogue',
+            'groupId': '',
+            'group': '',
+        }
+
+        self.assertTrue(views.module_belongs_to_group(module, group))
+
+    def test_stored_module_ids_win_over_stale_module_group_context(self):
+        group = {
+            'id': 'GROUP-1',
+            'name': 'G1',
+            'moduleIds': ['MOD-20260805143221794F2NN00'],
+            'modules': [],
+        }
+        module = {
+            'moduleCatalogueId': 'MOD-20260805143221794F2NN00',
+            'name': 'Module',
+            'groupId': 'GROUP-OLD',
+            'group': 'Old group',
+        }
+
+        self.assertTrue(views.module_belongs_to_group(module, group))
+
+    def test_group_membership_uses_module_group_id_even_when_stored_module_ids_are_stale(self):
+        group = {
+            'id': 'GROUP-1',
+            'moduleIds': ['MOD-KEEP'],
+        }
+        modules = [
+            {'moduleCatalogueId': 'MOD-KEEP', 'groupId': 'GROUP-1'},
+            {'moduleCatalogueId': 'MOD-STALE', 'groupId': 'GROUP-1'},
+        ]
+
+        filtered = [
+            module for module in modules
+            if views.module_belongs_to_group(module, group)
+        ]
+
+        self.assertEqual([module['moduleCatalogueId'] for module in filtered], ['MOD-KEEP', 'MOD-STALE'])
+
+
 class CurriculumTeamsMeetingTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -132,6 +184,115 @@ class CurriculumTeamsMeetingTests(TestCase):
 
     @patch('coach_api.views.microsoft_graph_request')
     @patch('coach_api.views.has_graph_credentials', return_value=True)
+    @patch('coach_api.views.get_graph_settings', return_value={
+        'tenant_id': 'tenant',
+        'client_id': 'client',
+        'client_secret': 'secret',
+        'scope': 'https://graph.microsoft.com/.default',
+        'base_url': 'https://graph.microsoft.com/v1.0',
+        'timezone': 'GMT Standard Time',
+    })
+    def test_schedule_update_keeps_wizard_dates_when_shifted_instances_fail(self, _settings, _credentials, graph_request):
+        live_session_id = 'LIVE-SHIFT-WARNING'
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': live_session_id,
+            'organizer_email': 'tutor@example.com',
+            'graph_event_id': 'event-1',
+            'module_title': 'Risk module',
+            'start_datetime': '2026-08-05T08:30:00Z',
+            'duration_minutes': 120,
+            'repeat_pattern': 'weekly',
+            'repeat_occurrences': 6,
+            'join_url': 'https://teams.microsoft.com/l/meetup-join/example',
+            'web_link': 'https://outlook.office.com/calendar/item',
+            'status': 'active',
+        })
+        instance_reads = {'count': 0}
+
+        def graph_side_effect(method, path, payload=None):
+            if method == 'PATCH' and path == 'users/tutor%40example.com/events/event-1':
+                return {
+                    'id': 'event-1',
+                    'webLink': 'https://outlook.office.com/calendar/item',
+                    'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'},
+                }
+            if method == 'GET' and path.startswith('users/tutor%40example.com/events/event-1/instances?'):
+                instance_reads['count'] += 1
+                if instance_reads['count'] > 1:
+                    return {'value': []}
+                return {
+                    'value': [
+                        {'id': f'instance-{index}', 'start': {'dateTime': value}}
+                        for index, value in enumerate([
+                            '2026-08-05T08:30:00',
+                            '2026-08-12T08:30:00',
+                            '2026-08-19T08:30:00',
+                            '2026-08-26T08:30:00',
+                            '2026-09-02T08:30:00',
+                            '2026-09-09T08:30:00',
+                        ], start=1)
+                    ],
+                }
+            if method == 'PATCH' and path.endswith('/instance-6'):
+                raise RuntimeError('ErrorOccurrenceCrossingBoundary')
+            if method in {'PATCH', 'POST', 'DELETE'}:
+                return {}
+            raise AssertionError(f'Unexpected Graph call: {method} {path}')
+
+        graph_request.side_effect = graph_side_effect
+
+        response = self.client.patch(
+            f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/schedule/',
+            data=json.dumps({
+                'title': 'Risk module',
+                'organizerEmail': 'tutor@example.com',
+                'eventId': 'event-1',
+                'localStartDateTime': '2026-09-02T09:30',
+                'startDateTimeUtc': '2026-09-02T08:30:00Z',
+                'durationMinutes': 120,
+                'repeat': 'weekly',
+                'repeatOccurrences': 6,
+                'scheduledOccurrences': [
+                    {
+                        'sessionNumber': index + 1,
+                        'startDateTimeUtc': value,
+                        'durationMinutes': 120,
+                    }
+                    for index, value in enumerate([
+                        '2026-09-02T08:30:00Z',
+                        '2026-09-09T08:30:00Z',
+                        '2026-09-16T08:30:00Z',
+                        '2026-09-23T08:30:00Z',
+                        '2026-10-07T08:30:00Z',
+                        '2026-10-14T08:30:00Z',
+                    ])
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        result = response.json()
+        self.assertEqual(result['meeting']['trackedOccurrences'], 6)
+        self.assertEqual(result['warnings'][0]['code'], 'teams_shifted_occurrence_recreated')
+        self.assertTrue(any(call.args[:2] == ('DELETE', 'users/tutor%40example.com/events/instance-6') for call in graph_request.call_args_list))
+        occurrences = views.authoring_fetch_all(
+            views.LIVE_SESSION_OCCURRENCES_TABLE,
+            'live_session_id = %s',
+            [live_session_id],
+            'session_number asc',
+        )
+        self.assertEqual([row['scheduled_start'].date().isoformat() for row in occurrences], [
+            '2026-09-02',
+            '2026-09-09',
+            '2026-09-16',
+            '2026-09-23',
+            '2026-10-07',
+            '2026-10-14',
+        ])
+
+    @patch('coach_api.views.microsoft_graph_request')
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
     def test_artifact_sync_backfills_online_meeting_id_from_join_url(self, _credentials, graph_request):
         live_session_id = 'LIVE-MISSING-MEETING-ID'
         views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
@@ -199,6 +360,7 @@ class CurriculumTeamsMeetingTests(TestCase):
 class CurriculumPersistenceTests(TestCase):
     def setUp(self):
         views._AUTHORING_TABLES_READY = False
+        views._STAFF_PROFILE_TABLES_READY = False
         views._PROGRAMME_CONFIG_DEDUP_READY = False
         views._TABLE_COLUMNS_CACHE.clear()
         views.invalidate_curriculum_cache()
@@ -206,7 +368,9 @@ class CurriculumPersistenceTests(TestCase):
         self.ensure_programmes_table()
         self.ensure_ksb_profiles_table()
         views.ensure_module_authoring_tables()
+        views.ensure_staff_profile_tables()
         self.clear_curriculum_tables()
+        self.clear_staff_profile_tables()
         self.seed_ksb_profile()
 
     def ensure_programmes_table(self):
@@ -274,6 +438,8 @@ class CurriculumPersistenceTests(TestCase):
             views.AUTHORING_ADVANCED_TABLE,
             views.AUTHORING_MODULES_TABLE,
             views.GROUPS_TABLE,
+            views.STAFF_PROFILE_TABLES['coach'],
+            views.STAFF_PROFILE_TABLES['tutor'],
             views.COHORT_AUTHORING_DETAILS_TABLE,
             'ksb_profiles',
             'programmes',
@@ -281,6 +447,11 @@ class CurriculumPersistenceTests(TestCase):
         with connection.cursor() as cursor:
             for table in table_names:
                 cursor.execute(f'delete from {views.authoring_table_name(table)}')
+
+    def clear_staff_profile_tables(self):
+        with connection.cursor() as cursor:
+            cursor.execute(f'delete from {views.table_name("coaches")}')
+            cursor.execute(f'delete from {views.table_name("tutors")}')
 
     def seed_ksb_profile(self):
         with connection.cursor() as cursor:
@@ -554,6 +725,57 @@ class CurriculumPersistenceTests(TestCase):
             'https://teams.microsoft.com/l/meetup-join/test-meeting',
         )
 
+    def test_tree_save_syncs_coach_and_each_module_tutor_profile(self):
+        views.authoring_upsert(views.STAFF_PROFILE_TABLES['coach'], ['id'], {
+            'id': 'COACH-ONE',
+            'name': 'Coach One',
+            'email': 'coach.one@example.com',
+            'assigned_group_ids': views.json_db_value([]),
+            'is_archived': False,
+        })
+        views.authoring_upsert(views.STAFF_PROFILE_TABLES['tutor'], ['id'], {
+            'id': 'TUTOR-ONE',
+            'name': 'Tutor One',
+            'email': 'tutor.one@example.com',
+            'assigned_module_ids': views.json_db_value([]),
+            'is_archived': False,
+        })
+        views.authoring_upsert(views.STAFF_PROFILE_TABLES['tutor'], ['id'], {
+            'id': 'TUTOR-TWO',
+            'name': 'Tutor Two',
+            'email': 'tutor.two@example.com',
+            'assigned_module_ids': views.json_db_value([]),
+            'is_archived': False,
+        })
+        payload = self.tree_payload()
+        payload['cohorts'][0]['groups'][0]['modules'].append({
+            'moduleName': 'Applied Dashboards',
+            'catalogueId': 'MOD-DATA-2',
+            'startDate': '2026-09-16',
+            'endDate': '2026-09-23',
+            'sessionsNumber': 2,
+            'weekDays': 'Wednesday',
+            'coach': 'Coach One',
+            'tutor': 'Tutor Two',
+            'weekStructure': [{
+                'id': 'WEEK-DATA-2',
+                'weekNumber': 1,
+                'title': 'Week 1',
+                'components': [],
+            }],
+        })
+
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        coach = self.row(views.STAFF_PROFILE_TABLES['coach'], 'id', 'COACH-ONE')
+        tutor_one = self.row(views.STAFF_PROFILE_TABLES['tutor'], 'id', 'TUTOR-ONE')
+        tutor_two = self.row(views.STAFF_PROFILE_TABLES['tutor'], 'id', 'TUTOR-TWO')
+        self.assertIn('GROUP-DATA-1', views.as_json_value(coach['assigned_group_ids'], []))
+        self.assertIn('MOD-DATA-1', views.as_json_value(tutor_one['assigned_module_ids'], []))
+        self.assertNotIn('MOD-DATA-2', views.as_json_value(tutor_one['assigned_module_ids'], []))
+        self.assertIn('MOD-DATA-2', views.as_json_value(tutor_two['assigned_module_ids'], []))
+
     def test_global_ksb_coverage_uses_framework_definitions(self):
         response = self.client.get('/curriculum_api/curriculum/ksb-coverage/')
         self.assertEqual(response.status_code, 200, response.content)
@@ -609,6 +831,21 @@ class CurriculumPersistenceTests(TestCase):
         response = self.post_json('/curriculum_api/curriculum/programmes/tree/', second)
         self.assertEqual(response.status_code, 200, response.content)
         self.assertTrue(response.json()['removedMissing'])
+        self.assertFalse(views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', ['COHORT-DATA-1']))
+        self.assertFalse(views.authoring_fetch_all(views.GROUPS_TABLE, 'group_id = %s', ['GROUP-DATA-1']))
+
+    def test_tree_save_explicitly_removes_deleted_cohort(self):
+        first = self.tree_payload()
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', first)
+        second = self.tree_payload(cohort_id='COHORT-DATA-2', group_id='GROUP-DATA-2', module_id='MOD-DATA-2')
+        second['removeMissing'] = False
+        second['hydrationComplete'] = False
+        second['removeCohortIds'] = ['COHORT-DATA-1']
+
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', second)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertIn('COHORT-DATA-1', response.json()['removedCohortIds'])
+        self.assertIn('GROUP-DATA-1', response.json()['removedGroupIds'])
         self.assertFalse(views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', ['COHORT-DATA-1']))
         self.assertFalse(views.authoring_fetch_all(views.GROUPS_TABLE, 'group_id = %s', ['GROUP-DATA-1']))
 
@@ -724,6 +961,148 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(group['tutor_name'], 'Tutor Two')
         self.assertEqual(module['cohort_id'], 'COHORT-DATA-1')
         self.assertEqual(module['group_id'], 'GROUP-DATA-1')
+
+    def test_group_staff_assignments_accept_email_identifiers_and_store_canonical_names(self):
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+
+        coach = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Two',
+            'email': 'coach.two@example.com',
+        })
+        tutor = self.post_json('/curriculum_api/curriculum/tutors/', {
+            'name': 'Tutor Two',
+            'email': 'tutor.two@example.com',
+        })
+        self.assertEqual(coach.status_code, 201, coach.content)
+        self.assertEqual(tutor.status_code, 201, tutor.content)
+
+        response = self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {
+            'coach': 'coach.two@example.com',
+            'tutor': 'tutor.two@example.com',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+
+        group = self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')
+        module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
+        coach_row = views.find_staff_profile_row('coach', 'coach.two@example.com')
+        tutor_row = views.find_staff_profile_row('tutor', 'tutor.two@example.com')
+
+        self.assertEqual(group['coach_name'], 'Coach Two')
+        self.assertEqual(group['tutor_name'], 'Tutor Two')
+        self.assertEqual(module['group_id'], 'GROUP-DATA-1')
+        self.assertIn('GROUP-DATA-1', views.as_json_value(coach_row.get('assigned_group_ids'), []))
+        self.assertIn('MOD-DATA-1', views.as_json_value(tutor_row.get('assigned_module_ids'), []))
+
+    def test_create_coach_profile_is_idempotent_for_duplicate_email(self):
+        first = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Primary',
+            'email': 'coach.duplicate@example.com',
+            'phone': '07123456789',
+        })
+        self.assertEqual(first.status_code, 201, first.content)
+
+        second = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Alias',
+            'email': 'coach.duplicate@example.com',
+            'phone': '07999999999',
+        })
+        self.assertEqual(second.status_code, 200, second.content)
+        self.assertFalse(second.json()['created'])
+        self.assertTrue(second.json()['duplicate'])
+
+        matching = views.staff_profile_rows_by_identity('coach', 'Coach Alias', 'coach.duplicate@example.com', include_archived=True)
+        self.assertEqual(len(matching), 1)
+        self.assertFalse(views.staff_profile_is_archived(matching[0]))
+        self.assertEqual(views.staff_profile_name(matching[0]), 'Coach Primary')
+
+    def test_create_coach_profile_allows_same_name_with_different_email_and_overview_keeps_both(self):
+        first = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Same Name',
+            'email': 'coach.same.one@example.com',
+        })
+        second = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Same Name',
+            'email': 'coach.same.two@example.com',
+        })
+        self.assertEqual(first.status_code, 201, first.content)
+        self.assertEqual(second.status_code, 201, second.content)
+
+        overview = views.build_curriculum_payload('all')
+        matches = [item for item in overview['coaches'] if item['name'] == 'Coach Same Name']
+        self.assertEqual(len(matches), 2)
+        self.assertEqual(
+            sorted(item['email'] for item in matches),
+            ['coach.same.one@example.com', 'coach.same.two@example.com'],
+        )
+
+    def test_create_coach_profile_restores_archived_duplicate_in_place(self):
+        created = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Restore',
+            'email': 'coach.restore@example.com',
+        })
+        self.assertEqual(created.status_code, 201, created.content)
+        created_id = created.json()['profile']['id']
+
+        deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
+        self.assertEqual(deleted.status_code, 200, deleted.content)
+
+        restored = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Restore Updated',
+            'email': 'coach.restore@example.com',
+            'phone': '07999999999',
+        })
+        self.assertEqual(restored.status_code, 200, restored.content)
+        self.assertFalse(restored.json()['created'])
+        self.assertTrue(restored.json()['restored'])
+        self.assertEqual(restored.json()['profile']['id'], created_id)
+        self.assertEqual(restored.json()['profile']['name'], 'Coach Restore Updated')
+        self.assertEqual(restored.json()['profile']['phone'], '07999999999')
+
+        matching = views.staff_profile_rows_by_identity('coach', 'Coach Restore Updated', 'coach.restore@example.com', include_archived=True)
+        self.assertEqual(len(matching), 1)
+        self.assertFalse(views.staff_profile_is_archived(matching[0]))
+
+    def test_delete_coach_archives_all_duplicate_rows_for_same_email(self):
+        created = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Archive All',
+            'email': 'coach.archive@example.com',
+        })
+        self.assertEqual(created.status_code, 201, created.content)
+        created_id = created.json()['profile']['id']
+
+        views.insert_row('coaches', views.staff_profile_payload('coach', {
+            'id': 'COACH-DUP-ARCHIVE-2',
+            'name': 'Coach Archive Alias',
+            'email': 'coach.archive@example.com',
+            'phone': '07000000000',
+        }))
+
+        deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
+        self.assertEqual(deleted.status_code, 200, deleted.content)
+        self.assertEqual(deleted.json()['count'], 2)
+
+        matching = views.staff_profile_rows_by_identity('coach', 'Coach Archive All', 'coach.archive@example.com', include_archived=True)
+        self.assertEqual(len(matching), 2)
+        self.assertTrue(all(views.staff_profile_is_archived(row) for row in matching))
+
+    def test_patch_coach_profile_rejects_email_change_to_existing_email(self):
+        first = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Rename One',
+            'email': 'coach.one@example.com',
+        })
+        second = self.post_json('/curriculum_api/curriculum/coaches/', {
+            'name': 'Coach Rename Two',
+            'email': 'coach.two@example.com',
+        })
+        self.assertEqual(first.status_code, 201, first.content)
+        self.assertEqual(second.status_code, 201, second.content)
+
+        response = self.patch_json(
+            f'/curriculum_api/curriculum/coaches/{second.json()["profile"]["id"]}/',
+            {'email': 'coach.one@example.com'},
+        )
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertIn('already exists', response.json()['error'])
 
 
 class CurriculumCacheTests(SimpleTestCase):
@@ -963,3 +1342,31 @@ class CurriculumReferenceEtagTests(SimpleTestCase):
         etag = views.reference_json_response(self._request(), payload)['ETag']
         response = views.reference_json_response(self._request(f'"other", {etag}'), payload)
         self.assertEqual(response.status_code, 304)
+
+
+class StaffProfileSchemaRepairTests(TestCase):
+    def setUp(self):
+        views._STAFF_PROFILE_TABLES_READY = False
+        views._TABLE_COLUMNS_CACHE.clear()
+        views.invalidate_curriculum_cache()
+
+    def test_ensure_staff_profile_tables_backfills_missing_status_column(self):
+        for table in ("coaches", "tutors"):
+            with connection.cursor() as cursor:
+                cursor.execute(f'drop table if exists {views.table_name(table)}')
+                cursor.execute(
+                    f'''
+                    create table {views.table_name(table)} (
+                        id varchar(128) primary key,
+                        name varchar(255) not null,
+                        email varchar(255) not null default ''
+                    )
+                    '''
+                )
+
+        views.ensure_staff_profile_tables()
+
+        self.assertIn("status", views.column_names("coaches"))
+        self.assertIn("status", views.column_names("tutors"))
+        self.assertIn("assigned_group_ids", views.column_names("coaches"))
+        self.assertIn("assigned_module_ids", views.column_names("tutors"))

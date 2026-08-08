@@ -44,7 +44,7 @@ export function AiSuggestion({
     return (
       <div className={`rounded-lg border border-foreground-200 bg-background-50 p-3 text-xs ${className}`}>
         <div className="flex items-center gap-2 text-foreground-400">
-          <i className="ri-close-circle-line"></i>
+          <AppIcon className="ri-close-circle-line"></AppIcon>
           <span>AI suggestion rejected</span>
         </div>
       </div>
@@ -71,7 +71,7 @@ export function AiSuggestion({
       {/* Header: AI badge + feature label */}
       <div className={`flex items-center gap-2 ${compact ? 'mb-2' : 'mb-3'}`}>
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent-100 text-accent-700 text-[10px] font-semibold uppercase tracking-wider">
-          <i className="ri-sparkling-2-line text-[10px]"></i>
+          <AppIcon className="ri-sparkling-2-line text-[10px]"></AppIcon>
           AI-Assisted
         </span>
         <span className="text-[11px] text-foreground-500">{featureLabel}</span>
@@ -95,14 +95,14 @@ export function AiSuggestion({
       {/* Input data summary (optional) */}
       {inputSummary && !compact && (
         <div className="mb-3 flex items-start gap-2 text-[11px] text-foreground-400 bg-background-50/70 rounded-md px-3 py-2">
-          <i className="ri-information-line mt-0.5 shrink-0"></i>
+          <AppIcon className="ri-information-line mt-0.5 shrink-0"></AppIcon>
           <span>Based on: {inputSummary}</span>
         </div>
       )}
 
       {/* Human validation label — ALWAYS present */}
       <div className={`flex items-center gap-2 text-[11px] text-accent-700 font-medium bg-accent-100/50 rounded-md px-3 py-1.5 ${compact ? 'mb-2' : 'mb-3'}`}>
-        <i className="ri-shield-check-line"></i>
+        <AppIcon className="ri-shield-check-line"></AppIcon>
         <span className="whitespace-nowrap">AI-assisted suggestion requiring human validation</span>
       </div>
 
@@ -113,21 +113,21 @@ export function AiSuggestion({
             onClick={handleAccept}
             className="px-3 py-1.5 rounded-md bg-emerald-50 text-emerald-700 text-xs font-medium border border-emerald-200 hover:bg-emerald-100 transition-smooth flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
           >
-            <i className="ri-check-line"></i>
+            <AppIcon className="ri-check-line"></AppIcon>
             Accept
           </button>
           <button
             onClick={handleEdit}
             className="px-3 py-1.5 rounded-md bg-background-100 text-foreground-700 text-xs font-medium border border-background-200 hover:bg-background-200 transition-smooth flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
           >
-            <i className="ri-edit-line"></i>
+            <AppIcon className="ri-edit-line"></AppIcon>
             Edit
           </button>
           <button
             onClick={handleReject}
             className="px-3 py-1.5 rounded-md bg-red-50 text-red-600 text-xs font-medium border border-red-200 hover:bg-red-100 transition-smooth flex items-center gap-1.5 whitespace-nowrap cursor-pointer"
           >
-            <i className="ri-close-line"></i>
+            <AppIcon className="ri-close-line"></AppIcon>
             Reject
           </button>
         </div>
@@ -136,7 +136,7 @@ export function AiSuggestion({
       {/* Post-action state */}
       {userAction === 'accepted' && (
         <div className="flex items-center gap-2 text-[11px] text-emerald-700 bg-emerald-50 rounded-md px-3 py-1.5">
-          <i className="ri-check-double-line"></i>
+          <AppIcon className="ri-check-double-line"></AppIcon>
           <span>Accepted as human-approved content</span>
         </div>
       )}
@@ -184,7 +184,7 @@ export function AiFeatureIndicator({ featureSlug, className = '' }: AiFeatureInd
 
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-accent-100 text-accent-700 whitespace-nowrap ${className}`}>
-      <i className="ri-sparkling-2-line text-[9px]"></i>
+      <AppIcon className="ri-sparkling-2-line text-[9px]"></AppIcon>
       {getFeatureLabel(featureSlug as any)}
     </span>
   );

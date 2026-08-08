@@ -266,6 +266,13 @@ _enrolment_database_url = (
 if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
 
+# Learner Log Pro reads Audit.mre from its own Neon branch. Keeping it on a
+# separate alias prevents the imported audit workspace from changing the LMS's
+# primary database connection.
+_audit_database_url = os.environ.get('AUDIT_DATABASE_URL')
+if _audit_database_url and not USE_SQLITE_FOR_TESTS:
+    DATABASES['audit'] = database_from_url(_audit_database_url)
+
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 
 # CORS/CSRF: the Vite dev server (port 3000) proxies /learner_api to this server, so

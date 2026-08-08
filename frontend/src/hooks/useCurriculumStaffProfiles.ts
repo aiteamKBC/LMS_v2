@@ -17,8 +17,8 @@ export function useCurriculumStaffProfiles({ autoLoad = true }: UseCurriculumSta
 
     if (!options.silent) setLoading(true);
     Promise.all([
-      fetchCurriculumTutors(controller.signal),
-      fetchCurriculumCoaches(controller.signal),
+      fetchCurriculumTutors(controller.signal, { skipCache: true }),
+      fetchCurriculumCoaches(controller.signal, { skipCache: true }),
     ])
       .then(([nextTutors, nextCoaches]) => {
         if (!mounted) return;

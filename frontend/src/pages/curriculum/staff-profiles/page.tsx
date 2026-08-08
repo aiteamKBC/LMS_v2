@@ -9,7 +9,9 @@ import {
   createCurriculumTutor,
   deleteCurriculumCoach,
   deleteCurriculumTutor,
+  fetchCurriculumCoaches,
   fetchCurriculumOverview,
+  fetchCurriculumTutors,
   updateCurriculumCoach,
   updateCurriculumTutor,
   type CurriculumGroup,
@@ -136,7 +138,15 @@ export default function StaffProfilesPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const payload = await fetchCurriculumOverview(undefined, { compact: false });
+      const [tutors, coaches] = await Promise.all([
+        fetchCurriculumTutors(undefined, { skipCache: true }),
+        fetchCurriculumCoaches(undefined, { skipCache: true }),
+      ]);
+      const basePayload = { schema: 'curriculum', stats: {}, programmes: [], modules: [], cohorts: [], groups: [], sessions: [], holidays: [], tutors, coaches } as unknown as CurriculumOverview;
+      setData(basePayload);
+      setLoading(false);
+      const overview = await fetchCurriculumOverview(undefined, { compact: true, skipCache: true, timeoutMs: 15000 }).catch(() => null);
+      const payload = { ...(overview || basePayload), tutors, coaches };
       setData(payload);
       setError(null);
       setSelected(prev => {
@@ -271,9 +281,12 @@ export default function StaffProfilesPage() {
       notes: form.notes.trim(),
     };
     try {
+      const isCreating = editing === 'new';
       const response = editing === 'new'
         ? role === 'coach' ? await createCurriculumCoach(input) : await createCurriculumTutor(input)
         : role === 'coach' ? await updateCurriculumCoach(editing.id || '', input) : await updateCurriculumTutor(editing.id || '', input);
+      const wasRestored = Boolean(isCreating && 'restored' in response && response.restored);
+      const wasDuplicate = Boolean(isCreating && 'duplicate' in response && response.duplicate);
       setEditing(null);
       setSelected(response.profile);
       setData(prev => {
@@ -289,10 +302,20 @@ export default function StaffProfilesPage() {
       });
       void load();
       await showCurriculumAlert({
-        title: editing === 'new' ? `${roleLabel(role)} added` : `${roleLabel(role)} updated`,
-        text: 'Profile details are now synced. Programme staffing assignments remain managed in the programme wizard.',
-        icon: 'success',
-        timer: 1700,
+        title: isCreating
+          ? wasRestored
+            ? `${roleLabel(role)} restored`
+            : wasDuplicate
+              ? `${roleLabel(role)} already exists`
+              : `${roleLabel(role)} added`
+          : `${roleLabel(role)} updated`,
+        text: wasDuplicate
+          ? 'A matching profile is already on file, so no duplicate record was created.'
+          : wasRestored
+            ? 'The archived profile was restored instead of creating a duplicate record.'
+            : 'Profile details are now synced. Programme staffing assignments remain managed in the programme wizard.',
+        icon: wasDuplicate ? 'error' : 'success',
+        timer: wasDuplicate ? 4200 : 1700,
       });
     } catch (err) {
       await showCurriculumAlert({
@@ -336,7 +359,7 @@ export default function StaffProfilesPage() {
       <div className="p-6 space-y-5">
         {error && (
           <div className="flex items-center gap-2 px-4 py-3 rounded-lg border border-red-200 bg-red-50 text-[12px] font-medium text-red-700">
-            <i className="ri-error-warning-line text-sm"></i>
+            <AppIcon className="ri-error-warning-line text-sm"></AppIcon>
             {error}
           </div>
         )}
@@ -357,7 +380,7 @@ export default function StaffProfilesPage() {
                   onClick={() => { setRole(item); setSelected(null); setSearch(''); }}
                   className={`h-9 px-3 rounded-md text-[12px] font-semibold transition-smooth ${role === item ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'}`}
                 >
-                  <i className={`${item === 'coach' ? 'ri-user-star-line' : 'ri-presentation-line'} mr-1.5`}></i>
+                  <AppIcon className={`${item === 'coach' ? 'ri-user-star-line' : 'ri-presentation-line'} mr-1.5`}></AppIcon>
                   {roleLabel(item)} Profiles
                 </button>
               ))}
@@ -366,7 +389,7 @@ export default function StaffProfilesPage() {
 
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="relative">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
               <input
                 value={search}
                 onChange={event => setSearch(event.target.value)}
@@ -375,7 +398,7 @@ export default function StaffProfilesPage() {
               />
             </div>
             <button onClick={() => openNew(role)} className="h-10 rounded-lg bg-primary-500 px-4 text-[12px] font-semibold text-white transition-smooth hover:bg-primary-600">
-              <i className="ri-add-line mr-1.5"></i>
+              <AppIcon className="ri-add-line mr-1.5"></AppIcon>
               Add {roleLabel(role)}
             </button>
           </div>
@@ -389,7 +412,7 @@ export default function StaffProfilesPage() {
               <span>{role === 'coach' ? 'Groups' : 'Modules'}</span>
               <span>{role === 'coach' ? 'Coverage' : 'In progress'}</span>
               <span className="text-right">
-                {loading && data ? <i className="ri-loader-4-line inline-block animate-spin text-sm text-primary-500"></i> : 'Actions'}
+                {loading && data ? <AppIcon className="ri-loader-4-line inline-block animate-spin text-sm text-primary-500"></AppIcon> : 'Actions'}
               </span>
             </div>
 
@@ -422,10 +445,10 @@ export default function StaffProfilesPage() {
                     <span className="self-center text-[13px] font-semibold text-amber-700">{role === 'coach' ? (profile.groupCount ? 'Assigned' : 'Open') : profile.inProgressCount || 0}</span>
                     <span className="flex items-center justify-end gap-1 self-center">
                       <span onClick={event => { event.stopPropagation(); openEdit(profile); }} title="Edit profile" className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100">
-                        <i className="ri-edit-line text-sm"></i>
+                        <AppIcon className="ri-edit-line text-sm"></AppIcon>
                       </span>
                       <span onClick={event => { event.stopPropagation(); deleteProfile(profile); }} title="Delete profile" className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-100 bg-red-50 text-red-600 hover:bg-red-100">
-                        <i className="ri-delete-bin-line text-sm"></i>
+                        <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
                       </span>
                     </span>
                   </button>
@@ -434,7 +457,7 @@ export default function StaffProfilesPage() {
             ) : (
               <div className="p-10 text-center">
                 <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
-                  <i className="ri-user-search-line text-lg"></i>
+                  <AppIcon className="ri-user-search-line text-lg"></AppIcon>
                 </div>
                 <p className="mt-3 text-sm font-semibold text-foreground-900">No {role}s found</p>
                 <p className="mt-1 text-[12px] text-foreground-400">Add a profile or adjust the current filters.</p>
@@ -452,7 +475,7 @@ export default function StaffProfilesPage() {
                     <p className="mt-1 text-[12px] text-foreground-500">{selected.jobTitle || selected.email || 'No job title set'}</p>
                   </div>
                   <button onClick={() => openEdit(selected)} title="Edit profile" className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-500 text-white hover:bg-primary-600">
-                    <i className="ri-edit-line text-sm"></i>
+                    <AppIcon className="ri-edit-line text-sm"></AppIcon>
                   </button>
                 </div>
 
@@ -496,7 +519,7 @@ export default function StaffProfilesPage() {
             ) : (
               <div className="flex min-h-[440px] flex-col items-center justify-center p-8 text-center">
                 <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
-                  <i className="ri-profile-line text-xl"></i>
+                  <AppIcon className="ri-profile-line text-xl"></AppIcon>
                 </div>
                 <p className="mt-3 text-sm font-semibold text-foreground-900">Select a profile</p>
                 <p className="mt-1 max-w-xs text-[12px] text-foreground-400">Choose a coach or tutor to inspect contact details and current assignments.</p>
@@ -514,7 +537,7 @@ export default function StaffProfilesPage() {
                   <p className="mt-0.5 text-[11px] text-foreground-400">Assignments are managed from the programme creation and edit wizard.</p>
                 </div>
                 <button type="button" onClick={closeProfilePopup} className="flex h-8 w-8 items-center justify-center rounded-lg bg-background-100 hover:bg-background-200">
-                  <i className="ri-close-line text-foreground-500"></i>
+                  <AppIcon className="ri-close-line text-foreground-500"></AppIcon>
                 </button>
               </div>
 
@@ -534,7 +557,7 @@ export default function StaffProfilesPage() {
               <div className="flex justify-end gap-2 border-t border-background-200 px-5 py-4">
                 <button type="button" onClick={closeProfilePopup} disabled={saving} className="rounded-lg border border-background-200 px-4 py-2 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
                 <button type="submit" disabled={saving} className="rounded-lg bg-primary-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-primary-600 disabled:opacity-50">
-                  <i className="ri-save-line mr-1.5"></i>
+                  <AppIcon className="ri-save-line mr-1.5"></AppIcon>
                   {saving ? 'Saving...' : 'Save profile'}
                 </button>
               </div>
@@ -556,7 +579,7 @@ function Metric({ label, value, icon, tone }: { label: string; value: number; ic
     <div className="rounded-lg border border-foreground-200/60 bg-background-50 p-4">
       <div className="flex items-center justify-between">
         <p className="text-[11px] font-bold uppercase text-foreground-400">{label}</p>
-        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${tones[tone]}`}><i className={`${icon} text-sm`}></i></span>
+        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${tones[tone]}`}><AppIcon className={`${icon} text-sm`}></AppIcon></span>
       </div>
       <p className="mt-3 text-2xl font-heading font-semibold text-foreground-900">{value}</p>
     </div>
@@ -575,7 +598,7 @@ function SmallMetric({ label, value }: { label: string; value: number }) {
 function DetailLine({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
     <div className="flex items-start gap-3 text-[12px]">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500"><i className={`${icon} text-sm`}></i></span>
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500"><AppIcon className={`${icon} text-sm`}></AppIcon></span>
       <span className="min-w-0">
         <span className="block text-[10px] font-bold uppercase text-foreground-400">{label}</span>
         <span className="block break-words font-medium text-foreground-800">{value}</span>

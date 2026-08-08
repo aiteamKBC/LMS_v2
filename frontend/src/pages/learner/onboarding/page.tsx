@@ -130,11 +130,11 @@ export default function LearnerOnboardingPage() {
       {/* w-full, matching the other learner pages — the shell already offsets for
           the collapsed sidebar rail, so an extra centred max-width fought it. */}
       <main className="w-full p-3 sm:p-4 md:p-6">
-        {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading your enrolment…</div>}
+        {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-2" />Loading your enrolment…</div>}
         {!loading && loadError && (
           <div className="py-20 text-center text-[13px]">
-            <p className="text-red-600 mb-3"><i className="ri-error-warning-line mr-1.5" />{loadError}</p>
-            <button className={btnSecondary} onClick={reload}><i className="ri-refresh-line" />Retry</button>
+            <p className="text-red-600 mb-3"><AppIcon className="ri-error-warning-line mr-1.5" />{loadError}</p>
+            <button className={btnSecondary} onClick={reload}><AppIcon className="ri-refresh-line" />Retry</button>
           </div>
         )}
         {!loading && !loadError && board && (

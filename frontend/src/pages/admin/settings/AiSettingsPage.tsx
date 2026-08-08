@@ -63,7 +63,7 @@ export default function AiSettingsPage() {
           <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
             isAiGloballyEnabled ? 'bg-emerald-100 text-emerald-600' : 'bg-background-200 text-foreground-400'
           }`}>
-            <i className={`text-lg ${isAiGloballyEnabled ? 'ri-sparkling-2-line' : 'ri-tools-line'}`}></i>
+            <AppIcon className={`text-lg ${isAiGloballyEnabled ? 'ri-sparkling-2-line' : 'ri-tools-line'}`}></AppIcon>
           </div>
           <div>
             <p className="text-sm font-semibold text-foreground-900">
@@ -95,7 +95,7 @@ export default function AiSettingsPage() {
                 : 'text-foreground-500 hover:text-foreground-700'
             }`}
           >
-            <i className={`${tab.icon} text-xs`}></i>
+            <AppIcon className={`${tab.icon} text-xs`}></AppIcon>
             {tab.label}
           </button>
         ))}
@@ -122,7 +122,7 @@ export default function AiSettingsPage() {
                 <div className="px-5 py-4 border-b border-background-100">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-lg bg-primary-100 flex items-center justify-center">
-                      <i className={`${category.icon} text-primary-600 text-sm`}></i>
+                      <AppIcon className={`${category.icon} text-primary-600 text-sm`}></AppIcon>
                     </div>
                     <div>
                       <h3 className="text-sm font-heading font-semibold text-foreground-950">{category.label}</h3>
@@ -148,11 +148,11 @@ export default function AiSettingsPage() {
                           {/* Allowed & Forbidden */}
                           <div className="flex items-center gap-4 mt-2">
                             <div className="flex items-center gap-1 text-[10px] text-emerald-600">
-                              <i className="ri-check-line"></i>
+                              <AppIcon className="ri-check-line"></AppIcon>
                               <span className="whitespace-nowrap">Can: {feature.allowedActions[0]}</span>
                             </div>
                             <div className="flex items-center gap-1 text-[10px] text-red-500">
-                              <i className="ri-close-line"></i>
+                              <AppIcon className="ri-close-line"></AppIcon>
                               <span className="whitespace-nowrap">Never: {feature.forbiddenActions[0]}</span>
                             </div>
                           </div>
@@ -267,11 +267,11 @@ function AiAuditTab() {
                 : entry.userDecision === 'edited' ? 'bg-accent-100 text-accent-600'
                 : 'bg-red-100 text-red-600'
               }`}>
-                <i className={`text-sm ${
+                <AppIcon className={`text-sm ${
                   entry.userDecision === 'accepted' ? 'ri-check-line'
                   : entry.userDecision === 'edited' ? 'ri-edit-line'
                   : 'ri-close-line'
-                }`}></i>
+                }`}></AppIcon>
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -314,7 +314,7 @@ function AiGovernanceTab() {
       <div className="bg-background-50 rounded-xl border border-accent-200/60 p-5">
         <div className="flex items-start gap-4">
           <div className="w-10 h-10 rounded-full bg-accent-100 flex items-center justify-center shrink-0">
-            <i className="ri-shield-check-line text-accent-600 text-lg"></i>
+            <AppIcon className="ri-shield-check-line text-accent-600 text-lg"></AppIcon>
           </div>
           <div>
             <h3 className="text-sm font-heading font-semibold text-foreground-950">Require Human Approval for AI Outputs</h3>
@@ -339,7 +339,7 @@ function AiGovernanceTab() {
         <div className="grid grid-cols-2 gap-2">
           {neverAllowedActions.map((action, i) => (
             <div key={i} className="flex items-start gap-2 p-2.5 rounded-lg bg-red-50/50 border border-red-100/50">
-              <i className="ri-forbid-2-line text-red-400 text-sm mt-0.5 shrink-0"></i>
+              <AppIcon className="ri-forbid-2-line text-red-400 text-sm mt-0.5 shrink-0"></AppIcon>
               <span className="text-xs text-red-700">{action}</span>
             </div>
           ))}
@@ -351,21 +351,21 @@ function AiGovernanceTab() {
         <h3 className="text-sm font-heading font-semibold text-foreground-950 mb-3">AI Failure Fallback Rules</h3>
         <div className="space-y-3">
           <div className="flex items-start gap-3 p-3 rounded-lg bg-background-100/50">
-            <i className="ri-error-warning-line text-foreground-400 mt-0.5 shrink-0"></i>
+            <AppIcon className="ri-error-warning-line text-foreground-400 mt-0.5 shrink-0"></AppIcon>
             <div>
               <p className="text-xs font-medium text-foreground-900">When AI is disabled</p>
               <p className="text-[11px] text-foreground-500 mt-0.5">{AI_FALLBACK_RULES.whenDisabled}</p>
             </div>
           </div>
           <div className="flex items-start gap-3 p-3 rounded-lg bg-background-100/50">
-            <i className="ri-alert-line text-foreground-400 mt-0.5 shrink-0"></i>
+            <AppIcon className="ri-alert-line text-foreground-400 mt-0.5 shrink-0"></AppIcon>
             <div>
               <p className="text-xs font-medium text-foreground-900">When AI fails</p>
               <p className="text-[11px] text-foreground-500 mt-0.5">{AI_FALLBACK_RULES.whenFails}</p>
             </div>
           </div>
           <div className="flex items-start gap-3 p-3 rounded-lg bg-background-100/50">
-            <i className="ri-timer-line text-foreground-400 mt-0.5 shrink-0"></i>
+            <AppIcon className="ri-timer-line text-foreground-400 mt-0.5 shrink-0"></AppIcon>
             <div>
               <p className="text-xs font-medium text-foreground-900">Grace period</p>
               <p className="text-[11px] text-foreground-500 mt-0.5">{AI_FALLBACK_RULES.gracePeriod}</p>
@@ -394,7 +394,7 @@ function StatCard({ label, value, icon, color = 'primary' }: { label: string; va
     <div className="bg-background-50 rounded-xl border border-foreground-200 p-4">
       <div className="flex items-center gap-2 mb-2">
         <div className={`w-7 h-7 rounded-md ${c.bg} flex items-center justify-center`}>
-          <i className={`${icon} ${c.text} text-xs`}></i>
+          <AppIcon className={`${icon} ${c.text} text-xs`}></AppIcon>
         </div>
         <span className="text-[10px] font-semibold text-foreground-400 uppercase tracking-wider">{label}</span>
       </div>

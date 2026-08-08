@@ -37,7 +37,7 @@ export default function PreventRiskPage() {
             <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
-                  <i className="ri-government-line text-amber-600 text-lg"></i>
+                  <AppIcon className="ri-government-line text-amber-600 text-lg"></AppIcon>
                 </div>
                 <div>
                   <p className="text-sm font-heading font-semibold text-amber-900">Statutory Prevent Duty</p>
@@ -52,7 +52,7 @@ export default function PreventRiskPage() {
             {PREVENT_CONCERNS.length === 0 ? (
               <div className="text-center py-12">
                 <div className="w-16 h-16 rounded-2xl bg-emerald-100 flex items-center justify-center mx-auto mb-4">
-                  <i className="ri-check-line text-emerald-500 text-2xl"></i>
+                  <AppIcon className="ri-check-line text-emerald-500 text-2xl"></AppIcon>
                 </div>
                 <p className="text-sm font-heading font-semibold text-foreground-700">No Active Prevent Concerns</p>
                 <p className="text-[12px] text-foreground-400 mt-1">All current learners have been assessed and no Prevent concerns identified.</p>
@@ -62,7 +62,7 @@ export default function PreventRiskPage() {
                 <div key={pc.id} className="bg-background-50 rounded-xl border-2 border-amber-200 p-4 md:p-5">
                   <div className="flex items-start gap-4">
                     <div className="w-12 h-12 rounded-xl bg-amber-100 flex items-center justify-center shrink-0">
-                      <i className="ri-radar-line text-amber-700 text-xl"></i>
+                      <AppIcon className="ri-radar-line text-amber-700 text-xl"></AppIcon>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between">
@@ -108,7 +108,7 @@ export default function PreventRiskPage() {
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
                       ra.score.startsWith('High') ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
                     }`}>
-                      <i className="ri-file-warning-line text-lg"></i>
+                      <AppIcon className="ri-file-warning-line text-lg"></AppIcon>
                     </div>
                     <div>
                       <p className="text-[13px] font-semibold text-foreground-800">{ra.type}</p>
@@ -137,7 +137,7 @@ export default function PreventRiskPage() {
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center">
-                      <i className="ri-shield-check-line text-secondary-600 text-lg"></i>
+                      <AppIcon className="ri-shield-check-line text-secondary-600 text-lg"></AppIcon>
                     </div>
                     <div>
                       <p className="text-[13px] font-semibold text-foreground-800">{sp.type} — {sp.learner}</p>

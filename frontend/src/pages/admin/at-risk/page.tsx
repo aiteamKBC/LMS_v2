@@ -40,7 +40,7 @@ export default function AdminAtRiskPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <i className="ri-alert-line text-white text-2xl"></i>
+              <AppIcon className="ri-alert-line text-white text-2xl"></AppIcon>
             </span>
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">At-risk Learners</h2>
@@ -68,7 +68,7 @@ export default function AdminAtRiskPage() {
         {/* Filters */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
           <div className="relative flex-1 w-full lg:w-auto">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
             <input type="text" placeholder="Search learners..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
           </div>
           <div className="flex items-center gap-2">
@@ -79,7 +79,7 @@ export default function AdminAtRiskPage() {
               <option value="low">Low Risk</option>
             </select>
             <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <i className="ri-add-line mr-1.5"></i> New Action
+              <AppIcon className="ri-add-line mr-1.5"></AppIcon> New Action
             </button>
           </div>
         </div>
@@ -96,7 +96,7 @@ export default function AdminAtRiskPage() {
               return (
                 <div key={l.id} onClick={() => setSelectedLearner(l.id)} className={`flex items-center gap-4 bg-background-50 rounded-xl border p-4 cursor-pointer transition-smooth ${selectedLearner === l.id ? 'border-primary-300 ring-1 ring-primary-200/50' : 'border-foreground-200/60 hover:border-background-300/60'}`}>
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${l.riskLevel === 'high' ? 'bg-red-100 text-red-600' : l.riskLevel === 'medium' ? 'bg-accent-100 text-accent-600' : 'bg-secondary-100 text-secondary-600'}`}>
-                    <i className="ri-alert-line text-sm"></i>
+                    <AppIcon className="ri-alert-line text-sm"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -114,7 +114,7 @@ export default function AdminAtRiskPage() {
                     <p>{l.actions} actions</p>
                     <p className="text-[10px] text-foreground-400">Last contact: {l.lastContact}</p>
                   </div>
-                  <i className={`ri-arrow-right-s-line text-foreground-300 ${selectedLearner === l.id ? 'text-primary-500' : ''}`}></i>
+                  <AppIcon className={`ri-arrow-right-s-line text-foreground-300 ${selectedLearner === l.id ? 'text-primary-500' : ''}`}></AppIcon>
                 </div>
               );
             })}
@@ -126,7 +126,7 @@ export default function AdminAtRiskPage() {
               <div className="space-y-5">
                 <div>
                   <div className={`w-14 h-14 rounded-full flex items-center justify-center mb-3 ${learner.riskLevel === 'high' ? 'bg-red-100 text-red-600' : learner.riskLevel === 'medium' ? 'bg-accent-100 text-accent-600' : 'bg-secondary-100 text-secondary-600'}`}>
-                    <i className="ri-alert-line text-xl"></i>
+                    <AppIcon className="ri-alert-line text-xl"></AppIcon>
                   </div>
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">{learner.name}</h3>
                   <p className="text-[12px] text-foreground-500 mt-1">{learner.programme} · {learner.cohort}</p>
@@ -167,7 +167,7 @@ export default function AdminAtRiskPage() {
             ) : (
               <div className="text-center py-8">
                 <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <i className="ri-alert-line text-foreground-300 text-xl"></i>
+                  <AppIcon className="ri-alert-line text-foreground-300 text-xl"></AppIcon>
                 </div>
                 <p className="text-sm text-foreground-500">Select a learner to view details</p>
               </div>

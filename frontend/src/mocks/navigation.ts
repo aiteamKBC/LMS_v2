@@ -173,7 +173,6 @@ export const coachNavItems: SidebarNavItem[] = [
       { id: 'coach-employer-actions', label: 'Employer Actions', icon: 'ri-building-2-line', href: '/coach/employer-actions' },
     ],
   },
-  { id: 'coach-reports', label: 'OTJH Generator', icon: 'ri-bar-chart-box-line', href: '/coach/reports' },
 ];
 
 // ============================================================================

@@ -24,12 +24,12 @@ function TakeActionModal({ kase, onClose, onConfirm }: { kase: SafeguardingCase;
             <p className="text-sm font-semibold text-foreground-900">Take Action</p>
             <p className="text-[11px] text-foreground-500 mt-0.5">{kase.caseRef} · {kase.learnerName}</p>
           </div>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="p-5 space-y-4">
           <div className="bg-red-50 rounded-lg p-3 border border-red-200/50">
             <div className="flex items-center gap-2 mb-1">
-              <i className="ri-error-warning-fill text-red-500"></i>
+              <AppIcon className="ri-error-warning-fill text-red-500"></AppIcon>
               <p className="text-[11px] font-bold text-red-700 uppercase tracking-wider">{kase.riskLevel}</p>
             </div>
             <p className="text-[12px] text-red-800">{kase.concernSummary.slice(0, 120)}...</p>
@@ -66,7 +66,7 @@ function TakeActionModal({ kase, onClose, onConfirm }: { kase: SafeguardingCase;
               disabled={!actionType || !detail.trim()}
               className="flex-1 px-3 py-2.5 bg-red-600 text-white rounded-lg text-[12px] font-semibold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-play-circle-line mr-1"></i> Execute Action
+              <AppIcon className="ri-play-circle-line mr-1"></AppIcon> Execute Action
             </button>
           </div>
         </div>
@@ -86,7 +86,7 @@ function EscalateModal({ kase, onClose, onConfirm }: { kase: SafeguardingCase; o
       <div className="relative w-full max-w-sm bg-background-50 rounded-2xl border border-foreground-200 shadow-2xl shadow-foreground-950/15 overflow-hidden animate-in zoom-in-95 duration-200">
         <div className="flex items-center justify-between p-5 border-b border-foreground-400/50">
           <p className="text-sm font-semibold text-foreground-900">Escalate {kase.caseRef}</p>
-          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="p-5 space-y-4">
           <div>
@@ -120,7 +120,7 @@ function EscalateModal({ kase, onClose, onConfirm }: { kase: SafeguardingCase; o
               disabled={!target || !reason.trim()}
               className="flex-1 px-3 py-2.5 bg-amber-500 text-white rounded-lg text-[12px] font-semibold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth cursor-pointer whitespace-nowrap"
             >
-              <i className="ri-arrow-up-circle-line mr-1"></i> Escalate
+              <AppIcon className="ri-arrow-up-circle-line mr-1"></AppIcon> Escalate
             </button>
           </div>
         </div>
@@ -168,7 +168,7 @@ export default function HighRiskCasesPage() {
         {/* Critical Banner */}
         <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 flex flex-col sm:flex-row items-start gap-3">
           <div className="w-12 h-12 rounded-xl bg-red-500 flex items-center justify-center shrink-0">
-            <i className="ri-error-warning-fill text-white text-xl"></i>
+            <AppIcon className="ri-error-warning-fill text-white text-xl"></AppIcon>
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-heading font-bold text-red-900">
@@ -201,7 +201,7 @@ export default function HighRiskCasesPage() {
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
                       kase.riskLevel === 'Immediate Action Required' ? 'bg-red-500 text-white animate-pulse-slow' : 'bg-red-100 text-red-600'
                     }`}>
-                      <i className={`${kase.riskLevel === 'Immediate Action Required' ? 'ri-alarm-warning-line' : 'ri-error-warning-line'} text-lg`}></i>
+                      <AppIcon className={`${kase.riskLevel === 'Immediate Action Required' ? 'ri-alarm-warning-line' : 'ri-error-warning-line'} text-lg`}></AppIcon>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2">
@@ -289,7 +289,7 @@ export default function HighRiskCasesPage() {
                   {kase.secureNotes && (
                     <div className="bg-amber-50/70 rounded-lg p-3 border border-amber-200/30">
                       <div className="flex items-center gap-1.5 mb-1">
-                        <i className="ri-lock-line text-amber-600 text-xs"></i>
+                        <AppIcon className="ri-lock-line text-amber-600 text-xs"></AppIcon>
                         <p className="text-[10px] font-bold text-amber-700 uppercase tracking-wider">Secure Notes — Restricted</p>
                       </div>
                       <p className="text-[12px] text-amber-900 mt-1">{kase.secureNotes}</p>

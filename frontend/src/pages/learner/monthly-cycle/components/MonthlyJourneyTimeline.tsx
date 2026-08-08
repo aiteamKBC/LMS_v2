@@ -78,9 +78,9 @@ export default function MonthlyJourneyTimeline({ activeMonth, onMonthChange }: M
 
                   {/* Dot */}
                   <div className={`relative z-10 w-[26px] h-[26px] sm:w-10 sm:h-10 rounded-full border-2 flex items-center justify-center shrink-0 transition-all duration-300 ${s.dot} ${isCurrent ? 'animate-pulse-slow' : ''}`}>
-                    {stage.status === 'completed' && <i className="ri-check-line text-white text-[10px] sm:text-sm"></i>}
-                    {stage.status === 'in-progress' && <i className="ri-arrow-right-line text-primary-500 text-[10px] sm:text-sm"></i>}
-                    {stage.status === 'locked' && <i className="ri-lock-line text-foreground-300 text-[8px] sm:text-xs"></i>}
+                    {stage.status === 'completed' && <AppIcon className="ri-check-line text-white text-[10px] sm:text-sm"></AppIcon>}
+                    {stage.status === 'in-progress' && <AppIcon className="ri-arrow-right-line text-primary-500 text-[10px] sm:text-sm"></AppIcon>}
+                    {stage.status === 'locked' && <AppIcon className="ri-lock-line text-foreground-300 text-[8px] sm:text-xs"></AppIcon>}
                     {stage.status === 'not-started' && <span className="text-[8px] sm:text-[10px] font-bold text-foreground-300">{i + 1}</span>}
                     {stage.status === 'pending' && <span className="text-[8px] sm:text-[10px] font-bold text-amber-500">{i + 1}</span>}
                   </div>

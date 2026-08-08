@@ -154,13 +154,13 @@ export default function VoucherClaimsPage() {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-[11px] font-semibold text-foreground-500 mr-1">Quick access:</span>
           <button onClick={() => navigate('/engagement/rewards-shop')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-accent-50 hover:text-accent-600 hover:border-accent-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-shopping-bag-3-line text-sm"></i> Rewards Shop
+            <AppIcon className="ri-shopping-bag-3-line text-sm"></AppIcon> Rewards Shop
           </button>
           <button onClick={() => navigate('/engagement/points-rules')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-600 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-gift-2-line text-sm"></i> Points Rules
+            <AppIcon className="ri-gift-2-line text-sm"></AppIcon> Points Rules
           </button>
           <button onClick={() => navigate('/engagement/learner-engagement')} className="flex items-center gap-1.5 px-3 py-1.5 bg-background-50 border border-foreground-200/60 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-secondary-50 hover:text-secondary-600 hover:border-secondary-200/50 transition-smooth cursor-pointer whitespace-nowrap">
-            <i className="ri-heart-line text-sm"></i> Learner Engagement
+            <AppIcon className="ri-heart-line text-sm"></AppIcon> Learner Engagement
           </button>
         </div>
 
@@ -169,13 +169,13 @@ export default function VoucherClaimsPage() {
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="relative flex-1 w-full sm:max-w-sm">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input type="text" placeholder="Search learner or reward..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[12px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-300" />
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
             {(['all', 'pending', 'approved', 'rejected', 'fulfilled'] as const).map(f => (
               <button key={f} onClick={() => setStatusFilter(f)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${statusFilter === f ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
-                <i className={`${f === 'pending' ? 'ri-time-line' : f === 'approved' ? 'ri-check-line' : f === 'rejected' ? 'ri-close-line' : f === 'fulfilled' ? 'ri-check-double-line' : 'ri-list-check'} text-sm`}></i>
+                <AppIcon className={`${f === 'pending' ? 'ri-time-line' : f === 'approved' ? 'ri-check-line' : f === 'rejected' ? 'ri-close-line' : f === 'fulfilled' ? 'ri-check-double-line' : 'ri-list-check'} text-sm`}></AppIcon>
                 {f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1)}
                 {f === 'pending' && pendingCount > 0 && <span className="bg-amber-500 text-white text-[10px] px-1.5 py-0.5 rounded-full leading-none">{pendingCount}</span>}
               </button>
@@ -192,7 +192,7 @@ export default function VoucherClaimsPage() {
           ]).map(opt => (
             <button key={opt.key} onClick={() => handleSort(opt.key)} className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-medium transition-smooth cursor-pointer whitespace-nowrap ${sortKey === opt.key ? 'bg-primary-50 text-primary-700 border border-primary-200/50' : 'text-foreground-500 hover:text-foreground-700 border border-transparent'}`}>
               {opt.label}
-              {sortKey === opt.key && <i className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></i>}
+              {sortKey === opt.key && <AppIcon className={sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>}
             </button>
           ))}
         </div>
@@ -206,7 +206,7 @@ export default function VoucherClaimsPage() {
 
         {!loading && filtered.length === 0 && (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-10 flex flex-col items-center justify-center text-center gap-2">
-            <i className="ri-search-line text-2xl text-foreground-300"></i>
+            <AppIcon className="ri-search-line text-2xl text-foreground-300"></AppIcon>
             <p className="text-sm font-semibold text-foreground-700">No claims match this view</p>
             <p className="text-[11px] text-foreground-400">Try switching the status or programme filter.</p>
           </div>
@@ -234,7 +234,7 @@ export default function VoucherClaimsPage() {
                 <div className="flex items-center gap-3 text-[10px] text-foreground-400 mt-1 flex-wrap">
                   <span className="font-semibold text-accent-600">{claim.points} pts</span>
                   <span className={`inline-flex items-center gap-1 font-semibold ${claim.deliveryType === 'digital' ? 'text-primary-600' : 'text-amber-600'}`}>
-                    <i className={claim.deliveryType === 'digital' ? 'ri-mail-send-line' : 'ri-box-3-line'}></i>
+                    <AppIcon className={claim.deliveryType === 'digital' ? 'ri-mail-send-line' : 'ri-box-3-line'}></AppIcon>
                     {claim.deliveryType === 'digital' ? 'Digital' : 'Physical'}
                   </span>
                   <span>{claim.requestedAt}</span>
@@ -245,7 +245,7 @@ export default function VoucherClaimsPage() {
               )}
               <div className="flex items-center gap-2">
                 <button onClick={() => setReviewId(claim.id)} className="flex-1 px-3 py-1.5 bg-secondary-50 border border-secondary-200/50 text-secondary-700 rounded-lg text-[10px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <i className="ri-file-list-3-line mr-1"></i> Review
+                  <AppIcon className="ri-file-list-3-line mr-1"></AppIcon> Review
                 </button>
                 {claim.status === 'pending' && (
                   <>
@@ -255,7 +255,7 @@ export default function VoucherClaimsPage() {
                 )}
                 {claim.status === 'approved' && (
                   <button onClick={() => openFulfilModal(claim)} className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <i className="ri-truck-line mr-1"></i> Fulfil
+                    <AppIcon className="ri-truck-line mr-1"></AppIcon> Fulfil
                   </button>
                 )}
               </div>
@@ -326,17 +326,17 @@ export default function VoucherClaimsPage() {
             {reviewClaim.status === 'pending' && (
               <div className="flex items-center gap-2">
                 <button onClick={() => approveClaim(reviewClaim)} className="flex-1 px-3 py-2 bg-emerald-600 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-700 transition-smooth cursor-pointer">
-                  <i className="ri-check-line mr-1"></i> Approve
+                  <AppIcon className="ri-check-line mr-1"></AppIcon> Approve
                 </button>
                 <button onClick={() => rejectClaim(reviewClaim)} className="flex-1 px-3 py-2 bg-red-600 text-white rounded-lg text-[11px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer">
-                  <i className="ri-close-line mr-1"></i> Reject
+                  <AppIcon className="ri-close-line mr-1"></AppIcon> Reject
                 </button>
               </div>
             )}
 
             {reviewClaim.status === 'approved' && (
               <button onClick={() => { setReviewId(null); openFulfilModal(reviewClaim); }} className="w-full px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer">
-                <i className="ri-truck-line mr-1"></i> Fulfil Claim
+                <AppIcon className="ri-truck-line mr-1"></AppIcon> Fulfil Claim
               </button>
             )}
 
@@ -357,13 +357,13 @@ export default function VoucherClaimsPage() {
           <div className="relative bg-background-50 rounded-2xl border border-foreground-200/60 max-w-lg w-full max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="p-5 border-b border-foreground-400/50 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-truck-line text-lg"></i></span>
+                <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-truck-line text-lg"></AppIcon></span>
                 <div>
                   <h3 className="text-base font-heading font-semibold text-foreground-900">Fulfil Reward</h3>
                   <p className="text-[11px] text-foreground-400">{fulfilClaim.reward} for {fulfilClaim.learner}</p>
                 </div>
               </div>
-              <button onClick={() => setFulfilId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><i className="ri-close-line text-lg"></i></button>
+              <button onClick={() => setFulfilId(null)} className="w-8 h-8 rounded-lg bg-background-100 text-foreground-400 hover:text-foreground-600 flex items-center justify-center transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
             </div>
             <div className="p-5 overflow-y-auto space-y-4">
               <div>
@@ -411,7 +411,7 @@ export default function VoucherClaimsPage() {
             <div className="p-5 border-t border-foreground-200/60 bg-background-100/30 flex items-center justify-between">
               <button onClick={() => setFulfilId(null)} className="px-4 py-2 bg-background-50 border border-foreground-200/60 text-foreground-600 rounded-lg text-[12px] font-medium hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={() => handleFulfil(fulfilClaim)} disabled={!fulfilForm.useDefault && !fulfilForm.customDetail.trim()} className="px-5 py-2 rounded-lg text-[12px] font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 bg-primary-500 text-white hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                <i className="ri-check-double-line"></i> Mark Fulfilled
+                <AppIcon className="ri-check-double-line"></AppIcon> Mark Fulfilled
               </button>
             </div>
           </div>

@@ -39,6 +39,9 @@ SOURCE_MODELS = {
     "apprenticeship": EnrolmentUser,
 }
 
+IMAGE_MATCHING_KIND = "image_matching_pair"
+IMAGE_SOURCE_PATTERN = re.compile(r"\.(png|jpe?g|gif|webp|svg)(?:[?#].*)?$", flags=re.IGNORECASE)
+
 
 def _conn():
     return connections["enrolment"]
@@ -132,10 +135,29 @@ def _scrub_answer_key(quiz):
 
         elif qtype in ("matching", "image_matching"):
             lefts, rights = [], []
-            for a in answers:
-                left, _, right = a["text"].partition("->")
-                lefts.append({"id": a["id"], "left": left.strip()})
-                rights.append(right.strip())
+            for index, a in enumerate(answers):
+                if qtype == "image_matching":
+                    parsed = _parse_image_matching_answer(a["text"])
+                    label = _pair_display_label(parsed, index)
+                    left_item = {
+                        "id": a["id"],
+                        "left": label,
+                        "leftKey": str(a["id"]),
+                        "label": label,
+                    }
+                    if parsed.get("imageUrl"):
+                        left_item["imageUrl"] = parsed["imageUrl"]
+                    lefts.append(left_item)
+                    rights.append(parsed["right"])
+                else:
+                    left, right = _split_pair_text(a["text"])
+                    lefts.append({
+                        "id": a["id"],
+                        "left": left,
+                        "leftKey": str(a["id"]),
+                        "label": left,
+                    })
+                    rights.append(right)
             random.shuffle(lefts)
             random.shuffle(rights)
             safe_q["answers"] = lefts
@@ -173,6 +195,57 @@ def quiz_detail(request, quiz_id):
 
 def _norm(text):
     return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
+def _split_pair_text(value):
+    parts = re.split(r"\s*(?:->|=>|=)\s*", str(value or ""), maxsplit=1)
+    left = parts[0].strip() if parts else ""
+    right = parts[1].strip() if len(parts) > 1 else ""
+    return left, right
+
+
+def _looks_like_image_source(value):
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if text.startswith("data:image/"):
+        return True
+    return text.lower().startswith(("http://", "https://")) and bool(IMAGE_SOURCE_PATTERN.search(text))
+
+
+def _parse_image_matching_answer(value):
+    text = str(value or "").strip()
+    if text.startswith("{"):
+        try:
+            payload = json.loads(text)
+        except (TypeError, ValueError):
+            payload = None
+        if isinstance(payload, dict):
+            image_url = str(payload.get("imageUrl") or "").strip()
+            label = str(payload.get("label") or payload.get("left") or "").strip()
+            match = str(payload.get("match") or payload.get("right") or "").strip()
+            kind = str(payload.get("kind") or "").strip()
+            if (image_url or label or match) and (not kind or kind == IMAGE_MATCHING_KIND):
+                return {
+                    "left": label,
+                    "right": match,
+                    "imageUrl": image_url,
+                }
+
+    left, right = _split_pair_text(text)
+    image_url = left if _looks_like_image_source(left) else ""
+    return {
+        "left": "" if image_url else left,
+        "right": right,
+        "imageUrl": image_url,
+    }
+
+
+def _pair_display_label(parsed_pair, index):
+    label = str(parsed_pair.get("left") or "").strip()
+    if parsed_pair.get("imageUrl"):
+        return label or f"Image {chr(65 + index)}"
+    return label or f"Item {index + 1}"
 
 
 def _answer_text_by_id(answers):
@@ -225,20 +298,37 @@ def _grade_question(question, submitted):
         }
 
     if qtype in ("matching", "image_matching"):
-        # pairs: raw left text (as shipped to the client and used as its
-        # submitted_map key) -> right text, plus a normalized-key lookup for
-        # tolerant comparison against the learner's submission.
-        pairs = {}
-        for a in answers:
-            left, _, right = a["text"].partition("->")
-            pairs[left.strip()] = right.strip()
+        pairs = []
+        for index, a in enumerate(answers):
+            if qtype == "image_matching":
+                parsed = _parse_image_matching_answer(a["text"])
+                legacy_key = parsed["left"] or parsed["imageUrl"]
+            else:
+                left, right = _split_pair_text(a["text"])
+                parsed = {"left": left, "right": right, "imageUrl": ""}
+                legacy_key = left
+
+            pairs.append({
+                "id": a["id"],
+                "displayLeft": _pair_display_label(parsed, index),
+                "legacyKey": str(legacy_key or "").strip(),
+                "right": parsed["right"],
+            })
+
         submitted_map = submitted if isinstance(submitted, dict) else {}
+
+        def submitted_value(pair):
+            for key in (str(pair["id"]), pair["legacyKey"], pair["displayLeft"]):
+                if key and key in submitted_map:
+                    return submitted_map.get(key) or ""
+            return ""
+
         total = len(pairs) or 1
-        matched = sum(1 for left, right in pairs.items() if _norm(submitted_map.get(left, "")) == _norm(right))
+        matched = sum(1 for pair in pairs if _norm(submitted_value(pair)) == _norm(pair["right"]))
         ok = matched == total
         earned = round(points * matched / total, 2)
-        chosen_pairs = "; ".join(f"{left} -> {submitted_map.get(left) or '(no answer)'}" for left in pairs)
-        correct_pairs = "; ".join(f"{left} -> {right}" for left, right in pairs.items())
+        chosen_pairs = "; ".join(f"{pair['displayLeft']} -> {submitted_value(pair) or '(no answer)'}" for pair in pairs)
+        correct_pairs = "; ".join(f"{pair['displayLeft']} -> {pair['right']}" for pair in pairs)
         return {
             "earned": earned, "possible": points, "correct": ok,
             "chosenAnswer": chosen_pairs or None, "correctAnswer": correct_pairs,

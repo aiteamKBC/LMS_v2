@@ -28,6 +28,7 @@ import {
   makeAuthoringId,
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
+  restoreModuleTeamsMeeting,
   saveModuleStructure,
   uploadComponentResource,
   wizardDraftLocalIdFromKey,
@@ -169,6 +170,14 @@ function moduleSnapshot(module: ModuleCatalogueItem | null) {
   return module ? JSON.stringify(recalculateModule(module)) : '';
 }
 
+function moduleNeedsTeamsRestore(module: ModuleCatalogueItem | null) {
+  if (!module) return false;
+  return module.weekStructure.some(week => week.components.some(component => (
+    component.type === 'live-session'
+    && !String(component.settings?.liveSessionUrl || component.settings?.teamsMeetingUrl || '').trim()
+  )));
+}
+
 async function showBuilderDeleteSwal({
   title,
   message,
@@ -205,6 +214,7 @@ export default function ModuleBuilder() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsWizardModule, setSettingsWizardModule] = useState<ModuleCatalogueItem | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creatingQuickModule, setCreatingQuickModule] = useState(false);
   const [creatingQuickModuleComplete, setCreatingQuickModuleComplete] = useState(false);
@@ -235,6 +245,7 @@ export default function ModuleBuilder() {
   const [standardsLoading, setStandardsLoading] = useState(false);
   const [storageVersion, setStorageVersion] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [restoringTeamsModuleId, setRestoringTeamsModuleId] = useState<string | null>(null);
   const [saveStartedAt, setSaveStartedAt] = useState<number | null>(null);
   const [saveElapsedSeconds, setSaveElapsedSeconds] = useState(0);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -385,6 +396,30 @@ export default function ModuleBuilder() {
     [resolveModuleScopeLock, workingModule],
   );
 
+  const settingsWizardProgramme = useMemo(() => {
+    if (!settingsWizardModule) return undefined;
+    const candidateKeys = [
+      settingsWizardModule.programmeId,
+      settingsWizardModule.programmeName,
+      settingsWizardModule.sourceModule?.programmeId,
+      settingsWizardModule.sourceModule?.programme,
+    ].map(normaliseDeepLinkValue).filter(Boolean);
+    return curriculumProgrammes.find(programme => [
+      programme.id,
+      programme.sourceId,
+      programme.name,
+    ].some(value => candidateKeys.includes(normaliseDeepLinkValue(value))));
+  }, [curriculumProgrammes, settingsWizardModule]);
+
+  const openSettingsWizard = useCallback((module: ModuleCatalogueItem) => {
+    setSettingsOpen(false);
+    setSettingsWizardModule(module);
+  }, []);
+
+  const closeSettingsWizard = useCallback(() => {
+    setSettingsWizardModule(null);
+  }, []);
+
   // Scope + module-scoped uploader passed to the shared week-builder editor.
   const weekScopeForModule = useMemo<WeekScope>(() => ({
     courseType: 'paid',
@@ -396,6 +431,55 @@ export default function ModuleBuilder() {
     (componentId, file, componentType) => uploadComponentResource({ moduleCatalogueId: workingModule?.catalogueId || '', componentId, componentType, file }),
     [workingModule?.catalogueId],
   );
+
+  const restoreTeamsMeetingForWorkingModule = useCallback(async () => {
+    const module = workingModule;
+    if (!module?.catalogueId || restoringTeamsModuleId) return;
+    setRestoringTeamsModuleId(module.catalogueId);
+    setActionMessage(null);
+    setNoticeAlert(null);
+    const wasDirty = Boolean(savedModuleSnapshotRef.current && moduleSnapshot(module) !== savedModuleSnapshotRef.current);
+    try {
+      const result = await restoreModuleTeamsMeeting(module.catalogueId);
+      const meetingSettings = result.meeting as ModuleComponent['settings'];
+      let nextSnapshot = '';
+      setWorkingModule(current => {
+        if (!current || current.catalogueId !== module.catalogueId) return current;
+        const next = recalculateModule({
+          ...current,
+          deliveryMetadata: {
+            ...(current.deliveryMetadata || {}),
+            ...meetingSettings,
+          },
+          weekStructure: current.weekStructure.map(week => ({
+            ...week,
+            components: week.components.map(component => (
+              component.type === 'live-session'
+                ? { ...component, settings: { ...component.settings, ...meetingSettings } }
+                : component
+            )),
+          })),
+        });
+        nextSnapshot = moduleSnapshot(next);
+        return next;
+      });
+      if (!wasDirty && nextSnapshot) {
+        savedModuleSnapshotRef.current = nextSnapshot;
+      }
+      setStorageVersion(version => version + 1);
+      setNoticeAlert({
+        title: 'Teams data restored',
+        message: result.updatedComponents
+          ? `Restored the saved Teams meeting into ${result.updatedComponents} live session component${result.updatedComponents === 1 ? '' : 's'}.`
+          : 'Loaded the saved Teams meeting for this module.',
+      });
+      reload({ silent: true });
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Unable to restore saved Teams data.');
+    } finally {
+      setRestoringTeamsModuleId(null);
+    }
+  }, [reload, restoringTeamsModuleId, workingModule]);
 
   const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
@@ -450,7 +534,17 @@ export default function ModuleBuilder() {
         ksbProfileSourceId: scopeLock.ksbSourceId || base.ksbProfileSourceId,
       } as ModuleBuilderListItem;
       scopedBase.deliveryUsages = (module as ModuleBuilderListItem).deliveryUsages;
-      const next = recalculateModule(scopedBase);
+      let next = recalculateModule(scopedBase);
+      if (moduleNeedsTeamsRestore(next)) {
+        try {
+          const restored = await restoreModuleTeamsMeeting(next.catalogueId);
+          if (restored.module) {
+            next = recalculateModule({ ...next, ...restored.module, sourceModule: next.sourceModule || restored.module.sourceModule });
+          }
+        } catch (err) {
+          console.warn('No saved Teams data could be restored for this module.', err);
+        }
+      }
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
@@ -1244,6 +1338,8 @@ export default function ModuleBuilder() {
                   rulePoints={componentPointsByType[selectedComponent.type]}
                   weekScope={weekScopeForModule}
                   uploadResource={uploadComponentForModule}
+                  restoreTeamsMeeting={selectedComponent.type === 'live-session' ? restoreTeamsMeetingForWorkingModule : undefined}
+                  restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
                 />
               ) : selectedWeek ? (
                 <ModuleWeekPanel
@@ -1281,7 +1377,7 @@ export default function ModuleBuilder() {
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
             onPreview={() => setPreviewOpen(true)}
-            onSettings={() => setSettingsOpen(true)}
+            onSettings={() => openSettingsWizard(workingModule)}
             onDelete={() => confirmDeleteModule(workingModule)}
             onSave={persistWorkingModule}
           />
@@ -1303,6 +1399,20 @@ export default function ModuleBuilder() {
             onRemoveKsb={mappingId => updateWorkingModule(module => removeKsbMapping(module, { scope: 'module' }, mappingId))}
             onUpdateKsbWeight={(mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, { scope: 'module' }, mappingId, weight))}
             onUpdateKsbClassification={(mappingId, classification) => updateWorkingModule(module => updateKsbMappingClassification(module, { scope: 'module' }, mappingId, classification))}
+          />
+        )}
+        {settingsWizardModule && (
+          <AddCurriculumStructureWizard
+            isOpen={Boolean(settingsWizardModule)}
+            onClose={closeSettingsWizard}
+            onSaved={async () => {
+              closeSettingsWizard();
+              await reload({ silent: true });
+            }}
+            initialProgrammeId={settingsWizardProgramme?.sourceId || settingsWizardProgramme?.id || settingsWizardModule.programmeId || settingsWizardModule.programmeName}
+            initialProgramme={settingsWizardProgramme}
+            initialModuleId={moduleStructureIdentifier(settingsWizardModule) || settingsWizardModule.catalogueId || settingsWizardModule.title}
+            startStep="modules"
           />
         )}
         {previewOpen && <PreviewModal module={workingModule} onClose={() => setPreviewOpen(false)} />}
@@ -1404,7 +1514,7 @@ export default function ModuleBuilder() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
-                <i className="ri-layout-4-line text-xl"></i>
+                <AppIcon className="ri-layout-4-line text-xl"></AppIcon>
               </span>
               <div className="min-w-0">
                 <h2 className="text-lg font-heading font-bold text-foreground-950">Module Builder</h2>
@@ -1414,7 +1524,7 @@ export default function ModuleBuilder() {
               </div>
             </div>
             <button onClick={() => setCreateOpen(true)} disabled={saving} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-70">
-              <i className="ri-add-line"></i>
+              <AppIcon className="ri-add-line"></AppIcon>
               New module
             </button>
           </div>
@@ -1445,7 +1555,7 @@ export default function ModuleBuilder() {
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative min-w-0 sm:w-80">
-                <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+                <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                 <input type="text" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search modules..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
               </div>
               <select value={programmeFilter} onChange={event => setProgrammeFilter(event.target.value)} className="h-10 min-w-44 rounded-lg border border-background-200 bg-background-100 px-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50">
@@ -1465,7 +1575,7 @@ export default function ModuleBuilder() {
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
                     onBuild={() => openModule(module)}
-                    onSettings={() => openModule(module, true)}
+                    onSettings={() => openSettingsWizard(module)}
                     onDuplicate={() => duplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
                   />
@@ -1473,7 +1583,7 @@ export default function ModuleBuilder() {
               </div>
             ) : (
               <div className="px-4 py-14 text-center">
-                <i className="ri-inbox-line mb-3 block text-3xl text-foreground-300"></i>
+                <AppIcon className="ri-inbox-line mb-3 block text-3xl text-foreground-300"></AppIcon>
                 <p className="text-[13px] font-semibold text-foreground-700">No modules match the current filters.</p>
                 <p className="mt-1 text-[12px] text-foreground-400">Try changing the search or programme filter.</p>
               </div>
@@ -1493,6 +1603,20 @@ export default function ModuleBuilder() {
             }}
             startStep="programme"
             modulePlacementMode
+          />
+        )}
+        {settingsWizardModule && (
+          <AddCurriculumStructureWizard
+            isOpen={Boolean(settingsWizardModule)}
+            onClose={closeSettingsWizard}
+            onSaved={async () => {
+              closeSettingsWizard();
+              await reload({ silent: true });
+            }}
+            initialProgrammeId={settingsWizardProgramme?.sourceId || settingsWizardProgramme?.id || settingsWizardModule.programmeId || settingsWizardModule.programmeName}
+            initialProgramme={settingsWizardProgramme}
+            initialModuleId={moduleStructureIdentifier(settingsWizardModule) || settingsWizardModule.catalogueId || settingsWizardModule.title}
+            startStep="modules"
           />
         )}
         {ksbMapDisplayModule && (
@@ -1570,7 +1694,7 @@ function SaveStatusPanel({ saving, elapsedSeconds, success, error, module }: {
       <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-start gap-3">
           <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/70">
-            <i className={`${icon} text-base`}></i>
+            <AppIcon className={`${icon} text-base`}></AppIcon>
           </span>
           <div className="min-w-0">
             <p className="text-[12px] font-heading font-bold">{title}</p>
@@ -1617,7 +1741,7 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
       <div className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-5">
         <div className="flex min-w-0 items-center gap-3">
           <button onClick={onBack} className="inline-flex h-10 shrink-0 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm shadow-primary-500/20 transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:ring-offset-1" title="Back to modules" aria-label="Back to modules">
-            <i className="ri-arrow-left-line text-base"></i>
+            <AppIcon className="ri-arrow-left-line text-base"></AppIcon>
             Back to modules
           </button>
           <div className="min-w-0 border-l border-background-200 pl-3">
@@ -1631,7 +1755,7 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
             {moduleMetrics.map(metric => (
               <div key={metric.label} className="min-w-[78px] rounded-lg border border-background-200 bg-background-100/50 px-2.5 py-1.5">
                 <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
-                  <i className={`${metric.icon} text-[12px]`}></i>{metric.label}
+                  <AppIcon className={`${metric.icon} text-[12px]`}></AppIcon>{metric.label}
                 </div>
                 <div className="mt-0.5 text-[15px] font-heading font-bold text-foreground-950">{metric.value}</div>
               </div>
@@ -1680,15 +1804,15 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onSettings, onDelete,
     <div className="sticky bottom-0 z-20 -mx-3 mt-2 border-t border-background-200/80 bg-background-50/95 px-3 py-3 shadow-[0_-12px_30px_rgba(15,23,42,0.08)] backdrop-blur sm:-mx-5 sm:px-5 lg:-mx-6 lg:px-6">
       <div className="mx-auto flex w-full max-w-[1840px] flex-wrap items-center justify-between gap-3 pr-0 lg:pr-44">
         <div className={`flex items-center gap-2 text-[12px] font-semibold ${stateTone}`}>
-          <i className={saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-checkbox-circle-line' : 'ri-edit-line'}></i>
+          <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : saved ? 'ri-checkbox-circle-line' : 'ri-edit-line'}></AppIcon>
           {stateText}
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <IconButton label="Preview" icon="ri-eye-line" onClick={onPreview} />
-          <IconButton label="Module settings" icon="ri-settings-3-line" onClick={onSettings} />
+          <IconButton label="Module settings" icon="ri-edit-line" onClick={onSettings} />
           <IconButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
           <button onClick={onSave} disabled={saving} className={`inline-flex h-10 min-w-[120px] items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition-smooth disabled:opacity-70 whitespace-nowrap ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
-            <i className={saveButtonIcon}></i>{saveButtonLabel}
+            <AppIcon className={saveButtonIcon}></AppIcon>{saveButtonLabel}
           </button>
         </div>
       </div>
@@ -1742,11 +1866,11 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           </div>
           <div className="flex items-center gap-1.5">
             <button onClick={onAddWeekFromTemplate} title="Add a week from a saved template" className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
-              <i className="ri-import-line"></i>
+              <AppIcon className="ri-import-line"></AppIcon>
               Template
             </button>
             <button onClick={onAddWeek} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
-              <i className="ri-add-line"></i>
+              <AppIcon className="ri-add-line"></AppIcon>
               Week
             </button>
           </div>
@@ -1787,9 +1911,9 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 }}
                 className="group/week flex items-center gap-2.5 px-2.5 py-2.5"
               >
-                <button type="button" aria-label="Drag to reorder" className="grid h-7 w-5 shrink-0 place-items-center text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none"><i className="ri-draggable"></i></button>
+                <button type="button" aria-label="Drag to reorder" className="grid h-7 w-5 shrink-0 place-items-center text-foreground-300 hover:text-foreground-600 cursor-grab active:cursor-grabbing touch-none"><AppIcon className="ri-draggable"></AppIcon></button>
                 <button type="button" onClick={() => toggleExpanded(week.id)} aria-label={expanded ? `Collapse ${week.title || `Week ${week.weekNumber}`}` : `Expand ${week.title || `Week ${week.weekNumber}`}`} aria-expanded={expanded} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700">
-                  <i className={expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}></i>
+                  <AppIcon className={expanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'}></AppIcon>
                 </button>
                 <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[11px] font-bold shadow-sm ${active ? 'bg-primary-500 text-white ring-4 ring-primary-100' : 'bg-background-200 text-foreground-600'}`}>{index + 1}</span>
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
@@ -1811,7 +1935,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                   title="Delete week"
                   aria-label={`Delete ${week.title || `Week ${week.weekNumber}`}`}
                 >
-                  <i className="ri-delete-bin-line text-sm"></i>
+                  <AppIcon className="ri-delete-bin-line text-sm"></AppIcon>
                 </button>
               </div>
               {expanded && (
@@ -1890,13 +2014,13 @@ function ComponentTypeChecklist({ selectedTypes, onToggle }: {
                     className="h-4 w-4 rounded border-foreground-300 accent-primary-500"
                   />
                   <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
-                    <i className={`${item.icon} text-base`}></i>
+                    <AppIcon className={`${item.icon} text-base`}></AppIcon>
                   </span>
                   <span className="min-w-0">
                     <span className="block truncate text-[13px] font-bold text-foreground-900 group-hover:text-primary-800">{item.label}</span>
                     <span className="mt-0.5 block truncate text-[11px] font-medium leading-snug text-foreground-500">{componentTypeDescription(item.type)}</span>
                   </span>
-                  <i className={`${checked ? 'ri-checkbox-circle-fill text-primary-500' : 'ri-add-circle-line text-foreground-300 group-hover:text-primary-400'} text-base`}></i>
+                  <AppIcon className={`${checked ? 'ri-checkbox-circle-fill text-primary-500' : 'ri-add-circle-line text-foreground-300 group-hover:text-primary-400'} text-base`}></AppIcon>
                 </label>
               );
             })}
@@ -1924,7 +2048,7 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
           <div className="flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-start gap-3">
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary-50 text-primary-600">
-                <i className="ri-layout-grid-line text-lg"></i>
+                <AppIcon className="ri-layout-grid-line text-lg"></AppIcon>
               </span>
               <div className="min-w-0">
                 <h3 className="text-base font-heading font-bold text-foreground-950">{title}</h3>
@@ -1932,7 +2056,7 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
               </div>
             </div>
             <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900" aria-label="Close">
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1960,7 +2084,7 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
               Cancel
             </button>
             <button type="button" onClick={() => onAdd(selected)} disabled={!selected.length} className="inline-flex h-9 min-w-[150px] items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
-              <i className="ri-add-line"></i>
+              <AppIcon className="ri-add-line"></AppIcon>
               {submitLabel} {selected.length || ''} component{selected.length === 1 ? '' : 's'}
             </button>
           </div>
@@ -1976,7 +2100,7 @@ function CreatingModuleAlert({ complete }: { complete: boolean }) {
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
         <div className="p-6">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-4 border-primary-100 bg-primary-50 text-primary-600">
-            <i className="ri-loader-4-line animate-spin text-3xl"></i>
+            <AppIcon className="ri-loader-4-line animate-spin text-3xl"></AppIcon>
           </div>
           <h3 className="mt-4 text-lg font-heading font-bold text-foreground-950">Creating new module...</h3>
           <p className="mx-auto mt-2 max-w-xs text-[13px] leading-relaxed text-foreground-500">
@@ -1984,7 +2108,7 @@ function CreatingModuleAlert({ complete }: { complete: boolean }) {
           </p>
           <div className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
             <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
-              <i className="ri-database-2-line text-primary-600"></i>
+              <AppIcon className="ri-database-2-line text-primary-600"></AppIcon>
               Preparing module structure...
             </div>
             <LoadingProgressBar complete={complete} />
@@ -2002,7 +2126,7 @@ function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'b
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
         <div className="p-6">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-4 border-primary-100 bg-primary-50 text-primary-600">
-            <i className="ri-loader-4-line animate-spin text-3xl"></i>
+            <AppIcon className="ri-loader-4-line animate-spin text-3xl"></AppIcon>
           </div>
           <h3 className="mt-4 text-lg font-heading font-bold text-foreground-950">
             {isSettings ? 'Opening module settings...' : 'Opening module builder...'}
@@ -2012,7 +2136,7 @@ function OpeningModuleAlert({ title, mode, complete }: { title: string; mode: 'b
           </p>
           <div className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
             <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
-              <i className={`${isSettings ? 'ri-settings-3-line' : 'ri-layout-4-line'} text-primary-600`}></i>
+              <AppIcon className={`${isSettings ? 'ri-settings-3-line' : 'ri-layout-4-line'} text-primary-600`}></AppIcon>
               {isSettings ? 'Preparing settings panel...' : 'Loading module structure...'}
             </div>
             <LoadingProgressBar complete={complete} />
@@ -2029,13 +2153,13 @@ function ModuleBusyAlert({ title, message, detail, icon, complete }: { title: st
       <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
         <div className="p-6">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-4 border-primary-100 bg-primary-50 text-primary-600">
-            <i className={`${icon} text-2xl`}></i>
+            <AppIcon className={`${icon} text-2xl`}></AppIcon>
           </div>
           <h3 className="mt-4 text-lg font-heading font-bold text-foreground-950">{title}</h3>
           <p className="mx-auto mt-2 max-w-xs text-[13px] leading-relaxed text-foreground-500">{message}</p>
           <div className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
             <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
-              <i className="ri-loader-4-line animate-spin text-primary-600"></i>
+              <AppIcon className="ri-loader-4-line animate-spin text-primary-600"></AppIcon>
               {detail}
             </div>
             <LoadingProgressBar complete={complete} />
@@ -2116,11 +2240,11 @@ function ModuleWeekPanel({ week, onChange, onApplyTemplate, onOpenSessionKsbMapp
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           <button onClick={onApplyTemplate} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
-            <i className="ri-sparkling-2-line"></i>
+            <AppIcon className="ri-sparkling-2-line"></AppIcon>
             Apply template
           </button>
           <button onClick={onAddLesson} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600">
-            <i className="ri-add-line"></i>
+            <AppIcon className="ri-add-line"></AppIcon>
             Add component
           </button>
         </div>
@@ -2162,7 +2286,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
             <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${tone.soft} ${tone.text}`}>
-              <i className={`${meta?.icon || 'ri-file-line'} text-xl`}></i>
+              <AppIcon className={`${meta?.icon || 'ri-file-line'} text-xl`}></AppIcon>
             </span>
             <div className="min-w-0 flex-1">
               <span className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-bold ${tone.soft} ${tone.text}`}>{meta?.label || 'Component'}</span>
@@ -2228,7 +2352,7 @@ function EditorSection({ title, icon, children }: { title: string; icon: string;
     <section className="space-y-3 rounded-xl border border-background-200 bg-background-50 p-4">
       <div className="flex items-center gap-2">
         <span className="grid h-7 w-7 place-items-center rounded-lg bg-background-100 text-foreground-500">
-          <i className={`${icon} text-sm`}></i>
+          <AppIcon className={`${icon} text-sm`}></AppIcon>
         </span>
         <h4 className="text-[12px] font-heading font-bold text-foreground-900">{title}</h4>
       </div>
@@ -2368,7 +2492,7 @@ function TypeSpecificFields({
               <p className="text-[10px] font-bold uppercase text-foreground-400">Microsoft Teams meeting</p>
               {getString('liveSessionUrl') ? (
                 <a href={getString('liveSessionUrl')} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[12px] font-bold text-primary-600 hover:text-primary-700">
-                  <i className="ri-microsoft-teams-line mr-1"></i>
+                  <AppIcon className="ri-microsoft-teams-line mr-1"></AppIcon>
                   Open meeting link
                 </a>
               ) : (
@@ -2381,7 +2505,7 @@ function TypeSpecificFields({
               onClick={() => setTeamsMeetingOpen(true)}
               className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
             >
-              <i className="ri-calendar-event-line"></i>
+              <AppIcon className="ri-calendar-event-line"></AppIcon>
               {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
             </button>
           </div>
@@ -2697,7 +2821,7 @@ function TeamsMeetingModal({
         <div className="flex shrink-0 items-start justify-between gap-4 bg-primary-950 px-5 py-4 text-white">
           <div className="flex min-w-0 items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-cyan-300">
-              <i className="ri-microsoft-teams-line text-xl"></i>
+              <AppIcon className="ri-microsoft-teams-line text-xl"></AppIcon>
             </span>
             <div>
               <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-white/55">Live session</p>
@@ -2706,7 +2830,7 @@ function TeamsMeetingModal({
             </div>
           </div>
           <button type="button" onClick={onClose} disabled={submitting} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white hover:bg-white/20 disabled:opacity-50" aria-label="Close">
-            <i className="ri-close-line"></i>
+            <AppIcon className="ri-close-line"></AppIcon>
           </button>
         </div>
 
@@ -2714,25 +2838,25 @@ function TeamsMeetingModal({
           {created ? (
             <div className="mx-auto max-w-2xl space-y-4 py-4">
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 text-center">
-                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-100 text-emerald-600"><i className="ri-check-line text-3xl"></i></span>
+                <span className="mx-auto grid h-14 w-14 place-items-center rounded-full bg-emerald-100 text-emerald-600"><AppIcon className="ri-check-line text-3xl"></AppIcon></span>
                 <h4 className="mt-3 text-base font-heading font-bold text-emerald-900">Teams meeting created</h4>
                 <p className="mt-1 text-[12px] font-medium text-emerald-700">The join link is now attached to this Live Session component.</p>
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
                   {(created.meeting.joinUrl || created.meeting.webLink) && (
                     <a href={created.meeting.joinUrl || created.meeting.webLink} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white hover:bg-primary-600">
-                      <i className="ri-external-link-line"></i> Open Teams meeting
+                      <AppIcon className="ri-external-link-line"></AppIcon> Open Teams meeting
                     </a>
                   )}
                   {created.meeting.meetingOptionsUrl && (
                     <a href={created.meeting.meetingOptionsUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-white px-4 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100">
-                      <i className="ri-settings-3-line"></i> Teams Meeting options
+                      <AppIcon className="ri-settings-3-line"></AppIcon> Teams Meeting options
                     </a>
                   )}
                 </div>
               </div>
               {!!created.warnings.length && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                  {created.warnings.map(warning => <p key={warning} className="text-[11px] font-semibold text-amber-800"><i className="ri-information-line mr-1"></i>{warning}</p>)}
+                  {created.warnings.map(warning => <p key={warning} className="text-[11px] font-semibold text-amber-800"><AppIcon className="ri-information-line mr-1"></AppIcon>{warning}</p>)}
                 </div>
               )}
             </div>
@@ -2777,12 +2901,12 @@ function TeamsMeetingModal({
                   <Checkbox label="Allow time proposals" checked={allowNewTimeProposals} onChange={setAllowNewTimeProposals} />
                   <Checkbox label="Hide attendee list" checked={hideAttendees} onChange={setHideAttendees} />
                 </div>
-                {graphTimeZone && <p className="text-[10px] font-semibold text-foreground-400"><i className="ri-time-line mr-1"></i>Microsoft calendar time zone: {graphTimeZone}</p>}
+                {graphTimeZone && <p className="text-[10px] font-semibold text-foreground-400"><AppIcon className="ri-time-line mr-1"></AppIcon>Microsoft calendar time zone: {graphTimeZone}</p>}
               </section>
             </div>
           )}
 
-          {error && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] font-semibold text-red-700"><i className="ri-error-warning-line mr-1"></i>{error}</p>}
+          {error && <p className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] font-semibold text-red-700"><AppIcon className="ri-error-warning-line mr-1"></AppIcon>{error}</p>}
           {!configurationLoading && !graphConfigured && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] font-semibold text-amber-800">Microsoft Graph credentials are missing from the backend environment.</p>}
         </div>
 
@@ -2792,7 +2916,7 @@ function TeamsMeetingModal({
             <button type="button" onClick={onClose} disabled={submitting} className="h-9 rounded-lg border border-background-200 bg-background-50 px-4 text-[11px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50">{created ? 'Done' : 'Cancel'}</button>
             {!created && (
               <button type="button" onClick={submit} disabled={submitting || configurationLoading || !graphConfigured} className="inline-flex h-9 min-w-[175px] items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50">
-                <i className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}></i>
+                <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}></AppIcon>
                 {submitting ? 'Creating meeting...' : 'Create with these options'}
               </button>
             )}
@@ -2912,7 +3036,7 @@ function LinkedQuizSelector({
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-w-0 items-center gap-2">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-600 text-white">
-              <i className="ri-questionnaire-line text-sm"></i>
+              <AppIcon className="ri-questionnaire-line text-sm"></AppIcon>
             </span>
             <div className="min-w-0">
               <p className="text-[12px] font-bold text-primary-950">Linked LMS quiz</p>
@@ -3007,10 +3131,10 @@ function LinkedQuizSelector({
           className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100/70"
         >
           <span className="inline-flex items-center gap-2">
-            <i className="ri-code-s-slash-line text-primary-600"></i>
+            <AppIcon className="ri-code-s-slash-line text-primary-600"></AppIcon>
             Technical link details
           </span>
-          <i className={`ri-arrow-down-s-line text-base transition-transform ${technicalOpen ? 'rotate-180' : ''}`}></i>
+          <AppIcon className={`ri-arrow-down-s-line text-base transition-transform ${technicalOpen ? 'rotate-180' : ''}`}></AppIcon>
         </button>
         {technicalOpen && (
           <div className="border-t border-background-200 p-3">
@@ -3238,7 +3362,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAd
               <div key={item.label} className="flex items-center justify-between gap-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
                 <div className="flex items-center gap-2">
                   <span className={`grid h-6 w-6 place-items-center rounded-full ${item.ready ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                    <i className={item.ready ? 'ri-check-line' : 'ri-error-warning-line'}></i>
+                    <AppIcon className={item.ready ? 'ri-check-line' : 'ri-error-warning-line'}></AppIcon>
                   </span>
                   <span className="text-[11px] font-bold text-foreground-700">{item.label}</span>
                 </div>
@@ -3292,7 +3416,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAd
           {componentChecks.map(item => (
             <div key={item.label} className={`rounded-lg border px-2 py-2 ${item.ready ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>
               <div className="flex items-center gap-1.5 text-[10px] font-bold">
-                <i className={item.ready ? 'ri-check-line' : 'ri-error-warning-line'}></i>
+                <AppIcon className={item.ready ? 'ri-check-line' : 'ri-error-warning-line'}></AppIcon>
                 {item.label}
               </div>
             </div>
@@ -3304,7 +3428,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAd
         </div>
         <KsbWeightSummary summary={componentWeightSummary} />
         <button onClick={() => onAddKsb({ scope: 'component', weekId: week.id, componentId: component.id })} className="inline-flex h-8 w-full items-center justify-center gap-1 rounded-md bg-primary-500 px-3 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600">
-          <i className="ri-add-line"></i>
+          <AppIcon className="ri-add-line"></AppIcon>
           Add KSBs
         </button>
         {!!inheritedWeekMappings.length && <KsbCards title="Inherited week KSBs" mappings={inheritedWeekMappings} sourceLabels={ksbSourceLabels} />}
@@ -3348,7 +3472,7 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
             <h3 className="text-sm font-heading font-bold text-white">Module settings</h3>
             <p className="mt-1 text-[12px] text-white/70">{module.catalogueId} - {module.qualityScore}% quality</p>
           </div>
-          <button onClick={onClose} disabled={saving} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 disabled:opacity-50"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} disabled={saving} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 disabled:opacity-50"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           <SettingsSection title="Basic details">
@@ -3364,7 +3488,7 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
           <SettingsSection title="KSBs targeted by this module">
             <KsbWeightSummary summary={moduleWeightSummary} />
             <button onClick={onAddKsb} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-primary-500 px-3 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600">
-              <i className="ri-add-line"></i>
+              <AppIcon className="ri-add-line"></AppIcon>
               Add KSBs
             </button>
             <KsbCards title="KSBs" mappings={module.moduleKsbMappings} sourceLabels={ksbSourceLabels} onRemove={onRemoveKsb} onWeightChange={onUpdateKsbWeight} onClassificationChange={onUpdateKsbClassification} />
@@ -3401,7 +3525,7 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {checklist.map(item => (
                 <div key={item.label} className={`rounded-xl border px-3 py-2 flex items-center gap-2 ${item.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
-                  <i className={item.passed ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></i>
+                  <AppIcon className={item.passed ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></AppIcon>
                   <span className="text-[12px] font-semibold">{item.label}</span>
                 </div>
               ))}
@@ -3416,7 +3540,7 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
                 Close
               </button>
               <button type="button" onClick={onSave} disabled={saving} className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-[12px] font-semibold text-white transition-smooth disabled:opacity-70 ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
-                <i className={saveButtonIcon}></i>{saveButtonLabel}
+                <AppIcon className={saveButtonIcon}></AppIcon>{saveButtonLabel}
               </button>
             </div>
           </div>
@@ -3456,7 +3580,7 @@ function SessionKsbMappingModal({ module, sourceLabels, onClose }: {
             <MetricPill label="KSB codes" value={String(uniqueMappedCount)} />
             <MetricPill label="Mappings" value={String(occurrenceCount)} />
             <button onClick={onClose} className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
-              <i className="ri-close-line"></i>
+              <AppIcon className="ri-close-line"></AppIcon>
             </button>
           </div>
         </div>
@@ -3539,7 +3663,7 @@ function ReviewKsbComponentRow({ week, component, sourceLabels }: { week: Module
       <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex min-w-0 items-start gap-2.5">
           <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
-            <i className={`${meta?.icon || 'ri-file-line'} text-sm`}></i>
+            <AppIcon className={`${meta?.icon || 'ri-file-line'} text-sm`}></AppIcon>
           </span>
           <div className="min-w-0">
             <p className="truncate text-[12px] font-bold text-foreground-950">{readableComponentTitle(component.title)}</p>
@@ -3713,7 +3837,7 @@ function SessionKsbMappingRow({ module, week, component, sourceLabels, onAddKsb,
       <div className="min-w-0">
         <div className="flex items-start gap-2.5">
           <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone.soft} ${tone.text}`}>
-            <i className={`${meta?.icon || 'ri-file-line'} text-sm`}></i>
+            <AppIcon className={`${meta?.icon || 'ri-file-line'} text-sm`}></AppIcon>
           </span>
           <div className="min-w-0">
             <p className="truncate text-[12px] font-bold text-foreground-950">{readableComponentTitle(component.title)}</p>
@@ -3742,7 +3866,7 @@ function SessionKsbMappingRow({ module, week, component, sourceLabels, onAddKsb,
       ))}
       <div className="flex justify-start xl:justify-end">
         <button type="button" onClick={onAddKsb} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
-          <i className="ri-add-line"></i>
+          <AppIcon className="ri-add-line"></AppIcon>
           Add KSBs
         </button>
       </div>
@@ -3790,7 +3914,7 @@ function SessionKsbChip({ mapping, sourceLabels, onRemove }: { mapping: KsbMappi
       <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{clampKsbWeight(mapping.weight)}%</span>
       <span className="max-w-[90px] truncate rounded bg-white/70 px-1 text-[8px] font-semibold">{sourceLabel}</span>
       <button type="button" onClick={onRemove} className="ml-0.5 flex h-4 w-4 items-center justify-center rounded text-red-500 transition-smooth hover:bg-red-50" aria-label={`Remove ${mapping.code}`}>
-        <i className="ri-close-line text-[11px]"></i>
+        <AppIcon className="ri-close-line text-[11px]"></AppIcon>
       </button>
     </span>
   );
@@ -3924,7 +4048,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
       <div className="w-full max-w-2xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
         <div className="px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
           <h3 className="text-sm font-heading font-bold text-white">Add KSBs</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="p-5 space-y-4">
           <div className="space-y-3">
@@ -3955,7 +4079,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       className="mt-1 h-4 w-4 rounded border-foreground-300 text-primary-600 focus:ring-primary-300"
                     />
                     <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
-                      <i className={`${tone.icon} text-[13px]`}></i>
+                      <AppIcon className={`${tone.icon} text-[13px]`}></AppIcon>
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -4064,21 +4188,21 @@ function NewModuleChoiceModal({ programmeOptions, defaultProgramme, onClose, onC
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-start gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
-                <i className="ri-layout-4-line text-xl"></i>
+                <AppIcon className="ri-layout-4-line text-xl"></AppIcon>
               </span>
               <div>
                 <h3 className="text-base font-heading font-bold text-foreground-950">Create new module</h3>
                 <p className="mt-1 text-[12px] text-foreground-500">Set the module scope and schedule. You can add weeks and components next.</p>
               </div>
             </div>
-            <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900" aria-label="Close"><i className="ri-close-line text-lg"></i></button>
+            <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900" aria-label="Close"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
           </div>
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-background-100/35 p-5">
           <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
             <div className="mb-4 flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className="ri-book-open-line"></i></span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><AppIcon className="ri-book-open-line"></AppIcon></span>
               <div>
                 <p className="text-[13px] font-bold text-foreground-950">Module setup</p>
                 <p className="text-[11px] text-foreground-500">New modules start as drafts.</p>
@@ -4096,7 +4220,7 @@ function NewModuleChoiceModal({ programmeOptions, defaultProgramme, onClose, onC
 
           <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
             <div className="mb-4 flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><i className="ri-calendar-check-line"></i></span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><AppIcon className="ri-calendar-check-line"></AppIcon></span>
               <div>
                 <p className="text-[13px] font-bold text-foreground-950">Delivery shape</p>
                 <p className="text-[11px] text-foreground-500">Set the session count and module date range.</p>
@@ -4138,7 +4262,7 @@ function NewModuleChoiceModal({ programmeOptions, defaultProgramme, onClose, onC
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-700 hover:bg-background-100">Cancel</button>
             <button type="submit" disabled={!canCreate} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-500 px-5 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60">
-              <i className="ri-add-circle-line"></i>Create and open builder
+              <AppIcon className="ri-add-circle-line"></AppIcon>Create and open builder
             </button>
           </div>
         </div>
@@ -4188,7 +4312,7 @@ function WeekTemplateImportModal({ scope, onClose, onImport }: {
             <h3 className="font-heading text-[15px] font-bold text-foreground-950">Add a week from a template</h3>
             <p className="mt-0.5 text-[11px] text-foreground-500">Copies the template's components into a new week in this module.</p>
           </div>
-          <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"><i className="ri-close-line text-lg"></i></button>
+          <button type="button" onClick={onClose} className="grid h-8 w-8 place-items-center rounded-lg bg-background-100 text-foreground-500 hover:bg-background-200"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
         </div>
         <div className="max-h-[60vh] overflow-y-auto p-4">
           {loading ? (
@@ -4197,12 +4321,12 @@ function WeekTemplateImportModal({ scope, onClose, onImport }: {
             <div className="space-y-2">
               {list.map(template => (
                 <button key={template.id} type="button" disabled={Boolean(importingId)} onClick={() => void pick(template)} className="flex w-full items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-300 hover:bg-primary-50 disabled:opacity-60">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><i className="ri-calendar-todo-line"></i></span>
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-500 text-white"><AppIcon className="ri-calendar-todo-line"></AppIcon></span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px] font-bold text-foreground-900">{template.title || 'Untitled week'}</span>
                     <span className="block text-[11px] text-foreground-500">{template.componentCount || template.components.length} components{template.programmeName ? ` · ${template.programmeName}` : ''}</span>
                   </span>
-                  {importingId === template.id ? <i className="ri-loader-4-line animate-spin text-foreground-400"></i> : <i className="ri-add-line text-primary-600"></i>}
+                  {importingId === template.id ? <AppIcon className="ri-loader-4-line animate-spin text-foreground-400"></AppIcon> : <AppIcon className="ri-add-line text-primary-600"></AppIcon>}
                 </button>
               ))}
             </div>
@@ -4248,7 +4372,7 @@ function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeO
             <h3 className="text-base font-heading font-bold text-white">Create new module</h3>
             <p className="mt-1 text-[12px] text-white/70">Set the module details first, then open the builder to add weeks, components and KSBs.</p>
           </div>
-          <button type="button" onClick={onClose} disabled={submitting} className="w-8 h-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 disabled:opacity-50" aria-label="Close"><i className="ri-close-line"></i></button>
+          <button type="button" onClick={onClose} disabled={submitting} className="w-8 h-8 shrink-0 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20 disabled:opacity-50" aria-label="Close"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <fieldset disabled={submitting} className="p-5 space-y-5 disabled:opacity-70">
           <div className="grid grid-cols-[32px_1fr] gap-3 rounded-xl border border-primary-100 bg-primary-50 px-4 py-3">
@@ -4280,7 +4404,7 @@ function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeO
                 onClick={() => setStartMode('blank')}
                 className={`rounded-xl border px-4 py-3 text-left transition-smooth ${startMode === 'blank' ? 'border-primary-300 bg-primary-50 ring-2 ring-primary-100' : 'border-background-200 bg-background-50 hover:bg-background-100'}`}
               >
-                <span className="flex items-center gap-2 text-[13px] font-bold text-foreground-950"><i className="ri-layout-row-line text-primary-600"></i>Blank builder</span>
+                <span className="flex items-center gap-2 text-[13px] font-bold text-foreground-950"><AppIcon className="ri-layout-row-line text-primary-600"></AppIcon>Blank builder</span>
                 <span className="mt-1 block text-[11px] leading-relaxed text-foreground-500">Create the module only. Add Week 1 manually when you are ready.</span>
               </button>
               <button
@@ -4288,7 +4412,7 @@ function CreateModuleModal({ programmeOptions, onClose, onCreate }: { programmeO
                 onClick={() => setStartMode('weeks')}
                 className={`rounded-xl border px-4 py-3 text-left transition-smooth ${startMode === 'weeks' ? 'border-primary-300 bg-primary-50 ring-2 ring-primary-100' : 'border-background-200 bg-background-50 hover:bg-background-100'}`}
               >
-                <span className="flex items-center gap-2 text-[13px] font-bold text-foreground-950"><i className="ri-calendar-check-line text-primary-600"></i>Pre-create weeks</span>
+                <span className="flex items-center gap-2 text-[13px] font-bold text-foreground-950"><AppIcon className="ri-calendar-check-line text-primary-600"></AppIcon>Pre-create weeks</span>
                 <span className="mt-1 block text-[11px] leading-relaxed text-foreground-500">Open with week shells already created for a faster build.</span>
               </button>
             </div>
@@ -4342,7 +4466,7 @@ function PreviewModal({ module, onClose }: { module: ModuleCatalogueItem; onClos
       <div className="w-full max-w-3xl rounded-2xl bg-background-50 shadow-2xl overflow-hidden" onClick={event => event.stopPropagation()}>
         <div className="px-5 py-4 bg-primary-950 text-white flex items-center justify-between">
           <h3 className="text-sm font-heading font-bold text-white">Preview</h3>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><i className="ri-close-line"></i></button>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center hover:bg-white/20"><AppIcon className="ri-close-line"></AppIcon></button>
         </div>
         <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
           <div>
@@ -4668,7 +4792,7 @@ function KsbCards({ title, mappings, sourceLabels = {}, onAdd, onRemove, onWeigh
         </div>
         {onAdd && (
           <button onClick={onAdd} className="inline-flex h-7 items-center justify-center gap-1 rounded-md bg-primary-500 px-2 text-[10px] font-semibold text-white transition-smooth hover:bg-primary-600">
-            <i className="ri-add-line"></i>
+            <AppIcon className="ri-add-line"></AppIcon>
             KSB
           </button>
         )}
@@ -4698,7 +4822,7 @@ function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onClass
     <div className={`rounded-lg border border-l-4 p-2 ${tone.row}`} title={mapping.description || `${mapping.code} applied`}>
       <div className="flex items-center gap-2">
         <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
-          <i className={`${tone.icon} text-[13px]`}></i>
+          <AppIcon className={`${tone.icon} text-[13px]`}></AppIcon>
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5 min-w-0">
@@ -4743,7 +4867,7 @@ function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onClass
             <p className="mt-1 text-[10px] font-semibold text-amber-700">Set a positive weight before saving.</p>
           )}
         </div>
-        {onRemove && <button onClick={onRemove} className="h-6 w-6 shrink-0 rounded-md text-red-500 hover:bg-red-50"><i className="ri-close-line text-xs"></i></button>}
+        {onRemove && <button onClick={onRemove} className="h-6 w-6 shrink-0 rounded-md text-red-500 hover:bg-red-50"><AppIcon className="ri-close-line text-xs"></AppIcon></button>}
       </div>
     </div>
   );
@@ -4884,7 +5008,7 @@ function ComponentResourceUpload({
           </p>
           {uploadedUrl && (
             <a href={uploadedUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">
-              <i className="ri-external-link-line"></i>
+              <AppIcon className="ri-external-link-line"></AppIcon>
               Open uploaded file
             </a>
           )}
@@ -4903,7 +5027,7 @@ function ComponentResourceUpload({
             }}
           />
           <label htmlFor={inputId} className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
-            <i className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></i>
+            <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></AppIcon>
             {uploading ? 'Uploading...' : 'Upload from device'}
           </label>
         </div>
@@ -5115,7 +5239,7 @@ function ModuleCatalogueCard({
         <div className="min-w-0">
           <div className="flex flex-wrap items-start gap-3">
             <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${hasContent ? 'bg-primary-50 text-primary-600 ring-1 ring-primary-100' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'}`}>
-              <i className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></i>
+              <AppIcon className={hasContent ? 'ri-layout-4-line text-base' : 'ri-draft-line text-base'}></AppIcon>
             </span>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -5143,11 +5267,11 @@ function ModuleCatalogueCard({
             aria-busy={ksbMapLoading}
             className="inline-flex h-9 min-w-[126px] items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-all duration-150 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1 active:translate-y-px disabled:cursor-wait disabled:border-primary-200 disabled:bg-primary-50 disabled:text-primary-700 disabled:shadow-inner"
           >
-            <i className={ksbMapLoading ? 'ri-loader-4-line animate-spin' : 'ri-node-tree'}></i>
+            <AppIcon className={ksbMapLoading ? 'ri-loader-4-line animate-spin' : 'ri-node-tree'}></AppIcon>
             {ksbMapLoading ? 'Loading module KSBs...' : 'Review module KSBs'}
           </button>
           <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700">
-            <i className="ri-hammer-line"></i>
+            <AppIcon className="ri-hammer-line"></AppIcon>
             Edit components
           </button>
           <IconButton label="Module settings" icon="ri-settings-3-line" onClick={onSettings} />
@@ -5244,7 +5368,7 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
               <p className="mt-1 text-[11px] font-semibold text-white/70">Review applied KSBs from the selected source and where they are used across this module.</p>
             </div>
             <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
-              <i className="ri-close-line"></i>
+              <AppIcon className="ri-close-line"></AppIcon>
             </button>
           </div>
         </div>
@@ -5264,7 +5388,7 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
               </div>
             </div>
           <div className="relative lg:self-end">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, source, description, week or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
           </div>
           </div>
@@ -5280,7 +5404,7 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
             </div>
           ) : (
             <div className="rounded-2xl border border-dashed border-background-300 bg-background-100 p-8 text-center">
-              <i className="ri-node-tree text-3xl text-foreground-300"></i>
+              <AppIcon className="ri-node-tree text-3xl text-foreground-300"></AppIcon>
               <p className="mt-2 text-[13px] font-bold text-foreground-700">No applied KSBs for this source</p>
               <p className="mt-1 text-[12px] text-foreground-500">Choose another source or use Edit mappings to attach KSBs to weeks or components.</p>
             </div>
@@ -5291,7 +5415,7 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
             Close
           </button>
           <button type="button" onClick={onBuild} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 py-2 text-[12px] font-bold text-white transition-smooth hover:bg-primary-600">
-            <i className="ri-hammer-line"></i>
+            <AppIcon className="ri-hammer-line"></AppIcon>
             Edit mappings
           </button>
         </div>
@@ -5337,13 +5461,13 @@ function ProgrammeKsbMapModal({ programmeName, modules, sourceLabels, onClose }:
               <p className="mt-1 text-[11px] font-semibold text-white/70">Applied KSBs across {modules.length} module{modules.length === 1 ? '' : 's'} in this programme.</p>
             </div>
             <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
-              <i className="ri-close-line"></i>
+              <AppIcon className="ri-close-line"></AppIcon>
             </button>
           </div>
         </div>
         <div className="border-b border-background-200 bg-background-50 px-5 py-3">
           <div className="relative">
-            <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></i>
+            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
             <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, source, module, week or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
           </div>
         </div>
@@ -5356,7 +5480,7 @@ function ProgrammeKsbMapModal({ programmeName, modules, sourceLabels, onClose }:
             </div>
           ) : (
             <div className="rounded-2xl border border-dashed border-background-300 bg-background-100 p-8 text-center">
-              <i className="ri-node-tree text-3xl text-foreground-300"></i>
+              <AppIcon className="ri-node-tree text-3xl text-foreground-300"></AppIcon>
               <p className="mt-2 text-[13px] font-bold text-foreground-700">No detailed KSB mappings in this programme</p>
               <p className="mt-1 text-[12px] text-foreground-500">Add KSB mappings to weeks or components to see programme coverage here.</p>
             </div>
@@ -5384,7 +5508,7 @@ function ModuleKsbGroupPanel({ group, totalRows }: {
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <span className={`grid h-9 w-9 place-items-center rounded-lg ${tone.iconClass}`}>
-              <i className={`${group.icon} text-sm`}></i>
+              <AppIcon className={`${group.icon} text-sm`}></AppIcon>
             </span>
             <div>
               <h4 className="text-[12px] font-black uppercase text-foreground-800">{group.title}</h4>
@@ -5434,7 +5558,7 @@ function ModuleKsbMapCard({ row }: { row: ModuleKsbMapRow }) {
         <ModuleKsbInfoBlock label="Source" value={row.source} title={row.sourceFull} icon="ri-database-2-line" />
         {row.applied ? <div>
           <p className="mb-1 flex items-center gap-1 text-[8px] font-black uppercase text-foreground-400">
-            <i className="ri-map-pin-line text-[10px]"></i>
+            <AppIcon className="ri-map-pin-line text-[10px]"></AppIcon>
             Used in
           </p>
           <div className="flex flex-wrap gap-1.5">
@@ -5457,7 +5581,7 @@ function ModuleKsbInfoBlock({ label, value, title, icon }: { label: string; valu
   return (
     <div className="rounded-lg bg-background-100 px-2.5 py-2" title={title}>
       <p className="flex items-center gap-1 text-[8px] font-black uppercase text-foreground-400">
-        <i className={`${icon} text-[10px]`}></i>
+        <AppIcon className={`${icon} text-[10px]`}></AppIcon>
         {label}
       </p>
       <p className="mt-0.5 truncate text-[10px] font-bold text-foreground-700">{value || 'Not set'}</p>
@@ -5471,7 +5595,7 @@ function ModuleMetricPill({ icon, label, tone = 'default' }: { icon: string; lab
     : 'border-background-200 bg-background-50 text-foreground-600';
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${classes}`}>
-      <i className={`${icon} text-[11px]`}></i>
+      <AppIcon className={`${icon} text-[11px]`}></AppIcon>
       {label}
     </span>
   );
@@ -5482,7 +5606,7 @@ function ModuleDeliverySummary({ module }: { module: ModuleBuilderListItem }) {
   if (!usages.length) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-background-300 bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">
-        <i className="ri-route-line text-[11px]"></i>
+        <AppIcon className="ri-route-line text-[11px]"></AppIcon>
         No delivery
       </span>
     );
@@ -5491,7 +5615,7 @@ function ModuleDeliverySummary({ module }: { module: ModuleBuilderListItem }) {
   const remaining = usages.length - 1;
   return (
     <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700">
-      <i className="ri-route-line text-[11px]"></i>
+      <AppIcon className="ri-route-line text-[11px]"></AppIcon>
       <span className="truncate">Used in {usages.length} {usages.length === 1 ? 'delivery' : 'deliveries'}: {formatDeliveryUsage(first)}</span>
       {remaining > 0 && <span className="rounded-full bg-background-50 px-1.5 text-[9px] font-black text-primary-700">+{remaining}</span>}
     </span>
@@ -5882,7 +6006,7 @@ function IconButton({ label, icon, onClick, tone = 'default' }: { label: string;
     : 'bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-700';
   return (
     <button onClick={onClick} title={label} aria-label={label} className={`w-7 h-7 rounded-md flex items-center justify-center transition-smooth ${classes}`}>
-      <i className={`${icon} text-sm`}></i>
+      <AppIcon className={`${icon} text-sm`}></AppIcon>
     </button>
   );
 }
@@ -5903,7 +6027,7 @@ function EmptyState({ text }: { text: string }) {
 function EmptyEditor({ onAddWeek }: { onAddWeek: () => void }) {
   return (
     <section className="rounded-2xl border border-foreground-200/60 bg-background-50 p-8 text-center">
-      <i className="ri-layout-row-line text-3xl text-foreground-300"></i>
+      <AppIcon className="ri-layout-row-line text-3xl text-foreground-300"></AppIcon>
       <p className="mt-2 text-sm font-semibold text-foreground-700">No week selected</p>
       <button onClick={onAddWeek} className="mt-4 px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600">Add week</button>
     </section>

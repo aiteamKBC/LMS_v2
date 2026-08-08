@@ -24,6 +24,9 @@ from .evidence_storage import (
 )
 from .learner_detail import (
     _active_profile_for_source,
+    _append_week_quizzes,
+    _display_quiz_title,
+    _matching_module_ids_for_quiz_record,
     _schedule_based_week_target,
     _sequential_week_target,
 )
@@ -250,6 +253,167 @@ class AttendanceSummaryTests(SimpleTestCase):
 
     def test_returns_none_without_session_rows(self):
         self.assertIsNone(_summarize_attendance([]))
+
+
+class LearnerQuizModuleMatchingTests(SimpleTestCase):
+    def test_matches_quiz_to_module_by_programme_and_module_name(self):
+        quiz_record = {
+            "module": "Risk Management",
+            "programme_id": "PROG-1",
+            "programme": "Fouda-Programme",
+        }
+        modules_by_id = {
+            "MOD-RISK": {
+                "module": "Risk Management",
+                "programmeId": "PROG-1",
+                "programme": "Fouda-Programme",
+            },
+            "MOD-OTHER": {
+                "module": "Fouda-Module",
+                "programmeId": "PROG-1",
+                "programme": "Fouda-Programme",
+            },
+        }
+
+        self.assertEqual(
+            _matching_module_ids_for_quiz_record(quiz_record, modules_by_id, explicit_module_ids=set()),
+            ["MOD-RISK"],
+        )
+
+    def test_explicit_module_assignments_win_over_metadata_guessing(self):
+        quiz_record = {
+            "module": "Risk Management",
+            "programme_id": "PROG-1",
+            "programme": "Fouda-Programme",
+        }
+        modules_by_id = {
+            "MOD-RISK": {
+                "module": "Risk Management",
+                "programmeId": "PROG-1",
+                "programme": "Fouda-Programme",
+            },
+        }
+
+        self.assertEqual(
+            _matching_module_ids_for_quiz_record(quiz_record, modules_by_id, explicit_module_ids={"MOD-RISK"}),
+            ["MOD-RISK"],
+        )
+
+
+class ScriptedCursor:
+    def __init__(self, results):
+        self._results = list(results)
+        self._current = []
+
+    def execute(self, sql, params=None):
+        self._current = self._results.pop(0) if self._results else []
+
+    def fetchall(self):
+        return list(self._current)
+
+
+class ScriptedConnection:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def cursor(self):
+        return self
+
+    def __enter__(self):
+        return self._cursor
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class LearnerWeekQuizVisibilityTests(SimpleTestCase):
+    def test_explicit_module_links_surface_quiz_without_module_or_week_metadata(self):
+        weeks = [{
+            "module": "Fouda-Module",
+            "week": "Week 1",
+            "moduleId": "MOD-FOUDA",
+            "weekId": "WEEK-1",
+        }]
+        components = []
+        cursor = ScriptedCursor([
+            [("MOD-FOUDA", "Fouda-Module", "PROG-1", "Fouda-Programme")],
+            [],
+            [(90, "MOD-FOUDA", "")],
+            [(90, "", "test aya", 7, 60, "Minutes", "PROG-1", "Fouda-Programme", "")],
+            [],
+        ])
+
+        with patch("learner_api.learner_detail.connections", {"enrolment": ScriptedConnection(cursor)}):
+            next_weeks, next_components = _append_week_quizzes(weeks, components)
+
+        self.assertEqual(len(next_weeks), 2)
+        self.assertIn(
+            {
+                "module": "Fouda-Module",
+                "week": "Module assessments",
+                "moduleId": "MOD-FOUDA",
+                "weekId": "quiz-module-assessments::MOD-FOUDA",
+            },
+            next_weeks,
+        )
+        self.assertEqual(len(next_components), 1)
+        self.assertEqual(next_components[0]["component"], "Quiz · test aya")
+        self.assertTrue(next_components[0]["isQuiz"])
+        self.assertEqual(next_components[0]["moduleId"], "MOD-FOUDA")
+        self.assertEqual(next_components[0]["weekId"], "quiz-module-assessments::MOD-FOUDA")
+        self.assertEqual(next_components[0]["quizMeta"]["quizId"], 90)
+
+    def legacy_test_explicit_module_week_links_place_quiz_into_the_real_week(self):
+        weeks = [{
+            "module": "Risk Management",
+            "week": "Week 1",
+            "moduleId": "MOD-RISK",
+            "weekId": "WEEK-RISK-1",
+        }]
+        components = []
+        cursor = ScriptedCursor([
+            [("MOD-RISK", "Risk Management", "PROG-1", "Fouda-Programme")],
+            [],
+            [(92, "MOD-RISK", "WEEK-RISK-1")],
+            [(92, "", "Aya test 2", 7, 60, "Minutes", "PROG-1", "Fouda-Programme", "")],
+            [],
+        ])
+
+        with patch("learner_api.learner_detail.connections", {"enrolment": ScriptedConnection(cursor)}):
+            next_weeks, next_components = _append_week_quizzes(weeks, components)
+
+        self.assertEqual(next_weeks, weeks)
+        self.assertEqual(len(next_components), 1)
+        self.assertEqual(next_components[0]["component"], "Quiz Â· Aya test 2")
+        self.assertEqual(next_components[0]["moduleId"], "MOD-RISK")
+        self.assertEqual(next_components[0]["weekId"], "WEEK-RISK-1")
+        self.assertEqual(next_components[0]["quizMeta"]["quizId"], 92)
+
+    def test_explicit_module_week_links_place_quiz_into_the_real_week_v2(self):
+        weeks = [{
+            "module": "Risk Management",
+            "week": "Week 1",
+            "moduleId": "MOD-RISK",
+            "weekId": "WEEK-RISK-1",
+        }]
+        components = []
+        cursor = ScriptedCursor([
+            [("MOD-RISK", "Risk Management", "PROG-1", "Fouda-Programme")],
+            [],
+            [(92, "MOD-RISK", "WEEK-RISK-1")],
+            [(92, "", "Aya test 2", 7, 60, "Minutes", "PROG-1", "Fouda-Programme", "")],
+            [],
+        ])
+
+        with patch("learner_api.learner_detail.connections", {"enrolment": ScriptedConnection(cursor)}):
+            next_weeks, next_components = _append_week_quizzes(weeks, components)
+
+        self.assertEqual(next_weeks, weeks)
+        self.assertEqual(len(next_components), 1)
+        self.assertEqual(next_components[0]["component"], _display_quiz_title("Aya test 2"))
+        self.assertEqual(next_components[0]["moduleId"], "MOD-RISK")
+        self.assertEqual(next_components[0]["weekId"], "WEEK-RISK-1")
+        self.assertEqual(next_components[0]["quizMeta"]["quizId"], 92)
 
 
 class LearnerKsbSnapshotTests(SimpleTestCase):

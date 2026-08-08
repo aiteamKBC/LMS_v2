@@ -41,7 +41,7 @@ export default function SafeguardingDashboard() {
         {showRestrictedBanner && (
           <div className="bg-red-50/80 border border-red-200/60 rounded-xl p-3 md:p-4 flex flex-col sm:flex-row items-start gap-3">
             <div className="w-10 h-10 rounded-xl bg-red-100 flex items-center justify-center shrink-0">
-              <i className="ri-shield-keyhole-line text-red-600 text-lg"></i>
+              <AppIcon className="ri-shield-keyhole-line text-red-600 text-lg"></AppIcon>
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-heading font-semibold text-red-900">Restricted Workspace — Safeguarding</p>
@@ -53,7 +53,7 @@ export default function SafeguardingDashboard() {
               onClick={() => setShowRestrictedBanner(false)}
               className="text-red-400 hover:text-red-600 transition-smooth cursor-pointer shrink-0"
             >
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
         )}
@@ -81,7 +81,7 @@ export default function SafeguardingDashboard() {
         {highRiskCases.some(c => c.status === 'Immediate Action Required') && (
           <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 flex flex-col sm:flex-row items-start gap-3 animate-pulse-slow">
             <div className="w-10 h-10 rounded-xl bg-red-500 flex items-center justify-center shrink-0">
-              <i className="ri-alarm-warning-line text-white text-lg"></i>
+              <AppIcon className="ri-alarm-warning-line text-white text-lg"></AppIcon>
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-heading font-bold text-red-900">
@@ -90,14 +90,14 @@ export default function SafeguardingDashboard() {
               <div className="mt-2 space-y-1">
                 {highRiskCases.filter(c => c.status === 'Immediate Action Required').map(c => (
                   <a key={c.id} href={`/safeguarding/high-risk-cases`} className="block text-[12px] text-red-800 font-medium hover:text-red-950 cursor-pointer">
-                    <i className="ri-arrow-right-s-line text-[10px] mr-1"></i>
+                    <AppIcon className="ri-arrow-right-s-line text-[10px] mr-1"></AppIcon>
                     {c.caseRef} — {c.learnerName} — {c.concernType} — <span className="font-semibold">{c.safeguardingOfficerAssigned}</span>
                   </a>
                 ))}
               </div>
             </div>
             <a href="/safeguarding/high-risk-cases" className="px-4 py-2 bg-red-500 text-white rounded-lg text-[12px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
-              View Cases <i className="ri-arrow-right-line ml-1"></i>
+              View Cases <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
             </a>
           </div>
         )}
@@ -124,7 +124,7 @@ export default function SafeguardingDashboard() {
                   <span className="ml-2 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200/50">RESTRICTED</span>
                 </h3>
                 <a href="/safeguarding/open-cases" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
-                  All Cases <i className="ri-arrow-right-line text-[10px] ml-0.5"></i>
+                  All Cases <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
                 </a>
               </div>
               <div className="space-y-2">
@@ -174,7 +174,7 @@ export default function SafeguardingDashboard() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Recent Escalations</h3>
                 <a href="/safeguarding/referrals" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
-                  View All <i className="ri-arrow-right-line text-[10px] ml-0.5"></i>
+                  View All <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
                 </a>
               </div>
               <div className="overflow-x-auto">
@@ -239,7 +239,7 @@ export default function SafeguardingDashboard() {
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">External Referrals</h3>
                 <a href="/safeguarding/referrals" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
-                  Details <i className="ri-external-link-line text-[10px] ml-0.5"></i>
+                  Details <AppIcon className="ri-external-link-line text-[10px] ml-0.5"></AppIcon>
                 </a>
               </div>
               <div className="space-y-2.5">
@@ -248,7 +248,7 @@ export default function SafeguardingDashboard() {
                     <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                       ref.status === 'Active' ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600'
                     }`}>
-                      <i className={`${ref.type === 'MARAC' ? 'ri-alert-line' : ref.type === 'Police' ? 'ri-police-car-line' : ref.type === 'Prevent/Channel' ? 'ri-radar-line' : ref.type === 'Social Care' ? 'ri-user-heart-line' : ref.type === 'LADO' ? 'ri-shield-user-line' : 'ri-building-line'} text-xs`}></i>
+                      <AppIcon className={`${ref.type === 'MARAC' ? 'ri-alert-line' : ref.type === 'Police' ? 'ri-police-car-line' : ref.type === 'Prevent/Channel' ? 'ri-radar-line' : ref.type === 'Social Care' ? 'ri-user-heart-line' : ref.type === 'LADO' ? 'ri-shield-user-line' : 'ri-building-line'} text-xs`}></AppIcon>
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-[11px] font-medium text-foreground-700">{ref.type} — {ref.organisation}</p>
@@ -285,7 +285,7 @@ export default function SafeguardingDashboard() {
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Team Messages</h3>
                 <a href="/safeguarding/communication" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
-                  Inbox <i className="ri-arrow-right-line text-[10px] ml-0.5"></i>
+                  Inbox <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
                 </a>
               </div>
               <div className="space-y-2">
@@ -313,7 +313,7 @@ export default function SafeguardingDashboard() {
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Safeguarding Audit Trail</h3>
               <a href="/safeguarding/qa-audit" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
-                Full Audit <i className="ri-arrow-right-line text-[10px] ml-0.5"></i>
+                Full Audit <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
               </a>
             </div>
             <div className="space-y-3">
@@ -322,7 +322,7 @@ export default function SafeguardingDashboard() {
                   <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
                     audit.rating === 'Outstanding' ? 'bg-emerald-100 text-emerald-600' : 'bg-secondary-100 text-secondary-600'
                   }`}>
-                    <i className="ri-check-double-line text-xs"></i>
+                    <AppIcon className="ri-check-double-line text-xs"></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[12px] font-medium text-foreground-800">{audit.type} — {audit.date}</p>
@@ -368,7 +368,7 @@ export default function SafeguardingDashboard() {
         {/* Footer — Confidentiality Notice */}
         <div className="bg-background-50 rounded-xl border border-red-200/30 p-3 md:p-4 text-center">
           <p className="text-[10px] text-foreground-300">
-            <i className="ri-lock-line mr-1"></i>
+            <AppIcon className="ri-lock-line mr-1"></AppIcon>
             This workspace and all contained information is CONFIDENTIAL and subject to restricted access controls under the Safeguarding Policy v4.2.
             Unauthorised access or disclosure is a serious disciplinary matter. All activity is logged and auditable.
           </p>
@@ -382,7 +382,7 @@ function HeroKpiCard({ icon, label, value, color }: { icon: string; label: strin
   return (
     <div className={`flex items-center gap-3 px-3 md:px-4 py-2.5 md:py-3 rounded-xl bg-black/30 backdrop-blur-md border border-white/10`}>
       <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
-        <i className={`${icon} text-sm ${color === 'red' ? 'text-red-300' : 'text-amber-300'}`}></i>
+        <AppIcon className={`${icon} text-sm ${color === 'red' ? 'text-red-300' : 'text-amber-300'}`}></AppIcon>
       </div>
       <div>
         <p className="text-[9px] md:text-[10px] text-white/50 font-medium uppercase tracking-wider">{label}</p>
@@ -400,7 +400,7 @@ function StatCard({ label, value, sub, icon, colour }: { label: string; value: n
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">
       <span className={`w-7 md:w-8 h-7 md:h-8 rounded-lg flex items-center justify-center ${colourMap[colour]} mb-2 md:mb-3`}>
-        <i className={`${icon} text-xs md:text-sm`}></i>
+        <AppIcon className={`${icon} text-xs md:text-sm`}></AppIcon>
       </span>
       <p className="text-xl md:text-2xl font-heading font-semibold text-foreground-900">{value}</p>
       <p className="text-[10px] md:text-[11px] text-foreground-400 mt-1">{label}</p>

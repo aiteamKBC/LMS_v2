@@ -247,7 +247,7 @@ function AuditActivitiesLanding() {
   const SortButton = ({ id, label }: { id: AuditSortKey; label: string }) => (
     <button type="button" onClick={() => requestSort(id)} className="inline-flex items-center gap-1 font-bold text-foreground-700 hover:text-primary-700">
       {label}
-      <i className={`${sortKey === id ? (sortDirection === 'asc' ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line') : 'ri-expand-up-down-line'} text-xs`} />
+      <AppIcon className={`${sortKey === id ? (sortDirection === 'asc' ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line') : 'ri-expand-up-down-line'} text-xs`} />
     </button>
   );
 
@@ -269,7 +269,7 @@ function AuditActivitiesLanding() {
                 setSelectedCategory(key);
                 setPage(1);
               }} className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-[12px] font-bold transition ${active ? 'border-[#d97706] bg-[#d97706] text-white shadow-sm' : 'border-[#eee7dc] bg-white text-[#6f5b49] hover:bg-[#fff7ed]'}`}>
-                <i className={meta.icon} />
+                <AppIcon className={meta.icon} />
                 {meta.label}
                 <span className={`rounded-full px-2 py-0.5 text-[11px] ${active ? 'bg-white/20 text-white' : 'bg-[#f5f1ea] text-[#8a7561]'}`}>
                   {active ? categoryCounts[key] : '-'}
@@ -281,7 +281,7 @@ function AuditActivitiesLanding() {
 
         <div className="mt-4 rounded-xl border border-[#eee7dc] bg-white p-3">
           <div className="grid gap-3 lg:grid-cols-[120px_220px_170px_1fr]">
-            <label className="flex items-center gap-2 text-xs font-bold uppercase text-[#8a7561]"><i className="ri-filter-3-line" />Filters</label>
+            <label className="flex items-center gap-2 text-xs font-bold uppercase text-[#8a7561]"><AppIcon className="ri-filter-3-line" />Filters</label>
             <select value={programme} onChange={(event) => setProgramme(event.target.value)} className="h-10 rounded-lg border border-[#eee7dc] bg-white px-3 text-sm outline-none focus:border-[#d97706]">
               <option value="all">All programmes</option>
               {programmeOptions.map(([option, count]) => <option key={option} value={option}>{display(option)} ({count})</option>)}
@@ -291,7 +291,7 @@ function AuditActivitiesLanding() {
               <input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} className="h-10 min-w-0 rounded-lg border border-[#eee7dc] bg-white px-2 text-sm outline-none focus:border-[#d97706]" />
             </div>
             <div className="relative">
-              <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-[#9b8875]" />
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-[#9b8875]" />
               <input
                 value={search}
                 onChange={(event) => {
@@ -336,11 +336,11 @@ function AuditActivitiesLanding() {
               {[10, 25, 50, 100].map((size) => <option key={size} value={size}>{size} / page</option>)}
             </select>
             <button type="button" disabled={page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-background-300 bg-white text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40">
-              <i className="ri-arrow-left-s-line" />
+              <AppIcon className="ri-arrow-left-s-line" />
             </button>
             <span className="min-w-[86px] text-center text-xs font-semibold text-foreground-600">Page {page} of {totalPages}</span>
             <button type="button" disabled={page >= totalPages || loading} onClick={() => setPage((value) => Math.min(totalPages, value + 1))} className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-background-300 bg-white text-foreground-700 disabled:cursor-not-allowed disabled:opacity-40">
-              <i className="ri-arrow-right-s-line" />
+              <AppIcon className="ri-arrow-right-s-line" />
             </button>
           </div>
         </div>
@@ -383,7 +383,7 @@ function AuditActivitiesLanding() {
                         <td className={`sticky left-12 z-10 border-r border-background-200 px-3 py-3 ${learnerIsTest ? 'bg-red-50' : 'bg-white'}`}>
                           <p className="flex items-center gap-2 font-bold text-foreground-950">
                             {learnerName}
-                            {learnerIsTest && <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white"><i className="ri-close-line text-xs" />Test</span>}
+                            {learnerIsTest && <span className="inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white"><AppIcon className="ri-close-line text-xs" />Test</span>}
                           </p>
                           <p className="text-[11px] text-foreground-400">ID {row.record.learner.learnerId}</p>
                         </td>
@@ -554,7 +554,7 @@ function AuditLearnerActivityPage({ learnerId }: { learnerId: string }) {
     <div className="min-h-[calc(100vh-112px)] bg-[#f8f7f4] px-3 py-5 md:px-6">
       <section className="mx-auto max-w-5xl rounded-xl border border-[#ebe4d9] bg-white p-4 shadow-sm md:p-6">
         <button type="button" onClick={() => navigate('/workspace/auditor')} className="mb-6 inline-flex items-center gap-2 text-[13px] font-bold text-[#8b5a24] hover:text-[#d97706]">
-          <i className="ri-arrow-left-line text-base" />
+          <AppIcon className="ri-arrow-left-line text-base" />
           Activity Categories
         </button>
 
@@ -613,7 +613,7 @@ function AuditLearnerActivityPage({ learnerId }: { learnerId: string }) {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <button type="button" onClick={toggleAllMonths} className="mb-3 inline-flex h-9 items-center gap-2 rounded-lg border border-[#eadfce] bg-white px-3 text-xs font-bold text-[#6f5b49] hover:bg-[#fff7ed]">
-                    <i className={allDatedSelected ? 'ri-checkbox-fill' : 'ri-checkbox-blank-line'} />
+                    <AppIcon className={allDatedSelected ? 'ri-checkbox-fill' : 'ri-checkbox-blank-line'} />
                     {allDatedSelected ? 'Deselect all months' : 'Select all months'}
                   </button>
                   <h2 className="text-lg font-heading font-bold text-[#17110b]">Monthly Breakdown</h2>
@@ -648,11 +648,11 @@ function AuditLearnerActivityPage({ learnerId }: { learnerId: string }) {
             </div>
             <div className="flex flex-wrap gap-2">
               <button type="button" onClick={handleSaveAndPreview} disabled={saving} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#0f766e] px-4 text-xs font-bold text-white shadow-sm hover:bg-[#115e59] disabled:opacity-50">
-                <i className={saving ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-line'} />
+                <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-line'} />
                 Save
               </button>
               <button type="button" onClick={handleDownloadPdf} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#0f766e] px-4 text-xs font-bold text-white hover:bg-[#115e59]">
-                <i className="ri-download-line" />
+                <AppIcon className="ri-download-line" />
                 Download PDF
               </button>
             </div>
@@ -725,7 +725,7 @@ function AuditLearnerMonthSection({ month, defaultOpen, selected, onToggleSelect
             }}
             className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border text-[13px] font-bold ${selected ? 'border-[#fed7aa] bg-[#ffedd5] text-[#9a3412]' : 'border-[#eadfce] bg-white text-[#8a7561]'}`}
           >
-            <i className={selected ? 'ri-checkbox-fill' : 'ri-checkbox-blank-line'} />
+            <AppIcon className={selected ? 'ri-checkbox-fill' : 'ri-checkbox-blank-line'} />
           </span>
         )}
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#ffedd5] text-sm font-bold text-[#d97706]">{monthAbbrev(month.label)}</span>
@@ -749,7 +749,7 @@ function AuditLearnerMonthSection({ month, defaultOpen, selected, onToggleSelect
             <div className="h-full rounded-full bg-[#d97706]" style={{ width: `${Math.min(100, rate)}%` }} />
           </div>
         </div>
-        <i className={`ri-arrow-right-s-line text-lg text-[#9b8875] transition-transform ${open ? 'rotate-90 text-[#d97706]' : ''}`} />
+        <AppIcon className={`ri-arrow-right-s-line text-lg text-[#9b8875] transition-transform ${open ? 'rotate-90 text-[#d97706]' : ''}`} />
       </button>
       {open && (
         <div className="space-y-3 border-t border-[#eee7dc] bg-white p-4">
@@ -800,7 +800,7 @@ function AuditLearnerWeekSection({ week, weekNumber }: { week: AuditWeek; weekNu
               <p className="mt-1 text-[12px] font-semibold text-[#6f5b49]">{formatHoursFromHours(actual)} / {formatHoursFromHours(planned)} · {rate}% · {done}/{allItems.length} done</p>
             </div>
           </div>
-          <i className={`ri-arrow-right-s-line text-lg text-[#9b8875] transition-transform ${open ? 'rotate-90 text-[#d97706]' : ''}`} />
+          <AppIcon className={`ri-arrow-right-s-line text-lg text-[#9b8875] transition-transform ${open ? 'rotate-90 text-[#d97706]' : ''}`} />
         </div>
       </button>
       {open && (
@@ -886,7 +886,7 @@ function AuditActivityBucket({ title, icon, items }: { title: string; icon: stri
   return (
     <div className="rounded-lg border border-[#eee7dc] bg-white p-3">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h3 className="inline-flex items-center gap-2 text-sm font-bold text-[#17110b]"><i className={`${icon} text-[#d97706]`} />{title}</h3>
+        <h3 className="inline-flex items-center gap-2 text-sm font-bold text-[#17110b]"><AppIcon className={`${icon} text-[#d97706]`} />{title}</h3>
         <span className="rounded-full bg-[#f5f1ea] px-2 py-0.5 text-xs font-bold text-[#6f5b49]">{visibleItems.length}</span>
       </div>
       {visibleItems.length === 0 ? (
@@ -899,7 +899,7 @@ function AuditActivityBucket({ title, icon, items }: { title: string; icon: stri
             const itemContent = (
               <div className="flex items-start gap-2">
                 <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${auditCell(item).done ? 'bg-[#ccfbf1] text-[#0f766e]' : 'bg-[#ffedd5] text-[#d97706]'}`}>
-                  <i className={AUDIT_CATEGORY_META[auditCategory(item)].icon} />
+                  <AppIcon className={AUDIT_CATEGORY_META[auditCategory(item)].icon} />
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-[#17110b]">{auditItemTitle(item)}</p>
@@ -908,7 +908,7 @@ function AuditActivityBucket({ title, icon, items }: { title: string; icon: stri
                     <span className="rounded-full bg-[#f5f1ea] px-2 py-0.5">{formatHoursFromHours(auditCell(item).actual)} / {formatHoursFromHours(auditCell(item).planned)}</span>
                     <span className={`rounded-full px-2 py-0.5 font-semibold ${statusPill(item.source === 'Aptem' ? item.status : item.completion_status)}`}>{item.source === 'Aptem' ? item.status : item.completion_status}</span>
                     {item.warnings.length > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">{item.warnings.length} warning(s)</span>}
-                    {canOpen && <span className="rounded-full bg-[#ffedd5] px-2 py-0.5 font-semibold text-[#9a3412]"><i className="ri-window-line mr-1" />Open</span>}
+                    {canOpen && <span className="rounded-full bg-[#ffedd5] px-2 py-0.5 font-semibold text-[#9a3412]"><AppIcon className="ri-window-line mr-1" />Open</span>}
                   </div>
                   <ActivityKsbStrip groups={ksbGroups} compact />
                 </div>
@@ -1016,22 +1016,22 @@ function AuditSourceViewer({ item, onClose }: { item: AuditActivityItem | null; 
           <div className="flex shrink-0 items-center gap-2">
             {(externalUrl(viewer?.openUrl) || externalUrl(viewer?.fileUrl)) && (
               <a href={externalUrl(viewer?.openUrl) || externalUrl(viewer?.fileUrl) || undefined} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#eadfce] px-3 text-xs font-bold text-[#6f5b49] hover:bg-[#fff7ed]">
-                <i className="ri-external-link-line" /> New tab
+                <AppIcon className="ri-external-link-line" /> New tab
               </a>
             )}
             <button type="button" onClick={onClose} className="h-9 w-9 rounded-lg text-[#8a7561] hover:bg-[#fff7ed] hover:text-[#17110b]">
-              <i className="ri-close-line text-lg" />
+              <AppIcon className="ri-close-line text-lg" />
             </button>
           </div>
         </div>
         {viewer?.notice && <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs font-bold text-amber-800">{viewer.notice}</div>}
         <div className="min-h-[360px] flex-1 bg-[#17110b]">
           {loading ? (
-            <div className="grid h-[70vh] place-items-center text-sm font-bold text-white"><i className="ri-loader-4-line mr-2 animate-spin" />Loading component...</div>
+            <div className="grid h-[70vh] place-items-center text-sm font-bold text-white"><AppIcon className="ri-loader-4-line mr-2 animate-spin" />Loading component...</div>
           ) : error ? (
             <div className="grid h-[70vh] place-items-center p-8 text-center text-white">
               <div>
-                <i className="ri-error-warning-line text-3xl text-amber-300" />
+                <AppIcon className="ri-error-warning-line text-3xl text-amber-300" />
                 <p className="mt-3 text-sm font-bold">{error}</p>
               </div>
             </div>
@@ -1070,7 +1070,7 @@ function ViewerFrame({ viewer }: { viewer: ViewerSource }) {
   return (
     <div className="grid h-[70vh] place-items-center p-8 text-center text-white">
       <div>
-        <i className="ri-link-unlink-m text-3xl text-white/40" />
+        <AppIcon className="ri-link-unlink-m text-3xl text-white/40" />
         <p className="mt-3 text-sm font-bold">No source link is available for this component.</p>
       </div>
     </div>
@@ -1083,7 +1083,7 @@ function ExternalLaunchPanel({ viewer, url }: { viewer: ViewerSource; url: strin
     <div className="grid h-[70vh] place-items-center bg-[#f8f7f4] p-6">
       <div className="w-full max-w-xl rounded-xl border border-[#eadfce] bg-white p-6 text-center shadow-sm">
         <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-[#ffedd5] text-[#d97706]">
-          <i className="ri-external-link-line text-2xl" />
+          <AppIcon className="ri-external-link-line text-2xl" />
         </span>
         <h3 className="mt-4 text-base font-bold text-[#17110b]">Open this activity in a new tab</h3>
         <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#6f5b49]">
@@ -1095,7 +1095,7 @@ function ExternalLaunchPanel({ viewer, url }: { viewer: ViewerSource; url: strin
           {host && <p className="mt-2 text-xs font-bold text-[#d97706]">{host}</p>}
         </div>
         <a href={url} target="_blank" rel="noreferrer" className="mt-5 inline-flex h-10 items-center gap-2 rounded-lg bg-[#d97706] px-4 text-sm font-bold text-white hover:bg-[#b45309]">
-          <i className="ri-arrow-right-up-line" /> Open original
+          <AppIcon className="ri-arrow-right-up-line" /> Open original
         </a>
       </div>
     </div>
@@ -1677,7 +1677,7 @@ if (!selectedMonth) return;
                   onClick={() => setLearnerTestFilter('test')}
                   className={`inline-flex h-8 items-center justify-center gap-1.5 rounded-md text-[11px] font-semibold transition ${learnerTestFilter === 'test' ? 'bg-white text-red-700 shadow-sm ring-1 ring-red-100' : 'text-foreground-500 hover:text-red-700'}`}
                 >
-                  <i className="ri-close-circle-line text-sm"></i>
+                  <AppIcon className="ri-close-circle-line text-sm"></AppIcon>
                   Test only
                 </button>
               </div>
@@ -1703,7 +1703,7 @@ if (!selectedMonth) return;
                           <p className="min-w-0 truncate text-[13px] font-semibold text-foreground-900">{learner.fullName || `Learner ${learner.learnerId}`}</p>
                           {learnerIsTest && (
                             <span className="inline-flex h-5 shrink-0 items-center gap-1 rounded-full bg-red-50 px-1.5 text-[10px] font-bold text-red-700 ring-1 ring-red-100">
-                              <i className="ri-close-line text-xs"></i>
+                              <AppIcon className="ri-close-line text-xs"></AppIcon>
                               Test
                             </span>
                           )}
@@ -1735,7 +1735,7 @@ if (!selectedMonth) return;
                 onClick={() => setAuditView('monthly')}
                 className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-[12px] font-bold transition ${auditView === 'monthly' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100'}`}
               >
-                <i className="ri-file-search-line" />
+                <AppIcon className="ri-file-search-line" />
                 Monthly Audit
               </button>
               <button
@@ -1743,7 +1743,7 @@ if (!selectedMonth) return;
                 onClick={() => setAuditView('activities')}
                 className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-[12px] font-bold transition ${auditView === 'activities' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100'}`}
               >
-                <i className="ri-stack-line" />
+                <AppIcon className="ri-stack-line" />
                 Activity Categories
               </button>
             </div>
@@ -1805,7 +1805,7 @@ if (!selectedMonth) return;
                   disabled={!audit || !selectedMonth || selectedSignoffMonths.length === 0 || savingSignoff}
                   className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-foreground-950 px-4 text-[12px] font-semibold text-white transition hover:bg-foreground-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <i className={`${savingSignoff ? 'ri-loader-4-line animate-spin' : 'ri-save-3-line'} text-sm`}></i>
+                  <AppIcon className={`${savingSignoff ? 'ri-loader-4-line animate-spin' : 'ri-save-3-line'} text-sm`}></AppIcon>
                   {savingSignoff ? 'Saving...' : 'Save Sign-Off'}
                 </button>
               </div>
@@ -1878,7 +1878,7 @@ function LearnerHeader({ audit, selectedLearner, loading, onPreviewPdf, selected
           disabled={!canPreviewPdf}
           className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-foreground-950 px-4 text-[12px] font-semibold text-white transition hover:bg-foreground-800 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <i className="ri-eye-line text-sm"></i>
+          <AppIcon className="ri-eye-line text-sm"></AppIcon>
           Preview Sign-Off PDF
         </button>
       </div>
@@ -1964,7 +1964,7 @@ function MonthlyTimeline({ audit, loading, activitySearch, onActivitySearch, sel
               disabled={!audit?.months.length}
               className="inline-flex h-8 items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <i className="ri-checkbox-multiple-line text-sm"></i>
+              <AppIcon className="ri-checkbox-multiple-line text-sm"></AppIcon>
               {audit && selectedSignoffMonthKeys.size === audit.months.filter((month) => month.month_key !== 'undated').length ? 'Clear all' : 'Select all'}
             </button>
           </div>
@@ -2019,7 +2019,7 @@ function MonthlyTimeline({ audit, loading, activitySearch, onActivitySearch, sel
                       }}
                       className={`flex h-5 w-5 items-center justify-center rounded border text-[12px] ${isCheckedForSignoff ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300 bg-white text-transparent'}`}
                     >
-                      <i className="ri-check-line"></i>
+                      <AppIcon className="ri-check-line"></AppIcon>
                     </button>
                     <button
                       type="button"
@@ -2027,7 +2027,7 @@ function MonthlyTimeline({ audit, loading, activitySearch, onActivitySearch, sel
                       aria-label={isOpen ? `Collapse ${month.label}` : `Expand ${month.label}`}
                       className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition hover:bg-background-100 hover:text-foreground-900"
                     >
-                      <i className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></i>
+                      <AppIcon className={`${isOpen ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></AppIcon>
                     </button>
                   </div>
                 </div>
@@ -2089,7 +2089,7 @@ function WeekBlock({ week, weekNumber, search, open, onToggle, selectedItemId, o
             {warningCount > 0 && <span title={metricHelp.warnings} className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">{warningCount} warning(s)</span>}
           </div>
         </div>
-        <i className={`${open ? 'ri-subtract-line' : 'ri-add-line'} text-sm text-foreground-500`}></i>
+        <AppIcon className={`${open ? 'ri-subtract-line' : 'ri-add-line'} text-sm text-foreground-500`}></AppIcon>
       </button>
       {open && (
         <div className="space-y-3 border-t border-background-200 p-3">
@@ -2224,7 +2224,7 @@ function AptemDetails({ item }: { item: AptemAuditItem }) {
 function EvidenceLink({ href, icon, label }: { href: string; icon: string; label: string }) {
   return (
     <a href={href} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-2.5 text-[11px] font-bold text-primary-700 hover:bg-primary-50">
-      <i className={icon} />
+      <AppIcon className={icon} />
       {label}
     </a>
   );
@@ -2257,7 +2257,7 @@ function MonthlyLearnerDeclaration({ audit, month }: { audit: LearnerAuditRespon
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex min-w-0 items-start gap-2">
           <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700">
-            <i className="ri-file-sign-line text-base"></i>
+            <AppIcon className="ri-file-sign-line text-base"></AppIcon>
           </div>
           <div className="min-w-0">
             <h3 className="text-[13px] font-heading font-semibold text-foreground-950">Monthly Declaration</h3>
@@ -2289,7 +2289,7 @@ function MonthlyLearnerDeclaration({ audit, month }: { audit: LearnerAuditRespon
       </div>
 
       <div className="mt-3 flex items-start gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[11px] leading-5 text-emerald-800">
-        <i className="ri-check-double-line mt-0.5 shrink-0 text-sm"></i>
+        <AppIcon className="ri-check-double-line mt-0.5 shrink-0 text-sm"></AppIcon>
         <span>
         I confirm that I have applied this month's KSB learning in my workplace practice and that the OTJH figures above reflect my planned, completed, and coach-reviewed learning record.
         </span>
@@ -2396,7 +2396,7 @@ function SignatureCapture({ label, value, onChange }: { label: string; value: st
       </div>
       <div className="relative h-36 overflow-hidden rounded-lg border border-background-200 bg-white">
         <canvas ref={canvasRef} className="h-full w-full touch-none" style={{ cursor: SIGNATURE_CURSOR }} />
-        {!hasInk && <i className="ri-pen-nib-line pointer-events-none absolute right-4 top-4 text-lg text-foreground-300"></i>}
+        {!hasInk && <AppIcon className="ri-pen-nib-line pointer-events-none absolute right-4 top-4 text-lg text-foreground-300"></AppIcon>}
         <div className="pointer-events-none absolute inset-x-6 bottom-8 border-b border-dashed border-foreground-300"></div>
       </div>
     </div>
@@ -2411,11 +2411,11 @@ function PdfPreviewModal({ fileName, previewUrl, onClose }: { fileName: string; 
           <p className="truncate text-[13px] font-semibold text-foreground-900">{fileName}</p>
           <div className="flex items-center gap-2">
             <a href={previewUrl} download={fileName} className="inline-flex h-9 items-center gap-2 rounded-lg bg-foreground-950 px-3 text-[12px] font-semibold text-white">
-              <i className="ri-download-2-line text-sm"></i>
+              <AppIcon className="ri-download-2-line text-sm"></AppIcon>
               Download
             </a>
             <button type="button" onClick={onClose} className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-background-200 text-foreground-600">
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
         </div>
@@ -2434,7 +2434,7 @@ function InfoGrid({ rows }: { rows: Array<[string, string]> }) {
         <div key={label} title={title} className="rounded-lg border border-background-200 bg-background-100/50 p-3">
           <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-foreground-400">
             <span>{label}</span>
-            {title && <i className="ri-information-line text-[11px] text-foreground-300"></i>}
+            {title && <AppIcon className="ri-information-line text-[11px] text-foreground-300"></AppIcon>}
           </p>
           <p className="mt-1 break-words text-[12px] font-medium text-foreground-900">{value || 'Not available'}</p>
         </div>
@@ -2447,14 +2447,14 @@ function InfoGrid({ rows }: { rows: Array<[string, string]> }) {
 function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (value: string) => void; placeholder: string }) {
   return (
     <div className="relative mt-3">
-      <i className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></i>
+      <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
       <input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] outline-none transition focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-100" />
     </div>
   );
 }
 
 function EmptyPanel({ icon, text }: { icon: string; text: string }) {
-  return <div className="rounded-lg border border-dashed border-background-300 bg-background-100/50 p-6 text-center text-[12px] text-foreground-500"><i className={`${icon} mb-2 block text-xl text-foreground-300`}></i>{text}</div>;
+  return <div className="rounded-lg border border-dashed border-background-300 bg-background-100/50 p-6 text-center text-[12px] text-foreground-500"><AppIcon className={`${icon} mb-2 block text-xl text-foreground-300`}></AppIcon>{text}</div>;
 }
 
 function StateBanner({ tone, text }: { tone: 'error' | 'warn' | 'success'; text: string }) {
@@ -2467,7 +2467,7 @@ function MiniFact({ label, value, title }: { label: string; value: string; title
     <div title={title} className="rounded-lg bg-background-50 px-2 py-1.5 ring-1 ring-background-200">
       <p className="flex items-center gap-1 truncate text-[9px] uppercase tracking-wide text-foreground-400">
         <span className="truncate">{label}</span>
-        {title && <i className="ri-information-line shrink-0 text-[10px] text-foreground-300"></i>}
+        {title && <AppIcon className="ri-information-line shrink-0 text-[10px] text-foreground-300"></AppIcon>}
       </p>
       <p className="truncate font-semibold text-foreground-800">{value}</p>
     </div>
@@ -2479,7 +2479,7 @@ function SummaryFact({ label, value, title }: { label: string; value: string; ti
     <div title={title} className="rounded-lg border border-background-200 bg-background-100/50 p-3">
       <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-foreground-400">
         <span>{label}</span>
-        {title && <i className="ri-information-line text-[11px] text-foreground-300"></i>}
+        {title && <AppIcon className="ri-information-line text-[11px] text-foreground-300"></AppIcon>}
       </p>
       <p className="mt-1 break-words text-[13px] font-bold text-foreground-900">{value}</p>
     </div>

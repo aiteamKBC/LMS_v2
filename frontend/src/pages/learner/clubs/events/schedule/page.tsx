@@ -86,7 +86,7 @@ export default function MySchedulePage() {
             onClick={() => navigate('/learner/clubs/events')}
             className="flex items-center gap-1.5 text-xs text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer whitespace-nowrap"
           >
-            <i className="ri-arrow-left-s-line"></i> Back to Events
+            <AppIcon className="ri-arrow-left-s-line"></AppIcon> Back to Events
           </button>
         </div>
 
@@ -101,7 +101,7 @@ export default function MySchedulePage() {
               to="/learner/clubs/events"
               className="px-4 py-2 bg-primary-500 text-white rounded-xl text-xs font-bold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-1.5"
             >
-              <i className="ri-compass-line"></i> Discover More Events
+              <AppIcon className="ri-compass-line"></AppIcon> Discover More Events
             </Link>
           </div>
 
@@ -148,7 +148,7 @@ export default function MySchedulePage() {
         {joinedEvents.length === 0 && (
           <div className="text-center py-20 bg-background-50 rounded-2xl border border-background-200/50">
             <span className="w-16 h-16 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-4">
-              <i className="ri-calendar-todo-line text-foreground-300 text-2xl"></i>
+              <AppIcon className="ri-calendar-todo-line text-foreground-300 text-2xl"></AppIcon>
             </span>
             <h3 className="text-base font-heading font-bold text-foreground-900 mb-1">No events joined yet</h3>
             <p className="text-sm text-foreground-400 mb-4">Browse events and RSVP to build your schedule</p>
@@ -156,7 +156,7 @@ export default function MySchedulePage() {
               to="/learner/clubs/events"
               className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-bold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap inline-flex items-center gap-2"
             >
-              <i className="ri-calendar-event-line"></i> Browse Events
+              <AppIcon className="ri-calendar-event-line"></AppIcon> Browse Events
             </Link>
           </div>
         )}
@@ -225,12 +225,12 @@ export default function MySchedulePage() {
                                   <h4 className="text-sm font-semibold text-foreground-900">{ev.title}</h4>
                                   {status === 'today' && (
                                     <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 flex items-center gap-0.5 animate-pulse">
-                                      <i className="ri-live-line text-[9px]"></i> Today
+                                      <AppIcon className="ri-live-line text-[9px]"></AppIcon> Today
                                     </span>
                                   )}
                                 </div>
                                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                                  <span className="text-xs text-foreground-400"><i className="ri-time-line mr-0.5 text-xs"></i>{ev.time}</span>
+                                  <span className="text-xs text-foreground-400"><AppIcon className="ri-time-line mr-0.5 text-xs"></AppIcon>{ev.time}</span>
                                   <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${typeColor}`}>{ev.type}</span>
                                   {club && (
                                     <span className="text-xs text-foreground-400">{club.title}</span>
@@ -242,9 +242,9 @@ export default function MySchedulePage() {
                               <div className="flex items-center gap-2 shrink-0">
                                 <span className="text-xs font-bold text-accent-600 bg-accent-50 px-2 py-0.5 rounded-full">+{ev.points} pts</span>
                                 <span className={`text-[10px] font-semibold flex items-center gap-0.5 ${sc.text}`}>
-                                  <i className={`${sc.icon} text-[10px]`}></i>{sc.label}
+                                  <AppIcon className={`${sc.icon} text-[10px]`}></AppIcon>{sc.label}
                                 </span>
-                                <i className={`ri-arrow-down-s-line text-foreground-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}></i>
+                                <AppIcon className={`ri-arrow-down-s-line text-foreground-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`}></AppIcon>
                               </div>
                             </div>
 
@@ -274,9 +274,9 @@ export default function MySchedulePage() {
                               <p className="text-sm text-foreground-600 leading-relaxed">{ev.description}</p>
 
                               <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-foreground-500">
-                                <span className="flex items-center gap-1"><i className="ri-user-line text-xs"></i>{ev.host} — {ev.hostRole}</span>
-                                <span className="flex items-center gap-1"><i className="ri-map-pin-line text-xs"></i>{ev.location}</span>
-                                <span className="flex items-center gap-1"><i className="ri-group-line text-xs"></i>{ev.rsvpCount}/{ev.capacity} registered</span>
+                                <span className="flex items-center gap-1"><AppIcon className="ri-user-line text-xs"></AppIcon>{ev.host} — {ev.hostRole}</span>
+                                <span className="flex items-center gap-1"><AppIcon className="ri-map-pin-line text-xs"></AppIcon>{ev.location}</span>
+                                <span className="flex items-center gap-1"><AppIcon className="ri-group-line text-xs"></AppIcon>{ev.rsvpCount}/{ev.capacity} registered</span>
                               </div>
 
                               <div className="flex items-center gap-2 pt-1">
@@ -284,11 +284,11 @@ export default function MySchedulePage() {
                                   to={`/learner/clubs/events/${ev.id}`}
                                   className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                                 >
-                                  <i className="ri-external-link-line mr-1"></i>View Full Details
+                                  <AppIcon className="ri-external-link-line mr-1"></AppIcon>View Full Details
                                 </Link>
                                 {status === 'completed' && (
                                   <span className="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-xs font-semibold whitespace-nowrap">
-                                    <i className="ri-checkbox-circle-line mr-1"></i>+{ev.points} pts earned
+                                    <AppIcon className="ri-checkbox-circle-line mr-1"></AppIcon>+{ev.points} pts earned
                                   </span>
                                 )}
                               </div>

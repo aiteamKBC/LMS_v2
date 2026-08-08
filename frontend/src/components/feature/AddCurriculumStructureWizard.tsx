@@ -1,8 +1,10 @@
 import { type DragEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
-import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
+import { useCurriculumWizardData } from '@/hooks/useCurriculumWizardData';
+import { useAuth } from '@/hooks/useAuth';
 import { DatePickerField } from '@/components/feature/DatePickerField';
+import { snapshotOptimizer } from '@/lib/snapshotOptimizer';
 import {
   attachCurriculumModulesToGroup,
   archiveCurriculumCohort,
@@ -14,10 +16,12 @@ import {
   createCurriculumHoliday,
   createCurriculumModule,
   createCurriculumProgramme,
+  fetchCurriculumCoaches,
   fetchCurriculumModules,
   fetchCurriculumKsbSets,
   fetchCurriculumProgrammeDetail,
   fetchCurriculumStandards,
+  fetchCurriculumTutors,
   fetchFreeProgrammeModules,
   saveFreeProgrammeModules,
   saveCurriculumProgrammeTree,
@@ -60,10 +64,15 @@ import {
   recalculateModule,
   saveModuleStructure,
   syncTeamsMeetingArtifacts,
+  teamsMeetingArtifactContentUrl,
+  teamsMeetingArtifactPreviewUrl,
+  teamsMeetingRecordingEventsUrl,
   updateTeamsMeetingSchedule,
   type ModuleCatalogueItem,
   type ModuleComponent,
   type ModuleComponentType,
+  type TeamsAttendanceRecord,
+  type TeamsMeetingArtifact,
   type TeamsMeetingInput,
   type TeamsMeetingOccurrence,
   type TeamsMeetingResult,
@@ -76,6 +85,10 @@ type SaveIntent = 'draft' | 'final';
 type ProgrammeStructureType = 'scheduled' | 'free';
 
 const MODULE_BUILDER_SYNC_CHANNEL = 'kbc-module-builder-sync';
+const DEFAULT_TEAMS_ORGANIZER_EMAIL = 'Khaled.Ashraf@kentbusinesscollege.net';
+const DEFAULT_TEAMS_PRESENTERS = ['Ahmed.Lotfi@kentbusinesscollege.com'];
+const DEFAULT_TEAMS_ATTENDEES = ['engagement@kentbusinesscollege.com', 'Mahmoud.Fouda@kentbusinesscollege.com'];
+const RECORDING_TRACKER_BROWSER_SESSION_KEY = 'kbc.recording-tracker.browser-session';
 
 interface GeneratedSession {
   sessionNumber: number;
@@ -150,6 +163,8 @@ interface TeamsMeetingDraft {
   requestResponses: boolean;
   allowNewTimeProposals: boolean;
   hideAttendees: boolean;
+  moduleLocalId?: string;
+  moduleSourceId?: string;
 }
 
 interface TutorSessionSummary {
@@ -216,6 +231,7 @@ interface AddCurriculumStructureWizardProps {
   initialProgramme?: CurriculumProgramme;
   initialCohortId?: string;
   initialGroupId?: string;
+  initialModuleId?: string;
   startStep?: WizardStep;
   modulePlacementMode?: boolean;
 }
@@ -232,8 +248,12 @@ function wizardDraftSnapshot(
   ksbSourceKind: 'profile' | 'standard',
   ksbSourceValue: string,
   cohortDrafts: CohortDraft[],
+  removedCohortIds: string[] = [],
+  removedGroupIds: string[] = [],
+  removedModuleIds: string[] = [],
 ) {
-  return JSON.stringify({
+  // Use optimized snapshot that extracts only relevant fields
+  return snapshotOptimizer.createSnapshot({
     programmeForm,
     ksbSourceKind,
     ksbSourceValue,
@@ -245,6 +265,75 @@ function wizardDraftSnapshot(
           ...module,
           weeks: module.weeks.map(({ open: _open, ...week }) => week),
         })),
+      })),
+    })),
+    removedCohortIds: removedCohortIds.slice().sort(),
+    removedGroupIds: removedGroupIds.slice().sort(),
+    removedModuleIds: removedModuleIds.slice().sort(),
+  });
+}
+
+function parseWizardDraftSnapshot(snapshot: string) {
+  if (!snapshot) return null;
+  try {
+    const parsed = JSON.parse(snapshot) as {
+      programmeForm?: {
+        name: string;
+        standard: string;
+        level: string;
+        color: string;
+        description: string;
+        structureType: ProgrammeStructureType;
+      };
+      ksbSourceKind?: 'profile' | 'standard';
+      ksbSourceValue?: string;
+      cohortDrafts?: CohortDraft[];
+    };
+    return Array.isArray(parsed.cohortDrafts) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function stableDraftFingerprint(value: unknown) {
+  return JSON.stringify(value);
+}
+
+function draftIdentity(...values: Array<string | undefined>) {
+  return values.map(value => String(value || '').trim()).find(Boolean) || '';
+}
+
+function cohortMetaFingerprint(cohort: CohortDraft) {
+  const { groups: _groups, ...meta } = cohort;
+  return stableDraftFingerprint(meta);
+}
+
+function groupMetaFingerprint(group: GroupDraft) {
+  const { modules: _modules, ...meta } = group;
+  return stableDraftFingerprint(meta);
+}
+
+function groupModuleMembershipFingerprint(group: GroupDraft) {
+  return stableDraftFingerprint(group.modules.map(module => draftIdentity(module.sourceId, module.catalogueId, module.localId, module.name)));
+}
+
+function moduleDraftFingerprint(module: ModuleDraft) {
+  return stableDraftFingerprint({
+    ...module,
+    weeks: module.weeks.map(({ open: _open, ...week }) => week),
+  });
+}
+
+function replaceModuleInWizardSnapshot(snapshot: string, moduleLocalId: string, patch: Partial<ModuleDraft>) {
+  const parsed = parseWizardDraftSnapshot(snapshot);
+  if (!parsed) return snapshot;
+  return JSON.stringify({
+    ...parsed,
+    cohortDrafts: (parsed.cohortDrafts || []).map(cohort => ({
+      ...cohort,
+      groups: cohort.groups.map(group => ({
+        ...group,
+        modules: group.modules.map(module => module.localId === moduleLocalId ? { ...module, ...patch } : module),
       })),
     })),
   });
@@ -471,9 +560,14 @@ function dayNameFromDate(date: Date) {
   return weekDays.find(day => weekdayIndexes[day] === date.getDay()) || weekDays[0];
 }
 
+function formatDateValue(dateValue: string) {
+  const parts = parseDateParts(dateValue);
+  if (!parts) return dateValue;
+  return `${String(parts.day).padStart(2, '0')}/${String(parts.month).padStart(2, '0')}/${parts.year}`;
+}
+
 function formatSessionDate(dateValue: string) {
-  const date = dateFromInput(dateValue);
-  return date ? `${dayNameFromDate(date).slice(0, 3)} ${dateValue}` : dateValue;
+  return formatDateValue(dateValue);
 }
 
 function generateModuleSessions(startDate: string, sessionCount: number | string, groupDay: string, groupTime: string): GeneratedSession[] {
@@ -514,6 +608,12 @@ function daysBetween(startDate: string, endDate: string) {
 
 function holidayId(holiday: CurriculumHoliday) {
   return String(holiday.id);
+}
+
+function holidayRangeLabel(holiday: CurriculumHoliday) {
+  const start = formatSessionDate(holiday.startDate);
+  const end = formatSessionDate(holiday.endDate || holiday.startDate);
+  return end && end !== start ? `${start} to ${end}` : start;
 }
 
 function dateInRange(dateValue: string, startValue: string, endValue: string) {
@@ -938,9 +1038,9 @@ function moduleSessionCount(module?: CurriculumModule) {
 }
 
 function moduleDraftSessionCount(draft: Pick<ModuleDraft, 'mode' | 'sessionsNumber' | 'weeks'>, selectedModule?: CurriculumModule) {
-  if (draft.mode === 'existing' && selectedModule) return moduleSessionCount(selectedModule);
   const parsed = Number(draft.sessionsNumber);
   if (Number.isFinite(parsed)) return Math.max(0, Math.round(parsed));
+  if (draft.mode === 'existing' && selectedModule) return moduleSessionCount(selectedModule);
   return Math.max(0, draft.weeks.length);
 }
 
@@ -998,6 +1098,12 @@ function moduleDraftDisplayableComponents(draft: Pick<ModuleDraft, 'weeks'>, fre
 
 function moduleDraftDisplayComponentCount(draft: Pick<ModuleDraft, 'weeks'>, freeMode = false) {
   return moduleDraftDisplayableComponents(draft, freeMode).length;
+}
+
+function moduleDraftHasLiveSessionComponent(draft: Pick<ModuleDraft, 'weeks'>) {
+  return draft.weeks.some(week => (
+    week.components.some(component => ['live-session', 'live_session'].includes(String(component.type || '').toLowerCase()))
+  ));
 }
 
 function uniqueKsbMappings(mappings: ModuleComponent['ksbMappings']) {
@@ -1114,6 +1220,79 @@ function valueMatchesCandidate(value: unknown, candidates: Set<string>) {
   return candidates.has(normalise(text)) || candidates.has(normalise(slugify(text))) || candidates.has(normalise(`program-${slugify(text)}`));
 }
 
+function groupModuleReferences(group: CurriculumGroup) {
+  const source = group as CurriculumGroup & {
+    moduleIds?: unknown[];
+    module_ids?: unknown[];
+    moduleNames?: unknown[];
+    module_names?: unknown[];
+  };
+  return uniqueTextValues([
+    ...(Array.isArray(group.modules) ? group.modules : []),
+    ...(Array.isArray(source.moduleIds) ? source.moduleIds : []),
+    ...(Array.isArray(source.module_ids) ? source.module_ids : []),
+    ...(Array.isArray(source.moduleNames) ? source.moduleNames : []),
+    ...(Array.isArray(source.module_names) ? source.module_names : []),
+  ]);
+}
+
+function groupModuleReferenceModules(group: CurriculumGroup, cohort: CurriculumCohort, programme: CurriculumProgramme): CurriculumModule[] {
+  const source = group as CurriculumGroup & {
+    moduleIds?: unknown[];
+    module_ids?: unknown[];
+    moduleNames?: unknown[];
+    module_names?: unknown[];
+  };
+  const ids = uniqueTextValues([
+    ...(Array.isArray(source.moduleIds) ? source.moduleIds : []),
+    ...(Array.isArray(source.module_ids) ? source.module_ids : []),
+  ]);
+  const names = uniqueTextValues([
+    ...(Array.isArray(group.modules) ? group.modules : []),
+    ...(Array.isArray(source.moduleNames) ? source.moduleNames : []),
+    ...(Array.isArray(source.module_names) ? source.module_names : []),
+  ]).filter(value => !isCanonicalModuleBuilderId(value));
+  const count = Math.max(ids.length, names.length);
+  return Array.from({ length: count }, (_, index) => {
+    const catalogueId = ids[index] || '';
+    const name = names[index] || catalogueId || `Module ${index + 1}`;
+    const identity = catalogueId || `module-ref-${slugify(name)}`;
+    return {
+      id: `module-${identity}`,
+      moduleId: catalogueId || identity,
+      moduleCatalogueId: catalogueId || undefined,
+      structureId: catalogueId || identity,
+      sourceId: catalogueId || identity,
+      catalogueId: catalogueId || undefined,
+      name,
+      programmeId: programme.id || programme.sourceId,
+      programme: programme.name,
+      cohortId: cohort.id,
+      cohort: cohort.name,
+      groupId: group.id,
+      group: group.name,
+      weeks: 0,
+      weekStructure: [],
+      sessionsNumber: 0,
+      startDate: group.startDate || cohort.startDate,
+      endDate: group.endDate || cohort.endDate,
+      ksbCount: 0,
+      lessons: 0,
+      quizzes: 0,
+      assignments: 0,
+      status: 'draft',
+      author: '',
+      tutor: group.tutor || '',
+      coach: group.coach || '',
+      lastUpdated: '',
+      color: group.color || '#2563eb',
+      notes: '',
+      sessionNames: [],
+      ksbCodes: [],
+    };
+  });
+}
+
 function programmeKeys(programme: CurriculumProgramme) {
   return candidateKeys([programme.id, programme.sourceId, programme.name, programme.standard]);
 }
@@ -1143,8 +1322,20 @@ function moduleBelongsToGroup(module: CurriculumModule, group: CurriculumGroup, 
   const hasGroupContext = moduleGroupValues.some(value => String(value || '').trim());
   if (hasGroupContext) return false;
 
-  const groupModuleKeys = candidateKeys(group.modules || []);
-  return valueMatchesCandidate(module.name, groupModuleKeys) || (cohort.groups || []).length <= 1;
+  const groupModuleKeys = candidateKeys(groupModuleReferences(group));
+  const moduleValues = [
+    module.name,
+    module.id,
+    module.sourceId,
+    module.moduleCatalogueId,
+    module.moduleId,
+    module.structureId,
+    module.catalogueId,
+    module.deliveryModuleId,
+    module.legacyModuleId,
+    ...(module.relatedCatalogueIds || []),
+  ];
+  return moduleValues.some(value => valueMatchesCandidate(value, groupModuleKeys)) || (cohort.groups || []).length <= 1;
 }
 
 function uniqueModulesByName(modules: CurriculumModule[]) {
@@ -1156,6 +1347,19 @@ function uniqueModulesByName(modules: CurriculumModule[]) {
     seen.add(key);
     return true;
   });
+}
+
+function uniqueGroupsByIdentity(groups: CurriculumGroup[]) {
+  const byKey = new Map<string, CurriculumGroup>();
+  groups.forEach(group => {
+    const key = normalise(group.id || `${group.cohortId}:${group.name}:${group.schedule}`);
+    if (!key) return;
+    const existing = byKey.get(key);
+    const existingScore = existing ? groupModuleReferences(existing).length + nestedModulesForGroup(existing).length * 3 : -1;
+    const nextScore = groupModuleReferences(group).length + nestedModulesForGroup(group).length * 3;
+    if (!existing || nextScore > existingScore) byKey.set(key, group);
+  });
+  return Array.from(byKey.values());
 }
 
 function nestedGroupsForCohort(cohort: CurriculumCohort) {
@@ -1297,6 +1501,22 @@ function metadataBoolean(value: unknown, fallback: boolean) {
   return fallback;
 }
 
+function recordingTrackerBrowserSessionId() {
+  try {
+    const existing = window.localStorage.getItem(RECORDING_TRACKER_BROWSER_SESSION_KEY);
+    if (existing) return existing;
+    const created = `browser-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    window.localStorage.setItem(RECORDING_TRACKER_BROWSER_SESSION_KEY, created);
+    return created;
+  } catch {
+    return `browser-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+}
+
+function inlineJson(value: unknown) {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
+}
+
 function normaliseTeamsEmailList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.map(item => String(item || '').trim()).filter(Boolean);
@@ -1311,8 +1531,9 @@ function normaliseTeamsEmailList(value: unknown): string[] {
   return value.split(/[\s,;]+/).map(item => item.trim()).filter(Boolean);
 }
 
-function teamsMeetingFromModule(module: CurriculumModule): TeamsMeetingDraft | undefined {
-  const metadata = (module as CurriculumModule & { deliveryMetadata?: Record<string, unknown> }).deliveryMetadata || {};
+function teamsMeetingFromModule(module: CurriculumModule | ModuleCatalogueItem, moduleLocalId = ''): TeamsMeetingDraft | undefined {
+  const source = module as CurriculumModule & ModuleCatalogueItem & { deliveryMetadata?: Record<string, unknown> };
+  const metadata = source.deliveryMetadata || {};
   const liveComponent = (module.weekStructure || [])
     .flatMap(week => week.components || [])
     .find(component => ['live-session', 'live_session'].includes(String(component.type || '').toLowerCase()));
@@ -1323,6 +1544,19 @@ function teamsMeetingFromModule(module: CurriculumModule): TeamsMeetingDraft | u
   if (!joinUrl && !eventId) return undefined;
   const attendees = normaliseTeamsEmailList(setting('teamsAttendees'));
   const presenters = normaliseTeamsEmailList(setting('teamsPresenters'));
+  const ownerLocalId = String(setting('wizardModuleLocalId') || '').trim();
+  const ownerSourceId = String(setting('moduleSourceId') || '').trim();
+  const moduleIds = uniqueTextValues([
+    module.id,
+    module.sourceId,
+    source.catalogueId,
+    source.moduleCatalogueId,
+    source.structureId,
+    moduleLocalId,
+  ]);
+  const localOwnerMatches = Boolean(ownerLocalId && moduleLocalId && normalise(ownerLocalId) === normalise(moduleLocalId));
+  const sourceOwnerMatches = Boolean(ownerSourceId && moduleIds.some(id => normalise(id) === normalise(ownerSourceId)));
+  if ((ownerLocalId || ownerSourceId) && !localOwnerMatches && !sourceOwnerMatches) return undefined;
   return {
     liveSessionId: String(setting('teamsLiveSessionId') || ''),
     eventId,
@@ -1344,7 +1578,44 @@ function teamsMeetingFromModule(module: CurriculumModule): TeamsMeetingDraft | u
     requestResponses: metadataBoolean(setting('teamsRequestResponses'), true),
     allowNewTimeProposals: metadataBoolean(setting('teamsAllowTimeProposals'), true),
     hideAttendees: metadataBoolean(setting('teamsHideAttendees'), false),
+    moduleLocalId: ownerLocalId,
+    moduleSourceId: ownerSourceId,
   };
+}
+
+function stripImportedTeamsSettings(settings: ModuleComponent['settings']) {
+  const source = (settings || {}) as Record<string, unknown>;
+  const next = { ...source };
+  [
+    'teamsLiveSessionId',
+    'teamsOnlineMeetingId',
+    'teamsMeetingUrl',
+    'liveSessionUrl',
+    'teamsEventId',
+    'teamsWebLink',
+    'teamsMeetingOptionsUrl',
+    'teamsOrganizerEmail',
+    'teamsAttendees',
+    'teamsPresenters',
+    'teamsProvider',
+    'teamsRepeat',
+    'teamsRepeatOccurrences',
+    'teamsLobbyBypass',
+    'teamsRecording',
+    'teamsSpokenLanguage',
+    'teamsMeetingType',
+    'teamsRequestResponses',
+    'teamsAllowTimeProposals',
+    'teamsHideAttendees',
+    'sessionDateTimeUtc',
+    'sessionDate',
+    'sessionTime',
+    'wizardModuleLocalId',
+    'moduleSourceId',
+  ].forEach(key => {
+    delete next[key];
+  });
+  return next as ModuleComponent['settings'];
 }
 
 function existingModuleDraft(module: CurriculumModule, group: GroupDraft, activeHolidays: CurriculumHoliday[], sourceGroup?: CurriculumGroup): ModuleDraft {
@@ -1376,7 +1647,7 @@ function existingModuleDraft(module: CurriculumModule, group: GroupDraft, active
     skippedHolidaySessions: plan.skippedHolidaySessions,
     originalEndDate: plan.originalEndDate,
     extensionDays: plan.extensionDays,
-    teamsMeeting: teamsMeetingFromModule(module),
+    teamsMeeting: teamsMeetingFromModule(module, localId),
   };
   const structure = actualModuleCatalogueStructure(module);
   return applyModuleBuilderContent(baseDraft, structure, group.deliveryDays.join(', '), group.startTime, activeHolidays);
@@ -1428,8 +1699,12 @@ function buildExistingProgrammeDrafts(
         modules: [],
       };
       const nestedModules = nestedModulesForGroup(group);
+      const referencedModules = modules.filter(module => moduleBelongsToGroup(module, group, cohort, programme));
+      const storedReferenceModules = (!nestedModules.length && !referencedModules.length)
+        ? groupModuleReferenceModules(group, cohort, programme)
+        : [];
       const groupModules = uniqueModulesByName(enrichModulesWithDetailComponents(
-        nestedModules.length ? nestedModules : modules.filter(module => moduleBelongsToGroup(module, group, cohort, programme)),
+        [...nestedModules, ...referencedModules, ...storedReferenceModules],
         components,
       ));
       groupDraft.modules = groupModules.map(module => existingModuleDraft(module, groupDraft, activeHolidays, group));
@@ -1495,6 +1770,7 @@ function cloneModuleDraft(draft: ModuleDraft): ModuleDraft {
         id: wizardCloneId('component'),
         sourceId: undefined,
         moduleId: localId,
+        settings: stripImportedTeamsSettings(component.settings),
       })),
     })),
   };
@@ -1709,7 +1985,7 @@ function programmeTotalHours(cohorts: CohortDraft[], moduleOptions: CurriculumMo
 
 function moduleDraftDisplayName(draft: ModuleDraft, index: number, moduleOptions: CurriculumModule[]) {
   const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
-  return draft.name.trim() || selectedModule?.name || `Module ${index + 1}`;
+  return draft.name.trim() || selectedModule?.name || 'No name yet';
 }
 
 function moduleDraftChipSessionCount(draft: ModuleDraft, moduleOptions: CurriculumModule[]) {
@@ -1811,13 +2087,45 @@ function sameSavedSessionContext(left: TutorSessionSummary, right: TutorSessionS
   const sameCohort = Boolean(left.cohortSourceId && right.cohortSourceId && normalise(left.cohortSourceId) === normalise(right.cohortSourceId));
   const sameGroup = Boolean(left.groupSourceId && right.groupSourceId && normalise(left.groupSourceId) === normalise(right.groupSourceId));
   const sameModule = Boolean(left.moduleSourceId && right.moduleSourceId && normalise(left.moduleSourceId) === normalise(right.moduleSourceId));
-  return sameCohort && sameGroup && sameModule && left.date === right.date && left.startTime === right.startTime;
+  const sameNamedContext = Boolean(
+    normalise(left.programme) && normalise(left.programme) === normalise(right.programme)
+    && normalise(left.cohort) && normalise(left.cohort) === normalise(right.cohort)
+    && normalise(left.group) && normalise(left.group) === normalise(right.group)
+    && normalise(left.module) && normalise(left.module) === normalise(right.module),
+  );
+  const sameModuleSlot = Boolean(
+    sameModule
+    && normalise(left.programmeSourceId || left.programme) === normalise(right.programmeSourceId || right.programme)
+    && left.date === right.date
+    && left.startTime === right.startTime,
+  );
+  return (sameCohort && sameGroup && sameModule || sameNamedContext || sameModuleSlot) && left.date === right.date && left.startTime === right.startTime;
 }
 
 function conflictSessionLabel(session: TutorSessionSummary) {
   const path = [session.programme, session.cohort, session.group].filter(Boolean).join(' / ');
   const title = session.title || `${session.module || 'Session'} ${session.sessionNumber}`;
   return `${title}${path ? ` (${path})` : ''}`;
+}
+
+function tutorConflictSummary(conflict: TutorScheduleConflict) {
+  const proposed = conflict.proposed;
+  const conflicting = conflict.conflicting;
+  return {
+    tutor: conflict.tutor,
+    date: formatSessionDate(proposed.date),
+    time: formatTimeRange(proposed.startTime, proposed.endTime),
+    currentTitle: proposed.title || `${proposed.module || 'This module'} session ${proposed.sessionNumber}`,
+    currentSessionNumber: proposed.sessionNumber,
+    currentProgramme: proposed.programme,
+    currentCohort: proposed.cohort,
+    currentGroup: proposed.group,
+    otherTitle: conflicting.title || `${conflicting.module || 'Another module'} session ${conflicting.sessionNumber}`,
+    otherSessionNumber: conflicting.sessionNumber,
+    otherProgramme: conflicting.programme,
+    otherCohort: conflicting.cohort,
+    otherGroup: conflicting.group,
+  };
 }
 
 function buildTutorConflict(proposed: TutorSessionSummary, conflicting: TutorSessionSummary): TutorScheduleConflict {
@@ -1925,6 +2233,11 @@ function firstTutorConflictForModule(conflicts: TutorScheduleConflict[], moduleL
   return conflicts.find(conflict => conflict.proposed.moduleLocalId === moduleLocalId || conflict.conflicting.moduleLocalId === moduleLocalId);
 }
 
+function tutorConflictBelongsToGroup(conflict: TutorScheduleConflict, groupLocalId?: string) {
+  if (!groupLocalId) return false;
+  return conflict.proposed.groupLocalId === groupLocalId || conflict.conflicting.groupLocalId === groupLocalId;
+}
+
 function moduleModeSwitchPatch(draft: ModuleDraft, nextMode: ModuleMode): Partial<ModuleDraft> {
   if (nextMode === draft.mode) return {};
 
@@ -1937,6 +2250,8 @@ function moduleModeSwitchPatch(draft: ModuleDraft, nextMode: ModuleMode): Partia
       catalogueId: '',
       name: draft.newName || '',
       sessionsNumber: draft.newSessionsNumber || '0',
+      sourceId: undefined,
+      teamsMeeting: undefined,
       weeks: [],
       skippedHolidaySessions: [],
       originalEndDate: '',
@@ -1952,6 +2267,28 @@ function moduleModeSwitchPatch(draft: ModuleDraft, nextMode: ModuleMode): Partia
     catalogueId: draft.existingCatalogueId || '',
     name: draft.existingName || '',
     sessionsNumber: draft.existingSessionsNumber || '0',
+  };
+}
+
+function freshNewModulePatch(draft: ModuleDraft, groupDay: string, groupTime: string): Partial<ModuleDraft> {
+  const fresh = emptyModuleDraft(groupDay, groupTime, []);
+  return {
+    ...fresh,
+    localId: draft.localId,
+    color: draft.color || fresh.color,
+    existingCatalogueId: draft.catalogueId || draft.existingCatalogueId,
+    existingName: draft.name || draft.existingName,
+    existingSessionsNumber: draft.sessionsNumber || draft.existingSessionsNumber,
+    newName: '',
+    newSessionsNumber: '0',
+    sourceId: undefined,
+    catalogueId: '',
+    name: '',
+    sessionsNumber: '0',
+    tutor: '',
+    coach: '',
+    notes: '',
+    teamsMeeting: undefined,
   };
 }
 
@@ -2101,10 +2438,12 @@ function showWizardSwalToast(title: string, text: string, icon: 'success' | 'err
   });
 }
 
-async function confirmDraftRemoval(itemType: 'cohort' | 'group' | 'module', itemName: string, onConfirm: () => void | Promise<void>) {
+async function confirmDraftRemoval(itemType: 'cohort' | 'group' | 'module', itemName: string, onConfirm: () => void | Promise<void>, persistOnUpdate = false) {
   return showCurriculumConfirm({
     title: `Remove ${itemType}?`,
-    text: `${itemName || `This ${itemType}`} will be removed from this draft.`,
+    text: persistOnUpdate
+      ? `${itemName || `This ${itemType}`} will be removed now and deleted from the database when you update the programme.`
+      : `${itemName || `This ${itemType}`} will be removed from this draft.`,
     icon: 'warning',
     confirmButtonText: 'Yes, remove it',
     cancelButtonText: 'Cancel',
@@ -2170,7 +2509,9 @@ function applyModuleBuilderContent(draft: ModuleDraft, structure: ModuleCatalogu
   const structureTutor = staffAssignment(structure.tutor, structure.deliveryMetadata?.tutor, structure.sourceModule?.tutor);
   const structureCoach = staffAssignment(structure.coach, structure.deliveryMetadata?.coach, structure.sourceModule?.coach);
   const sessionsNumber = String(moduleBuilderStructureSessionCount(structure, moduleDraftSessionCount(draft)));
-  const next = reconcileModuleDraft({ ...draft, sessionsNumber }, groupDay, groupTime, activeHolidays);
+  const structureMeeting = teamsMeetingFromModule(structure, draft.localId);
+  const next = reconcileModuleDraft({ ...draft, sessionsNumber, teamsMeeting: draft.teamsMeeting || structureMeeting }, groupDay, groupTime, activeHolidays);
+  const teamsSettings = next.teamsMeeting ? teamsComponentSettings(next.teamsMeeting, next) : null;
   return {
     ...next,
     sessionsNumber,
@@ -2188,6 +2529,15 @@ function applyModuleBuilderContent(draft: ModuleDraft, structure: ModuleCatalogu
           ...component,
           id: `${week.id}-${component.id}`,
           weekId: week.id,
+          settings: component.type === 'live-session' && teamsSettings
+            ? {
+                ...stripImportedTeamsSettings(component.settings),
+                ...teamsSettings,
+                sessionDate: week.date,
+                sessionTime: week.startTime || groupTime || '09:30',
+                sessionDateTimeUtc: new Date(`${week.date}T${week.startTime || groupTime || '09:30'}`).toISOString(),
+              }
+            : stripImportedTeamsSettings(component.settings),
         })),
       };
     }),
@@ -2276,12 +2626,14 @@ function freeProgrammeModuleInput(draft: ModuleDraft, moduleId: string, moduleNa
   };
 }
 
-function teamsComponentSettings(meeting: TeamsMeetingDraft) {
+function teamsComponentSettings(meeting: TeamsMeetingDraft, owner?: Pick<ModuleDraft, 'localId' | 'sourceId' | 'catalogueId'>) {
   return {
     teamsLiveSessionId: meeting.liveSessionId,
     teamsOnlineMeetingId: meeting.onlineMeetingId,
+    teamsMeetingUrl: meeting.joinUrl || meeting.webLink,
     liveSessionUrl: meeting.joinUrl || meeting.webLink,
     teamsEventId: meeting.eventId,
+    teamsWebLink: meeting.webLink,
     teamsMeetingOptionsUrl: meeting.meetingOptionsUrl,
     teamsOrganizerEmail: meeting.organizerEmail,
     teamsAttendees: meeting.attendees,
@@ -2298,6 +2650,8 @@ function teamsComponentSettings(meeting: TeamsMeetingDraft) {
     teamsRequestResponses: meeting.requestResponses,
     teamsAllowTimeProposals: meeting.allowNewTimeProposals,
     teamsHideAttendees: meeting.hideAttendees,
+    wizardModuleLocalId: owner?.localId || meeting.moduleLocalId || '',
+    moduleSourceId: owner?.sourceId || owner?.catalogueId || meeting.moduleSourceId || '',
   };
 }
 
@@ -2339,8 +2693,8 @@ function moduleDraftAuthoringPayload(
       points: Number(component.points) || 0,
       ksbMappings: component.ksbMappings || [],
       settings: component.type === 'live-session' && draft.teamsMeeting
-        ? { ...(component.settings || {}), ...teamsComponentSettings(draft.teamsMeeting) }
-        : component.settings || {},
+        ? { ...stripImportedTeamsSettings(component.settings), ...teamsComponentSettings(draft.teamsMeeting, draft) }
+        : stripImportedTeamsSettings(component.settings),
     })),
   }));
 
@@ -2409,6 +2763,8 @@ function moduleDraftAuthoringPayload(
         teamsRequestResponses: String(draft.teamsMeeting.requestResponses),
         teamsAllowTimeProposals: String(draft.teamsMeeting.allowNewTimeProposals),
         teamsHideAttendees: String(draft.teamsMeeting.hideAttendees),
+        wizardModuleLocalId: draft.localId,
+        moduleSourceId: draft.sourceId || catalogueId || '',
       } : {}),
     },
   });
@@ -2484,16 +2840,19 @@ export function AddCurriculumStructureWizard({
   initialProgramme,
   initialCohortId,
   initialGroupId,
+  initialModuleId,
   startStep = 'programme',
   modulePlacementMode = false,
 }: AddCurriculumStructureWizardProps) {
-  // useCurriculumData already fetches the full /curriculum/modules/ list when
-  // refreshModules is set, so the wizard does not mount a second modules loader:
-  // both hooks requested the identical URL and each carried its own abort signal,
-  // which made them un-shareable and doubled the payload on every open.
-  const { data, loading, error, reload } = useCurriculumData({ autoLoad: isOpen, compact: true, includeHolidays: true, refreshModules: true });
-  const catalogueModules = useMemo(() => data?.modules ?? [], [data?.modules]);
-  const { tutors: staffTutors, coaches: staffCoaches, loading: staffLoading, reload: reloadStaffProfiles } = useCurriculumStaffProfiles({ autoLoad: false });
+  // Load only programmes and holidays immediately when wizard opens.
+  // Modules, staff, and programme detail are lazy-loaded via useCurriculumWizardData
+  // based on which step the user reaches, reducing initial payload.
+  const { data, loading, error, reload } = useCurriculumData({
+    autoLoad: isOpen,
+    compact: true,
+    includeHolidays: true,
+    refreshModules: false, // disabled: loaded via lazy hook instead
+  });
   const [step, setStep] = useState<WizardStep>(startStep);
   const [programmeForm, setProgrammeForm] = useState({
     name: '',
@@ -2512,7 +2871,22 @@ export function AddCurriculumStructureWizard({
   const [programmeDetailLoading, setProgrammeDetailLoading] = useState(false);
   const [programmeDetailFailed, setProgrammeDetailFailed] = useState(false);
   const [chosenProgrammeId, setChosenProgrammeId] = useState('');
+
+  // Lazy-loading hook coordinates step-based data loading
+  const wizardLazyData = useCurriculumWizardData({
+    isOpen,
+    currentStep: step,
+    selectedProgrammeId: chosenProgrammeId || initialProgrammeId,
+  });
+
+  const catalogueModules = useMemo(() => {
+    // Prefer lazy-loaded modules (when modules step reached), fall back to empty
+    return wizardLazyData.modules?.data ?? [];
+  }, [wizardLazyData.modules?.data]);
   const [cohortDrafts, setCohortDrafts] = useState<CohortDraft[]>([]);
+  const [removedCohortIds, setRemovedCohortIds] = useState<string[]>([]);
+  const [removedGroupIds, setRemovedGroupIds] = useState<string[]>([]);
+  const [removedModuleIds, setRemovedModuleIds] = useState<string[]>([]);
   const [activeCohortId, setActiveCohortId] = useState('');
   const [expandedCohortId, setExpandedCohortId] = useState('');
   const [activeGroupId, setActiveGroupId] = useState('');
@@ -2545,8 +2919,10 @@ export function AddCurriculumStructureWizard({
   const loadingBuilderStructureKeysRef = useRef<Set<string>>(new Set());
   const loadedFreeProgrammeRef = useRef('');
   const openedDraftSnapshotRef = useRef('');
+  const baselineInitializedRef = useRef(false);
+  const preHydrationDirtyRef = useRef(false);
   const userEditedWizardRef = useRef(false);
-  const requestedStaffProfilesRef = useRef(false);
+  const focusedInitialModuleRef = useRef('');
 
   const programmes = useMemo(() => data?.programmes ?? [], [data?.programmes]);
   const selectedProgramme = useMemo(
@@ -2808,13 +3184,8 @@ export function AddCurriculumStructureWizard({
     void reload();
   }, [reload, shouldLoadCatalogueModules]);
 
-  useEffect(() => {
-    if (!isOpen || isFreeProgramme || requestedStaffProfilesRef.current) return;
-    if (!['group', 'modules', 'weeks', 'review'].includes(step)) return;
-    requestedStaffProfilesRef.current = true;
-    void reloadStaffProfiles({ silent: true });
-    return undefined;
-  }, [isFreeProgramme, isOpen, reloadStaffProfiles, step]);
+  // Staff profiles are loaded automatically by useCurriculumWizardData on modules step
+  // No manual reload needed
 
   useEffect(() => {
     if (!isOpen || isFreeProgramme || !['weeks', 'review'].includes(step)) return;
@@ -2877,9 +3248,18 @@ export function AddCurriculumStructureWizard({
     if (!isOpen || !discardConfirmOpen) return;
 
     let active = true;
+    const hasDeletions = removedCohortIds.length > 0 || removedGroupIds.length > 0 || removedModuleIds.length > 0;
+    const deletionList = [
+      removedCohortIds.length > 0 && `${removedCohortIds.length} cohort${removedCohortIds.length === 1 ? '' : 's'}`,
+      removedGroupIds.length > 0 && `${removedGroupIds.length} group${removedGroupIds.length === 1 ? '' : 's'}`,
+      removedModuleIds.length > 0 && `${removedModuleIds.length} module${removedModuleIds.length === 1 ? '' : 's'}`,
+    ].filter(Boolean).join(', ');
+    const text = hasDeletions
+      ? `Closing now will discard the programme structure and delete ${deletionList} from the database.`
+      : 'Closing now will discard the programme structure in this wizard.';
     showCurriculumConfirm({
       title: 'Discard unsaved changes?',
-      text: 'Closing now will discard the programme structure in this wizard.',
+      text,
       icon: 'warning',
       confirmButtonText: 'Discard changes',
       cancelButtonText: 'Keep editing',
@@ -2893,7 +3273,7 @@ export function AddCurriculumStructureWizard({
     return () => {
       active = false;
     };
-  }, [discardConfirmOpen, isOpen, onClose]);
+  }, [discardConfirmOpen, isOpen, onClose, removedCohortIds, removedGroupIds, removedModuleIds]);
 
   const cohortHolidayPlan = useMemo(
     () => buildHolidayAdjustedCohortPlan(cohortForm.startDate, cohortForm.durationMonths, activeHolidays),
@@ -2903,6 +3283,15 @@ export function AddCurriculumStructureWizard({
   const activeGroupCoachConflict = useMemo(
     () => groupCoachScheduleConflict(cohortDrafts, activeGroup.localId, data?.groups || []),
     [activeGroup.localId, cohortDrafts, data?.groups],
+  );
+  // Get staff profiles from lazy hook instead of eager hook
+  const staffTutors = useMemo(
+    () => wizardLazyData.staffProfiles?.data?.tutors ?? [],
+    [wizardLazyData.staffProfiles?.data?.tutors],
+  );
+  const staffCoaches = useMemo(
+    () => wizardLazyData.staffProfiles?.data?.coaches ?? [],
+    [wizardLazyData.staffProfiles?.data?.coaches],
   );
   const tutors = uniqueStaffNames(staffTutors.map(staffName));
   const coaches = uniqueStaffNames(staffCoaches.map(staffName));
@@ -2940,11 +3329,40 @@ export function AddCurriculumStructureWizard({
     if (isFreeProgramme) return [];
     return tutorScheduleConflicts.map(conflict => conflict.message);
   }, [isFreeProgramme, tutorScheduleConflicts]);
+  const activeGroupTutorScheduleConflicts = useMemo(() => {
+    if (isFreeProgramme) return [];
+    return tutorScheduleConflicts.filter(conflict => tutorConflictBelongsToGroup(conflict, activeGroup.localId));
+  }, [activeGroup.localId, isFreeProgramme, tutorScheduleConflicts]);
+  const activeGroupTutorScheduleIssues = useMemo(() => (
+    isFreeProgramme ? [] : activeGroupTutorScheduleConflicts.map(conflict => conflict.message)
+  ), [activeGroupTutorScheduleConflicts, isFreeProgramme]);
 
   const setCohortForm = (updater: Partial<CohortDraft> | ((previous: CohortDraft) => CohortDraft)) => {
     setCohortDrafts(previous => previous.map(cohort => {
       if (cohort.localId !== activeCohort.localId) return cohort;
       return typeof updater === 'function' ? updater(cohort) : { ...cohort, ...updater };
+    }));
+  };
+
+  const setCohortStartDate = (startDate: string) => {
+    setCohortDrafts(previous => previous.map(cohort => {
+      if (cohort.localId !== activeCohort.localId) return cohort;
+      return {
+        ...cohort,
+        startDate,
+        groups: cohort.groups.map(group => ({
+          ...group,
+          modules: group.modules.map(draft => {
+            if (!startDate || !draft.startDate || compareDateInputs(draft.startDate, startDate) >= 0) return draft;
+            return reconcileModuleDraft(
+              { ...draft, startDate },
+              group.deliveryDays.join(', '),
+              group.startTime,
+              activeHolidays,
+            );
+          }),
+        })),
+      };
     }));
   };
 
@@ -3015,6 +3433,13 @@ export function AddCurriculumStructureWizard({
       const nextDrafts = cohortDrafts.filter(cohort => cohort.localId !== id);
       const fallback = nextDrafts[Math.min(Math.max(removeIndex, 0), Math.max(nextDrafts.length - 1, 0))] || nextDrafts[0];
       setCohortDrafts(nextDrafts);
+      if (target.sourceId) {
+        setRemovedCohortIds(previous => uniqueTextValues([...previous, target.sourceId]));
+      }
+      const removedGroupSourceIds = target.groups.map(group => group.sourceId).filter(Boolean);
+      if (removedGroupSourceIds.length) {
+        setRemovedGroupIds(previous => uniqueTextValues([...previous, ...removedGroupSourceIds]));
+      }
       if (activeCohortId === id) setActiveCohortId(fallback?.localId || '');
       if (expandedCohortId === id) setExpandedCohortId('');
       if (!fallback || activeCohortId === id) {
@@ -3024,7 +3449,7 @@ export function AddCurriculumStructureWizard({
         setExpandedModuleId('');
       }
       if (!nextDrafts.length && step !== 'cohort') setStep('cohort');
-    });
+    }, Boolean(target.sourceId));
     setRemovingDraftId('');
   };
 
@@ -3064,11 +3489,14 @@ export function AddCurriculumStructureWizard({
       setCohortDrafts(previous => previous.map(cohort => (
         cohort.localId === activeCohort.localId ? { ...cohort, groups: nextGroups } : cohort
       )));
+      if (target.sourceId) {
+        setRemovedGroupIds(previous => uniqueTextValues([...previous, target.sourceId]));
+      }
       if (activeGroupId === id) setActiveGroupId(fallback?.localId || '');
       if (expandedGroupId === id) setExpandedGroupId('');
       if (activeGroupId === id) setActiveModuleId(fallback?.modules[0]?.localId || '');
       if (expandedGroupId === id) setExpandedModuleId('');
-    });
+    }, Boolean(target.sourceId));
     setRemovingDraftId('');
   };
 
@@ -3113,6 +3541,9 @@ export function AddCurriculumStructureWizard({
       const nextDrafts = moduleDrafts.filter(draft => draft.localId !== id);
       const fallback = nextDrafts[Math.min(Math.max(removeIndex, 0), Math.max(nextDrafts.length - 1, 0))] || nextDrafts[0];
       setModuleDrafts(nextDrafts);
+      if (target.sourceId) {
+        setRemovedModuleIds(previous => uniqueTextValues([...previous, target.sourceId]));
+      }
       if (activeModuleId === id) setActiveModuleId(fallback?.localId || '');
       if (expandedModuleId === id) setExpandedModuleId('');
     });
@@ -3160,32 +3591,41 @@ export function AddCurriculumStructureWizard({
 
   const stepIndex = Math.max(0, visibleSteps.findIndex(item => item.key === step));
   const hasAnyModuleDraft = cohortDrafts.some(cohort => cohort.groups.some(group => group.modules.length > 0));
+  const moduleIssuesForScope = (groupLocalId?: string) => (
+    isFreeProgramme && !hasAnyModuleDraft
+      ? ['Add at least one module.']
+      : cohortDrafts.flatMap((cohort, cohortIndex) => cohort.groups.flatMap((group, groupIndex) => {
+          if (groupLocalId && group.localId !== groupLocalId) return [];
+          const cohortLabel = validationCohortLabel(cohort, cohortIndex);
+          const groupLabel = validationGroupLabel(group, groupIndex);
+          if (!group.modules.length) return [isFreeProgramme ? 'Add at least one module.' : `${cohortLabel}, ${groupLabel}: add at least one module.`];
+          return group.modules.flatMap((draft, index) => {
+            const label = isFreeProgramme ? `Module ${index + 1}` : `${cohortLabel}, ${groupLabel}, Module ${index + 1}`;
+            const selectedModule = findModuleOption(moduleOptions, draft.catalogueId);
+            const issues = [];
+            if (draft.mode === 'existing' && !draft.catalogueId && !draft.name.trim()) issues.push(`${label}: choose an existing module.`);
+            if (draft.mode === 'new' && !draft.name.trim()) issues.push(`${label}: enter a module name.`);
+            if (!isFreeProgramme) {
+              if (!draft.startDate) issues.push(`${label}: choose a start date.`);
+              if (draft.startDate && cohort.startDate && compareDateInputs(draft.startDate, cohort.startDate) < 0) {
+                issues.push(`${label}: start date cannot be before the cohort start date (${formatDateValue(cohort.startDate)}).`);
+              }
+              if (moduleDraftSessionCount(draft, selectedModule) < 1) issues.push(`${label}: set at least one session.`);
+              if (!draft.weeks.length) issues.push(`${label}: no sessions could be generated for the selected delivery days.`);
+            }
+            return issues;
+          });
+        }))
+  );
+  const moduleIssuesWithoutTutorConflicts = moduleIssuesForScope();
+  const activeGroupModuleIssuesWithoutTutorConflicts = moduleIssuesForScope(activeGroup.localId);
   const moduleIssues = [
-    ...(isFreeProgramme && !hasAnyModuleDraft ? ['Add at least one module.'] : cohortDrafts.flatMap((cohort, cohortIndex) => cohort.groups.flatMap((group, groupIndex) => {
-    const cohortLabel = validationCohortLabel(cohort, cohortIndex);
-    const groupLabel = validationGroupLabel(group, groupIndex);
-    if (!group.modules.length) return [isFreeProgramme ? 'Add at least one module.' : `${cohortLabel}, ${groupLabel}: add at least one module.`];
-    return group.modules.flatMap((draft, index) => {
-      const label = isFreeProgramme ? `Module ${index + 1}` : `${cohortLabel}, ${groupLabel}, Module ${index + 1}`;
-      const selectedModule = findModuleOption(moduleOptions, draft.catalogueId);
-      const issues = [];
-      if (draft.mode === 'existing' && !draft.catalogueId && !draft.name.trim()) issues.push(`${label}: choose an existing module.`);
-      if (draft.mode === 'new' && !draft.name.trim()) issues.push(`${label}: enter a module name.`);
-      if (!isFreeProgramme) {
-        if (!draft.startDate) issues.push(`${label}: choose a start date.`);
-        if (draft.startDate && cohort.startDate && compareDateInputs(draft.startDate, cohort.startDate) < 0) {
-          issues.push(`${label}: start date cannot be before the cohort start date (${cohort.startDate}).`);
-        }
-        if (draft.startDate && cohort.endDate && compareDateInputs(draft.startDate, cohort.endDate) > 0) {
-          issues.push(`${label}: start date cannot be after the cohort end date (${cohort.endDate}).`);
-        }
-        if (moduleDraftSessionCount(draft, selectedModule) < 1) issues.push(`${label}: set at least one session.`);
-        if (!draft.weeks.length) issues.push(`${label}: no sessions could be generated for the selected delivery days.`);
-      }
-      return issues;
-    });
-    }))),
+    ...moduleIssuesWithoutTutorConflicts,
     ...tutorScheduleIssues,
+  ];
+  const activeStepModuleIssues = [
+    ...activeGroupModuleIssuesWithoutTutorConflicts,
+    ...activeGroupTutorScheduleIssues,
   ];
 
   const validation = {
@@ -3220,7 +3660,7 @@ export function AddCurriculumStructureWizard({
     step === 'programme' ? validation.programme.length === 0 :
     step === 'cohort' ? validation.cohort.length === 0 :
     step === 'group' ? validation.group.length === 0 :
-    step === 'modules' ? validation.modules.length === 0 :
+    step === 'modules' ? activeStepModuleIssues.length === 0 :
     true
   );
   const canSave = validation.programme.length === 0 && validation.cohort.length === 0 && validation.group.length === 0 && validation.modules.length === 0;
@@ -3230,16 +3670,27 @@ export function AddCurriculumStructureWizard({
   const reviewModulesForSave = reviewGroupsForSave.flatMap(group => group.modules.filter(isConfiguredModule));
   const reviewComponentsForSave = reviewModulesForSave.reduce((total, draft) => total + moduleDraftDisplayComponentCount(draft, isFreeProgramme), 0);
   const reviewSaveSummary = `${reviewModulesForSave.length} modules - ${reviewComponentsForSave} components`;
+  const currentDraftSnapshot = wizardDraftSnapshot(programmeForm, ksbSourceKind, ksbSourceValue, cohortDrafts, removedCohortIds, removedGroupIds, removedModuleIds);
+  const hasUnsavedChanges = Boolean(
+    preHydrationDirtyRef.current
+    || (userEditedWizardRef.current
+      && openedDraftSnapshotRef.current
+      && openedDraftSnapshotRef.current !== currentDraftSnapshot),
+  );
   const currentStepMeta = visibleSteps[stepIndex] || visibleSteps[0];
   const nextStepMeta = visibleSteps[Math.min(stepIndex + 1, visibleSteps.length - 1)] || visibleSteps[visibleSteps.length - 1];
   const currentValidationItems = (
     step === 'programme' ? validation.programme :
     step === 'cohort' ? validation.cohort :
     step === 'group' ? validation.group :
-    step === 'modules' ? validation.modules :
+    step === 'modules' ? activeStepModuleIssues :
     []
   );
-  const footerBlocker = !canContinue && currentValidationItems.length ? currentValidationItems[0] : '';
+  const footerBlocker = !canContinue && currentValidationItems.length
+    ? step === 'modules' && activeGroupTutorScheduleIssues.length && !activeGroupModuleIssuesWithoutTutorConflicts.length
+      ? ''
+      : currentValidationItems[0]
+    : '';
   const stepInstruction = isFreeProgramme && step === 'programme'
     ? 'Choose the course type, then continue to custom modules.'
     : step === 'review'
@@ -3269,6 +3720,9 @@ export function AddCurriculumStructureWizard({
     setProgrammeDetailFailed(false);
     setChosenProgrammeId('');
     setCohortDrafts([]);
+    setRemovedCohortIds([]);
+    setRemovedGroupIds([]);
+    setRemovedModuleIds([]);
     setActiveCohortId('');
     setExpandedCohortId('');
     setActiveGroupId('');
@@ -3287,9 +3741,11 @@ export function AddCurriculumStructureWizard({
     setBuilderStructureFailedDraftIds(new Set());
     loadedFreeProgrammeRef.current = '';
     openedDraftSnapshotRef.current = '';
+    baselineInitializedRef.current = false;
+    preHydrationDirtyRef.current = false;
     userEditedWizardRef.current = false;
-    requestedStaffProfilesRef.current = false;
-  }, [initialProgrammeId, isOpen, startStep]);
+    focusedInitialModuleRef.current = '';
+  }, [initialModuleId, initialProgrammeId, isOpen, startStep]);
 
   const chooseExistingProgramme = (programme: CurriculumProgramme) => {
     const programmeId = programme.sourceId || programme.id;
@@ -3304,6 +3760,9 @@ export function AddCurriculumStructureWizard({
     });
     setMessage(null);
     setCohortDrafts([]);
+    setRemovedCohortIds([]);
+    setRemovedGroupIds([]);
+    setRemovedModuleIds([]);
     setActiveCohortId('');
     setExpandedCohortId('');
     setActiveGroupId('');
@@ -3322,30 +3781,19 @@ export function AddCurriculumStructureWizard({
     setBuilderStructureFailedDraftIds(new Set());
     loadedFreeProgrammeRef.current = '';
     openedDraftSnapshotRef.current = '';
-    userEditedWizardRef.current = true;
+    baselineInitializedRef.current = false;
+    preHydrationDirtyRef.current = false;
+    userEditedWizardRef.current = false;
   };
 
+  // Wire KSB options from lazy-loading hook into component state
   useEffect(() => {
-    if (!isOpen) return;
-    const controller = new AbortController();
-    setKsbSourcesLoading(true);
-    Promise.all([
-      fetchCurriculumKsbSets(controller.signal),
-      fetchCurriculumStandards(controller.signal),
-    ])
-      .then(([nextKsbSets, nextStandards]) => {
-        setKsbSets(nextKsbSets);
-        setStandards(nextStandards);
-      })
-      .catch(error => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        console.warn('Unable to load KSB sources.', error);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setKsbSourcesLoading(false);
-      });
-    return () => controller.abort();
-  }, [isOpen]);
+    if (wizardLazyData.ksbOptions) {
+      setKsbSets(wizardLazyData.ksbOptions.data?.sets ?? []);
+      setStandards(wizardLazyData.ksbOptions.data?.standards ?? []);
+      setKsbSourcesLoading(wizardLazyData.ksbOptions.loading);
+    }
+  }, [wizardLazyData.ksbOptions]);
 
   useEffect(() => {
     if (!isOpen || !selectedProgramme) return;
@@ -3423,54 +3871,59 @@ export function AddCurriculumStructureWizard({
     if (!availableSteps.some(item => item.key === step)) setStep(availableSteps[0].key);
   }, [step, visibleSteps]);
 
+  // Wire programme detail from lazy-loading hook into component state
   useEffect(() => {
-    if (!isOpen || !selectedProgramme || isFreeProgramme) {
+    if (!selectedProgramme || isFreeProgramme) {
       setProgrammeDetail(null);
       setProgrammeDetailLoading(false);
       setProgrammeDetailFailed(false);
       return;
     }
-    const programmeId = selectedProgramme.sourceId || selectedProgramme.id || '';
-    if (!programmeId) return;
-
-    let active = true;
-    const controller = new AbortController();
-    setProgrammeDetail(null);
-    setProgrammeDetailFailed(false);
-    setProgrammeDetailLoading(true);
-    fetchCurriculumProgrammeDetail(programmeId, controller.signal)
-      .then(detail => {
-        if (!active) return;
-        setProgrammeDetail(detail);
-      })
-      .catch(error => {
-        if (error instanceof DOMException && error.name === 'AbortError') return;
-        console.warn('Unable to load programme detail for editing.', error);
-        if (active) setProgrammeDetailFailed(true);
-      })
-      .finally(() => {
-        if (active) setProgrammeDetailLoading(false);
-      });
-
-    return () => {
-      active = false;
-      controller.abort();
-    };
-  }, [isFreeProgramme, isOpen, selectedProgramme]);
+    if (wizardLazyData.programmeDetail) {
+      setProgrammeDetail(wizardLazyData.programmeDetail.data);
+      setProgrammeDetailLoading(wizardLazyData.programmeDetail.loading);
+      setProgrammeDetailFailed(Boolean(wizardLazyData.programmeDetail.error));
+    }
+  }, [isFreeProgramme, selectedProgramme, wizardLazyData.programmeDetail]);
 
   useEffect(() => {
-    if (!isOpen || !data || !selectedProgramme || loading || cohortDrafts.length || hydratedProgrammeRef.current) return;
-    if (!isFreeProgramme && programmeDetailLoading) return;
-    if (!isFreeProgramme && !programmeDetail && !programmeDetailFailed) return;
+    const hydratedProgrammeKey = selectedProgramme
+      ? (selectedProgramme.id || selectedProgramme.sourceId || selectedProgramme.name)
+      : '';
+    const compactHydrationKey = `${hydratedProgrammeKey}:compact`;
+    const compactModulesHydrationKey = `${hydratedProgrammeKey}:compact-modules`;
+    const canReplaceCompactHydration = Boolean(
+      !userEditedWizardRef.current
+      && (
+        (hydratedProgrammeRef.current === compactHydrationKey && (programmeDetail || (step === 'modules' && moduleOptions.length > 0)))
+        || (hydratedProgrammeRef.current === compactModulesHydrationKey && programmeDetail)
+      )
+    );
+    if (!isOpen || !data || !selectedProgramme || loading) return;
+    if (cohortDrafts.length && !canReplaceCompactHydration) return;
+    if (hydratedProgrammeRef.current && !canReplaceCompactHydration) return;
+    const allowCompactHydration = canReplaceCompactHydration || (step === 'modules' && Boolean(initialModuleId));
+    const allowFastCohortHydration = !isFreeProgramme
+      && !programmeDetail
+      && !programmeDetailFailed
+      && programmeDetailLoading
+      && step === 'cohort'
+      && ((data.cohorts || []).length > 0 || (data.groups || []).length > 0);
+    if (!isFreeProgramme && programmeDetailLoading && !allowCompactHydration && !allowFastCohortHydration) return;
+    if (!isFreeProgramme && !programmeDetail && !programmeDetailFailed && !allowCompactHydration && !allowFastCohortHydration) return;
     const detailCohorts = programmeDetail?.cohorts || [];
     const detailFlat = programmeDetail?.flat;
+    const flatGroups = ((detailFlat?.groups || data.groups || []).filter((group): group is CurriculumGroup => Boolean(group && typeof group === 'object')));
+    const flatModules = ((detailFlat?.modules || modules).filter((module): module is CurriculumModule => Boolean(module && typeof module === 'object')));
+    const nestedGroups = detailCohorts.flatMap(cohort => nestedGroupsForCohort(cohort));
+    const nestedModules = nestedGroups.flatMap(group => nestedModulesForGroup(group));
     const sourceCohorts = detailCohorts.length ? detailCohorts : (detailFlat?.cohorts || data.cohorts || []);
     const sourceGroups: CurriculumGroup[] = detailCohorts.length
-      ? detailCohorts.flatMap(cohort => nestedGroupsForCohort(cohort))
-      : ((detailFlat?.groups || data.groups || []).filter((group): group is CurriculumGroup => Boolean(group && typeof group === 'object')));
+      ? uniqueGroupsByIdentity([...nestedGroups, ...flatGroups])
+      : flatGroups;
     const sourceModules: CurriculumModule[] = detailCohorts.length
-      ? detailCohorts.flatMap(cohort => nestedGroupsForCohort(cohort).flatMap(group => nestedModulesForGroup(group)))
-      : ((detailFlat?.modules || modules).filter((module): module is CurriculumModule => Boolean(module && typeof module === 'object')));
+      ? [...nestedModules, ...flatModules]
+      : flatModules;
     const detailComponents = detailFlat?.components || [];
     const existingDrafts = buildExistingProgrammeDrafts(
       programmeDetail?.programme || selectedProgramme,
@@ -3483,7 +3936,7 @@ export function AddCurriculumStructureWizard({
       detailComponents,
     );
 
-    hydratedProgrammeRef.current = selectedProgramme.id || selectedProgramme.sourceId || selectedProgramme.name;
+    hydratedProgrammeRef.current = `${hydratedProgrammeKey}:${programmeDetail ? 'detail' : moduleOptions.length ? 'compact-modules' : 'compact'}`;
     hydratedCohortIdsRef.current = new Set(existingDrafts
       .map(cohort => cohort.sourceId)
       .filter((id): id is string => isCanonicalCurriculumId(id, 'COHORT')));
@@ -3494,7 +3947,11 @@ export function AddCurriculumStructureWizard({
       cohort.groups.forEach(group => {
         group.modules.forEach(draft => {
           const identifier = moduleBuilderStructureIdentifierForDraft(draft, moduleOptions);
-          if (identifier && moduleDraftDisplayComponentCount(draft, false) > 0) {
+          if (
+            identifier
+            && moduleDraftDisplayComponentCount(draft, false) > 0
+            && (draft.teamsMeeting || !moduleDraftHasLiveSessionComponent(draft))
+          ) {
             loadedBuilderStructureKeysRef.current.add(`${draft.localId}:${identifier}`);
           }
         });
@@ -3506,8 +3963,16 @@ export function AddCurriculumStructureWizard({
       setProgrammeForm(previous => ({ ...previous, structureType: 'free' }));
     }
 
-    const firstCohort = existingDrafts[0];
-    const firstGroup = firstCohort.groups[0];
+    const previousActiveCohortSourceId = cohortDrafts.find(cohort => cohort.localId === activeCohortId)?.sourceId;
+    const previousActiveGroupSourceId = cohortDrafts
+      .flatMap(cohort => cohort.groups)
+      .find(group => group.localId === activeGroupId)?.sourceId;
+    const firstCohort = existingDrafts.find(cohort => (
+      previousActiveCohortSourceId && cohort.sourceId === previousActiveCohortSourceId
+    )) || existingDrafts[0];
+    const firstGroup = firstCohort.groups.find(group => (
+      previousActiveGroupSourceId && group.sourceId === previousActiveGroupSourceId
+    )) || firstCohort.groups[0];
     setCohortDrafts(existingDrafts);
     setActiveCohortId(firstCohort.localId);
     setExpandedCohortId('');
@@ -3515,15 +3980,113 @@ export function AddCurriculumStructureWizard({
     setExpandedGroupId('');
     setActiveModuleId('');
     setExpandedModuleId('');
-  }, [cohortDrafts.length, data, holidays, initialCohortId, initialGroupId, isFreeProgramme, isOpen, loading, moduleOptions, modules, programmeDetail, programmeDetailFailed, programmeDetailLoading, selectedProgramme]);
+  }, [cohortDrafts.length, data, holidays, initialCohortId, initialGroupId, initialModuleId, isFreeProgramme, isOpen, loading, moduleOptions, modules, programmeDetail, programmeDetailFailed, programmeDetailLoading, selectedProgramme, step]);
 
   useEffect(() => {
-    if (!isOpen || openedDraftSnapshotRef.current) return;
+    if (!isOpen || isFreeProgramme || !selectedProgramme || !programmeDetail || !cohortDrafts.length) return;
+    const detailFlat = programmeDetail.flat;
+    const detailCohorts = programmeDetail.cohorts || [];
+    const detailGroups = uniqueGroupsByIdentity([
+      ...detailCohorts.flatMap(cohort => nestedGroupsForCohort(cohort)),
+      ...((detailFlat?.groups || []).filter((group): group is CurriculumGroup => Boolean(group && typeof group === 'object'))),
+    ]);
+    const detailModules = enrichModulesWithDetailComponents([
+      ...detailGroups.flatMap(group => nestedModulesForGroup(group)),
+      ...((detailFlat?.modules || []).filter((module): module is CurriculumModule => Boolean(module && typeof module === 'object'))),
+    ], detailFlat?.components || []);
+    if (!detailGroups.length || !detailModules.length) return;
+
+    const detailGroupModules = new Map<string, ModuleDraft[]>();
+    detailCohorts.forEach(cohort => {
+      detailGroups
+        .filter(group => groupBelongsToCohort(group, cohort))
+        .forEach(group => {
+          const times = scheduleTimes(group.schedule);
+          const draftGroup: GroupDraft = {
+            localId: `group-detail-${group.id}`,
+            sourceId: group.id,
+            name: group.name || '',
+            coach: staffAssignment(group.coach),
+            deliveryDays: scheduleDeliveryDays(group.schedule),
+            startTime: times.startTime,
+            endTime: times.endTime,
+            color: String((group as { color?: string }).color || '#334155'),
+            modules: [],
+          };
+          const activeHolidays = holidays.filter(holiday => (cohort.holidayIds || []).map(String).includes(holidayId(holiday)));
+          const groupModules = uniqueModulesByName([
+            ...nestedModulesForGroup(group),
+            ...detailModules.filter(module => moduleBelongsToGroup(module, group, cohort, programmeDetail.programme || selectedProgramme)),
+          ]);
+          if (group.id && groupModules.length) {
+            detailGroupModules.set(group.id, groupModules.map(module => existingModuleDraft(module, draftGroup, activeHolidays, group)));
+          }
+        });
+    });
+    if (!detailGroupModules.size) return;
+
+    setCohortDrafts(previous => {
+      let changed = false;
+      const next = previous.map(cohort => ({
+        ...cohort,
+        groups: cohort.groups.map(group => {
+          if (!group.sourceId || group.modules.some(isConfiguredModule)) return group;
+          const modulesForGroup = detailGroupModules.get(group.sourceId);
+          if (!modulesForGroup?.length) return group;
+          changed = true;
+          return { ...group, modules: modulesForGroup };
+        }),
+      }));
+      return changed ? next : previous;
+    });
+  }, [cohortDrafts.length, holidays, isFreeProgramme, isOpen, programmeDetail, selectedProgramme]);
+
+  useEffect(() => {
+    const target = String(initialModuleId || '').trim();
+    if (!isOpen || !target || !cohortDrafts.length) return;
+    if (focusedInitialModuleRef.current === target) return;
+
+    const normalisedTarget = normalise(target);
+    for (const cohort of cohortDrafts) {
+      for (const group of cohort.groups) {
+        for (const draft of group.modules) {
+          const identifiers = uniqueTextValues([
+            draft.localId,
+            draft.catalogueId,
+            draft.existingCatalogueId,
+            draft.sourceId,
+            draft.name,
+            draft.existingName,
+            ...moduleBuilderStructureIdentifiersForDraft(draft, moduleOptions),
+          ]);
+          if (!identifiers.some(identifier => normalise(identifier) === normalisedTarget)) continue;
+          focusedInitialModuleRef.current = target;
+          setActiveCohortId(cohort.localId);
+          setExpandedCohortId('');
+          setActiveGroupId(group.localId);
+          setExpandedGroupId('');
+          setActiveModuleId(draft.localId);
+          setExpandedModuleId(draft.localId);
+          if (step !== 'modules') setStep('modules');
+          return;
+        }
+      }
+    }
+  }, [cohortDrafts, initialModuleId, isOpen, moduleOptions, step]);
+
+  useEffect(() => {
+    if (!isOpen) return;
     if (selectedProgramme) {
       if (loading || ksbSourcesLoading || !programmeForm.name.trim()) return;
-      if (!isFreeProgramme && !hydratedProgrammeRef.current) return;
+      if (!isFreeProgramme && !hydratedProgrammeRef.current) {
+        preHydrationDirtyRef.current = true;
+        return;
+      }
     }
-    openedDraftSnapshotRef.current = wizardDraftSnapshot(programmeForm, ksbSourceKind, ksbSourceValue, cohortDrafts);
+    if (!baselineInitializedRef.current) {
+      baselineInitializedRef.current = true;
+      openedDraftSnapshotRef.current = wizardDraftSnapshot(programmeForm, ksbSourceKind, ksbSourceValue, cohortDrafts, removedCohortIds, removedGroupIds, removedModuleIds);
+    }
   }, [
     cohortDrafts,
     isFreeProgramme,
@@ -3533,6 +4096,9 @@ export function AddCurriculumStructureWizard({
     ksbSourcesLoading,
     loading,
     programmeForm,
+    removedCohortIds,
+    removedGroupIds,
+    removedModuleIds,
     selectedProgramme,
   ]);
 
@@ -3823,9 +4389,8 @@ export function AddCurriculumStructureWizard({
 
   const requestClose = () => {
     if (saving) return;
-    const currentSnapshot = wizardDraftSnapshot(programmeForm, ksbSourceKind, ksbSourceValue, cohortDrafts);
-    const hasUnsavedChanges = Boolean(userEditedWizardRef.current && openedDraftSnapshotRef.current && openedDraftSnapshotRef.current !== currentSnapshot);
-    if (hasUnsavedChanges && !submitted) {
+    const hasDeletions = removedCohortIds.length > 0 || removedGroupIds.length > 0 || removedModuleIds.length > 0;
+    if ((hasUnsavedChanges || hasDeletions) && !submitted) {
       setDiscardConfirmOpen(true);
       return;
     }
@@ -3855,17 +4420,22 @@ export function AddCurriculumStructureWizard({
 
   const persistTeamsMeetingForModuleDraft = async (draft: ModuleDraft, meeting: TeamsMeetingDraft, details: string): Promise<Partial<ModuleDraft> | void> => {
     if (isFreeProgramme) return;
-    const nextDraft = reconcileModuleDraft({
-      ...draft,
-      teamsMeeting: meeting,
-      weeks: attachTeamsMeetingToWeeks(draft, meeting, details),
-    }, groupForm.deliveryDay, groupForm.startTime, activeHolidays);
     const sourceModule = findModuleOption(moduleOptions, draft.catalogueId) || findModuleOption(modules, draft.catalogueId);
     const moduleId = isCanonicalModuleBuilderId(draft.catalogueId)
       ? draft.catalogueId
       : sourceModule
       ? moduleOptionId(sourceModule)
       : generatedModuleBuilderId();
+    const ownedMeeting = {
+      ...meeting,
+      moduleLocalId: draft.localId,
+      moduleSourceId: draft.sourceId || moduleId || meeting.moduleSourceId || '',
+    };
+    const nextDraft = reconcileModuleDraft({
+      ...draft,
+      teamsMeeting: ownedMeeting,
+      weeks: attachTeamsMeetingToWeeks(draft, ownedMeeting, details),
+    }, groupForm.deliveryDay, groupForm.startTime, activeHolidays);
     const currentStructure = sourceModule ? getDefaultStructure(curriculumModuleToCatalogue(sourceModule)) : null;
     const programmeId = selectedProgramme?.sourceId || selectedProgramme?.id || activeProgrammeSourceId;
     const moduleName = sourceModule?.name || draft.name || draft.catalogueId || 'Module';
@@ -3892,15 +4462,17 @@ export function AddCurriculumStructureWizard({
       } as CurriculumModuleInput & { moduleType: string; catalogueId: string; moduleCatalogueId: string });
     await reload();
     const savedId = String(result.module?.moduleCatalogueId || result.module?.catalogueId || result.module?.structureId || moduleId);
-    return {
+    const persistedPatch = {
       mode: 'existing',
       catalogueId: savedId,
       existingCatalogueId: savedId,
       existingName: moduleName,
       name: moduleName,
-      teamsMeeting: meeting,
+      teamsMeeting: ownedMeeting,
       weeks: nextDraft.weeks,
-    };
+    } as Partial<ModuleDraft>;
+    openedDraftSnapshotRef.current = replaceModuleInWizardSnapshot(openedDraftSnapshotRef.current, draft.localId, persistedPatch);
+    return persistedPatch;
   };
 
   const selectExistingModule = async (draft: ModuleDraft, catalogueId: string) => {
@@ -3916,6 +4488,7 @@ export function AddCurriculumStructureWizard({
         existingName: '',
         existingSessionsNumber: '0',
         sessionsNumber: '0',
+        teamsMeeting: undefined,
       });
       return;
     }
@@ -3933,6 +4506,7 @@ export function AddCurriculumStructureWizard({
       sessionsNumber: isFreeProgramme ? '1' : sessionsNumber,
       tutor: isFreeProgramme ? '' : staff.tutor,
       notes: '',
+      teamsMeeting: undefined,
     });
 
     try {
@@ -4090,12 +4664,17 @@ export function AddCurriculumStructureWizard({
       // Name matching can point at stale catalogue data and incorrectly turn a
       // "create" action into a PATCH against a programme that no longer exists.
       const matchingProgramme = selectedProgramme;
+      const initialSnapshot = selectedProgramme ? parseWizardDraftSnapshot(openedDraftSnapshotRef.current) : null;
+      const programmeChanged = !matchingProgramme || !initialSnapshot || stableDraftFingerprint(initialSnapshot.programmeForm) !== stableDraftFingerprint(programmeForm);
+      const ksbSourceChanged = !matchingProgramme || !initialSnapshot || initialSnapshot.ksbSourceKind !== ksbSourceKind || initialSnapshot.ksbSourceValue !== ksbSourceValue;
       const programmeResult = matchingProgramme
-        ? await updateCurriculumProgramme(matchingProgramme.sourceId || matchingProgramme.id, {
+        ? programmeChanged || ksbSourceChanged
+          ? await updateCurriculumProgramme(matchingProgramme.sourceId || matchingProgramme.id, {
             ...programmeForm,
             standard: programmeForm.standard || programmeForm.name,
             ksbProfileSourceId: ksbSourceValue || matchingProgramme.ksbProfileSourceId || '',
           })
+          : { updated: false, programme: matchingProgramme }
         : await createCurriculumProgramme({
             ...programmeForm,
             standard: programmeForm.standard || programmeForm.name,
@@ -4106,7 +4685,9 @@ export function AddCurriculumStructureWizard({
       const programmeSourceId = matchingProgramme?.sourceId || matchingProgramme?.id || savedProgramme?.sourceId || savedProgramme?.id || slugify(programmeName);
 
       if (selectedProgramme && step === 'programme') {
-        await applySelectedKsbSource(savedProgramme || matchingProgramme, programmeSourceId, programmeName);
+        if (ksbSourceChanged) {
+          await applySelectedKsbSource(savedProgramme || matchingProgramme, programmeSourceId, programmeName);
+        }
         await reload();
         setSubmitted(true);
         showWizardSwalToast('Programme updated', 'The programme details were saved.');
@@ -4125,7 +4706,9 @@ export function AddCurriculumStructureWizard({
           programmeName,
           modules: freeModules,
         });
-        await applySelectedKsbSource(savedProgramme || matchingProgramme, programmeSourceId, programmeName);
+        if (ksbSourceChanged) {
+          await applySelectedKsbSource(savedProgramme || matchingProgramme, programmeSourceId, programmeName);
+        }
         await reload();
         setSubmitted(true);
         showWizardSwalToast(
@@ -4138,21 +4721,45 @@ export function AddCurriculumStructureWizard({
       }
 
       const hydrationComplete = !selectedProgramme || Boolean(hydratedProgrammeRef.current && !loading && data);
+      const initialCohorts = initialSnapshot?.cohortDrafts || [];
+      const initialCohortByKey = new Map<string, CohortDraft>();
+      const initialGroupByKey = new Map<string, GroupDraft>();
+      const initialModuleByKey = new Map<string, ModuleDraft>();
+      initialCohorts.forEach(cohort => {
+        initialCohortByKey.set(draftIdentity(cohort.sourceId, cohort.localId, cohort.name), cohort);
+        cohort.groups.forEach(group => {
+          initialGroupByKey.set(draftIdentity(group.sourceId, group.localId, group.name), group);
+          group.modules.forEach(module => {
+            initialModuleByKey.set(draftIdentity(module.sourceId, module.catalogueId, module.localId, module.name), module);
+          });
+        });
+      });
+      const partialTree = Boolean(selectedProgramme && initialSnapshot);
       const treeCohorts = [];
       for (const cohort of cohortDrafts) {
         const cohortActiveHolidays = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
         const cohortSourceId = isCanonicalCurriculumId(cohort.sourceId, 'COHORT') ? String(cohort.sourceId) : undefined;
         const cohortId = cohortSourceId || generatedCurriculumId('COHORT');
         const groupsForSave = [];
+        const initialCohort = initialCohortByKey.get(draftIdentity(cohort.sourceId, cohort.localId, cohort.name));
+        const cohortMetaChanged = !partialTree || !initialCohort || cohortMetaFingerprint(initialCohort) !== cohortMetaFingerprint(cohort);
 
         for (const group of cohort.groups) {
           const deliveryDayValue = group.deliveryDays.join(', ');
           const groupSourceId = isCanonicalCurriculumId(group.sourceId, 'GROUP') ? String(group.sourceId) : undefined;
           const groupId = groupSourceId || generatedCurriculumId('GROUP');
           const modulesForSave: CurriculumModuleAttachmentInput[] = [];
+          const initialGroup = initialGroupByKey.get(draftIdentity(group.sourceId, group.localId, group.name));
+          const groupMetaChanged = !partialTree || !initialGroup || groupMetaFingerprint(initialGroup) !== groupMetaFingerprint(group);
+          const groupModuleMembershipChanged = !partialTree || !initialGroup || groupModuleMembershipFingerprint(initialGroup) !== groupModuleMembershipFingerprint(group);
 
           for (const originalDraft of group.modules) {
             const draft = reconcileModuleDraft(originalDraft, deliveryDayValue, group.startTime, cohortActiveHolidays);
+            const initialModule = initialModuleByKey.get(draftIdentity(draft.sourceId, draft.catalogueId, draft.localId, draft.name));
+            const moduleChanged = !partialTree || !initialModule || moduleDraftFingerprint(initialModule) !== moduleDraftFingerprint(draft);
+            if (partialTree && !groupModuleMembershipChanged && !moduleChanged) {
+              continue;
+            }
             let sourceModule: CurriculumModule | undefined;
             let catalogueId = draft.catalogueId;
             let moduleName = draft.name;
@@ -4179,9 +4786,7 @@ export function AddCurriculumStructureWizard({
               catalogueId = sourceModule ? moduleOptionId(sourceModule) : draft.catalogueId;
               moduleName = sourceModule?.name || draft.name;
             }
-            const deliverySessionCount = draft.mode === 'existing' && sourceModule
-              ? moduleSessionCount(sourceModule)
-              : Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || 1);
+            const deliverySessionCount = Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || (draft.mode === 'existing' && sourceModule ? moduleSessionCount(sourceModule) : 1));
             const canonicalCatalogueId = isCanonicalModuleBuilderId(catalogueId) ? catalogueId : '';
             const authored = moduleDraftAuthoringPayload(draft, canonicalCatalogueId, moduleName, {
               programmeId: programmeSourceId,
@@ -4233,7 +4838,10 @@ export function AddCurriculumStructureWizard({
               weekStructure: authored.weekStructure || [],
             } as CurriculumModuleAttachmentInput);
           }
-          groupsForSave.push({
+          if (partialTree && !groupMetaChanged && !modulesForSave.length) {
+            continue;
+          }
+          const groupPayload: CurriculumGroupInput & { id: string; modules?: CurriculumModuleAttachmentInput[]; modulesPartial?: boolean } = {
             id: groupId,
             name: group.name,
             cohortId,
@@ -4245,8 +4853,15 @@ export function AddCurriculumStructureWizard({
             color: group.color,
             startDate: cohort.startDate,
             endDate: cohort.endDate,
-            modules: modulesForSave,
-          });
+          };
+          if (!partialTree || modulesForSave.length) {
+            groupPayload.modules = modulesForSave;
+            groupPayload.modulesPartial = partialTree && !groupModuleMembershipChanged;
+          }
+          groupsForSave.push(groupPayload);
+        }
+        if (partialTree && !cohortMetaChanged && !groupsForSave.length) {
+          continue;
         }
         treeCohorts.push({
           id: cohortId,
@@ -4258,23 +4873,32 @@ export function AddCurriculumStructureWizard({
           durationMonths: Number(cohort.durationMonths),
           color: cohort.color,
           holidayIds: cohort.holidayIds,
-          groups: groupsForSave,
+          ...(groupsForSave.length ? { groups: groupsForSave } : {}),
         });
       }
 
-      await saveCurriculumProgrammeTree({
-        programme: {
-          id: programmeSourceId,
-          sourceId: programmeSourceId,
-          ...programmeForm,
-          standard: programmeForm.standard || programmeForm.name,
-          ksbProfileSourceId: ksbSourceValue,
-        },
-        cohorts: treeCohorts,
-        removeMissing: Boolean(selectedProgramme),
-        hydrationComplete,
-      });
-      await applySelectedKsbSource(savedProgramme || matchingProgramme, programmeSourceId, programmeName);
+      const hasTreeChanges = Boolean(treeCohorts.length || removedCohortIds.length || removedGroupIds.length || removedModuleIds.length || !partialTree);
+      if (hasTreeChanges) {
+        await saveCurriculumProgrammeTree({
+          programme: {
+            id: programmeSourceId,
+            sourceId: programmeSourceId,
+            ...programmeForm,
+            standard: programmeForm.standard || programmeForm.name,
+            ksbProfileSourceId: ksbSourceValue,
+          },
+          cohorts: treeCohorts,
+          partialTree,
+          removeMissing: Boolean(selectedProgramme) && !partialTree,
+          hydrationComplete,
+          removeCohortIds: removedCohortIds,
+          removeGroupIds: removedGroupIds,
+          removeModuleIds: removedModuleIds,
+        });
+      }
+      if (ksbSourceChanged) {
+        await applySelectedKsbSource(savedProgramme || matchingProgramme, programmeSourceId, programmeName);
+      }
 
       await reload();
       setSubmitted(true);
@@ -4320,7 +4944,7 @@ export function AddCurriculumStructureWizard({
           <PopupTrail current={step} stepIndex={stepIndex} steps={visibleSteps} onNavigate={setStep} />
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto bg-background-100/70">
+        <div className="min-h-0 flex-1 overflow-y-scroll bg-background-100/70" style={{ scrollbarGutter: 'stable' }}>
           <main className="min-w-0 p-3 sm:p-5" onChangeCapture={() => { userEditedWizardRef.current = true; }}>
               {error && <PanelTone icon="ri-error-warning-line" text={`Curriculum API error: ${error}`} tone="error" />}
               {message && <PanelTone icon="ri-information-line" text={message} tone={message.includes('Unable') || message.includes('returned') || message.includes('Complete') ? 'error' : 'info'} />}
@@ -4519,6 +5143,22 @@ export function AddCurriculumStructureWizard({
                         : 'Now add the cohort that belongs inside this programme.'
                     }
                   />
+                  {(removedCohortIds.length || removedGroupIds.length || removedModuleIds.length) ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
+                      <div className="flex items-start gap-2.5">
+                        <i className="ri-delete-bin-line mt-0.5 shrink-0 text-sm"></i>
+                        <div>
+                          <p className="font-heading text-[13px] font-bold">Deletion pending</p>
+                          <p className="mt-0.5 leading-5">
+                            {removedCohortIds.length} cohort{removedCohortIds.length === 1 ? '' : 's'}
+                            {removedGroupIds.length ? ` and ${removedGroupIds.length} group${removedGroupIds.length === 1 ? '' : 's'}` : ''}
+                            {removedModuleIds.length ? ` and ${removedModuleIds.length} module${removedModuleIds.length === 1 ? '' : 's'}` : ''}
+                            {' '}will be deleted from the database when you reach Review and update the programme.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   {showCohortDatabaseLoading ? (
                     <LoadingState title="Cohorts are being loaded" text="Reading the actual cohorts assigned to this programme from the database." />
                   ) : showCohortDatabaseError ? (
@@ -4568,7 +5208,7 @@ export function AddCurriculumStructureWizard({
                         </div>
                         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_220px]">
                           <Field label="Cohort name" value={cohortForm.name} onChange={value => setCohortForm(prev => ({ ...prev, name: value }))} required error={validation.cohort.find(item => item.includes('Cohort'))} placeholder="Example: Jan 2026 Cohort" />
-                          <Field label="Start date" type="date" value={cohortForm.startDate} onChange={value => setCohortForm(prev => ({ ...prev, startDate: value }))} required error={validation.cohort.find(item => item.includes('Start'))} />
+                          <Field label="Start date" type="date" value={cohortForm.startDate} onChange={setCohortStartDate} required error={validation.cohort.find(item => item.includes('Start'))} />
                           <Field label="Duration in months" type="number" value={cohortForm.durationMonths} onChange={value => setCohortForm(prev => ({ ...prev, durationMonths: value }))} required error={validation.cohort.find(item => item.includes('Duration'))} />
                           <Field
                             label="Adjusted end date"
@@ -4616,7 +5256,7 @@ export function AddCurriculumStructureWizard({
                       />
                     </aside>
 
-                    <section className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
+                    <section className="overflow-visible rounded-2xl border border-background-200 bg-background-50 shadow-sm">
                       <div className="border-b border-background-200 bg-gradient-to-r from-background-100 via-background-50 to-primary-50/50 px-4 py-4">
                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                           <div className="flex min-w-0 gap-3">
@@ -4725,22 +5365,23 @@ export function AddCurriculumStructureWizard({
                                   <p className="text-[11px] font-semibold text-foreground-500">Assigned at group level</p>
                                 </div>
                               </div>
-                              <StaffSelect label="Coach" value={groupForm.coach} onChange={value => setGroupForm(prev => ({ ...prev, coach: value }))} options={coaches} onOpen={() => reloadStaffProfiles({ silent: true })} />
+                              <StaffSelect
+                                label="Coach"
+                                value={groupForm.coach}
+                                onChange={value => setGroupForm(prev => ({ ...prev, coach: value }))}
+                                options={coaches}
+                                role="coach"
+                                onOpen={wizardLazyData.reloadStaffProfiles}
+                              />
                               {activeGroupCoachConflict && (
-                                <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-[11px] font-semibold leading-5 text-sky-800">
-                                  <div className="flex items-start gap-2">
-                                    <i className="ri-information-line mt-0.5 shrink-0 text-sm"></i>
-                                    <div>
-                                      <p className="text-[10px] font-bold uppercase tracking-wide text-sky-700">Coach availability hint</p>
-                                      <p>
-                                        {activeGroupCoachConflict.coach} also has {activeGroupCoachConflict.groupName}
-                                        {' '}in {[activeGroupCoachConflict.programmeName, activeGroupCoachConflict.cohortName].filter(Boolean).join(' / ')}
-                                        {' '}on {activeGroupCoachConflict.days.join(', ')}
-                                        {' '}at {activeGroupCoachConflict.time}. You can continue if this overlap is expected.
-                                      </p>
-                                    </div>
-                                  </div>
-                                </div>
+                                <CoachAvailabilityHint
+                                  coach={activeGroupCoachConflict.coach}
+                                  programme={activeGroupCoachConflict.programmeName || activeProgramme.name}
+                                  cohort={activeGroupCoachConflict.cohortName}
+                                  group={activeGroupCoachConflict.groupName}
+                                  days={activeGroupCoachConflict.days}
+                                  time={activeGroupCoachConflict.time}
+                                />
                               )}
                             </div>
                           </div>
@@ -4759,6 +5400,7 @@ export function AddCurriculumStructureWizard({
                 <StepPanel title="Add modules to this group" description="Choose the cohort and group on the left, then link an existing module or create a new one.">
                   <ModulesStepWorkspace
                     freeMode={isFreeProgramme}
+                    detailsLoading={!isFreeProgramme && Boolean(selectedProgramme) && !cohortDrafts.length && (loading || programmeDetailLoading || (!hydratedProgrammeRef.current && !programmeDetailFailed))}
                     programmeName={activeProgramme.name || programmeForm.name}
                     cohortDrafts={cohortDrafts}
                     activeCohort={activeCohort}
@@ -4771,8 +5413,8 @@ export function AddCurriculumStructureWizard({
                     groupForm={groupForm}
                     removingDraftId={removingDraftId}
                     validationModules={validation.modules}
-                    tutorConflicts={tutorScheduleConflicts}
-                    onRefreshStaffProfiles={() => reloadStaffProfiles({ silent: true })}
+                    tutorConflicts={activeGroupTutorScheduleConflicts}
+                    onLoadStaffProfiles={wizardLazyData.reloadStaffProfiles}
                     onSelectCohort={id => {
                       const nextCohort = cohortDrafts.find(cohort => cohort.localId === id);
                       const nextGroup = nextCohort?.groups[0];
@@ -4985,10 +5627,16 @@ export function AddCurriculumStructureWizard({
                 {selectedProgramme ? 'Ready to update' : 'Ready to save'}: <span className="text-foreground-950">{reviewSaveSummary}</span>
               </div>
             )}
-            {(canSaveDraft || saving === 'draft') && (
+            {!selectedProgramme && (canSaveDraft || saving === 'draft') && (
               <button type="button" onClick={() => persistStructure('draft')} disabled={Boolean(saving) || !canSaveDraft} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
                 <i className="ri-save-3-line"></i>
-                {saving === 'draft' ? selectedProgramme ? 'Updating...' : 'Saving...' : selectedProgramme ? 'Update' : 'Save Draft'}
+                {saving === 'draft' ? 'Saving...' : 'Save Draft'}
+              </button>
+            )}
+            {selectedProgramme && step !== 'review' && hasUnsavedChanges && (
+              <button type="button" onClick={() => persistStructure('final')} disabled={Boolean(saving) || !canSaveDraft} className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-5 py-2 text-[12px] font-bold text-white hover:bg-emerald-700 disabled:opacity-50 transition-smooth">
+                <i className="ri-save-3-line"></i>
+                {saving === 'final' ? 'Saving...' : 'Update Programme'}
               </button>
             )}
             {step === 'review' ? (
@@ -5137,7 +5785,7 @@ function NestedPopupBackdrop({
     {
       label: 'Cohort',
       title: cohort.name || 'Cohort',
-      meta: cohort.startDate && cohort.endDate ? `${cohort.startDate} to ${cohort.endDate}` : 'Dates selected',
+      meta: cohort.startDate && cohort.endDate ? `${formatDateValue(cohort.startDate)} to ${formatDateValue(cohort.endDate)}` : 'Dates selected',
       color: cohort.color,
       icon: 'ri-calendar-event-line',
     },
@@ -5207,6 +5855,31 @@ function DraftSwitcher({
   compact?: boolean;
   defaultOpen?: boolean;
 }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollState = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    setCanScrollLeft(element.scrollLeft > 2);
+    setCanScrollRight(element.scrollLeft + element.clientWidth < element.scrollWidth - 2);
+  }, []);
+
+  useEffect(() => {
+    updateScrollState();
+  }, [items.length, compact, updateScrollState]);
+
+  const scrollDrafts = (direction: 'left' | 'right') => {
+    const element = scrollRef.current;
+    if (!element) return;
+    element.scrollBy({
+      left: direction === 'right' ? Math.max(160, element.clientWidth * 0.8) : -Math.max(160, element.clientWidth * 0.8),
+      behavior: 'smooth',
+    });
+    window.setTimeout(updateScrollState, 260);
+  };
+
   return (
     <div className={`${compact ? 'mb-3' : 'mb-4'} rounded-xl border border-background-200 bg-background-50 px-3 py-2 shadow-sm`}>
       <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
@@ -5214,15 +5887,45 @@ function DraftSwitcher({
           <p className="text-[10px] font-bold uppercase text-foreground-400">{label}</p>
           <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{items.length}</span>
         </div>
-        {onAdd && (
-          <button type="button" onClick={onAdd} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
-            <i className="ri-add-line"></i>
-            {addLabel || 'Add'}
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-1.5">
+          {items.length > 1 && (
+            <>
+              <button
+                type="button"
+                onClick={() => scrollDrafts('left')}
+                disabled={!canScrollLeft}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-100 text-foreground-500 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-default disabled:opacity-35"
+                aria-label={`Scroll ${label} left`}
+                title={`Scroll ${label} left`}
+              >
+                <i className="ri-arrow-left-s-line text-lg"></i>
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollDrafts('right')}
+                disabled={!canScrollRight}
+                className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-100 text-foreground-500 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-default disabled:opacity-35"
+                aria-label={`Scroll ${label} right`}
+                title={`Scroll ${label} right`}
+              >
+                <i className="ri-arrow-right-s-line text-lg"></i>
+              </button>
+            </>
+          )}
+          {onAdd && (
+            <button type="button" onClick={onAdd} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
+              <i className="ri-add-line"></i>
+              {addLabel || 'Add'}
+            </button>
+          )}
+        </div>
       </div>
-      <div className={`${compact ? 'mt-1.5' : 'mt-2'} min-w-0`}>
-        <div className="flex gap-2 overflow-x-auto pb-1">
+      <div className={`${compact ? 'mt-1.5' : 'mt-2'} relative min-w-0`}>
+        <div
+          ref={scrollRef}
+          onScroll={updateScrollState}
+          className="flex gap-2 overflow-x-auto pb-1 pr-5"
+        >
           {items.map(item => {
             const removing = removingId === item.id;
             return (
@@ -5276,6 +5979,9 @@ function DraftSwitcher({
             );
           })}
         </div>
+        {canScrollRight && (
+          <div className="pointer-events-none absolute bottom-1 right-0 top-0 w-8 rounded-r-lg bg-gradient-to-l from-background-50 via-background-50/90 to-transparent" />
+        )}
       </div>
     </div>
   );
@@ -5580,8 +6286,9 @@ function HolidaySelector({
         <div className="border-b border-background-200/70 bg-background-100/40 px-4 py-3">
           <div className="flex flex-wrap gap-2">
             {visibleSelectedHolidays.map(holiday => (
-              <span key={holidayId(holiday)} className="rounded-full bg-background-50 px-3 py-1 text-[11px] font-bold text-foreground-700 shadow-sm">
-                {holiday.label}
+              <span key={holidayId(holiday)} className="rounded-xl bg-background-50 px-3 py-1.5 text-left shadow-sm">
+                <span className="block text-[11px] font-bold text-foreground-800">{holiday.label}</span>
+                <span className="mt-0.5 block text-[10px] font-semibold text-foreground-500">{holidayRangeLabel(holiday)}</span>
               </span>
             ))}
             {selectedInRangeIds.length > 5 && !showAllSelected && (
@@ -5608,7 +6315,7 @@ function HolidaySelector({
               <input type="checkbox" checked={checked} disabled={!inRange} onChange={() => toggle(id)} className="mt-1 h-4 w-4 accent-amber-600 disabled:cursor-not-allowed disabled:opacity-40" />
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] font-bold text-foreground-900">{holiday.label || 'Holiday'}</span>
-                <span className="mt-0.5 block text-[11px] text-foreground-500">{holiday.startDate}{holiday.endDate && holiday.endDate !== holiday.startDate ? ` to ${holiday.endDate}` : ''}</span>
+                <span className="mt-0.5 block text-[11px] text-foreground-500">{holidayRangeLabel(holiday)}</span>
               </span>
               <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${inRange ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-500'}`}>
                 {inRange ? 'In range' : 'Out of range'}
@@ -6289,6 +6996,7 @@ function buildHolidayTypeLibrary(holidays: CurriculumHoliday[]): HolidayTypeDefi
 
 function ModulesStepWorkspace({
   freeMode = false,
+  detailsLoading = false,
   programmeName,
   cohortDrafts,
   activeCohort,
@@ -6302,7 +7010,7 @@ function ModulesStepWorkspace({
   removingDraftId,
   validationModules,
   tutorConflicts,
-  onRefreshStaffProfiles,
+  onLoadStaffProfiles,
   onSelectCohort,
   onSelectGroup,
   onSelectModule,
@@ -6315,6 +7023,7 @@ function ModulesStepWorkspace({
   onResolveTutorConflict,
 }: {
   freeMode?: boolean;
+  detailsLoading?: boolean;
   programmeName: string;
   cohortDrafts: CohortDraft[];
   activeCohort: CohortDraft;
@@ -6328,7 +7037,7 @@ function ModulesStepWorkspace({
   removingDraftId: string;
   validationModules: string[];
   tutorConflicts: TutorScheduleConflict[];
-  onRefreshStaffProfiles: () => void;
+  onLoadStaffProfiles?: () => void;
   onSelectCohort: (id: string) => void;
   onSelectGroup: (id: string) => void;
   onSelectModule: (id: string) => void;
@@ -6344,6 +7053,17 @@ function ModulesStepWorkspace({
   const groupSchedule = `${groupForm.deliveryDay || 'No delivery days'} ${groupForm.startTime || ''}-${groupForm.endTime || addHoursToTime(groupForm.startTime, 2)}`.trim();
   const workspaceTitle = freeMode ? 'Custom modules' : (groupForm.name || 'Select a group');
   const workspaceMeta = freeMode ? (programmeName || 'Module course') : groupSchedule;
+
+  if (detailsLoading) {
+    return (
+      <section className="rounded-2xl border border-primary-100 bg-background-50 p-4 shadow-sm">
+        <LoadingState
+          title="Loading curriculum details"
+          text="Programme, cohorts, groups and modules are still being loaded."
+        />
+      </section>
+    );
+  }
 
   return (
     <div className={`grid grid-cols-1 gap-4 ${freeMode ? '' : 'xl:grid-cols-[300px_minmax(0,1fr)]'}`}>
@@ -6411,10 +7131,11 @@ function ModulesStepWorkspace({
               <button
                 type="button"
                 onClick={onAddModule}
-                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+                disabled={detailsLoading}
+                className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-60"
               >
-                <i className="ri-add-line"></i>
-                Add Module
+                <i className={detailsLoading ? 'ri-loader-4-line animate-spin' : 'ri-add-line'}></i>
+                {detailsLoading ? 'Loading...' : 'Add Module'}
               </button>
             </div>
           </div>
@@ -6431,7 +7152,12 @@ function ModulesStepWorkspace({
               Select a tutor inside each module
             </span>
           </div>
-          {moduleDrafts.length ? (
+          {detailsLoading ? (
+            <LoadingState
+              title="Loading curriculum details"
+              text="Programme, cohorts, groups and modules are still being loaded."
+            />
+          ) : moduleDrafts.length ? (
             <div className="flex gap-2 overflow-x-auto pb-1">
               {moduleDrafts.map((draft, index) => {
                 const active = activeModule?.localId === draft.localId;
@@ -6479,8 +7205,12 @@ function ModulesStepWorkspace({
         </div>
 
         <div className="bg-background-100/50 p-4">
-          <TutorConflictWarning conflicts={tutorConflicts} onResolve={onResolveTutorConflict} />
-          {activeModule ? (
+          {detailsLoading ? (
+            <LoadingState
+              title="Loading module details"
+              text="The module settings will appear here as soon as the data is ready."
+            />
+          ) : activeModule ? (
             <ModulePlanningPanel
               key={activeModule.localId}
               freeMode={freeMode}
@@ -6493,13 +7223,13 @@ function ModulesStepWorkspace({
               groupTime={groupForm.startTime}
               groupEndTime={groupForm.endTime}
               cohortStartDate={activeCohort.startDate}
-              cohortEndDate={activeCohort.endDate}
               tutorConflict={firstTutorConflictForModule(tutorConflicts, activeModule.localId)}
-              onRefreshStaffProfiles={onRefreshStaffProfiles}
               canRemove={!removingDraftId}
+              onLoadStaffProfiles={onLoadStaffProfiles}
               onRemove={() => onRemoveModule(activeModule.localId)}
               onChange={patch => onChangeModule(activeModule.localId, patch)}
               onSelectExisting={catalogueId => onSelectExistingModule(activeModule, catalogueId)}
+              onCreateNewModule={onAddModule}
               onPersistTeamsMeeting={onPersistTeamsMeeting}
             />
           ) : (
@@ -6510,7 +7240,7 @@ function ModulesStepWorkspace({
                 </span>
                 <p className="mt-3 text-sm font-heading font-bold text-foreground-950">Choose or add a module</p>
                 <p className="mt-1 text-[12px] leading-5 text-foreground-500">The module form appears here after a module is selected.</p>
-                <button type="button" onClick={onAddModule} className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700">
+                <button type="button" onClick={onAddModule} disabled={detailsLoading} className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700 disabled:cursor-wait disabled:opacity-60">
                   <i className="ri-add-line"></i>
                   Add Module
                 </button>
@@ -6687,14 +7417,22 @@ function EntityPickerPanel({
 }
 
 function attachTeamsMeetingToWeeks(draft: ModuleDraft, meeting: TeamsMeetingDraft, details: string) {
-  const settings = teamsComponentSettings(meeting);
+  const settings = teamsComponentSettings(meeting, draft);
   return draft.weeks.map((week, weekIndex) => {
+    const sessionDate = week.date || draft.startDate || todayIso();
+    const sessionTime = week.startTime || '09:30';
+    const sessionSettings = {
+      ...settings,
+      sessionDate,
+      sessionTime,
+      sessionDateTimeUtc: new Date(`${sessionDate}T${sessionTime}`).toISOString(),
+    };
     const existingLiveSessions = week.components.filter(component => component.type === 'live-session');
     if (existingLiveSessions.length) {
       return {
         ...week,
         components: week.components.map(component => component.type === 'live-session'
-          ? { ...component, settings: { ...(component.settings || {}), ...settings } }
+          ? { ...component, settings: { ...stripImportedTeamsSettings(component.settings), ...sessionSettings } }
           : component),
       };
     }
@@ -6706,7 +7444,7 @@ function attachTeamsMeetingToWeeks(draft: ModuleDraft, meeting: TeamsMeetingDraf
         title: `${draft.name || 'Live session'} - Session ${week.sessionNumber || weekIndex + 1}`,
         description: details || draft.notes || 'Microsoft Teams live session',
         expectedOtjh: Math.max(0.25, meeting.durationMinutes / 60),
-        settings: { ...(component.settings || {}), ...settings },
+        settings: { ...(component.settings || {}), ...sessionSettings },
       }],
     };
   });
@@ -6739,6 +7477,50 @@ function teamsScheduleInputFromDraft(draft: ModuleDraft, moduleTitle: string, gr
   };
 }
 
+function teamsScheduleFingerprint(draft: ModuleDraft, moduleTitle: string, groupTime: string, groupEndTime: string) {
+  const input = teamsScheduleInputFromDraft(draft, moduleTitle, groupTime, groupEndTime);
+  if (!input) return '';
+  return JSON.stringify({
+    title: input.title,
+    organizerEmail: input.organizerEmail,
+    durationMinutes: input.durationMinutes,
+    repeat: input.repeat,
+    repeatOccurrences: input.repeatOccurrences,
+    scheduledOccurrences: input.scheduledOccurrences,
+  });
+}
+
+function teamsScheduleImpactSummary(draft: ModuleDraft, groupTime: string, groupEndTime: string) {
+  const weeks = draft.weeks;
+  if (!weeks.length) return 'Teams calendar will be updated when wizard sessions are generated.';
+  const durationMinutes = Math.max(30, Math.round(groupSessionDurationHours({ startTime: groupTime, endTime: groupEndTime }) * 60) || draft.teamsMeeting?.durationMinutes || 60);
+  const first = weeks[0];
+  const last = weeks[weeks.length - 1];
+  const shiftedCount = weeks.filter(week => week.shiftedHolidaySessions?.length).length;
+  const firstTime = first.startTime || groupTime || '09:30';
+  const lastTime = last.startTime || groupTime || '09:30';
+  const firstEnd = addHoursToTime(firstTime, durationMinutes / 60);
+  const lastEnd = addHoursToTime(lastTime, durationMinutes / 60);
+  return [
+    `${weeks.length} Teams calendar occurrence${weeks.length === 1 ? '' : 's'} will match the wizard schedule.`,
+    `First: ${formatDateValue(first.date)} ${formatTimeRange(firstTime, firstEnd)}.`,
+    `Last: ${formatDateValue(last.date)} ${formatTimeRange(lastTime, lastEnd)}.`,
+    shiftedCount ? `${shiftedCount} occurrence${shiftedCount === 1 ? '' : 's'} include holiday shifts.` : 'No holiday shifts in the current wizard plan.',
+  ].join(' ');
+}
+
+function formatDateTimeValue(value?: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${formatDateValue(toDateInput(date))} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function teamsOccurrenceForWeek(week: WeekDraft, index: number, occurrences: TeamsMeetingOccurrence[]) {
+  const sessionNumber = week.sessionNumber || index + 1;
+  return occurrences.find(occurrence => Number(occurrence.session_number) === sessionNumber) || occurrences[index];
+}
+
 function ModulePlanningPanel({
   freeMode = false,
   draft,
@@ -6750,14 +7532,14 @@ function ModulePlanningPanel({
   groupTime,
   groupEndTime,
   cohortStartDate,
-  cohortEndDate,
   tutorConflict,
-  onRefreshStaffProfiles,
   canRemove,
   onRemove,
   onChange,
   onSelectExisting,
+  onCreateNewModule,
   onPersistTeamsMeeting,
+  onLoadStaffProfiles,
 }: {
   freeMode?: boolean;
   draft: ModuleDraft;
@@ -6769,14 +7551,14 @@ function ModulePlanningPanel({
   groupTime: string;
   groupEndTime: string;
   cohortStartDate?: string;
-  cohortEndDate?: string;
   tutorConflict?: TutorScheduleConflict;
-  onRefreshStaffProfiles: () => void;
   canRemove: boolean;
   onRemove: () => void;
   onChange: (patch: Partial<ModuleDraft>) => void;
   onSelectExisting: (catalogueId: string) => void;
+  onCreateNewModule?: () => void;
   onPersistTeamsMeeting?: (draft: ModuleDraft, meeting: TeamsMeetingDraft, details: string) => Promise<Partial<ModuleDraft> | void>;
+  onLoadStaffProfiles?: () => void;
 }) {
   const [startDateTouched, setStartDateTouched] = useState(false);
   const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
@@ -6786,20 +7568,168 @@ function ModulePlanningPanel({
   const [teamsPersistMessage, setTeamsPersistMessage] = useState('');
   const [teamsScheduleSyncing, setTeamsScheduleSyncing] = useState(false);
   const [teamsSessionsLoading, setTeamsSessionsLoading] = useState(false);
-  const [teamsSessionsOpen, setTeamsSessionsOpen] = useState(false);
+  const [teamsSessionsOpen, setTeamsSessionsOpen] = useState(true);
   const [teamsSessionsError, setTeamsSessionsError] = useState('');
   const [teamsSessions, setTeamsSessions] = useState<TeamsMeetingOccurrence[]>([]);
+  const lastTeamsScheduleFingerprintRef = useRef('');
   const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
   const selectedModuleId = selectedModule ? moduleOptionId(selectedModule) : draft.catalogueId;
-  const moduleTitle = draft.name || selectedModule?.name || `Module ${index + 1}`;
+  const moduleTitle = draft.name.trim() || selectedModule?.name || 'No name yet';
   const plannedSessionCount = moduleDraftSessionCount(draft, selectedModule);
   const componentCount = moduleDraftDisplayComponentCount(draft, freeMode);
   const startDateError = draft.startDate && cohortStartDate && compareDateInputs(draft.startDate, cohortStartDate) < 0
-    ? `Module cannot start before cohort start (${cohortStartDate}).`
-    : draft.startDate && cohortEndDate && compareDateInputs(draft.startDate, cohortEndDate) > 0
-    ? `Module cannot start after cohort end (${cohortEndDate}).`
+    ? `Module cannot start before cohort start (${formatDateValue(cohortStartDate)}).`
     : '';
   const visibleModeOptions = freeMode ? moduleModeOptions.filter(option => option.key === 'new') : moduleModeOptions;
+  const tutorEmail = String(tutorProfiles.find(profile => normalise(staffName(profile)) === normalise(draft.tutor))?.email || '');
+  const teamsScheduleFingerprintValue = useMemo(
+    () => teamsScheduleFingerprint(draft, moduleTitle, groupTime, groupEndTime),
+    [draft, groupEndTime, groupTime, moduleTitle],
+  );
+  const teamsScheduleImpact = useMemo(
+    () => teamsScheduleImpactSummary(draft, groupTime, groupEndTime),
+    [draft, groupEndTime, groupTime],
+  );
+  const handleModeOptionClick = (option: { key: ModuleMode }) => {
+    if (option.key === 'new' && draft.mode !== 'new' && isConfiguredModule(draft) && onCreateNewModule) {
+      onCreateNewModule();
+      return;
+    }
+    const patch = option.key === 'new' && draft.mode !== 'new'
+      ? freshNewModulePatch(draft, groupDay, groupTime)
+      : moduleModeSwitchPatch(draft, option.key);
+    if (Object.keys(patch).length) onChange(patch);
+    if (option.key === 'existing' && draft.mode !== 'existing' && draft.existingCatalogueId) {
+      onSelectExisting(draft.existingCatalogueId);
+    }
+  };
+
+  useEffect(() => {
+    const liveSessionId = draft.teamsMeeting?.liveSessionId;
+    lastTeamsScheduleFingerprintRef.current = liveSessionId ? teamsScheduleFingerprintValue : '';
+    if (!liveSessionId) {
+      setTeamsSessions([]);
+      setTeamsSessionsError('');
+      return;
+    }
+    let active = true;
+    setTeamsSessionsOpen(true);
+    setTeamsSessionsLoading(true);
+    setTeamsSessionsError('');
+    loadTeamsMeetingArtifacts(liveSessionId)
+      .then(result => {
+        if (!active) return;
+        setTeamsSessions(result.occurrences || []);
+      })
+      .catch(err => {
+        if (!active) return;
+        setTeamsSessionsError(err instanceof Error ? err.message : 'The Teams sessions could not be loaded.');
+      })
+      .finally(() => {
+        if (active) setTeamsSessionsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [draft.teamsMeeting?.liveSessionId, teamsScheduleFingerprintValue]);
+
+  const refreshTeamsSessions = async (liveSessionId: string) => {
+    const refreshed = await loadTeamsMeetingArtifacts(liveSessionId);
+    setTeamsSessions(refreshed.occurrences || []);
+    setTeamsSessionsError('');
+    setTeamsSessionsOpen(true);
+  };
+
+  const persistTeamsMeeting = async (meeting: TeamsMeetingDraft, details: string, draftForPersist = draft) => {
+    const ownedMeeting = {
+      ...meeting,
+      moduleLocalId: draftForPersist.localId,
+      moduleSourceId: draftForPersist.sourceId || draftForPersist.catalogueId || meeting.moduleSourceId || '',
+    };
+    onChange({
+      teamsMeeting: ownedMeeting,
+      weeks: attachTeamsMeetingToWeeks(draftForPersist, ownedMeeting, details),
+    });
+    if (!onPersistTeamsMeeting) {
+      setTeamsPersistMessage('Teams link is attached to this draft. Press Update to save it.');
+      return;
+    }
+    setTeamsPersisting(true);
+    showCurriculumLoading({
+      title: 'Saving Teams live sessions',
+      text: 'The Teams link and live-session components are being saved to this module.',
+    });
+    try {
+      const persistedPatch = await onPersistTeamsMeeting(draftForPersist, ownedMeeting, details);
+      if (persistedPatch) onChange(persistedPatch);
+      setTeamsPersistMessage('Saved Teams link and live-session components to this module.');
+      closeCurriculumLoading();
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'Teams link created, but module save failed. Press Update to retry.';
+      closeCurriculumLoading();
+      setTeamsPersistMessage(`Teams link created, but module save failed: ${detail}`);
+      throw err;
+    } finally {
+      setTeamsPersisting(false);
+    }
+  };
+
+  useEffect(() => {
+    const liveSessionId = draft.teamsMeeting?.liveSessionId;
+    if (!liveSessionId || !teamsScheduleFingerprintValue) return;
+    const previousFingerprint = lastTeamsScheduleFingerprintRef.current;
+    if (!previousFingerprint) {
+      lastTeamsScheduleFingerprintRef.current = teamsScheduleFingerprintValue;
+      return;
+    }
+    if (previousFingerprint === teamsScheduleFingerprintValue) return;
+
+    setTeamsSessionsOpen(true);
+    setTeamsSyncMessage(`Wizard schedule changed. ${teamsScheduleImpact} Press "Send wizard dates to Teams" to update Microsoft Teams.`);
+  }, [draft.teamsMeeting?.liveSessionId, teamsScheduleFingerprintValue, teamsScheduleImpact]);
+
+  const syncTeamsFromShiftedSchedule = async () => {
+    const scheduledWeeks = draft.weeks;
+    if (!scheduledWeeks.length) {
+      setTeamsSyncMessage('No shifted session dates are available to sync.');
+      return;
+    }
+    setTeamsScheduleSyncing(true);
+    setTeamsSyncMessage('');
+    setTeamsPersistMessage('');
+    try {
+      if (draft.teamsMeeting?.liveSessionId) {
+        const input = teamsScheduleInputFromDraft(draft, moduleTitle, groupTime, groupEndTime);
+        if (!input) throw new Error('No Teams meeting schedule is available for this module.');
+        const result = await updateTeamsMeetingSchedule(draft.teamsMeeting.liveSessionId, input);
+        const updatedMeeting: TeamsMeetingDraft = {
+          ...draft.teamsMeeting,
+          ...result.meeting,
+          liveSessionId: draft.teamsMeeting.liveSessionId,
+          joinUrl: result.meeting.joinUrl || draft.teamsMeeting.joinUrl,
+        };
+        await persistTeamsMeeting(updatedMeeting, draft.notes);
+        await refreshTeamsSessions(updatedMeeting.liveSessionId);
+        lastTeamsScheduleFingerprintRef.current = teamsScheduleFingerprint(draft, moduleTitle, groupTime, groupEndTime);
+        const warning = result.warnings?.[0]?.message;
+        setTeamsSyncMessage(warning
+          ? `Teams series updated and wizard dates were saved here. Microsoft Teams did not accept some shifted instance edits, so check the Teams calendar before sending invites.`
+          : `Teams calendar synced to ${input.repeatOccurrences} shifted session dates.`);
+        return;
+      }
+
+      setTeamsSyncMessage('Add presenters and attendees in Teams meeting options before syncing Teams.');
+      setTeamsSessionsOpen(true);
+      setTeamsMeetingOpen(true);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'Unable to sync Teams sessions.';
+      setTeamsSyncMessage(detail);
+      setTeamsSessionsError(detail);
+      setTeamsSessionsOpen(true);
+    } finally {
+      setTeamsScheduleSyncing(false);
+    }
+  };
 
   return (
     <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm" style={{ borderLeftColor: draft.color, borderLeftWidth: 4 }}>
@@ -6838,13 +7768,7 @@ function ModulePlanningPanel({
             <button
               key={option.key}
               type="button"
-              onClick={() => {
-                const patch = moduleModeSwitchPatch(draft, option.key);
-                if (Object.keys(patch).length) onChange(patch);
-                if (option.key === 'existing' && draft.mode !== 'existing' && draft.existingCatalogueId) {
-                  onSelectExisting(draft.existingCatalogueId);
-                }
-              }}
+              onClick={() => handleModeOptionClick(option)}
               className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-left transition-smooth ${draft.mode === option.key ? 'border-primary-300 bg-primary-50 text-primary-800 shadow-sm ring-2 ring-primary-100' : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:bg-background-100'}`}
             >
               <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${draft.mode === option.key ? 'bg-primary-600 text-white' : 'bg-background-100 text-foreground-500'}`}>
@@ -6924,18 +7848,25 @@ function ModulePlanningPanel({
                 }}
                 required
                 min={cohortStartDate}
-                max={cohortEndDate}
                 error={startDateTouched ? startDateError : ''}
               />
               {draft.mode === 'new' ? (
                 <Field label="Sessions" type="number" value={draft.sessionsNumber} onChange={value => onChange({ sessionsNumber: value, newSessionsNumber: value })} required />
               ) : (
-                <div className="hidden 2xl:block" />
+                <Field label="Sessions" type="number" value={draft.sessionsNumber} onChange={value => onChange({ sessionsNumber: value, existingSessionsNumber: value })} required />
               )}
               <Field label="End date" type="date" value={draft.endDate} onChange={value => onChange({ endDate: value })} />
-              <StaffSelect label="Tutor" value={draft.tutor} onChange={value => onChange({ tutor: value })} options={tutors} onOpen={onRefreshStaffProfiles} />
+              <StaffSelect
+                label="Tutor"
+                value={draft.tutor}
+                onChange={value => onChange({ tutor: value })}
+                options={tutors}
+                role="tutor"
+                onOpen={onLoadStaffProfiles}
+              />
             </div>
-            <div className="mt-3 flex flex-col gap-3 rounded-xl border border-primary-200 bg-primary-50/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50/60 p-3">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex min-w-0 items-start gap-2.5">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
                   <i className="ri-microsoft-teams-line text-base"></i>
@@ -6959,7 +7890,7 @@ function ModulePlanningPanel({
                   )}
                 </div>
               </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
+              <div className="flex shrink-0 flex-wrap items-center gap-2 xl:justify-end">
                 {draft.teamsMeeting ? (
                   <button
                     type="button"
@@ -6969,6 +7900,10 @@ function ModulePlanningPanel({
                       setTeamsSyncMessage('');
                       try {
                         const result = await syncTeamsMeetingArtifacts(draft.teamsMeeting!.liveSessionId);
+                        const refreshed = await loadTeamsMeetingArtifacts(draft.teamsMeeting!.liveSessionId);
+                        setTeamsSessions(refreshed.occurrences);
+                        setTeamsSessionsError('');
+                        setTeamsSessionsOpen(true);
                         setTeamsSyncMessage(
                           `Synced ${result.synced.attendanceRecords} attendance rows, ${result.synced.transcripts} transcripts and ${result.synced.recordings} recordings.`
                         );
@@ -6981,51 +7916,18 @@ function ModulePlanningPanel({
                     className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50 disabled:opacity-50"
                   >
                     <i className={`${teamsSyncing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}`}></i>
-                    {teamsSyncing ? 'Syncing...' : 'Sync results'}
+                    {teamsSyncing ? 'Syncing...' : 'Sync attendance & files'}
                   </button>
                 ) : null}
-                {draft.teamsMeeting ? (
-                  <button
-                    type="button"
-                    disabled={teamsScheduleSyncing}
-                    onClick={async () => {
-                      const input = teamsScheduleInputFromDraft(draft, moduleTitle, groupTime, groupEndTime);
-                      if (!input) {
-                        setTeamsSyncMessage('No Teams meeting schedule is available for this module.');
-                        return;
-                      }
-                      setTeamsScheduleSyncing(true);
-                      setTeamsSyncMessage('');
-                      try {
-                        const result = await updateTeamsMeetingSchedule(draft.teamsMeeting!.liveSessionId, input);
-                        const updatedMeeting: TeamsMeetingDraft = {
-                          ...draft.teamsMeeting!,
-                          ...result.meeting,
-                          liveSessionId: draft.teamsMeeting!.liveSessionId,
-                          joinUrl: result.meeting.joinUrl || draft.teamsMeeting!.joinUrl,
-                        };
-                        onChange({
-                          teamsMeeting: updatedMeeting,
-                          weeks: attachTeamsMeetingToWeeks(draft, updatedMeeting, draft.notes),
-                        });
-                        if (teamsSessionsOpen) {
-                          const refreshed = await loadTeamsMeetingArtifacts(draft.teamsMeeting!.liveSessionId);
-                          setTeamsSessions(refreshed.occurrences);
-                          setTeamsSessionsError('');
-                        }
-                        setTeamsSyncMessage(`Teams schedule updated for ${result.meeting.trackedOccurrences || input.repeatOccurrences} actual sessions.`);
-                      } catch (err) {
-                        setTeamsSyncMessage(err instanceof Error ? err.message : 'Unable to update Teams schedule.');
-                      } finally {
-                        setTeamsScheduleSyncing(false);
-                      }
-                    }}
-                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50 disabled:opacity-50"
-                  >
-                    <i className={`${teamsScheduleSyncing ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}`}></i>
-                    {teamsScheduleSyncing ? 'Updating...' : 'Sync schedule'}
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  disabled={teamsScheduleSyncing || teamsPersisting || !draft.weeks.length}
+                  onClick={syncTeamsFromShiftedSchedule}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <i className={`${teamsScheduleSyncing ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'}`}></i>
+                  {teamsScheduleSyncing ? 'Sending dates...' : draft.teamsMeeting ? 'Send wizard dates to Teams' : 'Create Teams calendar'}
+                </button>
                 {draft.teamsMeeting ? (
                   <button
                     type="button"
@@ -7047,80 +7949,49 @@ function ModulePlanningPanel({
                     className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50 disabled:opacity-50"
                   >
                     <i className={`${teamsSessionsLoading ? 'ri-loader-4-line animate-spin' : 'ri-list-check-2'}`}></i>
-                    Actual sessions
+                    Load dates from Teams
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  onPointerDown={event => event.stopPropagation()}
-                  onClick={event => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setTeamsMeetingOpen(true);
-                  }}
-                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
-                >
-                  <i className="ri-calendar-event-line"></i>
-                  {draft.teamsMeeting ? 'Edit / create another' : 'Teams meeting options'}
-                </button>
+                {draft.teamsMeeting ? (
+                  <button
+                    type="button"
+                    onPointerDown={event => event.stopPropagation()}
+                    onClick={event => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setTeamsMeetingOpen(true);
+                    }}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+                  >
+                    <i className="ri-calendar-event-line"></i>
+                    Teams meeting options
+                  </button>
+                ) : null}
               </div>
             </div>
-            {teamsSyncMessage ? <p className="mt-2 text-[10px] font-semibold text-foreground-600">{teamsSyncMessage}</p> : null}
-            {teamsPersistMessage ? <p className={`mt-2 text-[10px] font-semibold ${teamsPersistMessage.startsWith('Saved') ? 'text-emerald-700' : 'text-amber-700'}`}>{teamsPersistMessage}</p> : null}
-            {teamsSessionsOpen ? (
-              <div className="mt-3 overflow-hidden rounded-xl border border-primary-100 bg-background-50 shadow-sm">
-                <div className="flex items-center justify-between gap-3 border-b border-background-200 bg-primary-50/60 px-3 py-2">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Actual Teams sessions</p>
-                    <p className="text-[10px] font-semibold text-foreground-500">{teamsSessions.length ? `${teamsSessions.length} tracked sessions` : 'No tracked sessions loaded'}</p>
-                  </div>
-                  <button type="button" onClick={() => setTeamsSessionsOpen(false)} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-500 hover:bg-background-100" aria-label="Close actual sessions">
-                    <i className="ri-close-line"></i>
-                  </button>
-                </div>
-                {teamsSessionsError ? (
-                  <p className="px-3 py-3 text-[11px] font-semibold text-red-700">{teamsSessionsError}</p>
-                ) : teamsSessions.length ? (
-                  <div className="max-h-56 overflow-auto">
-                    <table className="w-full text-left text-[11px]">
-                      <thead className="sticky top-0 bg-background-100 text-[9px] uppercase text-foreground-400">
-                        <tr>
-                          <th className="px-3 py-2 font-bold">Session</th>
-                          <th className="px-3 py-2 font-bold">Scheduled</th>
-                          <th className="px-3 py-2 font-bold">Actual</th>
-                          <th className="px-3 py-2 font-bold">Attendance</th>
-                          <th className="px-3 py-2 font-bold">Artifacts</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-background-200">
-                        {teamsSessions.map(occurrence => (
-                          <tr key={occurrence.id}>
-                            <td className="px-3 py-2 font-bold text-foreground-900">Session {occurrence.session_number}</td>
-                            <td className="px-3 py-2 font-semibold text-foreground-600">{occurrence.scheduled_start ? new Date(occurrence.scheduled_start).toLocaleString('en-GB') : '-'}</td>
-                            <td className="px-3 py-2 font-semibold text-foreground-600">{occurrence.actual_start ? new Date(occurrence.actual_start).toLocaleString('en-GB') : 'Not attended yet'}</td>
-                            <td className="px-3 py-2 font-semibold text-foreground-600">{occurrence.participant_count || occurrence.attendance?.length || 0}</td>
-                            <td className="px-3 py-2 font-semibold text-foreground-600">{occurrence.artifacts?.length || 0}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="px-3 py-3 text-[11px] font-semibold text-foreground-500">No Teams sessions are tracked yet.</p>
-                )}
-              </div>
+            </div>
+            {teamsSyncMessage ? (
+              <TeamsStatusMessage tone={teamsSyncMessage.toLowerCase().includes('could not') || teamsSyncMessage.toLowerCase().includes('unable') || teamsSyncMessage.toLowerCase().includes('failed') ? 'error' : 'info'}>
+                {teamsSyncMessage}
+              </TeamsStatusMessage>
             ) : null}
+            {teamsPersistMessage ? (
+              <TeamsStatusMessage tone={teamsPersistMessage.startsWith('Saved') ? 'success' : teamsPersistMessage.toLowerCase().includes('failed') ? 'error' : 'warning'}>
+                {teamsPersistMessage}
+              </TeamsStatusMessage>
+            ) : null}
+            <TeamsActualSessionPlan
+              draft={draft}
+              groupTime={groupTime}
+              groupEndTime={groupEndTime}
+              occurrences={teamsSessions}
+              loading={teamsSessionsLoading}
+              error={teamsSessionsError}
+              open={teamsSessionsOpen}
+              onToggle={() => setTeamsSessionsOpen(current => !current)}
+            />
             {tutorConflict ? (
-              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">
-                <div className="flex items-start gap-2">
-                  <i className="ri-error-warning-line mt-0.5 shrink-0 text-sm"></i>
-                  <div>
-                    <p className="font-bold">Tutor scheduling conflict</p>
-                    <p className="mt-0.5 leading-5">{tutorConflict.message}</p>
-                    <p className="mt-1 text-[11px] font-bold">Choose a different tutor before continuing.</p>
-                  </div>
-                </div>
-              </div>
+              <TutorConflictInlineCard conflict={tutorConflict} />
             ) : null}
           </div>
         </div>
@@ -7133,14 +8004,19 @@ function ModulePlanningPanel({
             moduleTitle={moduleTitle}
             groupTime={groupTime}
             groupEndTime={groupEndTime}
-            tutorEmail={String(tutorProfiles.find(profile => normalise(staffName(profile)) === normalise(draft.tutor))?.email || '')}
+            tutorEmail={tutorEmail}
             onClose={() => setTeamsMeetingOpen(false)}
             persistLabel={teamsPersisting ? 'Saving Teams link to module...' : ''}
             onCreated={async (meeting, details) => {
               setTeamsPersistMessage('');
+              const ownedMeeting = {
+                ...meeting,
+                moduleLocalId: draft.localId,
+                moduleSourceId: draft.sourceId || draft.catalogueId || meeting.moduleSourceId || '',
+              };
               onChange({
-                teamsMeeting: meeting,
-                weeks: attachTeamsMeetingToWeeks(draft, meeting, details),
+                teamsMeeting: ownedMeeting,
+                weeks: attachTeamsMeetingToWeeks(draft, ownedMeeting, details),
               });
               if (!onPersistTeamsMeeting) {
                 setTeamsPersistMessage('Teams link is attached to this draft. Press Update to save it.');
@@ -7158,7 +8034,7 @@ function ModulePlanningPanel({
                 text: 'The Teams link and live-session components are being saved to this module.',
               });
               try {
-                const persistedPatch = await onPersistTeamsMeeting(draft, meeting, details);
+                const persistedPatch = await onPersistTeamsMeeting(draft, ownedMeeting, details);
                 if (persistedPatch) {
                   onChange(persistedPatch);
                 }
@@ -7192,6 +8068,884 @@ function ModulePlanningPanel({
   );
 }
 
+function TeamsActualSessionPlan({
+  draft,
+  groupTime,
+  groupEndTime,
+  occurrences,
+  loading,
+  error,
+  open,
+  onToggle,
+}: {
+  draft: ModuleDraft;
+  groupTime: string;
+  groupEndTime: string;
+  occurrences: TeamsMeetingOccurrence[];
+  loading: boolean;
+  error: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const meeting = draft.teamsMeeting;
+  const plannedWeeks = draft.weeks;
+  const [detailsOccurrence, setDetailsOccurrence] = useState<TeamsMeetingOccurrence | null>(null);
+  if (!plannedWeeks.length && !meeting) return null;
+
+  const durationMinutes = Math.max(30, Math.round(groupSessionDurationHours({ startTime: groupTime, endTime: groupEndTime }) * 60) || meeting?.durationMinutes || 60);
+  const teamsCount = occurrences.length || meeting?.trackedOccurrences || meeting?.repeatOccurrences || 0;
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-primary-100 bg-background-50 shadow-sm">
+      <div className="flex items-center justify-between gap-3 border-b border-background-200 bg-primary-50/60 px-3 py-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Live sessions after holidays</p>
+          <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">
+            {plannedWeeks.length} wizard dates - {meeting ? `${teamsCount || 'No'} Teams calendar occurrence${teamsCount === 1 ? '' : 's'}` : 'Teams meeting not created yet'}
+          </p>
+        </div>
+        <button type="button" onClick={onToggle} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-500 hover:bg-background-100" aria-label={open ? 'Hide live session details' : 'Show live session details'}>
+          <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-base`}></i>
+        </button>
+      </div>
+      {open ? (
+        <>
+          {error ? (
+            <p className="border-b border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>
+          ) : loading ? (
+            <p className="border-b border-background-200 px-3 py-2 text-[11px] font-semibold text-foreground-500">
+              <i className="ri-loader-4-line mr-1 animate-spin"></i>
+              Loading Teams calendar occurrences...
+            </p>
+          ) : null}
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-[11px]">
+              <thead className="bg-background-100 text-[9px] uppercase text-foreground-400">
+                <tr>
+                  <th className="px-3 py-2 font-bold">Session</th>
+                  <th className="px-3 py-2 font-bold">Wizard schedule</th>
+                  <th className="px-3 py-2 font-bold">Teams calendar</th>
+                  <th className="px-3 py-2 font-bold">Details</th>
+                  <th className="px-3 py-2 font-bold">Link</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-background-200">
+                {plannedWeeks.map((week, index) => {
+                  const occurrence = teamsOccurrenceForWeek(week, index, occurrences);
+                  const plannedStart = week.startTime || groupTime || '09:30';
+                  const plannedEnd = addHoursToTime(plannedStart, durationMinutes / 60);
+                  const shifted = week.shiftedHolidaySessions?.length;
+                  const calendarValue = occurrence?.scheduled_start
+                    ? formatDateTimeValue(occurrence.scheduled_start)
+                    : meeting
+                    ? 'Not loaded from Teams yet'
+                    : 'Create / sync Teams meeting';
+                  const meetingUrl = meeting?.joinUrl || meeting?.webLink || '';
+                  return (
+                    <tr key={week.id} className={shifted ? 'bg-amber-50/35' : ''}>
+                      <td className="px-3 py-2 align-top">
+                        <p className="font-bold text-foreground-900">Session {week.sessionNumber || index + 1}</p>
+                        {shifted ? <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-800">Shifted by holiday</span> : null}
+                      </td>
+                      <td className="px-3 py-2 align-top font-semibold text-foreground-700">
+                        <p>{formatDateValue(week.date)}</p>
+                        <p className="mt-0.5 text-[10px] text-foreground-500">{formatTimeRange(plannedStart, plannedEnd)}</p>
+                      </td>
+                      <td className="px-3 py-2 align-top font-semibold text-foreground-700">
+                        <p>{calendarValue}</p>
+                        {occurrence?.scheduled_end ? <p className="mt-0.5 text-[10px] text-foreground-500">Ends {formatDateTimeValue(occurrence.scheduled_end)}</p> : null}
+                      </td>
+                      <td className="px-3 py-2 align-top text-foreground-600">
+                        {shifted ? (
+                          <div className="space-y-1">
+                            <p className="font-semibold">From {formatDateValue(week.shiftedFromDate || week.shiftedHolidaySessions?.[0]?.date || week.date)}</p>
+                            {week.shiftedHolidaySessions?.map(skipped => (
+                              <p key={`${week.id}-${skipped.date}-${skipped.holidayId}`} className="text-[10px] font-semibold text-amber-800">
+                                {formatDateValue(skipped.date)}: {skipped.holidayLabel}
+                              </p>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="font-semibold text-emerald-700">No holiday clash</p>
+                        )}
+                        {occurrence ? (
+                          <p className="mt-1 text-[10px] font-semibold text-foreground-500">
+                            {occurrence.status || 'scheduled'} - {occurrence.participant_count || occurrence.attendance?.length || 0} attendance - {occurrence.artifacts?.length || 0} artifacts
+                          </p>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 align-top">
+                        {meetingUrl || occurrence ? (
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {meetingUrl ? (
+                              <a href={meetingUrl} target="_blank" rel="noreferrer" className="inline-flex h-7 items-center gap-1 rounded-lg bg-primary-600 px-2.5 text-[10px] font-bold text-white hover:bg-primary-700">
+                                <i className="ri-microsoft-teams-line"></i>
+                                Open
+                              </a>
+                            ) : null}
+                            {occurrence ? (
+                              <button
+                                type="button"
+                                onClick={() => setDetailsOccurrence(occurrence)}
+                                className="inline-flex h-7 items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 text-[10px] font-bold text-primary-700 hover:bg-primary-50"
+                              >
+                                <i className="ri-file-list-3-line"></i>
+                                Details
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-foreground-400">No link</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {meeting ? (
+            <p className="border-t border-background-200 bg-background-100/60 px-3 py-2 text-[10px] font-semibold text-foreground-500">
+              The wizard schedule is the source of truth. Date, session, and holiday changes update Microsoft Teams calendar occurrences automatically.
+            </p>
+          ) : null}
+          {detailsOccurrence ? (
+            <TeamsOccurrenceDetailsModal
+              liveSessionId={meeting?.liveSessionId || ''}
+              occurrence={detailsOccurrence}
+              onClose={() => setDetailsOccurrence(null)}
+            />
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function TeamsOccurrenceDetailsModal({
+  liveSessionId,
+  occurrence,
+  onClose,
+}: {
+  liveSessionId: string;
+  occurrence: TeamsMeetingOccurrence;
+  onClose: () => void;
+}) {
+  const { auth } = useAuth();
+  const attendance = occurrence.attendance || [];
+  const artifacts = occurrence.artifacts || [];
+  const transcripts = artifacts.filter(artifact => artifact.artifact_type === 'transcript');
+  const recordings = artifacts.filter(artifact => artifact.artifact_type === 'recording');
+  const [transcriptText, setTranscriptText] = useState('');
+  const [attendanceTranscriptText, setAttendanceTranscriptText] = useState('');
+  const [transcriptLoading, setTranscriptLoading] = useState('');
+  const [transcriptError, setTranscriptError] = useState('');
+
+  const loadTranscript = async (artifact: TeamsMeetingArtifact) => {
+    if (!liveSessionId) return;
+    setTranscriptLoading(artifact.id);
+    setTranscriptError('');
+    setTranscriptText('');
+    try {
+      const response = await fetch(teamsMeetingArtifactContentUrl(liveSessionId, artifact.id));
+      if (!response.ok) throw new Error(`Transcript could not be loaded (${response.status}).`);
+      const text = await response.text();
+      setAttendanceTranscriptText(text);
+      setTranscriptText(text);
+    } catch (err) {
+      setTranscriptError(err instanceof Error ? err.message : 'Transcript could not be loaded.');
+    } finally {
+      setTranscriptLoading('');
+    }
+  };
+
+  useEffect(() => {
+    if (!liveSessionId || attendanceTranscriptText || !transcripts.length) return;
+    let active = true;
+    fetch(teamsMeetingArtifactContentUrl(liveSessionId, transcripts[0].id))
+      .then(response => response.ok ? response.text() : '')
+      .then(text => {
+        if (active && text) setAttendanceTranscriptText(text);
+      })
+      .catch(() => {
+        // Attendance can still fall back to Graph/email names if transcript preview is unavailable.
+      });
+    return () => {
+      active = false;
+    };
+  }, [attendanceTranscriptText, liveSessionId, transcripts]);
+
+  const openRecordingPreview = (artifact: TeamsMeetingArtifact) => {
+    if (!liveSessionId) return;
+    const videoUrl = teamsMeetingArtifactPreviewUrl(liveSessionId, artifact.id);
+    const eventsUrl = teamsMeetingRecordingEventsUrl(liveSessionId, artifact.id);
+    const previewSessionId = `preview-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const viewer = {
+      id: auth.user?.id || '',
+      email: auth.user?.email || '',
+      name: auth.user?.fullName || '',
+      role: auth.roles.map(role => role.name || role.slug).filter(Boolean).join(', '),
+    };
+    const browser = {
+      sessionId: recordingTrackerBrowserSessionId(),
+      userAgent: window.navigator.userAgent,
+      pageUrl: window.location.href,
+      referrer: document.referrer,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    };
+    const preview = window.open('', '_blank', 'width=1180,height=760');
+    if (!preview) {
+      fetch(eventsUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          previewSessionId,
+          viewer,
+          browser,
+          events: [{
+            id: `evt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+            type: 'preview_clicked_popup_blocked',
+            eventTime: new Date().toISOString(),
+            videoTimeSeconds: 0,
+            watchedSecondsDelta: 0,
+            metadata: { button: 'Preview recording' },
+          }],
+        }),
+        keepalive: true,
+      }).catch(() => {
+        // Tracking must not block opening the recording fallback.
+      });
+      window.open(videoUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    preview.opener = null;
+    preview.document.write(`<!doctype html>
+<html>
+<head>
+  <title>Teams recording preview</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background: #0f0f12; color: #fff; }
+    header { display: flex; justify-content: space-between; gap: 16px; padding: 14px 18px; background: #18181b; font-weight: 800; }
+    header span { color: #a78bfa; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+    main { height: calc(100vh - 54px); display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 14px; padding: 18px; box-sizing: border-box; }
+    video { width: 100%; max-height: 100%; align-self: center; background: #000; border-radius: 10px; }
+    aside { border: 1px solid #27272a; border-radius: 10px; background: #18181b; padding: 14px; }
+    .metric { margin: 0 0 12px; }
+    .metric label { display: block; color: #a1a1aa; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .metric strong { display: block; margin-top: 4px; font-size: 18px; }
+    .status { margin-top: 14px; border-radius: 8px; background: #27272a; padding: 10px; color: #d4d4d8; font-size: 12px; font-weight: 700; }
+    @media (max-width: 820px) { main { grid-template-columns: 1fr; } aside { display: none; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>Teams recording - Session ${occurrence.session_number}</div>
+    <span>Tracking enabled</span>
+  </header>
+  <main>
+    <video id="recording" src="${videoUrl.replace(/"/g, '&quot;')}" controls autoplay></video>
+    <aside>
+      <div class="metric"><label>Watched</label><strong id="watched">0 sec</strong></div>
+      <div class="metric"><label>Current time</label><strong id="current">0 sec</strong></div>
+      <div class="metric"><label>Skips</label><strong id="skips">0</strong></div>
+      <div class="metric"><label>Events</label><strong id="events">0</strong></div>
+      <div class="status" id="status">Preview opened</div>
+    </aside>
+  </main>
+  <script>
+    (() => {
+      const config = {
+        eventsUrl: ${inlineJson(eventsUrl)},
+        previewSessionId: ${inlineJson(previewSessionId)},
+        viewer: ${inlineJson(viewer)},
+        browser: ${inlineJson(browser)}
+      };
+      const video = document.getElementById('recording');
+      const watchedEl = document.getElementById('watched');
+      const currentEl = document.getElementById('current');
+      const skipsEl = document.getElementById('skips');
+      const eventsEl = document.getElementById('events');
+      const statusEl = document.getElementById('status');
+      let queue = [];
+      let eventCount = 0;
+      let seekFrom = null;
+      let skipCount = 0;
+      let totalWatchedSeconds = 0;
+      let maxWatchedPosition = 0;
+      let lastTickAt = Date.now();
+      let lastPosition = 0;
+      let lastProgressSentAt = 0;
+
+      const fmt = seconds => {
+        const value = Math.max(0, Math.round(Number(seconds) || 0));
+        const minutes = Math.floor(value / 60);
+        const rest = value % 60;
+        return minutes ? minutes + ' min ' + rest + ' sec' : rest + ' sec';
+      };
+      const updateStats = status => {
+        watchedEl.textContent = fmt(totalWatchedSeconds);
+        currentEl.textContent = fmt(video.currentTime);
+        skipsEl.textContent = String(skipCount);
+        eventsEl.textContent = String(eventCount);
+        if (status) statusEl.textContent = status;
+      };
+      const baseEvent = type => ({
+        id: 'evt-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10),
+        type,
+        eventTime: new Date().toISOString(),
+        videoTimeSeconds: Number(video.currentTime || 0),
+        durationSeconds: Number.isFinite(video.duration) ? Number(video.duration) : null,
+        playbackRate: Number(video.playbackRate || 1),
+        volume: Number(video.volume || 0),
+        muted: Boolean(video.muted),
+        watchedSecondsDelta: 0,
+        metadata: {
+          paused: Boolean(video.paused),
+          ended: Boolean(video.ended),
+          readyState: video.readyState,
+          networkState: video.networkState,
+          fullscreen: document.fullscreenElement === video,
+          totalWatchedSeconds,
+          maxWatchedPosition,
+          skipCount
+        }
+      });
+      const enqueue = (type, extra = {}, immediate = false) => {
+        queue.push({ ...baseEvent(type), ...extra });
+        eventCount += 1;
+        updateStats(type);
+        if (immediate || queue.length >= 10) flush();
+      };
+      const flush = () => {
+        if (!queue.length) return;
+        const events = queue;
+        queue = [];
+        const body = JSON.stringify({
+          previewSessionId: config.previewSessionId,
+          viewer: config.viewer,
+          browser: {
+            ...config.browser,
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight,
+            pageUrl: window.location.href,
+            referrer: document.referrer
+          },
+          events
+        });
+        if (navigator.sendBeacon) {
+          const sent = navigator.sendBeacon(config.eventsUrl, new Blob([body], { type: 'application/json' }));
+          if (sent) return;
+        }
+        fetch(config.eventsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          keepalive: true
+        }).catch(() => {
+          queue = events.concat(queue).slice(-50);
+        });
+      };
+      const tick = () => {
+        const now = Date.now();
+        const elapsed = Math.max(0, (now - lastTickAt) / 1000);
+        lastTickAt = now;
+        const current = Number(video.currentTime || 0);
+        if (!video.paused && !video.ended) {
+          const naturalDelta = Math.max(0, Math.min(elapsed * Math.max(0.25, video.playbackRate || 1), current - lastPosition));
+          totalWatchedSeconds += naturalDelta;
+          maxWatchedPosition = Math.max(maxWatchedPosition, current);
+          if (now - lastProgressSentAt >= 5000) {
+            enqueue('progress', {
+              previousVideoTimeSeconds: lastPosition,
+              watchedSecondsDelta: naturalDelta,
+              metadata: { totalWatchedSeconds, maxWatchedPosition, skipCount }
+            });
+            lastProgressSentAt = now;
+          }
+        }
+        lastPosition = current;
+        updateStats();
+      };
+
+      window.setInterval(tick, 1000);
+      window.setInterval(flush, 5000);
+      enqueue('preview_clicked', { metadata: { button: 'Preview recording' } }, true);
+      enqueue('preview_opened', {}, true);
+      video.addEventListener('play', () => {
+        lastTickAt = Date.now();
+        lastPosition = Number(video.currentTime || 0);
+        enqueue('play', {}, true);
+      });
+      video.addEventListener('pause', () => enqueue(video.ended ? 'ended' : 'pause', { metadata: { totalWatchedSeconds, maxWatchedPosition, skipCount } }, true));
+      video.addEventListener('seeking', () => {
+        seekFrom = Number(video.currentTime || 0);
+        enqueue('seek_start', { skipFromSeconds: seekFrom }, true);
+      });
+      video.addEventListener('seeked', () => {
+        const to = Number(video.currentTime || 0);
+        const from = seekFrom ?? lastPosition;
+        const delta = to - from;
+        if (Math.abs(delta) >= 2) skipCount += 1;
+        enqueue('seek_end', {
+          skipped: Math.abs(delta) >= 2,
+          skipFromSeconds: from,
+          skipToSeconds: to,
+          previousVideoTimeSeconds: from,
+          metadata: { direction: delta >= 0 ? 'forward' : 'backward', deltaSeconds: delta, totalWatchedSeconds, maxWatchedPosition, skipCount }
+        }, true);
+        seekFrom = null;
+        lastPosition = to;
+      });
+      video.addEventListener('ratechange', () => enqueue('rate_change', {}, true));
+      video.addEventListener('volumechange', () => enqueue('volume_change'));
+      video.addEventListener('waiting', () => enqueue('buffering'));
+      video.addEventListener('ended', () => enqueue('ended', { metadata: { totalWatchedSeconds, maxWatchedPosition, skipCount } }, true));
+      video.addEventListener('error', () => enqueue('error', { metadata: { code: video.error?.code || null, message: video.error?.message || '' } }, true));
+      document.addEventListener('visibilitychange', () => enqueue(document.hidden ? 'tab_hidden' : 'tab_visible'));
+      document.addEventListener('fullscreenchange', () => enqueue(document.fullscreenElement ? 'fullscreen_enter' : 'fullscreen_exit', {}, true));
+      window.addEventListener('beforeunload', () => {
+        tick();
+        enqueue('preview_closed', { metadata: { totalWatchedSeconds, maxWatchedPosition, skipCount } }, false);
+        flush();
+      });
+    })();
+  </script>
+</body>
+</html>`);
+    preview.document.close();
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-[10200] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" role="dialog" aria-modal="true">
+      <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-background-200 px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Teams session details</p>
+            <h3 className="mt-1 font-heading text-lg font-bold text-foreground-950">Session {occurrence.session_number}</h3>
+            <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">
+              {formatDateTimeValue(occurrence.scheduled_start)} - {formatDateTimeValue(occurrence.scheduled_end)}
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-foreground-500 hover:bg-background-100" aria-label="Close Teams session details">
+            <i className="ri-close-line text-lg"></i>
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <TeamsDetailStat label="Attendance" value={String(occurrence.participant_count || attendance.length || 0)} icon="ri-user-follow-line" />
+            <TeamsDetailStat label="Transcripts" value={String(transcripts.length)} icon="ri-file-text-line" />
+            <TeamsDetailStat label="Recordings" value={String(recordings.length)} icon="ri-video-line" />
+          </div>
+
+          <TeamsDetailsSection title="Attendance" icon="ri-team-line">
+            {attendance.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[620px] text-left text-[11px]">
+                  <thead className="bg-background-100 text-[9px] uppercase text-foreground-400">
+                    <tr>
+                      <th className="px-3 py-2 font-bold">Name</th>
+                      <th className="px-3 py-2 font-bold">Email</th>
+                      <th className="px-3 py-2 font-bold">Role</th>
+                      <th className="px-3 py-2 font-bold">Duration</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-background-200">
+                    {attendance.map(record => (
+                      <tr key={record.id}>
+                        <td className="px-3 py-2 font-bold text-foreground-900">{teamsParticipantName(record, attendance, attendanceTranscriptText || transcriptText)}</td>
+                        <td className="px-3 py-2 font-semibold text-foreground-600">{record.email || '-'}</td>
+                        <td className="px-3 py-2 font-semibold text-foreground-600">{record.role || '-'}</td>
+                        <td className="px-3 py-2 font-semibold text-foreground-600">{formatTeamsAttendanceDuration(record)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <TeamsEmptyDetail text="No attendance rows loaded for this session yet. Run Sync attendance & files after the session ends." />
+            )}
+          </TeamsDetailsSection>
+
+          <TeamsDetailsSection title="Transcripts" icon="ri-file-text-line">
+            {transcripts.length ? (
+              <div className="space-y-2">
+                {transcripts.map(artifact => (
+                  <div key={artifact.id} className="flex flex-col gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-bold text-foreground-900">Transcript</p>
+                      <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">{formatArtifactDate(artifact)}</p>
+                    </div>
+                    <button type="button" onClick={() => loadTranscript(artifact)} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[10px] font-bold text-white hover:bg-primary-700">
+                      <i className={`${transcriptLoading === artifact.id ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'}`}></i>
+                      View transcript
+                    </button>
+                  </div>
+                ))}
+                {transcriptError ? <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{transcriptError}</p> : null}
+                {transcriptText ? (
+                  <div className="overflow-hidden rounded-lg border border-background-200">
+                    <div className="flex items-center justify-between gap-3 bg-background-100 px-3 py-2">
+                      <p className="text-[10px] font-bold uppercase text-foreground-500">Transcript preview</p>
+                      <button type="button" onClick={() => setTranscriptText('')} className="inline-flex h-7 items-center gap-1 rounded-lg border border-background-200 bg-white px-2.5 text-[10px] font-bold text-foreground-600 hover:bg-background-50">
+                        <i className="ri-close-line"></i>
+                        Close
+                      </button>
+                    </div>
+                    <div className="max-h-72 overflow-auto bg-white px-3 py-2">
+                      <ReadableTranscript text={transcriptText} />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <TeamsEmptyDetail text="No transcript loaded for this session yet." />
+            )}
+          </TeamsDetailsSection>
+
+          <TeamsDetailsSection title="Recordings" icon="ri-video-line">
+            {recordings.length ? (
+              <div className="space-y-2">
+                {recordings.map(artifact => {
+                  const recordingUrl = liveSessionId ? teamsMeetingArtifactPreviewUrl(liveSessionId, artifact.id) : artifact.content_url || '';
+                  return (
+                    <div key={artifact.id} className="flex flex-col gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-bold text-foreground-900">Recording link</p>
+                        <p className="mt-0.5 truncate text-[10px] font-semibold text-foreground-500">{formatArtifactDate(artifact)}</p>
+                      </div>
+                      {recordingUrl ? (
+                        <button type="button" onClick={() => openRecordingPreview(artifact)} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[10px] font-bold text-white hover:bg-primary-700">
+                          <i className="ri-play-circle-line"></i>
+                          Preview recording
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <TeamsEmptyDetail text="No recording loaded for this session yet." />
+            )}
+          </TeamsDetailsSection>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function TeamsDetailStat({ label, value, icon }: { label: string; value: string; icon: string }) {
+  return (
+    <div className="rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[9px] font-bold uppercase text-foreground-400">{label}</p>
+        <i className={`${icon} text-primary-600`}></i>
+      </div>
+      <p className="mt-1 text-lg font-bold text-foreground-950">{value}</p>
+    </div>
+  );
+}
+
+function TeamsDetailsSection({ title, icon, children }: { title: string; icon: string; children: ReactNode }) {
+  return (
+    <section className="mt-4 overflow-hidden rounded-xl border border-background-200">
+      <div className="flex items-center gap-2 border-b border-background-200 bg-background-100 px-3 py-2">
+        <i className={`${icon} text-primary-600`}></i>
+        <h4 className="text-[11px] font-bold uppercase tracking-wide text-foreground-700">{title}</h4>
+      </div>
+      <div className="p-3">{children}</div>
+    </section>
+  );
+}
+
+function TeamsEmptyDetail({ text }: { text: string }) {
+  return <p className="rounded-lg bg-background-100 px-3 py-2 text-[11px] font-semibold text-foreground-500">{text}</p>;
+}
+
+function parseReadableTranscript(text: string) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n');
+  const entries: Array<{ time: string; speaker: string; text: string }> = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line.includes('-->')) continue;
+    const time = line.split('-->')[0]?.trim().replace(/\.\d+$/, '') || '';
+    const contentLines = [];
+    index += 1;
+    while (index < lines.length && lines[index].trim()) {
+      contentLines.push(lines[index].trim());
+      index += 1;
+    }
+    let content = contentLines.join(' ').trim();
+    let speaker = '';
+    const speakerMatch = content.match(/^<v\s+([^>]+)>([\s\S]*?)<\/v>$/i);
+    if (speakerMatch) {
+      speaker = speakerMatch[1].trim();
+      content = speakerMatch[2].trim();
+    }
+    content = content
+      .replace(/<\/?v[^>]*>/gi, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (content) entries.push({ time, speaker, text: content });
+  }
+  return entries;
+}
+
+function transcriptSpeakerNames(text: string) {
+  const names = parseReadableTranscript(text).map(entry => entry.speaker).filter(Boolean);
+  return names.filter((name, index) => names.findIndex(item => normalise(item) === normalise(name)) === index);
+}
+
+function emailDisplayName(email: string) {
+  if (!email.includes('@')) return '';
+  const local = email.split('@', 1)[0];
+  return local.split(/[._-]+/).filter(Boolean).map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+}
+
+function speakerMatchesEmail(speaker: string, email: string) {
+  const localParts = String(email || '').split('@', 1)[0].split(/[._-]+/).filter(Boolean);
+  const speakerKey = normalise(speaker);
+  return localParts.some(part => {
+    const partKey = normalise(part);
+    return partKey && (speakerKey.includes(partKey) || partKey.includes(speakerKey) || speakerKey.slice(0, 4) === partKey.slice(0, 4));
+  });
+}
+
+function speakerNameForAttendance(record: TeamsAttendanceRecord, attendance: TeamsAttendanceRecord[], transcriptText: string) {
+  const speakers = transcriptSpeakerNames(transcriptText);
+  if (!speakers.length) return '';
+  const byEmail = speakers.find(speaker => speakerMatchesEmail(speaker, record.email));
+  if (byEmail) return byEmail;
+  const matchedSpeakers = new Set(
+    attendance
+      .map(item => speakers.find(speaker => speakerMatchesEmail(speaker, item.email)))
+      .filter(Boolean)
+      .map(name => normalise(String(name))),
+  );
+  const unmatchedSpeakers = speakers.filter(speaker => !matchedSpeakers.has(normalise(speaker)));
+  const unmatchedAttendance = attendance.filter(item => !speakers.some(speaker => speakerMatchesEmail(speaker, item.email)));
+  if (unmatchedAttendance.length === unmatchedSpeakers.length && unmatchedAttendance.length > 0) {
+    const index = unmatchedAttendance.findIndex(item => item.id === record.id);
+    if (index >= 0) return unmatchedSpeakers[index] || '';
+  }
+  return '';
+}
+
+function ReadableTranscript({ text }: { text: string }) {
+  const entries = parseReadableTranscript(text);
+  if (!entries.length) {
+    return <p className="rounded-lg bg-background-100 px-3 py-2 text-[11px] font-semibold text-foreground-500">Transcript has no readable speech segments.</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {entries.map((entry, index) => (
+        <div key={`${entry.time}-${index}`} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+          <div className="mb-1 flex flex-wrap items-center gap-2">
+            <span className="rounded-md bg-primary-50 px-2 py-0.5 text-[10px] font-bold text-primary-700">{entry.speaker || 'Speaker'}</span>
+            <span className="text-[10px] font-semibold text-foreground-400">{entry.time}</span>
+          </div>
+          <p className="text-[12px] font-semibold leading-5 text-foreground-800">{entry.text}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatTeamsAttendanceDuration(record: TeamsAttendanceRecord) {
+  const seconds = Number(record.total_attendance_seconds || 0);
+  if (!Number.isFinite(seconds) || seconds < 0) return '-';
+  const totalSeconds = Math.round(seconds);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const remainingSeconds = totalSeconds % 60;
+  const parts = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes || hours) parts.push(`${minutes} min`);
+  parts.push(`${remainingSeconds} sec`);
+  return parts.join(' ');
+}
+
+function teamsParticipantName(record: TeamsAttendanceRecord, attendance: TeamsAttendanceRecord[] = [], transcriptText = '') {
+  const transcriptName = speakerNameForAttendance(record, attendance, transcriptText);
+  if (transcriptName) return transcriptName;
+  if (record.display_name && normalise(record.display_name) !== normalise(emailDisplayName(record.email))) return record.display_name;
+  const email = String(record.email || '').trim();
+  const name = emailDisplayName(email);
+  return name || 'Unknown participant';
+}
+
+function formatArtifactDate(artifact: TeamsMeetingArtifact) {
+  return formatDateTimeValue(artifact.created_datetime || artifact.end_datetime || '') || 'Date not available';
+}
+
+function TeamsStatusMessage({ tone, children }: { tone: 'success' | 'warning' | 'error' | 'info'; children: ReactNode }) {
+  const styles = {
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    warning: 'border-amber-200 bg-amber-50 text-amber-800',
+    error: 'border-red-200 bg-red-50 text-red-800',
+    info: 'border-primary-200 bg-primary-50 text-primary-800',
+  };
+  const icons = {
+    success: 'ri-checkbox-circle-line',
+    warning: 'ri-error-warning-line',
+    error: 'ri-close-circle-line',
+    info: 'ri-information-line',
+  };
+  return (
+    <div className={`mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-[11px] font-semibold ${styles[tone]}`}>
+      <i className={`${icons[tone]} mt-0.5 shrink-0 text-sm`}></i>
+      <p className="min-w-0 leading-5">{children}</p>
+    </div>
+  );
+}
+
+function teamsCreationErrorHelp(message: string) {
+  const text = message || 'Microsoft Teams could not create the meeting.';
+  const lower = text.toLowerCase();
+  const likelyArea = lower.includes('organizer') || lower.includes('user') || lower.includes('mailbox') || lower.includes('not found')
+    ? 'Fix area: Organizer Microsoft 365 email. Make sure this mailbox exists in Microsoft 365 and the Graph app is allowed to create events for it.'
+    : lower.includes('permission') || lower.includes('access') || lower.includes('authorization') || lower.includes('unauthorized') || lower.includes('forbidden')
+    ? 'Fix area: Microsoft Graph permissions / application access policy. Check Calendars.ReadWrite and OnlineMeetings.ReadWrite.All for this organizer.'
+    : lower.includes('attendee') || lower.includes('recipient') || lower.includes('email')
+    ? 'Fix area: presenters/attendees emails. Check every email address is valid.'
+    : 'Fix area: Microsoft Teams/Graph integration. Check backend Graph credentials, organizer access policy, and Teams meeting policy.';
+  return `${text}\n\n${likelyArea}`;
+}
+
+function TutorConflictInlineCard({ conflict }: { conflict: TutorScheduleConflict }) {
+  const summary = tutorConflictSummary(conflict);
+  return (
+    <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-3 text-[12px] text-red-800">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="flex min-w-0 gap-2.5">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-red-100 text-red-700">
+            <i className="ri-calendar-close-line text-sm"></i>
+          </span>
+          <div className="min-w-0">
+            <p className="font-heading text-[13px] font-bold text-red-950">Tutor already booked</p>
+            <p className="mt-0.5 text-[11px] font-semibold text-red-700">
+              {summary.tutor} is assigned to both modules at the same time.
+            </p>
+          </div>
+        </div>
+        <span className="inline-flex h-7 shrink-0 items-center rounded-full bg-white px-2.5 text-[10px] font-bold text-red-700 ring-1 ring-red-100">
+          Choose another tutor above
+        </span>
+      </div>
+      <div className="mt-3 grid items-stretch gap-2 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <div className="rounded-lg border border-blue-200 bg-white px-3 py-2 ring-1 ring-blue-50">
+          <p className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[9px] font-bold uppercase text-blue-700">
+            <i className="ri-edit-line text-[10px]"></i>
+            Current module
+          </p>
+          <p className="mt-2 text-[9px] font-bold uppercase text-foreground-400">Clashing session</p>
+          <p className="mt-0.5 truncate text-[12px] font-bold text-foreground-950">
+            Session {summary.currentSessionNumber}: {summary.currentTitle}
+          </p>
+          <ConflictLocationGrid
+            programme={summary.currentProgramme}
+            cohort={summary.currentCohort}
+            group={summary.currentGroup}
+          />
+        </div>
+        <div className="flex items-center justify-center">
+          <div className="flex min-w-[8.5rem] flex-col items-center justify-center rounded-lg border border-red-200 bg-white px-3 py-2 text-center shadow-sm">
+            <span className="text-[9px] font-bold uppercase text-red-400">Same tutor</span>
+            <span className="mt-0.5 text-[11px] font-bold text-red-900">{summary.tutor}</span>
+            <span className="mt-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">{summary.date}</span>
+            <span className="mt-1 text-[10px] font-bold text-red-700">{summary.time}</span>
+          </div>
+        </div>
+        <div className="rounded-lg border border-red-200 bg-white px-3 py-2 ring-1 ring-red-50">
+          <p className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[9px] font-bold uppercase text-red-700">
+            <i className="ri-calendar-event-line text-[10px]"></i>
+            Existing booking
+          </p>
+          <p className="mt-2 text-[9px] font-bold uppercase text-foreground-400">Booked session</p>
+          <p className="mt-0.5 truncate text-[12px] font-bold text-foreground-950">
+            Session {summary.otherSessionNumber}: {summary.otherTitle}
+          </p>
+          <ConflictLocationGrid
+            programme={summary.otherProgramme}
+            cohort={summary.otherCohort}
+            group={summary.otherGroup}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CoachAvailabilityHint({
+  coach,
+  programme,
+  cohort,
+  group,
+  days,
+  time,
+}: {
+  coach: string;
+  programme?: string;
+  cohort?: string;
+  group?: string;
+  days: string[];
+  time: string;
+}) {
+  return (
+    <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-[11px] font-semibold text-sky-800">
+      <div className="flex items-start gap-2">
+        <i className="ri-information-line mt-0.5 shrink-0 text-sm"></i>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-sky-700">Possible coach overlap</p>
+              <p className="mt-0.5 leading-5">{coach} is already assigned to another group at this time.</p>
+            </div>
+            <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
+              You can continue
+            </span>
+          </div>
+          <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+            <ConflictLocationItem label="Programme" value={programme || 'Not set'} />
+            <ConflictLocationItem label="Cohort" value={cohort || 'Not set'} />
+            <ConflictLocationItem label="Group" value={group || 'Not set'} />
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <span className="rounded-md bg-white px-2 py-1 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
+              Days: {days.length ? days.join(', ') : 'Not set'}
+            </span>
+            <span className="rounded-md bg-white px-2 py-1 text-[10px] font-bold text-sky-700 ring-1 ring-sky-100">
+              Time: {time || 'Not set'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ConflictLocationGrid({ programme, cohort, group }: { programme?: string; cohort?: string; group?: string }) {
+  return (
+    <div className="mt-2 grid gap-1.5 sm:grid-cols-3">
+      <ConflictLocationItem label="Programme" value={programme || 'Not set'} />
+      <ConflictLocationItem label="Cohort" value={cohort || 'Not set'} />
+      <ConflictLocationItem label="Group" value={group || 'Not set'} />
+    </div>
+  );
+}
+
+function ConflictLocationItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-md bg-background-100/70 px-2 py-1">
+      <p className="text-[8px] font-bold uppercase text-foreground-400">{label}</p>
+      <p className="mt-0.5 truncate text-[10px] font-bold text-foreground-700" title={value}>{value}</p>
+    </div>
+  );
+}
+
 function WizardTeamsMeetingModal({
   draft,
   moduleTitle,
@@ -7216,10 +8970,12 @@ function WizardTeamsMeetingModal({
   const sessionCount = Math.max(1, plannedWeeks.length || Number(draft.sessionsNumber) || 1);
   const firstSessionDate = plannedWeeks[0]?.date || draft.startDate || todayIso();
   const defaultDuration = Math.max(30, Math.round(groupSessionDurationHours({ startTime: groupTime, endTime: groupEndTime }) * 60) || 60);
+  const existingPresenters = normaliseTeamsEmailList(existing?.presenters);
+  const existingAttendees = normaliseTeamsEmailList(existing?.attendees);
   const [title, setTitle] = useState(moduleTitle || 'Live session');
-  const [organizerEmail, setOrganizerEmail] = useState(existing?.organizerEmail || tutorEmail);
-  const [presenters, setPresenters] = useState(normaliseTeamsEmailList(existing?.presenters).join('\n'));
-  const [attendees, setAttendees] = useState(normaliseTeamsEmailList(existing?.attendees).join('\n'));
+  const [organizerEmail, setOrganizerEmail] = useState(existing?.organizerEmail || DEFAULT_TEAMS_ORGANIZER_EMAIL);
+  const [presenters, setPresenters] = useState((existingPresenters.length ? existingPresenters : DEFAULT_TEAMS_PRESENTERS).join('\n'));
+  const [attendees, setAttendees] = useState((existingAttendees.length ? existingAttendees : DEFAULT_TEAMS_ATTENDEES).join('\n'));
   const startDateTime = `${firstSessionDate}T${groupTime || '09:30'}`;
   const durationMinutes = defaultDuration;
   const repeat: TeamsMeetingInput['repeat'] = sessionCount > 1 ? 'weekly' : 'none';
@@ -7246,7 +9002,7 @@ function WizardTeamsMeetingModal({
         if (!active) return;
         setGraphConfigured(configuration.configured);
         setTimeZone(configuration.timeZone);
-        setOrganizerEmail(current => current || configuration.defaultOrganizer || '');
+        setOrganizerEmail(current => current || configuration.defaultOrganizer || DEFAULT_TEAMS_ORGANIZER_EMAIL);
       })
       .catch(err => {
         if (active) setError(err instanceof Error ? err.message : 'Unable to check Microsoft Teams configuration.');
@@ -7263,6 +9019,10 @@ function WizardTeamsMeetingModal({
     setError('');
     if (!title.trim()) return setError('Meeting title is required.');
     if (!organizerEmail.trim()) return setError('Enter the Microsoft 365 organizer email.');
+    const presenterEmails = normaliseTeamsEmailList(presenters);
+    const attendeeEmails = normaliseTeamsEmailList(attendees);
+    if (!presenterEmails.length) return setError('Add at least one presenter email.');
+    if (!attendeeEmails.length) return setError('Add at least one attendee email.');
     const start = new Date(startDateTime);
     if (Number.isNaN(start.getTime())) return setError('Choose a valid meeting start date and time.');
     const scheduledWeeks = plannedWeeks.length ? plannedWeeks : [{ sessionNumber: 1, date: firstSessionDate, startTime: groupTime || '09:30' }];
@@ -7278,8 +9038,8 @@ function WizardTeamsMeetingModal({
     const input: TeamsMeetingInput = {
       title: title.trim(),
       organizerEmail: organizerEmail.trim(),
-      attendees: attendees.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean),
-      presenters: presenters.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean),
+      attendees: attendeeEmails,
+      presenters: presenterEmails,
       localStartDateTime: `${scheduledWeeks[0]?.date || firstSessionDate}T${scheduledWeeks[0]?.startTime || groupTime || '09:30'}`,
       startDateTimeUtc: authoritativeStart,
       durationMinutes: defaultDuration,
@@ -7317,7 +9077,15 @@ function WizardTeamsMeetingModal({
       setCreated(result);
       await onCreated(meeting, details);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.');
+      const detail = err instanceof Error ? err.message : 'Microsoft Teams could not create the meeting.';
+      const help = teamsCreationErrorHelp(detail);
+      setError(help);
+      await showCurriculumAlert({
+        title: 'Teams meeting was not created',
+        text: help,
+        icon: 'error',
+        confirmButtonText: 'I will fix it',
+      });
     } finally {
       setSubmitting(false);
     }
@@ -7359,17 +9127,17 @@ function WizardTeamsMeetingModal({
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2.5">
                   <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700">Linked to module scheduling</p>
                   <p className="mt-1 text-[11px] font-semibold text-emerald-900">
-                    Module range {draft.startDate || 'N/A'} to {draft.endDate || 'N/A'} · meeting starts {firstSessionDate} at {groupTime} · {sessionCount} session{sessionCount === 1 ? '' : 's'}
+                    Module range {draft.startDate ? formatDateValue(draft.startDate) : 'N/A'} to {draft.endDate ? formatDateValue(draft.endDate) : 'N/A'} · meeting starts {formatDateValue(firstSessionDate)} at {groupTime} · {sessionCount} session{sessionCount === 1 ? '' : 's'}
                   </p>
                 </div>
                 <Field label="Title" value={title} onChange={setTitle} required />
                 <Field label="Organizer Microsoft 365 email" value={organizerEmail} onChange={setOrganizerEmail} required placeholder="tutor@organisation.com" />
                 <div>
-                  <TextArea label="Presenters" value={presenters} onChange={setPresenters} rows={2} />
+                  <TextArea label="Presenters" value={presenters} onChange={setPresenters} rows={2} required />
                   <p className="mt-1 text-[10px] font-semibold text-foreground-400">Microsoft 365 email or UPN, one per line. Presenters are also invited automatically.</p>
                 </div>
                 <div>
-                  <TextArea label="Attendees" value={attendees} onChange={setAttendees} rows={4} />
+                  <TextArea label="Attendees" value={attendees} onChange={setAttendees} rows={4} required />
                   <p className="mt-1 text-[10px] font-semibold text-foreground-400">One email per line, comma, or semicolon.</p>
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -7426,7 +9194,7 @@ function SessionPreview({ draft }: { draft: ModuleDraft }) {
           <div>
             <p className="text-[11px] font-bold uppercase text-foreground-500">Session plan preview</p>
             <p className="mt-0.5 text-[11px] text-foreground-500">
-              Original end: {draft.originalEndDate || 'N/A'} - Adjusted end: {draft.endDate || 'N/A'} - Extension: {draft.extensionDays} days
+              Original end: {draft.originalEndDate ? formatDateValue(draft.originalEndDate) : 'N/A'} - Adjusted end: {draft.endDate ? formatDateValue(draft.endDate) : 'N/A'} - Extension: {draft.extensionDays} days
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -7458,7 +9226,7 @@ function SessionPreview({ draft }: { draft: ModuleDraft }) {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className={`text-[10px] font-bold uppercase ${session.shiftedHolidaySessions?.length ? 'text-amber-800' : 'text-emerald-700'}`}>Session {session.sessionNumber}</p>
-                  <p className="mt-0.5 text-[12px] font-bold text-foreground-900">{session.day.slice(0, 3)} {session.date}</p>
+                  <p className="mt-0.5 text-[12px] font-bold text-foreground-900">{formatDateValue(session.date)}</p>
                 </div>
                 {session.shiftedHolidaySessions?.length ? (
                   <span className="rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-bold text-amber-800">Shifted</span>
@@ -7491,7 +9259,7 @@ function SessionPreview({ draft }: { draft: ModuleDraft }) {
           <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {draft.skippedHolidaySessions.map(skipped => (
               <div key={`${skipped.date}-${skipped.holidayId}`} className="rounded-lg bg-background-50 px-3 py-2">
-                <p className="text-[11px] font-bold text-amber-800">{skipped.day.slice(0, 3)} {skipped.date}</p>
+                <p className="text-[11px] font-bold text-amber-800">{formatDateValue(skipped.date)}</p>
                 <p className="mt-0.5 text-[11px] font-semibold text-foreground-600">{skipped.holidayLabel}</p>
               </div>
             ))}
@@ -8396,7 +10164,7 @@ function ReviewSummary({
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: moduleColor }} aria-hidden="true"></span>
-                          <p className="truncate text-[13px] font-bold text-foreground-950">{draft.name || `Module ${moduleIndex + 1}`}</p>
+                          <p className="truncate text-[13px] font-bold text-foreground-950">{moduleDraftDisplayName(draft, moduleIndex, moduleOptions)}</p>
                         </div>
                         <p className="mt-1 text-[11px] text-foreground-500">
                           {draftComponentCount} components - {formatHoursValue(moduleHours)} OTJH - certificate on completion
@@ -8519,7 +10287,7 @@ function ReviewSummary({
                         </div>
                         <p className="mt-1 truncate text-base font-heading font-bold text-foreground-950">{cohort.name || `Cohort ${cohortIndex + 1}`}</p>
                         <p className="mt-0.5 text-[12px] font-semibold text-foreground-500">
-                          {cohort.startDate || 'No start'} to {cohort.endDate || 'No end'} - {cohort.durationMonths || 0} months
+                          {cohort.startDate ? formatDateValue(cohort.startDate) : 'No start'} to {cohort.endDate ? formatDateValue(cohort.endDate) : 'No end'} - {cohort.durationMonths || 0} months
                         </p>
                       </div>
                     </div>
@@ -8584,11 +10352,11 @@ function ReviewSummary({
                                       <div className="min-w-0">
                                         <div className="flex flex-wrap items-center gap-1.5">
                                           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: moduleColor }} aria-hidden="true"></span>
-                                          <p className="truncate text-[13px] font-bold text-foreground-950">{draft.name || `Module ${moduleIndex + 1}`}</p>
+                                          <p className="truncate text-[13px] font-bold text-foreground-950">{moduleDraftDisplayName(draft, moduleIndex, moduleOptions)}</p>
                                           {draft.extensionDays > 0 ? <ReviewBadge tone="warning">extended {draft.extensionDays}d</ReviewBadge> : null}
                                         </div>
                                         <p className="mt-1 text-[11px] text-foreground-500">
-                                          {draft.startDate || 'No start'} to {draft.endDate || 'No end'} - {draft.sessionsNumber || draft.weeks.length || 0} sessions - {formatHoursValue(moduleHours)} OTJH
+                                          {draft.startDate ? formatDateValue(draft.startDate) : 'No start'} to {draft.endDate ? formatDateValue(draft.endDate) : 'No end'} - {draft.sessionsNumber || draft.weeks.length || 0} sessions - {formatHoursValue(moduleHours)} OTJH
                                         </p>
                                       </div>
                                     </div>
@@ -8929,11 +10697,11 @@ function ColorField({ label, value, onChange, compact = false }: { label: string
   );
 }
 
-function TextArea({ label, value, onChange, rows = 3 }: { label: string; value: string; onChange: (value: string) => void; rows?: number }) {
+function TextArea({ label, value, onChange, rows = 3, required = false }: { label: string; value: string; onChange: (value: string) => void; rows?: number; required?: boolean }) {
   return (
     <label className="block">
-      <span className="text-[10px] font-bold uppercase text-foreground-400">{label}</span>
-      <textarea value={value} onChange={event => onChange(event.target.value)} rows={rows} className="mt-1 w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-[13px] font-medium text-foreground-900 outline-none transition-smooth focus:border-primary-300" />
+      <span className="text-[10px] font-bold uppercase text-foreground-400">{label}{required ? ' *' : ''}</span>
+      <textarea required={required} value={value} onChange={event => onChange(event.target.value)} rows={rows} className="mt-1 w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-[13px] font-medium text-foreground-900 outline-none transition-smooth focus:border-primary-300" />
     </label>
   );
 }
@@ -8963,11 +10731,45 @@ function SelectNative({
   );
 }
 
-function StaffSelect({ label, value, onChange, options, onOpen }: { label: string; value: string; onChange: (value: string) => void; options: string[]; onOpen?: () => void }) {
+function StaffSelect({
+  label,
+  value,
+  onChange,
+  options,
+  role,
+  onOpen,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  role?: 'coach' | 'tutor';
+  onOpen?: () => void | Promise<void>;
+}) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [fallbackOptions, setFallbackOptions] = useState<string[]>([]);
+  const [fallbackLoading, setFallbackLoading] = useState(false);
+  const [fallbackLoaded, setFallbackLoaded] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
-  const filtered = options.filter(option => normalise(option).includes(normalise(query)));
+  const displayOptions = uniqueStaffNames([...options, ...fallbackOptions]);
+  const filtered = displayOptions.filter(option => normalise(option).includes(normalise(query)));
+
+  const loadFallbackOptions = useCallback(async () => {
+    if (!role || fallbackLoaded || fallbackLoading) return;
+    setFallbackLoading(true);
+    try {
+      const profiles = role === 'coach'
+        ? await fetchCurriculumCoaches(undefined, { skipCache: true })
+        : await fetchCurriculumTutors(undefined, { skipCache: true });
+      setFallbackOptions(uniqueStaffNames(profiles.map(staffName)));
+      setFallbackLoaded(true);
+    } catch {
+      setFallbackOptions([]);
+    } finally {
+      setFallbackLoading(false);
+    }
+  }, [fallbackLoaded, fallbackLoading, role]);
 
   useEffect(() => {
     if (!open) return;
@@ -8986,7 +10788,10 @@ function StaffSelect({ label, value, onChange, options, onOpen }: { label: strin
         onClick={() => {
           setOpen(current => {
             const next = !current;
-            if (next) onOpen?.();
+            if (next) {
+              void onOpen?.();
+              void loadFallbackOptions();
+            }
             return next;
           });
         }}
@@ -8999,12 +10804,19 @@ function StaffSelect({ label, value, onChange, options, onOpen }: { label: strin
       {open && (
         <div className="absolute left-auto right-0 z-[10030] mt-2 w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-background-200 bg-background-50 p-2 shadow-2xl">
           <input value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${label.toLowerCase()}...`} className="mb-2 w-full rounded-lg border border-background-200 px-3 py-2 text-[12px] outline-none focus:border-primary-300" />
-          <div className="max-h-56 overflow-y-auto">
+          <div
+            className="max-h-[148px] overflow-y-scroll pr-1"
+            style={{ scrollbarGutter: 'stable' }}
+          >
             <button type="button" onClick={() => { onChange(''); setOpen(false); }} className="w-full rounded-lg px-3 py-2 text-left text-[12px] font-semibold text-foreground-700 hover:bg-background-100">Unassigned</button>
             {filtered.map(option => (
               <button key={option} type="button" onClick={() => { onChange(option); setOpen(false); }} className="w-full rounded-lg px-3 py-2 text-left text-[12px] font-semibold text-foreground-700 hover:bg-primary-50">{option}</button>
             ))}
-            {!filtered.length && <p className="px-3 py-3 text-[12px] text-foreground-400">No matching staff found.</p>}
+            {!filtered.length && (
+              <p className="px-3 py-3 text-[12px] text-foreground-400">
+                {fallbackLoading ? 'Loading staff profiles...' : 'No matching staff found.'}
+              </p>
+            )}
           </div>
         </div>
       )}

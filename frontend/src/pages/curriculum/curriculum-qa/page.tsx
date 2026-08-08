@@ -189,10 +189,10 @@ const findingStatusColor = (s: FindingStatus) => {
 };
 
 const checklistStatusIcon = (s: ChecklistItem['status']) => {
-  if (s === 'Pass') return <i className="ri-checkbox-circle-line text-emerald-500 text-sm"></i>;
-  if (s === 'Fail') return <i className="ri-close-circle-line text-red-500 text-sm"></i>;
-  if (s === 'N/A') return <i className="ri-forbid-line text-foreground-300 text-sm"></i>;
-  return <i className="ri-time-line text-amber-400 text-sm"></i>;
+  if (s === 'Pass') return <AppIcon className="ri-checkbox-circle-line text-emerald-500 text-sm"></AppIcon>;
+  if (s === 'Fail') return <AppIcon className="ri-close-circle-line text-red-500 text-sm"></AppIcon>;
+  if (s === 'N/A') return <AppIcon className="ri-forbid-line text-foreground-300 text-sm"></AppIcon>;
+  return <AppIcon className="ri-time-line text-amber-400 text-sm"></AppIcon>;
 };
 
 // ─────────────────── Component ───────────────────
@@ -254,7 +254,7 @@ export default function CurriculumQAPage() {
         {/* Notification */}
         {notification && (
           <div className={`flex items-center gap-2 px-4 py-3 rounded-xl text-[13px] font-medium border ${notification.type === 'success' ? 'bg-emerald-50 border-emerald-200/60 text-emerald-700' : 'bg-amber-50 border-amber-200/60 text-amber-700'}`}>
-            <i className={`${notification.type === 'success' ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'} text-base`}></i>
+            <AppIcon className={`${notification.type === 'success' ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'} text-base`}></AppIcon>
             {notification.text}
           </div>
         )}
@@ -271,7 +271,7 @@ export default function CurriculumQAPage() {
           ].map(s => (
             <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
               <div className={`w-7 h-7 rounded-lg flex items-center justify-center mb-2 ${s.color}`}>
-                <i className={`${s.icon} text-xs`}></i>
+                <AppIcon className={`${s.icon} text-xs`}></AppIcon>
               </div>
               <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium leading-tight">{s.label}</p>
               <p className="text-xl font-heading font-bold text-foreground-900">{s.value}</p>
@@ -283,7 +283,7 @@ export default function CurriculumQAPage() {
         <div className="flex items-center gap-1 p-0.5 bg-background-100 rounded-xl w-fit">
           {([['versions', 'Programme Versions', 'ri-stack-line'], ['findings', 'QA Findings', 'ri-error-warning-line'], ['checklist', 'QA Checklist', 'ri-check-double-line']] as const).map(([t, label, icon]) => (
             <button key={t} onClick={() => setActiveTab(t)} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-medium transition-smooth cursor-pointer whitespace-nowrap ${activeTab === t ? 'bg-background-50 text-foreground-900' : 'text-foreground-400 hover:text-foreground-700'}`}>
-              <i className={`${icon} text-sm`}></i>{label}
+              <AppIcon className={`${icon} text-sm`}></AppIcon>{label}
               {t === 'findings' && stats.openFindings > 0 && <span className="bg-amber-400 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full">{stats.openFindings}</span>}
             </button>
           ))}
@@ -346,7 +346,7 @@ export default function CurriculumQAPage() {
                       <ul className="space-y-1">
                         {selectedVersion.changesSummary.map((c, i) => (
                           <li key={i} className="flex items-start gap-2 text-[12px] text-foreground-600">
-                            <i className="ri-arrow-right-s-line text-primary-400 mt-0.5 shrink-0"></i>{c}
+                            <AppIcon className="ri-arrow-right-s-line text-primary-400 mt-0.5 shrink-0"></AppIcon>{c}
                           </li>
                         ))}
                       </ul>
@@ -360,35 +360,35 @@ export default function CurriculumQAPage() {
                           <textarea value={approvalNote} onChange={e => setApprovalNote(e.target.value)} rows={2} placeholder="Add notes for the curriculum team..." className="w-full px-3 py-2 border border-background-200 rounded-lg bg-background-50 text-[12px] text-foreground-700 placeholder:text-foreground-300 outline-none focus:border-primary-400 resize-none" />
                           <div className="flex items-center gap-2">
                             <button onClick={() => handleApproveVersion(selectedVersion)} className="flex-1 py-2 bg-emerald-500 text-white rounded-lg text-[11px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer whitespace-nowrap">
-                              <i className="ri-checkbox-circle-line mr-1"></i>Approve Version
+                              <AppIcon className="ri-checkbox-circle-line mr-1"></AppIcon>Approve Version
                             </button>
                             <button onClick={() => handleRejectVersion(selectedVersion)} className="flex-1 py-2 bg-red-500 text-white rounded-lg text-[11px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap">
-                              <i className="ri-close-circle-line mr-1"></i>Reject Version
+                              <AppIcon className="ri-close-circle-line mr-1"></AppIcon>Reject Version
                             </button>
                             <button onClick={() => setApprovingId(null)} className="px-3 py-2 bg-background-100 border border-background-200 rounded-lg text-[11px] text-foreground-500 hover:bg-background-200 cursor-pointer whitespace-nowrap">Cancel</button>
                           </div>
                         </div>
                       ) : (
                         <button onClick={() => setApprovingId(selectedVersion.id)} className="w-full py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          <i className="ri-shield-check-line mr-1.5"></i>Begin QA Decision
+                          <AppIcon className="ri-shield-check-line mr-1.5"></AppIcon>Begin QA Decision
                         </button>
                       )
                     )}
                     {selectedVersion.status === 'Approved' && (
                       <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200/50 rounded-xl">
-                        <i className="ri-checkbox-circle-line text-emerald-600 text-base"></i>
+                        <AppIcon className="ri-checkbox-circle-line text-emerald-600 text-base"></AppIcon>
                         <span className="text-[12px] text-emerald-700 font-medium">Approved by {selectedVersion.reviewer} on {selectedVersion.reviewDate}. Ready for publishing.</span>
                       </div>
                     )}
                     {selectedVersion.status === 'Rejected' && (
                       <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200/50 rounded-xl">
-                        <i className="ri-close-circle-line text-red-600 text-base"></i>
+                        <AppIcon className="ri-close-circle-line text-red-600 text-base"></AppIcon>
                         <span className="text-[12px] text-red-700 font-medium">Rejected on {selectedVersion.reviewDate}. Critical findings must be resolved before resubmission.</span>
                       </div>
                     )}
                     {selectedVersion.status === 'Published' && (
                       <div className="flex items-center gap-2 p-3 bg-primary-50 border border-primary-200/50 rounded-xl">
-                        <i className="ri-book-open-line text-primary-600 text-base"></i>
+                        <AppIcon className="ri-book-open-line text-primary-600 text-base"></AppIcon>
                         <span className="text-[12px] text-primary-700 font-medium">Published and live for cohort assignment.</span>
                       </div>
                     )}
@@ -461,7 +461,7 @@ export default function CurriculumQAPage() {
               ) : (
                 <div className="flex items-center justify-center h-64 bg-background-50 rounded-2xl border border-foreground-200/60 border-dashed">
                   <div className="text-center">
-                    <i className="ri-stack-line text-3xl text-foreground-200 block mb-2"></i>
+                    <AppIcon className="ri-stack-line text-3xl text-foreground-200 block mb-2"></AppIcon>
                     <p className="text-[13px] text-foreground-400">Select a programme version to review</p>
                   </div>
                 </div>
@@ -516,7 +516,7 @@ export default function CurriculumQAPage() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">14 items across 5 sections — applied to every programme version review</p>
               </div>
               <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 cursor-pointer whitespace-nowrap">
-                <i className="ri-download-line mr-1"></i>Export Checklist
+                <AppIcon className="ri-download-line mr-1"></AppIcon>Export Checklist
               </button>
             </div>
             <div className="space-y-1">
@@ -534,7 +534,7 @@ export default function CurriculumQAPage() {
                   </div>
                   {items.map(item => (
                     <div key={item.id} className="flex items-center gap-3 p-3 rounded-lg bg-background-100/50 border border-background-200/30 mb-1 hover:bg-background-100 transition-smooth">
-                      <i className="ri-checkbox-blank-circle-line text-foreground-300 text-sm shrink-0"></i>
+                      <AppIcon className="ri-checkbox-blank-circle-line text-foreground-300 text-sm shrink-0"></AppIcon>
                       <p className="text-[12px] text-foreground-700">{item.item}</p>
                     </div>
                   ))}

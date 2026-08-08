@@ -19,7 +19,7 @@ export default function AttendanceHealthScore() {
       <div className="p-4 border-b border-background-200/60 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <span className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center">
-            <i className="ri-heart-pulse-line text-emerald-600 text-sm"></i>
+            <AppIcon className="ri-heart-pulse-line text-emerald-600 text-sm"></AppIcon>
           </span>
           <h3 className="text-sm font-heading font-semibold text-foreground-900">Health</h3>
         </div>

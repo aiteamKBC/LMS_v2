@@ -622,7 +622,7 @@ export function LearnerCalendarContent() {
       {/* Toast */}
       {addToCalendarToast && (
         <div className="fixed top-20 right-6 z-50 bg-background-50 rounded-xl border border-emerald-200/60 shadow-lg px-4 py-3 flex items-center gap-3 animate-in slide-in-from-right-4 duration-300">
-          <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center"><i className="ri-calendar-check-line"></i></span>
+          <span className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-calendar-check-line"></AppIcon></span>
           <p className="text-sm font-semibold text-foreground-900">{addToCalendarToast}</p>
         </div>
       )}
@@ -637,7 +637,7 @@ export function LearnerCalendarContent() {
                 <h3 className="mt-1 text-xl font-heading font-bold text-foreground-900">Connect personal calendar</h3>
                 <p className="mt-1 text-xs text-foreground-400">We only read free/busy times to prevent booking conflicts.</p>
               </div>
-              <button type="button" onClick={() => setShowCalendarConnect(false)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100"><i className="ri-close-line" /></button>
+              <button type="button" onClick={() => setShowCalendarConnect(false)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100"><AppIcon className="ri-close-line" /></button>
             </div>
             <div className="space-y-2.5">
               {CALENDAR_PROVIDERS.map((item) => {
@@ -645,7 +645,7 @@ export function LearnerCalendarContent() {
                 return (
                   <div key={item.provider} className={`rounded-xl border p-1 transition ${connected ? 'border-emerald-200 bg-emerald-50/30' : 'border-background-300'}`}>
                     <div className="flex items-center gap-3 px-3 py-2.5">
-                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${connected ? 'bg-emerald-100 text-emerald-600' : 'bg-primary-50 text-primary-600'}`}><i className={connected ? 'ri-check-line' : item.icon} /></span>
+                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${connected ? 'bg-emerald-100 text-emerald-600' : 'bg-primary-50 text-primary-600'}`}><AppIcon className={connected ? 'ri-check-line' : item.icon} /></span>
                       <button type="button" disabled={Boolean(connected)} onClick={async () => {
                         setConnectionError(null);
                         if (item.provider === 'google' || item.provider === 'microsoft') {
@@ -672,8 +672,8 @@ export function LearnerCalendarContent() {
                 );
               })}
             </div>
-            {connectionError && <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"><i className="ri-error-warning-line mt-0.5" /><span>{connectionError}</span></div>}
-            <p className="mt-4 flex items-start gap-2 text-[10px] leading-relaxed text-foreground-400"><i className="ri-shield-keyhole-line mt-0.5 text-emerald-500" />OAuth tokens and calendar passwords are encrypted on the server and are never sent back to the browser.</p>
+            {connectionError && <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700"><AppIcon className="ri-error-warning-line mt-0.5" /><span>{connectionError}</span></div>}
+            <p className="mt-4 flex items-start gap-2 text-[10px] leading-relaxed text-foreground-400"><AppIcon className="ri-shield-keyhole-line mt-0.5 text-emerald-500" />OAuth tokens and calendar passwords are encrypted on the server and are never sent back to the browser.</p>
           </div>
         </div>
       )}
@@ -682,8 +682,8 @@ export function LearnerCalendarContent() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowBookModal(false)}>
           <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><i className="ri-user-star-line text-primary-500"></i>Book a Coach Session</h3>
-              <button onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button>
+              <h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className="ri-user-star-line text-primary-500"></AppIcon>Book a Coach Session</h3>
+              <button onClick={() => setShowBookModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
             </div>
             <p className="text-sm text-foreground-500 mb-5">
               {coach
@@ -700,7 +700,7 @@ export function LearnerCalendarContent() {
                   ]).map((t) => (
                     <button key={t.value} onClick={() => setBookType(t.value)}
                       className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${bookType === t.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><i className={t.icon}></i></span>
+                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${bookType === t.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={t.icon}></AppIcon></span>
                       <p className="text-sm font-semibold text-foreground-900">{t.label}</p>
                       <p className="text-xs text-foreground-400 mt-0.5">{t.desc}</p>
                     </button>
@@ -713,11 +713,11 @@ export function LearnerCalendarContent() {
               </div>
               {calendarConnections.length > 0 ? (
                 <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${selectedSlotConflicts ? 'border-red-200 bg-red-50 text-red-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-                  <i className={`${availabilityLoading ? 'ri-loader-4-line animate-spin' : selectedSlotConflicts ? 'ri-calendar-close-line' : 'ri-calendar-check-line'} mt-0.5`} />
+                  <AppIcon className={`${availabilityLoading ? 'ri-loader-4-line animate-spin' : selectedSlotConflicts ? 'ri-calendar-close-line' : 'ri-calendar-check-line'} mt-0.5`} />
                   <div><p className="text-xs font-semibold">{availabilityLoading ? 'Checking your personal calendar…' : selectedSlotConflicts ? 'This time is busy' : 'This time is available'}</p><p className="mt-0.5 text-[10px] opacity-75">Checked against {calendarConnections.length} connected calendar{calendarConnections.length === 1 ? '' : 's'}.</p></div>
                 </div>
               ) : (
-                <button type="button" onClick={() => { setShowBookModal(false); setShowCalendarConnect(true); }} className="flex w-full items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-left text-xs font-semibold text-primary-700"><i className="ri-calendar-2-line" />Connect your personal calendar to prevent booking conflicts</button>
+                <button type="button" onClick={() => { setShowBookModal(false); setShowCalendarConnect(true); }} className="flex w-full items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-left text-xs font-semibold text-primary-700"><AppIcon className="ri-calendar-2-line" />Connect your personal calendar to prevent booking conflicts</button>
               )}
               <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Duration</label>
@@ -734,7 +734,7 @@ export function LearnerCalendarContent() {
               </div>
               {bookError && (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 flex items-center gap-2">
-                  <i className="ri-error-warning-line text-red-500"></i>
+                  <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>
                   <p className="text-xs text-red-700">{bookError}</p>
                 </div>
               )}
@@ -742,7 +742,7 @@ export function LearnerCalendarContent() {
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                {bookSubmitting ? <><i className="ri-loader-4-line animate-spin mr-1"></i>Booking...</> : <><i className="ri-calendar-check-line mr-1"></i>Book Session</>}
+                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>Booking...</> : <><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>Book Session</>}
               </button>
             </div>
           </div>
@@ -753,7 +753,7 @@ export function LearnerCalendarContent() {
       {showCreateModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowCreateModal(false)}>
           <div className="bg-background-50 rounded-2xl p-6 max-w-lg w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-5"><h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><i className="ri-add-circle-line text-primary-500"></i>Create New Event</h3><button onClick={() => setShowCreateModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button></div>
+            <div className="flex items-center justify-between mb-5"><h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className="ri-add-circle-line text-primary-500"></AppIcon>Create New Event</h3><button onClick={() => setShowCreateModal(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button></div>
             <div className="space-y-4">
               <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Event Title <span className="text-red-400">*</span></label><input type="text" value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} placeholder="e.g. Study session, Team meeting..." className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" maxLength={100} /></div>
               <div className="grid grid-cols-2 gap-3">
@@ -771,7 +771,7 @@ export function LearnerCalendarContent() {
               <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Location (optional)</label><input type="text" value={customLocation} onChange={(e) => setCustomLocation(e.target.value)} placeholder="e.g. Microsoft Teams, Library..." className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>
               <div><label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Description (optional)</label><textarea value={customDescription} onChange={(e) => setCustomDescription(e.target.value)} placeholder="Add any notes, agenda..." maxLength={500} rows={3} className="w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all resize-none" /><span className="text-[10px] text-foreground-400 mt-0.5 block">{customDescription.length}/500</span></div>
             </div>
-            <div className="flex gap-2 mt-5"><button onClick={() => setShowCreateModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button><button onClick={handleCreateCustomEvent} disabled={!customTitle.trim()} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"><i className="ri-calendar-check-line mr-1"></i>Create Event</button></div>
+            <div className="flex gap-2 mt-5"><button onClick={() => setShowCreateModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button><button onClick={handleCreateCustomEvent} disabled={!customTitle.trim()} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"><AppIcon className="ri-calendar-check-line mr-1"></AppIcon>Create Event</button></div>
           </div>
         </div>
       )}
@@ -780,21 +780,21 @@ export function LearnerCalendarContent() {
       {showEventDetails && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowEventDetails(null)}>
           <div className="bg-background-50 rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4"><span className={`text-xs font-semibold px-2 py-1 rounded-full ${statusConfig[showEventDetails.status].cls}`}>{statusConfig[showEventDetails.status].label}</span><button onClick={() => setShowEventDetails(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 cursor-pointer"><i className="ri-close-line"></i></button></div>
+            <div className="flex items-center justify-between mb-4"><span className={`text-xs font-semibold px-2 py-1 rounded-full ${statusConfig[showEventDetails.status].cls}`}>{statusConfig[showEventDetails.status].label}</span><button onClick={() => setShowEventDetails(null)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button></div>
             <h3 className="text-lg font-heading font-bold text-foreground-900 mb-2">{showEventDetails.title}</h3>
             <div className="space-y-2 mb-4">
-              <div className="flex items-center gap-2 text-sm text-foreground-600"><i className="ri-calendar-line text-foreground-400"></i><span className="font-semibold">{showEventDetails.date}, {showEventDetails.dayName} &middot; {showEventDetails.time}</span></div>
-              <div className="flex items-center gap-2 text-sm text-foreground-600"><i className="ri-map-pin-line text-foreground-400"></i><span>{showEventDetails.location}</span></div>
-              <div className="flex items-center gap-2 text-sm text-foreground-600"><i className="ri-team-line text-foreground-400"></i><span>{showEventDetails.club}</span></div>
+              <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-calendar-line text-foreground-400"></AppIcon><span className="font-semibold">{showEventDetails.date}, {showEventDetails.dayName} &middot; {showEventDetails.time}</span></div>
+              <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-map-pin-line text-foreground-400"></AppIcon><span>{showEventDetails.location}</span></div>
+              <div className="flex items-center gap-2 text-sm text-foreground-600"><AppIcon className="ri-team-line text-foreground-400"></AppIcon><span>{showEventDetails.club}</span></div>
             </div>
             <p className="text-sm text-foreground-500 leading-relaxed mb-5">{showEventDetails.description}</p>
             <div className="flex gap-2">
               {showEventDetails.meetingLink && (
-                <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap text-center"><i className="ri-video-chat-line mr-1"></i>Join Meeting</a>
+                <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap text-center"><AppIcon className="ri-video-chat-line mr-1"></AppIcon>Join Meeting</a>
               )}
-              <button onClick={() => handleExportICS(showEventDetails)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-download-line mr-1"></i>Export .ics</button>
+              <button onClick={() => handleExportICS(showEventDetails)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line mr-1"></AppIcon>Export .ics</button>
               {showEventDetails.id.startsWith('custom-') && (
-                <button onClick={() => handleRemoveFromCalendar(showEventDetails.id)} className="px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-calendar-close-line mr-1"></i>Remove</button>
+                <button onClick={() => handleRemoveFromCalendar(showEventDetails.id)} className="px-4 py-2.5 rounded-xl border border-red-200 text-sm font-semibold text-red-600 hover:bg-red-50 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-calendar-close-line mr-1"></AppIcon>Remove</button>
               )}
             </div>
           </div>
@@ -805,10 +805,10 @@ export function LearnerCalendarContent() {
       {showShareCalendar && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowShareCalendar(false)}>
           <div className="bg-background-50 rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-5"><h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><i className="ri-share-line text-primary-500"></i>Share Calendar</h3><button onClick={() => setShowShareCalendar(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-close-line"></i></button></div>
+            <div className="flex items-center justify-between mb-5"><h3 className="text-lg font-heading font-bold text-foreground-900 flex items-center gap-2"><AppIcon className="ri-share-line text-primary-500"></AppIcon>Share Calendar</h3><button onClick={() => setShowShareCalendar(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button></div>
             <p className="text-sm text-foreground-500 mb-4 leading-relaxed">Generate a public, read-only iCal feed URL for Google Calendar, Apple Calendar, or Outlook.</p>
-            {!publicFeedUrl ? (<div className="text-center py-4"><button onClick={handleGeneratePublicFeed} className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-link-m mr-1"></i>Generate Public Feed</button></div>) : (
-              <div className="space-y-3"><div className="bg-background-100 rounded-xl p-3 break-all"><p className="text-xs text-foreground-400 mb-1">Public Feed URL</p><p className="text-xs font-mono text-foreground-600">{publicFeedUrl}</p></div><div className="flex gap-2"><button onClick={handleCopyFeedUrl} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className={`${feedCopied ? 'ri-check-line' : 'ri-clipboard-line'} mr-1`}></i>{feedCopied ? 'Copied!' : 'Copy Link'}</button></div></div>
+            {!publicFeedUrl ? (<div className="text-center py-4"><button onClick={handleGeneratePublicFeed} className="px-5 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-link-m mr-1"></AppIcon>Generate Public Feed</button></div>) : (
+              <div className="space-y-3"><div className="bg-background-100 rounded-xl p-3 break-all"><p className="text-xs text-foreground-400 mb-1">Public Feed URL</p><p className="text-xs font-mono text-foreground-600">{publicFeedUrl}</p></div><div className="flex gap-2"><button onClick={handleCopyFeedUrl} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className={`${feedCopied ? 'ri-check-line' : 'ri-clipboard-line'} mr-1`}></AppIcon>{feedCopied ? 'Copied!' : 'Copy Link'}</button></div></div>
             )}
           </div>
         </div>
@@ -818,7 +818,7 @@ export function LearnerCalendarContent() {
       {conflictEvent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setConflictEvent(null)}>
           <div className="bg-background-50 rounded-2xl p-6 max-w-md w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center gap-3 mb-4"><span className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center"><i className="ri-alert-line text-lg"></i></span><h3 className="text-lg font-heading font-bold text-foreground-900">Event Conflict</h3></div>
+            <div className="flex items-center gap-3 mb-4"><span className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center"><AppIcon className="ri-alert-line text-lg"></AppIcon></span><h3 className="text-lg font-heading font-bold text-foreground-900">Event Conflict</h3></div>
             <p className="text-sm text-foreground-500 mb-4"><strong className="text-foreground-700">{conflictEvent.title}</strong> already overlaps with this time slot.</p>
             <div className="flex gap-2"><button onClick={() => setConflictEvent(null)} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Got it</button></div>
           </div>
@@ -829,7 +829,7 @@ export function LearnerCalendarContent() {
       {showNotificationSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowNotificationSettings(false)}>
           <div className="bg-background-50 rounded-2xl p-6 max-w-sm w-full mx-4 shadow-xl animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4"><h3 className="text-base font-heading font-bold text-foreground-900">Notification Settings</h3><button onClick={() => setShowNotificationSettings(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 cursor-pointer"><i className="ri-close-line"></i></button></div>
+            <div className="flex items-center justify-between mb-4"><h3 className="text-base font-heading font-bold text-foreground-900">Notification Settings</h3><button onClick={() => setShowNotificationSettings(false)} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button></div>
             <div className="space-y-4"><div className="flex items-center justify-between"><div><p className="text-sm font-semibold text-foreground-800">Event Reminders</p></div><div className={`w-10 h-6 rounded-full flex items-center px-0.5 transition-smooth cursor-pointer ${notificationPermission === 'granted' ? 'bg-primary-500' : 'bg-background-200'}`} onClick={() => { if (notificationPermission !== 'granted') handleEnableNotifications(); }}><div className={`w-5 h-5 rounded-full bg-white shadow-sm transition-transform duration-200 ${notificationPermission === 'granted' ? 'translate-x-4' : 'translate-x-0'}`}></div></div></div></div>
           </div>
         </div>
@@ -839,13 +839,13 @@ export function LearnerCalendarContent() {
 
         {calendarError && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-center gap-3">
-            <i className="ri-error-warning-line text-red-500"></i>
+            <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>
             <p className="text-sm text-red-700">Could not load your coaching sessions: {calendarError}</p>
           </div>
         )}
         {calendarLoading && !calendarError && (
           <div className="rounded-xl border border-background-300 bg-background-50 px-4 py-3 flex items-center gap-3">
-            <i className="ri-loader-4-line animate-spin text-primary-500"></i>
+            <AppIcon className="ri-loader-4-line animate-spin text-primary-500"></AppIcon>
             <p className="text-sm text-foreground-500">Loading your coaching sessions&hellip;</p>
           </div>
         )}
@@ -895,15 +895,15 @@ export function LearnerCalendarContent() {
         <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
           <div className="grid w-full grid-cols-3 items-center gap-1 rounded-xl bg-background-100 p-1 sm:flex sm:w-auto">
             {([{ key: 'monthly' as ViewMode, label: 'Month', icon: 'ri-calendar-2-line' },{ key: 'weekly' as ViewMode, label: 'Week', icon: 'ri-calendar-view' },{ key: 'daily' as ViewMode, label: 'Day', icon: 'ri-calendar-line' }]).map((v) => (
-              <button key={v.key} onClick={() => setViewMode(v.key)} className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-semibold transition-smooth whitespace-nowrap cursor-pointer sm:px-4 ${viewMode === v.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}><i className={`${v.icon} text-sm`}></i>{v.label}</button>
+              <button key={v.key} onClick={() => setViewMode(v.key)} className={`flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-semibold transition-smooth whitespace-nowrap cursor-pointer sm:px-4 ${viewMode === v.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}><AppIcon className={`${v.icon} text-sm`}></AppIcon>{v.label}</button>
             ))}
           </div>
           <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
             <button onClick={handleToday} className="px-3 py-1.5 text-xs font-semibold text-primary-600 bg-primary-100 rounded-lg hover:bg-primary-200 transition-smooth cursor-pointer whitespace-nowrap">Today</button>
             <div className="flex items-center gap-1">
-              <button onClick={handlePrev} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-left-s-line"></i></button>
+              <button onClick={handlePrev} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-arrow-left-s-line"></AppIcon></button>
               <span className="text-sm font-heading font-bold text-foreground-900 min-w-[130px] text-center whitespace-nowrap">{viewMode === 'daily' ? `${DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, ${selectedDay} ${MONTH_NAMES[viewMonth]} ${viewYear}` : `${MONTH_NAMES[viewMonth]} ${viewYear}`}</span>
-              <button onClick={handleNext} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><i className="ri-arrow-right-s-line"></i></button>
+              <button onClick={handleNext} className="w-8 h-8 rounded-lg flex items-center justify-center text-foreground-400 hover:bg-background-100 transition-smooth cursor-pointer"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
             </div>
           </div>
         </div>
@@ -947,7 +947,7 @@ export function LearnerCalendarContent() {
                             if (ev.type === 'Busy') {
                               return (
                                 <div key={ev.id} className="flex w-full items-center gap-1 rounded bg-slate-200 px-1.5 py-0.5 text-slate-700" title={`Busy · ${ev.time}`}>
-                                  <i className="ri-lock-line shrink-0 text-[9px]" />
+                                  <AppIcon className="ri-lock-line shrink-0 text-[9px]" />
                                   <span className="truncate text-[10px] font-semibold leading-tight">Busy · {ev.time.split('–')[0]}</span>
                                 </div>
                               );
@@ -1066,9 +1066,9 @@ export function LearnerCalendarContent() {
                                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
                                   </div>
                                   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-foreground-500">
-                                    <span className="flex items-center gap-1"><i className="ri-time-line text-foreground-400 text-xs"></i>{ev.time}</span>
-                                    <span className="flex items-center gap-1"><i className="ri-map-pin-line text-foreground-400 text-xs"></i>{ev.location}</span>
-                                    {ev.club !== 'Personal' && <span className="flex items-center gap-1"><i className="ri-team-line text-foreground-400 text-xs"></i>{ev.club}</span>}
+                                    <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-foreground-400 text-xs"></AppIcon>{ev.time}</span>
+                                    <span className="flex items-center gap-1"><AppIcon className="ri-map-pin-line text-foreground-400 text-xs"></AppIcon>{ev.location}</span>
+                                    {ev.club !== 'Personal' && <span className="flex items-center gap-1"><AppIcon className="ri-team-line text-foreground-400 text-xs"></AppIcon>{ev.club}</span>}
                                   </div>
                                 </div>
                               );
@@ -1090,13 +1090,13 @@ export function LearnerCalendarContent() {
                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${isToday(selectedDay, viewMonth, viewYear) ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-600'}`}>{selectedDay}</span>
                     {DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, {MONTH_NAMES[viewMonth]} {selectedDay}
                   </h3>
-                  <button onClick={() => setShowCreateModal(true)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-add-line mr-1"></i>New Event</button>
+                  <button onClick={() => setShowCreateModal(true)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-add-line mr-1"></AppIcon>New Event</button>
                 </div>
                 {selectedDayEvents.length === 0 ? (
                   <div className="text-center py-10">
-                    <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3"><i className="ri-calendar-2-line text-foreground-300 text-lg"></i></span>
+                    <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3"><AppIcon className="ri-calendar-2-line text-foreground-300 text-lg"></AppIcon></span>
                     <p className="text-sm text-foreground-500 mb-3">No events scheduled for this day</p>
-                    <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><i className="ri-add-line mr-1"></i>Create Event</button>
+                    <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-add-line mr-1"></AppIcon>Create Event</button>
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -1108,8 +1108,8 @@ export function LearnerCalendarContent() {
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-foreground-900 group-hover:text-primary-700 transition-colors">{ev.title}</p>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-xs text-foreground-400">
-                              <span className="flex items-center gap-1"><i className="ri-time-line text-[10px]"></i>{ev.time}</span>
-                              <span className="flex items-center gap-1"><i className="ri-map-pin-line text-[10px]"></i>{ev.location}</span>
+                              <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]"></AppIcon>{ev.time}</span>
+                              <span className="flex items-center gap-1"><AppIcon className="ri-map-pin-line text-[10px]"></AppIcon>{ev.location}</span>
                             </div>
                           </div>
                           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
@@ -1127,36 +1127,36 @@ export function LearnerCalendarContent() {
 
             {/* Quick Actions */}
             <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
-              <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><i className="ri-flashlight-line text-accent-500"></i>Quick Actions</h3>
+              <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><AppIcon className="ri-flashlight-line text-accent-500"></AppIcon>Quick Actions</h3>
               <div className="space-y-2">
                 <button onClick={() => setShowBookModal(true)}
                   className="group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-accent-500 px-3.5 py-3 text-white transition-all duration-200 hover:scale-[1.01] hover:bg-accent-600 active:scale-[0.99] sm:px-4">
-                  <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><i className="ri-user-star-line text-white"></i></span>
+                  <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><AppIcon className="ri-user-star-line text-white"></AppIcon></span>
                   <div className="text-left"><p className="text-sm font-semibold">Book Coach Session</p><p className="text-xs text-white/80">{coach ? `Catch-up or support with ${coach.name}` : 'Catch-up or student support'}</p></div>
                 </button>
                 <button onClick={() => setShowCreateModal(true)}
                   className="group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-primary-500 px-3.5 py-3 text-white transition-all duration-200 hover:scale-[1.01] hover:bg-primary-600 active:scale-[0.99] sm:px-4">
-                  <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><i className="ri-add-line text-white"></i></span>
+                  <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><AppIcon className="ri-add-line text-white"></AppIcon></span>
                   <div className="text-left"><p className="text-sm font-semibold">Create Event</p><p className="text-xs text-white/80">Add a custom personal event</p></div>
                 </button>
                 <button onClick={() => { setConnectionError(null); setShowCalendarConnect(true); }}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${calendarConnections.length ? 'bg-emerald-100 text-emerald-600' : 'bg-primary-100 text-primary-600'}`}><i className={calendarConnections.length ? 'ri-calendar-check-line' : 'ri-calendar-2-line'}></i></span>
+                  <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${calendarConnections.length ? 'bg-emerald-100 text-emerald-600' : 'bg-primary-100 text-primary-600'}`}><AppIcon className={calendarConnections.length ? 'ri-calendar-check-line' : 'ri-calendar-2-line'}></AppIcon></span>
                   <div className="min-w-0 text-left"><p className="text-sm font-semibold text-foreground-900">Connect Your Personal Calendar</p><p className="truncate text-xs text-foreground-400">{calendarConnections.length ? `${calendarConnections.length} calendar${calendarConnections.length === 1 ? '' : 's'} connected` : 'Connect Google, Microsoft, Apple or ICS'}</p></div>
                 </button>
                 <button onClick={() => setShowShareCalendar(true)}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <span className="w-9 h-9 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center"><i className="ri-share-line"></i></span>
+                  <span className="w-9 h-9 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-share-line"></AppIcon></span>
                   <div className="text-left"><p className="text-sm font-semibold text-foreground-900">Share Calendar</p><p className="text-xs text-foreground-400">Generate iCal feed link</p></div>
                 </button>
                 <button onClick={() => setShowNotificationSettings(true)}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${notificationPermission === 'granted' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}><i className="ri-notification-3-line"></i></span>
+                  <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${notificationPermission === 'granted' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}><AppIcon className="ri-notification-3-line"></AppIcon></span>
                   <div className="text-left"><p className="text-sm font-semibold text-foreground-900">Notifications</p><p className="text-xs text-foreground-400">{notificationPermission === 'granted' ? 'Reminders enabled' : 'Set up reminders'}</p></div>
                 </button>
                 <button onClick={handleExportAllICS}
                   className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <span className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center"><i className="ri-google-line"></i></span>
+                  <span className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-google-line"></AppIcon></span>
                   <div className="text-left"><p className="text-sm font-semibold text-foreground-900">Export All Events</p><p className="text-xs text-foreground-400">Download .ics file</p></div>
                 </button>
               </div>
@@ -1164,7 +1164,7 @@ export function LearnerCalendarContent() {
 
             {/* Upcoming Events */}
             <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
-              <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><i className="ri-calendar-todo-line text-primary-500"></i>Upcoming</h3>
+              <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><AppIcon className="ri-calendar-todo-line text-primary-500"></AppIcon>Upcoming</h3>
               <div className="space-y-2">
                 {myEvents.filter((ev) => {
                   const evDate = parseEventDate(ev);
@@ -1195,7 +1195,7 @@ export function LearnerCalendarContent() {
                   return evDate2 >= todayDate;
                 }).length === 0 && (
                   <div className="text-center py-6">
-                    <span className="w-10 h-10 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-2"><i className="ri-calendar-2-line text-foreground-300"></i></span>
+                    <span className="w-10 h-10 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-2"><AppIcon className="ri-calendar-2-line text-foreground-300"></AppIcon></span>
                     <p className="text-xs text-foreground-400">No upcoming events</p>
                   </div>
                 )}

@@ -43,20 +43,20 @@ export function RightSlidePanel({ isOpen, onClose, children, title, width = 'w-[
       {/* Backdrop overlay — no blur */}
       <div
         onClick={onClose}
-        className={`fixed inset-0 z-40 bg-foreground-950/20 transition-opacity duration-500 ease-out ${
+        className={`workspace-drawer-backdrop fixed inset-0 z-40 bg-foreground-950/20 transition-opacity duration-500 ease-out ${
           isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       />
 
       {/* Slide panel — starts from very top, no margin */}
       <div
-        className={`fixed top-0 right-0 h-full z-50 bg-background-50 border-l border-foreground-200 shadow-xl shadow-foreground-950/10 flex flex-col transition-transform duration-500 ease-out ${width} max-w-[calc(100vw-2rem)] !mt-0 ${
+        className={`workspace-drawer fixed top-0 right-0 h-full z-50 bg-background-50 border-l border-foreground-200 shadow-xl shadow-foreground-950/10 flex flex-col transition-transform duration-500 ease-out ${width} max-w-[calc(100vw-2rem)] !mt-0 ${
           isOpen ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
         {/* Header */}
         {title && (
-          <div className={`flex items-center justify-between px-5 py-4 shrink-0 ${
+          <div className={`workspace-drawer-header flex items-center justify-between px-5 py-4 shrink-0 ${
             coloredHeader
               ? 'bg-gradient-to-r from-primary-950 via-primary-900 to-primary-800 border-b border-white/10'
               : 'border-b border-foreground-200'
@@ -70,7 +70,7 @@ export function RightSlidePanel({ isOpen, onClose, children, title, width = 'w-[
                   : 'text-foreground-400 hover:text-foreground-700 hover:bg-background-100'
               }`}
             >
-              <i className="ri-close-line text-lg"></i>
+              <AppIcon className="ri-close-line text-lg"></AppIcon>
             </button>
           </div>
         )}
