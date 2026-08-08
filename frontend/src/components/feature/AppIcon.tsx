@@ -130,6 +130,7 @@ export interface AppIconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {
   /** Existing icon-font class or a compatible dynamic class expression. */
   name?: string;
   size?: number | string;
+  title?: string;
 }
 
 function resolveIcon(name: string): LucideIcon {

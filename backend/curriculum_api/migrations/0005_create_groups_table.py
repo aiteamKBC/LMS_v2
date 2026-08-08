@@ -86,6 +86,10 @@ def backfill_groups_from_modules(connection):
             cursor.execute("select to_regclass('curriculum.modules')")
             if not cursor.fetchone()[0]:
                 return
+        else:
+            cursor.execute("select 1 from sqlite_master where type='table' and name='modules' limit 1")
+            if not cursor.fetchone():
+                return
         cursor.execute(f'''
             select
                 module_catalogue_id,

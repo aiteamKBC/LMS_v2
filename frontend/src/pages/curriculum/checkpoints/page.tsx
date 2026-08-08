@@ -487,7 +487,7 @@ export default function CheckpointsPage() {
           <div className="flex flex-wrap items-center gap-3">
             <ThemedSelect value={programmeFilter} options={programmeOptions} onChange={setProgrammeFilter} className="w-full sm:w-48" />
             <ThemedSelect value={monthFilter} options={monthOptions} onChange={setMonthFilter} className="w-full sm:w-40" />
-            <ThemedSelect value={statusFilter} options={statusOptions} onChange={setStatusFilter} className="w-full sm:w-44" />
+            <ThemedSelect value={statusFilter} options={statusOptions} onChange={value => setStatusFilter(value as 'all' | CheckpointStatus)} className="w-full sm:w-44" />
             <div className="min-w-[240px] flex-1 rounded-lg bg-white/70 px-3 py-2 text-xs text-[#647083]">
               Quiz names are generated as <strong>Month - Week - Quiz title</strong> so coaches can track monthly progress.
             </div>

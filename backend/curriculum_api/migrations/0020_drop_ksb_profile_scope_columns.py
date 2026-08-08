@@ -21,6 +21,14 @@ def table_name(connection):
     return 'curriculum."ksb_profiles"' if connection.vendor == 'postgresql' else '"ksb_profiles"'
 
 
+def table_exists(cursor, connection):
+    if connection.vendor == 'postgresql':
+        cursor.execute("select to_regclass('curriculum.ksb_profiles')")
+        return bool(cursor.fetchone()[0])
+    cursor.execute("select 1 from sqlite_master where type='table' and name='ksb_profiles' limit 1")
+    return bool(cursor.fetchone())
+
+
 def column_exists(cursor, connection, column):
     if connection.vendor == 'postgresql':
         cursor.execute(
@@ -42,6 +50,8 @@ def column_exists(cursor, connection, column):
 def drop_scope_columns(apps, schema_editor):
     connection = schema_editor.connection
     with connection.cursor() as cursor:
+        if not table_exists(cursor, connection):
+            return
         for column in KSB_PROFILE_SCOPE_COLUMNS:
             if column_exists(cursor, connection, column):
                 cursor.execute(f'alter table {table_name(connection)} drop column "{column}"')
@@ -50,6 +60,8 @@ def drop_scope_columns(apps, schema_editor):
 def restore_scope_columns(apps, schema_editor):
     connection = schema_editor.connection
     with connection.cursor() as cursor:
+        if not table_exists(cursor, connection):
+            return
         for column, config in KSB_PROFILE_SCOPE_COLUMNS.items():
             if column_exists(cursor, connection, column):
                 continue

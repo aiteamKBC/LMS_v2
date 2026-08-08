@@ -4,6 +4,7 @@ from .message_views import coach_message_thread, coach_messages_threads
 from .views import (
     coach_attendance,
     coach_attendance_details,
+    coach_dashboard,
     coach_absence_reports,
     coach_caseload,
     coach_caseload_coach_rag,
@@ -18,6 +19,7 @@ from .views import (
 
 
 urlpatterns = [
+    path('coach/dashboard', coach_dashboard, name='coach-dashboard'),
     path('coach/caseload', coach_caseload, name='coach-caseload'),
     path('coach/messages', coach_messages_threads, name='coach-messages-threads'),
     path('coach/messages/<int:learner_id>', coach_message_thread, name='coach-message-thread'),

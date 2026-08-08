@@ -8,6 +8,14 @@ def table_name(connection, table):
     return f'curriculum."{table}"' if connection.vendor == 'postgresql' else f'"{table}"'
 
 
+def table_exists(cursor, connection, table):
+    if connection.vendor == 'postgresql':
+        cursor.execute('select to_regclass(%s)', [f'curriculum.{table}'])
+        return bool(cursor.fetchone()[0])
+    cursor.execute("select 1 from sqlite_master where type='table' and name=%s limit 1", [table])
+    return bool(cursor.fetchone())
+
+
 def normalise(value):
     return ' '.join(str(value or '').strip().lower().split())
 
@@ -68,10 +76,14 @@ def insert_staff(cursor, connection, table, prefix, name, assignment_column):
 def ensure_staff_profiles(apps, schema_editor):
     connection = schema_editor.connection
     with connection.cursor() as cursor:
-        cursor.execute(f'select module_catalogue_id, tutor_name, coach_name, group_id from {table_name(connection, "modules")}')
-        modules = cursor.fetchall()
-        cursor.execute(f'select group_id, coach_name from {table_name(connection, "groups")}')
-        groups = cursor.fetchall()
+        modules = []
+        groups = []
+        if table_exists(cursor, connection, 'modules'):
+            cursor.execute(f'select module_catalogue_id, tutor_name, coach_name, group_id from {table_name(connection, "modules")}')
+            modules = cursor.fetchall()
+        if table_exists(cursor, connection, 'groups'):
+            cursor.execute(f'select group_id, coach_name from {table_name(connection, "groups")}')
+            groups = cursor.fetchall()
 
         valid_group_ids = {str(group_id or '').strip() for group_id, _coach_name in groups if str(group_id or '').strip()}
         tutor_module_ids = {}

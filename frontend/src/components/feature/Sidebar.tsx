@@ -641,7 +641,7 @@ function NavGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
                     to={child.href}
                     aria-current={childActive ? 'page' : undefined}
                     className={`workspace-sidebar-flyout-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${childActive ? 'bg-white/10 text-white' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
-                    onClick={onToggle}
+                    onClick={onClose}
                   >
                     <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={20} />
                     <span className="flex-1">{child.label}</span>

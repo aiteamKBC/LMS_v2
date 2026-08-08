@@ -16,6 +16,7 @@ from urllib import request as urllib_request
 from urllib.parse import urlparse
 
 from django.conf import settings
+from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import IntegrityError, connection, transaction
 from django.core.serializers.json import DjangoJSONEncoder
@@ -44,9 +45,10 @@ CANONICAL_MODULE_ID_PATTERN = re.compile(r'^MOD-[A-Z0-9][A-Z0-9_-]*$', re.I)
 CURRICULUM_CACHE_TTL_SECONDS = 300
 _CURRICULUM_CACHE = {}
 _CURRICULUM_CACHE_LOCK = threading.Lock()
-# Incremented by every invalidation so a factory that is already running cannot
-# publish its now-stale result. Process-local, like the cache itself.
+# L1 generation: prevents an in-flight factory in this process from publishing
+# stale rows. The Django-cache generation below provides the cross-worker layer.
 _CURRICULUM_CACHE_EPOCH = 0
+_CURRICULUM_SHARED_EPOCH_KEY = 'curriculum:cache-epoch'
 _TABLE_COLUMNS_CACHE = {}
 _TABLE_EXISTS_CACHE = {}
 _AUTHORING_TABLES_READY = False
@@ -74,16 +76,55 @@ def invalidate_curriculum_cache():
         # afterwards and repopulates the cache with pre-write rows, which would
         # then serve stale authoring data for the rest of the TTL.
         _CURRICULUM_CACHE_EPOCH += 1
+    # Generation-based invalidation works with Django's built-in Redis backend
+    # without relying on backend-specific delete-pattern APIs. Old generations
+    # expire naturally after the normal TTL.
+    try:
+        cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)
+        cache.incr(_CURRICULUM_SHARED_EPOCH_KEY)
+    except Exception:
+        logger.warning('Unable to invalidate shared curriculum cache.', exc_info=True)
     _TABLE_EXISTS_CACHE.clear()
+
+
+def shared_curriculum_epoch():
+    try:
+        cache.add(_CURRICULUM_SHARED_EPOCH_KEY, 0, timeout=None)
+        return int(cache.get(_CURRICULUM_SHARED_EPOCH_KEY) or 0)
+    except Exception:
+        # Redis must never turn a cacheable read into an application outage.
+        logger.warning('Unable to read shared curriculum cache epoch.', exc_info=True)
+        return 0
+
+
+def shared_curriculum_cache_key(key, epoch):
+    digest = hashlib.sha256(str(key).encode()).hexdigest()
+    return f'curriculum:v{epoch}:{digest}'
 
 
 def cached_curriculum_value(key, factory):
     now = datetime.now().timestamp()
+    shared_epoch = shared_curriculum_epoch()
     with _CURRICULUM_CACHE_LOCK:
         entry = _CURRICULUM_CACHE.get(key)
-        if entry and entry['expires_at'] > now:
+        if entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:
             return entry['value']
         epoch = _CURRICULUM_CACHE_EPOCH
+
+    shared_key = shared_curriculum_cache_key(key, shared_epoch)
+    try:
+        shared_value = cache.get(shared_key)
+    except Exception:
+        logger.warning('Unable to read shared curriculum payload cache.', exc_info=True)
+        shared_value = None
+    if shared_value is not None:
+        with _CURRICULUM_CACHE_LOCK:
+            _CURRICULUM_CACHE[key] = {
+                'expires_at': now + CURRICULUM_CACHE_TTL_SECONDS,
+                'shared_epoch': shared_epoch,
+                'value': shared_value,
+            }
+        return shared_value
 
     # Build outside the lock: these factories run multi-table queries that can take
     # seconds on a cold database, and holding the lock would serialise every other
@@ -93,11 +134,16 @@ def cached_curriculum_value(key, factory):
 
     with _CURRICULUM_CACHE_LOCK:
         # Only publish if no write invalidated the cache while we were building.
-        if epoch == _CURRICULUM_CACHE_EPOCH:
+        if epoch == _CURRICULUM_CACHE_EPOCH and shared_epoch == shared_curriculum_epoch():
             _CURRICULUM_CACHE[key] = {
                 'expires_at': datetime.now().timestamp() + CURRICULUM_CACHE_TTL_SECONDS,
+                'shared_epoch': shared_epoch,
                 'value': value,
             }
+            try:
+                cache.set(shared_key, value, timeout=CURRICULUM_CACHE_TTL_SECONDS)
+            except Exception:
+                logger.warning('Unable to populate shared curriculum payload cache.', exc_info=True)
     return value
 
 
@@ -219,8 +265,14 @@ def ensure_columns(table, specs):
         return
     with connection.cursor() as cursor:
         for column, definition in missing.items():
+            if connection.vendor == 'postgresql':
+                add_column = f'add column if not exists {quote_ident(column)} {definition}'
+            else:
+                # SQLite supports ADD COLUMN but not ADD COLUMN IF NOT EXISTS.
+                # ``missing`` was already calculated through PRAGMA table_info.
+                add_column = f'add column {quote_ident(column)} {definition}'
             cursor.execute(
-                f'alter table {table_name(table)} add column if not exists {quote_ident(column)} {definition}'
+                f'alter table {table_name(table)} {add_column}'
             )
     _TABLE_COLUMNS_CACHE.pop(table, None)
     _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
@@ -4517,15 +4569,16 @@ def build_curriculum_payload_from_rows(rows, visibility='operational', compact=F
     groups = apply_staff_assignments_to_groups(groups, rows['coaches'])
     sessions = [] if compact else build_sessions(training_rows, rows['modules'], rows['program_configs'], rows['holidays'])
     session_count = sum(parse_int(group.get('sessions'), 0) for group in groups) if compact else len(sessions)
-    training_sessions = build_sessions(
-        training_rows,
-        rows['modules'],
-        rows['program_configs'],
-        rows['authoring_modules'],
-        rows.get('holidays', []),
-    )
-    authoring_sessions = build_sessions_from_authoring_modules(rows['authoring_modules'])
-    sessions = prefer_authoring_module_sessions(training_sessions, authoring_sessions)
+    if not compact:
+        training_sessions = build_sessions(
+            training_rows,
+            rows['modules'],
+            rows['program_configs'],
+            rows['authoring_modules'],
+            rows.get('holidays', []),
+        )
+        authoring_sessions = build_sessions_from_authoring_modules(rows['authoring_modules'])
+        sessions = prefer_authoring_module_sessions(training_sessions, authoring_sessions)
     visible_ksb_profiles = ksb_profiles if visibility == 'all' else [
         profile for profile in ksb_profiles
         if profile_matches_visible_programmes(profile, programmes)
@@ -4566,21 +4619,53 @@ def build_curriculum_payload_from_rows(rows, visibility='operational', compact=F
     return payload
 
 
-def curriculum_collection_response(payload, key, results=None):
+def paginate_curriculum_results(request, results, max_page_size=250):
+    """Apply opt-in pagination while preserving legacy unpaginated clients."""
+    raw_page = clean_str(request.GET.get('page'))
+    raw_page_size = clean_str(request.GET.get('page_size') or request.GET.get('pageSize'))
+    if not raw_page and not raw_page_size:
+        return results, None
+    page = max(1, parse_int(raw_page, 1))
+    page_size = min(max_page_size, max(1, parse_int(raw_page_size, 50)))
+    total = len(results)
+    start = (page - 1) * page_size
+    return results[start:start + page_size], {
+        'count': total,
+        'page': page,
+        'pageSize': page_size,
+        'pages': (total + page_size - 1) // page_size,
+        'hasNext': start + page_size < total,
+        'hasPrevious': page > 1,
+    }
+
+
+def curriculum_collection_response(payload, key, results=None, request=None):
     results = payload[key] if results is None else results
-    return JsonResponse({
+    page_meta = None
+    if request is not None:
+        results, page_meta = paginate_curriculum_results(request, results)
+    response = {
         'schema': payload['schema'],
-        'count': len(results),
+        'count': page_meta['count'] if page_meta else len(results),
         'results': results,
-    })
+    }
+    if page_meta:
+        response.update({key: value for key, value in page_meta.items() if key != 'count'})
+    return JsonResponse(response)
 
 
-def curriculum_results_response(results):
-    return JsonResponse({
+def curriculum_results_response(results, request=None):
+    page_meta = None
+    if request is not None:
+        results, page_meta = paginate_curriculum_results(request, results)
+    response = {
         'schema': CURRICULUM_SCHEMA,
-        'count': len(results),
+        'count': page_meta['count'] if page_meta else len(results),
         'results': results,
-    })
+    }
+    if page_meta:
+        response.update({key: value for key, value in page_meta.items() if key != 'count'})
+    return JsonResponse(response)
 
 
 def module_belongs_to_group(module, group):
@@ -6208,9 +6293,15 @@ def ensure_module_authoring_tables():
         _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
     with connection.cursor() as cursor:
         cursor.execute(f'create index if not exists curriculum_modules_title_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (title)')
+        cursor.execute(f'create index if not exists curriculum_modules_programme_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (programme_id, module_catalogue_id)')
+        cursor.execute(f'create index if not exists curriculum_modules_cohort_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (cohort_id, module_catalogue_id)')
+        cursor.execute(f'create index if not exists curriculum_modules_group_idx on {authoring_table_name(AUTHORING_MODULES_TABLE)} (group_id, module_catalogue_id)')
         cursor.execute(f'create index if not exists curriculum_weeks_module_idx on {authoring_table_name(AUTHORING_WEEKS_TABLE)} (module_catalogue_id)')
+        cursor.execute(f'create index if not exists curriculum_weeks_module_order_idx on {authoring_table_name(AUTHORING_WEEKS_TABLE)} (module_catalogue_id, display_order, id)')
         cursor.execute(f'create index if not exists curriculum_components_module_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (module_catalogue_id)')
         cursor.execute(f'create index if not exists curriculum_components_week_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (week_id)')
+        cursor.execute(f'create index if not exists curriculum_components_module_week_order_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (module_catalogue_id, week_id, display_order, id)')
+        cursor.execute(f'create index if not exists curriculum_components_updated_idx on {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (updated_at desc)')
     _AUTHORING_TABLES_READY = True
 
 
@@ -10264,7 +10355,16 @@ def curriculum_modules(request):
             {key: value for key, value in module.items() if key != 'weekStructure'}
             for module in modules
         ]
-    return curriculum_collection_response(payload, 'modules', modules)
+    filters = {
+        'programmeId': clean_str(request.GET.get('programme_id') or request.GET.get('programmeId')),
+        'cohortId': clean_str(request.GET.get('cohort_id') or request.GET.get('cohortId')),
+        'groupId': clean_str(request.GET.get('group_id') or request.GET.get('groupId')),
+        'status': clean_str(request.GET.get('status')),
+    }
+    for field, expected in filters.items():
+        if expected:
+            modules = [item for item in modules if normalise(item.get(field)) == normalise(expected)]
+    return curriculum_collection_response(payload, 'modules', modules, request=request)
 
 
 @csrf_exempt
@@ -10680,8 +10780,11 @@ def curriculum_component_collection(request):
             raw_ids = request.GET.get('module_catalogue_ids') or request.GET.get('moduleCatalogueIds') or ''
             module_catalogue_ids = [clean_str(value) for value in raw_ids.split(',') if clean_str(value)]
             if module_catalogue_ids:
-                return curriculum_results_response(component_builder_rows(module_catalogue_ids))
-            return curriculum_results_response(cached_curriculum_value('components:builder', component_builder_rows))
+                return curriculum_results_response(component_builder_rows(module_catalogue_ids), request=request)
+            return curriculum_results_response(
+                cached_curriculum_value('components:builder', component_builder_rows),
+                request=request,
+            )
         except Exception:
             logger.exception('Unable to load component builder rows.')
             return json_error('Unable to load component builder rows.', status=500)

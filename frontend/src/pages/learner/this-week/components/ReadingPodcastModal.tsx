@@ -39,6 +39,7 @@ export function ReadingPodcastModal({
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const contentRef = useRef<HTMLDivElement>(null);
   const podcastInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const totalDuration = podcastData?.totalDurationSecs || 1200;
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -103,8 +104,6 @@ export function ReadingPodcastModal({
   }, []);
 
   /* ── Podcast playback ── */
-  const totalDuration = podcastData?.totalDurationSecs || 1200;
-
   const updateChapterForTime = (time: number) => {
     const ch = podcastData?.chapters;
     if (ch) {
@@ -491,7 +490,7 @@ export function ReadingPodcastModal({
                         {podcastData.chapters.map((ch, i) => {
                           const chStartSecs = parseTimeString(ch.startTime);
                           const isActive = currentChapter === i;
-                          const isPast = podcastTime >= chStartSecs + parseTimeString(ch.duration).minutes * 60 + parseTimeString(ch.duration).seconds;
+                          const isPast = podcastTime >= chStartSecs + parseTimeString(ch.duration);
                           return (
                             <button key={i} onClick={() => { seekTo(ch.startTime); if (!playing) togglePodcast(); }}
                               className={`w-full flex items-center gap-3 p-4 rounded-xl text-left transition-smooth cursor-pointer border ${isActive ? 'bg-secondary-50 border-secondary-200' : 'border-transparent hover:bg-background-100'}`}>

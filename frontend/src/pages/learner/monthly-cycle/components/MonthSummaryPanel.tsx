@@ -9,7 +9,6 @@ const statusColor: Record<string, string> = {
   'In Progress': 'bg-primary-50 text-primary-700 border-primary-200',
   'Not Started': 'bg-background-100 text-foreground-400 border-background-200',
   'Submitted': 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  'Completed': 'bg-emerald-50 text-emerald-700 border-emerald-200',
   'Due 20 Jun': 'bg-amber-50 text-amber-700 border-amber-200',
   'Due 20 Jul': 'bg-amber-50 text-amber-700 border-amber-200',
   'Due 20 May': 'bg-emerald-50 text-emerald-700 border-emerald-200',

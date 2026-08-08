@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useAuth } from '@/hooks/useAuth';
 import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { roleNavMap } from '@/mocks/navigation';
@@ -207,7 +208,7 @@ export default function MessagesPage() {
     let cancelled = false;
 
     const syncConversationList = async () => {
-      if (cancelled || conversationSyncInFlightRef.current) return;
+      if (cancelled || document.visibilityState === 'hidden' || conversationSyncInFlightRef.current) return;
       conversationSyncInFlightRef.current = true;
       try {
         const data = await fetchChatConversations();
@@ -224,7 +225,10 @@ export default function MessagesPage() {
       }
     };
 
-    const conversationTimer = window.setInterval(() => { void syncConversationList(); }, 2000);
+    // The active WebSocket updates open conversations immediately. The inbox
+    // fallback only needs a modest cadence and must not load the API while the
+    // tab is in the background.
+    const conversationTimer = window.setInterval(() => { void syncConversationList(); }, 15000);
     return () => {
       cancelled = true;
       window.clearInterval(conversationTimer);
@@ -345,13 +349,13 @@ export default function MessagesPage() {
   // briefly drops. This is a lightweight fallback; the WebSocket remains the
   // primary delivery path when it is connected.
   useEffect(() => {
-    if (!chatReady || activeConversationId === null) return;
+    if (!chatReady || activeConversationId === null || socketState === 'connected') return;
 
     let cancelled = false;
     shouldStickToBottomRef.current = true;
 
     const syncMessages = async () => {
-      if (cancelled || messageSyncInFlightRef.current) return;
+      if (cancelled || document.visibilityState === 'hidden' || messageSyncInFlightRef.current) return;
       messageSyncInFlightRef.current = true;
       try {
         const page = await fetchAllChatMessages(activeConversationId);
@@ -383,12 +387,14 @@ export default function MessagesPage() {
       }
     };
 
-    const pollTimer = window.setInterval(() => { void syncMessages(); }, 2000);
+    // Poll only while the WebSocket is unavailable; once connected, socket
+    // events are the single source of live updates.
+    const pollTimer = window.setInterval(() => { void syncMessages(); }, 15000);
     return () => {
       cancelled = true;
       window.clearInterval(pollTimer);
     };
-  }, [activeConversationId, chatReady]);
+  }, [activeConversationId, chatReady, socketState]);
 
   const latestMessageId = messages[messages.length - 1]?.id ?? null;
 

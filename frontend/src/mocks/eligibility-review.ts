@@ -1,5 +1,3 @@
-import type { EligibilityReviewRecord } from './eligibility-review-data';
-
 export interface ResidencyTest {
   id: string;
   label: string;
@@ -27,7 +25,7 @@ export interface PriorAttainmentRecord {
   awardingBody: string;
   grade: string;
   verified: boolean;
-  relevance: 'relevant' | 'partial' | 'not-relevant';
+  relevance?: 'relevant' | 'partial' | 'not-relevant';
   evidenceProvided: boolean;
   note: string;
 }

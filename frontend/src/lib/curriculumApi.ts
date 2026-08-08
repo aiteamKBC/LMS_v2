@@ -1152,14 +1152,33 @@ async function fetchCollection<T>(path: string, init?: CurriculumRequestInit): P
 // from callers that read module identity/metadata alone: anything that reads
 // weekStructure, its nested components, or ranks duplicate modules by component
 // count must keep the full response. See fetchCurriculumModules callers.
-export function fetchCurriculumModules(signal?: AbortSignal, options: { compact?: boolean } = {}): Promise<CurriculumModule[]> {
-  return fetchCollection<CurriculumModule>(`/curriculum/modules/${options.compact ? '?compact=true' : ''}`, { signal });
+export function fetchCurriculumModules(signal?: AbortSignal, options: {
+  compact?: boolean;
+  programmeId?: string;
+  cohortId?: string;
+  groupId?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+} = {}): Promise<CurriculumModule[]> {
+  const query = new URLSearchParams();
+  if (options.compact) query.set('compact', 'true');
+  if (options.programmeId) query.set('programme_id', options.programmeId);
+  if (options.cohortId) query.set('cohort_id', options.cohortId);
+  if (options.groupId) query.set('group_id', options.groupId);
+  if (options.status) query.set('status', options.status);
+  if (options.page) query.set('page', String(options.page));
+  if (options.pageSize) query.set('page_size', String(options.pageSize));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal });
 }
 
-export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[] } = {}): Promise<CurriculumComponent[]> {
+export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number } = {}): Promise<CurriculumComponent[]> {
   const query = new URLSearchParams();
   const moduleCatalogueIds = (options.moduleCatalogueIds || []).filter(Boolean);
   if (moduleCatalogueIds.length) query.set('module_catalogue_ids', moduleCatalogueIds.join(','));
+  if (options.page) query.set('page', String(options.page));
+  if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchCollection<CurriculumComponent>(`/curriculum/components/${suffix}`, { signal });
 }

@@ -5226,6 +5226,61 @@ def coach_timetable(request):
         }
     )
 
+
+@require_GET
+def coach_dashboard(request):
+    """Return every data set needed by the coach workspace in one request."""
+    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+
+    try:
+        rows = fetch_caseload_dashboard_profiles(owner_email)
+        learners = [serialize_caseload_dashboard_learner(row) for row in rows]
+        owner_name = next(
+            (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
+            "Med Maher",
+        )
+        timetable_payload = collect_generated_timetable(
+            owner_email,
+            include_live_sessions=True,
+            include_scheduler_queues=False,
+        )
+    except Exception as exc:
+        return JsonResponse(
+            {"detail": "Unable to load coach dashboard data.", "error": str(exc)},
+            status=500,
+        )
+
+    sections = {}
+    section_errors = {}
+    for section_name, section_view in (
+        ("attendance", coach_attendance),
+        ("evidence", coach_evidence_awaiting_review),
+    ):
+        response = section_view(request)
+        payload = json.loads(response.content)
+        if response.status_code < 400:
+            sections[section_name] = payload
+        else:
+            sections[section_name] = {}
+            section_errors[section_name] = payload.get("detail") or "Section unavailable."
+
+    return JsonResponse(
+        {
+            "owner": {
+                "name": timetable_payload.get("owner_name") or owner_name,
+                "email": owner_email,
+            },
+            "learners": learners,
+            "attendance": sections["attendance"],
+            "timetable": {
+                "summary": timetable_payload.get("summary", {}),
+                "events": timetable_payload.get("events", []),
+            },
+            "evidence": sections["evidence"],
+            "errors": section_errors,
+        }
+    )
+
 @require_GET
 def coach_monthly_activity(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL

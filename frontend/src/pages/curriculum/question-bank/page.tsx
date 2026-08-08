@@ -348,7 +348,7 @@ export default function QuestionBankPage() {
                     <ThemedSelect
                       value={typeFilter}
                       options={typeOptions}
-                      onChange={setTypeFilter}
+                      onChange={value => setTypeFilter(value as 'all' | QuestionType)}
                       className="w-full md:w-44"
                     />
                     <ThemedSelect

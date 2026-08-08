@@ -445,7 +445,7 @@ function HeroKpi({ icon, label, value, sub }: { icon: string; label: string; val
   );
 }
 
-function QuickStat({ label, value, icon, color }: { label: string; value: string; icon: string; color: string }) {
+function QuickStat({ label, value, icon, color }: { label: string; value: string | number; icon: string; color: string }) {
   const bgMap: Record<string, string> = { primary: 'bg-primary-100 text-primary-600', secondary: 'bg-secondary-100 text-secondary-600', accent: 'bg-accent-100 text-accent-700' };
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">

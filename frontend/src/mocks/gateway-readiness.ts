@@ -64,7 +64,15 @@ export const EVIDENCE_COVERAGE = [
   { category: 'Behaviours', pieces: 6, color: 'secondary', icon: 'ri-user-heart-line' },
 ];
 
-export const EMPLOYER_READINESS = [
+export interface EmployerReadinessItem {
+  id: string;
+  label: string;
+  status: 'complete' | 'pending' | 'in-progress' | 'not-started';
+  detail: string;
+  deadline: string;
+}
+
+export const EMPLOYER_READINESS: EmployerReadinessItem[] = [
   { id: 'emp-01', label: 'Employer Sign-Off', status: 'pending' as const, detail: 'Line manager signature required before Gateway submission', deadline: 'Aug 2027' },
   { id: 'emp-02', label: 'Line Manager Statement', status: 'not-started' as const, detail: 'Workplace confirmation statement covering your role and responsibilities', deadline: 'Sep 2027' },
   { id: 'emp-03', label: 'Employer Progress Reviews', status: 'in-progress' as const, detail: '3 of 8 employer reviews signed and completed', deadline: 'Ongoing' },
