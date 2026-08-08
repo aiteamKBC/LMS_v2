@@ -11,11 +11,8 @@ class ModuleAuthoringModule(models.Model):
     group_name = models.CharField(max_length=255, blank=True, default='')
     title = models.CharField(max_length=500)
     description = models.TextField(blank=True, default='')
-    status = models.CharField(max_length=32, default='draft')
     total_otjh = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     quality_score = models.IntegerField(default=0)
-    source_type = models.CharField(max_length=64, blank=True, default='')
-    source_id = models.CharField(max_length=128, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
