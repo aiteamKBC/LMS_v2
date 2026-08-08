@@ -10,6 +10,7 @@ from coach_api.views import (
     build_otjh_completed_entries,
     build_monthly_activity_learner,
     coach_caseload,
+    collect_generated_timetable,
     completed_ksb_codes,
     fetch_source_schedule_rows,
     iterate_generated_schedule_dates,
@@ -143,6 +144,32 @@ class CoachTimetableWindowTests(SimpleTestCase):
                 (4, date(2026, 1, 29)),
             ],
         )
+
+    @patch("coach_api.views.fetch_calendar_event_records", return_value={})
+    @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
+    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.build_learner_profile_map", return_value={})
+    @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
+    @patch("coach_api.views.collect_live_session_events", side_effect=RuntimeError("legacy staff profile schema"))
+    def test_collect_generated_timetable_ignores_live_session_errors(
+        self,
+        collect_live_session_events,
+        fetch_owner_active_learner_profiles,
+        build_learner_profile_map,
+        fetch_source_schedule_rows,
+        fetch_standalone_event_records,
+        fetch_calendar_event_records,
+    ):
+        payload = collect_generated_timetable("coach@example.com")
+
+        self.assertEqual(payload["events"], [])
+        self.assertEqual(payload["summary"]["sourceCounts"]["liveSessionRows"], 0)
+        collect_live_session_events.assert_called_once()
+        fetch_owner_active_learner_profiles.assert_called_once_with("coach@example.com")
+        build_learner_profile_map.assert_called_once_with([])
+        fetch_source_schedule_rows.assert_called_once_with([])
+        fetch_standalone_event_records.assert_called_once_with("coach@example.com")
+        fetch_calendar_event_records.assert_called_once_with("coach@example.com", [])
 
 
 @override_settings(

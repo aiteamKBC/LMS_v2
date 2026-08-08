@@ -2662,7 +2662,6 @@ def ensure_staff_profile_tables():
             cursor.execute(f'create schema if not exists {quote_ident(CURRICULUM_SCHEMA)}')
         for role, table in STAFF_PROFILE_TABLES.items():
             assignment_column = STAFF_PROFILE_ASSIGNMENT_DB_COLUMNS[role]
-            stale_assignment_column = 'assigned_module_ids' if role == 'coach' else 'assigned_group_ids'
             cursor.execute(f'''
                 create table if not exists {table_name(table)} (
                     id varchar(128) primary key,
@@ -2679,9 +2678,23 @@ def ensure_staff_profile_tables():
                     updated_at timestamp not null default {timestamp_default}
                 )
             ''')
-            if connection.vendor == 'postgresql':
-                cursor.execute(f'alter table {table_name(table)} add column if not exists specialisms {json_type}')
-                cursor.execute(f'alter table {table_name(table)} add column if not exists {assignment_column} {json_type}')
+    for role, table in STAFF_PROFILE_TABLES.items():
+        assignment_column = STAFF_PROFILE_ASSIGNMENT_DB_COLUMNS[role]
+        stale_assignment_column = 'assigned_module_ids' if role == 'coach' else 'assigned_group_ids'
+        ensure_columns(table, {
+            'email': "varchar(255) not null default ''",
+            'phone': "varchar(64) not null default ''",
+            'job_title': "varchar(255) not null default ''",
+            'status': "varchar(32) not null default 'active'",
+            'specialisms': json_type,
+            assignment_column: json_type,
+            'notes': "text not null default ''",
+            'is_archived': 'boolean not null default false',
+            'created_at': f'timestamp not null default {timestamp_default}',
+            'updated_at': f'timestamp not null default {timestamp_default}',
+        })
+        if connection.vendor == 'postgresql':
+            with connection.cursor() as cursor:
                 cursor.execute(f'alter table {table_name(table)} drop column if exists {stale_assignment_column}')
                 cursor.execute(f'create index if not exists curriculum_{table}_name_idx on {table_name(table)} (name)')
                 cursor.execute(f'create index if not exists curriculum_{table}_status_idx on {table_name(table)} (status)')

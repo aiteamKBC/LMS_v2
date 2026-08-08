@@ -1113,3 +1113,31 @@ class CurriculumReferenceEtagTests(SimpleTestCase):
         etag = views.reference_json_response(self._request(), payload)['ETag']
         response = views.reference_json_response(self._request(f'"other", {etag}'), payload)
         self.assertEqual(response.status_code, 304)
+
+
+class StaffProfileSchemaRepairTests(TestCase):
+    def setUp(self):
+        views._STAFF_PROFILE_TABLES_READY = False
+        views._TABLE_COLUMNS_CACHE.clear()
+        views.invalidate_curriculum_cache()
+
+    def test_ensure_staff_profile_tables_backfills_missing_status_column(self):
+        for table in ("coaches", "tutors"):
+            with connection.cursor() as cursor:
+                cursor.execute(f'drop table if exists {views.table_name(table)}')
+                cursor.execute(
+                    f'''
+                    create table {views.table_name(table)} (
+                        id varchar(128) primary key,
+                        name varchar(255) not null,
+                        email varchar(255) not null default ''
+                    )
+                    '''
+                )
+
+        views.ensure_staff_profile_tables()
+
+        self.assertIn("status", views.column_names("coaches"))
+        self.assertIn("status", views.column_names("tutors"))
+        self.assertIn("assigned_group_ids", views.column_names("coaches"))
+        self.assertIn("assigned_module_ids", views.column_names("tutors"))
