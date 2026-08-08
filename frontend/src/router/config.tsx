@@ -479,7 +479,15 @@ const routes: RouteObject[] = [
     element: <OTJHPage />,
   },
   {
+    path: "/learner/otjh/:kind/:id",
+    element: <OTJHPage />,
+  },
+  {
     path: "/learner/ksbs",
+    element: <KSBsPage />,
+  },
+  {
+    path: "/learner/ksbs/:kind/:id",
     element: <KSBsPage />,
   },
   {
