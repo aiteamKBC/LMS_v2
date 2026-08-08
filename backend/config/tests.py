@@ -36,7 +36,7 @@ API_PREFIXES = (
 
 EXPECTED_ENDPOINT_COUNTS = {
     "curriculum_api/": 64,
-    "coach_api/": 16,
+    "coach_api/": 17,
     "quiz_api/": 13,
     "learner_api/": 31,
     "audit_api/": 5,
@@ -204,6 +204,7 @@ class ApiGetBatchTests(SimpleTestCase):
                 "requests": [
                     {"id": "external", "url": "https://example.com/learner_api/learners/"},
                     {"id": "admin", "url": "/admin/"},
+                    {"id": "recursive", "url": "/coach_api/_batch/"},
                 ]
             }),
             content_type="application/json",
@@ -212,7 +213,7 @@ class ApiGetBatchTests(SimpleTestCase):
         response = api_get_batch(request)
         payload = json.loads(response.content)
 
-        self.assertEqual([item["status"] for item in payload["responses"]], [400, 400])
+        self.assertEqual([item["status"] for item in payload["responses"]], [400, 400, 400])
 
     @patch("config.batch.resolve")
     def test_executes_child_gets_in_parallel_workers(self, resolve_route):

@@ -23,13 +23,14 @@ ALLOWED_API_PREFIXES = (
     "/api/calendar/",
 )
 MAX_BATCH_REQUESTS = 40
+BATCH_PATHS = {"/api/batch/", "/coach_api/_batch/"}
 
 
 def _safe_api_path(raw_url):
     parsed = urlsplit(str(raw_url or ""))
     if parsed.scheme or parsed.netloc or not parsed.path.startswith(ALLOWED_API_PREFIXES):
         return None
-    if parsed.path == "/api/batch/" or ".." in parsed.path.split("/"):
+    if parsed.path in BATCH_PATHS or ".." in parsed.path.split("/"):
         return None
     return parsed.path + (f"?{parsed.query}" if parsed.query else "")
 
