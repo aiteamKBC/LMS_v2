@@ -1849,6 +1849,31 @@ table tbody td:last-child {
   stroke: oklch(var(--background-50)) !important;
 }
 
+/* Keep hover/active icon tiles visible and remove the old left marker line. */
+.dashboard-theme .workspace-sidebar-panel .workspace-sidebar-active-marker {
+  display: none !important;
+}
+
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button):hover .workspace-sidebar-nav-icon,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button):focus-visible .workspace-sidebar-nav-icon,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button)[aria-current="page"] .workspace-sidebar-nav-icon,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button)[aria-expanded="true"] .workspace-sidebar-nav-icon,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button)[class*="bg-white/10"] .workspace-sidebar-nav-icon,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button)[class*="bg-white/15"] .workspace-sidebar-nav-icon {
+  background: oklch(var(--primary-500)) !important;
+  color: oklch(var(--background-50)) !important;
+}
+
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button):hover .workspace-sidebar-nav-icon svg,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button):focus-visible .workspace-sidebar-nav-icon svg,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button)[aria-current="page"] .workspace-sidebar-nav-icon svg,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button)[aria-expanded="true"] .workspace-sidebar-nav-icon svg,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button)[class*="bg-white/10"] .workspace-sidebar-nav-icon svg,
+.dashboard-theme .workspace-sidebar-panel nav :is(a, button)[class*="bg-white/15"] .workspace-sidebar-nav-icon svg {
+  color: oklch(var(--background-50)) !important;
+  stroke: oklch(var(--background-50)) !important;
+}
+
 /* Keep one active marker anchored to the active sidebar row. */
 .dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-panel span[class*="w-0.5"][class*="bg-accent-400"] {
   display: none !important;
@@ -1897,10 +1922,10 @@ table tbody td:last-child {
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
-  border: 1px solid oklch(var(--primary-300) / 0.9) !important;
+  border: 1px solid oklch(var(--accent-600)) !important;
   border-radius: 9999px !important;
-  background: oklch(var(--primary-50)) !important;
-  color: oklch(var(--primary-800)) !important;
+  background: oklch(var(--accent-500)) !important;
+  color: oklch(var(--primary-950)) !important;
   font-size: 0.65rem !important;
   font-weight: 800 !important;
   letter-spacing: 0.05em !important;

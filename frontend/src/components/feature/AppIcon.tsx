@@ -82,7 +82,6 @@ import {
   Mail,
   Map,
   MessageCircle,
-  MessageSquare,
   Mic,
   Minus,
   MoreHorizontal,
@@ -139,6 +138,17 @@ function resolveIcon(name: string): LucideIcon {
   if (/loader|loading/.test(key)) return Loader2;
   if (/dashboard|layout/.test(key)) return LayoutDashboard;
   if (/home/.test(key)) return LayoutDashboard;
+  // High-frequency workspace actions should never fall back to a generic circle.
+  if (/task|todo|to-do/.test(key)) return ClipboardList;
+  if (/notification|notification-3|bell/.test(key)) return Bell;
+  if (/file-list|list-3/.test(key)) return LayoutList;
+  if (/file-chart|bar-chart-box/.test(key)) return FileBarChart;
+  if (/chat-1|chat|message|feedback|comment/.test(key)) return MessageCircle;
+  if (/programme-design/.test(key)) return Presentation;
+  if (/curriculum-builder/.test(key)) return Workflow;
+  if (/assessment-design/.test(key)) return ClipboardCheck;
+  if (/delivery-planning/.test(key)) return CalendarDays;
+  if (/quality.*publish/.test(key)) return ShieldCheck;
   if (/arrow-left-s/.test(key)) return ChevronLeft;
   if (/arrow-right-s/.test(key)) return ChevronRight;
   if (/arrow-up-s/.test(key)) return ChevronUp;
@@ -170,7 +180,6 @@ function resolveIcon(name: string): LucideIcon {
   if (/user-add|user-received/.test(key)) return UserPlus;
   if (/user|profile/.test(key)) return User;
   if (/group|team|organization|organisation|cohort|apprentice|learner/.test(key)) return Users;
-  if (/message|chat|feedback|comment/.test(key)) return MessageSquare;
   if (/mail/.test(key)) return Mail;
   if (/send/.test(key)) return Send;
   if (/attachment/.test(key)) return Paperclip;
@@ -182,7 +191,6 @@ function resolveIcon(name: string): LucideIcon {
   if (/time|timer|clock|otjh|hours/.test(key)) return Timer;
   if (/file-search|search-eye/.test(key)) return FileSearch;
   if (/file-sign/.test(key)) return FileSignature;
-  if (/file-chart|bar-chart-box/.test(key)) return FileBarChart;
   if (/file-check/.test(key)) return FileCheck;
   if (/file-edit|edit/.test(key)) return FileEdit;
   if (/file-upload|upload/.test(key)) return Upload;
