@@ -34,7 +34,9 @@ Note: ``Audit.learner_match`` lives on the ``enrolment`` Neon database (same as
 mirrors how ``audit_api/views.py`` reaches the same table.
 """
 
+import collections
 import datetime
+import html
 import json
 import re
 import time
@@ -78,6 +80,39 @@ def _period_of(iso_date):
     return iso_date[:7] if iso_date else None
 
 
+def _clock(value):
+    """Pull the ``HH:MM`` clock time out of a timestamp string
+    (``2024-11-17 19:04:59``, ``2024-11-17T19:04:59+01:00``). Anchored on the
+    ``T``/space separator so a bare date — or a ``+01:00`` offset — never
+    matches. Returns None when there's no time-of-day part."""
+    if not value:
+        return None
+    match = re.search(r"[T ](\d{2}:\d{2})", str(value))
+    return match.group(1) if match else None
+
+
+def _stamp_parts(value):
+    """``(YYYY-MM-DD, HH:MM)`` for a timestamp, or None if either half is
+    missing. Ordering these tuples orders the timestamps themselves."""
+    date, clock = _iso_date(value), _clock(value)
+    return (date, clock) if date and clock else None
+
+
+def _time_from_to(started_at, completed_at):
+    """The ledger's "Timestamp" column: when the learner started and finished,
+    e.g. ``19:04 – 19:26``. Falls back to whichever single end we have; None
+    when neither timestamp carries a time-of-day."""
+    start = _clock(started_at)
+    end = _clock(completed_at)
+    if start and end:
+        return f"{start} – {end}"
+    if start:
+        return f"{start} – …"
+    if end:
+        return f"… – {end}"
+    return None
+
+
 def _integer_param(request, name, default, minimum, maximum):
     raw = request.GET.get(name)
     if raw is None or raw == "":
@@ -98,7 +133,259 @@ def _lms_category(activity):
     return kind or "lesson"
 
 
+# The full names behind the K/S/B single-letter KSB groups, for display.
+_KSB_TYPE_LABELS = {"K": "Knowledge", "S": "Skill", "B": "Behaviour"}
+
+
+def _completion_records(item):
+    """Clean an activity's per-completion history (each start/finish + time)."""
+    records = []
+    for record in item.get("completion_records") or []:
+        if not isinstance(record, dict):
+            continue
+        records.append({
+            "record_id": record.get("record_id"),
+            "started_at": record.get("started_at"),
+            "completed_at": record.get("completed_at"),
+            "time_spent_seconds": record.get("time_spent_seconds"),
+            "time_spent_formatted": record.get("time_spent_formatted"),
+        })
+    return records
+
+
+def _normalize_ksbs(ksbs):
+    """Flatten the ``{"K": [...], "S": [...], "B": [...]}`` KSB block that now
+    lives on every activity in programme_structure into a single ordered list of
+    ``{code, type, type_label, description, reason}`` dicts (Knowledge, then
+    Skill, then Behaviour). Returns ``[]`` when no KSBs are present."""
+    if not isinstance(ksbs, dict):
+        return []
+    result = []
+    for group in ("K", "S", "B"):
+        items = ksbs.get(group)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            code = (item.get("code") or "").strip()
+            if not code:
+                continue
+            group_letter = (item.get("type") or group or "").strip().upper()[:1] or group
+            result.append({
+                "code": code,
+                "type": group_letter,
+                "type_label": _KSB_TYPE_LABELS.get(group_letter, group_letter),
+                "description": (item.get("description") or "").strip() or None,
+                "reason": (item.get("reason") or "").strip() or None,
+            })
+    return result
+
+
+# --- attendance-session grouping + recording matching ----------------------
+#
+# An attendance key is ``<learner_id>_<YYYY-MM-DD>_<group>`` — e.g.
+# ``471_2026-07-03_project_planning_and_control_ppc_andrew``. Two learners
+# attended the *same* live session when the last two parts (date + group) match;
+# the group text is spelled inconsistently across learners (``ray-project...``
+# vs ``ray_project...`` vs ``Ray - Project ...``) so it's normalised first.
+#
+# The recording of that session lives as ordinary LMS lesson(s) whose *title*
+# starts with the session date in ``D-M-YYYY`` form and names the course, e.g.
+# ``26-6-2026 Project Planning & Control - Andrew Millington Part 1``. So a
+# recording belongs to a session when its title-date equals the session date and
+# its course name overlaps the session group. (Per-activity ``created_at`` /
+# ``completed_at`` are upload / watch timestamps and don't identify the session.)
+
+_ATT_KEY_RE = re.compile(r"^(\d+)_(\d{4}-\d{2}-\d{2})_(.+)$")
+# A D-M-YYYY / D/M/YYYY date appearing ANYWHERE in a recording title. Some
+# courses date-stamp the front ("26-6-2026 Project Planning…"), others the tail
+# ("… Customer Experience - 17/7/2026"), so it is not start-anchored.
+_TITLE_DATE_RE = re.compile(r"(?<!\d)(\d{1,2})[-/](\d{1,2})[-/](\d{4})(?!\d)")
+
+# Filler words that carry no course identity — dropped before comparing a
+# session group against a recording's course name.
+_TOKEN_STOP = {
+    "and", "the", "of", "a", "an", "part", "parts", "session", "sessions",
+    "recorded", "live", "lecture", "lesson", "qualification", "module",
+    "group", "online",
+}
+
+
+def _norm_group(value):
+    """Lower-case and collapse all non-alphanumerics to single spaces, so the
+    ``-``/``_``/space/case spelling variants of a group name unify."""
+    return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def _significant_tokens(text):
+    """Meaningful word set of a group/course name (stop-words and bare numbers
+    removed) — used to score whether a recording's course matches a session."""
+    return {t for t in _norm_group(text).split() if t not in _TOKEN_STOP and not t.isdigit()}
+
+
+def _parse_attendance_key(key):
+    match = _ATT_KEY_RE.match(key or "")
+    if not match:
+        return None
+    return match.group(1), match.group(2), match.group(3)
+
+
+def _clean_title(title):
+    """Un-escape HTML entities (``&amp;``) and drop zero-width spaces that some
+    recording titles carry, so parsing/matching sees plain text."""
+    return html.unescape(title or "").replace("​", " ")
+
+
+def _title_session_date(title):
+    """Parse the ``D-M-YYYY`` date somewhere in a recording's title into an ISO
+    ``YYYY-MM-DD`` string (the live-session date), or None if absent."""
+    match = _TITLE_DATE_RE.search(_clean_title(title))
+    if not match:
+        return None
+    day, month, year = (int(part) for part in match.groups())
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
+def _recording_course(title):
+    """Strip the date and any ``Part N`` marker out of a recording title,
+    leaving just the course/topic words for token matching."""
+    text = _TITLE_DATE_RE.sub(" ", _clean_title(title))
+    text = re.sub(r"(?i)\bpart\s*\d+\b", " ", text)
+    return text.strip(" -–—")
+
+
 # --- shape mapping ---------------------------------------------------------
+
+def _reading_quiz_rows(aptem_id, learner_name, month_no, month_unit, month_date,
+                       planned_month_period, wrapper):
+    """Turn a ``kind: "reading+quiz"`` week-group wrapper into ONE bundle activity
+    row. The wrapper's nested materials (readings, quizzes, pdfs) are returned as
+    a ``components`` list on that single row — so the group shows as one entry in
+    the ledger and its detailed contents are revealed on the activity page. The
+    group's ``week`` and ``KSBs`` describe the whole bundle."""
+    items = [item for item in (wrapper.get("items") or []) if isinstance(item, dict)]
+    if not items:
+        return []
+    group_week = wrapper.get("week") or None
+    group_ksbs = _normalize_ksbs(wrapper.get("KSBs"))
+
+    components = []
+    planned_seconds_total = 0.0
+    actual_seconds_total = 0.0
+    completed_count = 0
+    last_date = None
+    # Earliest start / latest finish across the bundle's materials, each kept as
+    # a (date, HH:MM) pair so the span can be rejected when it crosses days.
+    first_start = None
+    last_end = None
+    category_counts = collections.Counter()
+    for item in items:
+        act = item.get("activity") if isinstance(item.get("activity"), dict) else {}
+        duration = act.get("content_duration") if isinstance(act.get("content_duration"), dict) else {}
+        planned_seconds = duration.get("seconds")
+        if isinstance(planned_seconds, (int, float)):
+            planned_seconds_total += planned_seconds
+        # Actual = engineered OTJH-credited seconds (activity["otjh"]), not raw time.
+        item_otjh = act.get("otjh") if isinstance(act.get("otjh"), dict) else {}
+        otjh_seconds = _to_float(item_otjh.get("seconds"))
+        spent = otjh_seconds if otjh_seconds is not None else act.get("time_spent_seconds")
+        if isinstance(spent, (int, float)):
+            actual_seconds_total += spent
+        done = bool(act.get("completed"))
+        if done:
+            completed_count += 1
+        item_date = _iso_date(act.get("completed_at")) or _iso_date(act.get("started_at"))
+        if item_date and (last_date is None or item_date > last_date):
+            last_date = item_date
+        started = _stamp_parts(act.get("started_at"))
+        if started and (first_start is None or started < first_start):
+            first_start = started
+        ended = _stamp_parts(act.get("completed_at"))
+        if ended and (last_end is None or ended > last_end):
+            last_end = ended
+        material = (item.get("material_type") or "").strip() or "reading"
+        category_counts[material] += 1
+        attempt_records = act.get("quiz_attempt_records") or 0
+        components.append({
+            "component_id": item.get("component_id"),
+            "title": item.get("title") or "Untitled material",
+            "material_type": material,
+            "material_format": act.get("material_format") or None,
+            "iframe_url": item.get("iframe_url") or None,
+            "status": act.get("status") or None,
+            "done": done,
+            "activity_date": item_date,
+            "planned_hours": round(planned_seconds / 3600, 2) if isinstance(planned_seconds, (int, float)) and planned_seconds else None,
+            "time_spent_formatted": item_otjh.get("logged_time") or act.get("time_spent_formatted") or None,
+            "otjh_hours": _to_float(item_otjh.get("hours")),
+            "otjh_credited": bool(item_otjh.get("credited")) if item_otjh else None,
+            "attempt_number": act.get("attempt_number"),
+            "highest_score": act.get("highest_score"),
+            # Quiz result fields (null for readings/pdfs).
+            "score_percent": act.get("score_percent"),
+            "answered_questions": act.get("answered_questions"),
+            "correct_answers": act.get("correct_answers"),
+            "incorrect_answers": act.get("incorrect_answers"),
+            # Whether a graded body exists to open (from the quiz_attempts column).
+            "has_body": material == "quiz" and bool(attempt_records),
+        })
+
+    total = len(components)
+    month_period = _period_of(last_date) or planned_month_period
+    # A bundle spans several materials, so its span is only meaningful when they
+    # were all worked on the same day — otherwise "19:04 – 21:30" would silently
+    # hide a multi-day gap.
+    same_day_span = (
+        (first_start[1], last_end[1])
+        if first_start and last_end and first_start[0] == last_end[0]
+        else None
+    )
+    # Bundle id is stable across learners for the same week group, so the
+    # cross-learner "who has this" view lines them up.
+    week_slug = _norm_group(group_week).replace(" ", "-") if group_week else f"m{month_no}"
+    bundle_id = f"rqb:{week_slug}"
+    # A concise "quizzes / readings / pdfs" descriptor for the ledger row.
+    breakdown = ", ".join(f"{count} {name}" for name, count in category_counts.most_common())
+    return [{
+        "id": f"{aptem_id}:{month_no}:rqb:{week_slug}",
+        "mre_id": bundle_id,
+        "learner": learner_name,
+        "plan_id": bundle_id,
+        "month_no": month_no,
+        "month_unit": month_unit,
+        "unit_planned_date": month_date,
+        "activity_date": last_date,
+        "learner_activity_date": last_date,
+        "activity_period": month_period,
+        "time_from_to": (
+            f"{same_day_span[0]} – {same_day_span[1]}" if same_day_span else None
+        ),
+        "time_from": same_day_span[0] if same_day_span else None,
+        "time_to": same_day_span[1] if same_day_span else None,
+        "actual_lms_hours": round(actual_seconds_total / 3600, 2) if actual_seconds_total else None,
+        "activity_category": "reading+quiz",
+        "activity_unit": group_week or "Readings & quizzes",
+        "section_title": group_week or None,
+        # Completion counts are intentionally omitted for now — just the make-up.
+        "activity_description": breakdown or None,
+        "delivery_method": f"Readings & quizzes ({total} items)",
+        "planned_hours": round(planned_seconds_total / 3600, 2) if planned_seconds_total else None,
+        "source_course": None,
+        "source_url": None,
+        "source_basis": "reading+quiz",
+        "created_at": None,
+        "configured_duration": None,
+        "week": group_week,
+        "ksbs": group_ksbs,
+        "components": components,
+        "completed_count": completed_count,
+        "component_total": total,
+        "done": total > 0 and completed_count == total,
+    }]
+
 
 def _activities_for_row(aptem_id, learner_name, structure):
     """Flatten one learner's programme_structure into activity dicts matching
@@ -121,13 +408,30 @@ def _activities_for_row(aptem_id, learner_name, structure):
         for index, item in enumerate(month.get("LMS activities") or []):
             if not isinstance(item, dict):
                 continue
+            # Week-group wrapper (shape: kind/week/items/_meta, no component_id at
+            # the top level). "reading+quiz" groups nest their real materials under
+            # `items`, each with its own per-learner `activity` — expand those into
+            # rows instead of dropping the whole wrapper.
+            if item.get("component_id") is None:
+                if isinstance(item.get("items"), list):
+                    activities.extend(_reading_quiz_rows(
+                        aptem_id, learner_name, month_no, month_unit, month_date,
+                        planned_month_period, item,
+                    ))
+                continue
             component_id = item.get("component_id")
             activity_date = _iso_date(item.get("completed_at")) or _iso_date(item.get("started_at"))
             # An activity's "period" is the month it actually happened; if it was
             # never started, bucket it under its planned month.
             month_period = _period_of(activity_date) or planned_month_period
+            # Actual = the engineered OTJH-credited hours for this activity
+            # (item["otjh"]["hours"]); fall back to raw tracked time when absent.
+            otjh = item.get("otjh") if isinstance(item.get("otjh"), dict) else {}
+            otjh_hours = _to_float(otjh.get("hours"))
             seconds = item.get("time_spent_seconds")
-            actual_hours = round(seconds / 3600, 2) if isinstance(seconds, (int, float)) and seconds else None
+            actual_hours = otjh_hours if otjh_hours is not None else (
+                round(seconds / 3600, 2) if isinstance(seconds, (int, float)) and seconds else None
+            )
             planned_seconds = item.get("configured_duration_seconds")
             planned_hours = round(planned_seconds / 3600, 2) if isinstance(planned_seconds, (int, float)) and planned_seconds else None
             activities.append({
@@ -141,10 +445,15 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "activity_date": activity_date,
                 "learner_activity_date": activity_date,
                 "activity_period": month_period,
-                "time_from_to": item.get("time_spent_formatted") or None,
+                "time_from_to": _time_from_to(item.get("started_at"), item.get("completed_at")),
+                # Same span split out, for the two-column "From / To" header.
+                "time_from": _clock(item.get("started_at")),
+                "time_to": _clock(item.get("completed_at")),
                 "actual_lms_hours": actual_hours,
+                "otjh_credited": bool(otjh.get("credited")) if otjh else None,
                 "activity_category": _lms_category(item),
                 "activity_unit": item.get("title") or "Untitled activity",
+                "section_title": item.get("section_title") or item.get("section") or item.get("week") or None,
                 "activity_description": None,
                 "delivery_method": item.get("component_kind") or "",
                 "planned_hours": planned_hours,
@@ -153,6 +462,9 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "source_basis": item.get("post_type") or None,
                 "created_at": item.get("created_at") or None,
                 "configured_duration": item.get("configured_duration") or None,
+                "week": item.get("week") or None,
+                "ksbs": _normalize_ksbs(item.get("KSBs")),
+                "completion_records": _completion_records(item),
                 "done": bool(item.get("completed")),
             })
 
@@ -175,10 +487,14 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "activity_date": activity_date,
                 "learner_activity_date": activity_date,
                 "activity_period": month_period,
+                # Assignments/attendance carry dates only — no time of day.
                 "time_from_to": None,
+                "time_from": None,
+                "time_to": None,
                 "actual_lms_hours": _to_float(item.get("actual_hours")),
                 "activity_category": "assignment",
                 "activity_unit": item.get("name") or "Assignment",
+                "section_title": item.get("section_title") or item.get("section") or None,
                 "activity_description": item.get("status") or None,
                 "delivery_method": "assignment",
                 "planned_hours": _to_float(item.get("planned_hours")),
@@ -187,6 +503,8 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "source_basis": "assignment",
                 "created_at": None,
                 "configured_duration": None,
+                "week": None,
+                "ksbs": _normalize_ksbs(item.get("KSBs")),
                 "done": (item.get("status") or "").lower() == "completed",
             })
 
@@ -197,6 +515,11 @@ def _activities_for_row(aptem_id, learner_name, structure):
             activity_date = _iso_date(item.get("date"))
             month_period = _period_of(activity_date) or planned_month_period
             attended = item.get("attended")
+            # Session identity from the key (date + normalised group) — lets us
+            # gather every learner who attended the same live session.
+            parsed_key = _parse_attendance_key(item.get("key"))
+            session_date = parsed_key[1] if parsed_key else activity_date
+            session_group = _norm_group(parsed_key[2]) if parsed_key else ""
             activities.append({
                 "id": f"{aptem_id}:{month_no}:att:{item.get('key')}:{index}",
                 "mre_id": str(item.get("key") or ""),
@@ -208,10 +531,14 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "activity_date": activity_date,
                 "learner_activity_date": activity_date,
                 "activity_period": month_period,
+                # Assignments/attendance carry dates only — no time of day.
                 "time_from_to": None,
+                "time_from": None,
+                "time_to": None,
                 "actual_lms_hours": _to_float(item.get("actual_hours")),
                 "activity_category": "attendance",
                 "activity_unit": item.get("module") or "Attendance",
+                "section_title": item.get("section_title") or item.get("section") or None,
                 "activity_description": None,
                 "delivery_method": "attendance",
                 "planned_hours": _to_float(item.get("planned_hours")),
@@ -220,6 +547,10 @@ def _activities_for_row(aptem_id, learner_name, structure):
                 "source_basis": "attendance",
                 "created_at": None,
                 "configured_duration": None,
+                "week": None,
+                "ksbs": _normalize_ksbs(item.get("KSBs")),
+                "session_date": session_date,
+                "session_group": session_group,
                 "done": bool(attended),
             })
 
@@ -246,6 +577,28 @@ def _month_hours_for_row(structure):
             "completed": _to_float(hours.get("completed")) or 0.0,
         }
     return result
+
+
+def _otjh_for_row(structure):
+    """Pull the off-the-job-hours adjustment data out of a learner's structure:
+    the top-level ``otjh_summary`` and a ``{period -> months[].otjh_adjustment}``
+    map. These carry the engineered per-month hour breakdown (att/asg/lms vs the
+    Aptem actual) and the review ``flagged`` status."""
+    summary = structure.get("otjh_summary") if isinstance(structure, dict) else None
+    summary = summary if isinstance(summary, dict) else None
+    months_map = {}
+    months = structure.get("months") if isinstance(structure, dict) else None
+    if isinstance(months, list):
+        for month in months:
+            if not isinstance(month, dict):
+                continue
+            adjustment = month.get("otjh_adjustment")
+            if not isinstance(adjustment, dict):
+                continue
+            period = _period_of(_iso_date(month.get("date")))
+            if period:
+                months_map[period] = adjustment
+    return summary, months_map
 
 
 # Each programme_structure blob is multi-megabyte (thousands of activities), and
@@ -326,9 +679,12 @@ def _fetch_rows():
                 break_in_learning = None
         break_in_learning = break_in_learning if isinstance(break_in_learning, dict) else {}
         name = learner_name or f"Learner {aptem_id}"
+        otjh_summary, otjh_months = _otjh_for_row(structure)
         learners.append({
             "aptem_id": aptem_id,
             "name": name,
+            "otjh_summary": otjh_summary,
+            "otjh_months": otjh_months,
             "email": learner_email,
             "programme_name": programme_name or PROGRAMME_NAME,
             "program_status": program_status or "Unknown",
@@ -421,6 +777,9 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
             item["activity_date"] for item in activities
             if item["activity_date"] and item["activity_date"][:7] <= current_period
         ]
+        otjh_summary = learner.get("otjh_summary") or {}
+        otjh_months = learner.get("otjh_months") or {}
+        month_adjustment = otjh_months.get(period) if period else None
         summaries.append({
             "id": _learner_id(learner["name"]),
             "name": learner["name"],
@@ -432,6 +791,20 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
             "program_status": learner.get("program_status") or "Unknown",
             "has_break_in_learning": bool(learner.get("has_break_in_learning")),
             "coach": learner.get("coach") or {"name": None, "email": None},
+            # Off-the-job-hours adjustment: the whole-programme summary plus, when
+            # a period is selected, that month's specific breakdown + flag.
+            "otjh": {
+                "adjusted": bool(otjh_summary.get("adjusted")),
+                "applied_date": otjh_summary.get("applied_date"),
+                "note": otjh_summary.get("note"),
+                "flagged_count": otjh_summary.get("flagged_count") or 0,
+                "status_counts": otjh_summary.get("status_counts") or {},
+                "band_target_h": otjh_summary.get("band_target_h"),
+                "band_correct_h": otjh_summary.get("band_correct_h"),
+                "flagged_months": otjh_summary.get("flagged_months") or [],
+                "month": month_adjustment if isinstance(month_adjustment, dict) else None,
+                "month_flagged": bool(month_adjustment.get("flagged")) if isinstance(month_adjustment, dict) else False,
+            },
         })
 
     if search:
@@ -894,6 +1267,16 @@ def learner_activities(request: HttpRequest) -> JsonResponse:
     planned_total = round(planned_total, 2)
     actual_total = round(actual_total, 2)
     total = len(rows)
+    # For the single-learner + single-month view (the monthly report/journal),
+    # surface that month's OTJH adjustment (hour breakdown + flag).
+    otjh_month = None
+    if period and len(in_scope) == 1:
+        candidate = in_scope[0].get("otjh_months", {}).get(period)
+        if isinstance(candidate, dict):
+            # Attach the programme-level applied timestamp so the monthly report
+            # can show when the OTJH adjustment was run.
+            summary = in_scope[0].get("otjh_summary") or {}
+            otjh_month = {**candidate, "applied_date": summary.get("applied_date"), "note": summary.get("note")}
     return JsonResponse({
         "items": rows[offset : offset + limit],
         "total": total,
@@ -901,6 +1284,7 @@ def learner_activities(request: HttpRequest) -> JsonResponse:
         "actual_total": actual_total,
         "limit": limit,
         "offset": offset,
+        "otjh": otjh_month,
     })
 
 
@@ -942,6 +1326,133 @@ def activity_learners(request: HttpRequest) -> JsonResponse:
         "limit": len(rows),
         "offset": 0,
     })
+
+
+@require_GET
+def attendance_session(request: HttpRequest) -> JsonResponse:
+    """Everything about one live session, given any one learner's attendance key.
+
+    Returns (a) every learner who attended the *same* session — matched by the
+    key's date + normalised group, not the per-learner key — as activity rows
+    the "Learner activity records" table can render, and (b) the session's
+    recordings (LMS lessons whose title-date equals the session date and whose
+    course name overlaps the group), for the content-preview panel."""
+    key = request.GET.get("key", "").strip()
+    parsed = _parse_attendance_key(key)
+    if not parsed:
+        return JsonResponse({"error": "key must look like <learner_id>_<YYYY-MM-DD>_<group>"}, status=400)
+    _learner_part, date, group_raw = parsed
+    norm_group = _norm_group(group_raw)
+
+    try:
+        learners_raw = _load_rows()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse(
+            {"error": "Could not read Audit.learner_match from the enrolment database.", "details": str(error)},
+            status=503,
+        )
+
+    # (a) attendees — same date + same normalised group, one row per learner.
+    attendees = []
+    for learner in learners_raw:
+        for item in learner["activities"]:
+            if item.get("session_date") == date and item.get("session_group") == norm_group:
+                attendees.append(item)
+    attendees.sort(key=lambda item: item["learner"])
+
+    # (b) recordings — LMS lessons whose title is dated to this session day. On a
+    # given day more than one course can run (e.g. a PPC session and a PMO
+    # session), so rather than a fixed word-overlap threshold we assign each
+    # dated recording to whichever of that day's sessions its course name best
+    # matches, and keep the ones that land on THIS session. This copes with
+    # topical titles that share only one word with the group ("… PMO …").
+    sessions_on_date = {}  # normalised group -> significant-token set
+    for learner in learners_raw:
+        for item in learner["activities"]:
+            group = item.get("session_group")
+            if item.get("session_date") == date and group and group not in sessions_on_date:
+                sessions_on_date[group] = _significant_tokens(group)
+
+    recordings = {}
+    for learner in learners_raw:
+        for item in learner["activities"]:
+            source_url = item.get("source_url")
+            if not source_url:
+                continue
+            title = item.get("activity_unit")
+            if _title_session_date(title) != date:
+                continue
+            course_tokens = _significant_tokens(_recording_course(title))
+            scores = {group: len(course_tokens & tokens) for group, tokens in sessions_on_date.items()}
+            best = max(scores.values(), default=0)
+            # Keep only if this session is (one of) the best match and it is a
+            # real match (>0 shared words), so unrelated same-day courses split.
+            if best <= 0 or scores.get(norm_group, 0) != best:
+                continue
+            component = item.get("plan_id")
+            if component in recordings:
+                continue
+            recordings[component] = {
+                "component_id": component,
+                "title": _clean_title(title),
+                "preview_url": source_url,
+                "week": item.get("week"),
+            }
+    recordings_list = sorted(recordings.values(), key=lambda rec: rec["title"])
+
+    planned_total = round(sum(item["planned_hours"] or 0 for item in attendees), 2)
+    actual_total = round(sum(item["actual_lms_hours"] or 0 for item in attendees), 2)
+    return JsonResponse({
+        "session": {
+            "date": date,
+            "group": group_raw,
+            "group_label": norm_group,
+            "module": attendees[0]["activity_unit"] if attendees else None,
+        },
+        "recordings": recordings_list,
+        "items": attendees,
+        "total": len(attendees),
+        "planned_total": planned_total,
+        "actual_total": actual_total,
+        "limit": len(attendees),
+        "offset": 0,
+    })
+
+
+@require_GET
+def quiz_attempt(request: HttpRequest) -> JsonResponse:
+    """Return one learner's graded quiz body for a quiz component, read from the
+    Audit.learner_match.quiz_attempts jsonb column (keyed by component id,
+    attempted quizzes only). Shape: {title, status, quiz_body: {questions: [...]}}.
+    Uses the jsonb ``->`` operator to extract just the one quiz rather than
+    hauling the whole (large) column back."""
+    learner = request.GET.get("learner", "").strip().lower()
+    component = request.GET.get("component", "").strip()
+    if not learner or not component:
+        return JsonResponse({"error": "learner and component are required"}, status=400)
+    try:
+        with connections[CONN].cursor() as cur:
+            cur.execute(
+                '''
+                select quiz_attempts -> %s
+                from "Audit".learner_match
+                where lower(learner_name) = %s
+                  and programme_structure ->> 'programme' = %s
+                limit 1
+                ''',
+                [component, learner, PROGRAMME_NAME],
+            )
+            row = cur.fetchone()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not read quiz attempts.", "details": str(error)}, status=503)
+
+    attempt = row[0] if row else None
+    if isinstance(attempt, str):
+        try:
+            attempt = json.loads(attempt)
+        except ValueError:
+            attempt = None
+    return JsonResponse({"component_id": component, "attempt": attempt or None})
 
 
 # --- manual auditor annotations (KSBs + planned hours) per activity ---------

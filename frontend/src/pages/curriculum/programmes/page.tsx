@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardGridSkeleton } from '@/components/feature/CurriculumSkeletons';
@@ -75,6 +75,7 @@ type LearnerKsbAchievement = {
 
 const COLOR_PRESETS = ['#6d28d9', '#2563eb', '#0f766e', '#16a34a', '#ea580c', '#dc2626', '#be123c', '#334155'];
 const WEEKDAY_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const PROGRAMMES_PER_PAGE = 6;
 
 type SelectOption = { value: string; label: string; meta?: string; color?: string; aliases?: string[] };
 type StructureWizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'review';
@@ -91,6 +92,7 @@ function showProgrammeSwalToast(title: string, text: string, icon: 'success' | '
 
 export default function CurriculumProgrammes() {
   const [search, setSearch] = useState('');
+  const [programmePage, setProgrammePage] = useState(1);
   const [editingProgramme, setEditingProgramme] = useState<CurriculumProgramme | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardProgrammeId, setWizardProgrammeId] = useState<string | undefined>();
@@ -134,6 +136,19 @@ export default function CurriculumProgrammes() {
     if (needle && !p.name.toLowerCase().includes(needle)) return false;
     return true;
   });
+  const totalProgrammePages = Math.max(1, Math.ceil(filtered.length / PROGRAMMES_PER_PAGE));
+  const paginatedProgrammes = filtered.slice(
+    (programmePage - 1) * PROGRAMMES_PER_PAGE,
+    programmePage * PROGRAMMES_PER_PAGE,
+  );
+
+  useEffect(() => {
+    setProgrammePage(1);
+  }, [search]);
+
+  useEffect(() => {
+    setProgrammePage(currentPage => Math.min(currentPage, totalProgrammePages));
+  }, [totalProgrammePages]);
 
   const totalProgrammes = programmes.length;
   const totalLearners = programmes.reduce((a, b) => a + (b.learners || 0), 0);
@@ -400,7 +415,7 @@ export default function CurriculumProgrammes() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programmes" pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-4 sm:p-6 space-y-5">
+      <div className="programmes-page min-h-full bg-background-50 p-4 sm:p-6 space-y-5">
         <section className="overflow-hidden rounded-2xl border border-white/10 bg-primary-950 text-white shadow-xl">
           <div className="relative p-5 sm:p-7">
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
@@ -460,7 +475,7 @@ export default function CurriculumProgrammes() {
           </div>
         )}
 
-        <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
+        <section className="programmes-search-panel rounded-2xl border border-primary-100/70 bg-background-50 p-3 shadow-sm">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="relative flex-1">
               <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
@@ -483,23 +498,25 @@ export default function CurriculumProgrammes() {
         {loading ? (
           <CardGridSkeleton count={6} />
         ) : filtered.length ? (
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-3">
-            {filtered.map(prog => {
+          <>
+          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 2xl:grid-cols-3">
+            {paginatedProgrammes.map(prog => {
               const appliedSource = programmeKsbSources.get(prog.sourceId || prog.id) || resolveProgrammeAppliedKsbSource(prog, ksbSets, standards);
               const hasAppliedKsbSource = Boolean(appliedSource.value);
               const coverage = hasAppliedKsbSource && prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
+              const cardColor = normaliseHex(prog.color || '#6941c6');
               return (
-              <article key={prog.id} className="group relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200/80 hover:shadow-lg">
-                <div className="absolute inset-x-0 top-0 h-1" style={{ backgroundColor: prog.color || '#6941c6' }} />
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: prog.color || '#6941c6' }}>
+              <article key={prog.id} className="programmes-card programme-color-card group relative overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-3 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg" style={{ '--programme-card-color': cardColor } as CSSProperties}>
+                <div className="programme-card-accent absolute inset-x-0 top-0 h-1" />
+                <div className="mb-2.5 flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    <span className="programme-card-icon flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: cardColor }}>
                       <AppIcon className="ri-book-2-line text-base"></AppIcon>
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
                       <p className="text-[11px] text-foreground-400">Level: {prog.level || 'Not set'}</p>
-                      <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-slate-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-600 ring-1 ring-slate-200">
+                        <span className="programme-type-badge mt-1 inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary-700 ring-1 ring-primary-100">
                         <AppIcon className="ri-calendar-event-line text-[10px]"></AppIcon>
                         Programme
                       </span>
@@ -509,11 +526,11 @@ export default function CurriculumProgrammes() {
                 <button
                   type="button"
                   onClick={e => { e.stopPropagation(); openAppliedKsbSourceReview(prog, appliedSource); }}
-                  className={`mb-4 w-full rounded-xl border px-3 py-2.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${appliedSource.value ? 'border-primary-100 bg-primary-50/70 hover:border-primary-200 hover:bg-primary-50' : 'border-amber-100 bg-amber-50/70 hover:border-amber-200 hover:bg-amber-50'}`}
+                  className={`programme-source-button mb-2.5 w-full rounded-xl border px-2 py-1.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${appliedSource.value ? 'programme-source-applied' : 'programme-source-missing'}`}
                   aria-label={appliedSource.value ? `View KSBs for ${appliedSource.title}` : 'Choose KSB source'}
                 >
                   <div className="flex items-start gap-2">
-                    <span className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${appliedSource.value ? 'bg-primary-600 text-white' : 'bg-amber-500 text-white'}`}>
+                    <span className={`programme-source-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${appliedSource.value ? 'programme-source-applied' : 'programme-source-missing'}`}>
                       <AppIcon className={appliedSource.value ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></AppIcon>
                     </span>
                     <div className="min-w-0 flex-1">
@@ -528,7 +545,7 @@ export default function CurriculumProgrammes() {
                     </span>
                   </div>
                 </button>
-                <div className="mb-4 grid grid-cols-2 gap-3 rounded-xl border border-background-200/70 bg-background-100/60 p-3 sm:grid-cols-5">
+                <div className="programmes-metrics mb-2.5 grid grid-cols-2 gap-1.5 rounded-xl border border-primary-100/70 bg-primary-50/65 p-2 sm:grid-cols-5">
                   <Metric label="Cohorts" value={String(prog.cohorts)} />
                   <Metric label="Groups" value={String(prog.groups || 0)} />
                   <Metric label="Modules" value={String(prog.modules)} />
@@ -544,23 +561,23 @@ export default function CurriculumProgrammes() {
                     </div>
                   </div>
                 </div>
-                {prog.description && <p className="mb-4 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
-                <div className="flex flex-wrap items-center gap-2 border-t border-background-200/70 pt-4">
-                  <button className="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 py-2 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
+                {prog.description && <p className="mb-2.5 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
+                <div className="flex flex-wrap items-center gap-1 border-t border-primary-100/70 pt-2.5">
+                  <button className="programme-action-button programme-action-open inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1 text-[10px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
                     <AppIcon className="ri-eye-line"></AppIcon>
                     Open
                   </button>
-                  <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
+                  <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
                     <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB source
                   </button>
-                  <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
+                  <button className="programme-action-button programme-action-learners inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-1.5 py-1 text-[10px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
                     <AppIcon className="ri-user-follow-line text-sm"></AppIcon>Learners
                   </button>
-                  <button className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
+                  <button className="programme-action-button programme-action-edit inline-flex items-center justify-center gap-1 rounded-lg border border-background-200 bg-background-50 px-1.5 py-1 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
                     <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
                   </button>
                   <button
-                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
                     disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
                     onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
                   >
@@ -572,6 +589,14 @@ export default function CurriculumProgrammes() {
             );
             })}
           </div>
+          {totalProgrammePages > 1 && (
+            <ProgrammePagination
+              currentPage={programmePage}
+              totalPages={totalProgrammePages}
+              onPageChange={setProgrammePage}
+            />
+          )}
+          </>
         ) : (
           <ProgrammesEmptyState
             hasSearch={Boolean(search.trim())}
@@ -705,7 +730,7 @@ function ProgrammeLearnerImpactModal({
   return createPortal(
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
       <div className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
-        <div className="flex items-start justify-between gap-4 bg-[#070112] px-6 py-5 text-white">
+        <div className="flex items-start justify-between gap-4 bg-gradient-to-br from-primary-700 via-primary-900 to-primary-950 px-6 py-5 text-white">
           <div className="min-w-0">
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-200">Enrolled Learners</p>
             <h3 className="mt-2 truncate text-xl font-heading font-bold">{programme.name}</h3>
@@ -907,8 +932,8 @@ function LearnerMiniMetric({ label, value, detail }: { label: string; value: str
   );
 }
 
-function ProgressStrip({ label, value, tone, compact = false }: { label: string; value: number; tone: 'primary' | 'emerald' | 'amber' | 'red'; compact?: boolean }) {
-  const color = tone === 'emerald' ? 'bg-emerald-500' : tone === 'amber' ? 'bg-amber-500' : tone === 'red' ? 'bg-red-500' : 'bg-primary-600';
+function ProgressStrip({ label, value, compact = false }: { label: string; value: number; tone?: 'primary' | 'emerald' | 'amber' | 'red'; compact?: boolean }) {
+  const color = value >= 80 ? 'bg-emerald-500' : value >= 50 ? 'bg-amber-500' : 'bg-red-500';
   return (
     <div className={compact ? 'mt-2' : ''}>
       {label && <div className="mb-1 flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-foreground-400"><span>{label}</span><span>{value}%</span></div>}
@@ -1342,6 +1367,55 @@ function DashboardStat({ icon, label, value, detail }: { icon: string; label: st
       <p className="mt-2 text-2xl font-heading font-bold text-white">{value}</p>
       <p className="mt-0.5 truncate text-[11px] font-semibold text-white/60">{detail}</p>
     </div>
+  );
+}
+
+function ProgrammePagination({ currentPage, totalPages, onPageChange }: {
+  currentPage: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  return (
+    <nav aria-label="Programme pages" className="flex flex-col gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <span className="text-xs font-semibold text-foreground-500">
+        Page {currentPage} of {totalPages}
+      </span>
+      <div className="flex items-center justify-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          aria-label="Previous page"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <AppIcon className="ri-arrow-left-s-line" />
+          Previous
+        </button>
+        {Array.from({ length: totalPages }, (_, index) => index + 1).map(page => (
+          <button
+            key={page}
+            type="button"
+            onClick={() => onPageChange(page)}
+            aria-current={page === currentPage ? 'page' : undefined}
+            className={page === currentPage
+              ? 'inline-flex h-9 min-w-9 items-center justify-center rounded-lg bg-primary-600 px-2.5 text-xs font-bold text-white shadow-sm transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-300'
+              : 'inline-flex h-9 min-w-9 items-center justify-center rounded-lg border border-foreground-200 bg-background-50 px-2.5 text-xs font-bold text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300'}
+          >
+            {page}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={currentPage === totalPages}
+          aria-label="Next page"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 transition-smooth hover:border-primary-300 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Next
+          <AppIcon className="ri-arrow-right-s-line" />
+        </button>
+      </div>
+    </nav>
   );
 }
 
@@ -2595,7 +2669,7 @@ function ArchiveConfirmDialog({
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-background-200/80">
+    <div className="programmes-metric min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-primary-100/80">
       <p className="truncate text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
       <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{value}</p>
     </div>

@@ -5,10 +5,12 @@ from .learner_log_views import health, learner_activities, learner_summaries, mr
 from .learner_match_ledger_views import (
     activity_annotation as match_activity_annotation,
     activity_learners as match_activity_learners,
+    attendance_session as match_attendance_session,
     health as match_health,
     learner_activities as match_learner_activities,
     learner_profile as match_learner_profile,
     learner_summaries as match_learner_summaries,
+    quiz_attempt as match_quiz_attempt,
     save_activity_annotation as match_save_activity_annotation,
 )
 
@@ -23,6 +25,8 @@ urlpatterns = [
     path("match-ledger/health", match_health, name="match-ledger-health"),
     path("match-ledger/learner-activities", match_learner_activities, name="match-ledger-activities"),
     path("match-ledger/activity-learners", match_activity_learners, name="match-ledger-activity-learners"),
+    path("match-ledger/attendance-session", match_attendance_session, name="match-ledger-attendance-session"),
+    path("match-ledger/quiz-attempt", match_quiz_attempt, name="match-ledger-quiz-attempt"),
     path("match-ledger/activity-annotation", match_activity_annotation, name="match-ledger-activity-annotation"),
     path("match-ledger/activity-annotation/save", match_save_activity_annotation, name="match-ledger-activity-annotation-save"),
     path("match-ledger/learners", match_learner_summaries, name="match-ledger-learners"),

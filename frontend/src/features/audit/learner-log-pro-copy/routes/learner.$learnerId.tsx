@@ -82,7 +82,7 @@ function LearnerProfilePage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-surface">
-        <div className="mx-auto flex max-w-[88rem] items-center justify-between gap-4 px-6 py-4">
+        <div className="mx-auto flex max-w-[1700px] items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-baseline gap-3">
             <span className="font-serif text-base text-foreground">OTJ&nbsp;Ledger</span>
             <span className="label-caps">Learner profile</span>
@@ -93,7 +93,7 @@ function LearnerProfilePage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[88rem] space-y-6 px-6 py-8">
+      <main className="mx-auto w-full max-w-[1700px] space-y-6 px-6 py-8">
         <section className="rounded-lg border border-border bg-card px-7 py-6 shadow-panel">
           <div className="flex flex-wrap items-start justify-between gap-6">
             <div className="flex items-center gap-4">
@@ -162,7 +162,7 @@ function LearnerProfilePage() {
         <section className="grid gap-4 lg:grid-cols-3">
           <div className="rounded-lg border border-border bg-card p-5 shadow-panel">
             <p className="label-caps">ILR planned hours</p>
-            <p className="mt-3 font-mono text-3xl font-semibold text-foreground">{learner.planned_hours == null ? "—" : `${learner.planned_hours} h`}</p>
+            <p className="mt-3 font-mono text-3xl font-semibold text-foreground">{learner.planned_hours == null ? "—" : `${learner.planned_hours.toFixed(2)} h`}</p>
             <p className="mt-2 text-xs text-muted-foreground">From Audit.ilr_learning_deliveries</p>
           </div>
           <div className="rounded-lg border border-border bg-card p-5 shadow-panel">

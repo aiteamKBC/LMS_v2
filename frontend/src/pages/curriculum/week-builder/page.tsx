@@ -1232,14 +1232,16 @@ export interface ComponentBodyProps {
   // Injected file uploader so the same bodies work in both the week builder
   // (posts to week-components/) and the module builder (module-scoped upload).
   uploadResource?: WeekComponentUploader;
+  restoreTeamsMeeting?: () => Promise<void>;
+  restoringTeamsMeeting?: boolean;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, uploadResource }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; uploadResource?: WeekComponentUploader }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
   const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, uploadResource };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting };
 
   return (
     <div className="rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -1316,7 +1318,7 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, restoreTeamsMeeting, restoringTeamsMeeting }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
 
   return (
@@ -1330,6 +1332,19 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints }: Compon
           <Field label="Session date"><input type="date" value={s('sessionDate')} onChange={e => setSetting('sessionDate', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Start time"><input type="time" value={s('sessionTime')} onChange={e => setSetting('sessionTime', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
+        {restoreTeamsMeeting && (
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={() => { void restoreTeamsMeeting(); }}
+              disabled={restoringTeamsMeeting}
+              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-70"
+            >
+              <i className={restoringTeamsMeeting ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></i>
+              {restoringTeamsMeeting ? 'Restoring Teams data...' : 'Restore saved Teams data'}
+            </button>
+          </div>
+        )}
 
         <Field label="Session outline" className="mt-4"><textarea value={s('sessionPurpose')} onChange={e => setSetting('sessionPurpose', e.target.value)} rows={3} placeholder="A short summary of what this session covers…" className={`${inputClass} resize-none`} /></Field>
       </Section>

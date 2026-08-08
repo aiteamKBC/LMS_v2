@@ -5,7 +5,9 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { MreTable } from "@/features/audit/learner-log-pro-copy/components/MreTable";
 import {
   getActivityAnnotation,
+  getAttendanceSession,
   getLearnerActivities,
+  getQuizAttempt,
   saveActivityAnnotation,
 } from "@/features/audit/learner-log-pro-copy/lib/api";
 
@@ -16,6 +18,148 @@ export const Route = createFileRoute("/activity")({
   }),
   component: ActivityLogPage,
 });
+
+// Colour the KSB code badge by its type: Knowledge / Skill / Behaviour.
+function ksbBadgeClass(type: string) {
+  switch ((type || "").toUpperCase()) {
+    case "K":
+      return "bg-primary/15 text-primary";
+    case "S":
+      return "bg-success/15 text-success";
+    case "B":
+      return "bg-amber-500/15 text-amber-600";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
+
+// Colour a bundle component badge by its material: quiz / pdf / reading.
+function materialBadgeClass(material: string) {
+  switch ((material || "").toLowerCase()) {
+    case "quiz":
+      return "bg-primary/15 text-primary";
+    case "pdf":
+      return "bg-amber-500/15 text-amber-600";
+    case "text":
+    case "reading":
+      return "bg-success/15 text-success";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
+
+// Colour a quiz score chip by pass/fail status.
+function scoreClass(status: string | null) {
+  const value = (status || "").toLowerCase();
+  if (value === "passed") return "bg-success/15 text-success";
+  if (value === "failed") return "bg-destructive/15 text-destructive";
+  return "bg-muted text-muted-foreground";
+}
+
+// The graded body of one learner's quiz attempt, shown as text.
+function QuizBody({ learner, component }: { learner: string; component: string | number }) {
+  const query = useQuery({
+    queryKey: ["quiz-attempt", learner, String(component)],
+    queryFn: () => getQuizAttempt({ learner, component: String(component) }),
+    enabled: Boolean(learner && component),
+  });
+  if (query.isLoading) return <p className="px-3 py-2 text-xs text-muted-foreground">Loading quiz…</p>;
+  if (query.isError) return <p className="px-3 py-2 text-xs text-destructive">Could not load the quiz body.</p>;
+  const attempt = query.data?.attempt;
+  if (!attempt) return <p className="px-3 py-2 text-xs text-muted-foreground">No graded attempt stored for this quiz.</p>;
+  const questions = attempt.quiz_body?.questions ?? [];
+  return (
+    <div className="space-y-3 px-3 py-3">
+      {questions.map((question, qi) => (
+        <div key={question.question_id ?? qi} className="rounded-md border border-border bg-background/40 p-3">
+          <p className="text-sm leading-6 text-foreground">
+            <span className="mr-1.5 font-semibold text-muted-foreground">Q{question.question_order ?? qi + 1}.</span>
+            {question.question_text}
+            <span className={`ml-2 text-xs font-semibold ${question.is_correct ? "text-success" : "text-destructive"}`}>
+              {question.is_correct ? "✓ correct" : "✗ incorrect"}
+            </span>
+          </p>
+          <ul className="mt-2 space-y-1">
+            {(question.answer_options ?? []).map((option, oi) => (
+              <li
+                key={oi}
+                className={`flex items-start gap-2 rounded-sm px-2 py-1 text-sm ${
+                  option.is_correct
+                    ? "bg-success/10 text-foreground"
+                    : option.is_selected
+                    ? "bg-destructive/10 text-foreground"
+                    : "text-muted-foreground"
+                }`}
+              >
+                <span className="mt-0.5 shrink-0 text-xs">
+                  {option.is_correct ? "✓" : option.is_selected ? "✗" : "•"}
+                </span>
+                <span>
+                  {option.option_text}
+                  {option.is_selected && <span className="ml-1.5 text-xs font-medium text-muted-foreground">(learner's answer)</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A reading+quiz bundle's contents: each item as a row; quizzes show their
+// score and can be opened to reveal the graded body inline.
+function BundleContents({ components, learner }: { components: any[]; learner: string }) {
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  return (
+    <ul className="mt-3 divide-y divide-border rounded-md border border-border">
+      {components.map((component, index) => {
+        const rowKey = `${component.component_id}-${index}`;
+        const isQuiz = component.material_type === "quiz";
+        const canOpen = isQuiz && component.has_body;
+        const open = openKey === rowKey;
+        return (
+          <li key={rowKey} className="px-3 py-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className={`rounded-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase ${materialBadgeClass(component.material_type)}`}>
+                  {component.material_type}
+                </span>
+                <span className="truncate text-sm text-foreground">{component.title}</span>
+                {isQuiz && component.score_percent != null && (
+                  <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-semibold ${scoreClass(component.status)}`}>
+                    {component.score_percent}%{component.status ? ` · ${component.status}` : ""}
+                  </span>
+                )}
+              </div>
+              {canOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setOpenKey(open ? null : rowKey)}
+                  className="shrink-0 text-xs font-medium text-primary hover:underline"
+                >
+                  {open ? "Hide quiz" : "View quiz"}
+                </button>
+              ) : component.iframe_url ? (
+                <a href={component.iframe_url} target="_blank" rel="noreferrer" className="shrink-0 text-xs font-medium text-primary hover:underline">
+                  Open ↗
+                </a>
+              ) : null}
+            </div>
+            {isQuiz && component.correct_answers != null && component.answered_questions != null && (
+              <p className="mt-1 text-xs text-muted-foreground">{component.correct_answers}/{component.answered_questions} correct</p>
+            )}
+            {open && (
+              <div className="mt-2 overflow-hidden rounded-md border border-border bg-card">
+                <QuizBody learner={learner} component={component.component_id} />
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 function formatDateTime(value: string | null) {
   if (!value) return null;
@@ -37,6 +181,18 @@ function ActivityLogPage() {
   });
   const activity = overview.data?.items[0];
   const component = activity?.plan_id;
+
+  // Attendance rows represent a live session; the preview panel shows that
+  // session's recordings and the records table shows everyone who attended it.
+  const isAttendance = Boolean(
+    activity && (activity.activity_category === "attendance" || activity.delivery_method === "attendance"),
+  );
+  const session = useQuery({
+    queryKey: ["attendance-session", component],
+    queryFn: () => getAttendanceSession(component as string),
+    enabled: Boolean(isAttendance && component),
+  });
+  const recordings = session.data?.recordings ?? [];
 
   // Auditor-entered KSBs + planned hours for this activity (saved per component).
   const queryClient = useQueryClient();
@@ -79,7 +235,7 @@ function ActivityLogPage() {
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-surface">
-        <div className="mx-auto flex max-w-[88rem] flex-wrap items-center justify-between gap-4 px-6 py-4">
+        <div className="mx-auto flex max-w-[1700px] flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-baseline gap-3">
             <span className="font-serif text-base text-foreground">OTJ&nbsp;Ledger</span>
             <span className="label-caps">Live off-the-job activity</span>
@@ -103,7 +259,7 @@ function ActivityLogPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-[88rem] space-y-6 px-6 py-8">
+      <main className="mx-auto w-full max-w-[1700px] space-y-6 px-6 py-8">
         {overview.isLoading && (
           <div className="rounded-lg border border-border bg-card px-7 py-16 text-center text-sm text-muted-foreground">Loading activity from Neon…</div>
         )}
@@ -123,6 +279,65 @@ function ActivityLogPage() {
                 <h1 className="mt-3 font-serif text-2xl text-foreground">{activity.activity_unit}</h1>
               </header>
               <div className="space-y-6 px-7 py-6">
+                {isAttendance && (
+                  <section>
+                    <div className="flex items-center justify-between">
+                      <h2 className="label-caps">Session recordings</h2>
+                      <span className="text-xs text-muted-foreground">
+                        {session.isLoading
+                          ? "Matching recordings…"
+                          : `${recordings.length} part${recordings.length === 1 ? "" : "s"} · matched by session date`}
+                      </span>
+                    </div>
+                    {recordings.length > 0 ? (
+                      <div className="mt-3 space-y-5">
+                        {recordings.map((recording) => (
+                          <div key={recording.component_id}>
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-medium text-foreground">{recording.title}</p>
+                              {recording.preview_url && (
+                                <a
+                                  href={recording.preview_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="shrink-0 text-xs font-medium text-primary hover:underline"
+                                >
+                                  Open in new tab ↗
+                                </a>
+                              )}
+                            </div>
+                            {recording.week && <p className="text-xs text-muted-foreground">{recording.week}</p>}
+                            {recording.preview_url && (
+                              <div className="mt-2 aspect-video w-full overflow-hidden rounded-md border border-border bg-black/5">
+                                <iframe
+                                  src={recording.preview_url}
+                                  title={recording.title}
+                                  className="h-full w-full"
+                                  loading="lazy"
+                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                  allowFullScreen
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      !session.isLoading && (
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          No recording is linked to this session date in the programme structure. Recordings are matched to a
+                          session when an LMS lesson's title is dated to the session day and names the same course.
+                        </p>
+                      )
+                    )}
+                  </section>
+                )}
+                {activity.components && activity.components.length > 0 && (
+                  <section>
+                    <h2 className="label-caps">Bundle contents</h2>
+                    <BundleContents components={activity.components} learner={(activity.learner || "").toLowerCase()} />
+                  </section>
+                )}
                 {activity.source_url && (
                   <section>
                     <div className="flex items-center justify-between">
@@ -159,6 +374,21 @@ function ActivityLogPage() {
                     <p className="mt-1 text-xs text-muted-foreground">{activity.source_course || activity.source_basis || "Programme structure"}</p>
                   </section>
                 </div>
+                {activity.completion_records && activity.completion_records.length > 0 && (
+                  <section className="border-t border-border pt-5">
+                    <h2 className="label-caps">Completion history</h2>
+                    <ul className="mt-3 divide-y divide-border rounded-md border border-border">
+                      {activity.completion_records.map((record, index) => (
+                        <li key={record.record_id ?? index} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs">
+                          <span className="font-mono text-muted-foreground">
+                            {formatDateTime(record.started_at) ?? "—"} → {formatDateTime(record.completed_at) ?? "in progress"}
+                          </span>
+                          {record.time_spent_formatted && <span className="font-mono text-foreground">{record.time_spent_formatted}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
               </div>
             </article>
 
@@ -172,24 +402,50 @@ function ActivityLogPage() {
                   <dt className="label-caps">Category</dt>
                   <dd className="mt-1 text-sm capitalize text-foreground">{activity.activity_category}</dd>
                 </div>
+                {activity.week && (
+                  <div>
+                    <dt className="label-caps">Lecture / week</dt>
+                    <dd className="mt-1 text-sm text-foreground">{activity.week}</dd>
+                  </div>
+                )}
                 <div>
                   <dt className="label-caps">Content creation time</dt>
                   <dd className="snapshot-value mt-1 font-mono">{formatDateTime(activity.created_at) ?? "Not recorded"}</dd>
                 </div>
               </dl>
 
-              <div className="space-y-4 border-t border-border px-6 py-6">
-                <label className="block">
-                  <span className="label-caps">Mapped KSBs</span>
-                  <textarea
-                    value={ksbsInput}
-                    onChange={(event) => setKsbsInput(event.target.value)}
-                    rows={4}
-                    placeholder="Add KSBs, e.g. K3 (Primary, 60%) – Marketing theories…"
-                    className="mt-1.5 w-full rounded-md border border-border bg-card px-2.5 py-2 text-sm text-foreground outline-none focus:border-primary"
-                  />
-                </label>
+              {/* Real KSB mapping pulled live from programme_structure. */}
+              <section className="border-t border-border px-6 py-6">
+                <h3 className="label-caps">Mapped KSBs</h3>
+                {activity.ksbs && activity.ksbs.length > 0 ? (
+                  <ul className="mt-3 space-y-2">
+                    {activity.ksbs.map((ksb, index) => (
+                      <li key={`${ksb.code}-${index}`}>
+                        {/* Each KSB collapses on its own — closed by default, code shown. */}
+                        <details className="rounded-md border border-border bg-background/40 px-3 py-2">
+                          <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
+                            <span className={`rounded-sm px-1.5 py-0.5 text-xs font-semibold ${ksbBadgeClass(ksb.type)}`}>{ksb.code}</span>
+                            <span className="ml-auto text-xs text-muted-foreground">▸</span>
+                          </summary>
+                          <div className="mt-2">
+                            <span className="text-xs font-medium text-muted-foreground">{ksb.type_label}</span>
+                            {ksb.description && (
+                              <p className="mt-1 text-sm leading-6 text-foreground">{ksb.description}</p>
+                            )}
+                            {ksb.reason && (
+                              <p className="mt-1 text-xs italic leading-5 text-muted-foreground">Why: {ksb.reason}</p>
+                            )}
+                          </div>
+                        </details>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">No KSBs mapped in programme structure.</p>
+                )}
+              </section>
 
+              <div className="space-y-4 border-t border-border px-6 py-6">
                 <label className="block">
                   <span className="label-caps">Planned hours</span>
                   <span className="mt-1.5 flex items-center gap-2">
@@ -209,6 +465,17 @@ function ActivityLogPage() {
                   <span className="mt-2 block text-xs leading-5 text-muted-foreground">
                     Counts toward the minimum 20% off-the-job requirement. Logged time is compared against this planned duration at audit.
                   </span>
+                </label>
+
+                <label className="block">
+                  <span className="label-caps">Auditor KSB notes (optional)</span>
+                  <textarea
+                    value={ksbsInput}
+                    onChange={(event) => setKsbsInput(event.target.value)}
+                    rows={3}
+                    placeholder="Add notes or extra KSB mappings beyond those above…"
+                    className="mt-1.5 w-full rounded-md border border-border bg-card px-2.5 py-2 text-sm text-foreground outline-none focus:border-primary"
+                  />
                 </label>
 
                 <label className="block">
@@ -247,7 +514,11 @@ function ActivityLogPage() {
           </div>
         )}
 
-        <MreTable component={activity?.plan_id} learner={learner || undefined} />
+        {isAttendance ? (
+          <MreTable attendanceKey={activity?.plan_id} />
+        ) : (
+          <MreTable component={activity?.plan_id} learner={learner || undefined} />
+        )}
         <p className="pb-4 text-xs text-muted-foreground">
           All values on this page are loaded from the Neon <span className="font-mono">Audit.learner_match</span> table.
         </p>

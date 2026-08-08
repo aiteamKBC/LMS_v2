@@ -790,6 +790,16 @@ export function loadTeamsMeetingConfiguration() {
   return apiJson<TeamsMeetingConfiguration>('/curriculum/teams-meetings/', { timeoutMs: 15000 });
 }
 
+export function restoreModuleTeamsMeeting(moduleCatalogueId: string) {
+  return apiJson<{ restored: boolean; updatedComponents: number; meeting: Record<string, unknown>; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`, {
+    method: 'POST',
+    timeoutMs: 30000,
+  }).then(result => ({
+    ...result,
+    module: recalculateModule(result.module),
+  }));
+}
+
 export function createTeamsMeeting(input: TeamsMeetingInput) {
   return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
     method: 'POST',
@@ -799,7 +809,7 @@ export function createTeamsMeeting(input: TeamsMeetingInput) {
 }
 
 export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string }) {
-  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting'] }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify(input),
     timeoutMs: 45000,
@@ -832,6 +842,7 @@ export interface TeamsAttendanceRecord {
 export interface TeamsMeetingArtifact {
   id: string;
   artifact_type: 'transcript' | 'recording' | string;
+  content_url?: string;
   created_datetime?: string;
   end_datetime?: string;
 }
@@ -878,12 +889,22 @@ export function teamsMeetingArtifactContentUrl(liveSessionId: string, artifactId
   return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/content/`;
 }
 
+export function teamsMeetingArtifactPreviewUrl(liveSessionId: string, artifactId: string) {
+  return `${teamsMeetingArtifactContentUrl(liveSessionId, artifactId)}?preview=1`;
+}
+
+export function teamsMeetingRecordingEventsUrl(liveSessionId: string, artifactId: string) {
+  return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/recording-events/`;
+}
+
 class ApiError extends Error {
   status: number;
+  detail?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, detail?: string) {
     super(message);
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -902,7 +923,8 @@ async function apiForm<T>(path: string, body: FormData, init?: { timeoutMs?: num
       let message = `Curriculum API returned ${response.status} for ${path}`;
       try {
         const payload = await response.json();
-        if (payload?.error) message = payload.error;
+        const detail = typeof payload?.detail === 'string' ? payload.detail : '';
+        if (payload?.error) message = detail ? `${payload.error} ${detail}` : payload.error;
       } catch {
         // Keep the original status message when a non-JSON error body is returned.
       }
@@ -940,8 +962,9 @@ async function apiJson<T>(path: string, init?: { method?: string; body?: string;
         const validation = Array.isArray(payload?.validationErrors)
           ? payload.validationErrors.map((item: { message?: string }) => item.message).filter(Boolean).join('; ')
           : '';
+        const detail = typeof payload?.detail === 'string' ? payload.detail : '';
         if (validation) message = validation;
-        else if (payload?.error) message = payload.error;
+        else if (payload?.error) message = detail ? `${payload.error} ${detail}` : payload.error;
       } catch {
         // Ignore body parsing failures so the original status remains visible.
       }
