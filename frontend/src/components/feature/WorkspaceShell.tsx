@@ -196,7 +196,7 @@ export function WorkspaceShell({
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />
-      <div className="workspace-viewport flex-1 flex flex-col min-w-0 ml-0 bg-background-200 lg:ml-[56px] transition-[margin] duration-300 ease-out">
+      <div className="workspace-viewport flex-1 flex flex-col min-w-0 ml-0 bg-background-200 lg:ml-[56px] transition-[margin] duration-500 ease-out">
         <Header
           pageTitle={pageTitle}
           pageSubtitle={pageSubtitle}

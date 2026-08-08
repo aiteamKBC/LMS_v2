@@ -499,7 +499,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
     <>
       {/* Desktop sidebar — pinned open or expanded temporarily on hover */}
       <div
-        className={`workspace-sidebar-desktop hidden lg:block fixed left-0 top-0 z-40 h-screen overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${sidebarExpanded ? 'w-[300px] shadow-2xl' : 'w-[88px]'}`}
+        className={`workspace-sidebar-desktop hidden lg:block fixed left-0 top-0 z-40 h-screen overflow-hidden transition-[width] duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] ${sidebarExpanded ? 'w-[300px] shadow-2xl' : 'w-[88px]'}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
@@ -575,14 +575,14 @@ function NavGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
       if (rect.top + dropdownHeight > window.innerHeight - 16) {
         top = Math.max(8, window.innerHeight - dropdownHeight - 8);
       }
-      setDropdownStyle({ top, left: rect.right + 8 });
+      setDropdownStyle({ top, left: rect.right });
     } else {
       setDropdownStyle(null);
     }
   }, [childCount, isDropdownOpen]);
 
   return (
-    <div className="relative" onMouseEnter={openHover} onMouseLeave={scheduleClose}>
+    <div className="relative w-full" onMouseEnter={openHover} onMouseLeave={scheduleClose}>
       <button
         ref={buttonRef}
         id={`nav-btn-${item.id}`}
@@ -808,7 +808,7 @@ function MobileNavGroup({ item, isActive, isExpanded, onToggle, onSubmenuChange 
     const rect = buttonRef.current.getBoundingClientRect();
     const menuHeight = Math.min((item.children?.length ?? 0) * 42 + 16, 460);
     const top = Math.max(8, Math.min(rect.top, window.innerHeight - menuHeight - 8));
-    setSubmenuStyle({ top, left: rect.right + 8 });
+    setSubmenuStyle({ top, left: rect.right });
   }, [hovered, item.children?.length]);
 
   return (
