@@ -14,33 +14,18 @@ export const TYPE_OPTIONS = ['User', 'Employer', 'Referrer', 'Admin', 'Caseowner
 // Mirrors PROGRAMME_STATUS_CHOICES in backend/learner_api/constants.py, which
 // validates writes — a value missing there is rejected on save.
 export const PROGRAMME_STATUS_OPTIONS = [
-  'Ready to enrol',
+  // Account exists but the learner hasn't entered the enrolment flow yet. Also
+  // what the backend reports when no status has been set.
+  'Fresh user',
   // While a learner is at this status their landing page sends them to their own
   // enrolment wizard (/learner/onboarding) rather than the usual overview.
   'Onboarding',
-  'On probation',
+  'Delivery',
+  'Ready to enrol',
   'Active',
-  'Non starter',
-  'Under review',
-  'On maternity break',
-  'On illness break',
-  'On other break',
-  'Entered EPA',
-  'Completed',
-  'Withdrawn (w/o funding)',
-  'Early Leaver (funded)',
-  'Not Eligible',
-  'Imported',
-  'On a break',
   'Withdrawn',
-  'Pending Change of Programme',
-  'Did Not Attend',
-  'Early Completer',
-  'Left Employment Active',
-  'In Work (Mandatory)',
-  'Outcome',
-  'Tracking',
-  'In Work (Voluntary)',
+  'On break',
+  'Completed',
 ];
 
 /**
@@ -100,6 +85,12 @@ export interface CreateEnrolmentUserInput extends AptemUserFields {
   cohort?: string;
   group?: string;
   employer?: string;
+  /**
+   * The employer's record id in enrolment."Employers". `employer` above is the
+   * display name; this is the reference that reaches their full details. Null
+   * clears it. The API rejects an id naming no employer record.
+   */
+  employerId?: number | null;
   organization?: string;
   lineManager?: string;
   phone?: string;
@@ -158,9 +149,9 @@ export function updateEnrolmentUser(id: string, patch: Partial<CreateEnrolmentUs
 }
 
 /**
- * Finish enrolment: promote the learner out of enrolment."Created_users" into
- * the live learner tables, set them Active and start their journey. Until this
- * is called the learner exists only as an enrolment record.
+ * Check and complete an eligible learner's automatic activation. The server
+ * only makes a learner Active after all compliance documents are signed and
+ * their programme start date has arrived.
  */
 export function finishEnrolment(id: string): Promise<EnrolmentBoard> {
   return request<EnrolmentBoard>(`${BASE}/${id}/finish/`, { method: 'POST' });

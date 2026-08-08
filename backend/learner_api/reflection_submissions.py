@@ -206,12 +206,35 @@ def get_reflection_submission(request):
 
     if learner_kind not in VALID_KINDS:
         return _error("A valid learnerKind is required.")
-    if not learner_id or not activity_type or not activity_id:
-        return _error("learnerId, activityType and activityId are required.")
+    if not learner_id:
+        return _error("learnerId is required.")
+    if bool(activity_type) != bool(activity_id):
+        return _error("activityType and activityId must be provided together.")
 
     try:
-        ensure_learning_reflection_submissions_table()
         with connections["enrolment"].cursor() as cur:
+            if not activity_type:
+                cur.execute(
+                    """
+                    select activity_type, activity_id, status
+                    from "Learner"."learning_reflection_submissions"
+                    where learner_kind = %s and learner_id = %s
+                    """,
+                    [learner_kind, learner_id],
+                )
+                return JsonResponse(
+                    {
+                        "statuses": [
+                            {
+                                "activityType": row[0],
+                                "activityId": row[1],
+                                "status": row[2],
+                            }
+                            for row in cur.fetchall()
+                        ]
+                    }
+                )
+
             cur.execute(
                 """
                 select id, status, full_submission, coach_feedback,

@@ -92,7 +92,7 @@ export interface LeaderboardEntry {
   badge: string;
   avatar: string;
   highlight?: boolean;
-  movement: 'up' | 'down' | 'same';
+  movement: 'up' | 'down' | 'same' | 'new';
   category: 'all-time' | 'monthly' | 'club';
 }
 

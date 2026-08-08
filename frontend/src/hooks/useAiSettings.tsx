@@ -87,7 +87,7 @@ export function AiSettingsProvider({ children }: { children: ReactNode }) {
     setSettings(prev => {
       const key = featureSlugToKey(slug);
       if (key && key in prev) {
-        return { ...prev, [key]: !(prev as Record<string, boolean>)[key] };
+        return { ...prev, [key]: !(prev as unknown as Record<string, boolean>)[key] };
       }
       return prev;
     });

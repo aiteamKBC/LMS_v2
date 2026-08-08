@@ -11,4 +11,8 @@ urlpatterns = [
     path('document-types/', documents.document_types, name='document-types'),
     path('documents/<str:kind>/<int:learner_id>/', documents.documents, name='enrolment-documents'),
     path('documents/<str:kind>/<int:learner_id>/<uuid:doc_id>/download/', documents.download_document, name='enrolment-document-download'),
+    path('documents/<str:kind>/<int:learner_id>/<uuid:doc_id>/sign/', documents.sign_document, name='enrolment-document-sign'),
+    # Replaces the stored PDF in place, so a document rebuilt with a new
+    # signature keeps its id and the signatures already recorded on it.
+    path('documents/<str:kind>/<int:learner_id>/<uuid:doc_id>/file/', documents.replace_document_file, name='enrolment-document-file'),
 ]

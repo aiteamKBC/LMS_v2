@@ -8,7 +8,7 @@ import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
 import type { LearnerDetail, LearnerKind, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
-import { loadLearningReflectionSubmission } from '@/api/reflectionSubmission';
+import { learningReflectionStatusKey, loadLearningReflectionStatuses, type LearningReflectionStatusMap } from '@/api/reflectionSubmission';
 import { EmptyState } from '@/pages/users/components/ui';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
 import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
@@ -58,49 +58,17 @@ const REFLECTION_STATUS: Record<string, { label: string; style: string; icon: st
 };
 
 /** One component row inside the current-week card. */
-function CurrentWeekRow({ c, videos, learnerKind, learnerId, onOpen }: {
+function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
   c: JourneyComponent;
   videos: LearnerVideoProgress[];
-  learnerKind?: string;
-  learnerId?: string;
+  reflectionStatus?: string;
   onOpen?: () => void;
 }) {
   const meta = componentTypeMeta(c.title);
   const prog = componentProgress(c, videos);
   const style = STATE_STYLE[prog.state];
   const actionable = !!onOpen;
-  const [reflectionStatus, setReflectionStatus] = useState('');
-
-  useEffect(() => {
-    const validKind = learnerKind === 'commercial' || learnerKind === 'apprenticeship';
-    const activityId = c.isQuiz && c.quizMeta?.quizId != null
-      ? `quiz-${c.quizMeta.quizId}`
-      : c.componentId;
-    if (!validKind || !learnerId || !activityId) {
-      setReflectionStatus('');
-      return;
-    }
-
-    let cancelled = false;
-    void loadLearningReflectionSubmission({
-      learnerKind: learnerKind as LearnerKind,
-      learnerId,
-      activityType: c.isQuiz ? 'quiz' : componentNoun(c.type),
-      activityId,
-    })
-      .then((submission) => {
-        if (!cancelled) setReflectionStatus(submission?.status || '');
-      })
-      .catch(() => {
-        if (!cancelled) setReflectionStatus('');
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [c.componentId, c.isQuiz, c.quizMeta?.quizId, c.type, learnerId, learnerKind]);
-
-  const reflection = REFLECTION_STATUS[reflectionStatus];
+  const reflection = REFLECTION_STATUS[reflectionStatus || ''];
   return (
     <button
       type="button"
@@ -147,9 +115,10 @@ function CurrentWeekRow({ c, videos, learnerKind, learnerId, onOpen }: {
 }
 
 /** The highlighted "current week" hero card with rich component list + progress. */
-function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, learnerId }: {
+function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, learnerId, reflectionStatuses }: {
   moduleTitle: string; weekLabel: string; components: JourneyComponent[];
   videos: LearnerVideoProgress[]; kind?: string; learnerId?: string;
+  reflectionStatuses: LearningReflectionStatusMap;
 }) {
   const navigate = useNavigate();
   const total = components.length;
@@ -166,6 +135,16 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
     if (c.type === 'video' && c.videoUrl && c.componentId) return () => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}${q}`);
     if (isOpenableComponent(c)) return () => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}${q}`);
     return undefined;
+  };
+
+  const reflectionStatusFor = (c: JourneyComponent): string => {
+    const activityId = c.isQuiz && c.quizMeta?.quizId != null
+      ? `quiz-${c.quizMeta.quizId}`
+      : c.componentId || '';
+    if (!activityId) return '';
+    return reflectionStatuses[
+      learningReflectionStatusKey(c.isQuiz ? 'quiz' : componentNoun(c.type), activityId)
+    ] || '';
   };
 
   return (
@@ -201,8 +180,7 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
                 key={c.componentId || `${c.title}-${i}`}
                 c={c}
                 videos={videos}
-                learnerKind={kind}
-                learnerId={learnerId}
+                reflectionStatus={reflectionStatusFor(c)}
                 onOpen={openFor(c)}
               />
             ))}
@@ -791,6 +769,7 @@ export default function LearnerOverview() {
   const [attendanceLoading, setAttendanceLoading] = useState(isRealMode);
   const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
   const [evidenceLoading, setEvidenceLoading] = useState(isRealMode);
+  const [reflectionStatuses, setReflectionStatuses] = useState<LearningReflectionStatusMap>({});
 
   useEffect(() => {
     if (!isRealMode || !kind || !id) {
@@ -813,6 +792,25 @@ export default function LearnerOverview() {
         if (!cancelled) setAttendanceLoading(false);
       });
 
+    return () => {
+      cancelled = true;
+    };
+  }, [isRealMode, kind, id]);
+
+  useEffect(() => {
+    if (!isRealMode || !kind || !id) {
+      setReflectionStatuses({});
+      return;
+    }
+
+    let cancelled = false;
+    loadLearningReflectionStatuses({ learnerKind: kind, learnerId: id })
+      .then((statuses) => {
+        if (!cancelled) setReflectionStatuses(statuses);
+      })
+      .catch(() => {
+        if (!cancelled) setReflectionStatuses({});
+      });
     return () => {
       cancelled = true;
     };
@@ -1220,6 +1218,7 @@ export default function LearnerOverview() {
                       videos={real?.videoProgress ?? []}
                       kind={kind}
                       learnerId={id}
+                      reflectionStatuses={reflectionStatuses}
                     />
                   )}
                 </div>

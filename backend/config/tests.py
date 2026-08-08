@@ -6,14 +6,20 @@ external services, or depending on production data.  Endpoint-specific test
 modules continue to cover successful GET/POST/PATCH/DELETE behaviour.
 """
 
+import base64
+import json
 import re
 from collections import Counter
 from contextlib import ExitStack
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.db import connections
-from django.test import SimpleTestCase
+from django.http import JsonResponse
+from django.test import RequestFactory, SimpleTestCase
 from django.urls import URLPattern, URLResolver, get_resolver, resolve
+
+from config.batch import api_get_batch
 
 
 API_PREFIXES = (
@@ -29,7 +35,7 @@ API_PREFIXES = (
 
 EXPECTED_ENDPOINT_COUNTS = {
     "curriculum_api/": 64,
-    "coach_api/": 15,
+    "coach_api/": 17,
     "quiz_api/": 13,
     "learner_api/": 31,
     "audit_api/": 5,
@@ -156,3 +162,80 @@ class EveryApiEndpointContractTests(SimpleTestCase):
         for prefix, expected_count in EXPECTED_ENDPOINT_COUNTS.items():
             with self.subTest(application=prefix):
                 self.assertEqual(counts[prefix], expected_count)
+
+
+class ApiGetBatchTests(SimpleTestCase):
+    @patch("config.batch.resolve")
+    def test_combines_safe_get_requests_and_preserves_responses(self, resolve_route):
+        def fake_view(request, item_id=None):
+            return JsonResponse({"path": request.path, "itemId": item_id})
+
+        resolve_route.side_effect = lambda path: SimpleNamespace(
+            func=fake_view,
+            args=(),
+            kwargs={"item_id": "7"} if path.endswith("/7/") else {},
+        )
+        request = RequestFactory().post(
+            "/api/batch/",
+            data=json.dumps({
+                "requests": [
+                    {"id": "a", "url": "/coach_api/coach/caseload?summary=1"},
+                    {"id": "b", "url": "/learner_api/learners/7/"},
+                ]
+            }),
+            content_type="application/json",
+        )
+
+        response = api_get_batch(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(payload["responses"]), 2)
+        first_body = json.loads(base64.b64decode(payload["responses"][0]["body"]))
+        second_body = json.loads(base64.b64decode(payload["responses"][1]["body"]))
+        self.assertEqual(first_body["path"], "/coach_api/coach/caseload")
+        self.assertEqual(second_body["itemId"], "7")
+
+    def test_rejects_external_and_non_api_paths(self):
+        request = RequestFactory().post(
+            "/api/batch/",
+            data=json.dumps({
+                "requests": [
+                    {"id": "external", "url": "https://example.com/learner_api/learners/"},
+                    {"id": "admin", "url": "/admin/"},
+                    {"id": "recursive", "url": "/coach_api/_batch/"},
+                ]
+            }),
+            content_type="application/json",
+        )
+
+        response = api_get_batch(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual([item["status"] for item in payload["responses"]], [400, 400, 400])
+
+    @patch("config.batch.resolve")
+    def test_executes_child_gets_serially_in_request_order(self, resolve_route):
+        visited = []
+
+        def fake_view(request):
+            visited.append(request.path)
+            return JsonResponse({"ok": True})
+
+        resolve_route.return_value = SimpleNamespace(func=fake_view, args=(), kwargs={})
+        request = RequestFactory().post(
+            "/api/batch/",
+            data=json.dumps({
+                "requests": [
+                    {"id": "a", "url": "/coach_api/coach/caseload"},
+                    {"id": "b", "url": "/learner_api/learners/"},
+                ]
+            }),
+            content_type="application/json",
+        )
+
+        response = api_get_batch(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual([item["status"] for item in payload["responses"]], [200, 200])
+        self.assertEqual(visited, ["/coach_api/coach/caseload", "/learner_api/learners/"])

@@ -4,6 +4,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Signature face. Bundled locally rather than fetched from Google Fonts so a
+   signature renders identically offline and matches the font embedded in
+   generated PDFs. SIL Open Font License 1.1 — see public/fonts/. */
+@font-face {
+  font-family: 'Dancing Script';
+  src: url('/fonts/DancingScript.ttf') format('truetype');
+  font-weight: 400 700;
+  font-display: swap;
+}
+
 :root {
   /* Background — clean off-white surfaces with stronger distinction */
   --background-50: 0.99 0.001 95;
@@ -3079,6 +3089,16 @@ table tbody td:last-child {
   font-weight: 700;
 }
 
+.dashboard-theme .workspace-main button[data-timetable-view-active="true"] {
+  background: oklch(var(--primary-600)) !important;
+  color: oklch(var(--background-50)) !important;
+}
+
+.dashboard-theme .workspace-main button[data-timetable-view-active="true"] svg {
+  color: oklch(var(--background-50)) !important;
+  stroke: currentColor !important;
+}
+
 .dashboard-theme .workspace-main [role="tab"][aria-selected="true"],
 .dashboard-theme .workspace-main [role="tablist"] button[aria-selected="true"] {
   background: oklch(var(--background-50));
@@ -3987,7 +4007,7 @@ table tbody td:last-child {
 .dashboard-theme .workspace-sidebar-desktop {
   width: 88px !important;
   padding: 0.75rem 0.5rem !important;
-  transition-duration: 320ms !important;
+  transition-duration: 500ms !important;
 }
 
 .dashboard-theme .workspace-sidebar-desktop[class*="w-[88px]"] {

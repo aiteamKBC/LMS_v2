@@ -321,7 +321,7 @@ function FullMatrixView() {
                   return (
                     <td key={role.id} className="text-center py-2 px-2">
                       <span className={`inline-flex text-[8px] font-semibold px-1.5 py-0.5 rounded-full ${levelColors[assignment.level] || 'bg-background-100 text-foreground-500'}`}>
-                        {assignment.level === 'manage_settings' ? 'Mng' : assignment.level === 'full_admin' ? 'Admin' : assignment.level === 'assigned_learners_only' ? 'Alo' : assignment.level.slice(0, 3)}
+                        {assignment.level === 'manage_settings' ? 'Mng' : assignment.level === 'full_admin' ? 'Admin' : assignment.scope === 'assigned_learners_only' ? 'Alo' : assignment.level.slice(0, 3)}
                       </span>
                     </td>
                   );

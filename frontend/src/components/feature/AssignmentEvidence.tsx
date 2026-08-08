@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
+import { AppIcon } from '@/components/feature/AppIcon';
 import {
   fetchEvidence, uploadEvidence, getEvidenceDownloadUrl,
   type EvidenceRecord, type EvidenceTrainingPlanDetails,
@@ -71,7 +72,10 @@ export function AssignmentEvidence({
   // Poll while any file is still being scanned, so status flips pending -> approved/rejected.
   useEffect(() => {
     if (!files.some((f) => f.status === 'pending')) return;
-    const t = window.setInterval(load, 4000);
+    const refreshPendingFiles = () => {
+      if (document.visibilityState !== 'hidden') load();
+    };
+    const t = window.setInterval(refreshPendingFiles, 10000);
     return () => window.clearInterval(t);
   }, [files, load]);
 

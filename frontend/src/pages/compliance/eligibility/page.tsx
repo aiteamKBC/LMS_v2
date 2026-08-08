@@ -17,6 +17,7 @@ const TABS = [
   { id: 'residency', label: 'Residency Tests' },
   { id: 'funding', label: 'Funding' },
   { id: 'outcome', label: 'Outcome' },
+  { id: 'history', label: 'History' },
 ] as const;
 
 type TabId = typeof TABS[number]['id'];
@@ -38,7 +39,7 @@ export default function EligibilityReviewPage() {
   const activeStatuses = [...new Set(ELIGIBILITY_REVIEW_LEARNERS.map(r => r.overallStatus))];
 
   // Action history tab
-  const TABS_WITH_HISTORY = [...TABS, { id: 'history' as const, label: 'History' }];
+  const TABS_WITH_HISTORY = TABS;
 
   return (
     <WorkspaceShell

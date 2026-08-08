@@ -19,7 +19,14 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from .batch import api_get_batch
+
 urlpatterns = [
+    path('api/batch/', api_get_batch, name='api-get-batch'),
+    # Production LiteSpeed forwards the established *_api prefixes to Django,
+    # while unknown /api/* paths fall through to the SPA index. Keep the old
+    # URL for compatibility and expose the transport below a forwarded prefix.
+    path('coach_api/_batch/', api_get_batch, name='api-get-batch-proxied'),
     path('admin/', admin.site.urls),
     path('curriculum_api/', include('curriculum_api.urls')),
     path('coach_api/', include('coach_api.urls')),

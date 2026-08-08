@@ -39,6 +39,41 @@ export interface StoredLearningReflectionSubmission extends LearningReflectionSu
   locked: boolean;
 }
 
+export type LearningReflectionStatusMap = Record<string, string>;
+
+export function learningReflectionStatusKey(activityType: string, activityId: string): string {
+  return `${activityType}:${activityId}`;
+}
+
+/** Load every reflection status for a learner in one query. Dashboard cards
+ * only need the status badge, not each submission's full seven-step payload. */
+export async function loadLearningReflectionStatuses(input: {
+  learnerKind: 'commercial' | 'apprenticeship';
+  learnerId: string;
+}): Promise<LearningReflectionStatusMap> {
+  const params = new URLSearchParams(input);
+  let response: Response;
+  try {
+    response = await fetch(`/learner_api/reflection/submissions/?${params.toString()}`);
+  } catch {
+    throw new Error('Could not reach the server to load reflection statuses.');
+  }
+
+  const data = await response.json().catch(() => null) as {
+    statuses?: Array<{ activityType: string; activityId: string; status: string }>;
+    error?: string;
+  } | null;
+  if (!response.ok) {
+    throw new Error(data?.error || `Could not load reflection statuses (${response.status}).`);
+  }
+  return Object.fromEntries(
+    (data?.statuses || []).map((row) => [
+      learningReflectionStatusKey(row.activityType, row.activityId),
+      row.status,
+    ]),
+  );
+}
+
 export async function loadLearningReflectionSubmission(input: {
   learnerKind: 'commercial' | 'apprenticeship';
   learnerId: string;
