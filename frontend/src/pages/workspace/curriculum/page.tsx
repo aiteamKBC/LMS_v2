@@ -78,6 +78,8 @@ export default function CurriculumStudio() {
   const [programmeSearch, setProgrammeSearch] = useState('');
   const [programmeFilter, setProgrammeFilter] = useState<ProgrammeFilter>('all');
   const [sortKey, setSortKey] = useState<SortKey>('priority');
+  const [actionQueueExpanded, setActionQueueExpanded] = useState(true);
+  const [readinessSnapshotExpanded, setReadinessSnapshotExpanded] = useState(true);
   const { data, loading: dataLoading, error: dataError } = useCurriculumData({ compact: true });
   const { programmes: programmeRecords, loading: programmesLoading, error: programmesError } = useCurriculumProgrammes();
 
@@ -150,32 +152,33 @@ export default function CurriculumStudio() {
       userRole="Curriculum Designer"
     >
       <div className="space-y-5 bg-background-100 p-4 md:p-6">
-        <section className="overflow-hidden rounded-lg border border-primary-900/20 bg-foreground-950 shadow-sm">
+        <section className="overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-primary-700 via-primary-900 to-primary-950 text-white shadow-xl">
           <div className="grid xl:grid-cols-[minmax(0,1fr)_420px]">
-            <div className="p-5 text-white md:p-6">
+            <div className="p-4 text-white md:p-5">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-bold uppercase text-white/75">
                   <AppIcon className="ri-dashboard-3-line" />
                   LMS command centre
                 </span>
-                <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1 text-[11px] font-bold text-amber-100">
+                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-extrabold shadow-sm ${loading ? 'border border-amber-300/30 bg-amber-300/10 text-amber-100' : 'border border-red-300/60 bg-red-500/25 text-red-50 shadow-red-950/30'}`}>
+                  <AppIcon className={loading ? 'ri-loader-4-line animate-spin' : 'ri-error-warning-fill'} />
                   {loading ? 'Syncing data' : `${attentionProgrammeCount} programmes need action`}
                 </span>
               </div>
-              <div className="mt-5 max-w-4xl">
-                <h1 className="font-heading text-3xl font-bold text-white md:text-4xl">Curriculum Studio</h1>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-white/70">
+              <div className="mt-4 max-w-4xl">
+                <h1 className="font-heading text-3xl font-bold text-white md:text-[2.35rem]">Curriculum Studio</h1>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-white/70 lg:max-w-none lg:overflow-hidden lg:text-ellipsis lg:whitespace-nowrap">
                   Monitor programme health, KSB coverage, cohort structure and authoring work from one operational LMS dashboard.
                 </p>
               </div>
-              <div className="mt-6 grid gap-3 sm:grid-cols-3">
-                <HeroMetric label="Readiness" value={`${readyRate}%`} detail={`${readyProgrammeCount}/${programmeRows.length || 0} programmes ready`} loading={loading} />
-                <HeroMetric label="KSB mapped" value={`${mappingRate}%`} detail={`${mappedModules}/${modules.length || 0} modules mapped`} loading={loading} />
-                <HeroMetric label="Staffing gaps" value={staffingGaps} detail="Coach and tutor assignments" loading={loading} />
+              <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                <HeroMetric label="Readiness" value={`${readyRate}%`} detail={`${readyProgrammeCount}/${programmeRows.length || 0} programmes ready`} loading={loading} progress={readyRate} tone="accent" />
+                <HeroMetric label="KSB mapped" value={`${mappingRate}%`} detail={`${mappedModules}/${modules.length || 0} modules mapped`} loading={loading} progress={mappingRate} tone="primary" />
+                <HeroMetric label="Staffing gaps" value={staffingGaps} detail="Coach and tutor assignments" loading={loading} progress={percentage(staffingGaps, groups.length + modules.length)} tone="secondary" />
               </div>
             </div>
-            <div className="border-t border-white/10 bg-white/[0.06] p-4 xl:border-l xl:border-t-0">
-              <div className="rounded-lg border border-white/10 bg-white/[0.08] p-4">
+            <div className="border-t border-white/10 bg-primary-900/65 p-4 xl:border-l xl:border-t-0">
+              <div className="rounded-lg border border-white/10 bg-primary-800/45 p-4">
                 <p className="text-xs font-bold uppercase text-white/50">Quick launch</p>
                 <div className="mt-3 grid gap-2">
                   {primaryActions.map(action => (
@@ -225,49 +228,71 @@ export default function CurriculumStudio() {
           <KpiCard icon="ri-draft-line" label="Draft Modules" value={draftModules.length} detail={`${modulesWithoutKsb.length} without KSB mappings`} loading={loading} tone="info" progress={percentage(modules.length - draftModules.length, modules.length)} />
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="rounded-lg border border-foreground-200 bg-background-50 shadow-sm">
-            <SectionHeader title="Action Queue" detail="Prioritised blockers from programme, module, cohort and staffing data." />
-            <div className="grid gap-3 p-3 lg:grid-cols-3">
-              {loading ? (
-                <ListSkeleton count={3} />
-              ) : attentionIssues.length ? (
-                attentionIssues.map(issue => <AttentionCard key={issue.key} issue={issue} />)
-              ) : (
-                <EmptyState icon="ri-checkbox-circle-line" title="No curriculum issues require attention." detail="The current dashboard data does not show missing KSB mappings, draft modules, unassigned staff or incomplete structures." />
-              )}
-            </div>
+        <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="self-start h-fit rounded-lg border border-foreground-200 bg-background-50 shadow-sm">
+            <SectionHeader
+              title="Action Queue"
+              detail="Prioritised blockers from programme, module, cohort and staffing data."
+              action={actionQueueExpanded ? 'Collapse all' : 'Expand all'}
+              onAction={() => setActionQueueExpanded(value => !value)}
+              actionExpanded={actionQueueExpanded}
+              actionControls="action-queue-items"
+            />
+            {actionQueueExpanded && (
+              <div id="action-queue-items" className="grid gap-3 p-3 lg:grid-cols-3">
+                {loading ? (
+                  <ListSkeleton count={3} />
+                ) : attentionIssues.length ? (
+                  attentionIssues.map(issue => <AttentionCard key={issue.key} issue={issue} />)
+                ) : (
+                  <EmptyState icon="ri-checkbox-circle-line" title="No curriculum issues require attention." detail="The current dashboard data does not show missing KSB mappings, draft modules, unassigned staff or incomplete structures." />
+                )}
+              </div>
+            )}
           </div>
           <aside className="rounded-lg border border-foreground-200 bg-background-50 p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => setReadinessSnapshotExpanded(value => !value)}
+              aria-expanded={readinessSnapshotExpanded}
+              aria-controls="readiness-snapshot-details"
+              className="flex w-full items-start justify-between gap-3 text-left focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"
+            >
               <div>
                 <h2 className="text-sm font-bold text-foreground-950">Readiness Snapshot</h2>
                 <p className="mt-1 text-xs leading-5 text-foreground-500">A quick view of what blocks clean delivery.</p>
               </div>
-              <span className="rounded-lg bg-primary-50 px-2.5 py-1 text-xs font-bold text-primary-700">{loading ? '-' : `${readyRate}%`}</span>
-            </div>
-            <div className="mt-4 space-y-4">
-              <ReadinessBar label="Programme readiness" value={readyRate} detail={`${readyProgrammeCount} ready`} />
-              <ReadinessBar label="Module KSB coverage" value={mappingRate} detail={`${modulesWithoutKsb.length} gaps`} tone="emerald" />
-              <ReadinessBar label="Published modules" value={percentage(modules.length - draftModules.length, modules.length)} detail={`${draftModules.length} in draft/review`} tone="amber" />
-            </div>
-            <div className="mt-5 rounded-lg border border-foreground-200 bg-background-100/70 p-3">
-              <p className="text-xs font-bold text-foreground-900">Next best actions</p>
-              <div className="mt-3 space-y-2">
-                {loading ? (
-                  <p className="text-xs text-foreground-500">Loading actions...</p>
-                ) : criticalIssues.length ? (
-                  criticalIssues.map(issue => (
-                    <button key={issue.key} onClick={() => window.REACT_APP_NAVIGATE(issue.href)} className="flex w-full items-center justify-between gap-3 rounded-md bg-background-50 px-3 py-2 text-left text-xs font-semibold text-foreground-700 hover:text-primary-700">
-                      <span className="truncate">{issue.action}</span>
-                      <span className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">{issue.count}</span>
-                    </button>
-                  ))
-                ) : (
-                  <p className="text-xs text-foreground-500">No priority actions right now.</p>
-                )}
+              <span className="flex shrink-0 items-center gap-2">
+                <span className="rounded-lg bg-primary-50 px-2.5 py-1 text-xs font-bold text-primary-700">{loading ? '-' : `${readyRate}%`}</span>
+                <AppIcon className={readinessSnapshotExpanded ? 'ri-arrow-up-s-line text-lg text-primary-700' : 'ri-arrow-down-s-line text-lg text-primary-700'} />
+              </span>
+            </button>
+            {readinessSnapshotExpanded && (
+              <div id="readiness-snapshot-details">
+                <div className="mt-4 space-y-4">
+                  <ReadinessBar label="Programme readiness" value={readyRate} detail={`${readyProgrammeCount} ready`} />
+                  <ReadinessBar label="Module KSB coverage" value={mappingRate} detail={`${modulesWithoutKsb.length} gaps`} tone="emerald" />
+                  <ReadinessBar label="Published modules" value={percentage(modules.length - draftModules.length, modules.length)} detail={`${draftModules.length} in draft/review`} tone="amber" />
+                </div>
+                <div className="mt-5 rounded-lg border border-foreground-200 bg-background-100/70 p-3">
+                  <p className="text-xs font-bold text-foreground-900">Next best actions</p>
+                  <div className="mt-3 space-y-2">
+                    {loading ? (
+                      <p className="text-xs text-foreground-500">Loading actions...</p>
+                    ) : criticalIssues.length ? (
+                      criticalIssues.map(issue => (
+                        <button key={issue.key} onClick={() => window.REACT_APP_NAVIGATE(issue.href)} className="flex w-full items-center justify-between gap-3 rounded-md bg-background-50 px-3 py-2 text-left text-xs font-semibold text-foreground-700 hover:text-primary-700">
+                          <span className="truncate">{issue.action}</span>
+                          <span className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">{issue.count}</span>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="text-xs text-foreground-500">No priority actions right now.</p>
+                    )}
+                  </div>
+                </div>
               </div>
-            </div>
+            )}
           </aside>
         </section>
 
@@ -488,32 +513,45 @@ function buildAttentionIssues(rows: ProgrammeRow[], modules: CurriculumModule[],
   ].filter(Boolean) as AttentionIssue[];
 }
 
-function HeroMetric({ label, value, detail, loading }: { label: string; value: string | number; detail: string; loading: boolean }) {
+function ProgressRing({ value, loading, tone = 'primary', surface = 'light' }: { value: number; loading: boolean; tone?: 'primary' | 'accent' | 'secondary'; surface?: 'light' | 'dark' }) {
+  const toneClass = tone === 'accent' ? 'text-accent-500' : tone === 'secondary' ? 'text-secondary-500' : 'text-primary-500';
+  const progress = loading ? 0 : clamp(value);
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.08] p-3">
-      <p className="text-[11px] font-bold uppercase text-white/45">{label}</p>
-      <p className="mt-2 text-2xl font-bold text-white">{loading ? '-' : value}</p>
-      <p className="mt-1 truncate text-[11px] font-semibold text-white/55">{loading ? 'Loading curriculum data' : detail}</p>
+    <div className="relative h-14 w-14 shrink-0">
+      <svg viewBox="0 0 42 42" className="h-full w-full -rotate-90" aria-hidden="true">
+        <circle cx="21" cy="21" r="16" pathLength="100" fill="none" stroke="currentColor" strokeWidth="4" className={surface === 'dark' ? 'text-white/20' : 'text-foreground-200'} />
+        <circle cx="21" cy="21" r="16" pathLength="100" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeDasharray="100" strokeDashoffset={100 - progress} className={toneClass} />
+      </svg>
+      <span className={`absolute inset-0 flex items-center justify-center text-[10px] font-extrabold ${surface === 'dark' ? 'text-white' : 'text-foreground-700'}`}>{loading ? '-' : `${Math.round(progress)}%`}</span>
+    </div>
+  );
+}
+
+function HeroMetric({ label, value, detail, loading, progress, tone }: { label: string; value: string | number; detail: string; loading: boolean; progress: number; tone: 'primary' | 'accent' | 'secondary' }) {
+  return (
+    <div className="curriculum-progress-card flex min-h-[96px] items-center gap-3 rounded-xl border border-white/15 bg-white/10 p-3 shadow-lg shadow-primary-950/20 transition-smooth hover:-translate-y-0.5 hover:border-white/30 hover:bg-white/15">
+      <ProgressRing value={progress} loading={loading} tone={tone} surface="dark" />
+      <div className="min-w-0">
+        <p className="text-[10px] font-extrabold uppercase tracking-wide text-white/60">{label}</p>
+        <p className="mt-1 text-xl font-extrabold tracking-tight text-white">{loading ? '-' : value}</p>
+        <p className="mt-0.5 truncate text-[10px] font-semibold text-white/65">{loading ? 'Loading curriculum data' : detail}</p>
+      </div>
     </div>
   );
 }
 
 function KpiCard({ icon, label, value, detail, loading, progress, tone = 'default' }: { icon: string; label: string; value: number; detail: string; loading: boolean; progress?: number; tone?: 'default' | 'warning' | 'info' }) {
   const toneClass = tone === 'warning' ? 'bg-amber-50 text-amber-700' : tone === 'info' ? 'bg-blue-50 text-blue-700' : 'bg-primary-50 text-primary-700';
-  const barClass = tone === 'warning' ? 'bg-amber-500' : tone === 'info' ? 'bg-blue-500' : 'bg-primary-600';
+  const ringTone = tone === 'warning' ? 'accent' : tone === 'info' ? 'secondary' : 'primary';
   return (
-    <div className="rounded-lg border border-foreground-200 bg-background-50 p-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200">
+    <div className="rounded-xl border border-foreground-200 bg-background-50 p-4 shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-200">
       <div className="flex items-start justify-between gap-3">
         <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${toneClass}`}><AppIcon className={icon} /></span>
-        <span className="text-2xl font-bold text-foreground-950">{loading ? '-' : value}</span>
+        <ProgressRing value={progress ?? 0} loading={loading} tone={ringTone} />
       </div>
-      <p className="mt-3 text-xs font-bold text-foreground-800">{label}</p>
+      <p className="mt-2 text-xs font-bold text-foreground-800">{label}</p>
+      <p className="mt-1 text-2xl font-bold text-foreground-950">{loading ? '-' : value}</p>
       <p className="mt-1 text-[11px] text-foreground-500">{loading ? 'Loading curriculum data' : detail}</p>
-      {typeof progress === 'number' && (
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
-          <div className={`h-full rounded-full ${barClass}`} style={{ width: `${clamp(progress)}%` }} />
-        </div>
-      )}
     </div>
   );
 }
@@ -531,7 +569,7 @@ function AttentionCard({ issue }: { issue: AttentionIssue }) {
         </span>
       </div>
       <p className="mt-2 text-xs leading-5 text-foreground-500">{issue.detail}</p>
-      <button onClick={() => window.REACT_APP_NAVIGATE(issue.href)} className="mt-3 inline-flex h-8 w-fit items-center gap-1.5 rounded-lg bg-foreground-950 px-3 text-xs font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
+      <button onClick={() => window.REACT_APP_NAVIGATE(issue.href)} className="mt-3 inline-flex h-8 w-fit items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-xs font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300">
         {issue.action}
         <AppIcon className="ri-arrow-right-line" />
       </button>
@@ -704,17 +742,30 @@ function CompactTable({ loading, headers, rows, empty }: { loading: boolean; hea
   );
 }
 
-function SectionHeader({ title, detail, action, href }: { title: string; detail: string; action?: string; href?: string }) {
+function SectionHeader({ title, detail, action, href, onAction, actionExpanded, actionControls }: {
+  title: string;
+  detail: string;
+  action?: string;
+  href?: string;
+  onAction?: () => void;
+  actionExpanded?: boolean;
+  actionControls?: string;
+}) {
   return (
     <div className="flex flex-col gap-2 border-b border-foreground-200 p-3 md:flex-row md:items-center md:justify-between">
       <div>
         <h2 className="text-sm font-bold text-foreground-950">{title}</h2>
         <p className="mt-1 text-xs text-foreground-500">{detail}</p>
       </div>
-      {action && href && (
-        <button onClick={() => window.REACT_APP_NAVIGATE(href)} className="inline-flex h-8 w-fit items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300">
+      {action && (href || onAction) && (
+        <button
+          onClick={onAction ?? (() => href && window.REACT_APP_NAVIGATE(href))}
+          aria-expanded={onAction ? actionExpanded : undefined}
+          aria-controls={onAction ? actionControls : undefined}
+          className="inline-flex h-8 w-fit items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-xs font-bold text-foreground-700 hover:border-primary-300 hover:bg-primary-50 hover:text-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-300"
+        >
           {action}
-          <AppIcon className="ri-arrow-right-line" />
+          <AppIcon className={onAction ? (actionExpanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line') : 'ri-arrow-right-line'} />
         </button>
       )}
     </div>
