@@ -847,6 +847,10 @@ export function fetchCurriculumProgrammes(signal?: AbortSignal): Promise<Curricu
   return fetchCollection<CurriculumProgramme>('/curriculum/programmes/', { signal });
 }
 
+export function fetchCurriculumGroups(signal?: AbortSignal): Promise<CurriculumGroup[]> {
+  return fetchCollection<CurriculumGroup>('/curriculum/groups/', { signal });
+}
+
 export function fetchCurriculumKsbFrameworks(signal?: AbortSignal): Promise<CurriculumKsbFramework[]> {
   return fetchCollection<CurriculumKsbFramework>('/curriculum/ksb-frameworks/', { signal });
 }
@@ -981,6 +985,13 @@ export type CurriculumStaffProfileInput = {
   assignedModuleIds?: string[];
   assignedGroupIds?: string[];
   notes?: string;
+};
+
+export type CurriculumStaffProfileCreateResponse = {
+  created: boolean;
+  duplicate?: boolean;
+  restored?: boolean;
+  profile: CurriculumStaffProfile;
 };
 
 export function fetchCurriculumHolidays(signal?: AbortSignal): Promise<CurriculumHoliday[]> {
@@ -1218,7 +1229,7 @@ export function deleteStaffingAssignment(id: string) {
 }
 
 export function createCurriculumCoach(input: CurriculumStaffProfileInput) {
-  return postJson<{ created: boolean; profile: CurriculumStaffProfile }>('/curriculum/coaches/', input);
+  return postJson<CurriculumStaffProfileCreateResponse>('/curriculum/coaches/', input);
 }
 
 export function updateCurriculumCoach(id: string | number, input: CurriculumStaffProfileInput) {
@@ -1230,7 +1241,7 @@ export function deleteCurriculumCoach(id: string | number) {
 }
 
 export function createCurriculumTutor(input: CurriculumStaffProfileInput) {
-  return postJson<{ created: boolean; profile: CurriculumStaffProfile }>('/curriculum/tutors/', input);
+  return postJson<CurriculumStaffProfileCreateResponse>('/curriculum/tutors/', input);
 }
 
 export function updateCurriculumTutor(id: string | number, input: CurriculumStaffProfileInput) {

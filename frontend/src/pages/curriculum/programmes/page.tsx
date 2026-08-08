@@ -77,7 +77,7 @@ const COLOR_PRESETS = ['#6d28d9', '#2563eb', '#0f766e', '#16a34a', '#ea580c', '#
 const WEEKDAY_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const PROGRAMMES_PER_PAGE = 6;
 
-type SelectOption = { value: string; label: string; meta?: string; color?: string };
+type SelectOption = { value: string; label: string; meta?: string; color?: string; aliases?: string[] };
 type StructureWizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'review';
 
 function showProgrammeSwalToast(title: string, text: string, icon: 'success' | 'error' | 'info' = 'success') {
@@ -1474,6 +1474,21 @@ function TextAreaField({ label, value, onChange, rows = 3 }: { label: string; va
   );
 }
 
+function selectOptionMatchesValue(option: SelectOption, value: string) {
+  const requested = normalise(value);
+  if (!requested || requested === 'unassigned') return false;
+  return [option.value, option.label, option.meta, ...(option.aliases || [])].some(candidate => normalise(candidate) === requested);
+}
+
+function findSelectOption(options: SelectOption[], value: string) {
+  const current = String(value || '').trim();
+  if (!current) return undefined;
+  const direct = options.find(option => option.value === current);
+  if (direct) return direct;
+  const matches = options.filter(option => selectOptionMatchesValue(option, current));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 function ChoiceSelect({
   label,
   value,
@@ -1496,12 +1511,13 @@ function ChoiceSelect({
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0, width: 280, maxHeight: 300 });
   const selectRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const hasCurrentValue = value && !options.some(option => option.value === value);
+  const matchedOption = findSelectOption(options, value);
+  const hasCurrentValue = Boolean(value && !matchedOption);
   const visibleOptions = useMemo(
-    () => hasCurrentValue ? [{ value, label: value, meta: 'Current value' }, ...options] : options,
+    () => hasCurrentValue ? [{ value, label: value, meta: 'Current value', aliases: [value] }, ...options] : options,
     [hasCurrentValue, options, value],
   );
-  const selectedOption = visibleOptions.find(option => option.value === value);
+  const selectedOption = findSelectOption(visibleOptions, value);
   const filteredOptions = useMemo(() => {
     const search = normalise(query);
     if (!search) return visibleOptions;
@@ -1509,6 +1525,7 @@ function ChoiceSelect({
       normalise(option.label).includes(search)
       || normalise(option.meta).includes(search)
       || normalise(option.value).includes(search)
+      || (option.aliases || []).some(alias => normalise(alias).includes(search))
     ));
   }, [query, visibleOptions]);
 
@@ -2055,19 +2072,29 @@ function staffName(profile: CurriculumStaffProfile) {
   return String(profile.name || profile.Tutor_name || profile.Coach_name || profile.email || '').trim();
 }
 
-function uniqueStaffNames(profiles: CurriculumStaffProfile[] = []) {
-  const names = new Map<string, string>();
-  profiles.forEach(profile => {
-    const name = staffName(profile);
-    const key = normalise(name);
-    if (!key || key === 'unassigned' || names.has(key)) return;
-    names.set(key, name);
-  });
-  return Array.from(names.values()).sort((left, right) => left.localeCompare(right));
+function staffEmail(profile: CurriculumStaffProfile) {
+  return String(profile.email || '').trim();
 }
 
-function staffOptions(names: string[]): SelectOption[] {
-  return names.map(name => ({ value: name, label: name }));
+function staffOptions(profiles: CurriculumStaffProfile[] = []): SelectOption[] {
+  const options = new Map<string, SelectOption>();
+  profiles.forEach(profile => {
+    const name = staffName(profile);
+    const email = staffEmail(profile);
+    const value = email || name;
+    const key = normalise(value);
+    if (!key || key === 'unassigned' || options.has(key)) return;
+    const label = email && name && normalise(name) !== normalise(email)
+      ? `${name} - ${email}`
+      : name || email;
+    options.set(key, {
+      value,
+      label,
+      meta: email && name && normalise(name) !== normalise(email) ? email : undefined,
+      aliases: [name, email, label].filter(Boolean),
+    });
+  });
+  return Array.from(options.values()).sort((left, right) => left.label.localeCompare(right.label));
 }
 
 function moduleOptions(items: CurriculumModule[] = []): SelectOption[] {
@@ -2122,8 +2149,8 @@ function ProgrammeStructureEditor({
   const groups = useMemo(() => (data?.groups ?? []).filter(group => cohortIds.has(group.cohortId) || matchesProgramme(liveProgramme, group.programme)), [cohortIds, data?.groups, liveProgramme]);
   const modules = useMemo(() => (data?.modules ?? []).filter(module => matchesProgramme(liveProgramme, module.programme)), [data?.modules, liveProgramme]);
   const sessions = data?.sessions ?? [];
-  const tutorOptions = useMemo(() => staffOptions(uniqueStaffNames(staffTutors)), [staffTutors]);
-  const coachOptions = useMemo(() => staffOptions(uniqueStaffNames(staffCoaches)), [staffCoaches]);
+  const tutorOptions = useMemo(() => staffOptions(staffTutors), [staffTutors]);
+  const coachOptions = useMemo(() => staffOptions(staffCoaches), [staffCoaches]);
   const catalogueModuleOptions = useMemo(() => moduleOptions(data?.modules ?? []), [data?.modules]);
 
   const refresh = async (message: string) => {
@@ -2423,7 +2450,11 @@ function GroupEditorRow({ group, tutors, coaches, onRefreshStaffProfiles, onSave
         <EditorCardHeader
           icon="ri-team-line"
           title={form.name || group.name}
-          meta={[form.coach ? `Coach: ${form.coach}` : 'No coach', form.tutor ? `Tutor: ${form.tutor}` : 'No tutor', selectedWeekDays(form.weekDays).join(', ') || 'No days'].join(' - ')}
+          meta={[
+            form.coach ? `Coach: ${findSelectOption(coaches, form.coach)?.label || form.coach}` : 'No coach',
+            form.tutor ? `Tutor: ${findSelectOption(tutors, form.tutor)?.label || form.tutor}` : 'No tutor',
+            selectedWeekDays(form.weekDays).join(', ') || 'No days',
+          ].join(' - ')}
           color="#1f2a44"
           actions={<RowActions saving={saving} onDelete={() => setConfirmArchive(true)} />}
         />
@@ -2478,8 +2509,8 @@ function ModuleEditorRow({
     notes: cleanEditorNotes(module.notes),
     startDate: firstSession?.date || '',
     endDate: lastSession?.date || '',
-    tutor: firstSession?.tutor || '',
-    coach: '',
+    tutor: firstSession?.tutor || module.tutor || '',
+    coach: module.coach || '',
     weekDays: firstSession?.day || '',
     startTime: firstSession?.startTime || '',
     endTime: firstSession?.endTime || '',
@@ -2528,7 +2559,12 @@ function ModuleEditorRow({
         <EditorCardHeader
           icon="ri-book-open-line"
           title={form.name || module.name}
-          meta={[`${form.weeks || 0} sessions`, form.startDate || 'No start', form.endDate || 'No end', form.tutor ? `Tutor: ${form.tutor}` : 'No tutor'].join(' - ')}
+          meta={[
+            `${form.weeks || 0} sessions`,
+            form.startDate || 'No start',
+            form.endDate || 'No end',
+            form.tutor ? `Tutor: ${findSelectOption(tutors, form.tutor)?.label || form.tutor}` : 'No tutor',
+          ].join(' - ')}
           color={form.color}
           actions={<RowActions saving={saving} onDelete={() => setConfirmArchive(true)} />}
         />

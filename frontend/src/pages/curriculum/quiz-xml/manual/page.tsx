@@ -1,11 +1,14 @@
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
+import { ImageMatchingPairFields } from '@/components/feature/ImageMatchingPairFields';
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from '@/hooks/useToast';
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
 import { getQuizGeneralSettings } from '@/lib/quizGeneralSettings';
+import { convertAnswerTextForQuestionType, isPairAnswerComplete, parseQuizPairAnswer, serializeQuizPairAnswer } from '@/lib/quizPairAnswers';
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -134,18 +137,6 @@ function isAlwaysCorrectType(type: QuestionType) {
   return ['ordering', 'matching', 'image_matching', 'keywords', 'fill_gap'].includes(type);
 }
 
-function splitAnswerPair(value: string) {
-  const parts = value.split(/\s*(?:->|=>|=)\s*/);
-  return {
-    left: (parts[0] || '').trim(),
-    right: (parts.length > 1 ? parts.slice(1).join(' -> ') : '').trim(),
-  };
-}
-
-function joinAnswerPair(left: string, right: string) {
-  return `${left.trim()} -> ${right.trim()}`;
-}
-
 function normalizeAnswers(answers: ManualQuestion['answers'], type: QuestionType): ManualQuestion['answers'] {
   const fallbackId = -Date.now();
   const nextAnswers = answers.length ? [...answers] : [{ id: fallbackId, text: '', isCorrect: true }];
@@ -188,7 +179,7 @@ function answerCopy(type: QuestionType) {
   if (type === 'multiple_choice') return { title: 'Answer choices', hint: 'Tick every correct answer.', add: 'Add option' };
   if (type === 'true_false') return { title: 'True/False answers', hint: 'Choose whether True or False is correct.', add: 'Add option' };
   if (type === 'matching') return { title: 'Matching pairs', hint: 'Write each pair as prompt and match.', add: 'Add pair' };
-  if (type === 'image_matching') return { title: 'Image matching pairs', hint: 'Write each image prompt and matching concept.', add: 'Add match' };
+  if (type === 'image_matching') return { title: 'Image matching pairs', hint: 'Upload each image and enter the concept it should match.', add: 'Add match' };
   if (type === 'keywords') return { title: 'Accepted keywords', hint: 'Each row is an accepted keyword or phrase.', add: 'Add keyword' };
   if (type === 'fill_gap') return { title: 'Accepted gap answers', hint: 'Each row is an accepted answer for the blank.', add: 'Add answer' };
   if (type === 'ordering') return { title: 'Correct order', hint: 'Add the steps in the correct sequence.', add: 'Add step' };
@@ -282,7 +273,17 @@ export default function ManualQuizPage() {
   };
 
   const updateQuestionType = (questionId: number, questionType: QuestionType) => {
-    setQuestions(prev => prev.map(question => question.id === questionId ? { ...question, questionType, answers: normalizeAnswers(question.answers, questionType) } : question));
+    setQuestions(prev => prev.map(question => question.id === questionId ? {
+      ...question,
+      questionType,
+      answers: normalizeAnswers(
+        question.answers.map(answer => ({
+          ...answer,
+          text: convertAnswerTextForQuestionType(answer.text, question.questionType, questionType),
+        })),
+        questionType,
+      ),
+    } : question));
   };
 
   const updateAnswer = (questionId: number, answerId: number, text: string) => {
@@ -292,13 +293,14 @@ export default function ManualQuizPage() {
     } : question));
   };
 
-  const updateAnswerPair = (questionId: number, answerId: number, side: 'left' | 'right', value: string) => {
+  const updateAnswerPair = (questionId: number, answerId: number, patch: { left?: string; right?: string; imageUrl?: string }) => {
     setQuestions(prev => prev.map(question => question.id === questionId ? {
       ...question,
       answers: question.answers.map(answer => {
         if (answer.id !== answerId) return answer;
-        const pair = splitAnswerPair(answer.text);
-        return { ...answer, text: joinAnswerPair(side === 'left' ? value : pair.left, side === 'right' ? value : pair.right), isCorrect: true };
+        const type = question.questionType === 'image_matching' ? 'image_matching' : 'matching';
+        const pair = parseQuizPairAnswer(answer.text, type);
+        return { ...answer, text: serializeQuizPairAnswer(type, { ...pair, ...patch }), isCorrect: true };
       }),
     } : question));
   };
@@ -353,7 +355,15 @@ export default function ManualQuizPage() {
     if (!form.title.trim()) return 'Quiz title is required.';
     for (const [index, question] of questions.entries()) {
       if (!question.text.trim()) return `Question ${index + 1} needs question text.`;
-      if (question.answers.some(answer => !answer.text.trim())) return `Question ${index + 1} has an empty answer.`;
+      if (question.questionType === 'matching' && question.answers.some(answer => !isPairAnswerComplete('matching', answer.text))) {
+        return `Question ${index + 1} has an incomplete matching pair.`;
+      }
+      if (question.questionType === 'image_matching' && question.answers.some(answer => !isPairAnswerComplete('image_matching', answer.text))) {
+        return `Question ${index + 1} needs an image or prompt plus a matching concept for every row.`;
+      }
+      if (!['matching', 'image_matching'].includes(question.questionType) && question.answers.some(answer => !answer.text.trim())) {
+        return `Question ${index + 1} has an empty answer.`;
+      }
       if (!isAlwaysCorrectType(question.questionType) && !question.answers.some(answer => answer.isCorrect)) return `Question ${index + 1} needs at least one correct answer.`;
       if (['single_choice', 'multiple_choice', 'true_false'].includes(question.questionType) && question.answers.length < 2) return `Question ${index + 1} needs at least two answers.`;
     }
@@ -533,18 +543,30 @@ export default function ManualQuizPage() {
                     <div className="space-y-3">
                       {activeQuestion.answers.map((answer, answerIndex) => {
                         const isPair = activeQuestion.questionType === 'matching' || activeQuestion.questionType === 'image_matching';
-                        const pair = splitAnswerPair(answer.text);
+                        const pair = isPair
+                          ? parseQuizPairAnswer(
+                            answer.text,
+                            activeQuestion.questionType === 'image_matching' ? 'image_matching' : 'matching',
+                          )
+                          : null;
                         const rowLabel = activeQuestion.questionType === 'ordering' ? answerIndex + 1 : String.fromCharCode(65 + answerIndex);
                         return (
                           <div key={answer.id} className="rounded-xl border border-[#e2e8f0] bg-[#fbfcfe] p-3">
                             <div className="flex flex-col lg:flex-row lg:items-center gap-3">
                               <span className="w-8 h-8 rounded-lg bg-white border border-[#d8dde6] text-[#647083] flex items-center justify-center text-xs font-bold shrink-0">{rowLabel}</span>
                               {isPair ? (
-                                <div className="grid flex-1 min-w-0 grid-cols-1 sm:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)] gap-2">
-                                  <input value={pair.left} onChange={event => updateAnswerPair(activeQuestion.id, answer.id, 'left', event.target.value)} placeholder={activeQuestion.questionType === 'image_matching' ? 'Image prompt' : 'Prompt'} className="h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6]" />
-                                  <span className="hidden sm:flex items-center justify-center text-[#5b2dbb]"><AppIcon className="ri-arrow-right-line"></AppIcon></span>
-                                  <input value={pair.right} onChange={event => updateAnswerPair(activeQuestion.id, answer.id, 'right', event.target.value)} placeholder="Match" className="h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6]" />
-                                </div>
+                                activeQuestion.questionType === 'image_matching' ? (
+                                  <ImageMatchingPairFields
+                                    value={answer.text}
+                                    onChange={nextValue => updateAnswerPair(activeQuestion.id, answer.id, parseQuizPairAnswer(nextValue, 'image_matching'))}
+                                  />
+                                ) : (
+                                  <div className="grid flex-1 min-w-0 grid-cols-1 sm:grid-cols-[minmax(0,1fr)_32px_minmax(0,1fr)] gap-2">
+                                    <input value={pair?.left ?? ''} onChange={event => updateAnswerPair(activeQuestion.id, answer.id, { left: event.target.value })} placeholder="Prompt" className="h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6]" />
+                                    <span className="hidden sm:flex items-center justify-center text-[#5b2dbb]"><AppIcon className="ri-arrow-right-line"></AppIcon></span>
+                                    <input value={pair?.right ?? ''} onChange={event => updateAnswerPair(activeQuestion.id, answer.id, { right: event.target.value })} placeholder="Match" className="h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6]" />
+                                  </div>
+                                )
                               ) : (
                                 <input value={answer.text} readOnly={activeQuestion.questionType === 'true_false'} onChange={event => updateAnswer(activeQuestion.id, answer.id, event.target.value)} placeholder={activeQuestion.questionType === 'ordering' ? `Step ${answerIndex + 1}` : `Option ${rowLabel}`} className="flex-1 min-w-0 h-10 rounded-lg border border-[#d8dde6] bg-white px-3 text-sm outline-none focus:border-[#8b5cf6] read-only:bg-[#f8fafc]" />
                               )}

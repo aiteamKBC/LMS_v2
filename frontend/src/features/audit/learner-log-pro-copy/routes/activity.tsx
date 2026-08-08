@@ -5,6 +5,7 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { MreTable } from "@/features/audit/learner-log-pro-copy/components/MreTable";
 import {
   getActivityAnnotation,
+  getAttendanceSession,
   getLearnerActivities,
   saveActivityAnnotation,
 } from "@/features/audit/learner-log-pro-copy/lib/api";
@@ -16,6 +17,20 @@ export const Route = createFileRoute("/activity")({
   }),
   component: ActivityLogPage,
 });
+
+// Colour the KSB code badge by its type: Knowledge / Skill / Behaviour.
+function ksbBadgeClass(type: string) {
+  switch ((type || "").toUpperCase()) {
+    case "K":
+      return "bg-primary/15 text-primary";
+    case "S":
+      return "bg-success/15 text-success";
+    case "B":
+      return "bg-amber-500/15 text-amber-600";
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
 
 function formatDateTime(value: string | null) {
   if (!value) return null;
@@ -37,6 +52,18 @@ function ActivityLogPage() {
   });
   const activity = overview.data?.items[0];
   const component = activity?.plan_id;
+
+  // Attendance rows represent a live session; the preview panel shows that
+  // session's recordings and the records table shows everyone who attended it.
+  const isAttendance = Boolean(
+    activity && (activity.activity_category === "attendance" || activity.delivery_method === "attendance"),
+  );
+  const session = useQuery({
+    queryKey: ["attendance-session", component],
+    queryFn: () => getAttendanceSession(component as string),
+    enabled: Boolean(isAttendance && component),
+  });
+  const recordings = session.data?.recordings ?? [];
 
   // Auditor-entered KSBs + planned hours for this activity (saved per component).
   const queryClient = useQueryClient();
@@ -123,6 +150,59 @@ function ActivityLogPage() {
                 <h1 className="mt-3 font-serif text-2xl text-foreground">{activity.activity_unit}</h1>
               </header>
               <div className="space-y-6 px-7 py-6">
+                {isAttendance && (
+                  <section>
+                    <div className="flex items-center justify-between">
+                      <h2 className="label-caps">Session recordings</h2>
+                      <span className="text-xs text-muted-foreground">
+                        {session.isLoading
+                          ? "Matching recordings…"
+                          : `${recordings.length} part${recordings.length === 1 ? "" : "s"} · matched by session date`}
+                      </span>
+                    </div>
+                    {recordings.length > 0 ? (
+                      <div className="mt-3 space-y-5">
+                        {recordings.map((recording) => (
+                          <div key={recording.component_id}>
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-medium text-foreground">{recording.title}</p>
+                              {recording.preview_url && (
+                                <a
+                                  href={recording.preview_url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="shrink-0 text-xs font-medium text-primary hover:underline"
+                                >
+                                  Open in new tab ↗
+                                </a>
+                              )}
+                            </div>
+                            {recording.week && <p className="text-xs text-muted-foreground">{recording.week}</p>}
+                            {recording.preview_url && (
+                              <div className="mt-2 aspect-video w-full overflow-hidden rounded-md border border-border bg-black/5">
+                                <iframe
+                                  src={recording.preview_url}
+                                  title={recording.title}
+                                  className="h-full w-full"
+                                  loading="lazy"
+                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                  allowFullScreen
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      !session.isLoading && (
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          No recording is linked to this session date in the programme structure. Recordings are matched to a
+                          session when an LMS lesson's title is dated to the session day and names the same course.
+                        </p>
+                      )
+                    )}
+                  </section>
+                )}
                 {activity.source_url && (
                   <section>
                     <div className="flex items-center justify-between">
@@ -172,24 +252,44 @@ function ActivityLogPage() {
                   <dt className="label-caps">Category</dt>
                   <dd className="mt-1 text-sm capitalize text-foreground">{activity.activity_category}</dd>
                 </div>
+                {activity.week && (
+                  <div>
+                    <dt className="label-caps">Lecture / week</dt>
+                    <dd className="mt-1 text-sm text-foreground">{activity.week}</dd>
+                  </div>
+                )}
                 <div>
                   <dt className="label-caps">Content creation time</dt>
                   <dd className="snapshot-value mt-1 font-mono">{formatDateTime(activity.created_at) ?? "Not recorded"}</dd>
                 </div>
               </dl>
 
-              <div className="space-y-4 border-t border-border px-6 py-6">
-                <label className="block">
-                  <span className="label-caps">Mapped KSBs</span>
-                  <textarea
-                    value={ksbsInput}
-                    onChange={(event) => setKsbsInput(event.target.value)}
-                    rows={4}
-                    placeholder="Add KSBs, e.g. K3 (Primary, 60%) – Marketing theories…"
-                    className="mt-1.5 w-full rounded-md border border-border bg-card px-2.5 py-2 text-sm text-foreground outline-none focus:border-primary"
-                  />
-                </label>
+              {/* Real KSB mapping pulled live from programme_structure. */}
+              <section className="border-t border-border px-6 py-6">
+                <h3 className="label-caps">Mapped KSBs</h3>
+                {activity.ksbs && activity.ksbs.length > 0 ? (
+                  <ul className="mt-3 space-y-3">
+                    {activity.ksbs.map((ksb, index) => (
+                      <li key={`${ksb.code}-${index}`} className="rounded-md border border-border bg-background/40 px-3 py-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`rounded-sm px-1.5 py-0.5 text-xs font-semibold ${ksbBadgeClass(ksb.type)}`}>{ksb.code}</span>
+                          <span className="text-xs font-medium text-muted-foreground">{ksb.type_label}</span>
+                        </div>
+                        {ksb.description && (
+                          <p className="mt-1.5 text-sm leading-6 text-foreground">{ksb.description}</p>
+                        )}
+                        {ksb.reason && (
+                          <p className="mt-1 text-xs italic leading-5 text-muted-foreground">Why: {ksb.reason}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">No KSBs mapped in programme structure.</p>
+                )}
+              </section>
 
+              <div className="space-y-4 border-t border-border px-6 py-6">
                 <label className="block">
                   <span className="label-caps">Planned hours</span>
                   <span className="mt-1.5 flex items-center gap-2">
@@ -209,6 +309,17 @@ function ActivityLogPage() {
                   <span className="mt-2 block text-xs leading-5 text-muted-foreground">
                     Counts toward the minimum 20% off-the-job requirement. Logged time is compared against this planned duration at audit.
                   </span>
+                </label>
+
+                <label className="block">
+                  <span className="label-caps">Auditor KSB notes (optional)</span>
+                  <textarea
+                    value={ksbsInput}
+                    onChange={(event) => setKsbsInput(event.target.value)}
+                    rows={3}
+                    placeholder="Add notes or extra KSB mappings beyond those above…"
+                    className="mt-1.5 w-full rounded-md border border-border bg-card px-2.5 py-2 text-sm text-foreground outline-none focus:border-primary"
+                  />
                 </label>
 
                 <label className="block">
@@ -247,7 +358,11 @@ function ActivityLogPage() {
           </div>
         )}
 
-        <MreTable component={activity?.plan_id} learner={learner || undefined} />
+        {isAttendance ? (
+          <MreTable attendanceKey={activity?.plan_id} />
+        ) : (
+          <MreTable component={activity?.plan_id} learner={learner || undefined} />
+        )}
         <p className="pb-4 text-xs text-muted-foreground">
           All values on this page are loaded from the Neon <span className="font-mono">Audit.learner_match</span> table.
         </p>

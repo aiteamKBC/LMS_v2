@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as SearchRouteImport } from './routes/search'
+import { Route as LearnerLearnerIdRouteImport } from './routes/learner.$learnerId'
 import { Route as JournalIndexRouteImport } from './routes/journal.index'
 
 const IndexRoute = IndexRouteImport.update({
@@ -35,6 +36,11 @@ const SearchRoute = SearchRouteImport.update({
   path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LearnerLearnerIdRoute = LearnerLearnerIdRouteImport.update({
+  id: '/learner/$learnerId',
+  path: '/learner/$learnerId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const JournalIndexRoute = JournalIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -46,12 +52,14 @@ export interface FileRoutesByFullPath {
   '/activity': typeof ActivityRoute
   '/journal': typeof JournalRouteWithChildren
   '/search': typeof SearchRoute
+  '/learner/$learnerId': typeof LearnerLearnerIdRoute
   '/journal/': typeof JournalIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
   '/search': typeof SearchRoute
+  '/learner/$learnerId': typeof LearnerLearnerIdRoute
   '/journal': typeof JournalIndexRoute
 }
 export interface FileRoutesById {
@@ -60,14 +68,15 @@ export interface FileRoutesById {
   '/activity': typeof ActivityRoute
   '/journal': typeof JournalRouteWithChildren
   '/search': typeof SearchRoute
+  '/learner/$learnerId': typeof LearnerLearnerIdRoute
   '/journal/': typeof JournalIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/activity' | '/journal' | '/search' | '/journal/'
+  fullPaths: '/' | '/activity' | '/journal' | '/search' | '/learner/$learnerId' | '/journal/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/activity' | '/search' | '/journal'
-  id: '__root__' | '/' | '/activity' | '/journal' | '/search' | '/journal/'
+  to: '/' | '/activity' | '/search' | '/learner/$learnerId' | '/journal'
+  id: '__root__' | '/' | '/activity' | '/journal' | '/search' | '/learner/$learnerId' | '/journal/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -75,6 +84,7 @@ export interface RootRouteChildren {
   ActivityRoute: typeof ActivityRoute
   JournalRoute: typeof JournalRouteWithChildren
   SearchRoute: typeof SearchRoute
+  LearnerLearnerIdRoute: typeof LearnerLearnerIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -107,6 +117,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/learner/$learnerId': {
+      id: '/learner/$learnerId'
+      path: '/learner/$learnerId'
+      fullPath: '/learner/$learnerId'
+      preLoaderRoute: typeof LearnerLearnerIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/journal/': {
       id: '/journal/'
       path: '/'
@@ -133,6 +150,7 @@ const rootRouteChildren: RootRouteChildren = {
   ActivityRoute: ActivityRoute,
   JournalRoute: JournalRouteWithChildren,
   SearchRoute: SearchRoute,
+  LearnerLearnerIdRoute: LearnerLearnerIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
