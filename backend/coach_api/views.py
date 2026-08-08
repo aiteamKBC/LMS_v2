@@ -2370,7 +2370,10 @@ def build_monthly_activity_learner(
 
 def fetch_evidence_file_queue(owner_email: str) -> tuple[list[dict], list[dict]]:
     active_rows = fetch_caseload_learner_profiles(owner_email)
-    caseload_learners = [serialize_caseload_learner(row) for row in active_rows]
+    caseload_learners = [
+        serialize_caseload_learner(row, refresh_live_snapshots=False)
+        for row in active_rows
+    ]
     caseload_by_id = {
         str(learner["id"]): learner
         for learner in caseload_learners
@@ -5400,6 +5403,7 @@ def coach_dashboard(request):
 def coach_monthly_activity(request):
     owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
     start_date, end_date, month_label, month_key = parse_month_bounds(request.GET.get("month"))
+    refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
 
     try:
         rows = fetch_caseload_learner_profiles(owner_email)
@@ -5408,7 +5412,7 @@ def coach_monthly_activity(request):
         active_pairs = [
             (row, learner)
             for row in rows
-            for learner in [serialize_caseload_learner(row)]
+            for learner in [serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)]
             if learner.get("enrollmentStatus") == "active"
         ]
         learners = [
@@ -5763,7 +5767,11 @@ def serialize_absence_report(
     attendance_rate_override=None,
     previous_absences_override=None,
 ) -> dict:
-    learner_snapshot = serialize_caseload_learner(learner) if learner else {}
+    learner_snapshot = (
+        serialize_caseload_learner(learner, refresh_live_snapshots=False)
+        if learner
+        else {}
+    )
     reported_by = clean_text(report.reported_by)
     if reported_by not in {"Learner", "Employer", "Coach"}:
         reported_by = "Learner"

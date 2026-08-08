@@ -3089,6 +3089,16 @@ table tbody td:last-child {
   font-weight: 700;
 }
 
+.dashboard-theme .workspace-main button[data-timetable-view-active="true"] {
+  background: oklch(var(--primary-600)) !important;
+  color: oklch(var(--background-50)) !important;
+}
+
+.dashboard-theme .workspace-main button[data-timetable-view-active="true"] svg {
+  color: oklch(var(--background-50)) !important;
+  stroke: currentColor !important;
+}
+
 .dashboard-theme .workspace-main [role="tab"][aria-selected="true"],
 .dashboard-theme .workspace-main [role="tablist"] button[aria-selected="true"] {
   background: oklch(var(--background-50));
