@@ -21,8 +21,50 @@ export const ONBOARDING_NAV_ITEMS: SidebarNavItem[] = [
   { id: 'learner-onboarding-reviews', label: 'Reviews', icon: 'ri-calendar-check-line', href: ONBOARDING_REVIEWS_ROUTE },
 ];
 
+/** Onboarding is signed off but delivery hasn't started — see the backend's
+ *  promote_to_delivery_if_ready. */
+export const DELIVERY_STATUS = 'Delivery';
+
+/**
+ * A learner at Delivery has finished enrolment but isn't being taught yet: no
+ * training plan is running, so no evidence, attendance or progress exists to
+ * show. They keep their overview, their submitted enrolment, and the compliance
+ * paperwork — the Apprenticeship Agreement is waiting for their signature.
+ */
+export const DELIVERY_NAV_IDS = [
+  'learner-overview',
+  'learner-onboarding',
+  'learner-compliance-documents',
+];
+
 export function isOnboardingStatus(programmeStatus?: string | null): boolean {
   return (programmeStatus || '').trim().toLowerCase() === ONBOARDING_STATUS.toLowerCase();
+}
+
+export function isDeliveryStatus(programmeStatus?: string | null): boolean {
+  return (programmeStatus || '').trim().toLowerCase() === DELIVERY_STATUS.toLowerCase();
+}
+
+/**
+ * The sidebar for a learner at the given programme status.
+ *
+ * Onboarding and Delivery are both pre-teaching states where most of the
+ * workspace would render as empty shells, so each gets a reduced menu. Every
+ * other status gets the full nav unchanged.
+ */
+export function navItemsForStatus(
+  programmeStatus: string | null | undefined,
+  fullNav: SidebarNavItem[],
+): SidebarNavItem[] {
+  if (isOnboardingStatus(programmeStatus)) return ONBOARDING_NAV_ITEMS;
+  if (isDeliveryStatus(programmeStatus)) {
+    // Filtered from the real nav, not re-declared, so labels/icons/hrefs stay
+    // in one place and cannot drift.
+    return DELIVERY_NAV_IDS.map((id) => fullNav.find((item) => item.id === id)).filter(
+      (item): item is SidebarNavItem => Boolean(item),
+    );
+  }
+  return fullNav;
 }
 
 /**

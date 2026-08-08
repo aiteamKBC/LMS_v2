@@ -34,6 +34,8 @@ const AuditorWorkspace = lazy(() => import("../pages/workspace/auditor/page"));
 const AuditorCopyWorkspace = lazy(() => import("../pages/workspace/auditor-copy/page"));
 const BadgeDetailPage = lazy(() => import("../pages/learner/rewards/badge-detail/page"));
 const BoardPage = lazy(() => import("../pages/users/BoardPage"));
+const EmployerPortalPage = lazy(() => import("../pages/employer/EmployerPortalPage"));
+const EmployerLearnerPage = lazy(() => import("../pages/employer/EmployerLearnerPage"));
 const BudgetsPage = lazy(() => import("../pages/finance/budgets/page"));
 const BulkUserImportPage = lazy(() => import("@/pages/admin/bulk-user-import/page"));
 const CallLogsPage = lazy(() => import("../pages/engagement/call-logs/page"));
@@ -138,6 +140,7 @@ const LearnerCaseFile = lazy(() => import("../pages/coach/learner-case-file/page
 const LearnerEngagementPage = lazy(() => import("../pages/engagement/learner-engagement/page"));
 const LearnerKnowledgeBase = lazy(() => import("../pages/learner/knowledge-base/page"));
 const LearnerOnboardingPage = lazy(() => import("../pages/learner/onboarding/page"));
+const LearnerCompliancePage = lazy(() => import("../pages/learner/compliance/page"));
 const LearnerOnboardingReviewsPage = lazy(() => import("../pages/learner/onboarding/reviews/page"));
 const LearnerReviewFormPage = lazy(() => import("../pages/learner/onboarding/reviews/form"));
 const LearnerOverview = lazy(() => import("../pages/workspace/learner/page"));
@@ -277,6 +280,12 @@ const routes: RouteObject[] = [
     element: <LearnerOnboardingPage />,
   },
   {
+    // The learner's statutory paperwork — generated from their own record and
+    // signed by them and their employer.
+    path: "/learner/compliance-documents",
+    element: <LearnerCompliancePage />,
+  },
+  {
     // Declared before the :stepSlug pattern below, which would otherwise
     // capture "reviews" as a wizard step.
     path: "/learner/onboarding/reviews",
@@ -383,6 +392,16 @@ const routes: RouteObject[] = [
   {
     path: "/users/:userId",
     element: <BoardPage />,
+  },
+  // The employer-facing side pages, opened from the Users directory's View action
+  // on an employer row.
+  {
+    path: "/employers/:employerId",
+    element: <EmployerPortalPage />,
+  },
+  {
+    path: "/employers/:employerId/learner/:kind/:learnerId",
+    element: <EmployerLearnerPage />,
   },
   {
     path: "/users/:userId/wizard",

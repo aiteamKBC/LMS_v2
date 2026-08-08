@@ -21,10 +21,12 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import cohort_dates, replace_training_plan, sync_active_user
 from .identity import learner_profile_for_source
+from .learner_progression import ACTIVE_STATUS, advance_learner
 from .constants import (
     STATUS_CHOICES,
     TYPE_CHOICES,
     PROGRAMME_STATUS_CHOICES,
+    DEFAULT_PROGRAMME_STATUS,
     POSITION_CHOICES,
     LEARNER_TYPE_CHOICES,
 )
@@ -38,7 +40,7 @@ from .mappers import (
     write_fields,
     write_staff_fields,
 )
-from .models import CommercialUser, EnrolmentUser, LearnerProfile, StaffUser
+from .models import CommercialUser, Employer, EnrolmentUser, LearnerProfile, StaffUser
 
 
 def _parse_body(request):
@@ -52,6 +54,20 @@ def _parse_body(request):
 
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
+
+
+def _check_employer_id(fields):
+    """Reject an "Employer_id" that names no employer record.
+
+    The column is a plain integer rather than a real FK (these tables are
+    unmanaged), so this is where referential integrity is actually enforced.
+    Clearing it to None is always allowed.
+    """
+    employer_id = fields.get("employer_id")
+    if employer_id is None:
+        return
+    if not Employer.objects.filter(pk=employer_id).exists():
+        raise ValidationError(f"Unknown employerId: {employer_id}")
 
 
 def _profile_is_apprenticeship(profile):
@@ -126,7 +142,7 @@ def _profile_enrolment_board(profile):
             "type": "Delivery",
             "name": profile.programme or "",
             "cohort": profile.cohort or "",
-            "status": profile.programme_status or "Non starter",
+            "status": profile.programme_status or DEFAULT_PROGRAMME_STATUS,
             "startDate": profile.start_date.isoformat() if profile.start_date else "",
             "endDate": profile.end_date.isoformat() if profile.end_date else "",
             "enrolledAt": "",
@@ -297,7 +313,12 @@ def enrolment_users(request):
                 qs = qs.exclude(learner_type="commercial")
             elif wanted == "commercial":
                 qs = qs.filter(learner_type="commercial")
-            rows = [to_list_row(u) for u in qs.order_by("id")]
+            learners = list(qs.order_by("id"))
+            # A date can arrive without any signing action, so make normal
+            # enrolment reads a safe, idempotent backstop for the daily sweep.
+            for learner in learners:
+                advance_learner(learner)
+            rows = [to_list_row(u) for u in learners]
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse({"count": len(rows), "results": rows})
@@ -306,6 +327,7 @@ def enrolment_users(request):
         try:
             payload = _parse_body(request)
             fields = write_fields(payload, require_create=True)
+            _check_employer_id(fields)
         except ValidationError as exc:
             return _error(str(exc), 400)
 
@@ -358,11 +380,22 @@ def enrolment_user_detail(request, pk):
     if user is None:
         return _error("User not found.", 404)
     if request.method == "GET":
+        # Safety net: a learner whose onboarding reviews are all signed belongs in
+        # Delivery. The sign endpoint normally moves them the moment the last
+        # signature lands, but reviews signed before that hook existed were never
+        # re-evaluated — so opening the learner re-checks and heals them.
+        from .learning_plan import promote_learner_if_ready
+
+        learner_kind = str(getattr(user, "learner_type", "") or "").strip() or "apprenticeship"
+        if promote_learner_if_ready(learner_kind, user.pk):
+            user.refresh_from_db()
+        advance_learner(user)
         return JsonResponse(to_board(user))
     if request.method in ("PATCH", "PUT"):
         try:
             payload = _parse_body(request)
             fields = write_fields(payload)
+            _check_employer_id(fields)
         except ValidationError as exc:
             return _error(str(exc), 400)
         try:
@@ -370,6 +403,7 @@ def enrolment_user_detail(request, pk):
                 setattr(user, attr, value)
             if fields:
                 user.save(update_fields=list(fields.keys()))
+                advance_learner(user)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(to_board(user))
@@ -378,7 +412,7 @@ def enrolment_user_detail(request, pk):
 
 @csrf_exempt
 def enrolment_user_finish(request, pk):
-    """Promote an enrolled learner into the live learner tables.
+    """Check whether an enrolled learner is ready for automatic activation.
 
         POST /learner_api/enrolment-users/<id>/finish/  -> EnrolmentBoard
 
@@ -407,10 +441,15 @@ def enrolment_user_finish(request, pk):
         return _error("This learner needs an email address before enrolment can be finished.", 400)
 
     try:
-        # Active is what makes sync_active_user build the plan/KSB child rows,
-        # so the status is set on the source row first and then mirrored.
-        user.programme_status = "Active"
-        user.save(update_fields=["programme_status"])
+        # Programme activation is evidence/date driven. This legacy endpoint is
+        # kept for the UI, but cannot bypass unsigned documents or a future
+        # start date.
+        advance_learner(user)
+        if str(user.programme_status or "").strip() != ACTIVE_STATUS:
+            return _error(
+                "This learner becomes Active automatically once every compliance document is signed and the programme start date has arrived.",
+                409,
+            )
         learner = sync_active_user(user)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)

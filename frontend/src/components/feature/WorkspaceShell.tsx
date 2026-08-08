@@ -4,6 +4,7 @@ import { Sidebar, type SidebarNavItem } from './Sidebar';
 import { Header } from './Header';
 import { GlobalSearch } from './GlobalSearch';
 import { useAuth } from '@/hooks/useAuth';
+import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -114,7 +115,7 @@ export function WorkspaceShell({
   children,
   role,
   roleLabel,
-  navItems,
+  navItems: navItemsProp,
   pageTitle,
   pageSubtitle,
   userName,
@@ -122,6 +123,10 @@ export function WorkspaceShell({
   workspaceLabel,
   showBackButton = false,
 }: WorkspaceShellProps) {
+  // A learner who is still onboarding, or who has finished enrolment but is not
+  // yet being taught, gets a reduced sidebar — most of the workspace needs a
+  // running training plan. Applied here so every learner page inherits it.
+  const navItems = useLearnerNavGate(role, navItemsProp);
   const location = useLocation();
   const navigate = useNavigate();
   const { auth } = useAuth();

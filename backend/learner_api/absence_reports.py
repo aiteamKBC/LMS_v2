@@ -42,6 +42,9 @@ UPLOAD_EXTENSIONS = {
 DEFAULT_COACH_NAME = "Med Maher"
 DEFAULT_COACH_EMAIL = "med.maher@kbc.ac.uk"
 ATTENDANCE_TABLE = '"Learner"."learner_attendance_details"'
+# Read through the `default` alias, not `enrolment`: this table is in the
+# "Learner" schema, not the enrolment one, so it is outside what EnrolmentRouter
+# governs. Deliberate — see the note in apprenticeship_agreement._group_dates.
 
 
 def _error(message, status=400):

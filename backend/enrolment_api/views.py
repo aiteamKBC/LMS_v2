@@ -16,6 +16,7 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
+from learner_api.constants import DEFAULT_PROGRAMME_STATUS
 from learner_api.models import CommercialUser
 
 
@@ -93,7 +94,7 @@ def commercial_to_board(u):
             "type": "Commercial",
             "name": _s(u.programme),
             "cohort": _s(u.cohort),
-            "status": _s(u.programme_status) or "Non starter",
+            "status": _s(u.programme_status) or DEFAULT_PROGRAMME_STATUS,
             "startDate": _iso(u.start_date),
             "endDate": _iso(u.end_date),
             "enrolledAt": "",
