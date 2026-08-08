@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { Bell, ClipboardList, CirclePlus, Mail, MailOpen } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
 
@@ -205,7 +206,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             }`}
             title="Messages"
           >
-            <AppIcon className={`${newMsgFlashed ? 'ri-mail-unread-line' : 'ri-mail-line'} text-lg`}></AppIcon>
+            {newMsgFlashed ? <MailOpen size={18} strokeWidth={1.8} /> : <Mail size={18} strokeWidth={1.8} />}
             {unreadMessages > 0 && (
               <span className="absolute top-1 right-1 min-w-[14px] h-3.5 rounded-full bg-primary-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">{unreadMessages}</span>
             )}
@@ -238,7 +239,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             className="relative w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
             title="Tasks"
           >
-            <AppIcon className="ri-task-line text-lg"></AppIcon>
+            <ClipboardList size={18} strokeWidth={1.8} />
             {highPriorityTasks > 0 && (
               <span className="absolute top-1 right-1 min-w-[14px] h-3.5 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">{highPriorityTasks}</span>
             )}
@@ -270,7 +271,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             className="relative w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
             title="Notifications"
           >
-            <AppIcon className="ri-notification-3-line text-lg"></AppIcon>
+            <Bell size={18} strokeWidth={1.8} />
             {unreadNotifs > 0 && (
               <span className="absolute top-1 right-1 min-w-[14px] h-3.5 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">{unreadNotifs}</span>
             )}
@@ -308,7 +309,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer"
             title="Quick Create"
           >
-            <AppIcon className="ri-add-circle-line text-lg"></AppIcon>
+            <CirclePlus size={18} strokeWidth={1.8} />
           </button>
           {quickCreateOpen && (
             <div className="absolute right-0 top-full mt-1.5 w-56 bg-background-50 rounded-xl border border-background-200 shadow-lg shadow-foreground-950/5 z-50 py-1 overflow-hidden">
