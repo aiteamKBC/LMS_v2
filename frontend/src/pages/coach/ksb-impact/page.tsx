@@ -308,6 +308,39 @@ function KsbValue({
   );
 }
 
+function KsbRatioValue({
+  completed,
+  target,
+  label,
+  onClick,
+}: {
+  completed: number | null | undefined;
+  target: number | null | undefined;
+  label: string;
+  onClick?: () => void;
+}) {
+  const content = (
+    <p className={`text-[11px] font-semibold ${isNumber(target) && target > 0 ? 'text-slate-600' : 'text-slate-400'}`}>
+      {formatKsbRatio(completed, target)}
+    </p>
+  );
+
+  if (!onClick) {
+    return <div className="text-center">{content}</div>;
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Open ${label} KSB details`}
+      className="mx-auto block min-w-16 rounded-xl px-3 py-2 text-center transition hover:bg-violet-50 hover:ring-1 hover:ring-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-300"
+    >
+      {content}
+    </button>
+  );
+}
+
 function KsbTableMessage({ icon, message }: { icon: string; message: string }) {
   return (
     <div className="px-5 py-14 text-center">
@@ -607,7 +640,12 @@ export default function CoachKsbImpact() {
                         label="Behaviours"
                         onClick={() => openKsbDetails(row.id, 'behaviours')}
                       />
-                      <span className="text-center text-[11px] font-semibold text-slate-600">{formatKsbRatio(row.completed, row.target)}</span>
+                      <KsbRatioValue
+                        completed={row.completed}
+                        target={row.target}
+                        label="Validated"
+                        onClick={() => openKsbDetails(row.id, 'all')}
+                      />
                       <div className="min-w-0">
                         <div className="mb-1.5 flex items-center justify-between gap-2">
                           <span className={`text-[12px] font-bold ${getMetricTone(row.overall)}`}>{row.overall}%</span>

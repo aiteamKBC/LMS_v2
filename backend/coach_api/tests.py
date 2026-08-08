@@ -1,3 +1,4 @@
+import json
 from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -10,8 +11,12 @@ from coach_api.views import (
     build_otjh_completed_entries,
     build_monthly_activity_learner,
     coach_caseload,
+    coach_monthly_activity,
+    coach_timetable_book_event,
+    coach_timetable_schedule_event,
     collect_generated_timetable,
     completed_ksb_codes,
+    fetch_evidence_file_queue,
     fetch_source_schedule_rows,
     iterate_generated_schedule_dates,
     reported_minutes,
@@ -172,6 +177,110 @@ class CoachTimetableWindowTests(SimpleTestCase):
         fetch_calendar_event_records.assert_called_once_with("coach@example.com", [])
 
 
+class CoachTimetableBookingConflictTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    @patch("coach_api.views.sync_calendar_event_to_graph")
+    @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=True)
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_book_event_does_not_create_catch_up_or_support_when_learner_busy(
+        self,
+        fetch_caseload_learner_profiles,
+        coach_learner_personal_calendar_conflicts,
+        sync_calendar_event_to_graph,
+    ):
+        learner = SimpleNamespace(
+            id=7,
+            username="Test User",
+            email="learner@example.com",
+            coach_name="Coach Example",
+        )
+        fetch_caseload_learner_profiles.return_value = [learner]
+
+        for session_type in ("catch-up", "student-support"):
+            with self.subTest(session_type=session_type):
+                request = self.factory.post(
+                    "/coach_api/coach/timetable/events/book",
+                    data=json.dumps(
+                        {
+                            "ownerEmail": "coach@example.com",
+                            "learnerId": 7,
+                            "sessionType": session_type,
+                            "scheduledDate": "2026-08-19",
+                            "scheduledTime": "10:00",
+                            "durationMinutes": 60,
+                            "timezoneOffsetMinutes": -180,
+                        }
+                    ),
+                    content_type="application/json",
+                )
+
+                response = coach_timetable_book_event(request)
+
+                self.assertEqual(response.status_code, 409)
+                self.assertIn("busy at that time", response.content.decode())
+
+        self.assertEqual(coach_learner_personal_calendar_conflicts.call_count, 2)
+        sync_calendar_event_to_graph.assert_not_called()
+
+    @patch("coach_api.views.sync_calendar_event_to_graph")
+    @patch("coach_api.views.CoachCalendarEvent.objects.get_or_create")
+    @patch("coach_api.views.build_learner_profile_map")
+    @patch("coach_api.views.fetch_owner_active_learner_profiles")
+    @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=True)
+    @patch("coach_api.views.find_catchup_template_event")
+    @patch("coach_api.views.find_catchup_calendar_record", return_value=(None, "Coach Example"))
+    def test_schedule_template_does_not_create_catch_up_when_learner_busy(
+        self,
+        find_catchup_calendar_record,
+        find_catchup_template_event,
+        coach_learner_personal_calendar_conflicts,
+        fetch_owner_active_learner_profiles,
+        build_learner_profile_map,
+        get_or_create,
+        sync_calendar_event_to_graph,
+    ):
+        learner = SimpleNamespace(id=7)
+        fetch_owner_active_learner_profiles.return_value = [learner]
+        build_learner_profile_map.return_value = {7: learner}
+        find_catchup_template_event.return_value = (
+            {
+                "eventKey": "coach-catchup-template:coach@example.com:7",
+                "learnerId": "7",
+                "learner": "Test User",
+                "email": "learner@example.com",
+                "sequence": 1,
+            },
+            "Coach Example",
+        )
+        request = self.factory.post(
+            "/coach_api/coach/timetable/events/schedule",
+            data=json.dumps(
+                {
+                    "ownerEmail": "coach@example.com",
+                    "eventKey": "coach-catchup-template:coach@example.com:7",
+                    "scheduledDate": "2026-08-19",
+                    "scheduledTime": "10:00",
+                    "durationMinutes": 45,
+                    "timezoneOffsetMinutes": -180,
+                }
+            ),
+            content_type="application/json",
+        )
+
+        response = coach_timetable_schedule_event(request)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("busy at that time", response.content.decode())
+        find_catchup_calendar_record.assert_called_once_with(
+            "coach@example.com",
+            "coach-catchup-template:coach@example.com:7",
+        )
+        get_or_create.assert_not_called()
+        sync_calendar_event_to_graph.assert_not_called()
+
+
 @override_settings(
     AZURE_STORAGE_ACCOUNT="lmsstorage",
     AZURE_STORAGE_KEY="test-key",
@@ -250,6 +359,9 @@ class AbsenceEvidenceRoutingTests(SimpleTestCase):
 
 
 class MonthlyActivityTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
     def test_reported_minutes_treats_small_bare_numbers_as_hours_and_large_values_as_minutes(self):
         self.assertEqual(reported_minutes("2"), 120.0)
         self.assertEqual(reported_minutes("2h"), 120.0)
@@ -346,6 +458,94 @@ class MonthlyActivityTests(SimpleTestCase):
         expected_lookup.assert_called_once_with(["component-1"])
         self.assertEqual(entries[0]["hours"], 1.5)
         self.assertEqual(entries[0]["reportedTime"], "120")
+
+    @patch("coach_api.views.build_monthly_activity_learner")
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.collect_generated_timetable", return_value={"events": [], "owner_name": "Med Maher"})
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_coach_monthly_activity_uses_cached_snapshots_by_default(
+        self,
+        fetch_rows,
+        collect_generated_timetable,
+        serialize_learner,
+        build_monthly_activity_learner,
+    ):
+        row = SimpleNamespace(id=2, coach_name="Med Maher")
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"enrollmentStatus": "active"}
+        build_monthly_activity_learner.return_value = {
+            "status": "on-track",
+            "learning": {"total": 0, "quizzes": 0, "videos": 0, "components": 0},
+            "coaching": {"total": 0, "booked": 0, "needsSchedule": 0},
+            "evidence": {"submitted": 0},
+            "ksb": {"codes": []},
+            "otjh": {"monthlyHours": 0},
+            "needsAction": [],
+            "activities": [],
+        }
+
+        response = coach_monthly_activity(
+            self.factory.get(
+                "/coach_api/coach/monthly-activity",
+                {"owner_email": "coach@example.com", "month": "2026-08"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        serialize_learner.assert_called_once_with(row, refresh_live_snapshots=False)
+
+    @patch("coach_api.views.build_monthly_activity_learner")
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.collect_generated_timetable", return_value={"events": [], "owner_name": "Med Maher"})
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_coach_monthly_activity_allows_live_snapshot_refresh_when_requested(
+        self,
+        fetch_rows,
+        collect_generated_timetable,
+        serialize_learner,
+        build_monthly_activity_learner,
+    ):
+        row = SimpleNamespace(id=2, coach_name="Med Maher")
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"enrollmentStatus": "active"}
+        build_monthly_activity_learner.return_value = {
+            "status": "on-track",
+            "learning": {"total": 0, "quizzes": 0, "videos": 0, "components": 0},
+            "coaching": {"total": 0, "booked": 0, "needsSchedule": 0},
+            "evidence": {"submitted": 0},
+            "ksb": {"codes": []},
+            "otjh": {"monthlyHours": 0},
+            "needsAction": [],
+            "activities": [],
+        }
+
+        response = coach_monthly_activity(
+            self.factory.get(
+                "/coach_api/coach/monthly-activity",
+                {"owner_email": "coach@example.com", "month": "2026-08", "live": "1"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        serialize_learner.assert_called_once_with(row, refresh_live_snapshots=True)
+
+
+class EvidenceQueueSnapshotTests(SimpleTestCase):
+    @patch("coach_api.views.serialize_caseload_learner", return_value={"id": ""})
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_fetch_evidence_file_queue_uses_cached_snapshots(
+        self,
+        fetch_rows,
+        serialize_learner,
+    ):
+        row = SimpleNamespace(id=2)
+        fetch_rows.return_value = [row]
+
+        items, learners = fetch_evidence_file_queue("coach@example.com")
+
+        self.assertEqual(items, [])
+        self.assertEqual(learners, [{"id": ""}])
+        serialize_learner.assert_called_once_with(row, refresh_live_snapshots=False)
 
 
 class CaseloadOtjhSnapshotTests(SimpleTestCase):

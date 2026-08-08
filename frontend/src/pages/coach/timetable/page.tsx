@@ -220,6 +220,33 @@ function sanitizeEventNotes(value?: string | null) {
   return sanitizeCalendarSyncMessage(message);
 }
 
+function formatMeetingLinkHost(value?: string | null) {
+  if (!value) return '';
+  try {
+    return new URL(value).hostname.replace(/^www\./, '');
+  } catch {
+    return value.replace(/^https?:\/\//, '').split('/')[0] || '';
+  }
+}
+
+function formatMeetingProviderLabel(
+  event?: Pick<TimetableEvent, 'meetingProvider' | 'platform'> | null,
+  host = '',
+) {
+  const explicitProvider = [event?.meetingProvider, event?.platform]
+    .map(value => (value || '').trim())
+    .find(value => value && value !== '--');
+
+  if (explicitProvider) return explicitProvider;
+
+  const loweredHost = host.toLowerCase();
+  if (loweredHost.includes('teams')) return 'Microsoft Teams';
+  if (loweredHost.includes('zoom')) return 'Zoom';
+  if (loweredHost.includes('meet.google')) return 'Google Meet';
+  if (loweredHost.includes('webex')) return 'Webex';
+  return 'Online meeting';
+}
+
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    Data â€” June 2026 (spans 4 weeks)
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -388,6 +415,15 @@ function isThisWeekMetricEvent(event: TimetableEvent, referenceDate = new Date()
   const displayDate = getMetricDate(eventDisplayDateValue(event), event);
   const { start, end } = currentWeekRange(referenceDate);
   return displayDate.getTime() >= start.getTime() && displayDate.getTime() <= end.getTime();
+}
+
+function isCoachBookableEvent(event: TimetableEvent) {
+  return event.source === 'catch-up' || event.source === 'student-support';
+}
+
+function shouldRenderCalendarEvent(event: TimetableEvent) {
+  if (!isCoachBookableEvent(event)) return true;
+  return !event.schedulerOnly && Boolean(event.scheduledDate && event.scheduledTime);
 }
 
 function formatEventDateLabel(event: TimetableEvent) {
@@ -584,6 +620,15 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
 
 function isSchedulableSource(value?: string): value is SchedulableSource {
   return value === 'mcr' || value === 'progress-review' || value === 'catch-up';
+}
+
+function isSourceFilterValue(value?: string): value is SourceFilter {
+  return value === 'all'
+    || value === 'live-session'
+    || value === 'mcr'
+    || value === 'progress-review'
+    || value === 'catch-up'
+    || value === 'student-support';
 }
 
 function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent | null {
@@ -788,6 +833,39 @@ function EventDetailLine({ icon, children }: { icon: string; children: ReactNode
         <AppIcon className={icon}></AppIcon>
       </span>
       <div className="min-w-0 flex-1 truncate">{children}</div>
+    </div>
+  );
+}
+
+function TimetableSurfaceSkeleton() {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20 rounded-[28px] bg-background-50/94 backdrop-blur-[1px]">
+      <div className="space-y-5">
+        <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
+          <div className="grid gap-3 xl:grid-cols-[auto_minmax(260px,360px)] xl:items-center xl:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="h-11 w-[176px] animate-pulse rounded-xl bg-background-100"></div>
+              <div className="h-11 w-[220px] animate-pulse rounded-xl bg-background-100"></div>
+            </div>
+            <div className="h-10 w-full animate-pulse rounded-xl bg-background-100"></div>
+          </div>
+          <div className="mt-3 grid gap-3 xl:grid-cols-2">
+            <div className="h-20 animate-pulse rounded-xl bg-background-100"></div>
+            <div className="h-20 animate-pulse rounded-xl bg-background-100"></div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)]">
+          <div className="space-y-4">
+            <div className="h-[520px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]"></div>
+            <div className="h-[156px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]"></div>
+          </div>
+          <div className="space-y-4">
+            <div className="h-[430px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]"></div>
+            <div className="h-[220px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]"></div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1178,7 +1256,10 @@ export default function CoachTimetablePage() {
 
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
-  const calendarEvents = events;
+  const calendarEvents = useMemo(
+    () => events.filter(shouldRenderCalendarEvent),
+    [events],
+  );
   const visibleRangeEvents = useMemo(() => {
     if (viewMode === 'day') {
       return calendarEvents.filter(event => event.dayOfMonth === selectedDay && event.month === viewMonth && event.year === viewYear);
@@ -1418,7 +1499,7 @@ export default function CoachTimetablePage() {
 
     setViewMode('month');
     setFilterStatus('all');
-    setFilterSource(pendingFocusIntent.source === 'live-session' ? 'live-session' : 'all');
+    setFilterSource(isSourceFilterValue(pendingFocusIntent.source) ? pendingFocusIntent.source : 'all');
     setSearchTerm('');
     setScheduleModalOpen(false);
     setScheduleModalError(null);
@@ -1668,6 +1749,15 @@ export default function CoachTimetablePage() {
     : viewMode === 'week'
       ? `${weekDates[0].monthName} ${weekDates[0].day} - ${weekDates[6].monthName} ${weekDates[6].day}, ${viewYear}`
       : `${selectedDay} ${MONTH_NAMES[viewMonth]} ${viewYear}`;
+  const navigationSkeletonMode = pendingScheduleIntent
+    ? 'schedule'
+    : pendingFocusIntent
+      ? 'focus'
+      : 'loading';
+  const showNavigationSkeleton = loading || pendingScheduleIntent !== null || pendingFocusIntent !== null;
+  const selectedEventMeetingUrl = selectedEvent?.meetingLink || selectedEvent?.graphWebLink || '';
+  const selectedEventMeetingHost = formatMeetingLinkHost(selectedEventMeetingUrl);
+  const selectedEventMeetingProvider = formatMeetingProviderLabel(selectedEvent, selectedEventMeetingHost);
   const selectedEventNotes = sanitizeEventNotes(selectedEvent?.notes);
   const selectedEventFeedback = sanitizeCalendarSyncMessage(eventActionError || eventActionNotice);
   const selectedScheduleEventNotes = sanitizeEventNotes(selectedScheduleEvent?.notes);
@@ -1751,7 +1841,7 @@ export default function CoachTimetablePage() {
         </section>
 
         {/* â•â•â•â•â•â•â•â•â•â•â• CONTROLS BAR â•â•â•â•â•â•â•â•â•â•â• */}
-        {loading && (
+        {showNavigationSkeleton && (
           <div className="overflow-hidden rounded-[24px] border border-primary-200/70 bg-gradient-to-r from-primary-50 via-background-50 to-primary-50 shadow-sm">
             <div className="flex flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-5">
               <div className="flex items-start gap-3">
@@ -1760,9 +1850,19 @@ export default function CoachTimetablePage() {
                 </span>
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary-500">Syncing timetable</p>
-                  <p className="mt-1 text-sm font-heading font-semibold text-foreground-900">Loading your coaching calendar</p>
+                  <p className="mt-1 text-sm font-heading font-semibold text-foreground-900">
+                    {navigationSkeletonMode === 'schedule'
+                      ? 'Opening the scheduling queue'
+                      : navigationSkeletonMode === 'focus'
+                        ? 'Opening the selected event'
+                        : 'Loading your coaching calendar'}
+                  </p>
                   <p className="mt-1 text-[12px] leading-5 text-foreground-500">
-                    Preparing sessions, reviews, catch-up, and support events for the current view.
+                    {navigationSkeletonMode === 'schedule'
+                      ? 'Matching the learner and session before showing the calendar.'
+                      : navigationSkeletonMode === 'focus'
+                        ? 'Preparing the calendar and centering the requested session.'
+                        : 'Preparing sessions, reviews, catch-up, and support events for the current view.'}
                   </p>
                 </div>
               </div>
@@ -1781,6 +1881,12 @@ export default function CoachTimetablePage() {
           </div>
         )}
 
+        <div className="relative">
+          {showNavigationSkeleton && <TimetableSurfaceSkeleton />}
+          <div
+            className={showNavigationSkeleton ? 'pointer-events-none select-none opacity-0' : ''}
+            aria-hidden={showNavigationSkeleton}
+          >
         <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
           <div className="grid gap-3 xl:grid-cols-[auto_minmax(260px,360px)] xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
@@ -1793,35 +1899,36 @@ export default function CoachTimetablePage() {
                   <button
                     key={v.key}
                     aria-pressed={viewMode === v.key}
+                    data-timetable-view-active={viewMode === v.key ? 'true' : 'false'}
                     onClick={() => { setViewMode(v.key); if (v.key === 'month') setSelectedDay(todayDay); }}
-                    className={`flex h-9 items-center gap-1.5 rounded-lg px-3 text-[11px] font-bold transition-smooth whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 ${
+                    className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold transition-smooth whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 ${
                       viewMode === v.key
-                        ? 'bg-primary-500 text-white shadow-md shadow-primary-500/20'
-                        : 'text-foreground-500 hover:bg-white hover:text-foreground-900'
+                        ? 'bg-primary-600 text-[#ffffff] shadow-md shadow-primary-600/25'
+                        : 'text-foreground-600 hover:bg-white hover:text-foreground-900'
                     }`}
                   >
-                    <AppIcon className={`${v.icon} text-xs`}></AppIcon>{v.label}
+                    <AppIcon className={`${v.icon} h-3.5 w-3.5 shrink-0`}></AppIcon>{v.label}
                   </button>
                 ))}
               </div>
-              <div className="flex items-center gap-1 rounded-xl border border-background-200 bg-background-50 p-1">
+              <div className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-50 p-1">
                 <button
                   onClick={handlePrev}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-foreground-700 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                   aria-label="Previous period"
                 >
-                  <AppIcon className="ri-arrow-left-s-line"></AppIcon>
+                  <AppIcon className="ri-arrow-left-s-line h-4 w-4 shrink-0"></AppIcon>
                 </button>
-                <button onClick={handleToday} className="h-8 rounded-lg bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth cursor-pointer whitespace-nowrap hover:bg-primary-100">Today</button>
+                <button onClick={handleToday} className="inline-flex h-9 items-center justify-center rounded-lg bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth cursor-pointer whitespace-nowrap hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-200">Today</button>
                 <div className="relative">
                   <button
                     type="button"
                     onClick={() => setDatePickerOpen(open => !open)}
-                    className="h-8 min-w-[150px] rounded-lg px-3 text-center text-[12px] font-heading font-bold text-foreground-950 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700 whitespace-nowrap"
+                    className="inline-flex h-9 min-w-[154px] items-center justify-center gap-1.5 rounded-lg px-3 text-[12px] font-heading font-bold text-foreground-950 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700 whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-primary-200"
                     title="Change calendar date"
                   >
                     {titleLabel}
-                    <AppIcon className={`ri-arrow-down-s-line ml-1 text-xs transition-transform ${datePickerOpen ? 'rotate-180' : ''}`}></AppIcon>
+                    <AppIcon className={`ri-arrow-down-s-line h-4 w-4 shrink-0 transition-transform ${datePickerOpen ? 'rotate-180' : ''}`}></AppIcon>
                   </button>
                   {datePickerOpen && (
                     <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-2xl border border-background-200 bg-background-50 p-3 shadow-xl shadow-foreground-900/10">
@@ -1883,10 +1990,10 @@ export default function CoachTimetablePage() {
                 </div>
                 <button
                   onClick={handleNext}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-500 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-foreground-700 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                   aria-label="Next period"
                 >
-                  <AppIcon className="ri-arrow-right-s-line"></AppIcon>
+                  <AppIcon className="ri-arrow-right-s-line h-4 w-4 shrink-0"></AppIcon>
                 </button>
               </div>
             </div>
@@ -2368,17 +2475,31 @@ export default function CoachTimetablePage() {
                         <span className="font-bold text-foreground-900">{selectedEvent.cohort}</span>
                       </EventDetailLine>
                     )}
-                    {selectedEvent.meetingLink && (
-                      <EventDetailLine icon="ri-links-line">
-                        <a
-                          href={selectedEvent.meetingLink}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="font-bold text-primary-600 hover:text-primary-700 hover:underline"
-                        >
-                          Open meeting link
-                        </a>
-                      </EventDetailLine>
+                    {selectedEventMeetingUrl && (
+                      <a
+                        href={selectedEventMeetingUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group flex items-center justify-between gap-3 rounded-xl border border-primary-100 bg-gradient-to-r from-primary-50 via-white to-background-50 px-3.5 py-3 text-left transition-smooth hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm"
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700 ring-1 ring-primary-100 transition-smooth group-hover:bg-primary-600 group-hover:text-[#ffffff]">
+                            <AppIcon className="ri-video-chat-line h-4 w-4"></AppIcon>
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-[11px] font-bold text-foreground-950">
+                              Join {selectedEventMeetingProvider}
+                            </p>
+                            <p className="mt-0.5 truncate text-[10px] font-medium text-foreground-500">
+                              {selectedEventMeetingHost ? `${selectedEventMeetingHost} · opens in a new tab` : 'Opens in a new tab'}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 text-[10px] font-bold text-primary-700 transition-smooth group-hover:border-primary-600 group-hover:bg-primary-600 group-hover:text-[#ffffff]">
+                          Open
+                          <AppIcon className="ri-external-link-line h-3.5 w-3.5"></AppIcon>
+                        </span>
+                      </a>
                     )}
                     {selectedEventNotes && (
                       <div className="rounded-xl border border-background-100 bg-background-50 p-3">
@@ -2907,6 +3028,8 @@ export default function CoachTimetablePage() {
           </div>
         </div>
       )}
+          </div>
+        </div>
 
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={closeScheduleModal}>
