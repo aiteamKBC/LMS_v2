@@ -193,6 +193,7 @@ export default function Ilr() {
           <LabeledInput label="Date" type="date" value={ilr.learnerSignature.date} onChange={(v) => set({ learnerSignature: { ...ilr.learnerSignature, date: v } })} />
           <SignatureField
             label="Learner signature"
+            signatoryName={[ilr.learnerSignature.firstNames, ilr.learnerSignature.surname].filter(Boolean).join(' ')}
             value={ilr.learnerSignature.signatureUrl}
             onChange={(v) => set({ learnerSignature: { ...ilr.learnerSignature, signatureUrl: v || undefined, date: v && !ilr.learnerSignature.date ? new Date().toISOString().slice(0, 10) : ilr.learnerSignature.date } })}
           />
@@ -212,6 +213,7 @@ export default function Ilr() {
           <LabeledInput label="Date" type="date" value={ilr.providerSignature.date} onChange={(v) => set({ providerSignature: { ...ilr.providerSignature, date: v } })} />
           <SignatureField
             label="Provider signature"
+            signatoryName={ilr.providerSignature.printName}
             value={ilr.providerSignature.signatureUrl}
             onChange={(v) => set({ providerSignature: { ...ilr.providerSignature, signatureUrl: v || undefined, date: v && !ilr.providerSignature.date ? new Date().toISOString().slice(0, 10) : ilr.providerSignature.date } })}
           />

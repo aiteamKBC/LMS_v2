@@ -41,7 +41,6 @@ export interface IlrResponse {
   answers: Record<string, unknown>;
   /** Null until one has been issued. */
   document: IlrDocument | null;
-  savedLearnerSignature?: { signature?: string; name?: string; date?: string | null };
 }
 
 async function readJson<T>(res: Response): Promise<T> {

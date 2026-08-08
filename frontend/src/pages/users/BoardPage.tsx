@@ -12,6 +12,34 @@ import { fetchIlrDocument, issueIlrDocument, signIlrDocument, type IlrDocument }
 import { SignaturePad } from './wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
 import { renderIlrPdf, ilrFilename } from '@/lib/ilrDocumentPdf';
+import {
+  fetchTrainingPlanDocument,
+  issueTrainingPlanDocument,
+  signTrainingPlanDocument,
+  type TrainingPlanDocument,
+} from '@/api/trainingPlanDocument';
+import { renderTrainingPlanPdf, trainingPlanFilename } from '@/lib/trainingPlanPdf';
+import {
+  fetchWrittenAgreement,
+  issueWrittenAgreement,
+  signWrittenAgreement,
+  type WrittenAgreementDocument,
+} from '@/api/writtenAgreement';
+import { renderWrittenAgreementPdf, writtenAgreementFilename } from '@/lib/writtenAgreementPdf';
+
+/** Render the Written Agreement from its record and save it. */
+function downloadWrittenAgreement(document: WrittenAgreementDocument) {
+  renderWrittenAgreementPdf(document).save(
+    writtenAgreementFilename(document.particulars.apprenticeName || ''),
+  );
+}
+
+/** Render the Training Plan from its record and save it. */
+function downloadTrainingPlan(document: TrainingPlanDocument) {
+  renderTrainingPlanPdf(document).save(
+    trainingPlanFilename(document.programme.apprenticeName || ''),
+  );
+}
 
 /** Render the agreement from its record and save it. */
 function downloadAgreement(agreement: Agreement) {
@@ -301,13 +329,13 @@ function FinishEnrolment({ learnerId, status, onFinished }: { learnerId: string;
       ) : (
         <button
           onClick={() => setConfirming(true)}
-          title="Move this learner into the live learner tables and set them Active"
+          title="Check whether this learner is now eligible for automatic activation"
           className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-emerald-500 text-white rounded-xl text-[13px] font-semibold hover:bg-emerald-600 transition-smooth cursor-pointer shadow-lg shadow-black/10"
         >
-          <i className="ri-graduation-cap-line" />Finish enrolment
+          <i className="ri-refresh-line" />Check enrolment status
         </button>
       )}
-      {confirming && !err && <span className="text-[11px] text-white/70 max-w-[220px]">Starts this learner&apos;s journey and sets them Active.</span>}
+      {confirming && !err && <span className="text-[11px] text-white/70 max-w-[220px]">Activation happens automatically after all documents are signed and the start date arrives.</span>}
       {err && <span className="text-[11px] text-red-200 max-w-[220px]"><i className="ri-error-warning-line mr-1" />{err}</span>}
     </div>
   );
@@ -446,6 +474,64 @@ function IlrParties({ document }: { document: IlrDocument }) {
   );
 }
 
+/** Who has signed the Training Plan: all three parties. */
+function TrainingPlanParties({ document }: { document: TrainingPlanDocument }) {
+  const parties = [
+    { key: 'apprentice', label: 'Learner', icon: 'ri-user-line', state: document.signatures.apprentice },
+    { key: 'employer', label: 'Employer', icon: 'ri-briefcase-line', state: document.signatures.employer },
+    { key: 'provider', label: 'Provider', icon: 'ri-shield-user-line', state: document.signatures.provider },
+  ];
+  return (
+    <span className="flex items-center gap-1.5">
+      {parties.map((p) => (
+        <span
+          key={p.key}
+          title={
+            p.state.signed
+              ? `${p.label} signed${p.state.name ? ` by ${p.state.name}` : ''}`
+              : `${p.label} has not signed yet`
+          }
+          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap ${
+            p.state.signed
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+              : 'bg-background-100 text-foreground-400 border-foreground-200/60'
+          }`}
+        >
+          <i className={`${p.state.signed ? 'ri-check-line' : p.icon} text-[11px]`} />
+          {p.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Who has signed the Written Agreement: learner, employer and provider. */
+function WrittenAgreementParties({ document }: { document: WrittenAgreementDocument }) {
+  const parties = [
+    { key: 'learner', label: 'Learner', icon: 'ri-user-line', state: document.signatures.learner },
+    { key: 'employer', label: 'Employer', icon: 'ri-briefcase-line', state: document.signatures.employer },
+    { key: 'provider', label: 'Provider', icon: 'ri-shield-user-line', state: document.signatures.provider },
+  ];
+  return (
+    <span className="flex items-center gap-1.5">
+      {parties.map((p) => (
+        <span
+          key={p.key}
+          title={p.state.signed ? `${p.label} signed${p.state.name ? ` by ${p.state.name}` : ''}` : `${p.label} has not signed yet`}
+          className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border whitespace-nowrap ${
+            p.state.signed
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200/60'
+              : 'bg-background-100 text-foreground-400 border-foreground-200/60'
+          }`}
+        >
+          <i className={`${p.state.signed ? 'ri-check-line' : p.icon} text-[11px]`} />
+          {p.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind; learnerId: string; programme: string }) {
   const [docs, setDocs] = useState<EnrolmentDocument[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -457,6 +543,9 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
   // The ILR likewise has its own table. Signed by the learner and the provider;
   // never shown to the employer.
   const [ilr, setIlr] = useState<IlrDocument | null>(null);
+  // The Training Plan is tripartite: apprentice, employer and provider all sign.
+  const [plan, setPlan] = useState<TrainingPlanDocument | null>(null);
+  const [written, setWritten] = useState<WrittenAgreementDocument | null>(null);
   // Whoever is signed in signs the provider declaration in their own name.
   const { auth } = useAuth();
   const providerName = auth.user?.fullName || 'Enrolment Officer';
@@ -472,6 +561,12 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
     fetchIlrDocument(learnerId)
       .then((r) => !cancelled && setIlr(r.document))
       .catch(() => { /* Likewise for the ILR. */ });
+    fetchTrainingPlanDocument(learnerId)
+      .then((r) => !cancelled && setPlan(r.document))
+      .catch(() => { /* And the Training Plan. */ });
+    fetchWrittenAgreement(learnerId)
+      .then((r) => !cancelled && setWritten(r.document))
+      .catch(() => { /* And the Written Agreement. */ });
     return () => { cancelled = true; };
   }, [kind, learnerId]);
 
@@ -489,7 +584,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
   // Issuing is the provider's job: the agreement must exist before either the
   // learner or the employer can sign it, and neither of them should be the one
   // to create it. Freezes the current particulars onto a new record.
-  const [issuing, setIssuing] = useState<'agreement' | 'ilr' | null>(null);
+  const [issuing, setIssuing] = useState<'agreement' | 'ilr' | 'plan' | 'written' | null>(null);
   const issue = async () => {
     setIssuing('agreement');
     setErr(null);
@@ -516,6 +611,54 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
     }
   };
 
+  const issuePlan = async () => {
+    setIssuing('plan');
+    setErr(null);
+    try {
+      await issueTrainingPlanDocument(learnerId);
+      setPlan((await fetchTrainingPlanDocument(learnerId)).document);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not issue the training plan');
+    } finally {
+      setIssuing(null);
+    }
+  };
+
+  const issueWritten = async () => {
+    setIssuing('written');
+    setErr(null);
+    try {
+      await issueWrittenAgreement(learnerId);
+      setWritten((await fetchWrittenAgreement(learnerId)).document);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not issue the written agreement');
+    } finally {
+      setIssuing(null);
+    }
+  };
+
+  const [signingWritten, setSigningWritten] = useState(false);
+  const signWrittenAsProvider = async (mark: string) => {
+    setErr(null);
+    try {
+      setWritten(await signWrittenAgreement(learnerId, 'provider', providerName || 'Provider', mark));
+      setSigningWritten(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not save the signature');
+    }
+  };
+
+  const [signingPlan, setSigningPlan] = useState(false);
+  const signPlanAsProvider = async (mark: string) => {
+    setErr(null);
+    try {
+      setPlan(await signTrainingPlanDocument(learnerId, 'provider', providerName || 'Provider', mark));
+      setSigningPlan(false);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not save the signature');
+    }
+  };
+
   // The provider's side of the ILR — the Provider/Sub-contractor declaration.
   const [signingIlr, setSigningIlr] = useState(false);
   const signIlrAsProvider = async (mark: string) => {
@@ -533,7 +676,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
       <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">{programme || 'Programme Name'}</p>
       {err && <p className="text-[12px] text-red-600 mb-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
       {docs === null && !err && <p className="text-[12px] text-foreground-400 py-2"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading documents…</p>}
-      {docs !== null && docs.length === 0 && !agreement && !ilr && <EmptyState text="No documents" />}
+      {docs !== null && docs.length === 0 && !agreement && !ilr && !plan && !written && <EmptyState text="No documents" />}
       {/* Until the agreement is issued neither party can sign it, and it does
           not appear in the employer's portal — so offer it here. */}
       {agreement === null && (
@@ -633,6 +776,120 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
                 defaultName={providerName}
                 onCommit={(dataUrl) => { void signIlrAsProvider(dataUrl); }}
                 onCancel={() => setSigningIlr(false)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {/* The tripartite Training Plan: apprentice, employer and provider. */}
+      {plan === null && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
+          <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
+            <i className="ri-file-add-line text-foreground-400 shrink-0" />
+            <span className="truncate">Training Plan not issued yet</span>
+          </span>
+          <ActionLink
+            label={issuing === 'plan' ? 'Issuing…' : 'Issue training plan'}
+            icon="ri-quill-pen-line"
+            onClick={() => { void issuePlan(); }}
+          />
+        </div>
+      )}
+      {plan && (
+        <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg mb-2">
+          <div className="flex items-center justify-between gap-3 px-3 py-2">
+            <span className="text-[12px] text-foreground-700 inline-flex items-center gap-1.5 min-w-0">
+              <i className="ri-file-pdf-line text-red-500 shrink-0" />
+              <span className="truncate">Training Plan</span>
+              {plan.fullySigned && (
+                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/50 px-2 py-0.5 rounded-full shrink-0">signed</span>
+              )}
+            </span>
+            <span className="flex items-center gap-3 shrink-0">
+              <TrainingPlanParties document={plan} />
+              <span className="text-[11px] text-foreground-400">
+                {plan.createdAt ? new Date(plan.createdAt).toLocaleString('en-GB') : ''}
+              </span>
+              {!plan.signatures.provider.signed && (
+                <ActionLink
+                  label="Sign as provider"
+                  icon="ri-quill-pen-line"
+                  onClick={() => setSigningPlan(true)}
+                />
+              )}
+              <ActionLink
+                label="Download"
+                icon="ri-download-line"
+                onClick={() => downloadTrainingPlan(plan)}
+              />
+            </span>
+          </div>
+          {signingPlan && (
+            <div className="px-3 py-3 space-y-2">
+              <p className="text-[11px] text-foreground-500">
+                Signing commits the provider to the delivery and support set out in this plan.
+              </p>
+              <SignaturePad
+                defaultName={providerName}
+                onCommit={(dataUrl) => { void signPlanAsProvider(dataUrl); }}
+                onCancel={() => setSigningPlan(false)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {/* The Written Agreement: learner, employer and provider all sign. */}
+      {written === null && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
+          <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
+            <i className="ri-file-add-line text-foreground-400 shrink-0" />
+            <span className="truncate">Written Agreement not issued yet</span>
+          </span>
+          <ActionLink
+            label={issuing === 'written' ? 'Issuing…' : 'Issue written agreement'}
+            icon="ri-quill-pen-line"
+            onClick={() => { void issueWritten(); }}
+          />
+        </div>
+      )}
+      {written && (
+        <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg mb-2">
+          <div className="flex items-center justify-between gap-3 px-3 py-2">
+            <span className="text-[12px] text-foreground-700 inline-flex items-center gap-1.5 min-w-0">
+              <i className="ri-file-pdf-line text-red-500 shrink-0" />
+              <span className="truncate">Written Agreement</span>
+              {written.fullySigned && (
+                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200/50 px-2 py-0.5 rounded-full shrink-0">signed</span>
+              )}
+            </span>
+            <span className="flex items-center gap-3 shrink-0">
+              <WrittenAgreementParties document={written} />
+              <span className="text-[11px] text-foreground-400">
+                {written.createdAt ? new Date(written.createdAt).toLocaleString('en-GB') : ''}
+              </span>
+              {!written.signatures.provider.signed && (
+                <ActionLink
+                  label="Sign as provider"
+                  icon="ri-quill-pen-line"
+                  onClick={() => setSigningWritten(true)}
+                />
+              )}
+              <ActionLink
+                label="Download"
+                icon="ri-download-line"
+                onClick={() => downloadWrittenAgreement(written)}
+              />
+            </span>
+          </div>
+          {signingWritten && (
+            <div className="px-3 py-3 space-y-2">
+              <p className="text-[11px] text-foreground-500">
+                Signing confirms the provider's agreement to the content and costings in this document.
+              </p>
+              <SignaturePad
+                defaultName={providerName}
+                onCommit={(dataUrl) => { void signWrittenAsProvider(dataUrl); }}
+                onCancel={() => setSigningWritten(false)}
               />
             </div>
           )}

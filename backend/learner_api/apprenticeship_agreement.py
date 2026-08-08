@@ -34,6 +34,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .learning_plan import _group_module_ids, _programme_modules, _saved_modules
+from .learner_progression import advance_learner
 from .mappers import _s
 from .models import ApprenticeshipAgreement, EnrolmentUser
 
@@ -106,6 +107,12 @@ def _group_dates(learner):
     group = _s(learner.group)
     if group:
         try:
+            # Deliberately the `default` alias, not `enrolment`: curriculum.* is
+            # owned by curriculum_api, whose migrations run on `default` (the
+            # router keeps every non-enrolment app off the enrolment alias).
+            # Repointing this at `enrolment` would break the moment the two
+            # aliases genuinely differ. Same for the other curriculum readers in
+            # learning_plan.py and training_plan_document.py.
             with connection.cursor() as cursor:
                 cursor.execute(
                     """
@@ -217,51 +224,6 @@ def _agreement_json(agreement):
     }
 
 
-def _saved_learner_signature(learner_id):
-    """The signature the learner drew during enrolment, offered as their default."""
-    try:
-        from enrolment_api.models import WizardPersonalDetails
-
-        row = WizardPersonalDetails.objects.filter(learner_id=learner_id).first()
-    except DatabaseError:
-        logger.exception("_saved_learner_signature: lookup failed")
-        return {}
-    if row is None:
-        return {}
-    signature = _s(getattr(row, "signature", ""))
-    if not signature.startswith("data:image/"):
-        return {}
-    return {
-        "signature": signature,
-        "name": " ".join(p for p in (_s(row.first_name), _s(row.last_name)) if p),
-        "date": _iso(getattr(row, "signature_date", None)),
-    }
-
-
-def _saved_employer_signature(learner):
-    """The employer's reusable signature, so they don't redraw it each time."""
-    employer_id = getattr(learner, "employer_id", None)
-    if not employer_id:
-        return {}
-    try:
-        from .models import Employer
-
-        employer = Employer.objects.filter(pk=employer_id).first()
-    except DatabaseError:
-        logger.exception("_saved_employer_signature: lookup failed")
-        return {}
-    if employer is None:
-        return {}
-    signature = _s(getattr(employer, "signature", ""))
-    if not signature.startswith("data:image/"):
-        return {}
-    return {
-        "signature": signature,
-        "name": _s(getattr(employer, "signature_name", "")) or employer.full_name,
-        "date": _iso(getattr(employer, "signature_date", None)),
-    }
-
-
 def _active_agreement(learner_kind, learner_id):
     return ApprenticeshipAgreement.objects.filter(
         learner_kind=learner_kind,
@@ -329,8 +291,6 @@ def apprenticeship_agreement(request, pk):
             "moduleCount": len(derived["planModules"]),
         },
         "agreement": _agreement_json(agreement),
-        "savedLearnerSignature": _saved_learner_signature(learner.pk),
-        "savedEmployerSignature": _saved_employer_signature(learner),
     })
 
 
@@ -441,8 +401,13 @@ def sign_agreement(request, pk):
 
         agreement.recalculate_signed()
         agreement.save()
+        promoted = advance_learner(learner)
     except DatabaseError as exc:
         logger.exception("sign_agreement: failed")
         return _error(f"Database error: {exc}", 502)
 
-    return JsonResponse({"agreement": _agreement_json(agreement)})
+    return JsonResponse({
+        "agreement": _agreement_json(agreement),
+        "programmeStatus": _s(learner.programme_status),
+        "programmeStatusChangedTo": promoted,
+    })

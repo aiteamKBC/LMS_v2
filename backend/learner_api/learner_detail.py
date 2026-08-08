@@ -21,8 +21,9 @@ from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.utils import timezone
 
-from .active_users import completed_hours_from_progress, fmt_hours
+from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan
 from .identity import learner_profile_for_source
+from .learner_progression import advance_learner
 from .mappers import _s, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 
@@ -905,6 +906,13 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     try:
+        # Date-based activation has no user action of its own. Re-checking here
+        # keeps the learner workspace correct between scheduled daily sweeps.
+        advance_learner(source)
+        # Plans selected during enrolment used to contain only module ids. Fill
+        # in the authored weeks/components before serialising the learner page,
+        # which also repairs learners activated before this behaviour existed.
+        hydrate_source_training_plan(source)
         learner_profile = _active_profile_for_source(source, pk)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)

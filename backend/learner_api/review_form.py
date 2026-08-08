@@ -231,34 +231,6 @@ def _plr_context(review, learner):
     }
 
 
-def _saved_learner_signature(review):
-    """The learner's signature captured during enrolment, if any.
-
-    Offered as the default when signing a review so the learner reuses the mark
-    they already gave rather than drawing a fresh one each time. Read live from
-    enrolment."Wizard_Personal_Details" (same PNG data URL format as
-    SignaturePad produces) rather than copied, so replacing it there carries over.
-    """
-    from enrolment_api.models import WizardPersonalDetails
-
-    try:
-        row = WizardPersonalDetails.objects.filter(learner_id=review.learner_id).first()
-    except DatabaseError:
-        logger.exception("_saved_learner_signature: lookup failed")
-        return {}
-    signature = _s(getattr(row, "signature", ""))
-    if not signature.startswith("data:image/"):
-        return {}
-    name = " ".join(
-        part for part in (_s(row.first_name), _s(row.last_name)) if part
-    )
-    return {
-        "signature": signature,
-        "name": name,
-        "date": _iso(row.signature_date),
-    }
-
-
 # Review types an employer is asked to sign, when the row itself doesn't say.
 # Every onboarding review: the employer is a party to the whole onboarding record,
 # not only the parts that name them. Per-row `Employer_signature_required` still
@@ -311,8 +283,6 @@ def _signatures(review, *, include_saved=True):
         # A review is only signable once its form is finished, so an unfinished
         # review cannot be signed off by any party.
         "signable": bool(review.form_completed),
-        # The learner's signature from enrolment, offered as the default.
-        "savedLearnerSignature": _saved_learner_signature(review) if include_saved else {},
     }
 
 

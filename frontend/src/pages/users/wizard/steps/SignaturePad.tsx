@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { btnPrimary, btnSecondary } from '../../components/ui';
 import { useAuth } from '@/hooks/useAuth';
 import {
@@ -10,34 +10,37 @@ import {
 /**
  * Signature capture: the signatory's own name, set in a script face.
  *
- * This replaced a draw-or-upload pad. Typing the name means one person's
- * signature is identical every time they sign and is legible in the document,
- * and there is nothing to redraw badly on a trackpad.
+ * The name is NOT editable. It is whoever is actually signing — the signed-in
+ * account by default, or the party named by `signatoryName` (the learner on
+ * their own document, the employer in their portal). A signature that could be
+ * typed as any name is not a signature; fixing it to the identity on record is
+ * the whole point.
  *
- * The name defaults to the signed-in account holder's, so the common case is
- * simply to confirm. It stays editable because the account name is not always
- * the legal name that belongs on a statutory form — and because a learner may
- * be signing on a page opened by staff.
+ * There is no drawing and no stored "saved signature" to reuse: the same name
+ * always produces the same mark, so reuse is automatic rather than something to
+ * capture once and carry around.
  *
- * The committed value is still a PNG data URL, exactly as the drawn pad
- * produced. That is deliberate: every signature column, PDF signature block and
+ * The committed value is a PNG data URL, exactly as the old drawn pad produced.
+ * That is deliberate: every signature column, PDF signature block and
  * `startsWith('data:image/')` guard keeps working untouched, and signatures
  * captured before this change still render.
  */
 export function SignaturePad({
   onCommit,
   onCancel,
+  signatoryName,
+  /** @deprecated Use `signatoryName`. Kept so older call sites keep compiling. */
   defaultName,
 }: {
   onCommit: (dataUrl: string) => void;
   onCancel: () => void;
-  /** Overrides the signed-in account's name (e.g. staff opening a learner's form). */
+  /** Who is signing. Falls back to the signed-in account when omitted. */
+  signatoryName?: string;
   defaultName?: string;
 }) {
   const { auth } = useAuth();
-  const accountName = defaultName || auth.user?.fullName || '';
+  const name = (signatoryName || defaultName || auth.user?.fullName || '').trim();
 
-  const [name, setName] = useState(accountName);
   const [fontReady, setFontReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -54,23 +57,15 @@ export function SignaturePad({
     };
   }, []);
 
-  // Adopt the account name once it resolves, but never overwrite what the
-  // signatory has typed.
-  useEffect(() => {
-    setName((current) => current || accountName);
-  }, [accountName]);
-
-  const trimmed = useMemo(() => name.trim(), [name]);
-
   const commit = async () => {
-    if (!trimmed) {
-      setErr('Enter the name to sign with.');
+    if (!name) {
+      setErr('No name is on record for the signatory, so this cannot be signed.');
       return;
     }
     setSaving(true);
     setErr(null);
     try {
-      const dataUrl = await createTypedSignature(trimmed);
+      const dataUrl = await createTypedSignature(name);
       if (!dataUrl) {
         setErr('Could not create the signature. Please try again.');
         return;
@@ -83,21 +78,16 @@ export function SignaturePad({
 
   return (
     <div className="border border-foreground-200 rounded-xl p-3 max-w-md space-y-3">
-      <label className="block">
-        <span className="text-[12px] text-foreground-700 block mb-1">
-          Full name <span className="text-red-500">*</span>
-        </span>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Your full name"
-          className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2.5 py-2 text-[13px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
-        />
-      </label>
+      <div>
+        <p className="text-[12px] text-foreground-700 mb-1">Signing as</p>
+        <p className="text-[13px] font-medium text-foreground-900">
+          {name || <span className="text-red-600">No name on record</span>}
+        </p>
+      </div>
 
       {/* Exactly what will be stored. */}
       <div className="rounded-lg border-2 border-dashed border-foreground-200 bg-background-50 px-3 py-4 min-h-[80px] flex items-center justify-center overflow-x-auto">
-        {trimmed ? (
+        {name ? (
           <span
             className="text-foreground-900 whitespace-nowrap"
             style={{
@@ -109,17 +99,17 @@ export function SignaturePad({
               transition: 'opacity 120ms ease',
             }}
           >
-            {trimmed}
+            {name}
           </span>
         ) : (
           <span className="text-[12px] text-foreground-400">
-            Type your name above to preview your signature
+            A signature cannot be produced without a name on record.
           </span>
         )}
       </div>
 
       <p className="text-[11px] text-foreground-400">
-        Typing your name and confirming has the same effect as signing by hand.
+        Confirming below has the same effect as signing by hand.
       </p>
 
       {err && <p className="text-[12px] text-red-600">{err}</p>}
@@ -129,10 +119,10 @@ export function SignaturePad({
           type="button"
           className={btnPrimary}
           onClick={() => void commit()}
-          disabled={saving || !trimmed}
+          disabled={saving || !name}
         >
           <i className="ri-check-line" />
-          {saving ? 'Signing…' : 'Use signature'}
+          {saving ? 'Signing…' : 'Sign'}
         </button>
         <button type="button" className={btnSecondary} onClick={onCancel} disabled={saving}>
           Cancel

@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
-import { btnPrimary, btnSecondary } from '@/pages/users/components/ui';
 import { signReviewForm, type ReviewSignatures } from '@/api/reviewForm';
 import type { LearnerKind } from '@/api/learnerDetail';
 
 /**
  * Sign-off dialog for a completed review, shared by both sides.
  *
- * Reuses the enrolment wizard's SignaturePad (typed name in a script face → PNG data URL), so
- * a review signature is captured and stored the same way as an ILR one.
+ * Reuses the enrolment wizard's SignaturePad: the signatory's own name in a
+ * script face. The name is fixed to whoever is signing — the learner on their
+ * own review, the officer on the provider's side — so a review signature is
+ * captured and stored the same way as every other document's.
  */
 export default function SignReviewModal({
   kind,
@@ -31,35 +32,23 @@ export default function SignReviewModal({
   onSigned: (signatures: ReviewSignatures) => void;
 }) {
   const existing = signatures[party];
-  // The learner signed once during enrolment, so that signature is the default
-  // here — drawing a new one is the fallback, not the main path. Staff have no
-  // stored signature, so they type their name instead.
-  const saved = party === 'learner' ? signatures.savedLearnerSignature : undefined;
-  const savedSignature = saved?.signature ?? '';
+  // The name is not chosen here: it is whoever is signing. `defaultName` is the
+  // learner's own name on their side, and the signed-in officer's on the
+  // provider's.
+  const name = (existing.name || defaultName || '').trim();
 
-  const [name, setName] = useState(existing.name || saved?.name || defaultName);
-  const [signature, setSignature] = useState(existing.signature || savedSignature);
-  // Only open the pad when there is nothing to reuse.
-  const [editing, setEditing] = useState(!existing.signature && !savedSignature);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  /** True while showing the enrolment signature rather than one signed here. */
-  const usingSaved = !existing.signature && signature === savedSignature && !!savedSignature;
-
-  const submit = async (clear = false) => {
+  const submit = async (signature: string) => {
     if (saving) return;
-    if (!clear && (!signature || !name.trim())) {
-      setErr('Add your name and a signature first.');
-      return;
-    }
     setSaving(true);
     setErr(null);
     try {
       const res = await signReviewForm(kind, learnerId, eventKey, {
         party,
-        name: clear ? '' : name.trim(),
-        signature: clear ? '' : signature,
+        name: signature ? name : '',
+        signature,
       });
       onSigned(res.signatures);
       onClose();
@@ -93,54 +82,13 @@ export default function SignReviewModal({
         </header>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          <label className="block">
-            <span className="text-[12px] text-foreground-700 block mb-1">
-              Full name <span className="text-red-500">*</span>
-            </span>
-            <input value={name} onChange={(e) => setName(e.target.value)}
-              className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2.5 py-2 text-[13px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
-          </label>
-
           <div>
             <p className="text-[12px] text-foreground-700 mb-2">{label} <span className="text-red-500">*</span></p>
-            {editing ? (
-              <>
-                <SignaturePad
-                  onCommit={(url) => { setSignature(url); setEditing(false); }}
-                  onCancel={() => setEditing(false)}
-                />
-                {savedSignature && (
-                  <button
-                    onClick={() => { setSignature(savedSignature); setEditing(false); }}
-                    className="text-[12px] text-primary-600 hover:underline inline-flex items-center gap-1 mt-2"
-                  >
-                    <i className="ri-arrow-go-back-line" />Use my enrolment signature instead
-                  </button>
-                )}
-              </>
-            ) : signature ? (
-              <div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <img src={signature} alt={label} className="h-16 max-w-[280px] object-contain px-3 py-2 border border-foreground-200 rounded-lg bg-white" />
-                  <button onClick={() => setEditing(true)} className="text-[12px] text-primary-600 hover:underline inline-flex items-center gap-1">
-                    <i className="ri-pen-nib-line" />Draw a different one
-                  </button>
-                </div>
-                {usingSaved && (
-                  <p className="text-[11px] text-emerald-700 mt-1.5">
-                    <i className="ri-check-line mr-1" />
-                    Using the signature from your enrolment
-                    {saved?.date ? ` (${new Date(saved.date).toLocaleDateString('en-GB')})` : ''}.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <button onClick={() => setEditing(true)}
-                className="w-full h-24 border-2 border-dashed border-foreground-200 rounded-lg flex flex-col items-center justify-center text-foreground-400 hover:border-primary-300 hover:text-primary-500">
-                <i className="ri-pen-nib-line text-2xl mb-1" />
-                <span className="text-[12px]">Add a signature</span>
-              </button>
-            )}
+            <SignaturePad
+              signatoryName={name}
+              onCommit={(url) => { void submit(url); }}
+              onCancel={onClose}
+            />
           </div>
 
           <p className="text-[11px] text-foreground-500 leading-relaxed">
@@ -151,20 +99,14 @@ export default function SignReviewModal({
           {err && <p className="text-[11px] text-red-600"><i className="ri-error-warning-line mr-1" />{err}</p>}
         </div>
 
-        <footer className="flex items-center justify-between gap-2 px-5 py-3 border-t border-foreground-100 shrink-0">
-          {existing.signed ? (
-            <button onClick={() => submit(true)} disabled={saving}
+        {existing.signed && (
+          <footer className="flex items-center gap-2 px-5 py-3 border-t border-foreground-100 shrink-0">
+            <button onClick={() => void submit('')} disabled={saving}
               className="text-[12px] font-semibold text-red-600 hover:underline disabled:opacity-60">
               Remove signature
             </button>
-          ) : <span />}
-          <span className="flex items-center gap-2">
-            <button onClick={onClose} disabled={saving} className={btnSecondary}>Cancel</button>
-            <button onClick={() => submit()} disabled={saving} className={btnPrimary}>
-              {saving ? <><i className="ri-loader-4-line animate-spin" />Signing…</> : <><i className="ri-pen-nib-line" />Sign</>}
-            </button>
-          </span>
-        </footer>
+          </footer>
+        )}
       </div>
     </div>
   );

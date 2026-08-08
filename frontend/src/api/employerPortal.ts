@@ -13,13 +13,6 @@
 
 const BASE = '/learner_api/employer-portal';
 
-/** A saved, reusable signature offered as the default when signing. */
-export interface SavedSignature {
-  signature?: string;
-  name?: string;
-  date?: string | null;
-}
-
 export interface EmployerLearnerCard {
   id: string;
   kind: 'apprenticeship' | 'commercial';
@@ -61,7 +54,7 @@ export interface EmployerDocumentRow {
    * 'agreement' is the Apprenticeship Agreement, which has its own table and
    * signing endpoint but appears in the same signable list as everything else.
    */
-  kind: 'document' | 'agreement';
+  kind: 'document' | 'agreement' | 'training-plan' | 'written-agreement';
   id: string;
   docType: string;
   label: string;
@@ -77,6 +70,10 @@ export interface EmployerDocumentRow {
   learnerSigned?: boolean;
   learnerSignedName?: string;
   learnerSignedAt?: string | null;
+  /** The provider's side, on tripartite documents like the Training Plan. */
+  providerSigned?: boolean;
+  providerSignedName?: string;
+  providerSignedAt?: string | null;
 }
 
 export type SignableItem = EmployerReviewRow | EmployerDocumentRow;
@@ -87,7 +84,6 @@ export interface EmployerPortal {
     name: string;
     email: string;
     employerGroupNames: string[];
-    savedSignature: SavedSignature;
   };
   learners: EmployerLearnerCard[];
   outstandingTotal: number;
@@ -104,7 +100,7 @@ export interface EmployerPerformance {
 }
 
 export interface EmployerLearnerDetail {
-  employer: { id: string; name: string; savedSignature: SavedSignature };
+  employer: { id: string; name: string };
   learner: {
     id: string;
     kind: 'apprenticeship' | 'commercial';
@@ -155,16 +151,6 @@ export function fetchEmployerLearner(
   return request<EmployerLearnerDetail>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/`);
 }
 
-/** Save (or clear, with an empty signature) the employer's reusable signature. */
-export function saveEmployerSignature(
-  employerId: string,
-  input: { signature: string; name?: string },
-): Promise<{ savedSignature: SavedSignature }> {
-  return request<{ savedSignature: SavedSignature }>(`${BASE}/${employerId}/signature/`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
-}
 
 /**
  * Sign a review as the employer — the same endpoint the learner and admin use,
@@ -205,6 +191,28 @@ export function signAgreementAsEmployer(
 ): Promise<unknown> {
   return request(
     `/learner_api/apprenticeship-agreement/${learnerId}/sign/`,
+    { method: 'POST', body: JSON.stringify({ ...input, party: 'employer' }) },
+  );
+}
+
+/** The Training Plan is tripartite and has its own signing endpoint. */
+export function signTrainingPlanAsEmployer(
+  learnerId: string,
+  input: { name: string; signature: string },
+): Promise<unknown> {
+  return request(
+    `/learner_api/training-plan-document/${learnerId}/sign/`,
+    { method: 'POST', body: JSON.stringify({ ...input, party: 'employer' }) },
+  );
+}
+
+/** The Written Agreement is tripartite and has its own signing endpoint. */
+export function signWrittenAgreementAsEmployer(
+  learnerId: string,
+  input: { name: string; signature: string },
+): Promise<unknown> {
+  return request(
+    `/learner_api/written-agreement/${learnerId}/sign/`,
     { method: 'POST', body: JSON.stringify({ ...input, party: 'employer' }) },
   );
 }

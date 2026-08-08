@@ -34,6 +34,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from .learner_progression import advance_learner
+
 from .mappers import _s
 from .models import EnrolmentUser, IlrDocument
 
@@ -191,23 +193,6 @@ def _document_json(document):
     }
 
 
-def _saved_learner_signature(learner_id):
-    """The signature drawn during enrolment, offered as the learner's default."""
-    personal = _wizard_personal(learner_id)
-    if personal is None:
-        return {}
-    signature = _s(getattr(personal, "signature", ""))
-    if not signature.startswith("data:image/"):
-        return {}
-    return {
-        "signature": signature,
-        "name": " ".join(
-            p for p in (_s(personal.first_name), _s(personal.last_name)) if p
-        ),
-        "date": _iso(getattr(personal, "signature_date", None)),
-    }
-
-
 def _active_document(learner_kind, learner_id):
     return IlrDocument.objects.filter(
         learner_kind=learner_kind,
@@ -251,7 +236,6 @@ def ilr_document(request, pk):
         "learnerDetails": details,
         "answers": answers,
         "document": _document_json(document),
-        "savedLearnerSignature": _saved_learner_signature(learner.pk),
     })
 
 
@@ -341,8 +325,13 @@ def sign_ilr(request, pk):
 
         document.recalculate_signed()
         document.save()
+        promoted = advance_learner(learner)
     except DatabaseError as exc:
         logger.exception("sign_ilr: failed")
         return _error(f"Database error: {exc}", 502)
 
-    return JsonResponse({"document": _document_json(document)})
+    return JsonResponse({
+        "document": _document_json(document),
+        "programmeStatus": _s(learner.programme_status),
+        "programmeStatusChangedTo": promoted,
+    })

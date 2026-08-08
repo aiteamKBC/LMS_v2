@@ -20,17 +20,39 @@ import {
   type IlrResponse,
 } from '@/api/ilrDocument';
 import { buildIlrPdf, renderIlrPdf, ilrFilename } from '@/lib/ilrDocumentPdf';
+import {
+  fetchTrainingPlanDocument,
+  signTrainingPlanDocument,
+  type TrainingPlanResponse,
+} from '@/api/trainingPlanDocument';
+import {
+  buildTrainingPlanPdf,
+  renderTrainingPlanPdf,
+  trainingPlanFilename,
+} from '@/lib/trainingPlanPdf';
+import {
+  fetchWrittenAgreement,
+  signWrittenAgreement,
+  type WrittenAgreementResponse,
+} from '@/api/writtenAgreement';
+import {
+  buildWrittenAgreementPdf,
+  renderWrittenAgreementPdf,
+  writtenAgreementFilename,
+} from '@/lib/writtenAgreementPdf';
 import { DocumentCard, Field } from './DocumentCard';
 
 // ============================================================================
 // Compliance documents — the learner's statutory paperwork.
 //
-// Two documents today, each with its own table, signatories and lifecycle:
-//   * Apprenticeship Agreement — signed by the learner and their EMPLOYER.
-//   * Individual Learner Record — signed by the learner and the PROVIDER. The
-//     employer has no part in an ILR and never sees it.
+// Four documents, each with its own table, signatories and lifecycle:
+//   * Apprenticeship Agreement — learner + EMPLOYER.
+//   * Individual Learner Record — learner + PROVIDER. The employer has no part
+//     in an ILR and never sees it.
+//   * Training Plan — learner + employer + provider.
+//   * Written Agreement — learner + employer + provider.
 //
-// Both are issued by the provider, and both render their PDF on demand from the
+// All are issued by the provider, and each renders its PDF on demand from the
 // record so the file always carries the signatures actually on file.
 // ============================================================================
 
@@ -42,6 +64,8 @@ export default function LearnerCompliancePage() {
 
   const [agreementData, setAgreementData] = useState<AgreementResponse | null>(null);
   const [ilrData, setIlrData] = useState<IlrResponse | null>(null);
+  const [planData, setPlanData] = useState<TrainingPlanResponse | null>(null);
+  const [writtenData, setWrittenData] = useState<WrittenAgreementResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -50,9 +74,16 @@ export default function LearnerCompliancePage() {
     setLoading(true);
     setError('');
     try {
-      const [agreement, ilr] = await Promise.all([fetchAgreement(id), fetchIlrDocument(id)]);
+      const [agreement, ilr, plan, written] = await Promise.all([
+        fetchAgreement(id),
+        fetchIlrDocument(id),
+        fetchTrainingPlanDocument(id),
+        fetchWrittenAgreement(id),
+      ]);
       setAgreementData(agreement);
       setIlrData(ilr);
+      setPlanData(plan);
+      setWrittenData(written);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not load your compliance documents.');
     } finally {
@@ -83,12 +114,46 @@ export default function LearnerCompliancePage() {
   };
   const ilrShown = ilr ? ilr.learnerDetails : ilrData?.learnerDetails;
 
+  // ---- Training Plan ----
+  const plan = planData?.document ?? null;
+  const planPdf = () => {
+    if (!planData) return null;
+    return plan
+      ? renderTrainingPlanPdf(plan)
+      : buildTrainingPlanPdf(
+          planData.programme,
+          planData.employment,
+          planData.learningPlan,
+          planData.otjh,
+          planData.epa,
+          planData.contacts,
+        );
+  };
+  const planShown = plan ? plan.programme : planData?.programme;
+  const planRows = plan ? plan.learningPlan : planData?.learningPlan ?? [];
+
+  // ---- Written Agreement ----
+  const written = writtenData?.document ?? null;
+  const writtenPdf = () => {
+    if (!writtenData) return null;
+    return written
+      ? renderWrittenAgreementPdf(written)
+      : buildWrittenAgreementPdf(
+          writtenData.particulars,
+          writtenData.delivery,
+          writtenData.epa,
+          writtenData.costs,
+          writtenData.contacts,
+        );
+  };
+  const writtenShown = written ? written.particulars : writtenData?.particulars;
+
   const openPdf = (doc: ReturnType<typeof agreementPdf>) => {
     if (doc) window.open(doc.output('bloburl'), '_blank', 'noopener');
   };
 
   const sign = async (
-    kind: 'agreement' | 'ilr',
+    kind: 'agreement' | 'ilr' | 'plan' | 'written',
     mark: string,
     name: string,
     otherParty: string,
@@ -100,6 +165,8 @@ export default function LearnerCompliancePage() {
     setBusy(true);
     try {
       if (kind === 'agreement') await signAgreement(id, 'apprentice', name, mark);
+      else if (kind === 'plan') await signTrainingPlanDocument(id, 'apprentice', name, mark);
+      else if (kind === 'written') await signWrittenAgreement(id, 'learner', name, mark);
       else await signIlrDocument(id, 'learner', name, mark);
       toast.success('Signed', `Your ${otherParty} still needs to sign this document.`);
       await load();
@@ -143,8 +210,6 @@ export default function LearnerCompliancePage() {
               learner={agreement?.signatures.apprentice}
               other={agreement?.signatures.employer}
               otherLabel="Employer"
-              savedSignature={agreementData?.savedLearnerSignature?.signature}
-              savedSignatureDate={agreementData?.savedLearnerSignature?.date}
               signatoryName={agreementName}
               busy={busy}
               fmtDate={fmtAgreementDate}
@@ -186,8 +251,6 @@ export default function LearnerCompliancePage() {
               learner={ilr?.signatures.learner}
               other={ilr?.signatures.provider}
               otherLabel="Provider"
-              savedSignature={ilrData?.savedLearnerSignature?.signature}
-              savedSignatureDate={ilrData?.savedLearnerSignature?.date}
               signatoryName={ilrData?.learner.name}
               busy={busy}
               fmtDate={fmtAgreementDate}
@@ -206,6 +269,89 @@ export default function LearnerCompliancePage() {
                     <Field label="National insurance number" value={ilrShown.nationalInsuranceNumber ?? ''} />
                     <Field label="Sex" value={ilrShown.sex ?? ''} />
                     <Field label="Telephone" value={ilrShown.telephone ?? ''} />
+                  </>
+                )
+              }
+            />
+
+            <DocumentCard
+              title="Training Plan"
+              blurb="How you, your employer and your training provider will each support your apprenticeship, together with the learning plan and off-the-job hours that deliver it."
+              signedBy="You, your employer and your training provider"
+              issued={Boolean(plan)}
+              fullySigned={Boolean(plan?.fullySigned)}
+              learner={plan?.signatures.apprentice}
+              other={plan?.signatures.employer}
+              otherLabel="Employer"
+              third={plan?.signatures.provider}
+              thirdLabel="Provider"
+              signatoryName={planData?.learner.name}
+              busy={busy}
+              fmtDate={fmtAgreementDate}
+              onPreview={() => openPdf(planPdf())}
+              onDownload={() => planPdf()?.save(trainingPlanFilename(planData?.learner.name || ''))}
+              onSign={(mark) => void sign('plan', mark, planData?.learner.name || '', 'employer and provider')}
+              fields={
+                planShown && (
+                  <>
+                    <Field label="Programme" value={planShown.programme ?? ''} />
+                    <Field label="Start date" value={fmtAgreementDate(planShown.startDate)} />
+                    <Field label="End date" value={fmtAgreementDate(planShown.endDate)} />
+                    <Field
+                      label="Duration of practical period"
+                      value={planShown.durationWeeks != null ? `${planShown.durationWeeks} weeks` : ''}
+                    />
+                    <Field
+                      label="ILR planned hours"
+                      value={planShown.ilrPlannedHours != null ? `${planShown.ilrPlannedHours} hours` : ''}
+                    />
+                    <Field
+                      label="Learning plan"
+                      value={planRows.length ? `${planRows.length} activities` : ''}
+                    />
+                  </>
+                )
+              }
+            />
+
+            <DocumentCard
+              title="Written Agreement"
+              blurb="The agreement between your employer and your training provider: what will be delivered, the end-point assessment arrangements, and the costs against the funding band."
+              signedBy="You, your employer and your training provider"
+              issued={Boolean(written)}
+              fullySigned={Boolean(written?.fullySigned)}
+              learner={written?.signatures.learner}
+              other={written?.signatures.employer}
+              otherLabel="Employer"
+              third={written?.signatures.provider}
+              thirdLabel="Provider"
+              signatoryName={writtenData?.learner.name}
+              busy={busy}
+              fmtDate={fmtAgreementDate}
+              onPreview={() => openPdf(writtenPdf())}
+              onDownload={() => writtenPdf()?.save(writtenAgreementFilename(writtenData?.learner.name || ''))}
+              onSign={(mark) => void sign('written', mark, writtenData?.learner.name || '', 'employer and provider')}
+              fields={
+                writtenShown && (
+                  <>
+                    <Field label="Apprentice" value={writtenShown.apprenticeName ?? ''} />
+                    <Field label="Apprenticeship title" value={writtenShown.apprenticeshipTitle ?? ''} />
+                    <Field label="Main provider" value={writtenShown.mainProvider ?? ''} />
+                    <Field label="Start date" value={fmtAgreementDate(writtenShown.startDate)} />
+                    <Field label="Planned end date" value={fmtAgreementDate(writtenShown.plannedEndDate)} />
+                    <Field
+                      label="Planned off-the-job training"
+                      value={
+                        (written ?? writtenData)?.delivery?.totalOtjHours != null
+                          ? `${(written ?? writtenData)!.delivery.totalOtjHours} hours`
+                          : ''
+                      }
+                      hint={
+                        writtenData?.meta.activityCount
+                          ? `across ${writtenData.meta.activityCount} delivery activities`
+                          : undefined
+                      }
+                    />
                   </>
                 )
               }

@@ -4,8 +4,6 @@
         -> the employer, their learners, and each learner's outstanding signatures
     GET  /learner_api/employer-portal/<employer_id>/learner/<kind>/<learner_id>/
         -> one learner: details, performance summary, and their signable documents
-    POST /learner_api/employer-portal/<employer_id>/signature/
-        -> save the employer's own reusable signature
 
 An employer is a person at one or more organisations (enrolment."Employers").
 Their learners are the ones whose "Employer_id" points at them — the reference
@@ -137,6 +135,87 @@ def _agreement_signing_rows(kind, learner_id):
     }]
 
 
+def _training_plan_signing_rows(kind, learner_id):
+    """The learner's active Training Plan, as a signable row.
+
+    Signed by all three parties; the employer is one of them, so it appears in
+    their queue alongside the reviews and the apprenticeship agreement.
+    """
+    from .models import TrainingPlanDocument
+
+    try:
+        plan = TrainingPlanDocument.objects.filter(
+            learner_kind=kind,
+            learner_id=learner_id,
+            status=TrainingPlanDocument.STATUS_ACTIVE,
+        ).first()
+    except DatabaseError:
+        logger.exception("_training_plan_signing_rows: lookup failed for %s/%s", kind, learner_id)
+        return []
+    if plan is None:
+        return []
+
+    return [{
+        "kind": "training-plan",
+        "id": str(plan.id),
+        "docType": "training-plan",
+        "label": "Training Plan",
+        "generatedAt": _iso(plan.created_at),
+        "signable": True,
+        "signed": plan.employer_signed,
+        "signedName": _s(plan.employer_signed_name),
+        "signedAt": _iso(plan.employer_signed_at),
+        # All three parties, so the employer can see who else is outstanding.
+        "parties": ["learner", "employer", "provider"],
+        "learnerSigned": plan.apprentice_signed,
+        "learnerSignedName": _s(plan.apprentice_signed_name),
+        "learnerSignedAt": _iso(plan.apprentice_signed_at),
+        "providerSigned": plan.provider_signed,
+        "providerSignedName": _s(plan.provider_signed_name),
+        "providerSignedAt": _iso(plan.provider_signed_at),
+    }]
+
+
+def _written_agreement_signing_rows(kind, learner_id):
+    """The learner's active Written Agreement, as a signable row.
+
+    Signed by the learner, the employer and the provider — the employer is one
+    of the three, so it appears in their queue.
+    """
+    from .models import WrittenAgreement
+
+    try:
+        doc = WrittenAgreement.objects.filter(
+            learner_kind=kind,
+            learner_id=learner_id,
+            status=WrittenAgreement.STATUS_ACTIVE,
+        ).first()
+    except DatabaseError:
+        logger.exception("_written_agreement_signing_rows: lookup failed for %s/%s", kind, learner_id)
+        return []
+    if doc is None:
+        return []
+
+    return [{
+        "kind": "written-agreement",
+        "id": str(doc.id),
+        "docType": "written-agreement",
+        "label": "Written Agreement",
+        "generatedAt": _iso(doc.created_at),
+        "signable": True,
+        "signed": doc.employer_signed,
+        "signedName": _s(doc.employer_signed_name),
+        "signedAt": _iso(doc.employer_signed_at),
+        "parties": ["learner", "employer", "provider"],
+        "learnerSigned": doc.learner_signed,
+        "learnerSignedName": _s(doc.learner_signed_name),
+        "learnerSignedAt": _iso(doc.learner_signed_at),
+        "providerSigned": doc.provider_signed,
+        "providerSignedName": _s(doc.provider_signed_name),
+        "providerSignedAt": _iso(doc.provider_signed_at),
+    }]
+
+
 def _document_signing_rows(kind, learner_id):
     """The learner's generated compliance PDFs, with employer sign-off state.
 
@@ -149,7 +228,11 @@ def _document_signing_rows(kind, learner_id):
 
     from enrolment_api.documents import SIGNING_PARTIES
 
-    rows_out = _agreement_signing_rows(kind, learner_id)
+    rows_out = (
+        _agreement_signing_rows(kind, learner_id)
+        + _training_plan_signing_rows(kind, learner_id)
+        + _written_agreement_signing_rows(kind, learner_id)
+    )
 
     try:
         ensure_enrolment_documents_table()
@@ -212,18 +295,6 @@ def _employer_or_404(employer_id):
         return None, _error(f"Database error: {exc}", 502)
 
 
-def _saved_signature(employer):
-    """The employer's reusable signature, offered as the default when signing."""
-    signature = _s(employer.signature)
-    if not signature.startswith("data:image/"):
-        return {}
-    return {
-        "signature": signature,
-        "name": _s(employer.signature_name) or employer.full_name,
-        "date": _iso(employer.signature_date),
-    }
-
-
 def _learner_cards(employer_id):
     """One card per learner belonging to this employer, across both kinds.
 
@@ -282,7 +353,6 @@ def employer_portal(request, employer_id):
     return JsonResponse({
         "employer": {
             **to_employer_row(employer),
-            "savedSignature": _saved_signature(employer),
         },
         "learners": cards,
         "outstandingTotal": sum(c["outstandingCount"] for c in cards),
@@ -328,7 +398,6 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
         "employer": {
             "id": str(employer.pk),
             "name": employer.full_name,
-            "savedSignature": _saved_signature(employer),
         },
         "learner": {
             "id": str(learner.pk),
@@ -419,45 +488,3 @@ def _performance(kind, learner):
     return summary
 
 
-@csrf_exempt
-def employer_signature(request, employer_id):
-    """Save (or clear) the employer's reusable signature.
-
-        POST {"signature": "data:image/png;base64,...", "name": "..."}
-
-    Stored on their own row so it can be offered as the default next time,
-    exactly as a learner's enrolment signature is. Posting an empty signature
-    clears it.
-    """
-    if request.method != "POST":
-        return _error("Method not allowed.", 405)
-
-    employer, err = _employer_or_404(employer_id)
-    if err:
-        return err
-
-    try:
-        payload = _parse_body(request)
-    except Exception:  # noqa: BLE001 - _parse_body raises ValidationError
-        return _error("Invalid JSON body.", 400)
-
-    signature = _s(payload.get("signature"))
-    name = _s(payload.get("name")) or employer.full_name
-    if signature:
-        if len(signature) > MAX_SIGNATURE_CHARS:
-            return _error("That signature image is too large.", 400)
-        if not signature.startswith("data:image/"):
-            return _error("signature must be a PNG data URL.", 400)
-
-    try:
-        employer.signature = signature
-        employer.signature_name = name if signature else ""
-        employer.signature_date = timezone.now() if signature else None
-        employer.save(update_fields=[
-            "signature", "signature_name", "signature_date", "updated_at",
-        ])
-    except DatabaseError as exc:
-        logger.exception("employer_signature: save failed")
-        return _error(f"Database error: {exc}", 502)
-
-    return JsonResponse({"savedSignature": _saved_signature(employer)})

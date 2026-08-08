@@ -159,6 +159,47 @@ class DatabaseAliasCheckTests(SimpleTestCase):
             ["learner_api.W002"],
         )
 
+    def test_silent_when_only_the_port_representation_differs(self):
+        # The two aliases are built by different code paths: `default` normalises
+        # a missing port to "5432" while database_from_url leaves it empty. Same
+        # endpoint, different repr -- this warned on every normal startup until
+        # the port was normalised, which is how a check gets ignored.
+        self.assertEqual(
+            self._run(
+                USE_SQLITE_FOR_TESTS=False,
+                DATABASES={
+                    "default": {**self._PG, "PORT": "5432"},
+                    "enrolment": {**self._PG, "PORT": ""},
+                },
+            ),
+            [],
+        )
+
+    def test_silent_when_host_case_or_whitespace_differs(self):
+        self.assertEqual(
+            self._run(
+                USE_SQLITE_FOR_TESTS=False,
+                DATABASES={
+                    "default": {**self._PG, "HOST": "A.Neon.Tech "},
+                    "enrolment": {**self._PG, "HOST": "a.neon.tech"},
+                },
+            ),
+            [],
+        )
+
+    def test_still_warns_when_the_port_genuinely_differs(self):
+        # Normalising must not swallow a real difference.
+        self.assertEqual(
+            self._run(
+                USE_SQLITE_FOR_TESTS=False,
+                DATABASES={
+                    "default": {**self._PG, "PORT": "5432"},
+                    "enrolment": {**self._PG, "PORT": "6543"},
+                },
+            ),
+            ["learner_api.W002"],
+        )
+
     def test_warns_when_enrolment_alias_is_missing(self):
         self.assertEqual(
             self._run(USE_SQLITE_FOR_TESTS=False, DATABASES={"default": self._PG}),

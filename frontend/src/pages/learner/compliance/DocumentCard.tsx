@@ -5,8 +5,8 @@ import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 // One compliance document on the learner's page.
 //
 // Every statutory document behaves the same way from the learner's side: the
-// provider issues it, they see the particulars, they sign it (reusing the
-// signature captured during enrolment), and they can preview or download it.
+// provider issues it, they see the particulars, they sign it in their own name,
+// and they can preview or download it.
 // Only the fields shown and the other signing party differ — so that varies by
 // prop rather than by a second copy of this markup.
 // ============================================================================
@@ -30,10 +30,11 @@ interface Props {
   /** The other party (employer or provider), for the status line. */
   other?: PartyState;
   otherLabel: string;
+  /** A third signatory, for tripartite documents like the Training Plan. */
+  third?: PartyState;
+  thirdLabel?: string;
   /** Field rows shown above the signature state. */
   fields: ReactNode;
-  savedSignature?: string;
-  savedSignatureDate?: string | null;
   /** The learner's name — they sign as themselves, not as the logged-in account. */
   signatoryName?: string;
   busy: boolean;
@@ -52,9 +53,9 @@ export function DocumentCard({
   learner,
   other,
   otherLabel,
+  third,
+  thirdLabel,
   fields,
-  savedSignature,
-  savedSignatureDate,
   signatoryName,
   busy,
   onPreview,
@@ -63,11 +64,9 @@ export function DocumentCard({
   fmtDate,
 }: Props) {
   const [signing, setSigning] = useState(false);
-  const [redrawing, setRedrawing] = useState(false);
 
   const sign = (mark: string) => {
     setSigning(false);
-    setRedrawing(false);
     onSign(mark);
   };
 
@@ -106,6 +105,9 @@ export function DocumentCard({
         <div className="flex flex-wrap items-center gap-4 border-t border-foreground-200/50 px-5 py-3 text-[12px]">
           <SignState label="You" signed={Boolean(learner?.signed)} at={learner?.signedAt} fmtDate={fmtDate} />
           <SignState label={otherLabel} signed={Boolean(other?.signed)} at={other?.signedAt} fmtDate={fmtDate} />
+          {thirdLabel && (
+            <SignState label={thirdLabel} signed={Boolean(third?.signed)} at={third?.signedAt} fmtDate={fmtDate} />
+          )}
         </div>
       )}
 
@@ -138,61 +140,19 @@ export function DocumentCard({
         )}
       </div>
 
-      {/* The learner signed during enrolment, so that mark is the default here
-          and signing under a different name is the fallback. */}
+      {/* Signing produces the learner's own name in a script face — the same
+          mark every time, so there is nothing saved to pick from. */}
       {issued && signing && (
         <div className="border-t border-foreground-200/50 p-5 space-y-3">
           <p className="text-[12px] text-foreground-500">
             Sign below to confirm you agree to these details.
           </p>
 
-          {savedSignature && !redrawing ? (
-            <div className="space-y-3">
-              <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-3">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">
-                  Your saved signature
-                </p>
-                <img src={savedSignature} alt="Your saved signature" className="mt-2 max-h-24 object-contain" />
-                {savedSignatureDate && (
-                  <p className="mt-1 text-[11px] text-foreground-400">
-                    Captured during enrolment on {fmtDate(savedSignatureDate)}
-                  </p>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={() => sign(savedSignature)}
-                  disabled={busy}
-                  className="rounded-lg bg-primary-500 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-primary-600 cursor-pointer disabled:opacity-50"
-                >
-                  {busy ? 'Signing…' : 'Use this signature'}
-                </button>
-                <button
-                  onClick={() => setRedrawing(true)}
-                  disabled={busy}
-                  className="rounded-lg border border-foreground-200 px-3 py-1.5 text-[12px] font-medium text-foreground-600 hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer"
-                >
-                  Sign with a different name
-                </button>
-                <button
-                  onClick={() => setSigning(false)}
-                  disabled={busy}
-                  className="rounded-lg border border-foreground-200 px-3 py-1.5 text-[12px] font-medium text-foreground-600 hover:bg-background-100 cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <SignaturePad
-              defaultName={signatoryName}
-              onCommit={(dataUrl) => sign(dataUrl)}
-              onCancel={() => {
-                setSigning(false);
-                setRedrawing(false);
-              }}
-            />
-          )}
+          <SignaturePad
+            signatoryName={signatoryName}
+            onCommit={(dataUrl) => sign(dataUrl)}
+            onCancel={() => setSigning(false)}
+          />
         </div>
       )}
     </section>

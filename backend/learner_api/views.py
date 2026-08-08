@@ -21,6 +21,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .active_users import cohort_dates, replace_training_plan, sync_active_user
 from .identity import learner_profile_for_source
+from .learner_progression import ACTIVE_STATUS, advance_learner
 from .constants import (
     STATUS_CHOICES,
     TYPE_CHOICES,
@@ -312,7 +313,12 @@ def enrolment_users(request):
                 qs = qs.exclude(learner_type="commercial")
             elif wanted == "commercial":
                 qs = qs.filter(learner_type="commercial")
-            rows = [to_list_row(u) for u in qs.order_by("id")]
+            learners = list(qs.order_by("id"))
+            # A date can arrive without any signing action, so make normal
+            # enrolment reads a safe, idempotent backstop for the daily sweep.
+            for learner in learners:
+                advance_learner(learner)
+            rows = [to_list_row(u) for u in learners]
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse({"count": len(rows), "results": rows})
@@ -383,6 +389,7 @@ def enrolment_user_detail(request, pk):
         learner_kind = str(getattr(user, "learner_type", "") or "").strip() or "apprenticeship"
         if promote_learner_if_ready(learner_kind, user.pk):
             user.refresh_from_db()
+        advance_learner(user)
         return JsonResponse(to_board(user))
     if request.method in ("PATCH", "PUT"):
         try:
@@ -396,6 +403,7 @@ def enrolment_user_detail(request, pk):
                 setattr(user, attr, value)
             if fields:
                 user.save(update_fields=list(fields.keys()))
+                advance_learner(user)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
         return JsonResponse(to_board(user))
@@ -404,7 +412,7 @@ def enrolment_user_detail(request, pk):
 
 @csrf_exempt
 def enrolment_user_finish(request, pk):
-    """Promote an enrolled learner into the live learner tables.
+    """Check whether an enrolled learner is ready for automatic activation.
 
         POST /learner_api/enrolment-users/<id>/finish/  -> EnrolmentBoard
 
@@ -433,10 +441,15 @@ def enrolment_user_finish(request, pk):
         return _error("This learner needs an email address before enrolment can be finished.", 400)
 
     try:
-        # Active is what makes sync_active_user build the plan/KSB child rows,
-        # so the status is set on the source row first and then mirrored.
-        user.programme_status = "Active"
-        user.save(update_fields=["programme_status"])
+        # Programme activation is evidence/date driven. This legacy endpoint is
+        # kept for the UI, but cannot bypass unsigned documents or a future
+        # start date.
+        advance_learner(user)
+        if str(user.programme_status or "").strip() != ACTIVE_STATUS:
+            return _error(
+                "This learner becomes Active automatically once every compliance document is signed and the programme start date has arrived.",
+                409,
+            )
         learner = sync_active_user(user)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)

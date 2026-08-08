@@ -1471,3 +1471,163 @@ class IlrDocument(models.Model):
 
     def __str__(self):
         return f"ILR for {self.learner_kind}:{self.learner_id}"
+
+
+class TrainingPlanDocument(models.Model):
+    """The tripartite Training Plan.
+
+    Sets out how the apprentice, the employer and the training provider will
+    each support the apprenticeship, and carries the learning plan that delivers
+    it. All THREE parties sign — unlike the Apprenticeship Agreement (apprentice
+    + employer) or the ILR (learner + provider).
+
+    Each party signs with a name AND a position, which the form prints.
+
+    Content is SNAPSHOT at issue, like the other two documents: editing the
+    learning plan afterwards must not rewrite what three parties signed.
+
+    Table created by the apply_training_plans_table command.
+    """
+
+    STATUS_ACTIVE = "active"
+    STATUS_SUPERSEDED = "superseded"
+
+    id = models.UUIDField(primary_key=True, db_column="id", default=uuid.uuid4, editable=False)
+
+    learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
+    learner_id = models.BigIntegerField(db_column="Learner_id")
+
+    # ---- Frozen content ----
+    programme = SafeJSONField(db_column="Programme", null=True, blank=True)
+    employment = SafeJSONField(db_column="Employment", null=True, blank=True)
+    learning_plan = SafeJSONField(db_column="Learning_plan", null=True, blank=True)
+    otjh = SafeJSONField(db_column="Otjh", null=True, blank=True)
+    epa = SafeJSONField(db_column="Epa", null=True, blank=True)
+    contacts = SafeJSONField(db_column="Contacts", null=True, blank=True)
+
+    # ---- Signatories ----
+    apprentice_signature = models.TextField(db_column="Apprentice_signature", blank=True, default="")
+    apprentice_signed_name = models.TextField(db_column="Apprentice_signed_name", blank=True, default="")
+    apprentice_position = models.TextField(db_column="Apprentice_position", blank=True, default="")
+    apprentice_signed_at = models.DateTimeField(db_column="Apprentice_signed_at", null=True, blank=True)
+    employer_signature = models.TextField(db_column="Employer_signature", blank=True, default="")
+    employer_signed_name = models.TextField(db_column="Employer_signed_name", blank=True, default="")
+    employer_position = models.TextField(db_column="Employer_position", blank=True, default="")
+    employer_signed_at = models.DateTimeField(db_column="Employer_signed_at", null=True, blank=True)
+    provider_signature = models.TextField(db_column="Provider_signature", blank=True, default="")
+    provider_signed_name = models.TextField(db_column="Provider_signed_name", blank=True, default="")
+    provider_position = models.TextField(db_column="Provider_position", blank=True, default="")
+    provider_signed_at = models.DateTimeField(db_column="Provider_signed_at", null=True, blank=True)
+
+    fully_signed = models.BooleanField(db_column="Fully_signed", default=False)
+
+    status = models.CharField(db_column="Status", max_length=32, default=STATUS_ACTIVE)
+    created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
+    updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'enrolment"."Training_Plan_Documents'
+        ordering = ("-created_at",)
+
+    @property
+    def apprentice_signed(self):
+        return bool((self.apprentice_signature or "").strip())
+
+    @property
+    def employer_signed(self):
+        return bool((self.employer_signature or "").strip())
+
+    @property
+    def provider_signed(self):
+        return bool((self.provider_signature or "").strip())
+
+    def recalculate_signed(self):
+        """All three parties must sign a Training Plan."""
+        self.fully_signed = (
+            self.apprentice_signed and self.employer_signed and self.provider_signed
+        )
+        return self.fully_signed
+
+    def __str__(self):
+        return f"Training Plan for {self.learner_kind}:{self.learner_id}"
+
+
+class WrittenAgreement(models.Model):
+    """The Written Agreement between the employer and the main provider.
+
+    Records the delivery the provider will give, the End Point Assessment
+    arrangements, the cost breakdown against the funding band, and the process
+    for queries and complaints.
+
+    The printed template is signed by the employer, the EPAO and the provider.
+    Here it is signed by the learner, the employer and the provider — the same
+    three parties as the Training Plan, so a learner signs all their paperwork
+    in one place. Each signs with a name and a job role.
+
+    Content is SNAPSHOT at issue, like the other three documents.
+
+    Table created by the apply_written_agreements_table command.
+    """
+
+    STATUS_ACTIVE = "active"
+    STATUS_SUPERSEDED = "superseded"
+
+    id = models.UUIDField(primary_key=True, db_column="id", default=uuid.uuid4, editable=False)
+
+    learner_kind = models.CharField(db_column="Learner_kind", max_length=32)
+    learner_id = models.BigIntegerField(db_column="Learner_id")
+
+    # ---- Frozen content ----
+    particulars = SafeJSONField(db_column="Particulars", null=True, blank=True)
+    delivery = SafeJSONField(db_column="Delivery", null=True, blank=True)
+    epa = SafeJSONField(db_column="Epa", null=True, blank=True)
+    costs = SafeJSONField(db_column="Costs", null=True, blank=True)
+    contacts = SafeJSONField(db_column="Contacts", null=True, blank=True)
+
+    # ---- Signatories ----
+    learner_signature = models.TextField(db_column="Learner_signature", blank=True, default="")
+    learner_signed_name = models.TextField(db_column="Learner_signed_name", blank=True, default="")
+    learner_position = models.TextField(db_column="Learner_position", blank=True, default="")
+    learner_signed_at = models.DateTimeField(db_column="Learner_signed_at", null=True, blank=True)
+    employer_signature = models.TextField(db_column="Employer_signature", blank=True, default="")
+    employer_signed_name = models.TextField(db_column="Employer_signed_name", blank=True, default="")
+    employer_position = models.TextField(db_column="Employer_position", blank=True, default="")
+    employer_signed_at = models.DateTimeField(db_column="Employer_signed_at", null=True, blank=True)
+    provider_signature = models.TextField(db_column="Provider_signature", blank=True, default="")
+    provider_signed_name = models.TextField(db_column="Provider_signed_name", blank=True, default="")
+    provider_position = models.TextField(db_column="Provider_position", blank=True, default="")
+    provider_signed_at = models.DateTimeField(db_column="Provider_signed_at", null=True, blank=True)
+
+    fully_signed = models.BooleanField(db_column="Fully_signed", default=False)
+
+    status = models.CharField(db_column="Status", max_length=32, default=STATUS_ACTIVE)
+    created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
+    updated_at = models.DateTimeField(db_column="Updated_at", auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'enrolment"."Written_Agreements'
+        ordering = ("-created_at",)
+
+    @property
+    def learner_signed(self):
+        return bool((self.learner_signature or "").strip())
+
+    @property
+    def employer_signed(self):
+        return bool((self.employer_signature or "").strip())
+
+    @property
+    def provider_signed(self):
+        return bool((self.provider_signature or "").strip())
+
+    def recalculate_signed(self):
+        """All three parties must sign."""
+        self.fully_signed = (
+            self.learner_signed and self.employer_signed and self.provider_signed
+        )
+        return self.fully_signed
+
+    def __str__(self):
+        return f"Written Agreement for {self.learner_kind}:{self.learner_id}"

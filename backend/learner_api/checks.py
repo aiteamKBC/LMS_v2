@@ -37,12 +37,21 @@ CROSS_SCHEMA_READERS = (
 )
 
 
+#: Postgres' default port. The two aliases are built by different code paths --
+#: `default` is assembled inline and normalises a missing port to "5432", while
+#: `enrolment` goes through database_from_url, which leaves it empty. Comparing
+#: the raw values reports every normal single-database setup as a split, so the
+#: port is normalised before comparison. A check that fires on every startup
+#: teaches people to ignore it, which is worse than not having it.
+_DEFAULT_PG_PORT = "5432"
+
+
 def _endpoint(config):
-    """The (host, port, name) a database alias resolves to."""
+    """The (host, port, name) a database alias resolves to, normalised."""
     return (
-        config.get("HOST") or "",
-        str(config.get("PORT") or ""),
-        config.get("NAME") or "",
+        (config.get("HOST") or "").strip().lower(),
+        str(config.get("PORT") or "").strip() or _DEFAULT_PG_PORT,
+        (config.get("NAME") or "").strip(),
     )
 
 

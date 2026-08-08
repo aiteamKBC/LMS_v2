@@ -149,9 +149,9 @@ export function updateEnrolmentUser(id: string, patch: Partial<CreateEnrolmentUs
 }
 
 /**
- * Finish enrolment: promote the learner out of enrolment."Created_users" into
- * the live learner tables, set them Active and start their journey. Until this
- * is called the learner exists only as an enrolment record.
+ * Check and complete an eligible learner's automatic activation. The server
+ * only makes a learner Active after all compliance documents are signed and
+ * their programme start date has arrived.
  */
 export function finishEnrolment(id: string): Promise<EnrolmentBoard> {
   return request<EnrolmentBoard>(`${BASE}/${id}/finish/`, { method: 'POST' });

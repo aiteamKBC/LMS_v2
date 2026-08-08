@@ -109,7 +109,6 @@ export interface ReviewSignatures {
    * they reuse it rather than drawing a new one. Empty object when they have none,
    * and omitted entirely from the documents list (which never renders it).
    */
-  savedLearnerSignature?: { signature?: string; name?: string; date?: string | null };
 }
 
 /** One KSB with the learner's Skills Radar self-assessment of it. */

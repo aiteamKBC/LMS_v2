@@ -5,12 +5,12 @@ import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import {
   fetchEmployerLearner,
-  saveEmployerSignature,
   signDocumentAsEmployer,
   signAgreementAsEmployer,
+  signTrainingPlanAsEmployer,
+  signWrittenAgreementAsEmployer,
   signReviewAsEmployer,
   type EmployerLearnerDetail,
-  type SavedSignature,
   type SignableItem,
 } from '@/api/employerPortal';
 import { fetchReviewForm } from '@/api/reviewForm';
@@ -48,42 +48,30 @@ function fmt(value: string | null | undefined) {
 /**
  * The sign-off dialog for one document.
  *
- * The saved signature is the default path and typing a name is the fallback, which is
- * the same arrangement SignReviewModal uses on the learner/admin side.
+ * The employer signs in their own name, set in a script face — there is nothing
+ * to draw and nothing saved to pick from, because the same name always produces
+ * the same mark.
  */
 function SignModal({
   item,
-  saved,
-  defaultName,
+  employerName,
   onClose,
   onSign,
 }: {
   item: SignableItem;
-  saved: SavedSignature;
-  defaultName: string;
+  employerName: string;
   onClose: () => void;
-  onSign: (name: string, signature: string, remember: boolean) => Promise<void>;
+  onSign: (name: string, signature: string) => Promise<void>;
 }) {
-  const savedSignature = saved.signature ?? '';
-  const [name, setName] = useState(item.signedName || saved.name || defaultName);
-  const [signature, setSignature] = useState(item.signed ? '' : savedSignature);
-  const [editing, setEditing] = useState(!savedSignature && !item.signed);
-  const [remember, setRemember] = useState(!savedSignature);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const usingSaved = !!savedSignature && signature === savedSignature;
-
-  const submit = async (clear = false) => {
+  const submit = async (signature: string) => {
     if (busy) return;
-    if (!clear && (!signature || !name.trim())) {
-      setErr('Add your name and a signature first.');
-      return;
-    }
     setBusy(true);
     setErr(null);
     try {
-      await onSign(clear ? '' : name.trim(), clear ? '' : signature, !clear && remember);
+      await onSign(signature ? employerName : '', signature);
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Could not save the signature.');
@@ -107,63 +95,11 @@ function SignModal({
         </header>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          <label className="block">
-            <span className="text-[12px] text-foreground-700 block mb-1">Full name <span className="text-red-500">*</span></span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2.5 py-2 text-[13px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40"
-            />
-          </label>
-
-          <div>
-            <p className="text-[12px] text-foreground-700 mb-2">Employer signature <span className="text-red-500">*</span></p>
-            {editing ? (
-              <>
-                <SignaturePad
-                  onCommit={(url) => { setSignature(url); setEditing(false); }}
-                  onCancel={() => setEditing(false)}
-                />
-                {savedSignature && (
-                  <button
-                    onClick={() => { setSignature(savedSignature); setEditing(false); }}
-                    className="text-[12px] text-primary-600 hover:underline inline-flex items-center gap-1 mt-2"
-                  >
-                    <i className="ri-arrow-go-back-line" />Use my saved signature instead
-                  </button>
-                )}
-              </>
-            ) : signature ? (
-              <div>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <img src={signature} alt="Employer signature" className="h-16 max-w-[280px] object-contain px-3 py-2 border border-foreground-200 rounded-lg bg-white" />
-                  <button onClick={() => setEditing(true)} className="text-[12px] text-primary-600 hover:underline inline-flex items-center gap-1">
-                    <i className="ri-pen-nib-line" />Sign with a different name
-                  </button>
-                </div>
-                {usingSaved && (
-                  <p className="text-[11px] text-emerald-700 mt-1.5">
-                    <i className="ri-check-line mr-1" />Using your saved signature
-                    {saved.date ? ` (${fmt(saved.date)})` : ''}.
-                  </p>
-                )}
-                {!usingSaved && (
-                  <label className="flex items-center gap-2 text-[12px] text-foreground-600 mt-2 cursor-pointer">
-                    <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="accent-primary-500" />
-                    Save this signature for next time
-                  </label>
-                )}
-              </div>
-            ) : (
-              <button
-                onClick={() => setEditing(true)}
-                className="w-full h-24 border-2 border-dashed border-foreground-200 rounded-lg flex flex-col items-center justify-center text-foreground-400 hover:border-primary-300 hover:text-primary-500"
-              >
-                <i className="ri-pen-nib-line text-2xl mb-1" />
-                <span className="text-[12px]">Add a signature</span>
-              </button>
-            )}
-          </div>
+          <SignaturePad
+            signatoryName={employerName}
+            onCommit={(url) => { void submit(url); }}
+            onCancel={onClose}
+          />
 
           <p className="text-[11px] text-foreground-500 leading-relaxed">
             By signing you confirm the details recorded in this document are accurate.
@@ -171,21 +107,17 @@ function SignModal({
           </p>
 
           {err && <p className="text-[11px] text-red-600"><i className="ri-error-warning-line mr-1" />{err}</p>}
-        </div>
 
-        <footer className="flex items-center justify-between gap-2 px-5 py-4 border-t border-foreground-100 shrink-0">
-          {item.signed ? (
-            <button onClick={() => submit(true)} disabled={busy} className="text-[12px] font-semibold text-red-600 hover:underline disabled:opacity-60">
+          {item.signed && (
+            <button
+              onClick={() => void submit('')}
+              disabled={busy}
+              className="text-[12px] font-semibold text-red-600 hover:underline disabled:opacity-60"
+            >
               Remove signature
             </button>
-          ) : <span />}
-          <span className="flex items-center gap-2">
-            <button onClick={onClose} disabled={busy} className={btnSecondary}>Cancel</button>
-            <button onClick={() => submit()} disabled={busy} className={btnPrimary}>
-              {busy ? <><i className="ri-loader-4-line animate-spin" />Signing…</> : <><i className="ri-pen-nib-line" />Sign</>}
-            </button>
-          </span>
-        </footer>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -274,6 +206,7 @@ function DocumentRow({
         ) : (
           <PartyChips
             learner={item.parties?.includes('learner') ? Boolean(item.learnerSigned) : undefined}
+            admin={item.parties?.includes('provider') ? Boolean(item.providerSigned) : undefined}
             employer={item.parties?.includes('employer') !== false ? item.signed : undefined}
           />
         )}
@@ -334,23 +267,22 @@ export default function EmployerLearnerPage() {
 
   useEffect(load, [employerId, kind, learnerId]);
 
-  const handleSign = async (name: string, signature: string, remember: boolean) => {
+  const handleSign = async (name: string, signature: string) => {
     if (!signing) return;
     if (signing.kind === 'review') {
       await signReviewAsEmployer(kind, learnerId, signing.eventKey, { name, signature });
+    } else if (signing.kind === 'written-agreement') {
+      await signWrittenAgreementAsEmployer(learnerId, { name, signature });
+    } else if (signing.kind === 'training-plan') {
+      await signTrainingPlanAsEmployer(learnerId, { name, signature });
     } else if (signing.kind === 'agreement') {
       // Its own table, its own endpoint — see apprenticeship_agreement.py.
       await signAgreementAsEmployer(learnerId, { name, signature });
     } else {
       await signDocumentAsEmployer(kind, learnerId, signing.id, { name, signature });
     }
-    // Saving the reusable signature is secondary — a failure here must not look
-    // like the document itself failed to sign, so it's deliberately swallowed.
-    if (remember && signature) {
-      try {
-        await saveEmployerSignature(employerId, { signature, name });
-      } catch { /* the document is signed; the convenience copy just isn't kept */ }
-    }
+    // No reusable copy is kept: the employer's name always produces the same
+    // mark, so there is nothing to save and nothing to go stale.
     success(signature ? 'Signed' : 'Signature removed', signing.label);
     load();
   };
@@ -520,8 +452,7 @@ export default function EmployerLearnerPage() {
       {signing && data && (
         <SignModal
           item={signing}
-          saved={data.employer.savedSignature}
-          defaultName={data.employer.name}
+          employerName={data.employer.name}
           onClose={() => setSigning(null)}
           onSign={handleSign}
         />

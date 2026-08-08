@@ -57,12 +57,6 @@ export interface Agreement {
   document: { path: string; sizeBytes: number | null; stored: boolean };
 }
 
-export interface SavedSignature {
-  signature?: string;
-  name?: string;
-  date?: string | null;
-}
-
 export interface AgreementResponse {
   learner: {
     id: string;
@@ -77,8 +71,6 @@ export interface AgreementResponse {
   meta: { datesFrom: string; moduleCount: number };
   /** Null until one has been issued. */
   agreement: Agreement | null;
-  savedLearnerSignature?: SavedSignature;
-  savedEmployerSignature?: SavedSignature;
 }
 
 async function readJson<T>(res: Response): Promise<T> {

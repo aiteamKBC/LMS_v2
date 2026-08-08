@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, learner_detail, learning_plan, lms_schema, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
 
 urlpatterns = [
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
@@ -32,6 +32,15 @@ urlpatterns = [
     path("ilr-document/<int:pk>/", ilr_document.ilr_document, name="ilr-document"),
     path("ilr-document/<int:pk>/issue/", ilr_document.issue_ilr, name="ilr-document-issue"),
     path("ilr-document/<int:pk>/sign/", ilr_document.sign_ilr, name="ilr-document-sign"),
+    # The tripartite Training Plan: signed by the apprentice, the employer and
+    # the training provider.
+    path("training-plan-document/<int:pk>/", training_plan_document.training_plan_document, name="training-plan-document"),
+    path("training-plan-document/<int:pk>/issue/", training_plan_document.issue_training_plan, name="training-plan-document-issue"),
+    path("training-plan-document/<int:pk>/sign/", training_plan_document.sign_training_plan, name="training-plan-document-sign"),
+    # The Written Agreement: signed by the learner, employer and provider.
+    path("written-agreement/<int:pk>/", written_agreement.written_agreement, name="written-agreement"),
+    path("written-agreement/<int:pk>/issue/", written_agreement.issue_written_agreement, name="written-agreement-issue"),
+    path("written-agreement/<int:pk>/sign/", written_agreement.sign_written_agreement, name="written-agreement-sign"),
     path("commercial-users/", views.commercial_users, name="commercial-users"),
     path("commercial-users/<int:pk>/", views.commercial_user_detail, name="commercial-user-detail"),
     path("staff-users/", views.staff_users, name="staff-users"),
@@ -46,7 +55,6 @@ urlpatterns = [
     # Declared before "employers/<int:pk>/" is irrelevant (different prefix), but
     # the signature route is declared before the learner route for clarity.
     path("employer-portal/<int:employer_id>/", employer_portal.employer_portal, name="employer-portal"),
-    path("employer-portal/<int:employer_id>/signature/", employer_portal.employer_signature, name="employer-portal-signature"),
     path(
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/",
         employer_portal.employer_portal_learner,
