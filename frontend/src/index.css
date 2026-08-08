@@ -3997,7 +3997,7 @@ table tbody td:last-child {
 .dashboard-theme .workspace-sidebar-desktop {
   width: 88px !important;
   padding: 0.75rem 0.5rem !important;
-  transition-duration: 320ms !important;
+  transition-duration: 500ms !important;
 }
 
 .dashboard-theme .workspace-sidebar-desktop[class*="w-[88px]"] {
