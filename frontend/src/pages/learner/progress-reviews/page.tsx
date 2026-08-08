@@ -499,29 +499,7 @@ export default function ProgressReviewsPage() {
         ) : reviews.length === 0 ? (
           <section className="rounded-2xl border border-background-200 bg-background-50 p-6"><Empty>No progress reviews have been created for this learner.</Empty></section>
         ) : (
-          <div className={`grid items-start gap-5 ${reviews.length > 1 ? 'lg:grid-cols-[300px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
-            {reviews.length > 1 && <aside className="rounded-2xl border border-background-200 bg-background-50 p-3 shadow-sm lg:sticky lg:top-4">
-              <div className="px-2 pb-3 pt-1">
-                <h2 className="text-sm font-bold text-foreground-900">All progress reviews</h2>
-                <p className="mt-0.5 text-xs text-foreground-400">Completed and planned sessions</p>
-              </div>
-              <div className="space-y-2">
-                {reviews.map((review) => {
-                  const active = selected?.id === review.id;
-                  return (
-                    <button key={review.id} type="button" onClick={() => { setSelectedId(review.id); setOpenSections(['learning']); }} className={`w-full rounded-xl border p-3.5 text-left transition ${active ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-50 hover:bg-background-100'}`}>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm font-bold text-foreground-900">Progress Review #{review.sequence}</span>
-                        <AppIcon className={`ri-arrow-right-s-line ${active ? 'text-primary-600' : 'text-foreground-300'}`} />
-                      </div>
-                      <p className="mt-1 text-xs text-foreground-500">{formatDate(reviewDate(review))}</p>
-                      <span className={`mt-2 inline-flex rounded-full border px-2 py-0.5 text-[9px] font-bold ${statusStyle(review.status)}`}>{statusLabel(review.status)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </aside>}
-
+          <div>
             <main className="space-y-4">
               <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_10px_35px_rgba(25,12,50,0.07)]">
                 <div className="relative overflow-hidden border-b border-white/10 bg-gradient-to-r from-[#10021f] via-primary-950 to-[#35105e] p-5 text-white sm:p-6">
