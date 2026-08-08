@@ -112,3 +112,55 @@ class EnrolmentReviewsDdlTests(SimpleTestCase):
     def test_employer_signed_index_exists(self):
         joined = " ".join(INDEXES_SQL)
         self.assertIn("enrolment_reviews_employer_signed_idx", joined)
+
+
+class CreatedUsersInstallPathTests(SimpleTestCase):
+    """P0-3: enrolment."Created_users" must be creatable on a clean database.
+
+    The CREATE used to sit *after* the check for the legacy Enrolment_Users
+    table, so a fresh install hit "cutover already done — nothing to do" and
+    returned without ever creating the core learner table of the whole system.
+    """
+
+    def _handle_source(self):
+        import inspect
+
+        from .management.commands.create_created_users_table import Command
+
+        return inspect.getsource(Command.handle)
+
+    def test_create_runs_before_the_legacy_table_check(self):
+        source = self._handle_source()
+        create_at = source.find("CREATE TABLE IF NOT EXISTS")
+        guard_at = source.find('self._columns(cur, "Enrolment_Users")')
+
+        self.assertNotEqual(create_at, -1, "the CREATE has gone missing")
+        self.assertNotEqual(guard_at, -1, "the legacy-table guard has gone missing")
+        self.assertLess(
+            create_at,
+            guard_at,
+            "CREATE TABLE must run before the Enrolment_Users check, or a fresh "
+            "database returns early and never gets Created_users at all (P0-3).",
+        )
+
+    def test_early_return_does_not_precede_the_create(self):
+        # A bare `return` above the CREATE would reintroduce the bug by another
+        # route, so assert the create is reached unconditionally. Match a return
+        # *statement*, not the substring — prose in comments says "returned".
+        source = self._handle_source()
+        head = source[: source.find("CREATE TABLE IF NOT EXISTS")]
+        code = [
+            line for line in head.splitlines() if not line.lstrip().startswith("#")
+        ]
+        offenders = [line for line in code if re.match(r"\s*return\b", line)]
+        self.assertEqual(
+            offenders,
+            [],
+            "something returns before the CREATE — a fresh install would again "
+            f"finish without creating the table: {offenders}",
+        )
+
+    def test_create_is_idempotent_and_makes_its_schema(self):
+        source = self._handle_source()
+        self.assertIn("CREATE SCHEMA IF NOT EXISTS enrolment", source)
+        self.assertIn("CREATE TABLE IF NOT EXISTS", source)

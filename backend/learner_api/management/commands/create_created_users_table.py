@@ -4,26 +4,39 @@ This replaces BOTH old learner tables with one. The user-creation form's own
 fields come first in the column order, so the table reads as "the create form,
 persisted"; the operational columns the rest of the app needs follow.
 
+This is BOTH the fresh-install path for the table and the one-time cutover from
+the two legacy tables. Step 1 always runs; steps 2-5 are skipped when there is
+nothing to migrate, so it is equally safe on a clean database and on one that
+still holds legacy data.
+
 Ordered steps, all inside one transaction:
 
-  1. CREATE enrolment."Created_users" — form fields first, then operational columns.
-  2. Copy every learner across from enrolment."Enrolment_Users" PRESERVING ids.
+  1. CREATE enrolment."Created_users" — form fields first, then operational
+     columns. Unconditional: this is the only path that creates the core learner
+     table, so a clean install must get it. (It used to run only after the
+     legacy-table check below, which meant a fresh database was told "nothing to
+     do" and never got the table at all.)
+  2. Stop here if enrolment."Enrolment_Users" is gone — the cutover is done.
+  3. Copy every learner across from enrolment."Enrolment_Users" PRESERVING ids.
      Ids matter: the satellite tables (Extended_ILR, Enrolment_Documents, the
      Wizard_* set) reference a learner by (Learner_kind, Learner_id), so a
      renumbering here would orphan real wizard and document data. The id column is
      GENERATED ALWAYS AS IDENTITY, so the insert uses OVERRIDING SYSTEM VALUE and
      the identity sequence is then advanced past the highest copied id.
-  3. Verify the copy row-for-row — same count, same id set, same emails. The DROP
-     in step 4 is only reached if this passes, which is what makes it safe: the
+  4. Verify the copy row-for-row — same count, same id set, same emails. The DROP
+     in step 5 is only reached if this passes, which is what makes it safe: the
      data is provably already in the new table.
-  4. DROP enrolment."Enrolment_Users", enrolment."Commercial_users" and the two
+  5. DROP enrolment."Enrolment_Users", enrolment."Commercial_users" and the two
      *_premerge_bak copies of them.
 
 Run:
 
     python manage.py create_created_users_table --dry-run   # rehearse, roll back
-    python manage.py create_created_users_table             # create + copy, KEEP old tables
+    python manage.py create_created_users_table             # ensure + copy, KEEP old tables
     python manage.py create_created_users_table --drop-old  # ... and drop the old tables
+
+`apply_created_users_table` is a thin alias for the install case, so a fresh
+deployment reads as an install rather than a migration.
 """
 from django.core.management.base import BaseCommand
 from django.db import connections, transaction
@@ -194,18 +207,13 @@ class Command(BaseCommand):
             with transaction.atomic(using=CONN):
                 cur = conn.cursor()
 
-                src_cols = self._columns(cur, "Enrolment_Users")
-                if not src_cols:
-                    self.stdout.write(self.style.WARNING(
-                        f"{SRC} does not exist — cutover already done. Nothing to do."
-                    ))
-                    return
-
-                cur.execute(f"SELECT count(*) FROM {SRC}")
-                src_count = cur.fetchone()[0]
-                self.stdout.write(f"\nsource {SRC}: {src_count} learner(s), {len(src_cols)} columns")
-
                 # --- 1. create ---
+                # Unconditional, and ahead of the legacy-table check below: this
+                # is the only path that creates the core learner table, so a
+                # clean database must get it whether or not there is anything to
+                # copy. It used to sit after that check, which meant a fresh
+                # install returned "nothing to do" and left the table absent.
+                cur.execute("CREATE SCHEMA IF NOT EXISTS enrolment")
                 col_defs = ",\n                        ".join(
                     f'"{name}" {sql_type}' for name, sql_type in ALL_COLUMNS
                 )
@@ -216,9 +224,22 @@ class Command(BaseCommand):
                     )
                 ''')
                 self.stdout.write(
-                    f"created {DST}: {len(FORM_COLUMNS)} form column(s) "
+                    f"ensured {DST}: {len(FORM_COLUMNS)} form column(s) "
                     f"+ {len(OPERATIONAL_COLUMNS)} operational = {len(ALL_COLUMNS)} (+ id)"
                 )
+
+                # --- 2. is there anything to copy? ---
+                src_cols = self._columns(cur, "Enrolment_Users")
+                if not src_cols:
+                    self.stdout.write(self.style.SUCCESS(
+                        f"{SRC} does not exist — cutover already done. "
+                        "Table ensured; nothing to copy."
+                    ))
+                    return
+
+                cur.execute(f"SELECT count(*) FROM {SRC}")
+                src_count = cur.fetchone()[0]
+                self.stdout.write(f"\nsource {SRC}: {src_count} learner(s), {len(src_cols)} columns")
 
                 cur.execute(f"SELECT count(*) FROM {DST}")
                 if cur.fetchone()[0]:
@@ -238,7 +259,7 @@ class Command(BaseCommand):
                 else:
                     self.stdout.write("  every source column is carried over")
 
-                # --- 2. copy, preserving ids ---
+                # --- 3. copy, preserving ids ---
                 ordered = sorted(carried)
                 col_list = ", ".join(f'"{c}"' for c in ordered)
                 cur.execute(f'''
@@ -260,7 +281,7 @@ class Command(BaseCommand):
                 """, [max_id])
                 self.stdout.write(f"identity sequence set past max id {max_id}")
 
-                # --- 3. verify before anything is destroyed ---
+                # --- 4. verify before anything is destroyed ---
                 cur.execute(f"SELECT count(*) FROM {DST}")
                 dst_count = cur.fetchone()[0]
                 if dst_count != src_count:
@@ -297,7 +318,7 @@ class Command(BaseCommand):
                     raise RuntimeError(f"{orphans} Extended_ILR row(s) would be orphaned")
                 self.stdout.write("  no orphaned satellite rows")
 
-                # --- 4. drop ---
+                # --- 5. drop ---
                 if drop_old:
                     self.stdout.write("\ndropping old tables:")
                     for table in DROP_TABLES:
