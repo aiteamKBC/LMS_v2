@@ -105,9 +105,13 @@ interface MonthlyActivityResponse {
 
 interface CoachingDeliveryItem {
   id: string;
+  eventKey?: string;
   learnerId: string;
   learnerName: string;
   learnerStatus: MonthlyStatus;
+  programme: string;
+  cohort: string;
+  group: string;
   kind: CoachingDeliveryKind;
   label: string;
   title: string;
@@ -118,6 +122,7 @@ interface CoachingDeliveryItem {
 }
 
 type CoachingDeliveryScheduleSource = 'mcr' | 'progress-review' | 'catch-up';
+type CoachingDeliveryFocusSource = 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
 
 interface CoachingDeliverySummary {
   byKind: Record<CoachingDeliveryKind, {
@@ -301,6 +306,21 @@ function coachingDeliveryScheduleSource(kind: CoachingDeliveryKind): CoachingDel
   if (kind === 'pr') return 'progress-review';
   if (kind === 'catch-up') return 'catch-up';
   return null;
+}
+
+function coachingDeliveryFocusSource(kind: CoachingDeliveryKind): CoachingDeliveryFocusSource {
+  if (kind === 'pr') return 'progress-review';
+  if (kind === 'support') return 'student-support';
+  return kind;
+}
+
+function coachingDeliveryEventKey(activityId: string) {
+  return activityId.startsWith('event:') ? activityId.slice('event:'.length) : undefined;
+}
+
+function coachingDeliveryScheduledTime(timeLabel: string) {
+  const match = timeLabel.match(/\b\d{2}:\d{2}\b/);
+  return match?.[0];
 }
 
 function emptyCoachingDeliveryCounts(): Record<CoachingDeliveryStatus, number> {
@@ -743,9 +763,13 @@ export default function CoachMonthlyCycle() {
         delivery.byKind[kind].counts[status] += 1;
         delivery.byKind[kind].items.push({
           id: `${learner.id}-${activity.id}`,
+          eventKey: coachingDeliveryEventKey(activity.id),
           learnerId: learner.id,
           learnerName: learner.name,
           learnerStatus: learner.status,
+          programme: learner.programme,
+          cohort: learner.cohortName,
+          group: learner.group,
           kind,
           label: config.shortLabel,
           title: activity.title,
@@ -794,22 +818,32 @@ export default function CoachMonthlyCycle() {
     setSelectedLearnerId(learnerId);
   };
 
-  const handleOpenScheduleCalendar = (item: CoachingDeliveryItem) => {
-    const source = coachingDeliveryScheduleSource(item.kind);
-    if (!source) {
-      handleOpenLearnerOverview(item.learnerId);
-      return;
-    }
+  const handleOpenCalendarItem = (item: CoachingDeliveryItem) => {
+    const focusEvent = {
+      source: coachingDeliveryFocusSource(item.kind),
+      eventKey: item.eventKey,
+      date: item.date,
+      title: item.title,
+      scheduledTime: coachingDeliveryScheduledTime(item.timeLabel),
+      programme: item.programme,
+      cohort: item.cohort,
+      group: item.group,
+    };
+    const scheduleSource = item.status === 'needs-schedule'
+      ? coachingDeliveryScheduleSource(item.kind)
+      : null;
 
     navigate('/coach/timetable', {
-      state: {
-        scheduleIntent: {
-          source,
-          learnerId: item.learnerId,
-          targetDate: item.date,
-          title: item.title,
-        },
-      },
+      state: scheduleSource
+        ? {
+            scheduleIntent: {
+              source: scheduleSource,
+              learnerId: item.learnerId,
+              targetDate: item.date,
+              title: item.title,
+            },
+          }
+        : { focusEvent },
     });
   };
 
@@ -887,8 +921,7 @@ export default function CoachMonthlyCycle() {
             <CoachDeliveryPanel
               delivery={coachingDelivery}
               monthLabel={monthLabel}
-              onOpenLearner={handleOpenLearnerOverview}
-              onScheduleItem={handleOpenScheduleCalendar}
+              onOpenCalendarItem={handleOpenCalendarItem}
             />
           )}
 
@@ -1132,13 +1165,11 @@ export default function CoachMonthlyCycle() {
 function CoachDeliveryPanel({
   delivery,
   monthLabel,
-  onOpenLearner,
-  onScheduleItem,
+  onOpenCalendarItem,
 }: {
   delivery: CoachingDeliverySummary;
   monthLabel: string;
-  onOpenLearner: (learnerId: string) => void;
-  onScheduleItem: (item: CoachingDeliveryItem) => void;
+  onOpenCalendarItem: (item: CoachingDeliveryItem) => void;
 }) {
   const totalCaptured = COACHING_DELIVERY_ORDER.reduce(
     (sum, kind) => sum + COACHING_DELIVERY_STATUS_ORDER.reduce((kindSum, status) => kindSum + delivery.byKind[kind].counts[status], 0),
@@ -1170,8 +1201,7 @@ function CoachDeliveryPanel({
             items={delivery.byKind[kind].items}
             counts={delivery.byKind[kind].counts}
             monthLabel={monthLabel}
-            onOpenLearner={onOpenLearner}
-            onScheduleItem={onScheduleItem}
+            onOpenCalendarItem={onOpenCalendarItem}
           />
         ))}
       </div>
@@ -1184,15 +1214,13 @@ function CoachDeliveryKindCard({
   items,
   counts,
   monthLabel,
-  onOpenLearner,
-  onScheduleItem,
+  onOpenCalendarItem,
 }: {
   kind: CoachingDeliveryKind;
   items: CoachingDeliveryItem[];
   counts: Record<CoachingDeliveryStatus, number>;
   monthLabel: string;
-  onOpenLearner: (learnerId: string) => void;
-  onScheduleItem: (item: CoachingDeliveryItem) => void;
+  onOpenCalendarItem: (item: CoachingDeliveryItem) => void;
 }) {
   const config = COACHING_DELIVERY_CONFIG[kind];
   const tone = safeTone(config.tone);
@@ -1229,7 +1257,7 @@ function CoachDeliveryKindCard({
         ) : (
           <div className="mt-3 max-h-[340px] space-y-2 overflow-y-auto pr-1">
             {items.map((item) => (
-              <CoachDeliveryRecentItem key={item.id} item={item} onOpenLearner={onOpenLearner} onScheduleItem={onScheduleItem} />
+              <CoachDeliveryRecentItem key={item.id} item={item} onOpenCalendarItem={onOpenCalendarItem} />
             ))}
           </div>
         )}
@@ -1250,21 +1278,13 @@ function CoachDeliveryStatusStat({ status, value }: { status: CoachingDeliverySt
 
 function CoachDeliveryRecentItem({
   item,
-  onOpenLearner,
-  onScheduleItem,
+  onOpenCalendarItem,
 }: {
   item: CoachingDeliveryItem;
-  onOpenLearner: (learnerId: string) => void;
-  onScheduleItem: (item: CoachingDeliveryItem) => void;
+  onOpenCalendarItem: (item: CoachingDeliveryItem) => void;
 }) {
   const status = COACHING_DELIVERY_STATUS_CONFIG[item.status];
-  const handleClick = () => {
-    if (item.status === 'needs-schedule') {
-      onScheduleItem(item);
-      return;
-    }
-    onOpenLearner(item.learnerId);
-  };
+  const handleClick = () => onOpenCalendarItem(item);
 
   return (
     <button

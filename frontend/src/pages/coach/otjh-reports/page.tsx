@@ -245,27 +245,6 @@ function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
   };
 }
 
-function OtjhMetricCard({ icon, label, value, tone }: { icon: string; label: string; value: string; tone: 'purple' | 'blue' | 'amber' | 'red' }) {
-  const toneClasses = {
-    purple: 'bg-violet-50 text-violet-700',
-    blue: 'bg-sky-50 text-sky-700',
-    amber: 'bg-amber-50 text-amber-700',
-    red: 'bg-red-50 text-red-700',
-  };
-
-  return (
-    <div className="flex min-h-[92px] items-center gap-3 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-[0_6px_18px_rgba(15,23,42,0.04)]">
-      <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${toneClasses[tone]}`}>
-        <AppIcon className={`${icon} text-xl`} />
-      </span>
-      <div className="min-w-0">
-        <p className="text-xl font-bold leading-none text-slate-950 md:text-2xl">{value}</p>
-        <p className="mt-2 truncate text-[9px] font-bold uppercase tracking-[0.08em] text-slate-400">{label}</p>
-      </div>
-    </div>
-  );
-}
-
 function OtjhValueButton({
   value,
   label,
@@ -436,7 +415,7 @@ export default function CoachOtjhReports() {
                 <AppIcon className="ri-arrow-right-s-line text-sm" />
                 <span className="text-white">OTJH Reports</span>
               </div>
-              <h1 className="font-heading text-2xl font-bold tracking-tight md:text-[28px]">Off-The-Job Hours</h1>
+              <h1 className="font-heading text-2xl font-bold tracking-tight text-white md:text-[28px]">Off-The-Job Hours</h1>
               <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-white/70">
                 Monitor completed hours against each learner's target and quickly identify caseload risks.
               </p>
@@ -451,13 +430,6 @@ export default function CoachOtjhReports() {
               </span>
             </button>
           </div>
-        </section>
-
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <OtjhMetricCard icon="ri-checkbox-circle-line" label="Completed hours" value={formatHours(stats.totalCompleted)} tone="purple" />
-          <OtjhMetricCard icon="ri-calendar-schedule-line" label="Planned hours" value={formatHours(stats.totalPlanned)} tone="blue" />
-          <OtjhMetricCard icon="ri-focus-3-line" label="Target hours" value={formatHours(stats.totalTarget)} tone="amber" />
-          <OtjhMetricCard icon="ri-alarm-warning-line" label="Learners at risk" value={String(stats.behind)} tone="red" />
         </section>
 
         <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
