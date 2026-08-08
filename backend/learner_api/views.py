@@ -41,6 +41,13 @@ from .mappers import (
 from .models import CommercialUser, EnrolmentUser, LearnerProfile, StaffUser
 
 
+def _learner_profiles_with_plan():
+    """Load a learner list and its nested plan in four queries, not one per row."""
+    return LearnerProfile.objects.prefetch_related(
+        'plan_modules__weeks__components',
+    )
+
+
 def _parse_body(request):
     if not request.body:
         return {}
@@ -428,7 +435,7 @@ def commercial_users(request):
         try:
             rows = [
                 _profile_commercial_row(profile)
-                for profile in LearnerProfile.objects.all().order_by("id")
+                for profile in _learner_profiles_with_plan().order_by("id")
                 if not _profile_is_apprenticeship(profile)
             ]
         except DatabaseError as exc:
@@ -515,7 +522,7 @@ def staff_user_detail(request, pk):
 @csrf_exempt
 def commercial_user_detail(request, pk):
     try:
-        profile = LearnerProfile.objects.filter(pk=pk).first()
+        profile = _learner_profiles_with_plan().filter(pk=pk).first()
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
     if profile is None:

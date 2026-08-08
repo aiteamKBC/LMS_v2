@@ -122,7 +122,6 @@ function ModuleCard({ mod, index, x, y, above }: { mod: RoadModule; index: numbe
   return (
     <foreignObject x={x} y={y} width={CARD_W} height={CARD_H}>
       <div
-        xmlns="http://www.w3.org/1999/xhtml"
         className="w-full h-full rounded-xl bg-white border border-gray-100 flex flex-col overflow-hidden cursor-pointer transition-shadow duration-200 hover:border-gray-200 group"
         style={{ boxShadow: '0 0 0 1px rgba(0,0,0,0.03), 0 1px 3px rgba(0,0,0,0.04)' }}
       >

@@ -2,7 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
 import { getRouter } from "./router";
+import { installApiGetBatching } from "../../../lib/apiGetBatching";
 import "./styles.css";
+
+installApiGetBatching();
 
 const router = getRouter();
 

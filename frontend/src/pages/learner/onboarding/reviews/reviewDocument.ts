@@ -251,7 +251,7 @@ function drawSignature(doc: jsPDF, signed: string, x: number, lineY: number): vo
   } catch {
     // A corrupt data URL must not abort the whole document.
     doc.setFont('times', 'italic').setFontSize(11).setTextColor(20, 20, 20);
-    doc.text('Signed', x, baselineY);
+    doc.text('Signed', x, lineY - 1);
   }
 }
 
@@ -263,10 +263,8 @@ export function buildReviewPdf(data: ReviewFormResponse, questionLabels: Record<
   const rawText = raw.text.bind(raw);
   const rawSplit = raw.splitTextToSize.bind(raw);
   const doc = raw;
-  // @ts-expect-error - deliberately narrowing the overloaded signature
   doc.text = (text: string | string[], x: number, y: number, opts?: unknown) =>
     rawText(Array.isArray(text) ? text.map(latin1) : latin1(String(text)), x, y, opts as never);
-  // @ts-expect-error - as above
   doc.splitTextToSize = (text: string, size: number, opts?: unknown) =>
     rawSplit(latin1(String(text)), size, opts as never);
 

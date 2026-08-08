@@ -1,8 +1,10 @@
+import json
 from datetime import date, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from django.http import JsonResponse
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from coach_api.models import CoachAbsenceReport
@@ -10,6 +12,7 @@ from coach_api.views import (
     build_otjh_completed_entries,
     build_monthly_activity_learner,
     coach_caseload,
+    coach_dashboard,
     collect_generated_timetable,
     completed_ksb_codes,
     fetch_source_schedule_rows,
@@ -123,6 +126,48 @@ class CoachCaseloadViewTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         serialize_learner.assert_called_once_with(row, refresh_live_snapshots=True)
+
+
+class CoachDashboardViewTests(SimpleTestCase):
+    @patch("coach_api.views.coach_evidence_awaiting_review")
+    @patch("coach_api.views.coach_attendance")
+    @patch("coach_api.views.collect_generated_timetable")
+    @patch("coach_api.views.serialize_caseload_dashboard_learner")
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_dashboard_aggregates_workspace_data_with_one_timetable_collection(
+        self,
+        fetch_rows,
+        serialize_learner,
+        collect_timetable,
+        attendance_view,
+        evidence_view,
+    ):
+        row = SimpleNamespace(id=2)
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
+        collect_timetable.return_value = {
+            "owner_name": "Med Maher",
+            "summary": {"total": 1},
+            "events": [{"id": "event-1"}],
+        }
+        attendance_view.return_value = JsonResponse({"learners": [{"id": "2", "attendance": 95}]})
+        evidence_view.return_value = JsonResponse({"items": [{"learnerId": "2", "pendingEvidence": 1}]})
+
+        response = coach_dashboard(
+            RequestFactory().get("/coach_api/coach/dashboard", {"owner_email": "coach@example.com"})
+        )
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["learners"], [{"id": "2", "coachName": "Med Maher"}])
+        self.assertEqual(payload["attendance"]["learners"][0]["attendance"], 95)
+        self.assertEqual(payload["timetable"]["events"], [{"id": "event-1"}])
+        self.assertEqual(payload["evidence"]["items"][0]["pendingEvidence"], 1)
+        collect_timetable.assert_called_once_with(
+            "coach@example.com",
+            include_live_sessions=True,
+            include_scheduler_queues=False,
+        )
 
 
 class CoachTimetableWindowTests(SimpleTestCase):

@@ -267,6 +267,16 @@ ENROLMENT_DATABASE_URL=postgresql://user:password@host:5432/enrolment_database
 CHAT_REDIS_URL=redis://127.0.0.1:6379/1
 CHAT_DEMO_BOOTSTRAP_ENABLED=true
 
+# Shared API cache (use the deployment's Redis service in production)
+CACHE_URL=redis://127.0.0.1:6379/2
+CACHE_KEY_PREFIX=kbc-lms
+CACHE_DEFAULT_TIMEOUT=300
+
+# Optional API profiling. Adds Server-Timing and X-DB-Query-Count headers and
+# logs requests slower than the configured threshold.
+PERFORMANCE_DIAGNOSTICS=false
+SLOW_REQUEST_THRESHOLD_MS=750
+
 # AI services
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-4.1-mini
@@ -332,7 +342,30 @@ Run `sync_calendar_busy_slots` every 10–15 minutes in the deployment scheduler
 
 The cache stores only start/end times and never stores personal event titles, descriptions, attendees, or locations. Booking endpoints still perform a live provider check before confirming a session.
 
-Set `DJANGO_USE_SQLITE=true` to run backend tests against the isolated SQLite configuration.
+Set `DJANGO_USE_SQLITE=true` to run backend tests against the isolated SQLite
+configuration. PostgreSQL-only `chat` and `coach_api` migration histories are
+skipped in that mode; Django creates their current test models directly, while
+production continues to use the complete PostgreSQL migration history.
+
+For production, set `DJANGO_DEBUG=false`, use the pooled PostgreSQL/Neon
+connection URL for `DATABASE_URL`, and configure `CACHE_URL` so all Django
+workers share the same curriculum cache. `GZipMiddleware` compresses large JSON
+responses automatically when compression has not already been applied by the
+reverse proxy.
+
+After deploying, create the project-wide query indexes (the command safely
+skips schemas/tables that are not present and can be run repeatedly):
+
+```bash
+python manage.py apply_performance_indexes --dry-run
+python manage.py apply_performance_indexes
+```
+
+Curriculum module and component collections support opt-in server pagination:
+`?page=1&page_size=50`. Module collections also accept `programme_id`,
+`cohort_id`, `group_id`, `status`, and `compact=true`; component collections
+accept `module_catalogue_ids=MOD-1,MOD-2`. Existing clients remain unpaginated
+unless they send pagination parameters.
 
 ## API Overview
 

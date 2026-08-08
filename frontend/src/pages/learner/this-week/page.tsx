@@ -112,7 +112,7 @@ export default function ThisWeekPage() {
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
   const p = LEARNER_PROFILE;
   const [searchParams, setSearchParams] = useSearchParams();
-  const [components, setComponents] = useState([...WEEKLY_LEARNING_COMPONENTS]);
+  const [components, setComponents] = useState<any[]>([...WEEKLY_LEARNING_COMPONENTS]);
   const [selectedComp, setSelectedComp] = useState<typeof WEEKLY_LEARNING_COMPONENTS[number] | null>(null);
 
   /* ── Auto-open panel from query param ── */

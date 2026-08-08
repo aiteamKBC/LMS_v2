@@ -23,6 +23,14 @@ def table_name(connection):
     return 'curriculum."ksb_profiles"' if connection.vendor == 'postgresql' else '"ksb_profiles"'
 
 
+def table_exists(cursor, connection):
+    if connection.vendor == 'postgresql':
+        cursor.execute("select to_regclass('curriculum.ksb_profiles')")
+        return bool(cursor.fetchone()[0])
+    cursor.execute("select 1 from sqlite_master where type='table' and name='ksb_profiles' limit 1")
+    return bool(cursor.fetchone())
+
+
 def column_exists(cursor, connection, column):
     if connection.vendor == 'postgresql':
         cursor.execute(
@@ -102,6 +110,8 @@ def preserve_programme_values(cursor, connection):
 def drop_ksb_profile_columns(apps, schema_editor):
     connection = schema_editor.connection
     with connection.cursor() as cursor:
+        if not table_exists(cursor, connection):
+            return
         preserve_programme_values(cursor, connection)
         if connection.vendor == 'postgresql':
             cursor.execute('drop index if exists curriculum_ksb_profiles_programme_id_idx')
@@ -113,6 +123,8 @@ def drop_ksb_profile_columns(apps, schema_editor):
 def restore_ksb_profile_columns(apps, schema_editor):
     connection = schema_editor.connection
     with connection.cursor() as cursor:
+        if not table_exists(cursor, connection):
+            return
         for column, config in KSB_PROFILE_COLUMNS.items():
             if column_exists(cursor, connection, column):
                 continue

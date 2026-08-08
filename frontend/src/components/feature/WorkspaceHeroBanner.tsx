@@ -6,7 +6,7 @@ interface WorkspaceHeroBannerProps {
   icon: string;
   imageUrl?: string;
   imageAlt?: string;
-  stats?: { label: string; value: string; variant?: 'default' | 'danger' | 'success' }[];
+  stats?: { label: string; value: string; variant?: 'default' | 'danger' | 'success' | 'warning' }[];
   accentColor?: string;
 }
 

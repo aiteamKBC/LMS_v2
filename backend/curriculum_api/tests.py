@@ -1108,9 +1108,9 @@ class CurriculumPersistenceTests(TestCase):
 class CurriculumCacheTests(SimpleTestCase):
     """Guards the authoring cache's correctness properties.
 
-    The cache is process-local and TTL-based, so the risky failure modes are all
-    about invalidation rather than hit rate: a stale entry surviving a write, or a
-    failed build being memoised.
+    The cache has a process-local L1 and a Django-cache L2, so the risky failure
+    modes are about invalidation: a stale entry surviving a write, or a failed
+    build being memoised.
     """
 
     def setUp(self):
@@ -1214,6 +1214,47 @@ class CurriculumCacheTests(SimpleTestCase):
         views._TABLE_EXISTS_CACHE['curriculum.example'] = True
         views.invalidate_curriculum_cache()
         self.assertEqual(views._TABLE_EXISTS_CACHE, {})
+
+
+class CurriculumPayloadPerformanceTests(SimpleTestCase):
+    def test_compact_payload_does_not_build_session_details(self):
+        rows = {
+            'training': [],
+            'modules': [],
+            'authoring_modules': [],
+            'ksb_profiles': [],
+            'program_configs': [],
+            'holidays': [],
+            'tutors': [],
+            'coaches': [],
+            'tutor_modules': [],
+        }
+        with patch.object(views, 'build_sessions', side_effect=AssertionError('must stay lazy')), \
+             patch.object(views, 'build_sessions_from_authoring_modules', side_effect=AssertionError('must stay lazy')), \
+             patch.object(views, 'build_programmes', return_value=[]), \
+             patch.object(views, 'build_cohorts_and_groups', return_value=([], [])), \
+             patch.object(views, 'build_ksb_data', return_value=([], [])):
+            payload = views.build_curriculum_payload_from_rows(rows, compact=True)
+        self.assertEqual(payload['sessions'], [])
+
+    def test_pagination_is_opt_in_and_reports_total_count(self):
+        request = RequestFactory().get('/curriculum/modules/', {'page': 2, 'page_size': 2})
+        results, metadata = views.paginate_curriculum_results(request, ['a', 'b', 'c', 'd', 'e'])
+        self.assertEqual(results, ['c', 'd'])
+        self.assertEqual(metadata, {
+            'count': 5,
+            'page': 2,
+            'pageSize': 2,
+            'pages': 3,
+            'hasNext': True,
+            'hasPrevious': True,
+        })
+
+    def test_pagination_caps_untrusted_page_size(self):
+        request = RequestFactory().get('/curriculum/components/', {'page_size': 100000})
+        results, metadata = views.paginate_curriculum_results(request, list(range(300)))
+        self.assertEqual(len(results), 250)
+        self.assertEqual(metadata['pageSize'], 250)
 
 
 class StructurePayloadsCacheKeyTests(SimpleTestCase):

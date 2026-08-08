@@ -40,8 +40,7 @@ def drop_staff_columns(apps, schema_editor):
     connection = schema_editor.connection
     with connection.cursor() as cursor:
         for table in STAFF_TABLES:
-            if connection.vendor == 'postgresql':
-                cursor.execute(f'drop index if exists curriculum_{table}_status_idx')
+            cursor.execute(f'drop index if exists curriculum_{table}_status_idx')
             for column in STAFF_COLUMNS:
                 if column_exists(cursor, connection, table, column):
                     cursor.execute(f'alter table {table_name(connection, table)} drop column "{column}"')
@@ -56,8 +55,7 @@ def restore_staff_columns(apps, schema_editor):
                     continue
                 column_type = config['postgres'] if connection.vendor == 'postgresql' else config['sqlite']
                 cursor.execute(f'alter table {table_name(connection, table)} add column "{column}" {column_type}')
-            if connection.vendor == 'postgresql':
-                cursor.execute(f'create index if not exists curriculum_{table}_status_idx on {table_name(connection, table)} (status)')
+            cursor.execute(f'create index if not exists curriculum_{table}_status_idx on {table_name(connection, table)} (status)')
 
 
 class Migration(migrations.Migration):

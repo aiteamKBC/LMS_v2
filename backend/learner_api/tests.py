@@ -40,17 +40,15 @@ class LearnerQuizReferenceTests(SimpleTestCase):
         self.assertIsNone(_serialise_quiz_ref(None))
 
 
-class LearnerActivityFeedFallbackTests(SimpleTestCase):
-    @patch("learner_api.models.learner_activity_events_relation_exists", return_value=False)
-    def test_returns_empty_activity_feed_when_relation_is_missing(self, relation_exists):
+class LearnerActivityFeedProjectionTests(SimpleTestCase):
+    def test_returns_empty_activity_feed_when_no_progress_is_prefetched(self):
         learner = LearnerProfile()
+        learner._prefetched_objects_cache = {"progress_entries": []}
 
         self.assertEqual(learner.activity_feed_entries(), [])
-        relation_exists.assert_called_once()
 
     @patch("learner_api.models._progress_entry_activity")
-    @patch("learner_api.models.learner_activity_events_relation_exists", return_value=True)
-    def test_uses_prefetched_progress_entries_when_available(self, relation_exists, project_entry):
+    def test_uses_prefetched_progress_entries_when_available(self, project_entry):
         learner = LearnerProfile()
         learner._prefetched_objects_cache = {
             "progress_entries": [
@@ -65,7 +63,6 @@ class LearnerActivityFeedFallbackTests(SimpleTestCase):
             [{"kind": "keep", "at": "keep"}],
         )
         project_entry.assert_called_once()
-        relation_exists.assert_called_once()
 
 
 class ProgressActivityProjectionTests(SimpleTestCase):

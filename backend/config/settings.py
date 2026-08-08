@@ -99,7 +99,10 @@ def database_from_url(database_url):
 SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
+# Production-safe by default. Local development can opt back in with
+# DJANGO_DEBUG=true in backend/.env.
+DEBUG = os.environ.get("DJANGO_DEBUG", "false").lower() == "true"
+USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "true"
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",
     # The current frontend authentication is local/demo authentication and
@@ -130,6 +133,10 @@ ALLOWED_HOSTS = [
 # Application definition
 
 INSTALLED_APPS = [
+    # Daphne supplies Django's ASGI-aware runserver and the Channels WebSocket
+    # test runtime. Keep it before django.contrib.staticfiles as recommended by
+    # Channels so its runserver command takes precedence in development.
+    'daphne',
     'quiz_api',
     'rest_framework',
     'channels',
@@ -150,14 +157,24 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Compress JSON/CSS/JS responses when the reverse proxy has not already done
+    # so. Large curriculum payloads benefit substantially from this middleware.
+    'django.middleware.gzip.GZipMiddleware',
+    # Add ETag/Last-Modified handling so unchanged API/static responses can be
+    # answered with a small 304 response instead of being downloaded again.
+    'django.middleware.http.ConditionalGetMiddleware',
     'config.cors.ChatCorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'config.performance.PerformanceTimingMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+PERFORMANCE_DIAGNOSTICS = os.environ.get('PERFORMANCE_DIAGNOSTICS', 'false').lower() == 'true'
+SLOW_REQUEST_THRESHOLD_MS = int(os.environ.get('SLOW_REQUEST_THRESHOLD_MS', '750'))
 
 ROOT_URLCONF = 'config.urls'
 
@@ -195,14 +212,48 @@ CHAT_REDIS_URL = (
     or os.environ.get('REDIS_URL')
     or 'redis://127.0.0.1:6379/1'
 )
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            'hosts': [CHAT_REDIS_URL],
+if USE_SQLITE_FOR_TESTS:
+    # Unit tests must be isolated and deterministic: WebSocket tests should not
+    # require a developer Redis process or spend seconds waiting for a refused
+    # connection. Production and normal development continue to use Redis.
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
         },
-    },
-}
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [CHAT_REDIS_URL],
+            },
+        },
+    }
+
+
+# Share expensive curriculum payloads between Django workers in production.
+# Django's built-in Redis backend uses the already-installed ``redis`` package,
+# so no additional cache dependency is required. Development and tests retain a
+# process-local cache when no Redis URL is configured.
+CACHE_URL = os.environ.get('CACHE_URL') or os.environ.get('REDIS_URL')
+if CACHE_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': CACHE_URL,
+            'KEY_PREFIX': os.environ.get('CACHE_KEY_PREFIX', 'kbc-lms'),
+            'TIMEOUT': int(os.environ.get('CACHE_DEFAULT_TIMEOUT', '300')),
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'kbc-lms-local-cache',
+            'TIMEOUT': 300,
+        }
+    }
 
 
 # Database
@@ -213,7 +264,25 @@ DATABASE_URL = (
     or os.environ.get("DATABASEURL")
     or os.environ.get("Database_url")
 )
-USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "true"
+# The production migration histories for these apps intentionally manipulate
+# PostgreSQL schemas and externally managed tables. SQLite cannot execute that
+# DDL. In isolated tests, skip those historical migrations and let Django's test
+# runner create the current managed models directly (``--run-syncdb`` is enabled
+# automatically for apps without migrations). Production keeps the complete,
+# already-applied migration graph unchanged.
+CHAT_TEST_MODE = USE_SQLITE_FOR_TESTS
+COACH_TEST_MODE = USE_SQLITE_FOR_TESTS
+if USE_SQLITE_FOR_TESTS:
+    MIGRATION_MODULES = {
+        'chat': None,
+        'coach_api': None,
+    }
+    # Password strength is not under test in these suites. A fast hasher keeps
+    # tests that create many authenticated chat users from spending most of
+    # their runtime in PBKDF2 while production retains the secure defaults.
+    PASSWORD_HASHERS = [
+        'django.contrib.auth.hashers.MD5PasswordHasher',
+    ]
 
 if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     parsed_db = urlparse(DATABASE_URL)
