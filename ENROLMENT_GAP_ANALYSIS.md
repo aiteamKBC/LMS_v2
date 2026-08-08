@@ -734,7 +734,7 @@ Do not "fix" these. Each is deliberate and commented as such in source.
 | `7a230a1` | P0-2 | `apply_enrolment_reviews_table.py`, `tests_enrolment_schema.py` (new) |
 | `becd1a3` | P0-1, 6.3 | `document_tables.py`, `apply_enrolment_documents_table.py` (new), `tests_document_schema.py` (new) |
 | `3c6879a` | P0-3 | `create_created_users_table.py`, `apply_created_users_table.py` (new) |
-| pending | P0-4, 6.10 A, 7.1, 7.4 | 6 × `apply_*` commands, `checks.py` (new), `apps.py`, `apply_enrolment_schema.py` (new), `settings.py`, 4 × comment-only |
+| `d4c3ae1` | P0-4, 6.10 A, 7.1, 7.4 | 6 × `apply_*` commands, `checks.py` (new), `apps.py`, `apply_enrolment_schema.py` (new), `settings.py`, 4 × comment-only |
 
 **New files**
 
