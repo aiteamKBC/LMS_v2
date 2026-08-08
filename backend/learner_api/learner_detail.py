@@ -18,6 +18,7 @@ from datetime import timedelta
 from html import unescape
 
 from django.db import DatabaseError, connections
+from django.db.models import prefetch_related_objects
 from django.http import JsonResponse
 from django.utils import timezone
 
@@ -52,7 +53,24 @@ def _active_profile_for_source(source, source_pk):
     shared learner identity; the id lookup remains only as a compatibility
     fallback for older records that do not have an email.
     """
-    return learner_profile_for_source(source, source_pk, active_only=True)
+    profile = learner_profile_for_source(source, source_pk, active_only=True)
+    if profile is None:
+        return None
+
+    # The detail serializer walks progress -> KSB links -> quiz answers and
+    # their selected/correct answers.  Without prefetching, that becomes one
+    # database round-trip per progress row/answer (and the OTJ calculation
+    # reads the same graph again).  Load the complete graph in a fixed number
+    # of queries so learner pages stay fast as their history grows.
+    prefetch_related_objects(
+        [profile],
+        "ksb_assignment__profile_version__definitions",
+        "assigned_ksbs",
+        "progress_entries__ksb_links",
+        "progress_entries__quiz_answers__chosen_answers",
+        "progress_entries__quiz_answers__correct_answers",
+    )
+    return profile
 
 
 def _video_url_from_settings(settings):

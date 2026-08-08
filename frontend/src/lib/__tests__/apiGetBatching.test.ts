@@ -48,6 +48,26 @@ describe('API GET batching', () => {
     expect(secondPayload.url).toBe('/learner_api/learners/');
   });
 
+  it('sends a single GET directly without batch encoding overhead', async () => {
+    const transport = vi.fn(async () => new Response('{"ok":true}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', transport);
+    installApiGetBatching();
+
+    const pending = fetch(`${location.origin}/coach_api/coach/dashboard`);
+    await vi.advanceTimersByTimeAsync(20);
+    const payload = await pending.then(response => response.json());
+
+    expect(payload).toEqual({ ok: true });
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(transport).toHaveBeenCalledWith(
+      '/coach_api/coach/dashboard',
+      expect.objectContaining({ credentials: 'same-origin' }),
+    );
+  });
+
   it('does not batch writes, external calls, or downloads', async () => {
     const transport = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', transport);

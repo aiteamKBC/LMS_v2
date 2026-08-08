@@ -1,9 +1,10 @@
+import json
 from datetime import date, datetime, timezone
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
-from django.test import SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from .active_users import (
     _canonical_ksb_items,
@@ -33,6 +34,7 @@ from .learner_detail import (
 from .learner_progression import ACTIVE_STATUS, READY_TO_ENROL_STATUS, _as_date, advance_learner
 from .mappers import to_learner_detail
 from .models import LearnerProfile, _progress_entry_activity, _serialise_quiz_ref
+from .reflection_submissions import get_reflection_submission
 
 
 class LearnerQuizReferenceTests(SimpleTestCase):
@@ -40,6 +42,67 @@ class LearnerQuizReferenceTests(SimpleTestCase):
         self.assertEqual(_serialise_quiz_ref("42"), 42)
         self.assertEqual(_serialise_quiz_ref("quiz-42"), "quiz-42")
         self.assertIsNone(_serialise_quiz_ref(None))
+
+
+class LearnerDetailPrefetchTests(SimpleTestCase):
+    @patch("learner_api.learner_detail.prefetch_related_objects")
+    @patch("learner_api.learner_detail.learner_profile_for_source")
+    def test_prefetches_the_complete_progress_graph(self, resolve_profile, prefetch):
+        source = SimpleNamespace(email="learner@example.com")
+        profile = Mock()
+        resolve_profile.return_value = profile
+
+        self.assertIs(_active_profile_for_source(source, 19), profile)
+
+        resolve_profile.assert_called_once_with(source, 19, active_only=True)
+        prefetch.assert_called_once_with(
+            [profile],
+            "ksb_assignment__profile_version__definitions",
+            "assigned_ksbs",
+            "progress_entries__ksb_links",
+            "progress_entries__quiz_answers__chosen_answers",
+            "progress_entries__quiz_answers__correct_answers",
+        )
+
+    @patch("learner_api.learner_detail.prefetch_related_objects")
+    @patch("learner_api.learner_detail.learner_profile_for_source", return_value=None)
+    def test_skips_prefetch_when_the_learner_is_not_active(self, _resolve_profile, prefetch):
+        self.assertIsNone(_active_profile_for_source(SimpleNamespace(), 19))
+        prefetch.assert_not_called()
+
+
+class LearnerReflectionStatusTests(SimpleTestCase):
+    @patch("learner_api.reflection_submissions.ensure_learning_reflection_submissions_table")
+    def test_loads_all_statuses_in_one_read_without_running_schema_ddl(self, ensure_table):
+        cursor = MagicMock()
+        cursor.__enter__.return_value = cursor
+        cursor.fetchall.return_value = [
+            ("quiz", "quiz-68", "accepted"),
+            ("reading", "COMP-1", "submitted_for_tutor_review"),
+        ]
+        connection = MagicMock()
+        connection.cursor.return_value = cursor
+        request = RequestFactory().get(
+            "/learner_api/reflection/submissions/",
+            {"learnerKind": "commercial", "learnerId": "19"},
+        )
+
+        with patch("learner_api.reflection_submissions.connections", {"enrolment": connection}):
+            response = get_reflection_submission(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(response.content)["statuses"],
+            [
+                {"activityType": "quiz", "activityId": "quiz-68", "status": "accepted"},
+                {
+                    "activityType": "reading",
+                    "activityId": "COMP-1",
+                    "status": "submitted_for_tutor_review",
+                },
+            ],
+        )
+        ensure_table.assert_not_called()
 
 
 class LearnerProgressionTests(SimpleTestCase):

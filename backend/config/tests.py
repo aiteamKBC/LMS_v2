@@ -9,6 +9,7 @@ modules continue to cover successful GET/POST/PATCH/DELETE behaviour.
 import base64
 import json
 import re
+import threading
 from collections import Counter
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -212,3 +213,31 @@ class ApiGetBatchTests(SimpleTestCase):
         payload = json.loads(response.content)
 
         self.assertEqual([item["status"] for item in payload["responses"]], [400, 400])
+
+    @patch("config.batch.resolve")
+    def test_executes_child_gets_in_parallel_workers(self, resolve_route):
+        barrier = threading.Barrier(2)
+        worker_ids = set()
+
+        def synchronized_view(_request):
+            worker_ids.add(threading.get_ident())
+            barrier.wait(timeout=1)
+            return JsonResponse({"ok": True})
+
+        resolve_route.return_value = SimpleNamespace(func=synchronized_view, args=(), kwargs={})
+        request = RequestFactory().post(
+            "/api/batch/",
+            data=json.dumps({
+                "requests": [
+                    {"id": "a", "url": "/coach_api/coach/caseload"},
+                    {"id": "b", "url": "/learner_api/learners/"},
+                ]
+            }),
+            content_type="application/json",
+        )
+
+        response = api_get_batch(request)
+        payload = json.loads(response.content)
+
+        self.assertEqual([item["status"] for item in payload["responses"]], [200, 200])
+        self.assertEqual(len(worker_ids), 2)

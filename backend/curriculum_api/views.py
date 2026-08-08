@@ -2564,11 +2564,11 @@ def is_actual_delivery_row(row, program_configs_by_id):
     return bool(actual_group_identity(row, cohort['id']))
 
 
-def authoring_modules_as_training_rows():
+def authoring_modules_as_training_rows(*, ensure_tables=True):
     try:
-        module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
-        group_rows = {clean_str(row.get('group_id')): row for row in authoring_fetch_all(GROUPS_TABLE)}
-        cohort_rows = {clean_str(row.get('cohort_id')): row for row in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE)}
+        module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, ensure_tables=ensure_tables)
+        group_rows = {clean_str(row.get('group_id')): row for row in authoring_fetch_all(GROUPS_TABLE, ensure_tables=ensure_tables)}
+        cohort_rows = {clean_str(row.get('cohort_id')): row for row in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, ensure_tables=ensure_tables)}
     except (Exception, AssertionError):
         logger.debug('Could not build fallback training rows from authoring tables.', exc_info=True)
         return []
@@ -6380,8 +6380,9 @@ def ensure_free_programme_tables():
     _FREE_PROGRAMME_TABLES_READY = True
 
 
-def authoring_fetch_all(table, where_sql='', params=None, order_sql=''):
-    ensure_module_authoring_tables()
+def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensure_tables=True):
+    if ensure_tables:
+        ensure_module_authoring_tables()
     query = f'select * from {authoring_table_name(table)}'
     if where_sql:
         query += f' where {where_sql}'

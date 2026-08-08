@@ -25,6 +25,8 @@ type QueuedGet = {
   key: string;
   url: string;
   headers: Record<string, string>;
+  cache: RequestCache;
+  credentials: RequestCredentials;
   callers: FetchCaller[];
 };
 
@@ -85,6 +87,14 @@ function settleCallers(item: QueuedGet, result?: BatchResult, failure?: unknown)
   });
 }
 
+function settleDirectCallers(item: QueuedGet, response: Response) {
+  item.callers.forEach((caller, index) => {
+    if (caller.abort && caller.signal) caller.signal.removeEventListener('abort', caller.abort);
+    if (caller.signal?.aborted) return;
+    caller.resolve(index === item.callers.length - 1 ? response : response.clone());
+  });
+}
+
 async function flushQueue() {
   flushTimer = null;
   const items = Array.from(queuedByKey.values());
@@ -92,6 +102,17 @@ async function flushQueue() {
   if (!items.length || !nativeFetch) return;
 
   try {
+    if (items.length === 1) {
+      const item = items[0];
+      const response = await nativeFetch(item.url, {
+        cache: item.cache,
+        credentials: item.credentials,
+        headers: item.headers,
+      });
+      settleDirectCallers(item, response);
+      return;
+    }
+
     const response = await nativeFetch(BATCH_ENDPOINT, {
       method: 'POST',
       credentials: 'same-origin',
@@ -118,6 +139,8 @@ function enqueue(request: Request, url: URL): Promise<Response> {
       key,
       url: `${url.pathname}${url.search}`,
       headers: requestHeaders(request),
+      cache: request.cache,
+      credentials: request.credentials,
       callers: [],
     };
     queuedByKey.set(key, item);
