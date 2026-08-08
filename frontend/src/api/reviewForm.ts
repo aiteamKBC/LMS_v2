@@ -96,6 +96,12 @@ export interface ReviewSignature {
 export interface ReviewSignatures {
   learner: ReviewSignature;
   admin: ReviewSignature;
+  /**
+   * The learner's employer, on reviews that attest to employment facts (Health &
+   * Safety, Eligibility). `required` is false on reviews the employer has no part
+   * in — the RPL review — where this block is omitted from the document entirely.
+   */
+  employer?: ReviewSignature & { required?: boolean };
   /** False until the form is completed — an unfinished review cannot be signed. */
   signable: boolean;
   /**
@@ -103,7 +109,6 @@ export interface ReviewSignatures {
    * they reuse it rather than drawing a new one. Empty object when they have none,
    * and omitted entirely from the documents list (which never renders it).
    */
-  savedLearnerSignature?: { signature?: string; name?: string; date?: string | null };
 }
 
 /** One KSB with the learner's Skills Radar self-assessment of it. */
