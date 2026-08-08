@@ -5,7 +5,6 @@ import {
   Activity,
   AlertTriangle,
   Archive,
-  ArrowRight,
   ArrowUpCircle,
   BarChart3,
   Bell,
@@ -42,10 +41,9 @@ import {
   LifeBuoy,
   Link2,
   LockKeyhole,
+  Menu,
   MessageSquare,
   Phone,
-  Pin,
-  PinOff,
   PieChart,
   Plug,
   Presentation,
@@ -68,7 +66,6 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
-import { BrandLockup } from '@/components/BrandLockup';
 
 export interface SidebarNavItem {
   id: string;
@@ -157,7 +154,6 @@ function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   if (/folder/.test(key)) return Folder;
   if (/open-cases/.test(key)) return FolderUp;
   if (/open/.test(key)) return FolderOpen;
-  if (/pin/.test(key)) return Pin;
   if (/calendar/.test(key)) return Calendar;
   if (/search|find|qa/.test(key)) return Search;
   if (/workflow|automation/.test(key)) return Workflow;
@@ -177,17 +173,12 @@ function SidebarIcon({ id, label, sourceIcon, size = 18, className }: {
   return <Icon aria-hidden="true" focusable="false" size={size} strokeWidth={1.8} className={className} />;
 }
 
-export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHoverChange, onPinChange }: SidebarProps) {
+export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHoverChange }: SidebarProps) {
   const location = useLocation();
   const { canSeeNavItem } = useAuth();
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
-  const [isPinned, setIsPinned] = useState(() => {
-    try {
-      const stored = localStorage.getItem('kbc_sidebar_pinned_v2');
-      return stored === 'true';
-    } catch { return false; }
-  });
   const [isHovering, setIsHovering] = useState(false);
+  const [, setSubmenuOpen] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => {
     try {
       const stored = localStorage.getItem('kbc_sidebar_expanded');
@@ -200,13 +191,6 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
       localStorage.setItem('kbc_sidebar_expanded', JSON.stringify([...expandedGroups]));
     } catch { /* Ignore unavailable browser storage. */ }
   }, [expandedGroups]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('kbc_sidebar_pinned_v2', String(isPinned));
-    } catch { /* Ignore unavailable browser storage. */ }
-    onPinChange?.(isPinned);
-  }, [isPinned, onPinChange]);
 
   // Close dropdown on route change
   useEffect(() => {
@@ -244,8 +228,14 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
     return items.find(item => item.href?.includes('?') && item.href === current)?.href ?? '';
   }, [filteredNavItems, location.pathname, location.search]);
 
-  const toggleGroup = useCallback((id: string) => {
-    setActiveDropdown(prev => prev === id ? null : id);
+  const openGroup = useCallback((id: string) => {
+    setActiveDropdown(id);
+    setSubmenuOpen(true);
+  }, []);
+
+  const closeGroup = useCallback((id: string) => {
+    setActiveDropdown(prev => prev === id ? null : prev);
+    setSubmenuOpen(false);
   }, []);
 
   const navHrefs = useMemo(
@@ -297,11 +287,12 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
 
   const handleMouseLeave = useCallback(() => {
     setIsHovering(false);
+    setSubmenuOpen(false);
     setActiveDropdown(null);
     onHoverChange?.(false);
   }, [onHoverChange]);
 
-  const sidebarExpanded = isPinned || isHovering;
+  const sidebarExpanded = isHovering;
 
   // Desktop sidebar (collapsed)
   const desktopSidebar = (
@@ -358,17 +349,8 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
       </div>
 
       {/* Logo */}
-      <div className="relative z-10 flex items-center justify-center h-14 px-3 shrink-0">
-        <img src="/kbc-logo.png" alt="Kent Business College" className="h-8 w-14 object-contain object-left transition-transform duration-300 hover:scale-105" />
-        <button
-          type="button"
-          onClick={() => setIsPinned(true)}
-          aria-label="Expand sidebar"
-          title="Expand sidebar"
-          className="workspace-sidebar-pin absolute right-1.5 top-3 hidden h-8 w-8 items-center justify-center rounded-lg transition-colors duration-200 lg:flex"
-        >
-          <ArrowRight size={18} strokeWidth={1.8} aria-hidden="true" />
-        </button>
+      <div className="workspace-sidebar-menu-toggle relative z-10 flex items-center justify-start h-14 px-4 shrink-0">
+        <Menu className={`workspace-sidebar-menu-icon ${isHovering || mobileOpen ? 'workspace-sidebar-menu-icon-expanded' : ''}`} size={22} strokeWidth={2} aria-hidden="true" />
       </div>
 
       {/* Navigation */}
@@ -381,7 +363,8 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
                   item={item}
                   isActive={isActive}
                   isDropdownOpen={activeDropdown === item.id}
-                  onToggle={() => toggleGroup(item.id)}
+                  onOpen={() => openGroup(item.id)}
+                  onClose={() => closeGroup(item.id)}
                 />
               ) : (
                 <NavLink item={item} isActive={isActive} />
@@ -457,19 +440,9 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
         />
       </div>
 
-      {/* Logo */}
-      <div className="relative z-10 flex items-center justify-between h-14 px-3 shrink-0">
-        <BrandLockup size="compact" theme="dark" />
-        <button
-          type="button"
-          onClick={() => setIsPinned(prev => !prev)}
-          aria-label={isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
-          aria-pressed={isPinned}
-          title={isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
-          className="workspace-sidebar-pin hidden h-8 w-8 items-center justify-center rounded-lg transition-colors duration-200 lg:flex"
-        >
-          {isPinned ? <PinOff size={16} strokeWidth={1.8} aria-hidden="true" /> : <Pin size={16} strokeWidth={1.8} aria-hidden="true" />}
-        </button>
+      {/* Sidebar control */}
+      <div className="workspace-sidebar-menu-toggle relative z-10 flex items-center justify-start h-14 px-4 shrink-0">
+        <Menu className={`workspace-sidebar-menu-icon ${isHovering || mobileOpen ? 'workspace-sidebar-menu-icon-expanded' : ''}`} size={22} strokeWidth={2} aria-hidden="true" />
       </div>
 
       {/* Mobile navigation */}
@@ -482,6 +455,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
                   item={item}
                   isActive={isActive}
                   isExpanded={expandedGroups.has(item.id)}
+                  onSubmenuChange={setSubmenuOpen}
                   onToggle={() => {
                     setExpandedGroups(prev => {
                       const next = new Set(prev);
@@ -518,7 +492,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
     <>
       {/* Desktop sidebar — pinned open or expanded temporarily on hover */}
       <div
-        className={`workspace-sidebar-desktop hidden lg:block fixed left-0 top-0 z-40 h-screen overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${sidebarExpanded ? 'w-[264px] shadow-2xl' : 'w-[56px]'}`}
+        className={`workspace-sidebar-desktop hidden lg:block fixed left-0 top-0 z-40 h-screen overflow-hidden transition-[width] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${sidebarExpanded ? 'w-[300px] shadow-2xl' : 'w-[88px]'}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
@@ -549,20 +523,35 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
 
 // ---------- Desktop components (collapsed) ----------
 
-function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
+function NavGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
   item: SidebarNavItem;
   isActive: (href?: string) => boolean;
   isDropdownOpen: boolean;
-  onToggle: () => void;
+  onOpen: () => void;
+  onClose: () => void;
 }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const closeTimer = useRef<number | null>(null);
   const [dropdownStyle, setDropdownStyle] = useState<{ top: number; left: number } | null>(null);
-  const [hovered, setHovered] = useState(false);
-  const [tooltipStyle, setTooltipStyle] = useState<{ top: number; left: number } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const anyChildActive = item.children?.some(child => isActive(child.href)) ?? false;
   const childCount = item.children?.length ?? 0;
   const needsSearch = childCount > 5;
+
+  const openHover = () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    if (!isDropdownOpen) setSearchQuery('');
+    onOpen();
+  };
+
+  const scheduleClose = () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    closeTimer.current = window.setTimeout(onClose, 120);
+  };
+
+  useEffect(() => () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+  }, []);
 
   const filteredChildren = useMemo(() => {
     if (!searchQuery.trim()) return item.children ?? [];
@@ -585,33 +574,17 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
     }
   }, [childCount, isDropdownOpen]);
 
-  useLayoutEffect(() => {
-    if (hovered && buttonRef.current) {
-      const rect = buttonRef.current.getBoundingClientRect();
-      setTooltipStyle({ top: rect.top + rect.height / 2, left: rect.right + 8 });
-    } else {
-      setTooltipStyle(null);
-    }
-  }, [hovered]);
-
-  const handleToggle = () => {
-    if (!isDropdownOpen) {
-      setSearchQuery('');
-    }
-    onToggle();
-  };
-
   return (
-    <div className="relative">
+    <div className="relative" onMouseEnter={openHover} onMouseLeave={scheduleClose}>
       <button
         ref={buttonRef}
         id={`nav-btn-${item.id}`}
-        onClick={handleToggle}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-        className={`w-full flex items-center justify-center px-2 py-2 rounded-lg text-sm transition-all duration-200 group relative ${anyChildActive ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/90 hover:bg-white/7'}`}
+        onClick={event => event.preventDefault()}
+        onFocus={openHover}
+        onBlur={scheduleClose}
+        className={`workspace-sidebar-hover-row workspace-sidebar-nav-item w-full flex items-center justify-center px-2 py-2 rounded-lg text-sm transition-all duration-200 group relative ${anyChildActive ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/90 hover:bg-white/7'}`}
       >
-        <span className="w-5 h-5 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
+        <span className="workspace-sidebar-nav-icon w-5 h-5 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />
         </span>
         {item.badge && (
@@ -622,26 +595,20 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
           <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>
         )}
       </button>
-      {hovered && tooltipStyle && !isDropdownOpen && createPortal(
-        <div className="fixed z-[100] tooltip-fade-in px-2 py-1 tooltip-bg text-white text-xs rounded-md shadow-lg whitespace-nowrap pointer-events-none"
-          style={{ top: tooltipStyle.top, left: tooltipStyle.left }}
-        >
-          {item.label}{item.comingSoon ? ' - Soon' : ''}
-        </div>,
-        document.body
-      )}
       {isDropdownOpen && dropdownStyle && createPortal(
         <div
           id={`dropdown-${item.id}`}
-          className="fixed z-[100] w-[220px] rounded-lg overflow-hidden shadow-2xl border border-white/10 dropdown-panel-in"
+          className="workspace-sidebar-submenu workspace-sidebar-flyout fixed z-[100] w-[296px] rounded-2xl border p-2 shadow-2xl"
           style={{ 
             top: dropdownStyle.top, 
             left: dropdownStyle.left,
             background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)',
           }}
+          onMouseEnter={openHover}
+          onMouseLeave={scheduleClose}
         >
           <div className="p-1 max-h-[calc(100vh-24px)] overflow-y-auto">
-            <div className="px-3 py-2 text-sm font-semibold text-white/90 border-b border-white/10 flex items-center justify-between">
+            <div className="workspace-sidebar-flyout-title px-3 py-2 text-sm font-semibold text-white/90 border-b border-white/10 flex items-center justify-between">
               <span>{item.label}</span>
               {item.comingSoon ? <SoonBadge /> : <ChevronRight size={14} strokeWidth={1.8} className="text-white/40" aria-hidden="true" />}
             </div>
@@ -665,12 +632,13 @@ function NavGroup({ item, isActive, isDropdownOpen, onToggle }: {
                   <Link
                     key={child.id}
                     to={child.href}
-                    className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-all ${childActive ? 'bg-white/10 text-white' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
+                    aria-current={childActive ? 'page' : undefined}
+                    className={`workspace-sidebar-flyout-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${childActive ? 'bg-white/10 text-white' : 'text-white/70 hover:text-white hover:bg-white/10'}`}
                     onClick={onToggle}
                   >
-                    <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={16} />
+                    <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={20} />
                     <span className="flex-1">{child.label}</span>
-                    {child.comingSoon ? <SoonBadge /> : <ChevronRight size={14} strokeWidth={1.8} className="text-white/40" aria-hidden="true" />}
+                    {child.comingSoon ? <SoonBadge /> : <ChevronRight size={14} strokeWidth={1.8} className="workspace-sidebar-flyout-chevron text-white/40" aria-hidden="true" />}
                   </Link>
                 );
               })}
@@ -691,32 +659,12 @@ function NavLink({ item, isActive }: {
   isActive: (href?: string) => boolean;
 }) {
   const active = isActive(item.href);
-  const spanRef = useRef<HTMLSpanElement>(null);
-  const [hovered, setHovered] = useState(false);
-  const [tooltipStyle, setTooltipStyle] = useState<{ top: number; left: number } | null>(null);
-
-  useLayoutEffect(() => {
-    if (hovered && spanRef.current) {
-      const rect = spanRef.current.getBoundingClientRect();
-      setTooltipStyle({ top: rect.top + rect.height / 2, left: rect.right + 8 });
-    } else {
-      setTooltipStyle(null);
-    }
-  }, [hovered]);
 
   const content = (
     <>
-      <span ref={spanRef} className="w-5 h-5 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
+      <span data-sidebar-icon={/dashboard|overview/i.test(item.id + ' ' + item.label) ? 'dashboard' : undefined} className="workspace-sidebar-nav-icon w-5 h-5 flex items-center justify-center shrink-0 transition-transform duration-300 group-hover:scale-110">
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={17} />
       </span>
-      {hovered && tooltipStyle && createPortal(
-        <div className="fixed z-[100] tooltip-fade-in px-2 py-1 tooltip-bg text-white text-xs rounded-md shadow-lg whitespace-nowrap pointer-events-none"
-          style={{ top: tooltipStyle.top, left: tooltipStyle.left }}
-        >
-          {item.label}{item.comingSoon ? ' - Soon' : ''}
-        </div>,
-        document.body
-      )}
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
       {item.statusDot && !active && (
         <span className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-red-500"></span>
@@ -731,9 +679,8 @@ function NavLink({ item, isActive }: {
   return (
     <Link
       to={item.href ?? '#'}
-      className={`relative flex items-center justify-center px-2 py-2 rounded-lg text-sm transition-all duration-200 group ${active ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/90 hover:bg-white/7'}`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      aria-current={active ? 'page' : undefined}
+      className={`workspace-sidebar-hover-row workspace-sidebar-nav-item relative flex items-center justify-center px-2 py-2 rounded-lg text-sm transition-all duration-200 group ${active ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white/90 hover:bg-white/7'}`}
     >
       {content}
     </Link>
@@ -747,37 +694,16 @@ function SidebarBottomLink({ href, icon, label, isActive }: {
   isActive: (href?: string) => boolean;
 }) {
   const active = isActive(href);
-  const spanRef = useRef<HTMLSpanElement>(null);
-  const [hovered, setHovered] = useState(false);
-  const [tooltipStyle, setTooltipStyle] = useState<{ top: number; left: number } | null>(null);
-
-  useLayoutEffect(() => {
-    if (hovered && spanRef.current) {
-      const rect = spanRef.current.getBoundingClientRect();
-      setTooltipStyle({ top: rect.top + rect.height / 2, left: rect.right + 8 });
-    } else {
-      setTooltipStyle(null);
-    }
-  }, [hovered]);
 
   return (
     <Link
       to={href}
-      className={`relative flex items-center justify-center px-2 py-2 rounded-lg text-xs transition-all duration-200 group ${active ? 'bg-white/10 text-white' : 'text-white/45 hover:text-white/80 hover:bg-white/7'}`}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      aria-current={active ? 'page' : undefined}
+      className={`workspace-sidebar-hover-row workspace-sidebar-bottom-link relative flex items-center justify-center px-2 py-2 rounded-lg text-xs transition-all duration-200 group ${active ? 'bg-white/10 text-white' : 'text-white/45 hover:text-white/80 hover:bg-white/7'}`}
     >
-      <span ref={spanRef} className="w-5 h-5 flex items-center justify-center shrink-0">
+      <span className="w-5 h-5 flex items-center justify-center shrink-0">
         <SidebarIcon id={icon} label={label} sourceIcon={icon} size={15} />
       </span>
-      {hovered && tooltipStyle && createPortal(
-        <div className="fixed z-[100] tooltip-fade-in px-2 py-1 tooltip-bg text-white text-xs rounded-md shadow-lg whitespace-nowrap pointer-events-none"
-          style={{ top: tooltipStyle.top, left: tooltipStyle.left }}
-        >
-          {label}
-        </div>,
-        document.body
-      )}
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
     </Link>
   );
@@ -785,7 +711,7 @@ function SidebarBottomLink({ href, icon, label, isActive }: {
 
 // ---------- Mobile components (expanded) ----------
 
-function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
+function MobileNavGroupInline({ item, isActive, isExpanded, onToggle }: {
   item: SidebarNavItem;
   isActive: (href?: string) => boolean;
   isExpanded: boolean;
@@ -796,12 +722,12 @@ function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
     <div>
       <button
         onClick={onToggle}
-        className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all duration-200 ease-out group relative ${anyChildActive ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/90 hover:bg-white/7 hover:translate-x-0.5'}`}
+        className={`workspace-sidebar-hover-row workspace-sidebar-nav-item w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all duration-200 ease-out group relative ${anyChildActive ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/90 hover:bg-white/7 hover:translate-x-0.5'}`}
       >
-        <span className="w-5 h-5 flex items-center justify-center shrink-0">
+        <span className="workspace-sidebar-nav-icon w-5 h-5 flex items-center justify-center shrink-0">
           <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
         </span>
-        <span className="flex-1 text-left whitespace-nowrap text-sm font-medium">{item.label}</span>
+        <span className="workspace-sidebar-nav-label flex-1 text-left whitespace-nowrap text-sm font-medium">{item.label}</span>
         <span className="flex items-center gap-1 shrink-0">
           {item.comingSoon && <SoonBadge />}
           {item.badge && <NavBadge count={item.badge} />}
@@ -835,6 +761,105 @@ function MobileNavGroup({ item, isActive, isExpanded, onToggle }: {
   );
 }
 
+function MobileNavGroup({ item, isActive, isExpanded, onToggle, onSubmenuChange }: {
+  item: SidebarNavItem;
+  isActive: (href?: string) => boolean;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onSubmenuChange?: (open: boolean) => void;
+}) {
+  const anyChildActive = item.children?.some(child => isActive(child.href)) ?? false;
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const closeTimer = useRef<number | null>(null);
+  const [hovered, setHovered] = useState(false);
+  const [submenuStyle, setSubmenuStyle] = useState<{ top: number; left: number } | null>(null);
+
+  const openHoverMenu = () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    setHovered(true);
+    onSubmenuChange?.(true);
+  };
+
+  const scheduleClose = () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    closeTimer.current = window.setTimeout(() => {
+      setHovered(false);
+      onSubmenuChange?.(false);
+    }, 80);
+  };
+
+  useEffect(() => () => {
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!hovered || !buttonRef.current) {
+      setSubmenuStyle(null);
+      return;
+    }
+
+    const rect = buttonRef.current.getBoundingClientRect();
+    const menuHeight = Math.min((item.children?.length ?? 0) * 42 + 16, 460);
+    const top = Math.max(8, Math.min(rect.top, window.innerHeight - menuHeight - 8));
+    setSubmenuStyle({ top, left: rect.right + 8 });
+  }, [hovered, item.children?.length]);
+
+  return (
+    <div className="workspace-sidebar-flyout-trigger relative" onMouseEnter={openHoverMenu} onMouseLeave={scheduleClose}>
+      <button
+        ref={buttonRef}
+        onClick={() => {
+          if (window.matchMedia('(min-width: 1024px)').matches) return;
+          onSubmenuChange?.(false);
+          onToggle();
+        }}
+        aria-expanded={isExpanded || hovered}
+        className={'workspace-sidebar-hover-row workspace-sidebar-nav-item w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all duration-200 ease-out group relative ' + (anyChildActive ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/90 hover:bg-white/7 hover:translate-x-0.5')}
+      >
+        <span className="workspace-sidebar-nav-icon w-5 h-5 flex items-center justify-center shrink-0">
+          <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
+        </span>
+        <span className="workspace-sidebar-nav-label flex-1 text-left whitespace-nowrap text-sm font-medium">{item.label}</span>
+        <span className="flex items-center gap-1 shrink-0">
+          {item.comingSoon && <SoonBadge />}
+          {item.badge && <NavBadge count={item.badge} />}
+          {isExpanded ? <ChevronUp size={14} strokeWidth={1.8} className="text-white/30" aria-hidden="true" /> : <ChevronDown size={14} strokeWidth={1.8} className="text-white/30" aria-hidden="true" />}
+        </span>
+      </button>
+
+      {hovered && submenuStyle && item.children && createPortal(
+        <div
+          className="workspace-sidebar-submenu workspace-sidebar-flyout fixed z-[100] w-[296px] rounded-2xl border p-2 shadow-2xl"
+          style={{ top: submenuStyle.top, left: submenuStyle.left }}
+          onMouseEnter={openHoverMenu}
+          onMouseLeave={scheduleClose}
+        >
+          {item.children.map(child => (
+            <Link
+              key={child.id}
+              to={child.href}
+              onClick={() => {
+                setHovered(false);
+                onSubmenuChange?.(false);
+              }}
+              aria-current={isActive(child.href) ? 'page' : undefined}
+              className={'workspace-sidebar-flyout-link flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm transition-colors ' + (isActive(child.href) ? 'bg-primary-700 text-white' : 'text-white/75 hover:bg-primary-700/70 hover:text-white')}
+            >
+              <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={20} />
+              <span className="min-w-0 flex-1 truncate">{child.label}</span>
+              {child.comingSoon && <SoonBadge />}
+              {child.statusDot && <StatusDot color={child.statusDot} />}
+              {child.badge && <NavBadge count={child.badge} />}
+            </Link>
+          ))}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+
 function MobileNavLink({ item, isActive }: {
   item: SidebarNavItem;
   isActive: (href: string) => boolean;
@@ -843,10 +868,10 @@ function MobileNavLink({ item, isActive }: {
   const content = (
     <>
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400 shadow-[0_0_6px_rgba(0,0,0,0.3)]"></span>}
-      <span className="w-5 h-5 flex items-center justify-center shrink-0">
+      <span data-sidebar-icon={/dashboard|overview/i.test(item.id + ' ' + item.label) ? 'dashboard' : undefined} className="workspace-sidebar-nav-icon w-5 h-5 flex items-center justify-center shrink-0">
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} size={18} />
       </span>
-      <span className="flex-1 whitespace-nowrap text-sm font-medium">{item.label}</span>
+      <span className="workspace-sidebar-nav-label flex-1 whitespace-nowrap text-sm font-medium">{item.label}</span>
       <span className="flex items-center gap-1.5 shrink-0">
         {item.comingSoon && <SoonBadge />}
         {item.statusDot && <StatusDot color={item.statusDot} />}
@@ -858,7 +883,8 @@ function MobileNavLink({ item, isActive }: {
   return (
     <Link
       to={item.href ?? '#'}
-      className={`flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all duration-200 ease-out group relative ${active ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/90 hover:bg-white/7 hover:translate-x-0.5'}`}
+      aria-current={active ? 'page' : undefined}
+      className={`workspace-sidebar-hover-row workspace-sidebar-nav-item flex items-center gap-3 px-2.5 py-2 rounded-lg text-sm transition-all duration-200 ease-out group relative ${active ? 'bg-white/10 text-white shadow-sm' : 'text-white/55 hover:text-white/90 hover:bg-white/7 hover:translate-x-0.5'}`}
     >
       {content}
     </Link>
@@ -867,7 +893,7 @@ function MobileNavLink({ item, isActive }: {
 
 function SoonBadge() {
   return (
-    <span className="rounded-full border border-white/10 bg-white/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/55">
+    <span className="workspace-sidebar-flyout-badge workspace-sidebar-soon-badge rounded-full border border-white/10 bg-white/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white/55">
       Soon
     </span>
   );
@@ -897,7 +923,8 @@ function MobileSidebarBottomLink({ href, icon, label, isActive }: {
   return (
     <Link
       to={href}
-      className={`flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs transition-all duration-200 ease-out group relative ${active ? 'bg-white/10 text-white' : 'text-white/45 hover:text-white/80 hover:bg-white/7'}`}
+      aria-current={active ? 'page' : undefined}
+      className={`workspace-sidebar-hover-row workspace-sidebar-bottom-link flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs transition-all duration-200 ease-out group relative ${active ? 'bg-white/10 text-white' : 'text-white/45 hover:text-white/80 hover:bg-white/7'}`}
     >
       {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent-400"></span>}
       <span className="w-5 h-5 flex items-center justify-center shrink-0">

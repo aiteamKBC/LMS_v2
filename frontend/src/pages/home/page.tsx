@@ -81,57 +81,6 @@ function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: 
   );
 }
 
-// Supporting cards stay positioned around the learner, matching the original hero composition.
-const HERO_CARD_BASE = 'cursor-pointer rounded-2xl border border-white/15 bg-[#0f0b20]/65 text-white shadow-2xl shadow-black/30 backdrop-blur-md transition-all duration-300 ease-out hover:-translate-y-2 hover:scale-[1.03] hover:border-accent-300/70 hover:bg-[#15102a]/85 hover:shadow-[0_18px_45px_rgba(124,58,237,0.32)]';
-
-function NextMilestoneCard() {
-  return (
-    <div className={`${HERO_CARD_BASE} border-accent-300/15 bg-accent-300/[0.08] p-4`}>
-      <p className="text-[10px] uppercase tracking-[0.16em] text-accent-200/60">Next milestone</p>
-      <div className="mt-3 flex items-center gap-2.5">
-        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-500/30 text-primary-200"><AppIcon className="ri-shield-check-line" /></span>
-        <div>
-          <p className="text-xs font-semibold text-white">Submit campaign plan</p>
-          <p className="mt-0.5 text-[10px] text-accent-200">Due in 5 days</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RecentActivityCard() {
-  return (
-    <div className={`${HERO_CARD_BASE} p-4`}>
-      <p className="text-[10px] uppercase tracking-[0.16em] text-white/40">Recent activity</p>
-      <div className="mt-3 flex items-start gap-2.5">
-        <span className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-full border border-primary-300/30 bg-primary-500/15 text-primary-200"><AppIcon className="ri-check-line text-xs" /></span>
-        <div>
-          <p className="text-xs font-medium text-white/80">Evidence uploaded</p>
-          <p className="mt-0.5 text-[10px] text-white/40">2 hours ago</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function HeroProgressDesktop() {
-  return (
-    <div className="pointer-events-none absolute inset-0 z-20 mx-auto hidden w-full max-w-[1920px] xl:block">
-      <div className="pointer-events-auto absolute right-[2.5%] top-[52%] w-[238px] animate-hero-fade-in-up delay-900 2xl:w-[250px]"><NextMilestoneCard /></div>
-      <div className="pointer-events-auto absolute bottom-[11%] right-[3.5%] w-[220px] animate-hero-fade-in-up delay-900 2xl:w-[232px]"><RecentActivityCard /></div>
-    </div>
-  );
-}
-
-function HeroProgressMobile() {
-  return (
-    <div className="grid gap-3 sm:grid-cols-2">
-      <NextMilestoneCard />
-      <RecentActivityCard />
-    </div>
-  );
-}
-
 export default function Home() {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -278,13 +227,6 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Individual chart cards, kept in the original spaced positions around the learner. */}
-        <HeroProgressDesktop />
-
-      </section>
-
-      <section className="bg-[#0b0814] px-4 py-8 xl:hidden">
-        <HeroProgressMobile />
       </section>
 
       {/* ============ STATS BAR ============ */}

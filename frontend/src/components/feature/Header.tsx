@@ -164,7 +164,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
       {/* Provider Logo */}
       <a href="/" className="hidden shrink-0 sm:flex">
-        <BrandLockup size="compact" />
+        <BrandLockup size="compact" className="!h-16 !w-32" />
       </a>
 
       {/* Spacer */}
