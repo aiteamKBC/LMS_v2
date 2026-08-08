@@ -114,6 +114,149 @@ class EnrolmentReviewsDdlTests(SimpleTestCase):
         self.assertIn("enrolment_reviews_employer_signed_idx", joined)
 
 
+class DatabaseAliasCheckTests(SimpleTestCase):
+    """P0-4 / 7.2: the two-database assumption must fail loudly, not silently.
+
+    Six apply_* commands created enrolment-schema tables through the `default`
+    alias while EnrolmentRouter reads them through `enrolment`. That worked only
+    because .env sets one Database_url both chains fall back to. These tests
+    cover the check that now flags a split.
+    """
+
+    _PG = {
+        "ENGINE": "django.db.backends.postgresql",
+        "HOST": "a.neon.tech",
+        "PORT": "5432",
+        "NAME": "kbc",
+    }
+
+    def _run(self, **overrides):
+        from django.test import override_settings
+
+        from .checks import check_enrolment_alias_matches_default
+
+        with override_settings(**overrides):
+            return [w.id for w in check_enrolment_alias_matches_default(None)]
+
+    def test_silent_when_both_aliases_match(self):
+        self.assertEqual(
+            self._run(
+                USE_SQLITE_FOR_TESTS=False,
+                DATABASES={"default": self._PG, "enrolment": dict(self._PG)},
+            ),
+            [],
+        )
+
+    def test_warns_when_aliases_diverge(self):
+        self.assertEqual(
+            self._run(
+                USE_SQLITE_FOR_TESTS=False,
+                DATABASES={
+                    "default": self._PG,
+                    "enrolment": {**self._PG, "HOST": "b.neon.tech"},
+                },
+            ),
+            ["learner_api.W002"],
+        )
+
+    def test_warns_when_enrolment_alias_is_missing(self):
+        self.assertEqual(
+            self._run(USE_SQLITE_FOR_TESTS=False, DATABASES={"default": self._PG}),
+            ["learner_api.W001"],
+        )
+
+    def test_skipped_under_sqlite_test_mode(self):
+        # Warning on every test run would train people to ignore it.
+        self.assertEqual(
+            self._run(
+                USE_SQLITE_FOR_TESTS=True,
+                DATABASES={
+                    "default": self._PG,
+                    "enrolment": {**self._PG, "HOST": "b.neon.tech"},
+                },
+            ),
+            [],
+        )
+
+    def test_divergence_hint_names_the_cross_schema_readers(self):
+        # The warning is only actionable if it says which call sites are affected.
+        from django.test import override_settings
+
+        from .checks import check_enrolment_alias_matches_default
+
+        with override_settings(
+            USE_SQLITE_FOR_TESTS=False,
+            DATABASES={
+                "default": self._PG,
+                "enrolment": {**self._PG, "HOST": "b.neon.tech"},
+            },
+        ):
+            hint = check_enrolment_alias_matches_default(None)[0].hint
+
+        for fragment in ("curriculum.groups", "curriculum.weeks", "Learner"):
+            self.assertIn(fragment, hint)
+
+
+class EnrolmentDdlAliasTests(SimpleTestCase):
+    """Every command that creates an enrolment table must use that alias."""
+
+    COMMANDS = (
+        "apply_enrolment_reviews_table",
+        "apply_review_detail_tables",
+        "apply_apprenticeship_agreements_table",
+        "apply_ilr_documents_table",
+        "apply_training_plans_table",
+        "apply_written_agreements_table",
+        "apply_document_learner_signature",
+        "apply_learning_plan_jsonb",
+        "apply_employer_signing",
+        "apply_staff_users_table",
+        "apply_employer_tables",
+        "create_created_users_table",
+    )
+
+    def test_no_command_opens_a_default_alias_cursor(self):
+        import importlib
+        import inspect
+
+        offenders = []
+        for name in self.COMMANDS:
+            module = importlib.import_module(
+                f"learner_api.management.commands.{name}"
+            )
+            source = inspect.getsource(module)
+            if "with connection.cursor()" in source:
+                offenders.append(name)
+
+        self.assertEqual(
+            offenders,
+            [],
+            "These create/alter enrolment.* but open a cursor on the `default` "
+            f"alias, so DDL and DML can land on different databases: {offenders}",
+        )
+
+    def test_no_command_opens_a_bare_atomic_block(self):
+        # transaction.atomic() defaults to `default`; with an enrolment cursor the
+        # DDL ends up outside the block it appears to be inside, so --dry-run
+        # would not roll it back.
+        import importlib
+        import inspect
+
+        offenders = []
+        for name in self.COMMANDS:
+            module = importlib.import_module(
+                f"learner_api.management.commands.{name}"
+            )
+            if "transaction.atomic()" in inspect.getsource(module):
+                offenders.append(name)
+
+        self.assertEqual(
+            offenders,
+            [],
+            f"bare transaction.atomic() must pass using=CONN: {offenders}",
+        )
+
+
 class CreatedUsersInstallPathTests(SimpleTestCase):
     """P0-3: enrolment."Created_users" must be creatable on a clean database.
 

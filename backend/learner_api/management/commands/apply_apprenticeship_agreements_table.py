@@ -22,7 +22,14 @@ Why its own table:
     python manage.py apply_apprenticeship_agreements_table
 """
 from django.core.management.base import BaseCommand
-from django.db import connection
+from django.db import connections
+
+# These tables live in the Neon `enrolment` schema, which EnrolmentRouter
+# sends every model read and write to. Creating them on the `default` alias
+# only worked because .env sets a single Database_url that both aliases
+# resolve to; split them and the DDL lands on one database while the ORM
+# queries another. Use the same alias the models use.
+CONN = "enrolment"
 
 TABLE = 'enrolment."Apprenticeship_Agreements"'
 
@@ -114,7 +121,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        with connection.cursor() as cursor:
+        with connections[CONN].cursor() as cursor:
             cursor.execute("CREATE SCHEMA IF NOT EXISTS enrolment")
             exists = _exists(cursor)
             self.stdout.write(f"{TABLE} exists: {exists}")

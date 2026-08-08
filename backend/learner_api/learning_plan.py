@@ -34,6 +34,9 @@ def _error(message, status):
 
 
 def _rows(sql, params):
+    # Deliberately the `default` alias: every caller reads curriculum.*, which is
+    # owned by curriculum_api and migrated on `default`. Not an oversight — see
+    # the note in apprenticeship_agreement._group_dates.
     with connection.cursor() as cursor:
         cursor.execute(sql, params)
         columns = [c[0] for c in cursor.description]

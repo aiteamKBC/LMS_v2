@@ -14,6 +14,8 @@ import os
 from pathlib import Path
 from urllib.parse import parse_qsl, urlparse, unquote
 
+from django.core.exceptions import ImproperlyConfigured
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -95,11 +97,25 @@ def database_from_url(database_url):
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_'
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
+
+# SECURITY WARNING: keep the secret key used in production secret!
+# Environment-driven, with the historical development key kept as the fallback so
+# local runs need no setup. When DEBUG is off there is no fallback: a production
+# process must be given a real key rather than silently signing sessions and
+# password-reset tokens with a value that is public in this repository.
+_DEV_SECRET_KEY = 'django-insecure-suh%63q857hx@$cdjhxnj5t9@eh!$pemr!r0dc9*m5%2ey)1d_'
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") or ""
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = _DEV_SECRET_KEY
+    else:
+        raise ImproperlyConfigured(
+            "DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false. The "
+            "development key is committed to this repository, so it cannot be "
+            "used to sign anything outside local development."
+        )
 CHAT_DEMO_BOOTSTRAP_ENABLED = os.environ.get(
     "CHAT_DEMO_BOOTSTRAP_ENABLED",
     # The current frontend authentication is local/demo authentication and
@@ -323,7 +339,17 @@ AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
 # — see enrolment_api/documents.py. Separate from the evidence containers: these
 # are produced by the platform, not uploaded by learners, so they need no
 # quarantine/scan step and are written straight to their own container.
-AZURE_ENROLMENT_DOCS_CONTAINER = os.environ.get("AZURE_Enrolment_Docs_CONTAINER", "enrolment-docs")
+# Reads the UPPERCASE key first, matching every sibling above, and falls back to
+# the original mixed-case spelling so existing deployments keep working.
+# Environment variables are case-sensitive on Linux, so an ops-set
+# AZURE_ENROLMENT_DOCS_CONTAINER was previously ignored in silence and the
+# default used instead. EVIDENCE_CLOUD.md already flags case-mismatch as a bug
+# that has bitten this project.
+AZURE_ENROLMENT_DOCS_CONTAINER = (
+    os.environ.get("AZURE_ENROLMENT_DOCS_CONTAINER")
+    or os.environ.get("AZURE_Enrolment_Docs_CONTAINER")
+    or "enrolment-docs"
+)
 
 LOGGING = {
     'version': 1,
