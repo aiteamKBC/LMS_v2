@@ -106,7 +106,9 @@ function formatHours(value: number) {
 // totals above still use the exact values, so a column can differ from its
 // total by the rounding remainder.
 function roundHours(value: number | null | undefined) {
-  return value == null ? "—" : String(Math.round(value));
+  // Round to 2 dp (not whole hours — 2.5h must stay "2.5", not become "3"),
+  // dropping any trailing zeros so 11.0 shows as "11".
+  return value == null ? "—" : String(Math.round(value * 100) / 100);
 }
 
 function SearchPage() {
@@ -376,27 +378,23 @@ function SearchPage() {
             <div className="max-h-[36rem] overflow-auto">
               <Table>
                 <TableHeader>
-                  {/* Two header rows: "Timestamp" spans the From / To pair, every
-                      other column spans both rows so the grid stays aligned. */}
+                  {/* A single "Timestamp" column carrying the combined from–to
+                      value (it'll later hold other kinds of value too). */}
                   <TableRow className="hover:bg-transparent">
-                    <TableHead rowSpan={2} className="label-caps pl-7">Activity ID</TableHead>
-                    <TableHead rowSpan={2} className="label-caps">Date</TableHead>
-                    <TableHead rowSpan={2} className="label-caps">Learner</TableHead>
-                    <TableHead rowSpan={2} className="label-caps">Month</TableHead>
-                    <TableHead rowSpan={2} className="label-caps">Category</TableHead>
-                    <TableHead rowSpan={2} className="label-caps">Activity</TableHead>
-                    <TableHead colSpan={2} className="label-caps h-auto border-b border-border pb-1 pt-3 text-center">Timestamp</TableHead>
-                    <TableHead rowSpan={2} className="label-caps text-right">Planned</TableHead>
-                    <TableHead rowSpan={2} className="label-caps pr-7 text-right">Actual</TableHead>
-                  </TableRow>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="label-caps h-auto whitespace-nowrap pb-3 pt-1 text-center">From</TableHead>
-                    <TableHead className="label-caps h-auto whitespace-nowrap pb-3 pt-1 text-center">To</TableHead>
+                    <TableHead className="label-caps pl-7">Activity ID</TableHead>
+                    <TableHead className="label-caps">Date</TableHead>
+                    <TableHead className="label-caps">Learner</TableHead>
+                    <TableHead className="label-caps">Month</TableHead>
+                    <TableHead className="label-caps">Category</TableHead>
+                    <TableHead className="label-caps">Activity</TableHead>
+                    <TableHead className="label-caps text-center">Timestamp</TableHead>
+                    <TableHead className="label-caps text-right">Planned</TableHead>
+                    <TableHead className="label-caps pr-7 text-right">Actual</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {activities.isLoading && (
-                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
                   )}
                   {activities.data?.items.map((row) => (
                     <TableRow key={row.id}>
@@ -418,8 +416,7 @@ function SearchPage() {
                           {row.activity_unit}
                         </Link>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.time_from ?? "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.time_to ?? "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.time_from_to ?? "—"}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{roundHours(row.planned_hours)}</TableCell>
                       <TableCell className="pr-7 text-right font-mono text-sm text-success">{roundHours(row.actual_lms_hours)}</TableCell>
                     </TableRow>

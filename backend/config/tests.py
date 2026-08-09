@@ -9,7 +9,6 @@ modules continue to cover successful GET/POST/PATCH/DELETE behaviour.
 import base64
 import json
 import re
-import threading
 from collections import Counter
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -36,7 +35,7 @@ API_PREFIXES = (
 
 EXPECTED_ENDPOINT_COUNTS = {
     "curriculum_api/": 64,
-    "coach_api/": 16,
+    "coach_api/": 17,
     "quiz_api/": 13,
     "learner_api/": 31,
     "audit_api/": 5,
@@ -204,6 +203,7 @@ class ApiGetBatchTests(SimpleTestCase):
                 "requests": [
                     {"id": "external", "url": "https://example.com/learner_api/learners/"},
                     {"id": "admin", "url": "/admin/"},
+                    {"id": "recursive", "url": "/coach_api/_batch/"},
                 ]
             }),
             content_type="application/json",
@@ -212,19 +212,17 @@ class ApiGetBatchTests(SimpleTestCase):
         response = api_get_batch(request)
         payload = json.loads(response.content)
 
-        self.assertEqual([item["status"] for item in payload["responses"]], [400, 400])
+        self.assertEqual([item["status"] for item in payload["responses"]], [400, 400, 400])
 
     @patch("config.batch.resolve")
-    def test_executes_child_gets_in_parallel_workers(self, resolve_route):
-        barrier = threading.Barrier(2)
-        worker_ids = set()
+    def test_executes_child_gets_serially_in_request_order(self, resolve_route):
+        visited = []
 
-        def synchronized_view(_request):
-            worker_ids.add(threading.get_ident())
-            barrier.wait(timeout=1)
+        def fake_view(request):
+            visited.append(request.path)
             return JsonResponse({"ok": True})
 
-        resolve_route.return_value = SimpleNamespace(func=synchronized_view, args=(), kwargs={})
+        resolve_route.return_value = SimpleNamespace(func=fake_view, args=(), kwargs={})
         request = RequestFactory().post(
             "/api/batch/",
             data=json.dumps({
@@ -240,4 +238,4 @@ class ApiGetBatchTests(SimpleTestCase):
         payload = json.loads(response.content)
 
         self.assertEqual([item["status"] for item in payload["responses"]], [200, 200])
-        self.assertEqual(len(worker_ids), 2)
+        self.assertEqual(visited, ["/coach_api/coach/caseload", "/learner_api/learners/"])

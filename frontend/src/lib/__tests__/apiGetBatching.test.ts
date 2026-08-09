@@ -43,7 +43,7 @@ describe('API GET batching', () => {
     ]);
 
     expect(transport).toHaveBeenCalledTimes(1);
-    expect(transport).toHaveBeenCalledWith('/api/batch/', expect.objectContaining({ method: 'POST' }));
+    expect(transport).toHaveBeenCalledWith('/coach_api/_batch/', expect.objectContaining({ method: 'POST' }));
     expect(firstPayload.url).toBe('/coach_api/coach/caseload');
     expect(secondPayload.url).toBe('/learner_api/learners/');
   });

@@ -9,7 +9,9 @@ const API_PREFIXES = [
   '/api/chat/',
   '/api/calendar/',
 ];
-const BATCH_ENDPOINT = '/api/batch/';
+// This lives below an established production proxy prefix. Some LiteSpeed
+// deployments route an unknown /api/* URL to index.html instead of Django.
+const BATCH_ENDPOINT = '/coach_api/_batch/';
 const BATCH_WINDOW_MS = 12;
 const NON_BATCHABLE_PATH = /\/(?:download|content)\/?$/i;
 

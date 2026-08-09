@@ -121,7 +121,9 @@ function SignatureCapture({ label, signer, value, onChange, onRemove, canRemove,
 // Per-activity hours are shown as whole hours across the log tables; the month
 // totals stay exact, so a column can differ from its total by the remainder.
 function roundHours(value: number | null | undefined) {
-  return value == null ? "—" : String(Math.round(value));
+  // Round to 2 dp (not whole hours — 2.5h must stay "2.5", not become "3"),
+  // dropping any trailing zeros so 11.0 shows as "11".
+  return value == null ? "—" : String(Math.round(value * 100) / 100);
 }
 
 function Stat({ label, value, tone = "navy" }: { label: string; value: string; tone?: "navy" | "purple" | "success" | "warning" }) {
@@ -460,20 +462,16 @@ function JournalPage() {
           <div className="overflow-x-auto">
             <Table>
               <TableHeader>
-                {/* Two header rows: "Timestamp" spans the From / To pair, every
-                    other column spans both rows so the grid stays aligned. */}
+                {/* A single "Timestamp" column carrying the combined from–to
+                    value (it'll later hold other kinds of value too). */}
                 <TableRow className="border-0 bg-[#182d48] hover:bg-[#182d48]">
-                  <TableHead rowSpan={2} className="label-caps pl-7 text-white">Plan ID</TableHead>
-                  <TableHead rowSpan={2} className="label-caps text-white">Date</TableHead>
-                  <TableHead rowSpan={2} className="label-caps text-white">Activity</TableHead>
-                  <TableHead rowSpan={2} className="label-caps text-white">Category</TableHead>
-                  <TableHead colSpan={2} className="label-caps h-auto border-b border-white/20 pb-1 pt-3 text-center text-white">Timestamp</TableHead>
-                  <TableHead rowSpan={2} className="label-caps text-right text-white">Planned</TableHead>
-                  <TableHead rowSpan={2} className="label-caps pr-7 text-right text-white">Actual</TableHead>
-                </TableRow>
-                <TableRow className="border-0 bg-[#182d48] hover:bg-[#182d48]">
-                  <TableHead className="label-caps h-auto pb-3 pt-1 text-center text-white/70">From</TableHead>
-                  <TableHead className="label-caps h-auto pb-3 pt-1 text-center text-white/70">To</TableHead>
+                  <TableHead className="label-caps pl-7 text-white">Plan ID</TableHead>
+                  <TableHead className="label-caps text-white">Date</TableHead>
+                  <TableHead className="label-caps text-white">Activity</TableHead>
+                  <TableHead className="label-caps text-white">Category</TableHead>
+                  <TableHead className="label-caps text-center text-white">Timestamp</TableHead>
+                  <TableHead className="label-caps text-right text-white">Planned</TableHead>
+                  <TableHead className="label-caps pr-7 text-right text-white">Actual</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -496,8 +494,7 @@ function JournalPage() {
                     <TableCell className="font-mono text-xs text-muted-foreground">{row.learner_activity_date ?? "—"}</TableCell>
                     <TableCell className="max-w-md"><p className="text-sm font-medium">{row.activity_unit}</p><p className="mt-1 text-xs text-muted-foreground">{row.activity_description}</p></TableCell>
                     <TableCell className="text-xs text-muted-foreground">{row.activity_category}</TableCell>
-                    <TableCell className="text-center font-mono text-xs text-muted-foreground">{row.time_from ?? "—"}</TableCell>
-                    <TableCell className="text-center font-mono text-xs text-muted-foreground">{row.time_to ?? "—"}</TableCell>
+                    <TableCell className="text-center font-mono text-xs text-muted-foreground">{row.time_from_to ?? "—"}</TableCell>
                     <TableCell className="text-right font-mono text-sm">{roundHours(row.planned_hours)}</TableCell>
                     <TableCell className="pr-7 text-right font-mono text-sm font-medium text-success">{roundHours(row.actual_lms_hours)}</TableCell>
                   </TableRow>

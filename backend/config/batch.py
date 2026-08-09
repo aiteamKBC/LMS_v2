@@ -1,9 +1,7 @@
 import base64
 import json
-from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlsplit
 
-from django.db import close_old_connections
 from django.http import JsonResponse, StreamingHttpResponse
 from django.test.client import RequestFactory
 from django.urls import Resolver404, resolve
@@ -23,13 +21,14 @@ ALLOWED_API_PREFIXES = (
     "/api/calendar/",
 )
 MAX_BATCH_REQUESTS = 40
+BATCH_PATHS = {"/api/batch/", "/coach_api/_batch/"}
 
 
 def _safe_api_path(raw_url):
     parsed = urlsplit(str(raw_url or ""))
     if parsed.scheme or parsed.netloc or not parsed.path.startswith(ALLOWED_API_PREFIXES):
         return None
-    if parsed.path == "/api/batch/" or ".." in parsed.path.split("/"):
+    if parsed.path in BATCH_PATHS or ".." in parsed.path.split("/"):
         return None
     return parsed.path + (f"?{parsed.query}" if parsed.query else "")
 
@@ -90,16 +89,6 @@ def _execute_get(parent_request, item):
         }
 
 
-def _execute_get_isolated(parent_request, item):
-    # Django connections are thread-local. Ensure a batch worker never reuses
-    # the request thread's connection and does not leave its own connection open.
-    close_old_connections()
-    try:
-        return _execute_get(parent_request, item)
-    finally:
-        close_old_connections()
-
-
 @csrf_exempt
 @require_POST
 def api_get_batch(request):
@@ -118,13 +107,8 @@ def api_get_batch(request):
     if not valid_requests:
         return JsonResponse({"responses": []})
 
-    # Browser GETs used to run concurrently. Preserve that latency benefit after
-    # combining them into one HTTP request: total time should be close to the
-    # slowest child request, not the sum of every child request.
-    worker_count = min(8, len(valid_requests))
-    with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="api-get-batch") as executor:
-        responses = list(executor.map(
-            lambda item: _execute_get_isolated(request, item),
-            valid_requests,
-        ))
+    # Keep this endpoint safe for already-open clients during the batching
+    # rollback. Shared-hosting WSGI workers have strict thread/process limits;
+    # running child requests serially avoids exhausting LiteSpeed/Passenger.
+    responses = [_execute_get(request, item) for item in valid_requests]
     return JsonResponse({"responses": responses})

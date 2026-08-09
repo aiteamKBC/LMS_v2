@@ -9,9 +9,11 @@ import { getActivityLearners, getAttendanceSession, getLearnerActivities } from 
 
 const pageSize = 20;
 
-// Per-activity hours are shown as whole hours across the log tables.
+// Per-activity hours shown to 2 dp across the log tables.
 function roundHours(value: number | null | undefined) {
-  return value == null ? "—" : String(Math.round(value));
+  // Round to 2 dp (not whole hours — 2.5h must stay "2.5", not become "3"),
+  // dropping any trailing zeros so 11.0 shows as "11".
+  return value == null ? "—" : String(Math.round(value * 100) / 100);
 }
 
 export function MreTable({
@@ -88,35 +90,30 @@ export function MreTable({
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              {/* Two header rows: "Time" spans the From / To pair, every other
-                  column spans both rows so the grid stays aligned. */}
+              {/* A single "Time" column carrying the combined from–to value
+                  (it'll later hold other kinds of value too). */}
               <TableRow className="hover:bg-transparent">
-                <TableHead rowSpan={2} className="label-caps pl-7">Learner</TableHead>
-                <TableHead rowSpan={2} className="label-caps">Plan ID</TableHead>
-                <TableHead rowSpan={2} className="label-caps">Activity date</TableHead>
-                <TableHead colSpan={2} className="label-caps h-auto border-b border-border pb-1 pt-3 text-center">Time</TableHead>
-                <TableHead rowSpan={2} className="label-caps">Category</TableHead>
-                <TableHead rowSpan={2} className="label-caps">Activity</TableHead>
-                <TableHead rowSpan={2} className="label-caps text-right">Planned</TableHead>
-                <TableHead rowSpan={2} className="label-caps text-right">Actual</TableHead>
-                <TableHead rowSpan={2} className="label-caps pr-7 text-right">Journal</TableHead>
-              </TableRow>
-              <TableRow className="hover:bg-transparent">
-                <TableHead className="label-caps h-auto whitespace-nowrap pb-3 pt-1 text-center">From</TableHead>
-                <TableHead className="label-caps h-auto whitespace-nowrap pb-3 pt-1 text-center">To</TableHead>
+                <TableHead className="label-caps pl-7">Learner</TableHead>
+                <TableHead className="label-caps">Plan ID</TableHead>
+                <TableHead className="label-caps">Activity date</TableHead>
+                <TableHead className="label-caps text-center">Time</TableHead>
+                <TableHead className="label-caps">Category</TableHead>
+                <TableHead className="label-caps">Activity</TableHead>
+                <TableHead className="label-caps text-right">Planned</TableHead>
+                <TableHead className="label-caps text-right">Actual</TableHead>
+                <TableHead className="label-caps pr-7 text-right">Journal</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {query.isLoading && (
-                <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading learner data from Neon…</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Loading learner data from Neon…</TableCell></TableRow>
               )}
               {items.map((activity) => (
                 <TableRow key={activity.id}>
                   <TableCell className="pl-7 text-sm font-medium text-foreground">{activity.learner}</TableCell>
                   <TableCell className="font-mono text-xs text-foreground">{activity.plan_id}</TableCell>
                   <TableCell className="font-mono text-xs text-muted-foreground">{activity.learner_activity_date ?? "—"}</TableCell>
-                  <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{activity.time_from ?? "—"}</TableCell>
-                  <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{activity.time_to ?? "—"}</TableCell>
+                  <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{activity.time_from_to ?? "—"}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{activity.activity_category}</TableCell>
                   <TableCell className="max-w-md text-sm text-foreground">
                     <Link
@@ -147,7 +144,7 @@ export function MreTable({
                 </TableRow>
               ))}
               {!query.isLoading && items.length === 0 && (
-                <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">No learner activity records were returned by this database branch.</TableCell></TableRow>
+                <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">No learner activity records were returned by this database branch.</TableCell></TableRow>
               )}
             </TableBody>
           </Table>

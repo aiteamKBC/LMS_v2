@@ -137,6 +137,15 @@ KBC_LMS_SCHEMA_URL = os.environ.get(
 )
 KBC_LMS_API_KEY = os.environ.get("KBC_LMS_API_KEY", "")
 
+# --- Azure Blob Storage (learner evidence) ---
+# Keys live in backend/.env (never committed). Match the exact UPPERCASE names.
+AZURE_STORAGE_ACCOUNT      = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
+AZURE_STORAGE_KEY          = os.environ.get("AZURE_STORAGE_KEY", "")
+AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evidence-quarantine")
+AZURE_APPROVED_CONTAINER   = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
+AZURE_REJECTED_CONTAINER   = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
+AZURE_SAS_TTL_MINUTES      = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
+
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,lms.kentbusinesscollege.net,api.kentbusinesscollege.net").split(",")
