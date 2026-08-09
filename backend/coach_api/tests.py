@@ -11,6 +11,7 @@ from coach_api.views import (
     build_otjh_completed_entries,
     build_monthly_activity_learner,
     coach_caseload,
+    coach_dashboard,
     coach_monthly_activity,
     coach_timetable_book_event,
     coach_timetable_schedule_event,
@@ -128,6 +129,56 @@ class CoachCaseloadViewTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 200)
         serialize_learner.assert_called_once_with(row, refresh_live_snapshots=True)
+
+
+class CoachDashboardViewTests(SimpleTestCase):
+    @patch("coach_api.views.cache")
+    @patch("coach_api.views.collect_tracked_live_session_events")
+    @patch("coach_api.views.collect_generated_timetable")
+    @patch("coach_api.views.serialize_caseload_dashboard_learner")
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_dashboard_aggregates_workspace_data_with_one_timetable_collection(
+        self,
+        fetch_rows,
+        serialize_learner,
+        collect_timetable,
+        collect_live_sessions,
+        dashboard_cache,
+    ):
+        row = SimpleNamespace(id=2)
+        fetch_rows.return_value = [row]
+        serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
+        collect_timetable.return_value = {
+            "owner_name": "Med Maher",
+            "summary": {"total": 1},
+            "events": [{"id": "event-1"}],
+        }
+        dashboard_cache.get.return_value = None
+        collect_live_sessions.return_value = [{"id": "live-1", "date": "2026-08-09", "startHour": 9}]
+
+        response = coach_dashboard(
+            RequestFactory().get("/coach_api/coach/dashboard", {"owner_email": "coach@example.com"})
+        )
+        payload = json.loads(response.content)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload["learners"], [{"id": "2", "coachName": "Med Maher"}])
+        self.assertEqual(payload["attendance"]["learners"], [])
+        self.assertEqual([item["id"] for item in payload["timetable"]["events"]], ["event-1", "live-1"])
+        self.assertEqual(payload["evidence"]["items"], [])
+        collect_timetable.assert_called_once_with(
+            "coach@example.com",
+            start_date=date.today(),
+            end_date=date.today() + timedelta(days=90),
+            include_live_sessions=False,
+            include_scheduler_queues=False,
+        )
+        collect_live_sessions.assert_called_once_with(
+            "coach@example.com",
+            "Med Maher",
+            start_date=date.today(),
+            end_date=date.today() + timedelta(days=90),
+        )
 
 
 class CoachTimetableWindowTests(SimpleTestCase):

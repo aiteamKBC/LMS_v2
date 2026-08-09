@@ -12,6 +12,7 @@ from .constants import (
     STATUS_CHOICES,
     TYPE_CHOICES,
     PROGRAMME_STATUS_CHOICES,
+    DEFAULT_PROGRAMME_STATUS,
     POSITION_CHOICES,
     LEARNER_TYPE_CHOICES,
     ORGANISATION_STATUS_CHOICES,
@@ -76,6 +77,9 @@ def to_list_row(u):
         "subscriptionStatus": status,
         "subscriptionVerified": status.lower() == "fulluser",
         "learningPlan": utype == "User",
+        # Whether a plan has actually been saved, so the users table can offer
+        # "Add" vs "Edit" without fetching every learner's plan.
+        "hasLearningPlan": bool(u.learning_plan) or bool(u.training_plan),
         "programmeStatus": _s(u.programme_status),
         "notesCount": 0,
         "hasTasks": utype == "User",
@@ -154,12 +158,48 @@ def _subscription(u):
     }
 
 
+def _employer_label(u):
+    """(display name, id) for the learner's employer.
+
+    Prefers the live name from enrolment."Employers" when "Employer_id" is set:
+    the learner's own "Employer" text is a snapshot typed at create time, so a
+    renamed employer would otherwise keep showing the old name.
+
+    Falls back to that text for learners created before employer profiles existed
+    (their id is NULL), which is most historical rows. Never raises — a broken
+    employer lookup must not fail the whole board.
+    """
+    employer_id = getattr(u, "employer_id", None)
+    fallback = _s(getattr(u, "employer", ""))
+    if employer_id is None:
+        return fallback, None
+
+    # Imported here for the same circularity reason as the board_wizard import
+    # below.
+    from django.db import DatabaseError
+
+    from .models import Employer
+
+    try:
+        employer = Employer.objects.filter(pk=employer_id).only(
+            "first_name", "surname"
+        ).first()
+    except DatabaseError:
+        return fallback, employer_id
+    if employer is None:
+        # A dangling id — the API blocks writing one, but a row could predate
+        # that check or have had its employer deleted.
+        return fallback, employer_id
+    return employer.full_name or fallback, employer_id
+
+
 def to_board(u):
     # Imported here, not at module scope: enrolment_api.models imports from
     # learner_api.models, so a top-level import would be circular.
     from .board_wizard import fmt_date, merge_wizard_sections
 
     enrolled_at, enrolled_by = _split_enrolled(u.enrolled_time_and_user)
+    employer_name, employer_id = _employer_label(u)
     board = {
         "user": {
             "id": str(u.id),
@@ -170,6 +210,10 @@ def to_board(u):
             # and coach. Falls back to whoever enrolled them, then the line
             # manager, for rows created before that field existed.
             "owner": _s(u.case_owner) or enrolled_by or _s(u.line_manager),
+            # Resolved from "Employer_id" where set, so a renamed employer shows
+            # its current name rather than the stale string on the learner row.
+            "employer": employer_name,
+            "employerId": employer_id,
         },
         "contact": {
             "email": _s(u.email),
@@ -194,7 +238,7 @@ def to_board(u):
             "type": "Delivery",
             "name": _s(u.programme),
             "cohort": _s(u.cohort),
-            "status": _s(u.programme_status) or "Non starter",
+            "status": _s(u.programme_status) or DEFAULT_PROGRAMME_STATUS,
             # Cohort dates, matched from curriculum.cohort_authoring_details.
             # apprenticeship_end_date is the learner's own override and only
             # applies when it's set, so the cohort end date is the fallback.
@@ -445,6 +489,24 @@ def validate_choices(payload):
             raise ValidationError(f"Invalid {key}: {val!r}. Allowed: {', '.join(allowed)}")
 
 
+def _employer_id_field(payload):
+    """{'employer_id': int|None} for a payload carrying "employerId", else {}.
+
+    An integer column, so it bypasses the string-coercing loops below. Existence
+    of the referenced employer is checked by the caller (it needs a DB read) —
+    see _resolve_employer in views.py.
+    """
+    if "employerId" not in payload:
+        return {}
+    raw = payload["employerId"]
+    if raw in (None, ""):
+        return {"employer_id": None}
+    try:
+        return {"employer_id": int(str(raw).strip())}
+    except (TypeError, ValueError):
+        raise ValidationError(f"Invalid employerId: {raw!r}. Expected a whole number.")
+
+
 def write_fields(payload, *, require_create=False):
     """Validate a payload and return {model_attr: value} for the flat columns."""
     if not isinstance(payload, dict):
@@ -469,6 +531,7 @@ def write_fields(payload, *, require_create=False):
             fields[attr] = _bool_or_none(payload[key])
     if "trainingPlan" in payload:
         fields["learning_plan"] = _normalize_training_plan(payload["trainingPlan"])
+    fields.update(_employer_id_field(payload))
     return fields
 
 
@@ -509,6 +572,8 @@ def to_commercial_row(u):
         "employer": _s(u.employer),
         "lineManager": _s(u.line_manager),
         "organization": _s(u.organization),
+        # The employer's record id, so the caller can fetch its full details.
+        "employerId": u.employer_id,
         "programmeStatus": _s(u.programme_status),
         "programme": _s(u.programme),
         "cohort": _s(u.cohort),
@@ -549,6 +614,7 @@ def write_commercial_fields(payload, *, require_create=False):
             fields[attr] = _bool_or_none(payload[key])
     if "trainingPlan" in payload:
         fields["training_plan"] = _normalize_training_plan(payload["trainingPlan"])
+    fields.update(_employer_id_field(payload))
     return fields
 
 
@@ -673,6 +739,7 @@ def to_learner_detail(source, learner_profile):
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),
+        "employerId": getattr(source, "employer_id", None),
         "lineManager": _s(getattr(source, "line_manager", "")),
         "isActive": learner_profile is not None,
         "modules": modules,

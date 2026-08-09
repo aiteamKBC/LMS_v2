@@ -49,6 +49,7 @@ interface TimetableEvent {
   rawStatus?: string;
   notes?: string;
   cohort?: string;
+  group?: string;
   learnerId?: string;
   ownerEmail?: string;
   ownerName?: string;

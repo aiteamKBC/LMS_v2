@@ -1226,8 +1226,8 @@ function hasAptemSourceUrl(item: AptemAuditItem) {
     || reportUrls.some((value) => externalUrl(value));
 }
 
-function externalUrl(value?: string | null) {
-  if (!value) return null;
+function externalUrl(value?: AuditJsonValue | null) {
+  if (typeof value !== 'string' || !value) return null;
   const url = String(value).trim();
   if (!/^https?:\/\//i.test(url)) return null;
   try {

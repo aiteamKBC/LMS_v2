@@ -1,4 +1,12 @@
+from django.conf import settings
 from django.db import models
+
+
+COACH_TEST_MODE = getattr(settings, "COACH_TEST_MODE", False)
+
+
+def _table_name(test_name, production_name):
+    return test_name if COACH_TEST_MODE else production_name
 
 
 class CoachCalendarEvent(models.Model):
@@ -51,8 +59,12 @@ class CoachCalendarEvent(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'Coach"."coach_calendar_event'
+        db_table = _table_name('coach_test_calendar_events', 'Coach"."coach_calendar_event')
         ordering = ["target_date", "learner_name", "event_type", "sequence"]
+        indexes = [
+            models.Index(fields=["owner_email", "target_date", "status"], name="coach_owner_date_status_idx"),
+            models.Index(fields=["learner_id", "event_type", "target_date"], name="coach_learner_type_date_idx"),
+        ]
 
     def __str__(self):
         return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_id}"
@@ -92,8 +104,12 @@ class CoachAbsenceReport(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'Coach"."coach_absence_report'
+        db_table = _table_name('coach_test_absence_reports', 'Coach"."coach_absence_report')
         ordering = ["-session_date", "learner_name"]
+        indexes = [
+            models.Index(fields=["owner_email", "status", "-session_date"], name="coach_abs_owner_status_idx"),
+            models.Index(fields=["learner_id", "-session_date"], name="coach_abs_learner_date_idx"),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(attendance_rate__isnull=True)

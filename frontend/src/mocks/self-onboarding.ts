@@ -42,7 +42,7 @@ export interface SelfOnboardingLearner {
   learningSupportScreening: Record<string, string | boolean>;
   englishAndMaths: Record<string, string | boolean | number>;
   programmeUnderstanding: Record<string, string | boolean>;
-  priorLearning: Record<string, string | boolean | string[]>;
+  priorLearning: Record<string, string | boolean | number | string[]>;
   cvJobDescription: Record<string, string | boolean | string[]>;
   policyAcknowledgements: PolicyAcknowledgement[];
   declarations: Record<string, string | boolean>;

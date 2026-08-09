@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
 from time import sleep as _sleep
@@ -17,7 +18,8 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from django.conf import settings
-from django.db import DatabaseError, connections, router
+from django.core.cache import cache
+from django.db import DatabaseError, close_old_connections, connections, router
 from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
@@ -51,6 +53,7 @@ from curriculum_api.views import (
     actual_cohort_identity,
     actual_group_identity,
     AUTHORING_COMPONENTS_TABLE,
+    AUTHORING_MODULES_TABLE,
     AUTHORING_WEEKS_TABLE,
     authoring_fetch_all,
     authoring_modules_as_training_rows,
@@ -4201,7 +4204,17 @@ def build_live_session_calendar_event(
 
 def fetch_coach_assigned_group_ids(owner_email: str) -> set[str]:
     requested_owner = normalize_email(owner_email)
-    for coach in get_coach_rows():
+    try:
+        coach_rows = authoring_fetch_all(
+            'coaches',
+            'coalesce(is_archived, false) = false',
+            ensure_tables=False,
+        )
+    except Exception:
+        # Compatibility fallback for databases that have not provisioned the
+        # normalized staff tables yet.
+        coach_rows = get_coach_rows()
+    for coach in coach_rows:
         if normalize_email(coach.get("email")) != requested_owner:
             continue
         group_ids = parse_json_value(coach.get("assigned_group_ids"), [])
@@ -4210,7 +4223,12 @@ def fetch_coach_assigned_group_ids(owner_email: str) -> set[str]:
 
 
 def fetch_cohort_holidays_in_range(cohort_id: str) -> list[dict]:
-    for cohort in authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id]):
+    for cohort in authoring_fetch_all(
+        COHORT_AUTHORING_DETAILS_TABLE,
+        'cohort_id = %s',
+        [cohort_id],
+        ensure_tables=False,
+    ):
         return parse_json_value(cohort.get("holidays_in_range"), [])
     return []
 
@@ -4228,12 +4246,12 @@ def collect_live_session_events(
 
     program_configs_by_id = program_config_by_id(get_program_config_rows())
     weeks_by_module: dict[str, list[dict]] = {}
-    for week in authoring_fetch_all(AUTHORING_WEEKS_TABLE):
+    for week in authoring_fetch_all(AUTHORING_WEEKS_TABLE, ensure_tables=False):
         module_catalogue_id = clean_text(week.get("module_catalogue_id"))
         if module_catalogue_id:
             weeks_by_module.setdefault(module_catalogue_id, []).append(week)
     component_links_by_week: dict[str, str] = {}
-    for component in authoring_fetch_all(AUTHORING_COMPONENTS_TABLE):
+    for component in authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, ensure_tables=False):
         if clean_text(component.get("type")).lower() != "live_session":
             continue
         week_id = clean_text(component.get("week_id"))
@@ -4249,13 +4267,14 @@ def collect_live_session_events(
             "status = %s",
             ["active"],
             "updated_at desc, created_at desc",
+            ensure_tables=False,
         )
         for series in active_series:
             module_id = clean_text(series.get("module_catalogue_id"))
             if module_id and module_id not in active_series_by_module:
                 active_series_by_module[module_id] = series
         active_series_ids = {clean_text(series.get("id")) for series in active_series}
-        for occurrence in authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE):
+        for occurrence in authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, ensure_tables=False):
             series_id = clean_text(occurrence.get("live_session_id"))
             if series_id in active_series_ids:
                 occurrences_by_series_and_number[
@@ -4269,22 +4288,10 @@ def collect_live_session_events(
     today = date.today()
 
     events: list[dict] = []
-    training_rows = get_training_rows()
-    existing_delivery_keys = {
-        (
-            clean_text(row.get("_meta", {}).get("module_catalogue_id")),
-            clean_text(row.get("_meta", {}).get("group_id")),
-        )
-        for row in training_rows
-    }
-    training_rows.extend(
-        row
-        for row in authoring_modules_as_training_rows()
-        if (
-            clean_text(row.get("_meta", {}).get("module_catalogue_id")),
-            clean_text(row.get("_meta", {}).get("group_id")),
-        ) not in existing_delivery_keys
-    )
+    # The current curriculum source is the normalized authoring schema. Reading
+    # it once avoids the previous duplicate full-table pass and skips DDL checks
+    # that belong to deployment/migrations, not a dashboard GET request.
+    training_rows = authoring_modules_as_training_rows(ensure_tables=False)
     for row in training_rows:
         if not is_operational_training_row(row):
             continue
@@ -4361,6 +4368,87 @@ def collect_live_session_events(
             and (not end_date or date.fromisoformat(event["date"]) <= end_date)
         ]
 
+    return events
+
+
+def collect_tracked_live_session_events(
+    owner_email: str,
+    owner_name: str,
+    *,
+    start_date: date,
+    end_date: date,
+) -> list[dict]:
+    """Read only already-scheduled live occurrences for the dashboard.
+
+    The full timetable planner expands every authored week and component. That
+    is useful on the timetable page, but unnecessarily expensive for the small
+    dashboard preview.
+    """
+    assigned_group_ids = fetch_coach_assigned_group_ids(owner_email)
+    if not assigned_group_ids:
+        return []
+
+    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, ensure_tables=False)
+    modules_by_id = {
+        clean_text(row.get("module_catalogue_id")): row
+        for row in module_rows
+        if clean_text(row.get("module_catalogue_id"))
+        and clean_text(row.get("group_id")) in assigned_group_ids
+    }
+    if not modules_by_id:
+        return []
+
+    active_series = authoring_fetch_all(
+        LIVE_SESSIONS_TABLE,
+        "status = %s",
+        ["active"],
+        "updated_at desc, created_at desc",
+        ensure_tables=False,
+    )
+    series_by_id = {
+        clean_text(series.get("id")): series
+        for series in active_series
+        if clean_text(series.get("module_catalogue_id")) in modules_by_id
+    }
+    if not series_by_id:
+        return []
+
+    events = []
+    for occurrence in authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, ensure_tables=False):
+        series = series_by_id.get(clean_text(occurrence.get("live_session_id")))
+        if not series:
+            continue
+        scheduled_start = parse_date_value(occurrence.get("scheduled_start"))
+        if isinstance(scheduled_start, datetime):
+            occurrence_date = scheduled_start.date()
+        elif isinstance(scheduled_start, date):
+            occurrence_date = scheduled_start
+        else:
+            continue
+        if occurrence_date < start_date or occurrence_date > end_date:
+            continue
+
+        module = modules_by_id.get(clean_text(series.get("module_catalogue_id"))) or {}
+        session_number = max(1, parse_int(occurrence.get("session_number"), 1))
+        tracked_occurrence = {**occurrence, "scheduled_start": scheduled_start}
+        events.append(build_live_session_calendar_event(
+            {
+                "id": module.get("module_catalogue_id"),
+                "module_name": module.get("title") or series.get("module_title"),
+                "Tutor_name": module.get("tutor_name"),
+                "session_week_day": module.get("session_week_day"),
+                "session_start_time": module.get("session_start_time"),
+                "session_end_time": module.get("session_end_time"),
+            },
+            {"date": occurrence_date.isoformat(), "sessionNumber": session_number},
+            programme=clean_text(module.get("programme_name")),
+            cohort=clean_text(module.get("cohort_name")),
+            group=clean_text(module.get("group_name")),
+            owner_email=owner_email,
+            owner_name=owner_name,
+            tracked_occurrence=tracked_occurrence,
+            tracked_series=series,
+        ))
     return events
 
 
@@ -5226,6 +5314,88 @@ def coach_timetable(request):
             "summary": timetable_payload["summary"],
             "events": timetable_payload["events"],
             "schedulerQueues": timetable_payload.get("schedulerQueues", {}),
+        }
+    )
+
+
+@require_GET
+def coach_dashboard(request):
+    """Return every data set needed by the coach workspace in one request."""
+    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    today = date.today()
+    calendar_end = today + timedelta(days=90)
+
+    def load_dashboard_learners():
+        try:
+            rows = fetch_caseload_dashboard_profiles(owner_email)
+            return [serialize_caseload_dashboard_learner(row) for row in rows]
+        finally:
+            close_old_connections()
+
+    def load_dashboard_timetable():
+        cache_key = f"coach-dashboard-timetable:v2:{normalize_email(owner_email)}:{today.isoformat()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            payload = collect_generated_timetable(
+                owner_email,
+                start_date=today,
+                end_date=calendar_end,
+                include_live_sessions=False,
+                include_scheduler_queues=False,
+            )
+            live_events = collect_tracked_live_session_events(
+                owner_email,
+                payload.get("owner_name") or "Med Maher",
+                start_date=today,
+                end_date=calendar_end,
+            )
+            payload["events"] = sorted(
+                [*payload.get("events", []), *live_events],
+                key=lambda event: (event.get("date") or "", event.get("startHour") or 0),
+            )
+            payload.setdefault("summary", {})["liveSessionRows"] = len(live_events)
+            cache.set(cache_key, payload, 60)
+            return payload
+        finally:
+            close_old_connections()
+
+    try:
+        # These sections use independent read-only connections. Running them
+        # together makes initial page latency the duration of the slowest query
+        # instead of the sum of both remote-database round trips.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="coach-dashboard") as executor:
+            learners_future = executor.submit(load_dashboard_learners)
+            timetable_future = executor.submit(load_dashboard_timetable)
+            learners = learners_future.result()
+            timetable_payload = timetable_future.result()
+        owner_name = next(
+            (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
+            "Med Maher",
+        )
+    except Exception as exc:
+        return JsonResponse(
+            {"detail": "Unable to load coach dashboard data.", "error": str(exc)},
+            status=500,
+        )
+
+    return JsonResponse(
+        {
+            "owner": {
+                "name": timetable_payload.get("owner_name") or owner_name,
+                "email": owner_email,
+            },
+            "learners": learners,
+            # The compact dashboard cards do not render attendance or evidence.
+            # Their dedicated pages load those expensive datasets on demand.
+            "attendance": {"learners": []},
+            "timetable": {
+                "summary": timetable_payload.get("summary", {}),
+                "events": timetable_payload.get("events", []),
+            },
+            "evidence": {"items": []},
+            "errors": {},
         }
     )
 

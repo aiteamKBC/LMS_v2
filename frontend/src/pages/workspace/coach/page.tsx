@@ -10,7 +10,6 @@ import {
   eventDisplayDate,
   eventTargetDate,
   eventPeriodLabel,
-  fetchCoachCalendarEvents,
   formatDateLabel,
   formatTimeLabel,
   isAtRiskEvent,
@@ -28,30 +27,15 @@ type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
 type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
 
 const EMPTY_VALUE = '--';
-const CASELOAD_ENDPOINT = `/coach_api/coach/caseload?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
-const CASELOAD_SUMMARY_ENDPOINT = `${CASELOAD_ENDPOINT}&summary=1`;
+const DASHBOARD_ENDPOINT = `/coach_api/coach/dashboard?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 const AT_RISK_SCROLL_THRESHOLD = 8;
 const COACHING_CALENDAR_WINDOW_DAYS = 7;
-
-function buildCoachOwnedEndpoint(basePath: string, ownerEmail: string) {
-  return `${basePath}?owner_email=${encodeURIComponent(ownerEmail || DEFAULT_COACH_EMAIL)}`;
-}
 
 function toIsoDate(value: Date) {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, '0');
   const day = String(value.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
-}
-
-function buildCoachingCalendarWindow(referenceDate = new Date()) {
-  const start = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
-  const end = new Date(start);
-  end.setDate(start.getDate() + COACHING_CALENDAR_WINDOW_DAYS - 1);
-  return {
-    start: toIsoDate(start),
-    end: toIsoDate(end),
-  };
 }
 
 interface CoachLearner {
@@ -97,6 +81,15 @@ interface CaseloadApiResponse {
     email?: string;
   };
   learners?: CaseloadApiLearner[];
+}
+
+interface CoachDashboardApiResponse extends CaseloadApiResponse {
+  attendance?: AttendanceApiResponse;
+  timetable?: {
+    events?: CoachCalendarEvent[];
+  };
+  evidence?: MarkingQueueResponse;
+  errors?: Record<string, string>;
 }
 
 interface AttendanceApiLearner {
@@ -786,97 +779,6 @@ export default function CoachDashboard() {
 
   useEffect(() => {
     const controller = new AbortController();
-    let secondaryTimer: number | null = null;
-    let calendarHydrationTimer: number | null = null;
-
-    async function loadFullCalendarData(resolvedOwnerEmail: string) {
-      try {
-        const fullCalendar = await fetchCoachCalendarEvents(controller.signal, resolvedOwnerEmail, {
-          includeLiveSessions: false,
-          includeSchedulerQueues: false,
-        });
-        if (controller.signal.aborted) return;
-        setCalendarEvents(sortEvents(fullCalendar.events || []));
-        if (displayValue(fullCalendar.owner?.name) !== EMPTY_VALUE) {
-          setOwnerName(String(fullCalendar.owner?.name));
-        }
-      } catch {
-        if (controller.signal.aborted) return;
-        setCalendarEvents([]);
-      }
-    }
-
-    async function loadLiveSessionData(resolvedOwnerEmail: string) {
-      try {
-        const liveSessionsCalendar = await fetchCoachCalendarEvents(controller.signal, resolvedOwnerEmail, {
-          includeLiveSessions: true,
-          includeSchedulerQueues: false,
-        });
-        if (controller.signal.aborted) return;
-        setLiveSessionEvents(sortEvents(
-          (liveSessionsCalendar.events || []).filter(event => event.source === 'live-session'),
-        ));
-        if (displayValue(liveSessionsCalendar.owner?.name) !== EMPTY_VALUE) {
-          setOwnerName(String(liveSessionsCalendar.owner?.name));
-        }
-        setLiveSessionsError(null);
-      } catch {
-        if (controller.signal.aborted) return;
-        setLiveSessionEvents([]);
-        setLiveSessionsError('Live sessions unavailable right now.');
-      }
-      if (!controller.signal.aborted) {
-        setLiveSessionsLoading(false);
-      }
-    }
-
-    async function loadSecondaryData(resolvedOwnerEmail: string) {
-      const currentOwnerEmail = resolvedOwnerEmail || DEFAULT_COACH_EMAIL;
-      const calendarWindow = buildCoachingCalendarWindow();
-      const [
-        attendanceResult,
-        timetableResult,
-        evidenceResult,
-      ] = await Promise.allSettled([
-        fetchSharedJsonGet<AttendanceApiResponse>(buildCoachOwnedEndpoint('/coach_api/coach/attendance', currentOwnerEmail), { signal: controller.signal }),
-        fetchCoachCalendarEvents(controller.signal, currentOwnerEmail, {
-          ...calendarWindow,
-          includeLiveSessions: false,
-          includeSchedulerQueues: false,
-        }),
-        fetchSharedJsonGet<MarkingQueueResponse>(buildCoachOwnedEndpoint('/coach_api/coach/evidence-awaiting-review', currentOwnerEmail), { signal: controller.signal }),
-      ]);
-
-      if (controller.signal.aborted) return;
-
-      if (attendanceResult.status === 'fulfilled') {
-        setLearners((currentLearners) => mergeAttendanceRates(currentLearners, attendanceResult.value.learners || []));
-      }
-
-      if (timetableResult.status === 'fulfilled') {
-        setCalendarPreviewEvents(sortEvents(timetableResult.value.events || []));
-        if (displayValue(timetableResult.value.owner?.name) !== EMPTY_VALUE) {
-          setOwnerName(String(timetableResult.value.owner?.name));
-        }
-        setCalendarError(null);
-      } else {
-        setCalendarPreviewEvents([]);
-        setCalendarError('Calendar unavailable right now.');
-      }
-      setCalendarLoading(false);
-
-      if (evidenceResult.status === 'fulfilled') {
-        const queueItems = (evidenceResult.value.items || []).map(normalizeEvidenceQueueLearner);
-        setEvidenceQueue(queueItems);
-        setLearners((currentLearners) => mergeEvidenceQueueIntoLearners(currentLearners, queueItems));
-      } else {
-        setEvidenceQueue([]);
-      }
-
-      calendarHydrationTimer = window.setTimeout(() => {
-        void loadFullCalendarData(currentOwnerEmail);
-      }, 0);
-    }
 
     async function loadDashboard() {
       setLoading(true);
@@ -887,37 +789,47 @@ export default function CoachDashboard() {
       setLiveSessionsError(null);
 
       try {
-        const caseload = await fetchSharedJsonGet<CaseloadApiResponse>(CASELOAD_SUMMARY_ENDPOINT, { signal: controller.signal });
+        const dashboard = await fetchSharedJsonGet<CoachDashboardApiResponse>(DASHBOARD_ENDPOINT, { signal: controller.signal });
         if (controller.signal.aborted) return;
 
-        const resolvedOwnerName = displayValue(caseload.owner?.name) === EMPTY_VALUE ? 'Med Maher' : String(caseload.owner?.name);
-        const resolvedOwnerEmail = displayValue(caseload.owner?.email) === EMPTY_VALUE ? DEFAULT_COACH_EMAIL : String(caseload.owner?.email);
-        setOwnerName(resolvedOwnerName);
-        setLearners((caseload.learners || []).map(normalizeLearner));
-        setLoading(false);
+        const queueItems = (dashboard.evidence?.items || []).map(normalizeEvidenceQueueLearner);
+        const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
+        const attendanceLearners = dashboard.attendance?.learners || [];
+        const events = sortEvents(dashboard.timetable?.events || []);
+        const nonLiveEvents = events.filter(event => event.source !== 'live-session');
 
-        secondaryTimer = window.setTimeout(() => {
-          void loadSecondaryData(resolvedOwnerEmail);
-          void loadLiveSessionData(resolvedOwnerEmail);
-        }, 0);
+        setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? 'Med Maher' : String(dashboard.owner?.name));
+        setLearners(mergeEvidenceQueueIntoLearners(
+          mergeAttendanceRates(normalizedLearners, attendanceLearners),
+          queueItems,
+        ));
+        setEvidenceQueue(queueItems);
+        setCalendarEvents(nonLiveEvents);
+        setCalendarPreviewEvents(nonLiveEvents.filter(isWithinCalendarPreviewWindow));
+        setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
+        setCalendarError(dashboard.errors?.timetable || null);
+        setLiveSessionsError(dashboard.errors?.timetable || null);
+        setCalendarLoading(false);
+        setLiveSessionsLoading(false);
+        setLoading(false);
       } catch (error) {
         if (controller.signal.aborted) return;
         setLearners([]);
+        setCalendarEvents([]);
+        setCalendarPreviewEvents([]);
+        setLiveSessionEvents([]);
         setLoadWarning(error instanceof Error ? error.message : 'Unable to load coach dashboard data right now.');
+        setCalendarError('Calendar unavailable right now.');
+        setLiveSessionsError('Live sessions unavailable right now.');
+        setCalendarLoading(false);
+        setLiveSessionsLoading(false);
         setLoading(false);
-
-        secondaryTimer = window.setTimeout(() => {
-          void loadSecondaryData(DEFAULT_COACH_EMAIL);
-          void loadLiveSessionData(DEFAULT_COACH_EMAIL);
-        }, 0);
       }
     }
 
     loadDashboard();
     return () => {
       controller.abort();
-      if (secondaryTimer !== null) window.clearTimeout(secondaryTimer);
-      if (calendarHydrationTimer !== null) window.clearTimeout(calendarHydrationTimer);
     };
   }, []);
 

@@ -35,7 +35,7 @@ export function AiSuggestion({
   className = '',
 }: AiSuggestionProps) {
   const { isAiActive } = useAiSettings();
-  const [userAction, setUserAction] = useState<SuggestionAction | null>(null);
+  const [userAction, setUserAction] = useState<SuggestionAction | 'accepted' | 'rejected' | null>(null);
   const [editedText, setEditedText] = useState('');
 
   if (!isAiActive) return null;

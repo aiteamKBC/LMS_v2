@@ -205,6 +205,112 @@ def replace_training_plan(learner, plan):
             )
 
 
+def hydrate_training_plan(plan):
+    """Expand selected modules into their authored week/component tree.
+
+    Enrolment's module picker stores a deliberately small selection payload.
+    Learner delivery needs the complete tree, however, so resolve it from the
+    curriculum source before an Active profile is built. Existing detailed
+    plans are refreshed too: the authored curriculum remains authoritative.
+    """
+    if isinstance(plan, str):
+        try:
+            plan = json.loads(plan)
+        except ValueError:
+            return []
+    if not isinstance(plan, list):
+        return []
+
+    selected = [item for item in plan if isinstance(item, dict)]
+    module_ids = [_s(item.get("moduleId")) for item in selected if _s(item.get("moduleId"))]
+    module_titles = [_s(item.get("moduleTitle")) for item in selected if _s(item.get("moduleTitle"))]
+    if not module_ids and not module_titles:
+        return selected
+
+    try:
+        # Curriculum belongs to the default database. The enrolment alias only
+        # owns learner records when the two connections are split in production.
+        with connections["default"].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT m.module_catalogue_id, m.title,
+                       w.id, w.title, w.week_number,
+                       c.id, c.title, c.type
+                FROM curriculum.modules m
+                LEFT JOIN curriculum.weeks w ON w.module_catalogue_id = m.module_catalogue_id
+                LEFT JOIN curriculum.components c ON c.week_id = w.id
+                WHERE m.module_catalogue_id = ANY(%s) OR m.title = ANY(%s)
+                ORDER BY m.module_catalogue_id, w.display_order, w.week_number,
+                         c.display_order, c.id
+                """,
+                [module_ids, module_titles],
+            )
+            rows = cursor.fetchall()
+    except DatabaseError:
+        logger.exception("Could not expand training-plan modules from curriculum")
+        return selected
+
+    titles = {}
+    ids_by_title = {}
+    weeks_by_module = {}
+    seen_weeks = set()
+    for module_id, module_title, week_id, week_title, week_number, component_id, component_title, component_type in rows:
+        module_id = _s(module_id)
+        titles[module_id] = _s(module_title) or module_id
+        ids_by_title[titles[module_id]] = module_id
+        if not week_id:
+            continue
+        week_key = (module_id, str(week_id))
+        if week_key not in seen_weeks:
+            weeks_by_module.setdefault(module_id, []).append({
+                "weekId": str(week_id),
+                "weekTitle": _s(week_title) or f"Week {week_number}",
+                "components": [],
+            })
+            seen_weeks.add(week_key)
+        if component_id:
+            weeks_by_module[module_id][-1]["components"].append({
+                "componentId": str(component_id),
+                "componentTitle": _s(component_title) or _s(component_type) or "Activity",
+            })
+
+    expanded = []
+    for item in selected:
+        module_id = _s(item.get("moduleId"))
+        if module_id not in titles:
+            module_id = ids_by_title.get(_s(item.get("moduleTitle")), module_id)
+        # Keep orphaned/id-less entries intact: they cannot be resolved against
+        # current curriculum and should remain visible for staff to correct.
+        if not module_id or module_id not in titles:
+            expanded.append(item)
+            continue
+        expanded.append({
+            **item,
+            "moduleId": module_id,
+            "moduleTitle": titles[module_id],
+            "weeks": weeks_by_module.get(module_id, []),
+        })
+    return expanded
+
+
+def hydrate_source_training_plan(source):
+    """Persist an expanded plan on the enrolment source when it changed.
+
+    This self-heals learners activated before this expansion existed as well as
+    making every new Active learner immediately able to open their activities.
+    """
+    plan = get_training_plan(source)
+    hydrated = hydrate_training_plan(plan)
+    if hydrated == plan:
+        return hydrated
+
+    # Apprenticeships use Learning_plan; commercial learners use Training_plan.
+    field = "training_plan" if getattr(source, "training_plan", None) else "learning_plan"
+    setattr(source, field, hydrated)
+    source.save(update_fields=[field])
+    return hydrated
+
+
 def _canonical_ksb_items(items):
     canonical = []
     seen = set()
@@ -764,7 +870,7 @@ def sync_active_user(source):
                     setattr(learner, field, value)
                 learner.save(update_fields=list(defaults))
             if status.lower() == ACTIVE_STATUS:
-                training_plan = get_training_plan(source)
+                training_plan = hydrate_source_training_plan(source)
                 replace_training_plan(learner, training_plan)
                 refresh_learner_ksb_snapshot(learner, source, training_plan=training_plan)
         return learner if status.lower() == ACTIVE_STATUS else None

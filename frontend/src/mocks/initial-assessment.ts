@@ -1,5 +1,3 @@
-import type { InitialAssessmentRecord } from './initial-assessment-data';
-
 export interface BKSBResult {
   subject: 'English' | 'Maths';
   initialLevel: string;

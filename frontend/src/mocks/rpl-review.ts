@@ -1,5 +1,3 @@
-import type { RPLRecord } from './rpl-review-data';
-
 export interface KSBCategory {
   id: string;
   type: 'Knowledge' | 'Skill' | 'Behaviour';

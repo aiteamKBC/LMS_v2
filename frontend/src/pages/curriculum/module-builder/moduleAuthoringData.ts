@@ -6,6 +6,7 @@ import {
   getComponentDefinition,
   normaliseComponentSettings,
   type ComponentSettings,
+  type ComponentSettingValue,
   type KsbMappingType,
   type ModuleComponentType,
   type ModuleStatus,
@@ -88,7 +89,7 @@ export interface ModuleCatalogueItem {
   sourceType?: string;
   sourceId?: string;
   deliveryStatus?: string;
-  deliveryMetadata?: Record<string, string>;
+  deliveryMetadata?: Record<string, ComponentSettingValue>;
   ksbProfileSourceId?: string;
   tutor?: string;
   coach?: string;

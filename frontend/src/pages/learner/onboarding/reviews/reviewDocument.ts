@@ -208,7 +208,9 @@ function buildRows(data: ReviewFormResponse, questionLabels: Record<string, stri
     }
   }
 
-  const { learner, admin } = data.signatures;
+  const { learner, admin, employer } = data.signatures;
+  const gbDate = (iso?: string | null) => (iso ? new Date(iso).toLocaleDateString('en-GB') : '');
+
   rows.push({ kind: 'section', title: 'Declaration' });
   rows.push({
     kind: 'note',
@@ -217,13 +219,23 @@ function buildRows(data: ReviewFormResponse, questionLabels: Record<string, stri
   rows.push({
     kind: 'signature', label: 'Learner signature',
     signed: learner.signature, name: learner.name,
-    date: learner.signedAt ? new Date(learner.signedAt).toLocaleDateString('en-GB') : '',
+    date: gbDate(learner.signedAt),
   });
   rows.push({
     kind: 'signature', label: 'Provider signature',
     signed: admin.signature, name: admin.name,
-    date: admin.signedAt ? new Date(admin.signedAt).toLocaleDateString('en-GB') : '',
+    date: gbDate(admin.signedAt),
   });
+  // Only on reviews that actually call for an employer sign-off. Rendered even
+  // when unsigned, so the document shows an outstanding signature line rather
+  // than silently omitting a party who is required to sign.
+  if (employer?.required) {
+    rows.push({
+      kind: 'signature', label: 'Employer signature',
+      signed: employer.signature, name: employer.name,
+      date: gbDate(employer.signedAt),
+    });
+  }
 
   return rows;
 }
@@ -251,7 +263,7 @@ function drawSignature(doc: jsPDF, signed: string, x: number, lineY: number): vo
   } catch {
     // A corrupt data URL must not abort the whole document.
     doc.setFont('times', 'italic').setFontSize(11).setTextColor(20, 20, 20);
-    doc.text('Signed', x, baselineY);
+    doc.text('Signed', x, lineY - 1);
   }
 }
 
@@ -263,10 +275,8 @@ export function buildReviewPdf(data: ReviewFormResponse, questionLabels: Record<
   const rawText = raw.text.bind(raw);
   const rawSplit = raw.splitTextToSize.bind(raw);
   const doc = raw;
-  // @ts-expect-error - deliberately narrowing the overloaded signature
   doc.text = (text: string | string[], x: number, y: number, opts?: unknown) =>
     rawText(Array.isArray(text) ? text.map(latin1) : latin1(String(text)), x, y, opts as never);
-  // @ts-expect-error - as above
   doc.splitTextToSize = (text: string, size: number, opts?: unknown) =>
     rawSplit(latin1(String(text)), size, opts as never);
 

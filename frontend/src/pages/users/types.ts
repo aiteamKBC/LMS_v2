@@ -6,7 +6,18 @@ import type { TrainingPlan } from '@/api/trainingPlan';
 
 // ---- Screen A: Users List ----
 export type UserType = 'User' | 'Employer' | 'Referrer' | 'Admin' | 'Caseowner';
-export type ProgrammeStatus = 'Non starter' | 'Active' | 'Completed' | 'Entered EPA' | string;
+// Mirrors PROGRAMME_STATUS_OPTIONS. Stays open (`| string`) because rows saved
+// before the list was trimmed can still carry a retired status.
+export type ProgrammeStatus =
+  | 'Fresh user'
+  | 'Onboarding'
+  | 'Delivery'
+  | 'Ready to enrol'
+  | 'Active'
+  | 'Withdrawn'
+  | 'On break'
+  | 'Completed'
+  | string;
 
 export interface UserListRow {
   id: string;
@@ -17,6 +28,8 @@ export interface UserListRow {
   subscriptionStatus: string; // "FullUser"
   subscriptionVerified: boolean; // false -> red ✗
   learningPlan: boolean; // show "Learning plan" link (User rows only)
+  /** Whether a learning plan has actually been saved — drives Add vs Edit. */
+  hasLearningPlan?: boolean;
   programmeStatus?: ProgrammeStatus;
   notesCount?: number;
   hasTasks?: boolean;
@@ -167,7 +180,15 @@ export interface AimRow {
 }
 
 export interface EnrolmentBoard {
-  user: { id: string; name: string; reference: string; owner: string };
+  user: {
+    id: string;
+    name: string;
+    reference: string;
+    owner: string;
+    /** Resolved from Employer_id where set, else the learner's own text. */
+    employer?: string;
+    employerId?: number | null;
+  };
   contact: {
     email: string;
     phone: string;

@@ -344,7 +344,7 @@ export interface VoucherClaim {
   learnerId: string;
   learner: string;
   avatarImg?: string;
-  programmeCode: ProgrammeCode;
+  programmeCode: ProgrammeCode | '';
   programme: string;
   cohort: string;
   rewardId: string;
@@ -449,12 +449,14 @@ export const CATCHUP_ITEMS: CatchupItem[] = [
 // ---- FILTER HELPERS ----
 export type ProgrammeFilterValue = 'all' | ProgrammeCode;
 
-export function filterByProgramme<T extends { programmeCode: ProgrammeCode }>(items: T[], active: ProgrammeFilterValue): T[] {
+export function filterByProgramme<T extends { programmeCode: ProgrammeCode | '' }>(items: T[], active: ProgrammeFilterValue): T[] {
   return active === 'all' ? items : items.filter(i => i.programmeCode === active);
 }
 
-export function countByProgramme<T extends { programmeCode: ProgrammeCode }>(items: T[]): Record<ProgrammeFilterValue, number> {
+export function countByProgramme<T extends { programmeCode: ProgrammeCode | '' }>(items: T[]): Record<ProgrammeFilterValue, number> {
   const counts = { all: items.length, PCP: 0, APM: 0, MM: 0, ME: 0 } as Record<ProgrammeFilterValue, number>;
-  for (const item of items) counts[item.programmeCode]++;
+  for (const item of items) {
+    if (item.programmeCode) counts[item.programmeCode]++;
+  }
   return counts;
 }
