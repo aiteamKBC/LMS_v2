@@ -37,15 +37,30 @@ mirrors how ``audit_api/views.py`` reaches the same table.
 import collections
 import datetime
 import html
+import io
 import json
+import mimetypes
 import re
 import time
 import uuid
+from urllib.parse import quote, unquote, urlparse
 
+from django.conf import settings
 from django.db import DatabaseError, connections
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
+
+try:
+    from azure.storage.blob import BlobSasPermissions, generate_blob_sas
+except ImportError:  # pragma: no cover - exercised only when optional Azure SDK is absent.
+    BlobSasPermissions = None
+    generate_blob_sas = None
+
+try:
+    from learner_api.evidence_storage import download_blob_bytes
+except ImportError:  # pragma: no cover - optional storage helper in slim test envs.
+    download_blob_bytes = None
 
 
 # The one programme these endpoints serve. Kept as an exact match (not a
@@ -706,11 +721,365 @@ def _fetch_rows():
     return learners
 
 
+def _fetch_profile_row(learner_key):
+    """Fetch one profile row across all programmes.
+
+    The cached ledger rows are intentionally scoped to the original PCP summary
+    cohort. Profile links now come from the live all-programme cohort feed, so a
+    learner outside that subset still needs the same rich profile payload.
+    """
+    with connections[CONN].cursor() as cur:
+        cur.execute(
+            '''
+            select lm.aptem_id, lm.learner_name, lm.learner_email,
+                   lm.programme_structure, lm.aptem_training_plan,
+                   lm.programme_name, profile.program_status,
+                   profile.break_in_learning, owner.coach_name,
+                   owner.coach_email
+            from "Audit".learner_match lm
+            left join lateral (
+                select program_status, "Break in learning" as break_in_learning
+                from fetching_evidence.aptem_cv_contracts_probe
+                where learner_id = lm.aptem_id
+                order by fetched_at desc nulls last, id desc
+                limit 1
+            ) profile on true
+            left join lateral (
+                select "OwnerName" as coach_name, "OwnerEmail" as coach_email
+                from "LMS"."Aptem_users"
+                where "ID" = lm.aptem_id
+                limit 1
+            ) owner on true
+            where lm.aptem_id::text = %s
+               or lower(btrim(lm.learner_name)) = %s
+            order by lm.learner_name, lm.aptem_id
+            limit 1
+            ''',
+            [learner_key, learner_key],
+        )
+        row = cur.fetchone()
+    if row is None:
+        return _fetch_profile_source_row(learner_key)
+
+    (
+        aptem_id, learner_name, learner_email, structure, training_plan,
+        programme_name, program_status, break_in_learning, coach_name,
+        coach_email,
+    ) = row
+    if isinstance(structure, str):
+        try:
+            structure = json.loads(structure)
+        except ValueError:
+            structure = None
+    if isinstance(training_plan, str):
+        try:
+            training_plan = json.loads(training_plan)
+        except ValueError:
+            training_plan = None
+    if isinstance(break_in_learning, str):
+        try:
+            break_in_learning = json.loads(break_in_learning)
+        except ValueError:
+            break_in_learning = None
+    break_in_learning = break_in_learning if isinstance(break_in_learning, dict) else {}
+    name = learner_name or f"Learner {aptem_id}"
+    otjh_summary, otjh_months = _otjh_for_row(structure)
+    return {
+        "aptem_id": aptem_id,
+        "name": name,
+        "otjh_summary": otjh_summary,
+        "otjh_months": otjh_months,
+        "email": learner_email,
+        "programme_name": programme_name or PROGRAMME_NAME,
+        "program_status": program_status or "Unknown",
+        "has_break_in_learning": (
+            bool(break_in_learning.get("has_break_in_learning"))
+            or str(program_status or "").strip().lower() == "onbreak"
+        ),
+        "coach": {
+            "name": coach_name or None,
+            "email": coach_email or None,
+        },
+        "training_plan": training_plan if isinstance(training_plan, list) else [],
+        "activities": _activities_for_row(aptem_id, name, structure),
+        "month_hours": _month_hours_for_row(structure),
+    }
+
+
+def _fetch_profile_source_row(learner_key):
+    """Build a profile shell from fetching_evidence when learner_match lags.
+
+    Newly added learners can appear in the live cohort/contracts data before the
+    nightly learner_match enrichment has produced programme_structure. Returning
+    a same-shaped learner dict lets the profile page auto-exist immediately; the
+    rich sections that are already keyed by aptem_id are still loaded below by
+    _load_profile_sources.
+    """
+    with connections[CONN].cursor() as cur:
+        cur.execute(
+            '''
+            select contracts.learner_id, contracts.full_name, contracts.email,
+                   contracts.program_name, contracts.program_status,
+                   contracts."Break in learning", owner.coach_name,
+                   owner.coach_email
+            from fetching_evidence.aptem_cv_contracts_probe contracts
+            left join lateral (
+                select "OwnerName" as coach_name, "OwnerEmail" as coach_email
+                from "LMS"."Aptem_users"
+                where "ID" = contracts.learner_id
+                limit 1
+            ) owner on true
+            where contracts.learner_id::text = %s
+               or lower(btrim(contracts.full_name)) = %s
+               or lower(btrim(contracts.email)) = %s
+            order by contracts.fetched_at desc nulls last, contracts.id desc
+            limit 1
+            ''',
+            [learner_key, learner_key, learner_key],
+        )
+        row = cur.fetchone()
+    if row is None or row[0] is None:
+        return None
+
+    aptem_id, learner_name, learner_email, programme_name, program_status, break_in_learning, coach_name, coach_email = row
+    if isinstance(break_in_learning, str):
+        try:
+            break_in_learning = json.loads(break_in_learning)
+        except ValueError:
+            break_in_learning = None
+    break_in_learning = break_in_learning if isinstance(break_in_learning, dict) else {}
+    name = learner_name or f"Learner {aptem_id}"
+    return {
+        "aptem_id": aptem_id,
+        "name": name,
+        "otjh_summary": {},
+        "otjh_months": {},
+        "email": learner_email,
+        "programme_name": programme_name or "Unknown programme",
+        "program_status": program_status or "Unknown",
+        "has_break_in_learning": (
+            bool(break_in_learning.get("has_break_in_learning"))
+            or str(program_status or "").strip().lower() == "onbreak"
+        ),
+        "coach": {
+            "name": coach_name or None,
+            "email": coach_email or None,
+        },
+        "training_plan": [],
+        "activities": [],
+        "month_hours": {},
+    }
+
+
 def _learner_id(name):
     """Stable slug used as the learner filter key. Mirrors the original MRE
     app convention (id == lowercased name) so the existing UI links/dropdowns
     keep working without change."""
     return (name or "").strip().lower()
+
+
+def _contract_blob_from_azure_path(value):
+    """Parse `az://account/container/blob` contract references."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    parsed = urlparse(text)
+    if parsed.scheme == "az":
+        account = (parsed.netloc or "").strip()
+        path = parsed.path.lstrip("/")
+        if "/" not in path:
+            return None
+        container, blob_name = path.split("/", 1)
+        configured_account = getattr(settings, "AZURE_STORAGE_ACCOUNT", "")
+        if configured_account and account and account.lower() != configured_account.lower():
+            return None
+        return container, unquote(blob_name)
+    if parsed.scheme == "https" and parsed.hostname:
+        configured_account = getattr(settings, "AZURE_STORAGE_ACCOUNT", "")
+        expected_host = f"{configured_account}.blob.core.windows.net".lower()
+        if configured_account and parsed.hostname.lower() != expected_host:
+            return None
+        path = parsed.path.lstrip("/")
+        if "/" not in path:
+            return None
+        container, blob_name = path.split("/", 1)
+        return container, unquote(blob_name)
+    return None
+
+
+def _safe_contract_filename(document_name, blob_name):
+    blob_filename = unquote(blob_name.rsplit("/", 1)[-1]) if blob_name else ""
+    filename = blob_filename or str(document_name or "contract").strip() or "contract"
+    filename = re.sub(r'[\r\n"\\]+', " ", filename).strip()
+    return filename or "contract"
+
+
+def _contract_preview_url(azure_path, document_name):
+    location = _contract_blob_from_azure_path(azure_path)
+    if not location:
+        return ""
+    account_name = getattr(settings, "AZURE_STORAGE_ACCOUNT", "")
+    account_key = getattr(settings, "AZURE_STORAGE_KEY", "")
+    if not account_name or not account_key or generate_blob_sas is None or BlobSasPermissions is None:
+        return ""
+
+    container, blob_name = location
+    filename = _safe_contract_filename(document_name, blob_name)
+    content_type = mimetypes.guess_type(filename)[0] or mimetypes.guess_type(blob_name)[0] or "application/octet-stream"
+    token = generate_blob_sas(
+        account_name=account_name,
+        container_name=container,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=30),
+        content_type=content_type,
+        content_disposition=f'inline; filename="{filename}"',
+    )
+    return f"https://{account_name}.blob.core.windows.net/{container}/{quote(blob_name, safe='/')}?{token}"
+
+
+_CONTRACT_SIGNATURE_CACHE_TTL_SECONDS = 600
+_contract_signature_cache = {}
+
+
+def _normalise_contract_date(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    iso_match = re.search(r"(?<!\d)(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)", text)
+    if iso_match:
+        year, month, day = (int(part) for part in iso_match.groups())
+    else:
+        uk_match = re.search(r"(?<!\d)(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})(?!\d)", text)
+        if not uk_match:
+            return None
+        day, month, year = (int(part) for part in uk_match.groups())
+        if year < 100:
+            year += 2000
+    try:
+        return datetime.date(year, month, day).isoformat()
+    except ValueError:
+        return None
+
+
+def _extract_contract_text(filename, data):
+    extension = "." + str(filename or "").rsplit(".", 1)[-1].lower() if "." in str(filename or "") else ""
+    if extension == ".pdf":
+        try:
+            import fitz
+
+            document = fitz.open(stream=data, filetype="pdf")
+            lines = []
+            for page_index in range(min(len(document), 30)):
+                page = document[page_index]
+                text = re.sub(r"\s+", " ", page.get_text("text") or "").strip()
+                if text:
+                    lines.append(f"Page {page_index + 1}: {text}")
+            text = "\n".join(lines)
+            if text:
+                return text
+        except Exception:
+            pass
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(data))
+            lines = []
+            for page in reader.pages[:10]:
+                text = re.sub(r"\s+", " ", page.extract_text() or "").strip()
+                if text:
+                    lines.append(text)
+            return "\n".join(lines)
+        except Exception:
+            return ""
+    if extension == ".docx":
+        try:
+            from docx import Document
+
+            document = Document(io.BytesIO(data))
+            lines = []
+            for paragraph in document.paragraphs:
+                text = re.sub(r"\s+", " ", paragraph.text).strip()
+                if text:
+                    lines.append(text)
+            for table in document.tables:
+                for row in table.rows:
+                    values = [re.sub(r"\s+", " ", cell.text).strip() for cell in row.cells if cell.text.strip()]
+                    if values:
+                        lines.append(" | ".join(values))
+            return "\n".join(lines)
+        except Exception:
+            return ""
+    if extension in {".txt", ".csv"}:
+        return data.decode("utf-8-sig", errors="replace")
+    return ""
+
+
+def _contract_signature_dates_from_text(text):
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not clean:
+        return {"learner_signed_date": None, "fully_signed_date": None}
+
+    date_pattern = r"(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})"
+    signature_section = clean[-3500:]
+    markers = []
+    for marker_pattern in (
+        r"\bsignatures?\s*&\s*declarations?\b",
+        r"\bsignatories\b",
+        r"\bsignatures\b",
+    ):
+        markers.extend(re.finditer(marker_pattern, clean, flags=re.IGNORECASE))
+    if markers:
+        marker = max(markers, key=lambda item: item.start())
+        signature_section = clean[marker.start(): marker.start() + 3500]
+
+    learner_date = None
+    # Prefer the date in the apprentice/learner signatory row.
+    for pattern in (
+        rf"(?:apprentice|learner)\s*:?.{{0,220}}?\bdate\s*:?\s*{date_pattern}",
+        rf"(?:apprentice|learner)\s*:?.{{0,220}}?{date_pattern}",
+    ):
+        match = re.search(pattern, signature_section, flags=re.IGNORECASE)
+        if match:
+            learner_date = _normalise_contract_date(match.group(1))
+            if learner_date:
+                break
+
+    all_dates = [
+        parsed for parsed in (_normalise_contract_date(match.group(1)) for match in re.finditer(date_pattern, signature_section))
+        if parsed
+    ]
+    return {
+        "learner_signed_date": learner_date,
+        "fully_signed_date": max(all_dates) if all_dates else None,
+    }
+
+
+def _contract_signature_dates(azure_path, document_name):
+    location = _contract_blob_from_azure_path(azure_path)
+    if not location or download_blob_bytes is None:
+        return {"learner_signed_date": None, "fully_signed_date": None}
+    now = time.monotonic()
+    cached = _contract_signature_cache.get(str(azure_path))
+    if cached and now < cached["expires_at"]:
+        return cached["value"]
+
+    result = {"learner_signed_date": None, "fully_signed_date": None}
+    try:
+        container, blob_name = location
+        filename = _safe_contract_filename(document_name, blob_name)
+        data = download_blob_bytes(container, blob_name)
+        text = _extract_contract_text(filename, data)
+        result = _contract_signature_dates_from_text(text)
+    except Exception:
+        result = {"learner_signed_date": None, "fully_signed_date": None}
+
+    _contract_signature_cache[str(azure_path)] = {
+        "expires_at": now + _CONTRACT_SIGNATURE_CACHE_TTL_SECONDS,
+        "value": result,
+    }
+    return result
 
 
 # --- views -----------------------------------------------------------------
@@ -855,6 +1224,14 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
         None,
     )
     if learner is None:
+        try:
+            learner = _fetch_profile_row(learner_key)
+        except DatabaseError as error:
+            return JsonResponse(
+                {"error": "Could not read Audit.learner_match for this learner.", "details": str(error)},
+                status=503,
+            )
+    if learner is None:
         return JsonResponse({"error": "Learner not found."}, status=404)
 
     try:
@@ -945,7 +1322,7 @@ def _load_profile_sources(aptem_id, learner_email):
             '''
             select id, document_name, status, date, learner_signed_date,
                    fully_signed_date, requested_date, program_name,
-                   program_start_date, planned_end_date, file
+                   program_start_date, planned_end_date, file, azure_path
             from fetching_evidence.aptem_cv_contracts_probe
             where learner_id = %s
             order by date desc nulls last, id desc
@@ -953,18 +1330,31 @@ def _load_profile_sources(aptem_id, learner_email):
             [aptem_id],
         )
         for row in cursor.fetchall():
+            signature_dates = _contract_signature_dates(row[11], row[1])
+            document_learner_signed_date = signature_dates.get("learner_signed_date")
+            document_fully_signed_date = signature_dates.get("fully_signed_date")
+            learner_signed_date = document_learner_signed_date or row[4]
+            fully_signed_date = document_fully_signed_date or row[5]
             contracts.append({
                 "id": str(row[0]),
                 "document_name": row[1] or "Contract",
                 "status": row[2] or "Unknown",
                 "date": row[3],
-                "learner_signed_date": row[4],
-                "fully_signed_date": row[5],
+                "learner_signed_date": learner_signed_date,
+                "fully_signed_date": fully_signed_date,
+                "document_learner_signed_date": document_learner_signed_date,
+                "document_fully_signed_date": document_fully_signed_date,
+                "metadata_learner_signed_date": row[4],
+                "metadata_fully_signed_date": row[5],
+                "learner_signed_date_source": "document" if document_learner_signed_date else "metadata",
+                "fully_signed_date_source": "document" if document_fully_signed_date else "metadata",
                 "requested_date": row[6],
                 "programme": row[7],
                 "programme_start_date": row[8],
                 "planned_end_date": row[9],
-                "file": row[10],
+                "file": _contract_preview_url(row[11], row[1]) or row[10],
+                "download_file": row[10],
+                "azure_path_available": bool(row[11]),
             })
 
         cursor.execute(
