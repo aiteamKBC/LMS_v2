@@ -20,10 +20,12 @@ export function MreTable({
   learner,
   component,
   attendanceKey,
+  programme,
 }: {
   learner?: string;
   component?: string;
   attendanceKey?: string;
+  programme?: string;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
@@ -34,12 +36,12 @@ export function MreTable({
   const byComponent = !bySession && Boolean(component);
   const singlePage = bySession || byComponent;
   const query = useQuery({
-    queryKey: ["mre", learner, component, attendanceKey, search, page],
+    queryKey: ["mre", learner, component, attendanceKey, programme, search, page],
     queryFn: () =>
       bySession
-        ? getAttendanceSession(attendanceKey as string)
+        ? getAttendanceSession(attendanceKey as string, programme)
         : byComponent
-        ? getActivityLearners({ component: component as string, search })
+        ? getActivityLearners({ component: component as string, search, programme })
         : getLearnerActivities({ learner, search, offset: page * pageSize, limit: pageSize }),
   });
   // The session endpoint returns every attendee at once (no server-side search),

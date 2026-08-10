@@ -347,8 +347,8 @@ function ActivityLogPage() {
 
   // The activity + its sub-activities + participants come from the /activity endpoint.
   const detail = useQuery({
-    queryKey: ["activity-detail", componentId],
-    queryFn: () => getActivityDetail(componentId),
+    queryKey: ["activity-detail", learner, componentId],
+    queryFn: () => getActivityDetail(componentId, learner),
     enabled: Boolean(componentId),
   });
   const data = detail.data;
@@ -520,7 +520,7 @@ function ActivityLogPage() {
               )}
 
               {/* The same inline CRUD row used by search and journal. */}
-              <MreTable component={String(data.component_id)} learner={primary?.learner_name} />
+              <MreTable component={String(data.component_id)} learner={primary?.learner_name} programme={data.programme} />
             </article>
 
             {/* Snapshot + activity-level editing. */}

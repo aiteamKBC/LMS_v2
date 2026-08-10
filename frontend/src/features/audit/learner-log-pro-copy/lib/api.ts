@@ -340,6 +340,8 @@ export type ActivityParticipant = {
 
 export type ActivityDetail = {
   component_id: number | string;
+  programme?: string;
+  programme_code?: string;
   activity: string;
   category: string;
   participant_count: number;
@@ -444,7 +446,12 @@ type LiveCohortLearner = {
   months: LiveCohortMonth[];
 };
 
-type LiveCohortResponse = { learners: LiveCohortLearner[] };
+type LiveCohortResponse = {
+  programme?: string;
+  programme_code?: string;
+  programmes?: string[];
+  learners: LiveCohortLearner[];
+};
 
 type LiveKsbItem = { code?: string | null; description?: string | null; [key: string]: unknown };
 type LiveKsbs = { K?: LiveKsbItem[]; S?: LiveKsbItem[]; B?: LiveKsbItem[] } | null;
@@ -611,7 +618,27 @@ export function applyCohortOverlay(cohort: LiveCohortResponse, overlays: Activit
 let cohortPromise: Promise<LiveCohortResponse> | null = null;
 function fetchCohort(): Promise<LiveCohortResponse> {
   if (!cohortPromise) {
-    cohortPromise = Promise.all([getJson<LiveCohortResponse>("/cohort/"), fetchOverlays()])
+    const allProgrammes = getJson<LiveCohortResponse>("/cohort/").then(async (primary) => {
+      const programmeNames = primary.programmes?.length
+        ? primary.programmes
+        : primary.programme
+          ? [primary.programme]
+          : [];
+      const additional = programmeNames.filter((name) => name !== primary.programme);
+      const cohorts = await Promise.all(
+        additional.map((name) =>
+          getJson<LiveCohortResponse>(`/cohort/?programme=${encodeURIComponent(name)}`),
+        ),
+      );
+      const learners = [primary, ...cohorts]
+        .flatMap((cohort) => cohort.learners)
+        .filter(
+          (learner, index, rows) =>
+            rows.findIndex((item) => item.aptem_id === learner.aptem_id) === index,
+        );
+      return { ...primary, programmes: programmeNames, learners };
+    });
+    cohortPromise = Promise.all([allProgrammes, fetchOverlays()])
       .then(([cohort, overlays]) => applyCohortOverlay(cohort, overlays))
       .catch((error) => {
       cohortPromise = null; // let a later call retry after a failure
@@ -940,11 +967,15 @@ export function getLearnerActivities(params: {
 }
 
 // All learners who have this activity id, one row each (activity-detail drill-down).
-export function getActivityLearners(params: { component: string; search?: string }) {
+export function getActivityLearners(params: { component: string; search?: string; programme?: string }) {
   return (async (): Promise<LearnerActivitiesResponse> => {
     const cohort = await fetchCohort();
+    const programme = (params.programme ?? "").trim().toLowerCase();
+    const eligibleLearners = programme
+      ? cohort.learners.filter((learner) => learner.programme.toLowerCase() === programme)
+      : cohort.learners;
     const pages = await Promise.all(
-      cohort.learners.map((learner) =>
+      eligibleLearners.map((learner) =>
         fetchActivitiesRaw(learner.aptem_id).catch(() => ({ activities: [] } as Partial<LiveActivitiesResponse>)),
       ),
     );
@@ -969,11 +1000,15 @@ export function getActivityLearners(params: { component: string; search?: string
 // The live feed has no live-session/recordings concept, so we reconstruct the
 // "session" as every attendance row that shares the same activity name + date
 // (the key is the reference activity id). No recordings are available.
-export function getAttendanceSession(key: string) {
+export function getAttendanceSession(key: string, programme?: string) {
   return (async (): Promise<AttendanceSessionResponse> => {
     const cohort = await fetchCohort();
+    const programmeName = (programme ?? "").trim().toLowerCase();
+    const eligibleLearners = programmeName
+      ? cohort.learners.filter((learner) => learner.programme.toLowerCase() === programmeName)
+      : cohort.learners;
     const pages = await Promise.all(
-      cohort.learners.map((learner) =>
+      eligibleLearners.map((learner) =>
         fetchActivitiesRaw(learner.aptem_id).catch(() => ({ activities: [] } as Partial<LiveActivitiesResponse>)),
       ),
     );
@@ -1083,12 +1118,16 @@ export async function saveActivityAnnotation(payload: {
 // fields. Both are read/write on the live service (CORS + preflight handled).
 // ---------------------------------------------------------------------------
 
-export async function getActivityDetail(componentId: string | number): Promise<ActivityDetail> {
+export async function getActivityDetail(componentId: string | number, learnerId?: string): Promise<ActivityDetail> {
+  const cohort = await fetchCohort();
+  const referenceLearner = learnerId ? resolveLearner(cohort, learnerId) : undefined;
+  const programme = referenceLearner?.programme;
+  const programmeQuery = programme ? `&programme=${encodeURIComponent(programme)}` : "";
   try {
     const detail = normalizeActivityDetail(
-      await getJson<ActivityDetail>(`/activity/?component_id=${encodeURIComponent(String(componentId))}`),
+      await getJson<ActivityDetail>(`/activity/?component_id=${encodeURIComponent(String(componentId))}${programmeQuery}`),
     );
-    const merged = await getActivityLearners({ component: String(componentId) });
+    const merged = await getActivityLearners({ component: String(componentId), programme });
     if (!merged.items.length) throw new Error("This activity has been deleted from the audit view.");
     const participants: ActivityParticipant[] = merged.items.map((row) => ({
       learner_id: row.learner_id ?? 0,
@@ -1116,7 +1155,7 @@ export async function getActivityDetail(componentId: string | number): Promise<A
     // reading+quiz bundles, attendance). Assignments use a separate id namespace
     // and 404 there — but /edit DOES accept them. Reconstruct a minimal detail
     // from the flat activities feed so assignment rows still open and stay editable.
-    const learners = await getActivityLearners({ component: String(componentId) });
+    const learners = await getActivityLearners({ component: String(componentId), programme });
     if (!learners.items.length) throw error; // genuinely unknown id
     const participants: ActivityParticipant[] = learners.items.map((row) => ({
       learner_id: row.learner_id ?? 0,
@@ -1134,6 +1173,7 @@ export async function getActivityDetail(componentId: string | number): Promise<A
     const first = learners.items[0];
     return {
       component_id: componentId,
+      programme,
       activity: first.activity_unit,
       category: first.activity_category,
       participant_count: participants.length,
