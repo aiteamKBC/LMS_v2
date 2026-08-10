@@ -67,6 +67,20 @@ function otjhChipClass(status: string) {
   }
 }
 
+// Data-quality flags from the live cohort feed. "withdrawn" already shows via the
+// programme-status chip, so it is not repeated here.
+function flagLabel(flag: string) {
+  switch (flag) {
+    case "no_attendance_recorded": return "No attendance recorded";
+    case "withdrawn": return "Withdrawn";
+    default: return flag.replace(/_/g, " ");
+  }
+}
+function flagChipClass(flag: string) {
+  if (flag === "withdrawn") return "bg-destructive/10 text-destructive ring-1 ring-destructive/40";
+  return "bg-warning/20 text-foreground ring-1 ring-warning/40";
+}
+
 function StyledFilterSelect({
   value,
   options,
@@ -126,16 +140,10 @@ function SearchPage() {
     queryFn: () => getLearners(),
   });
 
-  // Default to the latest month on first load only, so the user can later pick
-  // "All months" (empty period) without it snapping back to the latest.
-  const periodInitialized = useRef(false);
-  useEffect(() => {
-    const periods = filterOptions.data?.periods ?? [];
-    if (periodInitialized.current || periods.length === 0) return;
-    periodInitialized.current = true;
-    const latestPeriod = [...periods].sort((left, right) => left.value.localeCompare(right.value)).at(-1);
-    if (latestPeriod) setSharedPeriod(latestPeriod.value);
-  }, [filterOptions.data?.periods]);
+  // The cohort table defaults to "All months" (empty period) so it shows each
+  // learner's cumulative planned_total vs actual_total — the cohort-overview
+  // reading. Picking a month then narrows both the table and the activity log
+  // to that month.
 
   const summaries = useQuery({
     queryKey: ["learner-summaries", sharedPeriod, learnerSearch, gapBand],
@@ -153,7 +161,6 @@ function SearchPage() {
       "learner-activities-search",
       activitySearch,
       activityLearner,
-      learnerSearch,
       sharedPeriod,
       activityCategory,
       page,
@@ -162,15 +169,18 @@ function SearchPage() {
       getLearnerActivities({
         search: activitySearch,
         learner: activityLearner || undefined,
-        learnerSearch: learnerSearch || undefined,
         period: sharedPeriod || undefined,
         category: activityCategory || undefined,
         limit: pageSize,
         offset: page * pageSize,
       }),
     placeholderData: keepPreviousData,
-    enabled: Boolean(filterOptions.data),
+    // A learner's full (all-month) activity history is large (~1 MB+), so the
+    // activity log only loads once a learner OR a specific month is chosen —
+    // never a whole-cohort, all-months fan-out on first paint.
+    enabled: Boolean(filterOptions.data) && Boolean(activityLearner || sharedPeriod),
   });
+  const activitiesEnabled = Boolean(activityLearner || sharedPeriod);
 
   const totalPages = Math.max(1, Math.ceil((activities.data?.total ?? 0) / pageSize));
   const resetPage = () => setPage(0);
@@ -212,13 +222,9 @@ function SearchPage() {
                   placeholder="Search learner…"
                   value={learnerSearch}
                   onChange={(event) => {
-                    const value = event.target.value;
-                    const exactLearner = filterOptions.data?.learners.find(
-                      (learner) => learner.name.toLowerCase() === value.trim().toLowerCase(),
-                    );
-                    setLearnerSearch(value);
-                    setActivityLearner(exactLearner?.id ?? "");
-                    resetPage();
+                    // Only filters the cohort table above; the activity log has
+                    // its own independent "Learner" filter.
+                    setLearnerSearch(event.target.value);
                   }}
                 />
               </span>
@@ -260,6 +266,7 @@ function SearchPage() {
                     <TableHead className="label-caps text-right">Activities</TableHead>
                     <TableHead className="label-caps text-right">Planned hours</TableHead>
                     <TableHead className="label-caps text-right">Actual hours</TableHead>
+                    <TableHead className="label-caps text-right">Not accepted</TableHead>
                     <TableHead className="label-caps text-right">Actual vs plan</TableHead>
                     <TableHead className="label-caps">Last activity</TableHead>
                     <TableHead className="label-caps text-right">Learner profile</TableHead>
@@ -268,7 +275,7 @@ function SearchPage() {
                 </TableHeader>
                 <TableBody>
                   {summaries.isLoading && (
-                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading learners from Neon…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={11} className="py-10 text-center text-sm text-muted-foreground">Loading learners from Neon…</TableCell></TableRow>
                   )}
                   {summaries.data?.learners.map((learner) => (
                     <TableRow key={learner.id} className={learner.has_break_in_learning ? "bg-warning/5 hover:bg-warning/10" : undefined}>
@@ -277,6 +284,9 @@ function SearchPage() {
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${learnerStatusClass(learner.program_status)}`}>{learner.program_status}</span>
                           {learner.has_break_in_learning && <span className="rounded-full bg-warning/20 px-2.5 py-1 text-xs font-semibold text-foreground ring-1 ring-warning/40">Break in learning</span>}
+                          {(learner.flags ?? []).filter((flag) => flag !== "withdrawn").map((flag) => (
+                            <span key={flag} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${flagChipClass(flag)}`}>⚑ {flagLabel(flag)}</span>
+                          ))}
                           {learner.otjh?.month_flagged && learner.otjh.month ? (
                             <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${otjhChipClass(learner.otjh.month.status)}`}>⚑ OTJH: {otjhLabel(learner.otjh.month.status)}</span>
                           ) : (learner.otjh?.flagged_count ?? 0) > 0 ? (
@@ -288,9 +298,12 @@ function SearchPage() {
                         <p className="text-sm font-medium text-foreground">{learner.coach.name ?? "—"}</p>
                         {learner.coach.email && <p className="mt-0.5 text-xs text-muted-foreground">{learner.coach.email}</p>}
                       </TableCell>
-                      <TableCell className="text-right font-mono text-sm">{learner.entries}</TableCell>
+                      {/* Activity counts are only fetched per-month; in the
+                          cumulative (All months) view we don't load them. */}
+                      <TableCell className="text-right font-mono text-sm">{sharedPeriod ? learner.entries : "—"}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{formatHours(learner.planned_hours)}</TableCell>
                       <TableCell className="text-right font-mono text-sm text-success">{formatHours(learner.actual_hours)}</TableCell>
+                      <TableCell className={`text-right font-mono text-sm ${learner.not_accepted_hours > 0 ? "text-warning" : "text-muted-foreground"}`}>{formatHours(learner.not_accepted_hours)}</TableCell>
                       <TableCell className={`text-right font-mono text-sm ${learner.gap_hours < 0 ? "text-warning" : "text-success"}`}>
                         {learner.gap_hours > 0 ? "+" : ""}{formatHours(learner.gap_hours)}
                       </TableCell>
@@ -344,9 +357,8 @@ function SearchPage() {
                 allLabel="All learners"
                 options={filterOptions.data?.learners.map((learner) => ({ value: learner.id, label: learner.name })) ?? []}
                 onChange={(value) => {
-                  const learnerName = filterOptions.data?.learners.find((learner) => learner.id === value)?.name ?? "";
+                  // Only scopes the activity log below; leaves the cohort table untouched.
                   setActivityLearner(value);
-                  setLearnerSearch(learnerName);
                   resetPage();
                 }}
               />
@@ -393,7 +405,10 @@ function SearchPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {activities.isLoading && (
+                  {!activitiesEnabled && (
+                    <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Pick a learner or an activity month above to load the evidence log.</TableCell></TableRow>
+                  )}
+                  {activitiesEnabled && activities.isLoading && (
                     <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
                   )}
                   {activities.data?.items.map((row) => (
@@ -415,6 +430,9 @@ function SearchPage() {
                         >
                           {row.activity_unit}
                         </Link>
+                        {row.activity_description ? (
+                          <p className="mt-1 text-xs text-muted-foreground">{row.activity_description}</p>
+                        ) : null}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.time_from_to ?? "—"}</TableCell>
                       <TableCell className="text-right font-mono text-sm">{roundHours(row.planned_hours)}</TableCell>
