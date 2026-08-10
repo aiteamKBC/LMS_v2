@@ -242,11 +242,19 @@ export type LearnerProfile = {
     date: string | null;
     learner_signed_date: string | null;
     fully_signed_date: string | null;
+    document_learner_signed_date?: string | null;
+    document_fully_signed_date?: string | null;
+    metadata_learner_signed_date?: string | null;
+    metadata_fully_signed_date?: string | null;
+    learner_signed_date_source?: "document" | "metadata";
+    fully_signed_date_source?: "document" | "metadata";
     requested_date: string | null;
     programme: string | null;
     programme_start_date: string | null;
     planned_end_date: string | null;
     file: string | null;
+    download_file?: string | null;
+    azure_path_available?: boolean;
   }>;
   training_plan: {
     total_modules: number;
@@ -1082,19 +1090,16 @@ export function getLearnerProfile(learnerId: string) {
     const cohort = await fetchCohort();
     const learner = resolveLearner(cohort, learnerId);
     if (!learner) throw new Error(`Learner ${learnerId} was not found in the live cohort.`);
-    if (learner.programme === "Level 6 Project Controls Professional") {
-      const query = new URLSearchParams({ learner: learnerId });
-      const response = await fetch(`${ANNOTATION_BASE}/learner-profile?${query}`);
-      if (response.ok) return response.json() as Promise<LearnerProfile>;
-      if (response.status !== 404) {
-        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(payload?.error ?? `Could not load learner profile (${response.status})`);
-      }
+    const query = new URLSearchParams({ learner: learnerId });
+    const response = await fetch(`${ANNOTATION_BASE}/learner-profile?${query}`);
+    if (response.ok) return response.json() as Promise<LearnerProfile>;
+    if (response.status !== 404) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(payload?.error ?? `Could not load learner profile (${response.status})`);
     }
 
-    // The match-ledger profile endpoint serves the original PCP subset. Other
-    // programmes use a safe ledger-level profile from the same live cohort row
-    // that supplied their activities, avoiding a guaranteed legacy 404.
+    // If the rich match-ledger profile is genuinely unavailable, keep the audit
+    // page usable with the safe ledger-level profile from the live cohort row.
     const activeMonths = learner.months
       .filter((month) => Number(month.planned || 0) !== 0 || Number(month.actual || 0) !== 0 || Number(month.not_accepted || 0) !== 0)
       .sort((left, right) => left.month.localeCompare(right.month));

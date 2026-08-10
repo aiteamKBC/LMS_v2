@@ -49,9 +49,27 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   return <p className="px-7 py-10 text-center text-sm text-muted-foreground">{children}</p>;
 }
 
+function isOfficeDocument(url: string) {
+  const path = (() => {
+    try {
+      return new URL(url).pathname;
+    } catch {
+      return url.split("?", 1)[0];
+    }
+  })().toLowerCase();
+  return /\.(docx?|xlsx?|pptx?)$/i.test(path);
+}
+
+function documentViewerUrl(url: string) {
+  return isOfficeDocument(url)
+    ? `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`
+    : url;
+}
+
 function LearnerProfilePage() {
   const { learnerId } = Route.useParams();
   const [showFirstEvidence, setShowFirstEvidence] = useState(false);
+  const [contractPreview, setContractPreview] = useState<{ title: string; url: string } | null>(null);
   const profile = useQuery({
     queryKey: ["learner-profile", learnerId],
     queryFn: () => getLearnerProfile(learnerId),
@@ -252,20 +270,22 @@ function LearnerProfilePage() {
               <Table>
                 <TableHeader><TableRow className="hover:bg-transparent">
                   <TableHead className="label-caps pl-7">Document</TableHead>
-                  <TableHead className="label-caps">Status</TableHead>
-                  <TableHead className="label-caps">Document date</TableHead>
-                  <TableHead className="label-caps">Learner signed</TableHead>
-                  <TableHead className="label-caps">Fully signed</TableHead>
                   <TableHead className="label-caps pr-7">File</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>{learner.contracts.map((contract) => (
                   <TableRow key={contract.id}>
                     <TableCell className="pl-7 text-sm font-semibold"><span className="inline-flex items-center gap-2"><FileCheck2 className="h-4 w-4" />{contract.document_name}</span></TableCell>
-                    <TableCell><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(contract.status)}`}>{contract.status}</span></TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{dateOnly(contract.date)}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{dateOnly(contract.learner_signed_date)}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{dateOnly(contract.fully_signed_date)}</TableCell>
-                    <TableCell className="pr-7 text-xs">{contract.file && /^https?:\/\//i.test(contract.file) ? <a href={contract.file} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold hover:underline">Open <ExternalLink className="h-3.5 w-3.5" /></a> : "—"}</TableCell>
+                    <TableCell className="pr-7 text-xs">
+                      {contract.file && /^https?:\/\//i.test(contract.file) ? (
+                        <button
+                          type="button"
+                          onClick={() => setContractPreview({ title: contract.document_name, url: documentViewerUrl(contract.file!) })}
+                          className="inline-flex items-center gap-1 font-semibold hover:underline"
+                        >
+                          <Eye className="h-3.5 w-3.5" /> Preview
+                        </button>
+                      ) : "—"}
+                    </TableCell>
                   </TableRow>
                 ))}</TableBody>
               </Table>
@@ -368,6 +388,32 @@ function LearnerProfilePage() {
               ))}
               {!learner.learning_delivery.first_evidence_items?.length && <EmptyState>The evidence details are unavailable.</EmptyState>}
             </div>
+          </section>
+        </div>
+      )}
+
+      {contractPreview && (
+        <div
+          className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setContractPreview(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="contract-preview-title"
+            className="flex h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
+          >
+            <header className="flex items-start justify-between gap-4 border-b border-border bg-card px-6 py-5">
+              <div>
+                <p className="label-caps">Contract document</p>
+                <h2 id="contract-preview-title" className="mt-1 font-serif text-xl text-foreground">{contractPreview.title}</h2>
+              </div>
+              <button type="button" aria-label="Close document preview" onClick={() => setContractPreview(null)} className="rounded-md border border-border p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"><X className="h-4 w-4" /></button>
+            </header>
+            <iframe title={contractPreview.title} src={contractPreview.url} className="min-h-0 flex-1 bg-white" />
           </section>
         </div>
       )}
