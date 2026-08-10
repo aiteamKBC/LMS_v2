@@ -15,6 +15,7 @@ type JournalActivity = {
   time_from: string | null;
   time_to: string | null;
   actual_lms_hours: number | null;
+  not_accepted?: boolean; // progress-review row → "Accepted: No"
 };
 
 type JournalSummary = {
@@ -22,6 +23,7 @@ type JournalSummary = {
   planned_hours: number;
   actual_hours: number;
   gap_hours: number;
+  not_accepted_hours?: number;
 };
 
 type JournalProfile = {
@@ -196,7 +198,8 @@ export async function downloadLearnerJournalPdf(
 
   drawMetric(doc, 12, "Monthly plan", hours(learner.planned_hours), navy);
   drawMetric(doc, 81.5, "Claimed", hours(learner.actual_hours), purple);
-  drawMetric(doc, 151, "Accepted", hours(learner.actual_hours), green);
+  // Progress-review hours kept out of the accepted total, shown separately.
+  drawMetric(doc, 151, "Not accepted", hours(learner.not_accepted_hours ?? 0), red);
   drawMetric(doc, 220.5, "Variance", hours(learner.gap_hours), (learner.gap_hours ?? 0) < 0 ? red : green);
 
   doc.setFontSize(11.5);
@@ -205,7 +208,7 @@ export async function downloadLearnerJournalPdf(
   doc.setFont("helvetica", "normal");
   doc.setFontSize(7.5);
   doc.setTextColor(...muted);
-  doc.text("Claimed and accepted off-the-job learning time", 12, 102);
+  doc.text("Claimed off-the-job learning time and whether it is accepted", 12, 102);
 
   autoTable(doc, {
     startY: 106,
@@ -219,29 +222,37 @@ export async function downloadLearnerJournalPdf(
     head: [[
       "Date",
       "Activity ID",
-      "Section title",
       "Activity details",
       "Type",
       { content: "Time", styles: { halign: "center" as const } },
       { content: "Claimed", styles: { halign: "right" as const } },
-      { content: "Accepted", styles: { halign: "right" as const } },
-      { content: "Paid", styles: { halign: "center" as const } },
+      { content: "Accepted", styles: { halign: "center" as const } },
     ]],
     body: rows.map((row) => [
       displayDate(row.learner_activity_date),
       compactId(row.plan_id || "-"),
-      row.section_title || "-",
       activityDetails(row),
       row.delivery_method || row.activity_category || "-",
       row.time_from_to ?? "-",
       hours(row.actual_lms_hours),
-      hours(row.actual_lms_hours),
-      "Yes",
+      row.not_accepted ? "No" : "Yes",
     ]),
-    foot: [[
-      { content: "MONTH TOTAL", colSpan: 6, styles: { halign: "right" as const } },
-      hours(learner.actual_hours), hours(learner.actual_hours), "",
-    ]],
+    foot: [
+      // Accepted total = the claimed hours that count; progress reviews are
+      // listed as "Accepted: No" and summarised on their own line below.
+      [
+        { content: "Accepted total", colSpan: 5, styles: { halign: "right" as const } },
+        hours(learner.actual_hours),
+        "",
+      ],
+      ...(((learner.not_accepted_hours ?? 0) > 0)
+        ? [[
+            { content: "Not accepted total", colSpan: 5, styles: { halign: "right" as const } },
+            hours(learner.not_accepted_hours ?? 0),
+            "",
+          ]]
+        : []),
+    ],
     styles: {
       font: "helvetica", fontSize: 7.3, minCellHeight: 8,
       cellPadding: { top: 2.5, right: 2.4, bottom: 2.5, left: 2.4 },
@@ -251,16 +262,16 @@ export async function downloadLearnerJournalPdf(
     footStyles: { fillColor: [238, 241, 246], textColor: navy, fontStyle: "bold", fontSize: 7.2 },
     alternateRowStyles: { fillColor: [247, 249, 252] },
     columnStyles: {
-      0: { cellWidth: 23 }, 1: { cellWidth: 25 }, 2: { cellWidth: 38 }, 3: { cellWidth: 78 },
-      4: { cellWidth: 32 },
-      // The combined from–to time, in one 24mm column.
-      5: { cellWidth: 24, halign: "center" },
-      6: { cellWidth: 19, halign: "right", fontStyle: "bold" },
-      7: { cellWidth: 20, halign: "right", fontStyle: "bold" }, 8: { cellWidth: 14, halign: "center" },
+      0: { cellWidth: 24 }, 1: { cellWidth: 28 }, 2: { cellWidth: 125 }, 3: { cellWidth: 34 },
+      // The combined from–to time, in one 26mm column.
+      4: { cellWidth: 26, halign: "center" },
+      5: { cellWidth: 20, halign: "right", fontStyle: "bold" },
+      6: { cellWidth: 16, halign: "center" },
     },
     didParseCell: (data) => {
-      if (data.section === "body" && data.column.index === 8) {
-        data.cell.styles.textColor = green;
+      // Colour the Accepted column: green "Yes", red "No" (progress reviews).
+      if (data.section === "body" && data.column.index === 6) {
+        data.cell.styles.textColor = data.cell.raw === "No" ? red : green;
         data.cell.styles.fontStyle = "bold";
       }
     },
