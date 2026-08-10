@@ -157,11 +157,12 @@ export function WizardProvider({
         setIlrFiling(true);
         try {
           const sig = draft.ilr.learnerSignature;
+          const pdf = await ilrDocumentBlob(draft.ilr, board);
           await uploadEnrolmentDocument(
             kind,
             userId,
             'extended-ilr',
-            ilrDocumentBlob(draft.ilr, board),
+            pdf,
             ilrDocumentFilename(board),
             // Flagged signed only when both parties have signed, matching how
             // the ILR row's Completed is derived server-side.

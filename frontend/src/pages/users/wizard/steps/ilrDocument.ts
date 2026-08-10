@@ -13,13 +13,42 @@ import type { EnrolmentBoard, IlrForm } from '../../types';
 const PAGE_W = 210;
 const PAGE_H = 297;
 const MARGIN_X = 18;
-const MARGIN_TOP = 20;
+const MARGIN_TOP = 41;
 const MARGIN_BOTTOM = 20;
 const LABEL_W = 88;
 const VALUE_X = MARGIN_X + LABEL_W + 4;
 const VALUE_W = PAGE_W - MARGIN_X - VALUE_X;
 const LINE_H = 4.6;
 const ROW_GAP = 2.2;
+
+// Kent Business College brand colours used throughout the generated document.
+const BRAND_PURPLE: [number, number, number] = [74, 28, 170];
+const BRAND_PURPLE_DARK: [number, number, number] = [43, 18, 92];
+const BRAND_PURPLE_LIGHT: [number, number, number] = [244, 240, 253];
+const BRAND_GOLD: [number, number, number] = [211, 164, 42];
+const KENT_LOGO_URL = '/assets/kbc-logo.png';
+
+let kentLogoPromise: Promise<string | null> | null = null;
+
+/** Load the public Kent logo once and turn it into a format jsPDF can embed. */
+function loadKentLogo(): Promise<string | null> {
+  if (kentLogoPromise) return kentLogoPromise;
+  kentLogoPromise = fetch(KENT_LOGO_URL)
+    .then((response) => {
+      if (!response.ok) throw new Error('Kent logo could not be loaded');
+      return response.blob();
+    })
+    .then((blob) => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    }))
+    // The form must remain downloadable if a deployment is temporarily missing
+    // the asset; the branded text header still identifies the document.
+    .catch(() => null);
+  return kentLogoPromise;
+}
 
 type Row =
   | { kind: 'section'; title: string }
@@ -168,7 +197,8 @@ function drawSignature(doc: jsPDF, signed: string, x: number, baselineY: number)
   }
 }
 
-export function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): jsPDF {
+export async function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): Promise<jsPDF> {
+  const kentLogo = await loadKentLogo();
   const raw = new jsPDF({ unit: 'mm', format: 'a4' });
 
   // Transcode on the way out, so no call site has to remember to. Both text()
@@ -184,8 +214,37 @@ export function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): jsPDF {
 
   let y = MARGIN_TOP;
 
+  const drawPageHeader = () => {
+    // Clean letterhead: the supplied logo already includes the college name, so
+    // it sits directly on white without another card or duplicate brand label.
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, PAGE_W, 34, 'F');
+    if (kentLogo) {
+      try {
+        doc.addImage(kentLogo, 'PNG', MARGIN_X, 6, 44, 20);
+      } catch {
+        // The adjacent text remains a complete branded fallback.
+      }
+    }
+
+    doc.setFont('helvetica', 'bold').setFontSize(16).setTextColor(...BRAND_PURPLE_DARK);
+    doc.text('Extended ILR', PAGE_W - MARGIN_X, 14, { align: 'right' });
+    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(99, 91, 113);
+    doc.text('Learner Details Data Capture Form', PAGE_W - MARGIN_X, 20.5, { align: 'right' });
+
+    // The two-part rule echoes the purple and gold in the Kent crest without
+    // turning the whole top of every page into a heavy colour block.
+    doc.setFillColor(...BRAND_PURPLE);
+    doc.rect(MARGIN_X, 32, PAGE_W - MARGIN_X * 2, 1.2, 'F');
+    doc.setFillColor(...BRAND_GOLD);
+    doc.rect(MARGIN_X, 32, 42, 1.2, 'F');
+  };
+
+  drawPageHeader();
+
   const newPage = () => {
     doc.addPage();
+    drawPageHeader();
     y = MARGIN_TOP;
   };
   /** Reserves `h` mm on the current page, breaking first if it will not fit. */
@@ -193,36 +252,29 @@ export function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): jsPDF {
     if (y + h > PAGE_H - MARGIN_BOTTOM) newPage();
   };
 
-  // Title
-  doc.setFont('helvetica', 'bold').setFontSize(15).setTextColor(20, 20, 20);
-  doc.text('Extended ILR', MARGIN_X, y);
-  y += 6;
-  doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(110, 110, 110);
-  doc.text('Learner Details Data Capture Form', MARGIN_X, y);
-  y += 6;
-  doc.setDrawColor(210, 210, 210).setLineWidth(0.3);
-  doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
-  y += 5;
-
   for (const row of buildRows(ilr, board)) {
     if (row.kind === 'section') {
       need(12);
-      y += 2;
-      doc.setFont('helvetica', 'bold').setFontSize(10.5).setTextColor(30, 30, 30);
-      doc.text(row.title, MARGIN_X, y);
-      y += 2;
-      doc.setDrawColor(225, 225, 225).setLineWidth(0.25);
-      doc.line(MARGIN_X, y, PAGE_W - MARGIN_X, y);
-      y += 4.5;
+      y += 1.5;
+      doc.setFillColor(...BRAND_PURPLE_LIGHT);
+      doc.roundedRect(MARGIN_X, y, PAGE_W - MARGIN_X * 2, 8, 2, 2, 'F');
+      doc.setFillColor(...BRAND_GOLD);
+      doc.roundedRect(MARGIN_X, y, 2.2, 8, 1, 1, 'F');
+      doc.setFont('helvetica', 'bold').setFontSize(10).setTextColor(...BRAND_PURPLE_DARK);
+      doc.text(row.title, MARGIN_X + 5, y + 5.3);
+      y += 11;
       continue;
     }
 
     if (row.kind === 'note') {
-      doc.setFont('helvetica', 'italic').setFontSize(8).setTextColor(120, 120, 120);
+      doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(86, 76, 105);
       const lines = doc.splitTextToSize(row.text, PAGE_W - MARGIN_X * 2) as string[];
-      need(lines.length * 3.8 + 2);
-      doc.text(lines, MARGIN_X, y);
-      y += lines.length * 3.8 + 2;
+      const noteH = lines.length * 3.8 + 5;
+      need(noteH);
+      doc.setFillColor(249, 247, 253);
+      doc.roundedRect(MARGIN_X, y - 2.5, PAGE_W - MARGIN_X * 2, noteH, 1.5, 1.5, 'F');
+      doc.text(lines, MARGIN_X + 3, y + 1);
+      y += noteH + 1;
       continue;
     }
 
@@ -250,7 +302,7 @@ export function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): jsPDF {
 
     // Label / value row. Yes-No prints both options with the answer marked, so
     // the unanswered case stays visible on paper rather than silently blank.
-    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(70, 70, 70);
+    doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(69, 61, 82);
     const labelLines = doc.splitTextToSize(row.label, LABEL_W) as string[];
 
     let valueLines: string[];
@@ -268,19 +320,24 @@ export function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): jsPDF {
 
     const answered = row.kind === 'yesno' ? row.value != null : Boolean(row.value);
     doc.setFont('helvetica', answered ? 'bold' : 'normal').setFontSize(8.5);
-    doc.setTextColor(answered ? 20 : 170, answered ? 20 : 170, answered ? 20 : 170);
+    if (answered) doc.setTextColor(...BRAND_PURPLE_DARK);
+    else doc.setTextColor(160, 156, 168);
     doc.text(valueLines, VALUE_X, y + 3);
 
     y += h;
-    doc.setDrawColor(238, 238, 238).setLineWidth(0.2);
+    doc.setDrawColor(231, 227, 238).setLineWidth(0.2);
     doc.line(MARGIN_X, y - 1, PAGE_W - MARGIN_X, y - 1);
   }
 
   // ---- Declaration page ----
   newPage();
-  doc.setFont('helvetica', 'bold').setFontSize(12).setTextColor(20, 20, 20);
-  doc.text('Learning declaration', MARGIN_X, y);
-  y += 7;
+  doc.setFillColor(...BRAND_PURPLE_LIGHT);
+  doc.roundedRect(MARGIN_X, y - 2, PAGE_W - MARGIN_X * 2, 11, 2, 2, 'F');
+  doc.setFillColor(...BRAND_GOLD);
+  doc.roundedRect(MARGIN_X, y - 2, 2.2, 11, 1, 1, 'F');
+  doc.setFont('helvetica', 'bold').setFontSize(13).setTextColor(...BRAND_PURPLE_DARK);
+  doc.text('Learning declaration', MARGIN_X + 5, y + 5);
+  y += 15;
 
   doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(60, 60, 60);
   for (const p of [
@@ -332,9 +389,13 @@ export function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): jsPDF {
 
   y += 4;
   need(40);
-  doc.setFont('helvetica', 'bold').setFontSize(12).setTextColor(20, 20, 20);
-  doc.text('Provider/Sub-contractor Declaration', MARGIN_X, y);
-  y += 7;
+  doc.setFillColor(...BRAND_PURPLE_LIGHT);
+  doc.roundedRect(MARGIN_X, y - 2, PAGE_W - MARGIN_X * 2, 11, 2, 2, 'F');
+  doc.setFillColor(...BRAND_GOLD);
+  doc.roundedRect(MARGIN_X, y - 2, 2.2, 11, 1, 1, 'F');
+  doc.setFont('helvetica', 'bold').setFontSize(12).setTextColor(...BRAND_PURPLE_DARK);
+  doc.text('Provider/Sub-contractor Declaration', MARGIN_X + 5, y + 5);
+  y += 15;
   doc.setFont('helvetica', 'normal').setFontSize(9).setTextColor(60, 60, 60);
   const provLines = doc.splitTextToSize(
     'I confirm I have seen evidence to verify the learners identity, immigration permission (if applicable) and relevant eligibility for this qualification/funding',
@@ -357,8 +418,10 @@ export function buildIlrPdf(ilr: IlrForm, board: EnrolmentBoard): jsPDF {
   const pages = doc.getNumberOfPages();
   for (let p = 1; p <= pages; p++) {
     doc.setPage(p);
+    doc.setDrawColor(...BRAND_GOLD).setLineWidth(0.35);
+    doc.line(MARGIN_X, PAGE_H - 14, PAGE_W - MARGIN_X, PAGE_H - 14);
     doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(150, 150, 150);
-    doc.text(`${board.user.name} - Extended ILR`, MARGIN_X, PAGE_H - 10);
+    doc.text(`Kent Business College  |  ${board.user.name}  |  Extended ILR`, MARGIN_X, PAGE_H - 10);
     doc.text(`Page ${p} of ${pages}`, PAGE_W - MARGIN_X, PAGE_H - 10, { align: 'right' });
   }
 
@@ -371,11 +434,13 @@ export function ilrDocumentFilename(board: EnrolmentBoard): string {
   return `Extended-ILR-${safe}.pdf`;
 }
 
-export function downloadIlrDocument(ilr: IlrForm, board: EnrolmentBoard): void {
-  buildIlrPdf(ilr, board).save(ilrDocumentFilename(board));
+export async function downloadIlrDocument(ilr: IlrForm, board: EnrolmentBoard): Promise<void> {
+  const document = await buildIlrPdf(ilr, board);
+  document.save(ilrDocumentFilename(board));
 }
 
 /** The same PDF as a Blob, for filing into the enrolment-docs container. */
-export function ilrDocumentBlob(ilr: IlrForm, board: EnrolmentBoard): Blob {
-  return buildIlrPdf(ilr, board).output('blob');
+export async function ilrDocumentBlob(ilr: IlrForm, board: EnrolmentBoard): Promise<Blob> {
+  const document = await buildIlrPdf(ilr, board);
+  return document.output('blob');
 }
