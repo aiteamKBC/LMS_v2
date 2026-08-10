@@ -169,6 +169,7 @@ export type LearnerSummary = {
   id: string;
   name: string;
   programme: string;
+  periods: Array<{ value: string; label: string }>;
   entries: number;
   planned_hours: number;
   actual_hours: number;
@@ -810,13 +811,14 @@ function buildPeriods(cohort: LiveCohortResponse): Array<{ value: string; label:
 // Public API — same signatures the routes already call.
 // ---------------------------------------------------------------------------
 
-export function getLearners(params: { period?: string; search?: string; position?: string; programme?: string } = {}) {
+export function getLearners(params: { period?: string; search?: string; position?: string; programme?: string; learner?: string } = {}) {
   return (async (): Promise<LearnersResponse> => {
     const cohort = await fetchCohort();
     const period = params.period;
     const search = (params.search ?? "").trim().toLowerCase();
     const position = params.position;
     const programme = (params.programme ?? "").trim().toLowerCase();
+    const learnerFilter = (params.learner ?? "").trim().toLowerCase();
 
     let rows = cohort.learners.map((learner) => {
       const month = period ? learner.months.find((item) => item.month === period) ?? null : null;
@@ -825,6 +827,9 @@ export function getLearners(params: { period?: string; search?: string; position
       return { learner, month, planned, actual };
     });
     if (search) rows = rows.filter((row) => row.learner.learner_name.toLowerCase().includes(search));
+    if (learnerFilter) rows = rows.filter(
+      (row) => String(row.learner.aptem_id) === learnerFilter || row.learner.learner_name.toLowerCase() === learnerFilter,
+    );
     if (programme) rows = rows.filter((row) => row.learner.programme.toLowerCase() === programme);
     if (position === "behind") rows = rows.filter((row) => row.actual - row.planned < 0);
     if (position === "ahead") rows = rows.filter((row) => row.actual - row.planned >= 0);
@@ -853,6 +858,14 @@ export function getLearners(params: { period?: string; search?: string; position
         id: String(learner.aptem_id),
         name: learner.learner_name,
         programme: learner.programme,
+        periods: learner.months
+          .filter((item) =>
+            Math.abs(Number(item.planned ?? 0)) > 0 ||
+            Math.abs(Number(item.actual ?? 0)) > 0 ||
+            Math.abs(Number(item.not_accepted ?? 0)) > 0,
+          )
+          .map((item) => ({ value: item.month, label: item.label }))
+          .sort((left, right) => left.value.localeCompare(right.value)),
         entries: counts[String(learner.aptem_id)] ?? 0,
         planned_hours: round2(planned),
         actual_hours: round2(actual),
@@ -1066,13 +1079,59 @@ export function getLearnerProfile(learnerId: string) {
     // profile needs the richer Audit/fetching_evidence joins (ILR, contracts,
     // coach, training plan, skills radar, CV and programme responses), which
     // remain served by the local Django match-ledger endpoint.
-    const query = new URLSearchParams({ learner: learnerId });
-    const response = await fetch(`${ANNOTATION_BASE}/learner-profile?${query}`);
-    if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(payload?.error ?? `Could not load learner profile (${response.status})`);
+    const cohort = await fetchCohort();
+    const learner = resolveLearner(cohort, learnerId);
+    if (!learner) throw new Error(`Learner ${learnerId} was not found in the live cohort.`);
+    if (learner.programme === "Level 6 Project Controls Professional") {
+      const query = new URLSearchParams({ learner: learnerId });
+      const response = await fetch(`${ANNOTATION_BASE}/learner-profile?${query}`);
+      if (response.ok) return response.json() as Promise<LearnerProfile>;
+      if (response.status !== 404) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(payload?.error ?? `Could not load learner profile (${response.status})`);
+      }
     }
-    return response.json() as Promise<LearnerProfile>;
+
+    // The match-ledger profile endpoint serves the original PCP subset. Other
+    // programmes use a safe ledger-level profile from the same live cohort row
+    // that supplied their activities, avoiding a guaranteed legacy 404.
+    const activeMonths = learner.months
+      .filter((month) => Number(month.planned || 0) !== 0 || Number(month.actual || 0) !== 0 || Number(month.not_accepted || 0) !== 0)
+      .sort((left, right) => left.month.localeCompare(right.month));
+    const firstMonth = activeMonths[0]?.month;
+    const lastMonth = activeMonths[activeMonths.length - 1]?.month;
+    return {
+      id: String(learner.aptem_id),
+      aptem_id: String(learner.aptem_id),
+      name: learner.learner_name,
+      email: null,
+      programme: learner.programme,
+      programme_status: learner.withdrawn ? "Withdrawn" : "Active",
+      break_in_learning: {
+        has_break_in_learning: false,
+        last_learning_date: null,
+        expected_return_date: null,
+        has_return_to_learning: false,
+        return_to_learning_date: null,
+        revised_learning_planned_end_date: null,
+      },
+      coach: { name: null, email: null },
+      planned_hours: learner.planned_total,
+      learning_delivery: {
+        planned_hours: learner.planned_total,
+        actual_hours: learner.actual_total,
+        start_date: firstMonth ? `${firstMonth}-01` : undefined,
+        first_evidence_date: firstMonth ? `${firstMonth}-01` : null,
+        first_evidence_items: [],
+        planned_end_date: lastMonth ? `${lastMonth}-01` : undefined,
+      },
+      contracts: [],
+      training_plan: { total_modules: 0, completed_modules: 0, months: [] },
+      skills_radar: [],
+      certifications: [],
+      employment: null,
+      programme_understanding: { understanding_programme: null, career_development_progression: null },
+    };
   })();
 }
 

@@ -195,6 +195,9 @@ function SearchPage() {
   const programmeOptions = [...new Set(filterOptions.data?.learners.map((learner) => learner.programme).filter(Boolean) ?? [])]
     .sort()
     .map((programme) => ({ value: programme, label: programme }));
+  const learnerNumberById = new Map(
+    (filterOptions.data?.learners ?? []).map((learner, index) => [learner.id, index + 1]),
+  );
 
   const totalPages = Math.max(1, Math.ceil((activities.data?.total ?? 0) / pageSize));
   const resetPage = () => setPage(0);
@@ -222,9 +225,6 @@ function SearchPage() {
         <section className="rounded-lg border border-border bg-card shadow-panel">
           <header className="border-b border-border px-7 py-5">
             <h1 className="font-serif text-lg text-foreground">Learner search</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Live learner totals calculated from the Neon <span className="font-mono">Audit.learner_match</span> table.
-            </p>
           </header>
 
           <div className="grid gap-4 border-b border-border px-7 py-5 sm:grid-cols-2 lg:grid-cols-4">
@@ -286,7 +286,8 @@ function SearchPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <TableHead className="label-caps pl-7">Learner</TableHead>
+                    <TableHead className="label-caps w-20 pl-7">No.</TableHead>
+                    <TableHead className="label-caps">Learner</TableHead>
                     <TableHead className="label-caps">Status</TableHead>
                     <TableHead className="label-caps">Coach</TableHead>
                     <TableHead className="label-caps text-right">Activities</TableHead>
@@ -301,11 +302,12 @@ function SearchPage() {
                 </TableHeader>
                 <TableBody>
                   {summaries.isLoading && (
-                    <TableRow><TableCell colSpan={11} className="py-10 text-center text-sm text-muted-foreground">Loading learners from Neon…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">Loading learners…</TableCell></TableRow>
                   )}
                   {summaries.data?.learners.map((learner) => (
                     <TableRow key={learner.id} className={learner.has_break_in_learning ? "bg-warning/5 hover:bg-warning/10" : undefined}>
-                      <TableCell className="pl-7 text-sm font-semibold text-foreground">{learner.name}</TableCell>
+                      <TableCell className="pl-7 font-mono text-sm font-semibold text-muted-foreground">{learnerNumberById.get(learner.id) ?? "—"}</TableCell>
+                      <TableCell className="text-sm font-semibold text-foreground">{learner.name}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${learnerStatusClass(learner.program_status)}`}>{learner.program_status}</span>
@@ -364,7 +366,6 @@ function SearchPage() {
           <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border px-7 py-5">
             <div>
               <h2 className="font-serif text-lg text-foreground">Activity log search</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Real learner activity dates, timestamps and hours from the programme structure.</p>
             </div>
             <dl className="flex gap-6">
               <div><dt className="label-caps">Matches</dt><dd className="font-mono text-sm">{activities.data?.total ?? 0}</dd></div>

@@ -230,22 +230,30 @@ function JournalPage() {
 
   const metadata = useQuery({ queryKey: ["journal-metadata"], queryFn: () => getLearners() });
   useEffect(() => {
-    if (!metadata.data) return;
-    if (!learnerChoice && metadata.data.learners[0]) {
-      setLearnerChoice(metadata.data.learners[0].id);
-    }
-    if (!periodChoice && metadata.data.periods.length) {
-      setPeriodChoice(metadata.data.periods[metadata.data.periods.length - 1]!.value);
-    }
-  }, [metadata.data, learnerChoice, periodChoice]);
+    if (!metadata.data || learnerChoice) return;
+    if (metadata.data.learners[0]) setLearnerChoice(metadata.data.learners[0].id);
+  }, [metadata.data, learnerChoice]);
 
   const selectedLearner = learnerChoice;
-  const selectedPeriod = periodChoice;
+  const cumulativeLearner = metadata.data?.learners.find((item) => item.id === selectedLearner);
+  const learnerPeriods = cumulativeLearner?.periods ?? [];
+  const selectedPeriod = learnerPeriods.some((item) => item.value === periodChoice) ? periodChoice : "";
+
+  useEffect(() => {
+    if (!cumulativeLearner) return;
+    if (learnerPeriods.some((item) => item.value === periodChoice)) return;
+    setPeriodChoice(learnerPeriods[learnerPeriods.length - 1]?.value ?? "");
+    setActivityPage(0);
+    setLearnerSignature("");
+    setCoachSignature("");
+    setLearnerSignatureSaved(false);
+    setCoachSignatureSaved(false);
+  }, [cumulativeLearner, learnerPeriods, periodChoice]);
 
   const monthSummaries = useQuery({
-    queryKey: ["journal-summary", selectedPeriod],
-    queryFn: () => getLearners({ period: selectedPeriod }),
-    enabled: Boolean(selectedPeriod),
+    queryKey: ["journal-summary", selectedLearner, selectedPeriod],
+    queryFn: () => getLearners({ period: selectedPeriod, learner: selectedLearner }),
+    enabled: Boolean(selectedLearner && selectedPeriod),
   });
   const activities = useQuery({
     queryKey: ["journal-activities", selectedLearner, selectedPeriod, activityPage],
@@ -263,11 +271,13 @@ function JournalPage() {
     queryKey: ["learner-profile", selectedLearner],
     queryFn: () => getLearnerProfile(selectedLearner),
     enabled: Boolean(selectedLearner),
+    retry: false,
   });
   const savedSignoff = useQuery({
     queryKey: ["journal-signoff", learnerProfile.data?.aptem_id, selectedPeriod],
     queryFn: () => fetchAuditSignoff(learnerProfile.data!.aptem_id, selectedPeriod),
     enabled: Boolean(learnerProfile.data?.aptem_id && selectedPeriod),
+    retry: false,
   });
 
   useEffect(() => {
@@ -282,8 +292,7 @@ function JournalPage() {
   }, [savedSignoff.data]);
 
   const learner = monthSummaries.data?.learners.find((item) => item.id === selectedLearner);
-  const cumulativeLearner = metadata.data?.learners.find((item) => item.id === selectedLearner);
-  const monthLabel = metadata.data?.periods.find((item) => item.value === selectedPeriod)?.label ?? selectedPeriod;
+  const monthLabel = learnerPeriods.find((item) => item.value === selectedPeriod)?.label ?? "No activity months";
   const activityTotal = activities.data?.total ?? 0;
   const activityTotalPages = Math.max(1, Math.ceil(activityTotal / activityPageSize));
   const activityFrom = activityTotal === 0 ? 0 : activityPage * activityPageSize + 1;
@@ -379,7 +388,9 @@ function JournalPage() {
     (Boolean(selectedLearner && selectedPeriod) && activities.isLoading) ||
     (Boolean(selectedLearner) && learnerProfile.isLoading) ||
     (Boolean(learnerProfile.data?.aptem_id && selectedPeriod) && savedSignoff.isLoading);
-  const pageError = metadata.error || monthSummaries.error || activities.error || learnerProfile.error || savedSignoff.error;
+  // Rich profile/sign-off data is optional for newly added programmes. Core
+  // cohort/month/activity failures still block the journal; optional 404s do not.
+  const pageError = metadata.error || monthSummaries.error || activities.error;
 
   return (
     <div className="min-h-screen bg-background">
@@ -406,8 +417,6 @@ function JournalPage() {
               <span className="h-14 w-px bg-border" />
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight text-[#182d48]">Learner Journal</h1>
-                <p className="mt-1 text-sm text-muted-foreground">Monthly off-the-job learning record</p>
-                <p className="mt-1 text-xs text-muted-foreground">Generated from <span className="font-mono">Audit.learner_match</span></p>
               </div>
             </div>
             <div className="flex items-center gap-3">
@@ -427,16 +436,18 @@ function JournalPage() {
           </div>
 
           <div className="grid gap-4 border-y border-border bg-[#fafbfc] px-7 py-5 sm:grid-cols-2">
-            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={(event) => { setLearnerChoice(event.target.value); setActivityPage(0); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label><span className="label-caps">Activity month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedPeriod} onChange={(event) => { setPeriodChoice(event.target.value); setActivityPage(0); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.periods.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={(event) => { setLearnerChoice(event.target.value); setPeriodChoice(""); setActivityPage(0); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label><span className="label-caps">Activity month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60" value={selectedPeriod} disabled={!learnerPeriods.length} onChange={(event) => { setPeriodChoice(event.target.value); setActivityPage(0); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{learnerPeriods.length ? learnerPeriods.map((item) => <option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No activity months available</option>}</select></label>
           </div>
 
           {pageError ? (
             <p className="py-10 text-center text-sm text-destructive">
               {pageError instanceof Error ? pageError.message : "Could not load the journal."}
             </p>
+          ) : selectedLearner && !learnerPeriods.length ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">No activity months are available for this learner.</p>
           ) : isLoading || !selectedLearner || !selectedPeriod ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Loading journal from Neon…</p>
+            <p className="py-10 text-center text-sm text-muted-foreground">Loading journal…</p>
           ) : learner ? (
             <div className="space-y-5 px-7 py-6">
               <div className="grid rounded-lg bg-[#f6f8fb] px-5 lg:grid-cols-3">
