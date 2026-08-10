@@ -232,9 +232,10 @@ function teamsEventStyle(session: CalSession, column: number, totalColumns: numb
   const outerPadding = 6;
   const availableWidth = 100 - outerPadding * 2;
   const eventWidth = availableWidth / totalColumns;
+  const durationHeight = Math.max(28, (end - start) * pixelsPerMinute - 4);
   return {
     top: (start - dayStart) * pixelsPerMinute + 2,
-    height: Math.max(28, (end - start) * pixelsPerMinute - 4),
+    height: Math.max(28, durationHeight * 0.72),
     left: `calc(${outerPadding + eventWidth * column}% + ${gap / 2}px)`,
     width: `calc(${eventWidth}% - ${gap}px)`,
     borderLeftColor: eventAccent[session.type] || '#8b86ff',
@@ -366,32 +367,32 @@ export default function SessionCalendarPage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Session Calendar" pageSubtitle={loading ? 'Loading live LMS sessions...' : `${filteredSessions.length} module sessions`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="h-[calc(100vh-96px)] min-h-[720px] overflow-hidden bg-[#f6f4f8] text-slate-950">
-        <div className="grid h-full min-w-0" style={{ gridTemplateColumns: '260px minmax(0, 1fr)' }}>
+      <div className="h-[calc(100vh-96px)] min-h-[720px] overflow-auto bg-[#f6f4f8] text-slate-950">
+        <div className="grid h-full min-w-[1460px] border border-slate-200 bg-white" style={{ gridTemplateColumns: '280px minmax(1180px, 1fr)' }}>
           <TeamsSidebar currentDate={currentDate} miniMonthDays={miniMonthDays} isToday={isToday} isCurrentMonth={isCurrentMonth} holidaysAvailable={holidays.length > 0} showUkHolidays={showUkHolidays} onToggleUkHolidays={setShowUkHolidays} onPickDate={setCurrentDate} onMonthNavigate={direction => {
             const next = new Date(currentDate);
             next.setMonth(next.getMonth() + direction);
             setCurrentDate(next);
           }} />
 
-          <main className="flex min-w-0 flex-col bg-white">
-            <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4">
+            <main className="flex min-w-0 flex-col bg-white">
+            <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 shadow-[0_2px_8px_rgba(15,23,42,0.04)]">
               <div className="flex min-w-0 items-center gap-2">
                 <Link to="/workspace/curriculum" className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-slate-100" title="Curriculum Studio">
                   <AppIcon className="ri-side-bar-line"></AppIcon>
                 </Link>
-                <button onClick={goToday} className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-[12px] font-bold text-slate-800 hover:bg-slate-100">
+                <button onClick={goToday} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-bold text-slate-800 hover:bg-slate-100">
                   <AppIcon className="ri-calendar-line"></AppIcon>
                   Today
                 </button>
-                <button onClick={() => navigate(-1)} className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-slate-100" aria-label="Previous"><AppIcon className="ri-arrow-left-s-line"></AppIcon></button>
-                <button onClick={() => navigate(1)} className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-slate-100" aria-label="Next"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
-                <h3 className="truncate px-2 text-[15px] font-bold text-slate-950">{calendarTitle}</h3>
+                <button onClick={() => navigate(-1)} className="grid h-9 w-9 place-items-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label="Previous"><AppIcon className="ri-arrow-left-s-line"></AppIcon></button>
+                <button onClick={() => navigate(1)} className="grid h-9 w-9 place-items-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label="Next"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
+                <h3 className="truncate px-2 text-[16px] font-bold text-slate-950">{calendarTitle}</h3>
               </div>
 
               <div className="flex items-center gap-2">
                 <ViewMenu view={view} onChange={setView} />
-                <button onClick={() => setShowFilters(!showFilters)} className={`inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-[12px] font-semibold ${activeFilterCount ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-700 hover:bg-slate-100'}`}>
+                <button onClick={() => setShowFilters(!showFilters)} className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-semibold ${activeFilterCount ? 'border-primary-300 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-700 hover:bg-slate-100'}`}>
                   <AppIcon className="ri-filter-3-line"></AppIcon>
                   {activeFilterCount ? 'Filter applied' : 'Filter'}
                   {activeFilterCount > 0 && <span className="rounded bg-primary-600 px-1.5 text-[10px] text-white">{activeFilterCount}</span>}
@@ -415,7 +416,7 @@ export default function SessionCalendarPage() {
             )}
 
             {showFilters && (
-              <div className="mx-4 mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+              <div className="mx-4 mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 shadow-sm">
                 <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                   <TeamsFilterSelect label="Cohort" value={filters.cohort} options={uniqueCohorts} onChange={value => setFilters(previous => ({ ...previous, cohort: value }))} />
                   <TeamsFilterSelect label="Group" value={filters.group} options={uniqueGroups} onChange={value => setFilters(previous => ({ ...previous, group: value }))} />
@@ -496,14 +497,14 @@ function TeamsSidebar({ currentDate, miniMonthDays, isToday, isCurrentMonth, hol
   onMonthNavigate: (direction: -1 | 1) => void;
 }) {
   return (
-    <aside className="min-w-0 border-r border-slate-200 bg-[#f6f4f8]">
-      <div className="flex h-14 items-center justify-between border-b border-slate-200 px-4">
+    <aside className="min-w-0 border-r border-slate-200 bg-white">
+      <div className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-4">
         <h2 className="text-[15px] font-bold text-slate-950">Calendar</h2>
         <Link to="/workspace/curriculum" className="grid h-8 w-8 place-items-center rounded-md text-slate-600 hover:bg-white" title="Curriculum Studio">
           <AppIcon className="ri-arrow-go-back-line"></AppIcon>
         </Link>
       </div>
-      <div className="space-y-5 p-4">
+      <div className="space-y-5 bg-slate-50/70 p-4">
         <div>
           <div className="mb-3 flex items-center justify-between">
             <button onClick={() => onMonthNavigate(-1)} className="grid h-7 w-7 place-items-center rounded-md text-slate-500 hover:bg-white" aria-label="Previous month"><AppIcon className="ri-arrow-up-s-line"></AppIcon></button>
@@ -547,9 +548,9 @@ function TeamsSidebar({ currentDate, miniMonthDays, isToday, isCurrentMonth, hol
 
 function ViewMenu({ view, onChange }: { view: CalendarView; onChange: (view: CalendarView) => void }) {
   return (
-    <div className="flex h-8 overflow-hidden rounded-md border border-slate-200 bg-slate-50">
+    <div className="flex h-9 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 p-0.5">
       {(['day', 'week', 'month'] as CalendarView[]).map(option => (
-        <button key={option} onClick={() => onChange(option)} className={`px-3 text-[12px] font-semibold capitalize ${view === option ? 'bg-white text-primary-700 shadow-sm' : 'text-slate-600 hover:bg-white'}`}>
+        <button key={option} onClick={() => onChange(option)} className={`rounded-md px-3 text-[12px] font-semibold capitalize ${view === option ? 'bg-white text-primary-700 shadow-sm' : 'text-slate-600 hover:bg-white'}`}>
           {option}
         </button>
       ))}
@@ -573,14 +574,14 @@ function TeamsTimelineView({ days, hours, selectedSession, draggedSession, dragO
   onSelectSession: (session: CalSession) => void;
   onTooltipChange: (tooltip: MeetingTooltipState | null) => void;
 }) {
-  const gridColumns = days.length === 1 ? '48px minmax(0,1fr)' : `48px repeat(${days.length}, minmax(120px, 1fr))`;
+  const gridColumns = days.length === 1 ? '56px minmax(0,1fr)' : `56px repeat(${days.length}, minmax(150px, 1fr))`;
   const timelineHeight = hours.length * 72;
   return (
-    <div className="flex h-full flex-col">
-      <div className="grid border-b border-slate-200 bg-white" style={{ gridTemplateColumns: gridColumns }}>
+    <div className="flex h-full flex-col bg-white">
+      <div className="grid min-w-[1110px] border-b border-slate-200 bg-white shadow-[0_2px_8px_rgba(15,23,42,0.04)]" style={{ gridTemplateColumns: gridColumns }}>
         <div className="border-r border-slate-200"></div>
           {days.map(day => (
-          <div key={day.toISOString()} className={`h-[72px] border-r border-slate-200 px-3 py-2 text-left ${isToday(day) ? 'bg-primary-50/70' : ''}`}>
+          <div key={day.toISOString()} className={`h-[78px] border-r border-slate-200 px-4 py-3 text-left ${isToday(day) ? 'bg-primary-50/70' : ''}`}>
             <p className={`text-[20px] font-bold leading-tight ${isToday(day) ? 'text-primary-700' : 'text-slate-950'}`}>{day.getDate()}</p>
             <p className={`text-[11px] font-semibold ${isToday(day) ? 'text-primary-700' : 'text-slate-600'}`}>{day.toLocaleDateString('en-GB', { weekday: 'long' })}</p>
             {getHolidaysForDay(day).slice(0, 1).map(holiday => (
@@ -590,7 +591,7 @@ function TeamsTimelineView({ days, hours, selectedSession, draggedSession, dragO
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="grid min-w-[980px]" style={{ gridTemplateColumns: gridColumns }}>
+        <div className="grid min-w-[1110px]" style={{ gridTemplateColumns: gridColumns }}>
           <div className="relative border-r border-slate-200 bg-white" style={{ height: timelineHeight }}>
             {hours.map(hour => (
               <div key={hour} className="h-[72px] border-b border-slate-200 pr-2 pt-1 text-right text-[11px] font-semibold text-slate-500">
@@ -621,7 +622,7 @@ function TeamsTimelineView({ days, hours, selectedSession, draggedSession, dragO
                     onMouseLeave={() => onTooltipChange(null)}
                     onDragStart={event => onDragStart(event, session.id)}
                     onClick={() => onSelectSession(session)}
-                    className={`absolute overflow-hidden rounded-md border border-primary-200 border-l-4 bg-primary-50 px-2 py-1 text-left text-[11px] text-primary-900 shadow-sm hover:z-20 hover:border-primary-400 ${selectedSession?.id === session.id ? 'z-10 ring-2 ring-primary-300' : ''} ${draggedSession === session.id ? 'opacity-50' : ''}`}
+                    className={`absolute overflow-hidden rounded-lg border border-primary-200 border-l-4 bg-primary-50 px-2 py-1 text-left text-[11px] text-primary-900 shadow-[0_4px_12px_rgba(91,45,187,0.10)] hover:z-20 hover:border-primary-400 ${selectedSession?.id === session.id ? 'z-10 ring-2 ring-primary-300' : ''} ${draggedSession === session.id ? 'opacity-50' : ''}`}
                     style={teamsEventStyle(session, column, totalColumns)}
                   >
                     <span className="block truncate font-bold">{session.title}</span>

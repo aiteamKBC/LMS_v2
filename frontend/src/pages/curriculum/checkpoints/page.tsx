@@ -133,6 +133,7 @@ const emptyForm: CheckpointFormState = {
 function statusClass(status: CheckpointStatus) {
   if (status === 'published') return 'bg-emerald-100 text-emerald-700';
   if (status === 'pending') return 'bg-sky-100 text-sky-700';
+  if (status === 'draft') return 'bg-slate-200 text-slate-700';
   if (status === 'trash') return 'bg-red-100 text-red-700';
   if (status === 'private') return 'bg-slate-100 text-slate-700';
   return 'bg-amber-100 text-amber-700';
@@ -458,7 +459,7 @@ export default function CheckpointsPage() {
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row sm:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <AppIcon className="ri-check-double-line text-white text-2xl"></AppIcon>
+              <AppIcon className="ri-check-double-line text-white" size={24}></AppIcon>
             </span>
             <div className="min-w-0 flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Monthly Checkpoint Assessments</h2>
@@ -496,23 +497,23 @@ export default function CheckpointsPage() {
                 setShowArchive(current => !current);
                 setStatusFilter('all');
               }}
-              className={`h-10 w-full rounded-lg border px-4 text-sm font-semibold transition-smooth sm:w-auto ${
+              className={`inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border px-4 text-sm font-semibold transition-smooth sm:w-auto ${
                 showArchive
                   ? 'border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100'
                   : 'border-[#d8dde6] bg-white text-[#5b2dbb] hover:bg-[#f7f3ff]'
               }`}
             >
-              <AppIcon className={`${showArchive ? 'ri-arrow-go-back-line' : 'ri-archive-line'} mr-1`}></AppIcon>{showArchive ? 'Back to active' : 'Archive'}
+              <AppIcon className={`${showArchive ? 'ri-arrow-go-back-line' : 'ri-archive-line'} shrink-0`} size={16}></AppIcon>{showArchive ? 'Back to active' : 'Archive'}
             </button>
-            <button onClick={openCreateModal} className="h-10 w-full rounded-lg bg-primary-500 px-4 text-sm font-semibold text-white transition-smooth hover:bg-primary-600 sm:w-auto">
-              <AppIcon className="ri-upload-cloud-2-line mr-1"></AppIcon>Upload checkpoint quiz
+            <button onClick={openCreateModal} className="inline-flex h-10 w-full items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-primary-500 px-4 text-sm font-semibold text-white transition-smooth hover:bg-primary-600 sm:w-auto">
+              <AppIcon className="ri-upload-cloud-2-line shrink-0" size={16}></AppIcon>Upload checkpoint quiz
             </button>
           </div>
         </section>
 
         <section className="rounded-xl border border-foreground-200/60 bg-background-50 overflow-hidden">
           <div className="overflow-x-auto">
-          <div className="hidden min-w-[980px] md:grid grid-cols-[2fr_1fr_110px_110px_120px_110px_170px] gap-4 border-b border-foreground-300/50 bg-background-100/60 px-5 py-3 text-[11px] font-bold uppercase tracking-wide text-foreground-500">
+          <div className="hidden min-w-[980px] md:grid grid-cols-[minmax(300px,2fr)_minmax(140px,0.75fr)_200px_90px_140px_90px_250px] gap-3 border-b border-foreground-300/50 bg-background-100/60 px-5 py-3 text-[11px] font-bold uppercase tracking-wide text-foreground-500">
             <span>Checkpoint quiz</span>
             <span>Programme</span>
             <span>Timing</span>
@@ -532,7 +533,7 @@ export default function CheckpointsPage() {
               <div className="px-5 py-12 text-center text-sm text-foreground-400">{showArchive ? 'No archived checkpoint quizzes yet' : 'No checkpoint quizzes match this filter'}</div>
             )}
             {!loading && !error && filtered.map(checkpoint => (
-              <article key={checkpoint.id} className="grid grid-cols-1 gap-4 px-5 py-4 transition-smooth hover:bg-background-100/40 md:grid-cols-[2fr_1fr_110px_110px_120px_110px_170px] md:items-center">
+              <article key={checkpoint.id} className="grid grid-cols-1 gap-4 px-5 py-4 transition-smooth hover:bg-background-100/40 md:grid-cols-[minmax(300px,2fr)_minmax(140px,0.75fr)_200px_90px_140px_90px_250px] md:items-center">
                 <div className="min-w-0">
                   <h3 className="text-sm font-heading font-bold text-foreground-900 leading-6 break-words">{checkpoint.displayName}</h3>
                   <p className="text-xs text-foreground-400 mt-1">{checkpoint.module} - {checkpoint.questions} questions - uploaded {checkpoint.uploadedAt}</p>
@@ -558,26 +559,26 @@ export default function CheckpointsPage() {
                   </div>
                 </div>
                 <span className={`w-fit rounded-full px-3 py-1 text-xs font-bold ${statusClass(checkpoint.status)}`}>{statusLabel(checkpoint.status)}</span>
-                <div className="flex items-center justify-start gap-2 md:justify-end">
+                <div className="flex min-w-max items-center justify-start gap-2 md:justify-end">
                   {showArchive ? (
                     <>
-                      <button onClick={() => updateCheckpointStatus(checkpoint, 'draft')} className="h-9 rounded-lg bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition-smooth hover:bg-emerald-100">
-                        <AppIcon className="ri-arrow-go-back-line mr-1"></AppIcon>Restore
+                      <button onClick={() => updateCheckpointStatus(checkpoint, 'draft')} className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 transition-smooth hover:bg-emerald-100">
+                        <AppIcon className="ri-arrow-go-back-line shrink-0" size={15}></AppIcon>Restore
                       </button>
-                      <button onClick={() => deleteCheckpoint(checkpoint)} className="h-9 rounded-lg bg-red-50 px-3 text-xs font-semibold text-red-700 transition-smooth hover:bg-red-100">
-                        <AppIcon className="ri-delete-bin-line mr-1"></AppIcon>Delete
+                      <button onClick={() => deleteCheckpoint(checkpoint)} className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-red-50 px-3 text-xs font-semibold text-red-700 transition-smooth hover:bg-red-100">
+                        <AppIcon className="ri-delete-bin-line shrink-0" size={15}></AppIcon>Delete
                       </button>
                     </>
                   ) : (
                     <>
-                      <button onClick={() => setSelectedCheckpoint(checkpoint)} className="h-9 rounded-lg bg-primary-500 px-3 text-xs font-semibold text-white transition-smooth hover:bg-primary-600">
-                        <AppIcon className="ri-team-line mr-1"></AppIcon>Manage students
+                      <button onClick={() => setSelectedCheckpoint(checkpoint)} className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-primary-500 px-3 text-xs font-semibold text-white transition-smooth hover:bg-primary-600">
+                        <AppIcon className="ri-team-line shrink-0" size={15}></AppIcon><span>Manage students</span>
                       </button>
-                      <button onClick={() => openCheckpointEditor(checkpoint)} className="h-9 w-9 rounded-lg bg-background-100 border border-foreground-200/60 transition-smooth hover:bg-background-200" title="Edit checkpoint">
-                        <AppIcon className="ri-pencil-line"></AppIcon>
+                      <button onClick={() => openCheckpointEditor(checkpoint)} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 border border-foreground-200/60 transition-smooth hover:bg-background-200" title="Edit checkpoint">
+                        <AppIcon className="ri-pencil-line" size={16}></AppIcon>
                       </button>
-                      <button onClick={() => updateCheckpointStatus(checkpoint, 'trash')} className="h-9 w-9 rounded-lg bg-orange-50 text-orange-700 border border-orange-100 transition-smooth hover:bg-orange-100" title="Archive checkpoint">
-                        <AppIcon className="ri-archive-line"></AppIcon>
+                      <button onClick={() => updateCheckpointStatus(checkpoint, 'trash')} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-50 text-orange-700 border border-orange-100 transition-smooth hover:bg-orange-100" title="Archive checkpoint">
+                        <AppIcon className="ri-archive-line" size={16}></AppIcon>
                       </button>
                     </>
                   )}

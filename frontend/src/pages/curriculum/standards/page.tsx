@@ -145,10 +145,10 @@ export default function CurriculumStandards() {
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Skills England Standards" pageSubtitle={`${numberText(totals.standards)} standards from standard_ksbs`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="p-5 sm:p-6 space-y-5">
         <section
-          className="overflow-hidden rounded-2xl border border-primary-900/20 text-white shadow-lg"
-          style={{ background: 'linear-gradient(135deg, #16072f 0%, #2c0d52 48%, #073a42 100%)' }}
+          className="relative overflow-hidden rounded-2xl border border-primary-900/20 bg-primary-950 text-white shadow-lg"
         >
-          <div className="px-5 py-6 sm:px-7 sm:py-7">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_0%,rgba(255,255,255,0.18),transparent_34%),linear-gradient(135deg,rgba(109,40,217,0.35),rgba(15,23,42,0))]" />
+          <div className="relative px-5 py-6 sm:px-7 sm:py-7">
             <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-start gap-4">
                 <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/20">
@@ -159,7 +159,7 @@ export default function CurriculumStandards() {
                     <span className="rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase text-white/75">Source table</span>
                     <span className="text-[11px] font-semibold text-cyan-100">curriculum.standard_ksbs</span>
                   </div>
-                  <h2 className="font-heading text-xl font-bold">Government standard library</h2>
+                  <h2 className="font-heading text-xl font-bold text-white">Government standard library</h2>
                   <p className="mt-1 text-[13px] font-medium leading-relaxed text-white/90">
                     Live KSB definitions grouped by apprenticeship standard, version, funding, route and delivery status.
                   </p>
@@ -168,8 +168,8 @@ export default function CurriculumStandards() {
               <div className="grid w-full grid-cols-3 gap-2 sm:w-auto">
                 {[
                   { label: 'Standards', value: totals.standards, color: 'text-white' },
-                  { label: 'KSBs', value: totals.ksbs, color: 'text-cyan-200' },
-                  { label: 'Approved', value: totals.active, color: 'text-emerald-200' },
+                  { label: 'KSBs', value: totals.ksbs, color: 'text-primary-100' },
+                  { label: 'Approved', value: totals.active, color: 'text-primary-100' },
                 ].map(item => (
                   <div key={item.label} className="rounded-xl bg-white px-4 py-3 text-center shadow-sm ring-1 ring-white/70">
                     <p className="text-2xl font-black text-primary-950">{numberText(item.value)}</p>

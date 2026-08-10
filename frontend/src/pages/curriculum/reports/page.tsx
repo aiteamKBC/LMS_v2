@@ -160,8 +160,8 @@ export default function CurriculumReportsPage() {
             <div className="divide-y divide-background-200/30">
               {section.items.map(item => (
                 <div key={item.id} className="p-4 flex items-start gap-4 hover:bg-background-100/40 transition-smooth">
-                  <div className="w-9 h-9 bg-background-100 rounded-xl flex items-center justify-center shrink-0 border border-foreground-200/60">
-                    <AppIcon className={`${item.icon} text-foreground-500 text-sm`}></AppIcon>
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary-100 bg-primary-50 text-primary-700 shadow-sm">
+                    <AppIcon className={`${item.icon} text-base`}></AppIcon>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start gap-2 flex-wrap">
@@ -175,24 +175,24 @@ export default function CurriculumReportsPage() {
                       <span className="text-[10px] text-foreground-400">Formats: {item.format.join(', ')}</span>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex shrink-0 items-center gap-2">
                     <button
                       onClick={() => handleGenerate(item)}
                       disabled={generating === item.id}
-                      className="px-3 py-1.5 bg-background-100 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-100 px-3 py-1.5 text-[11px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <AppIcon className="ri-refresh-line mr-1"></AppIcon>
+                      <AppIcon className="ri-refresh-line text-[13px]"></AppIcon>
                       {generating === item.id ? 'Generating...' : 'Generate'}
                     </button>
                     <button
                       onClick={() => { setSendReportId(item.id); setSelectedFormat(item.format[0]); }}
-                      className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
                     >
-                      <AppIcon className="ri-send-plane-line mr-1"></AppIcon>
+                      <AppIcon className="ri-send-plane-line text-[13px]"></AppIcon>
                       Send
                     </button>
-                    <button className="w-7 h-7 flex items-center justify-center bg-background-100 border border-background-200 rounded-lg hover:bg-background-200 transition-smooth cursor-pointer">
-                      <AppIcon className="ri-download-line text-foreground-500 text-sm"></AppIcon>
+                    <button type="button" title="Download report" aria-label="Download report" className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-100 text-foreground-500 hover:bg-background-200 transition-smooth cursor-pointer">
+                      <AppIcon className="ri-download-line text-sm"></AppIcon>
                     </button>
                   </div>
                 </div>

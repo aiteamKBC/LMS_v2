@@ -397,8 +397,8 @@ export default function StaffProfilesPage() {
                 className="h-10 w-full min-w-[220px] rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none focus:border-primary-300"
               />
             </div>
-            <button onClick={() => openNew(role)} className="h-10 rounded-lg bg-primary-500 px-4 text-[12px] font-semibold text-white transition-smooth hover:bg-primary-600">
-              <AppIcon className="ri-add-line mr-1.5"></AppIcon>
+            <button onClick={() => openNew(role)} className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[12px] font-semibold text-white transition-smooth hover:bg-primary-600">
+              <AppIcon name="ri-user-add-line" size={15}></AppIcon>
               Add {roleLabel(role)}
             </button>
           </div>
@@ -409,8 +409,8 @@ export default function StaffProfilesPage() {
             <div className="grid grid-cols-[minmax(180px,1.1fr)_minmax(150px,.8fr)_110px_120px_92px] gap-3 border-b border-background-200 px-4 py-3 text-[10px] font-bold uppercase text-foreground-400">
               <span>Name</span>
               <span>Contact</span>
-              <span>{role === 'coach' ? 'Groups' : 'Modules'}</span>
-              <span>{role === 'coach' ? 'Coverage' : 'In progress'}</span>
+              <span className="text-center">{role === 'coach' ? 'Groups' : 'Modules'}</span>
+              <span className="text-center">{role === 'coach' ? 'Coverage' : 'In progress'}</span>
               <span className="text-right">
                 {loading && data ? <AppIcon className="ri-loader-4-line inline-block animate-spin text-sm text-primary-500"></AppIcon> : 'Actions'}
               </span>
@@ -441,8 +441,8 @@ export default function StaffProfilesPage() {
                       <span className="block truncate text-[12px] font-medium text-foreground-700">{profile.email || 'No email'}</span>
                       <span className="block truncate text-[11px] text-foreground-400">{profile.phone || profile.jobTitle || 'No contact details'}</span>
                     </span>
-                    <span className="self-center text-[13px] font-semibold text-foreground-800">{role === 'coach' ? profile.groupCount || 0 : profile.moduleCount || 0}</span>
-                    <span className="self-center text-[13px] font-semibold text-amber-700">{role === 'coach' ? (profile.groupCount ? 'Assigned' : 'Open') : profile.inProgressCount || 0}</span>
+                    <span className="justify-self-center self-center text-center text-[13px] font-semibold text-foreground-800">{role === 'coach' ? profile.groupCount || 0 : profile.moduleCount || 0}</span>
+                    <span className={`justify-self-center self-center text-center font-semibold ${role === 'coach' && !profile.groupCount ? 'inline-flex min-w-[120px] items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[12px] text-emerald-700 shadow-[0_3px_10px_-5px_rgba(16,185,129,0.55)]' : 'text-[13px] text-amber-700'}`}>{role === 'coach' ? (profile.groupCount ? 'Assigned' : 'Open') : profile.inProgressCount || 0}</span>
                     <span className="flex items-center justify-end gap-1 self-center">
                       <span onClick={event => { event.stopPropagation(); openEdit(profile); }} title="Edit profile" className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100">
                         <AppIcon className="ri-edit-line text-sm"></AppIcon>

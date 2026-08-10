@@ -87,6 +87,13 @@ function statusClasses(status: string) {
   return 'bg-[#e8edf4] text-[#526173]';
 }
 
+function statusIcon(status: string) {
+  if (status === 'published') return 'ri-checkbox-circle-line';
+  if (status === 'pending' || status === 'validating') return 'ri-time-line';
+  if (status === 'private') return 'ri-lock-line';
+  return 'ri-file-edit-line';
+}
+
 export default function QuestionBankPage() {
   const { success, error: toastError } = useToast();
   const [questionBank, setQuestionBank] = useState<QuestionBankData | null>(null);
@@ -429,12 +436,12 @@ export default function QuestionBankPage() {
                                   })}
                                 </div>
                               </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                {hasKsbTag && <span className="w-fit text-[10px] font-bold uppercase px-2 py-1 rounded-md bg-[#eefcf7] text-emerald-700">KSB tagged</span>}
-                                <span className={`w-fit text-[10px] font-bold uppercase px-2 py-1 rounded-md ${statusClasses(question.quizStatus)}`}>{statusLabel(question.quizStatus)}</span>
-                                <span className="w-fit text-[10px] font-bold uppercase px-2 py-1 rounded-md bg-[#e8edf4] text-[#526173]">{questionLabel(question.questionType)}</span>
-                                <button onClick={() => openAddToQuiz(question)} className="h-8 px-3 rounded-lg bg-[#5b2dbb] text-white text-xs font-semibold hover:bg-[#4c1d95] transition-smooth">
-                                  <AppIcon className="ri-add-line mr-1"></AppIcon>Add to quiz
+                              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                                {hasKsbTag && <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[#eefcf7] px-2 py-1 text-[10px] font-bold uppercase text-emerald-700"><AppIcon className="ri-price-tag-3-line text-[11px]"></AppIcon>KSB tagged</span>}
+                                <span className={`inline-flex w-fit items-center gap-1 rounded-md px-2 py-1 text-[10px] font-bold uppercase ${statusClasses(question.quizStatus)}`}><AppIcon className={`${statusIcon(question.quizStatus)} text-[11px]`}></AppIcon>{statusLabel(question.quizStatus)}</span>
+                                <span className="inline-flex w-fit items-center gap-1 rounded-md bg-[#e8edf4] px-2 py-1 text-[10px] font-bold uppercase text-[#526173]"><AppIcon className="ri-list-check-2-line text-[11px]"></AppIcon>{questionLabel(question.questionType)}</span>
+                                <button type="button" onClick={() => openAddToQuiz(question)} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-[#5b2dbb] px-3 text-xs font-semibold text-white hover:bg-[#4c1d95] transition-smooth">
+                                  <AppIcon className="ri-add-line text-sm"></AppIcon>Add to quiz
                                 </button>
                               </div>
                             </div>
