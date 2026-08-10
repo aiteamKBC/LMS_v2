@@ -305,7 +305,7 @@ export default function Home() {
 
       {/* ============ FEATURES GRID ============ */}
       <section className="max-w-6xl mx-auto px-6 py-20 md:py-24">
-        <div className="text-center mb-14 animate-fade-in-up">
+        <div className="public-home-section-heading text-center mb-14 animate-fade-in-up">
           <h2 className="text-[32px] md:text-[40px] font-heading font-semibold text-foreground-900 tracking-tight mb-4">
             Designed for every learner journey
           </h2>

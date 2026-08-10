@@ -113,7 +113,9 @@ export default function CurriculumPublished() {
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
                       <h3 className="text-sm font-semibold text-foreground-900">{curriculum.name}</h3>
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${sc.bg} ${sc.text}`}>{sc.label}</span>
+                      <span className={`inline-flex items-center gap-1 text-[9px] font-semibold px-2 py-0.5 rounded-full ${sc.bg} ${sc.text}`}>
+                        <AppIcon className={`${sc.icon} text-[10px]`}></AppIcon>{sc.label}
+                      </span>
                     </div>
                     <p className="text-[11px] text-foreground-400">{curriculum.programme} · v{curriculum.version}</p>
                   </div>
@@ -144,13 +146,13 @@ export default function CurriculumPublished() {
 
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-foreground-400 mb-3">
                   <span className={`px-2 py-0.5 rounded-full font-medium ${rc.bg} ${rc.text}`}>{rc.label}</span>
-                  {curriculum.status === 'live' && <span><AppIcon className="ri-calendar-check-line mr-0.5"></AppIcon> Next review: {curriculum.nextReviewDue}</span>}
-                  {curriculum.publishedDate !== '—' && <span><AppIcon className="ri-calendar-line mr-0.5"></AppIcon> Published: {curriculum.publishedDate}</span>}
+                  {curriculum.status === 'live' && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-check-line text-[11px]"></AppIcon>Next review: {curriculum.nextReviewDue}</span>}
+                  {curriculum.publishedDate !== '—' && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line text-[11px]"></AppIcon>Published: {curriculum.publishedDate}</span>}
                 </div>
 
                 <div className="flex items-center gap-2">
-                  <button className="flex-1 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-eye-line mr-1"></AppIcon> View Details</button>
-                  {curriculum.status === 'live' && <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line"></AppIcon></button>}
+                  <button title="View details" aria-label="View details" className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 py-1.5 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"><AppIcon className="ri-eye-line text-[13px]"></AppIcon>View Details</button>
+                  {curriculum.status === 'live' && <button title="Download curriculum" aria-label="Download curriculum" className="inline-flex items-center justify-center rounded-lg border border-background-200 bg-background-50 px-3 py-1.5 text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line text-[13px]"></AppIcon></button>}
                 </div>
               </div>
             );

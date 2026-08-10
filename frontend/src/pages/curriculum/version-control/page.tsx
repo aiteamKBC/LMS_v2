@@ -33,6 +33,14 @@ const VERSIONS: VersionRecord[] = [
   { id: 'ver-12', framework: 'Project Manager L4', version: 'v1.8', changeType: 'minor', changeSummary: 'Added agile project management methodologies to K5. Updated risk management KSBs to include digital project risks.', author: 'Emma Walsh', date: '25 May 2026', status: 'current', ksbChanges: { added: 1, removed: 0, modified: 2 }, reviewStatus: 'approved', approvedBy: 'James Carter' },
 ];
 
+function versionMarker(version: VersionRecord) {
+  if (version.status === 'archived') return { icon: 'ri-folder-archive-line', title: 'Archived version', tone: 'border-foreground-300 bg-foreground-100 text-foreground-500' };
+  if (version.status === 'previous') return { icon: 'ri-history-line', title: 'Previous version', tone: 'border-background-300 bg-background-50 text-foreground-500' };
+  if (version.reviewStatus === 'pending') return { icon: 'ri-time-line', title: 'Current version pending review', tone: 'border-amber-300 bg-amber-100 text-amber-700' };
+  if (version.reviewStatus === 'rejected') return { icon: 'ri-close-circle-line', title: 'Current version rejected', tone: 'border-red-300 bg-red-100 text-red-700' };
+  return { icon: 'ri-checkbox-circle-line', title: 'Current approved version', tone: 'border-emerald-200 bg-emerald-100 text-emerald-700' };
+}
+
 export default function CurriculumVersionControl() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -98,11 +106,12 @@ export default function CurriculumVersionControl() {
           {filtered.map((ver, idx) => {
             const cc = changeConfig[ver.changeType];
             const rc = reviewConfig[ver.reviewStatus];
+            const marker = versionMarker(ver);
             const isCurrent = ver.status === 'current';
             return (
               <div key={ver.id} className="relative pb-6 last:pb-0">
-                <div className={`absolute -left-[25px] top-1 w-5 h-5 rounded-full border-2 flex items-center justify-center z-10 ${isCurrent ? 'bg-primary-500 border-primary-500' : ver.status === 'previous' ? 'bg-background-50 border-background-300' : 'bg-foreground-200 border-foreground-300'}`}>
-                  {isCurrent && <AppIcon className="ri-check-line text-white text-[8px]"></AppIcon>}
+                <div title={marker.title} aria-label={marker.title} className={`absolute -left-[30px] top-0 z-10 flex h-8 w-8 items-center justify-center rounded-lg border-2 shadow-sm ${marker.tone}`}>
+                  <AppIcon name={marker.icon} size={16}></AppIcon>
                 </div>
                 <div className={`bg-background-50 rounded-xl border p-4 ml-6 ${isCurrent ? 'border-primary-200/50 bg-primary-50/20' : 'border-foreground-200/60'}`}>
                   <div className="flex flex-col sm:flex-row sm:items-center gap-4">
@@ -116,9 +125,9 @@ export default function CurriculumVersionControl() {
                       </div>
                       <p className="text-[12px] text-foreground-500 mb-2">{ver.changeSummary}</p>
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-foreground-400">
-                        <span><AppIcon className="ri-user-line mr-0.5"></AppIcon> {ver.author}</span>
-                        <span><AppIcon className="ri-calendar-line mr-0.5"></AppIcon> {ver.date}</span>
-                        {ver.reviewStatus === 'approved' && <span><AppIcon className="ri-check-double-line mr-0.5 text-emerald-500"></AppIcon> Approved by {ver.approvedBy}</span>}
+                        <span className="inline-flex items-center gap-1"><AppIcon name="ri-user-line" size={13}></AppIcon> {ver.author}</span>
+                        <span className="inline-flex items-center gap-1"><AppIcon name="ri-calendar-line" size={13}></AppIcon> {ver.date}</span>
+                        {ver.reviewStatus === 'approved' && <span className="inline-flex items-center gap-1"><AppIcon name="ri-check-double-line" size={13} className="text-emerald-500"></AppIcon> Approved by {ver.approvedBy}</span>}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -129,8 +138,8 @@ export default function CurriculumVersionControl() {
                           {ver.ksbChanges.modified > 0 && <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-semibold">~{ver.ksbChanges.modified}</span>}
                         </div>
                       )}
-                      <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-eye-line mr-1"></AppIcon> View Diff</button>
-                      {ver.status === 'previous' && <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-arrow-go-back-line mr-1"></AppIcon> Rollback</button>}
+                      <button className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-medium text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer whitespace-nowrap"><AppIcon name="ri-file-search-line" size={14}></AppIcon> View Diff</button>
+                      {ver.status === 'previous' && <button className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"><AppIcon name="ri-history-line" size={14}></AppIcon> Rollback</button>}
                     </div>
                   </div>
                 </div>

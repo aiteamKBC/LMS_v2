@@ -499,7 +499,7 @@ export function Sidebar({ roleLabel, navItems, mobileOpen, onCloseMobile, onHove
     <>
       {/* Desktop sidebar — pinned open or expanded temporarily on hover */}
       <div
-        className={`workspace-sidebar-desktop hidden lg:block fixed left-0 top-0 z-40 h-screen overflow-hidden transition-[width] duration-500 ease-[cubic-bezier(0.4,0,0.2,1)] ${sidebarExpanded ? 'w-[300px] shadow-2xl' : 'w-[88px]'}`}
+        className={`workspace-sidebar-desktop hidden lg:block fixed left-0 top-0 z-40 h-screen overflow-hidden transition-[width] duration-[650ms] ease-[cubic-bezier(0.4,0,0.2,1)] ${sidebarExpanded ? 'w-[300px] shadow-2xl' : 'w-[88px]'}`}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >

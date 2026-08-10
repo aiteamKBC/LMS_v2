@@ -13,6 +13,9 @@ export interface EvidenceTrainingPlanDetails {
   componentId?: string | null;
   componentTitle?: string | null;
   componentType?: string | null;
+  evidenceDescription?: string | null;
+  ksbCodes?: string[];
+  otjhHours?: number | null;
 }
 
 export interface EvidenceRecord {

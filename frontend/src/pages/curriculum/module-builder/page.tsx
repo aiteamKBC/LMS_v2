@@ -5267,11 +5267,11 @@ function ModuleCatalogueCard({
             aria-busy={ksbMapLoading}
             className="inline-flex h-9 min-w-[126px] items-center justify-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-all duration-150 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-100 focus:ring-offset-1 active:translate-y-px disabled:cursor-wait disabled:border-primary-200 disabled:bg-primary-50 disabled:text-primary-700 disabled:shadow-inner"
           >
-            <AppIcon className={ksbMapLoading ? 'ri-loader-4-line animate-spin' : 'ri-node-tree'}></AppIcon>
+            <AppIcon name={ksbMapLoading ? 'ri-loader-4-line' : 'ri-node-tree'} className={ksbMapLoading ? 'animate-spin' : ''} size={15}></AppIcon>
             {ksbMapLoading ? 'Loading module KSBs...' : 'Review module KSBs'}
           </button>
           <button onClick={onBuild} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700">
-            <AppIcon className="ri-hammer-line"></AppIcon>
+            <AppIcon name="ri-hammer-line" size={15}></AppIcon>
             Edit components
           </button>
           <IconButton label="Module settings" icon="ri-settings-3-line" onClick={onSettings} />
@@ -6005,8 +6005,8 @@ function IconButton({ label, icon, onClick, tone = 'default' }: { label: string;
     ? 'bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-700'
     : 'bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-700';
   return (
-    <button onClick={onClick} title={label} aria-label={label} className={`w-7 h-7 rounded-md flex items-center justify-center transition-smooth ${classes}`}>
-      <AppIcon className={`${icon} text-sm`}></AppIcon>
+    <button onClick={onClick} title={label} aria-label={label} className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition-smooth ${classes}`}>
+      <AppIcon name={icon} size={15}></AppIcon>
     </button>
   );
 }

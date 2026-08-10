@@ -1,10 +1,11 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { roleNavMap } from '@/mocks/navigation';
-import { LEARNER_PROFILE } from '@/mocks/learner-profile';
-import { MODULE_PERIODS } from '@/mocks/training-plan';
+import { fetchEvidence, getEvidenceDownloadUrl, uploadEvidence, type EvidenceRecord } from '@/api/evidence';
+import type { LearnerDetail } from '@/api/learnerDetail';
+import { useMyLearner } from '@/hooks/useMyLearner';
+import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 
 const learnerNav = roleNavMap.learner;
 
@@ -39,22 +40,72 @@ interface EvidenceItem {
   tutorFeedback?: string;
   tutorName?: string;
   note?: string;
+  fileId?: string;
+  rawStatus?: string;
+  sortDate?: number;
 }
 
-const EVIDENCE_ITEMS: EvidenceItem[] = [
-  { id: 'ev-01', title: 'Team 1:1 coaching notes — September', type: 'Meeting notes', module: 'Marketing Fundamentals', week: 3, weekLabel: 'Week 3', sessionType: 'Monthly Coaching', ksb: ['K3', 'S4'], otjh: 2, status: 'Validated', date: '26/09/2025', description: 'Document your coaching session with your line manager. Include key discussion points, agreed actions, and how coaching supports your KSB development.', progress: 100, documents: [{ name: 'Coaching_notes_Sept.pdf', status: 'Accepted', size: '245 KB', uploaded: '26/09/2025' }], tutorFeedback: 'Excellent evidence — clearly demonstrates KSB application in the workplace. Well structured and shows good reflection on practice.', tutorName: 'Crispin Jones' },
-  { id: 'ev-02', title: 'Change communications plan draft', type: 'Document', module: 'Marketing Fundamentals', week: 4, weekLabel: 'Week 4', sessionType: 'Evidence Upload', ksb: ['K4', 'S5'], otjh: 1.5, status: 'Validated', date: '03/10/2025', description: 'Draft a communications plan for a change initiative at your workplace.', progress: 100, documents: [{ name: 'Change_comm_plan_draft.pdf', status: 'Accepted', size: '312 KB', uploaded: '03/10/2025' }], tutorFeedback: 'Strong plan with clear objectives. Good stakeholder analysis.', tutorName: 'Crispin Jones' },
-  { id: 'ev-03', title: 'Stakeholder map — Customer Services restructure', type: 'Spreadsheet', module: 'Marketing Fundamentals', week: 5, weekLabel: 'Week 5', sessionType: 'Evidence Upload', ksb: ['K5'], otjh: 2, status: 'Pending tutor', date: '06/07/2025', description: 'Create a stakeholder map for a workplace restructuring project.', progress: 85, documents: [{ name: 'Stakeholder_map_v1.xlsx', status: 'Pending', size: '128 KB', uploaded: '06/07/2025' }], tutorFeedback: 'Awaiting tutor review.', tutorName: 'Crispin Jones' },
-  { id: 'ev-04', title: 'Reflection: leading a difficult feedback conversation', type: 'Reflection', module: 'Marketing Fundamentals', week: 3, weekLabel: 'Week 3', sessionType: 'Reflection', ksb: ['S4', 'B1'], otjh: 1, status: 'Validated', date: '25/09/2025', description: 'Reflect on a difficult feedback conversation you have led at work.', progress: 100, documents: [{ name: 'Feedback_reflection_v2.pdf', status: 'Accepted', size: '189 KB', uploaded: '25/09/2025' }], tutorFeedback: 'Very insightful reflection.', tutorName: 'Crispin Jones' },
-  { id: 'ev-05', title: 'Quiz 1 — Leadership models (90%)', type: 'Quiz', module: 'Marketing Fundamentals', week: 1, weekLabel: 'Week 1', sessionType: 'Quiz', ksb: ['K1'], otjh: 0.25, status: 'Validated', date: '11/09/2025', progress: 100, documents: [{ name: 'Quiz_1_results.pdf', status: 'Accepted', size: '56 KB', uploaded: '11/09/2025' }], tutorFeedback: 'Excellent score!', tutorName: 'Crispin Jones' },
-  { id: 'ev-06', title: 'Project initiation document — draft', type: 'Document', module: 'Marketing Environment', week: 7, weekLabel: 'Week 7', sessionType: 'Evidence Upload', ksb: ['K6', 'S7'], otjh: 2, status: 'Needs work', date: '15/10/2025', progress: 45, documents: [{ name: 'PID_draft_v1.pdf', status: 'Referred', size: '456 KB', uploaded: '15/10/2025' }], tutorFeedback: 'This needs more specific workplace examples.', tutorName: 'Crispin Jones' },
-  { id: 'ev-07', title: 'Marketing campaign analysis report', type: 'Document', module: 'Marketing Environment', week: 6, weekLabel: 'Week 6', sessionType: 'Evidence Upload', ksb: ['K6', 'S6'], otjh: 2.5, status: 'Validated', date: '08/10/2025', progress: 100, documents: [{ name: 'Campaign_analysis_v2.pdf', status: 'Accepted', size: '678 KB', uploaded: '08/10/2025' }], tutorFeedback: 'Comprehensive analysis with excellent use of data.', tutorName: 'Crispin Jones' },
-  { id: 'ev-08', title: 'Customer persona development workshop', type: 'Presentation', module: 'Marketing Fundamentals', week: 4, weekLabel: 'Week 4', sessionType: 'Live Session', ksb: ['K5', 'S7'], otjh: 1.5, status: 'Validated', date: '01/10/2025', progress: 100, documents: [{ name: 'Customer_personas.pptx', status: 'Accepted', size: '2.1 MB', uploaded: '01/10/2025' }], tutorFeedback: 'Great personas with strong data backing.', tutorName: 'Crispin Jones' },
-  { id: 'ev-09', title: 'Monthly coaching meeting notes', type: 'Meeting notes', module: 'Marketing Fundamentals', week: 3, weekLabel: 'Week 3', sessionType: 'Monthly Coaching', ksb: ['K3', 'B2'], otjh: 1, status: 'Submitted', date: '28/09/2025', progress: 90, documents: [{ name: 'Monthly_coaching_Oct.pdf', status: 'Pending', size: '234 KB', uploaded: '28/09/2025' }], tutorFeedback: 'Submitted for review.', tutorName: 'Med Maher' },
-  { id: 'ev-10', title: 'SWOT analysis — competitor review', type: 'Spreadsheet', module: 'Marketing Environment', week: 5, weekLabel: 'Week 5', sessionType: 'Evidence Upload', ksb: ['K5', 'K7'], otjh: 1.5, status: 'Validated', date: '05/10/2025', progress: 100, documents: [{ name: 'SWOT_competitor_review.xlsx', status: 'Accepted', size: '156 KB', uploaded: '05/10/2025' }], tutorFeedback: 'Excellent analysis.', tutorName: 'Crispin Jones' },
-  { id: 'ev-11', title: 'Workplace reflection — team restructuring', type: 'Reflection', module: 'Marketing Environment', week: 6, weekLabel: 'Week 6', sessionType: 'Reflection', ksb: ['B3', 'B4'], otjh: 1, status: 'Draft', date: '10/10/2025', progress: 25, documents: [{ name: 'Team_restructure_reflection.docx', status: 'Pending', size: '45 KB', uploaded: '10/10/2025' }], tutorFeedback: 'Draft evidence — not yet submitted.', tutorName: 'Crispin Jones' },
-  { id: 'ev-12', title: 'Digital marketing channel evaluation', type: 'Document', module: 'Marketing Environment', week: 8, weekLabel: 'Week 8', sessionType: 'Evidence Upload', ksb: ['K8', 'S6'], otjh: 2, status: 'Draft', date: '18/10/2025', progress: 30, documents: [{ name: 'Digital_channel_eval_draft.docx', status: 'Pending', size: '89 KB', uploaded: '18/10/2025' }], tutorFeedback: 'Draft evidence — not yet submitted.', tutorName: 'Crispin Jones' },
-];
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function formatEvidenceDate(value: string | null): string {
+  if (!value) return 'Date unavailable';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(date);
+}
+
+function recordType(record: EvidenceRecord): EvidenceType {
+  const authoredType = record.trainingPlanDetails?.componentType?.toLowerCase() || '';
+  if (record.contentType.startsWith('image/')) return 'Image';
+  if (record.contentType.startsWith('audio/')) return 'Audio';
+  if (authoredType.includes('quiz')) return 'Quiz';
+  if (authoredType.includes('reflection')) return 'Reflection';
+  if (authoredType.includes('meeting') || authoredType.includes('coaching')) return 'Meeting notes';
+  if (authoredType.includes('workplace')) return 'Workplace evidence';
+  if (authoredType.includes('presentation')) return 'Presentation';
+  if (authoredType.includes('spreadsheet')) return 'Spreadsheet';
+  return 'Document';
+}
+
+function recordStatus(status: string): EvidenceStatus {
+  if (status === 'approved') return 'Validated';
+  if (status === 'rejected') return 'Needs work';
+  return 'Pending tutor';
+}
+
+function evidenceRecordToItem(record: EvidenceRecord): EvidenceItem {
+  const details = record.trainingPlanDetails || {};
+  const weekLabel = details.weekTitle || 'General evidence';
+  const weekMatch = weekLabel.match(/\d+/);
+  const week = weekMatch ? Number(weekMatch[0]) : 0;
+  const status = recordStatus(record.status);
+  const docStatus: EvidenceDocument['status'] = status === 'Validated' ? 'Accepted' : status === 'Needs work' ? 'Referred' : 'Pending';
+  return {
+    id: record.id,
+    fileId: record.id,
+    title: details.componentTitle || record.filename,
+    type: recordType(record),
+    module: details.moduleTitle || 'Programme evidence',
+    week,
+    weekLabel,
+    sessionType: details.componentType || 'Evidence Upload',
+    ksb: Array.isArray(details.ksbCodes) ? details.ksbCodes : [],
+    otjh: Number(details.otjhHours) || 0,
+    status,
+    rawStatus: record.status,
+    date: formatEvidenceDate(record.uploadedAt),
+    sortDate: record.uploadedAt ? new Date(record.uploadedAt).getTime() : 0,
+    description: details.evidenceDescription || `Uploaded file: ${record.filename}`,
+    progress: status === 'Validated' ? 100 : status === 'Needs work' ? 0 : 50,
+    documents: [{ name: record.filename, status: docStatus, size: formatBytes(record.sizeBytes), uploaded: formatEvidenceDate(record.uploadedAt) }],
+    note: record.sectionRef ? `Evidence reference: ${record.sectionRef}` : undefined,
+  };
+}
+
 
 const STATUS_CONFIG: Record<EvidenceStatus, { bg: string; text: string; dot: string; label: string }> = {
   Validated: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500', label: 'Validated' },
@@ -84,48 +135,32 @@ interface WeekInfo {
   ksbCodes: string[];
 }
 
-function buildWeekLookup(): WeekInfo[] {
-  const weeks: WeekInfo[] = [];
-  const startYear = 2024;
-  const startMonth = 9;
-  let globalWeek = 0;
-  for (let m = 0; m < 15; m++) {
-    const monthNum = ((startMonth + m - 1) % 12) + 1;
-    const year = startYear + Math.floor((startMonth + m - 1) / 12);
-    for (let w = 1; w <= 4; w++) {
-      globalWeek++;
-      const module = MODULE_PERIODS.find(mp => globalWeek >= mp.weeksStart && globalWeek <= mp.weeksEnd);
-      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      const s = (w - 1) * 7 + 1;
-      const e = Math.min(w * 7, 28);
-      weeks.push({
-        weekNumber: globalWeek,
-        moduleName: module?.label || 'Programme',
-        dateRange: `${s}–${e} ${months[monthNum - 1]} ${year}`,
-        ksbCodes: module?.ksbCodes || [],
-      });
+function buildWeekLookup(detail: LearnerDetail | null): WeekInfo[] {
+  if (!detail) return [{ weekNumber: 1, moduleName: 'Programme', dateRange: '', ksbCodes: [] }];
+  const weeks = new Map<string, WeekInfo>();
+  detail.components.forEach((component, index) => {
+    const label = component.week || `Week ${index + 1}`;
+    const key = `${component.module || 'Programme'}::${label}`;
+    const current = weeks.get(key);
+    const ksbCodes = component.ksbMappings?.map(mapping => mapping.code).filter(Boolean) || [];
+    if (current) {
+      current.ksbCodes = Array.from(new Set([...current.ksbCodes, ...ksbCodes]));
+    } else {
+      weeks.set(key, { weekNumber: weeks.size + 1, moduleName: component.module || 'Programme', dateRange: label, ksbCodes });
     }
-  }
-  return weeks;
+  });
+  return Array.from(weeks.values()).sort((a, b) => a.weekNumber - b.weekNumber);
 }
-
-const WEEK_LOOKUP = buildWeekLookup();
 
 /* ── All KSBs with metadata ── */
 interface KSBInfo { code: string; type: 'Knowledge' | 'Skill' | 'Behaviour'; label: string }
-function buildAllKSBs(): KSBInfo[] {
-  const map = new Map<string, KSBInfo>();
-  MODULE_PERIODS.forEach(mp => {
-    mp.ksbCodes.forEach(code => {
-      if (!map.has(code)) {
-        const type = code.startsWith('K') ? 'Knowledge' : code.startsWith('S') ? 'Skill' : 'Behaviour';
-        map.set(code, { code, type, label: code });
-      }
-    });
-  });
-  return Array.from(map.values()).sort((a, b) => a.code.localeCompare(b.code));
+function buildAllKSBs(detail: LearnerDetail | null): KSBInfo[] {
+  return (detail?.ksbs || []).map(ksb => ({
+    code: ksb.code,
+    type: (ksb.code.startsWith('K') ? 'Knowledge' : ksb.code.startsWith('S') ? 'Skill' : 'Behaviour') as KSBInfo['type'],
+    label: ksb.description || ksb.code,
+  })).sort((a, b) => a.code.localeCompare(b.code));
 }
-const ALL_KSBS = buildAllKSBs();
 
 const KSB_TYPE_COLORS: Record<string, { bg: string; text: string }> = {
   Knowledge: { bg: 'bg-primary-50', text: 'text-primary-700' },
@@ -190,19 +225,18 @@ function EvidenceCard({ ev, onClick }: { ev: EvidenceItem; onClick: () => void }
       </div>
       <div className="flex items-center gap-2 mb-3 text-xs text-foreground-400">
         <span className="flex items-center gap-1">
-          <AppIcon className="ri-time-line text-[10px]"></AppIcon>
-          {ev.otjh}h OTJH
+          <AppIcon className="ri-hard-drive-2-line text-[10px]"></AppIcon>
+          {ev.documents?.[0]?.size || 'Size unavailable'}
         </span>
         <span className="text-foreground-200">·</span>
         <span className="flex items-center gap-1">
           <AppIcon className="ri-file-list-line text-[10px]"></AppIcon>
           {ev.type}
         </span>
-        <span className="text-foreground-200">·</span>
-        <span className="flex items-center gap-1">
-          <AppIcon className="ri-percent-line text-[10px]"></AppIcon>
-          {ev.progress || 0}%
-        </span>
+        {ev.otjh > 0 && <>
+          <span className="text-foreground-200">·</span>
+          <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{ev.otjh}h OTJH</span>
+        </>}
       </div>
       <div className="flex items-center gap-1.5 mb-3 flex-wrap">
         {ev.ksb.map(code => {
@@ -251,9 +285,10 @@ function EvidenceRow({ ev, onClick }: { ev: EvidenceItem; onClick: () => void })
           <span className="text-foreground-200">·</span>
           <span>{ev.date}</span>
           <span className="text-foreground-200">·</span>
-          <span>{ev.otjh}h</span>
+          <span>{ev.documents?.[0]?.size || 'Size unavailable'}</span>
           <span className="text-foreground-200">·</span>
           <span>{ev.type}</span>
+          {ev.otjh > 0 && <><span className="text-foreground-200">·</span><span>{ev.otjh}h OTJH</span></>}
         </div>
       </div>
       <div className="hidden sm:flex items-center gap-1.5 shrink-0">
@@ -268,7 +303,12 @@ function EvidenceRow({ ev, onClick }: { ev: EvidenceItem; onClick: () => void })
 }
 
 /* ── File Preview Modal ── */
-function FilePreviewModal({ item, onClose }: { item: EvidenceItem | null; onClose: () => void }) {
+function FilePreviewModal({ item, onClose, onDownload, opening }: {
+  item: EvidenceItem | null;
+  onClose: () => void;
+  onDownload: (item: EvidenceItem) => void;
+  opening: boolean;
+}) {
   if (!item) return null;
   const tp = TYPE_CONFIG[item.type] || TYPE_CONFIG.Document;
   return (
@@ -307,8 +347,13 @@ function FilePreviewModal({ item, onClose }: { item: EvidenceItem | null; onClos
                     <p className="text-sm font-medium text-foreground-900 truncate">{doc.name}</p>
                     <p className="text-xs text-foreground-400">{doc.size} · {doc.status}</p>
                   </div>
-                  <button className="px-3 py-2 rounded-lg bg-primary-500 text-background-50 dark:text-foreground-950 text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                    <AppIcon className="ri-download-line mr-1"></AppIcon> Download
+                  <button
+                    onClick={() => onDownload(item)}
+                    disabled={item.rawStatus !== 'approved' || opening}
+                    className="px-3 py-2 rounded-lg bg-primary-500 text-background-50 dark:text-foreground-950 text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AppIcon className={`${opening ? 'ri-loader-4-line animate-spin' : 'ri-download-line'} mr-1`}></AppIcon>
+                    {opening ? 'Opening…' : item.rawStatus === 'approved' ? 'Open file' : 'Unavailable'}
                   </button>
                 </div>
               ))}
@@ -343,7 +388,10 @@ function FilePreviewModal({ item, onClose }: { item: EvidenceItem | null; onClos
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
 export default function EvidencePage() {
-  const p = LEARNER_PROFILE;
+  const learner = useMyLearner();
+  const { real } = useLearnerDetailParam(learner.kind, learner.id);
+  const weekLookup = useMemo(() => buildWeekLookup(real), [real]);
+  const allKsbs = useMemo(() => buildAllKSBs(real), [real]);
   const [activeFilter, setActiveFilter] = useState<'All' | 'Validated' | 'Pending' | 'Draft' | 'Needs work'>('All');
   const [filterType, setFilterType] = useState<'All' | EvidenceType>('All');
   const [searchQuery, setSearchQuery] = useState('');
@@ -356,13 +404,34 @@ export default function EvidencePage() {
   const [uploadKSBs, setUploadKSBs] = useState<string[]>([]);
   const [uploadDesc, setUploadDesc] = useState('');
   const [uploadOtjh, setUploadOtjh] = useState(1.5);
-  const [userEvidence, setUserEvidence] = useState<EvidenceItem[]>([]);
+  const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
+  const [evidenceLoading, setEvidenceLoading] = useState(true);
+  const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [openingEvidenceId, setOpeningEvidenceId] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [showFilePreview, setShowFilePreview] = useState<string | null>(null);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const filterRef = useRef<HTMLDivElement>(null);
 
-  const allEvidence = useMemo(() => [...EVIDENCE_ITEMS, ...userEvidence], [userEvidence]);
+  const loadEvidence = useCallback(async () => {
+    setEvidenceLoading(true);
+    setEvidenceError(null);
+    try {
+      setEvidenceRecords(await fetchEvidence(learner.kind, learner.id));
+    } catch (error) {
+      setEvidenceError(error instanceof Error ? error.message : 'Could not load evidence.');
+    } finally {
+      setEvidenceLoading(false);
+    }
+  }, [learner.kind, learner.id]);
+
+  useEffect(() => {
+    void loadEvidence();
+  }, [loadEvidence]);
+
+  const allEvidence = useMemo(() => evidenceRecords.map(evidenceRecordToItem), [evidenceRecords]);
 
   const filtered = useMemo(() => {
     let list = [...allEvidence];
@@ -375,7 +444,7 @@ export default function EvidencePage() {
       const q = searchQuery.toLowerCase();
       list = list.filter(e => e.title.toLowerCase().includes(q) || e.module.toLowerCase().includes(q) || e.ksb.some(k => k.toLowerCase().includes(q)) || String(e.week).includes(q));
     }
-    list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    list.sort((a, b) => (b.sortDate || 0) - (a.sortDate || 0));
     return list;
   }, [activeFilter, filterType, searchQuery, allEvidence]);
 
@@ -392,53 +461,76 @@ export default function EvidencePage() {
 
   const hasActiveFilters = activeFilter !== 'All' || filterType !== 'All' || searchQuery.trim().length > 0;
 
-  const handleUpload = () => {
-    if (!uploadTitle.trim()) return;
-    const weekInfo = WEEK_LOOKUP.find(w => w.weekNumber === uploadWeek);
-    const now = new Date();
-    const dateStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+  const handleUpload = async (files: File[]) => {
+    if (!uploadTitle.trim() || files.length === 0 || uploading) return;
+    const weekInfo = weekLookup.find(w => w.weekNumber === uploadWeek);
     const moduleName = weekInfo?.moduleName || 'Programme';
-    const ksbToUse = uploadKSBs.length > 0 ? uploadKSBs : (weekInfo?.ksbCodes || []).slice(0, 3);
-
-    const newItem: EvidenceItem = {
-      id: `ev-user-${Date.now()}`,
-      title: uploadTitle,
-      type: uploadType,
-      module: moduleName,
-      week: uploadWeek,
-      weekLabel: `Week ${uploadWeek}`,
-      sessionType: 'Evidence Upload',
-      ksb: ksbToUse,
-      otjh: uploadOtjh,
-      status: 'Draft',
-      date: dateStr,
-      description: uploadDesc,
-      progress: 30,
-      documents: [],
-    };
-
-    setUserEvidence(prev => [newItem, ...prev]);
-    setUploadTitle('');
-    setUploadDesc('');
-    setUploadKSBs([]);
-    setUploadSuccess(true);
-    setTimeout(() => setUploadSuccess(false), 3000);
-    setTimeout(() => setShowUploadModal(false), 800);
+    const sectionRef = `evidence-library-week-${uploadWeek}`;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      for (const file of files) {
+        await uploadEvidence(learner.kind, learner.id, file, sectionRef, {
+          moduleTitle: moduleName,
+          weekTitle: weekInfo?.dateRange || `Week ${uploadWeek}`,
+          componentTitle: uploadTitle.trim(),
+          componentType: uploadType,
+          evidenceDescription: uploadDesc.trim() || null,
+          ksbCodes: uploadKSBs.length > 0 ? uploadKSBs : (weekInfo?.ksbCodes || []).slice(0, 3),
+          otjhHours: uploadOtjh,
+        });
+      }
+      await loadEvidence();
+      setUploadTitle('');
+      setUploadDesc('');
+      setUploadKSBs([]);
+      setUploadSuccess(true);
+      window.setTimeout(() => {
+        setUploadSuccess(false);
+        setShowUploadModal(false);
+      }, 800);
+    } catch (error) {
+      await loadEvidence();
+      setUploadError(error instanceof Error ? error.message : 'Evidence upload failed.');
+    } finally {
+      setUploading(false);
+    }
   };
+
+  const handleDownload = useCallback(async (item: EvidenceItem) => {
+    if (!item.fileId || item.rawStatus !== 'approved' || openingEvidenceId) return;
+    setOpeningEvidenceId(item.id);
+    setEvidenceError(null);
+    try {
+      const url = await getEvidenceDownloadUrl(learner.kind, learner.id, item.fileId);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      setEvidenceError(error instanceof Error ? error.message : 'Could not open this evidence file.');
+    } finally {
+      setOpeningEvidenceId(null);
+    }
+  }, [learner.kind, learner.id, openingEvidenceId]);
 
   const handleCloseUpload = () => {
     setUploadTitle('');
     setUploadDesc('');
     setUploadKSBs([]);
+    setUploadError(null);
     setShowUploadModal(false);
   };
 
   const suggestedKSBs = useMemo(() => {
-    const wi = WEEK_LOOKUP.find(w => w.weekNumber === uploadWeek);
+    const wi = weekLookup.find(w => w.weekNumber === uploadWeek);
     return wi?.ksbCodes || [];
-  }, [uploadWeek]);
+  }, [uploadWeek, weekLookup]);
 
-  const currentWeekModule = WEEK_LOOKUP.find(w => w.weekNumber === uploadWeek);
+  const currentWeekModule = weekLookup.find(w => w.weekNumber === uploadWeek);
+
+  useEffect(() => {
+    if (!weekLookup.some(week => week.weekNumber === uploadWeek) && weekLookup[0]) {
+      setUploadWeek(weekLookup[0].weekNumber);
+    }
+  }, [weekLookup, uploadWeek]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -462,6 +554,8 @@ export default function EvidencePage() {
           onClose={handleCloseUpload}
           onSubmit={handleUpload}
           uploadSuccess={uploadSuccess}
+          uploadError={uploadError}
+          uploading={uploading}
           uploadTitle={uploadTitle}
           setUploadTitle={setUploadTitle}
           uploadWeek={uploadWeek}
@@ -476,18 +570,25 @@ export default function EvidencePage() {
           setUploadDesc={setUploadDesc}
           suggestedKSBs={suggestedKSBs}
           currentWeekModule={currentWeekModule}
+          weekLookup={weekLookup}
+          allKsbs={allKsbs}
         />
       )}
 
       {/* File Preview Modal */}
       {showFilePreview && (
-        <FilePreviewModal item={previewItem || null} onClose={() => setShowFilePreview(null)} />
+        <FilePreviewModal
+          item={previewItem || null}
+          onClose={() => setShowFilePreview(null)}
+          onDownload={handleDownload}
+          opening={openingEvidenceId === previewItem?.id}
+        />
       )}
 
       <WorkspaceShell
         role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
         pageTitle="Evidence Library" pageSubtitle="Upload, track & map your apprenticeship evidence to KSBs"
-        userName={p.fullName} userRole={`${p.programme} Apprentice`}
+        userName={real?.name || 'Learner'} userRole={`${real?.programme || 'Apprenticeship'} Apprentice`}
       >
         <div className="p-4 md:p-6 space-y-5 md:space-y-6">
 
@@ -525,19 +626,22 @@ export default function EvidencePage() {
           {/* ══════════════════════════════════════════════════════
               STATS CARDS
               ══════════════════════════════════════════════════════ */}
-          <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100">
-              <AppIcon className="ri-information-line text-base" />
-            </span>
-            <div>
-              <p className="text-xs font-semibold">Demo data</p>
-              <p className="mt-0.5 text-[11px] leading-relaxed text-amber-700">
-                The evidence, statistics, statuses and tutor feedback shown on this page are mock data for demonstration only. New uploads are not currently saved to the database.
-              </p>
+          {evidenceError && (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800">
+              <div className="flex items-center gap-2">
+                <AppIcon className="ri-error-warning-line" />
+                <p className="text-xs">{evidenceError}</p>
+              </div>
+              <button onClick={() => void loadEvidence()} className="text-xs font-semibold underline cursor-pointer">Retry</button>
             </div>
-          </div>
+          )}
 
           <section>
+            {evidenceLoading && (
+              <div className="mb-3 flex items-center gap-2 text-xs text-foreground-400">
+                <AppIcon className="ri-loader-4-line animate-spin" /> Loading evidence…
+              </div>
+            )}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
               <StatStripCard label="Total Evidence" value={counts.total} icon="ri-folder-line" color="primary" />
               <StatStripCard label="Validated" value={counts.validated} icon="ri-check-double-line" color="emerald" />
@@ -614,7 +718,7 @@ export default function EvidencePage() {
                         <div>
                           <p className="text-xs font-semibold text-foreground-400 uppercase tracking-wider mb-2">Type</p>
                           <div className="flex flex-wrap gap-1.5">
-                            {(['All', 'Document', 'Presentation', 'Spreadsheet', 'Reflection', 'Quiz', 'Meeting notes'] as const).map(t => (
+                            {(['All', 'Document', 'Presentation', 'Spreadsheet', 'Reflection', 'Quiz', 'Meeting notes', 'Workplace evidence', 'Image', 'Audio'] as const).map(t => (
                               <button
                                 key={t}
                                 onClick={() => setFilterType(t)}
@@ -687,19 +791,19 @@ export default function EvidencePage() {
               </div>
             )}
 
-            {filtered.length === 0 && (
+            {!evidenceLoading && filtered.length === 0 && (
               <div className="py-16 text-center bg-background-50 rounded-2xl border border-foreground-200/70">
                 <span className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-4">
                   <AppIcon className="ri-folder-open-line text-foreground-300 text-2xl"></AppIcon>
                 </span>
-                <p className="text-sm text-foreground-500 mb-1">No evidence matches your filters</p>
-                <p className="text-xs text-foreground-400 mb-3">Try adjusting your search or clearing filters</p>
-                <button
+                <p className="text-sm text-foreground-500 mb-1">{allEvidence.length ? 'No evidence matches your filters' : 'No evidence uploaded yet'}</p>
+                <p className="text-xs text-foreground-400 mb-3">{allEvidence.length ? 'Try adjusting your search or clearing filters' : 'Use Upload Evidence to add the first file.'}</p>
+                {allEvidence.length > 0 && <button
                   onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
                   className="px-4 py-2 rounded-xl bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"
                 >
                   Clear all filters
-                </button>
+                </button>}
               </div>
             )}
           </section>
@@ -744,21 +848,13 @@ export default function EvidencePage() {
             <div className="grid grid-cols-2 gap-3">
               <MetaBox label="Type" value={selectedItem.type} />
               <MetaBox label="Module" value={selectedItem.module} />
-              <MetaBox label="Week" value={`Week ${selectedItem.week}`} />
-              <MetaBox label="OTJH" value={`${selectedItem.otjh}h`} />
+              <MetaBox label="Week" value={selectedItem.weekLabel} />
+              <MetaBox label="Status" value={STATUS_CONFIG[selectedItem.status].label} />
               <MetaBox label="Session" value={selectedItem.sessionType || 'N/A'} />
               <MetaBox label="Submitted" value={selectedItem.date} />
+              {selectedItem.otjh > 0 && <MetaBox label="OTJH" value={`${selectedItem.otjh}h`} />}
             </div>
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <h4 className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider">Progress</h4>
-                <span className="text-sm font-bold text-foreground-900">{selectedItem.progress || 0}%</span>
-              </div>
-              <div className="w-full rounded-full bg-background-200 overflow-hidden h-1.5">
-                <div className="h-full rounded-full bg-primary-500 transition-all duration-700" style={{ width: `${Math.min(selectedItem.progress || 0, 100)}%` }} />
-              </div>
-            </div>
-            <div>
+            {selectedItem.ksb.length > 0 && <div>
               <h4 className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-2">Linked KSBs</h4>
               <div className="flex flex-wrap gap-1.5">
                 {selectedItem.ksb.map(code => {
@@ -766,7 +862,7 @@ export default function EvidencePage() {
                   return <span key={code} className={`text-xs font-bold px-2 py-1 rounded ${kc.bg} ${kc.text} border border-current/10`}>{code}</span>;
                 })}
               </div>
-            </div>
+            </div>}
             <div>
               <h4 className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-2">Documents</h4>
               {selectedItem.documents && selectedItem.documents.length > 0 ? (
@@ -789,25 +885,6 @@ export default function EvidencePage() {
               ) : (
                 <p className="text-sm text-foreground-400 bg-background-100/60 rounded-xl px-3 py-2.5">No documents uploaded yet.</p>
               )}
-              <div className="flex items-center gap-2 mt-3">
-                <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-background-50 border border-foreground-200 text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <AppIcon className="ri-add-line"></AppIcon> Upload File
-                </button>
-                <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-background-50 border border-foreground-200 text-sm font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                  <AppIcon className="ri-file-add-line"></AppIcon> Add Note
-                </button>
-              </div>
-            </div>
-            <div className="bg-background-100/60 rounded-xl p-4">
-              <h4 className="text-[11px] font-semibold text-foreground-700 mb-2 flex items-center gap-1.5">
-                <AppIcon className="ri-chat-quote-line text-foreground-400"></AppIcon> Tutor Feedback
-              </h4>
-              <p className="text-sm text-foreground-500 leading-relaxed">
-                {selectedItem.tutorFeedback || 'No feedback available yet.'}
-              </p>
-              {selectedItem.tutorName && (
-                <p className="text-xs text-foreground-400 mt-2">— {selectedItem.tutorName}</p>
-              )}
             </div>
             <div className="flex flex-col gap-2 pt-2 border-t border-background-200/40">
               <button 
@@ -816,18 +893,13 @@ export default function EvidencePage() {
               >
                 <AppIcon className="ri-eye-line mr-1.5"></AppIcon> View Full Evidence
               </button>
-              {(selectedItem.status === 'Draft') && (
-                <button className="w-full px-4 py-2.5 rounded-xl bg-background-50 border border-foreground-200 text-sm font-medium cursor-pointer whitespace-nowrap hover:bg-background-100 transition-smooth">
-                  <AppIcon className="ri-send-plane-line mr-1.5"></AppIcon> Submit for Review
-                </button>
-              )}
-              {selectedItem.status === 'Needs work' && (
-                <button className="w-full px-4 py-2.5 rounded-xl bg-red-50 border border-red-200/60 text-sm font-medium text-red-700 cursor-pointer whitespace-nowrap hover:bg-red-100 transition-smooth">
-                  <AppIcon className="ri-edit-line mr-1.5"></AppIcon> Revise Evidence
-                </button>
-              )}
-              <button className="w-full px-4 py-2.5 rounded-xl bg-background-50 border border-foreground-200 text-sm font-medium text-foreground-600 cursor-pointer whitespace-nowrap hover:bg-background-100 transition-smooth">
-                <AppIcon className="ri-download-line mr-1.5"></AppIcon> Download All Files
+              <button
+                onClick={() => void handleDownload(selectedItem)}
+                disabled={selectedItem.rawStatus !== 'approved' || openingEvidenceId === selectedItem.id}
+                className="w-full px-4 py-2.5 rounded-xl bg-background-50 border border-foreground-200 text-sm font-medium text-foreground-600 cursor-pointer whitespace-nowrap hover:bg-background-100 transition-smooth disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <AppIcon className={`${openingEvidenceId === selectedItem.id ? 'ri-loader-4-line animate-spin' : 'ri-download-line'} mr-1.5`}></AppIcon>
+                {openingEvidenceId === selectedItem.id ? 'Opening…' : selectedItem.rawStatus === 'approved' ? 'Open File' : 'File Awaiting Approval'}
               </button>
             </div>
           </div>
@@ -842,8 +914,10 @@ export default function EvidencePage() {
    ═══════════════════════════════════════════════════════════════ */
 interface UploadModalProps {
   onClose: () => void;
-  onSubmit: () => void;
+  onSubmit: (files: File[]) => void;
   uploadSuccess: boolean;
+  uploadError: string | null;
+  uploading: boolean;
   uploadTitle: string;
   setUploadTitle: (v: string) => void;
   uploadWeek: number;
@@ -858,12 +932,16 @@ interface UploadModalProps {
   setUploadDesc: (v: string) => void;
   suggestedKSBs: string[];
   currentWeekModule?: WeekInfo;
+  weekLookup: WeekInfo[];
+  allKsbs: KSBInfo[];
 }
 
 function UploadModal({
   onClose,
   onSubmit,
   uploadSuccess,
+  uploadError,
+  uploading,
   uploadTitle,
   setUploadTitle,
   uploadWeek,
@@ -878,20 +956,23 @@ function UploadModal({
   setUploadDesc,
   suggestedKSBs,
   currentWeekModule,
+  weekLookup,
+  allKsbs,
 }: UploadModalProps) {
   const [showKSBSelector, setShowKSBSelector] = useState(false);
   const [ksbSearch, setKsbSearch] = useState('');
   const [dragActive, setDragActive] = useState(false);
-  const [files, setFiles] = useState<{ name: string; size: string }[]>([]);
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const ksbByType = useMemo(() => {
-    const ksb = ALL_KSBS.filter(k => k.code.toLowerCase().includes(ksbSearch.toLowerCase()));
+    const ksb = allKsbs.filter(k => k.code.toLowerCase().includes(ksbSearch.toLowerCase()));
     return {
       Knowledge: ksb.filter(k => k.type === 'Knowledge'),
       Skill: ksb.filter(k => k.type === 'Skill'),
       Behaviour: ksb.filter(k => k.type === 'Behaviour'),
     };
-  }, [ksbSearch]);
+  }, [allKsbs, ksbSearch]);
 
   const toggleKSB = (code: string) => {
     setUploadKSBs((prev: string[]) =>
@@ -914,11 +995,7 @@ function UploadModal({
     e.stopPropagation();
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      const newFiles = Array.from(e.dataTransfer.files).map(f => ({
-        name: f.name,
-        size: f.size > 1024 * 1024 ? `${(f.size / (1024 * 1024)).toFixed(1)} MB` : `${(f.size / 1024).toFixed(0)} KB`,
-      }));
-      setFiles(prev => [...prev, ...newFiles]);
+      setFiles(prev => [...prev, ...Array.from(e.dataTransfer.files)]);
     }
   };
 
@@ -969,6 +1046,12 @@ function UploadModal({
               Evidence uploaded successfully!
             </div>
           )}
+          {uploadError && (
+            <div className="px-4 py-3 rounded-xl bg-red-50 border border-red-200/50 flex items-center gap-2 text-sm text-red-700">
+              <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>
+              {uploadError}
+            </div>
+          )}
 
           {/* Title */}
           <div>
@@ -994,7 +1077,7 @@ function UploadModal({
                   onChange={e => setUploadWeek(Number(e.target.value))}
                   className="w-full px-4 py-3 rounded-xl bg-background-50 border border-foreground-200 text-sm text-foreground-900 focus:outline-none focus:border-primary-300 transition-smooth cursor-pointer appearance-none pr-10"
                 >
-                  {WEEK_LOOKUP.map(w => (
+                  {weekLookup.map(w => (
                     <option key={w.weekNumber} value={w.weekNumber}>
                       W{w.weekNumber} — {w.moduleName}
                     </option>
@@ -1219,7 +1302,7 @@ function UploadModal({
                     </span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-foreground-700 truncate">{f.name}</p>
-                      <p className="text-[10px] text-foreground-400">{f.size}</p>
+                      <p className="text-[10px] text-foreground-400">{formatBytes(f.size)}</p>
                     </div>
                     <button
                       onClick={() => removeFile(idx)}
@@ -1237,19 +1320,32 @@ function UploadModal({
               onDragLeave={handleDrag}
               onDragOver={handleDrag}
               onDrop={handleDrop}
+              onClick={() => fileInputRef.current?.click()}
               className={`rounded-xl border-2 border-dashed p-5 text-center transition-smooth cursor-pointer ${
                 dragActive
                   ? 'border-primary-300 bg-primary-50/50'
                   : 'border-foreground-200 bg-background-100/40 hover:border-foreground-300/60 hover:bg-background-100/60'
               }`}
             >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="application/pdf,image/png,image/jpeg,video/mp4"
+                className="hidden"
+                onClick={e => e.stopPropagation()}
+                onChange={e => {
+                  if (e.target.files?.length) setFiles(prev => [...prev, ...Array.from(e.target.files || [])]);
+                  e.target.value = '';
+                }}
+              />
               <span className="w-10 h-10 rounded-xl bg-background-50 flex items-center justify-center mx-auto mb-2">
                 <AppIcon className="ri-upload-cloud-2-line text-foreground-400 text-lg"></AppIcon>
               </span>
               <p className="text-sm text-foreground-600 font-medium">
                 Drop files here or <span className="text-primary-600">click to browse</span>
               </p>
-              <p className="text-[11px] text-foreground-400 mt-1">PDF, Word, Excel, PPT, images up to 25MB</p>
+              <p className="text-[11px] text-foreground-400 mt-1">PDF, PNG, JPG or MP4 up to 50MB</p>
             </div>
           </div>
         </div>
@@ -1263,16 +1359,16 @@ function UploadModal({
             Cancel
           </button>
           <button
-            onClick={onSubmit}
-            disabled={!uploadTitle.trim()}
+            onClick={() => onSubmit(files)}
+            disabled={!uploadTitle.trim() || files.length === 0 || uploading}
             className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-              uploadTitle.trim()
+              uploadTitle.trim() && files.length > 0 && !uploading
                 ? 'bg-primary-500 text-background-50 dark:text-foreground-950 hover:bg-primary-600 shadow-sm'
                 : 'bg-background-200 text-foreground-400 cursor-not-allowed'
             }`}
           >
-            <AppIcon className="ri-check-line"></AppIcon>
-            Submit Evidence
+            <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-check-line'}></AppIcon>
+            {uploading ? 'Uploading…' : 'Submit Evidence'}
           </button>
         </div>
       </div>

@@ -499,14 +499,14 @@ export default function CurriculumProgrammes() {
           <CardGridSkeleton count={6} />
         ) : filtered.length ? (
           <>
-          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 2xl:grid-cols-3">
+          <div className="grid grid-cols-1 items-stretch gap-5 md:grid-cols-2 xl:grid-cols-3">
             {paginatedProgrammes.map(prog => {
               const appliedSource = programmeKsbSources.get(prog.sourceId || prog.id) || resolveProgrammeAppliedKsbSource(prog, ksbSets, standards);
               const hasAppliedKsbSource = Boolean(appliedSource.value);
               const coverage = hasAppliedKsbSource && prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
               const cardColor = normaliseHex(prog.color || '#6941c6');
               return (
-              <article key={prog.id} className="programmes-card programme-color-card group relative overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-3 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg" style={{ '--programme-card-color': cardColor } as CSSProperties}>
+              <article key={prog.id} className="programmes-card programme-color-card group relative flex h-full flex-col overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-4 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg" style={{ '--programme-card-color': cardColor } as CSSProperties}>
                 <div className="programme-card-accent absolute inset-x-0 top-0 h-1" />
                 <div className="mb-2.5 flex items-start justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2.5">
@@ -545,7 +545,7 @@ export default function CurriculumProgrammes() {
                     </span>
                   </div>
                 </button>
-                <div className="programmes-metrics mb-2.5 grid grid-cols-2 gap-1.5 rounded-xl border border-primary-100/70 bg-primary-50/65 p-2 sm:grid-cols-5">
+                <div className="programmes-metrics mb-3 grid grid-cols-2 gap-2.5 rounded-xl border border-primary-100/70 bg-primary-50/65 p-2.5 sm:grid-cols-5">
                   <Metric label="Cohorts" value={String(prog.cohorts)} />
                   <Metric label="Groups" value={String(prog.groups || 0)} />
                   <Metric label="Modules" value={String(prog.modules)} />
@@ -562,7 +562,7 @@ export default function CurriculumProgrammes() {
                   </div>
                 </div>
                 {prog.description && <p className="mb-2.5 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
-                <div className="flex flex-wrap items-center gap-1 border-t border-primary-100/70 pt-2.5">
+                <div className="mt-auto flex flex-wrap items-center gap-1 border-t border-primary-100/70 pt-2.5">
                   <button className="programme-action-button programme-action-open inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1 text-[10px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
                     <AppIcon className="ri-eye-line"></AppIcon>
                     Open
@@ -1011,10 +1011,15 @@ function ProgrammeKsbReviewModal({
   return createPortal(
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
       <div className="flex max-h-[86vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
-        <div className="flex items-start justify-between gap-4 bg-[#070112] px-6 py-5 text-white">
+        <div
+          className="flex items-start justify-between gap-4 px-6 py-5 text-white"
+          style={{
+            background: 'radial-gradient(circle at 18% 0%, rgba(255,255,255,0.18), transparent 36%), linear-gradient(135deg, oklch(var(--primary-800)) 0%, oklch(var(--primary-900)) 46%, oklch(var(--primary-950)) 100%)',
+          }}
+        >
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Programme KSB Coverage</p>
-            <h3 className="mt-2 text-xl font-heading font-bold">{programme.name}</h3>
+            <h3 className="mt-2 text-xl font-heading font-bold text-white">{programme.name}</h3>
             <p className="mt-1 text-[12px] font-semibold text-white/70">
               {loading ? 'Loading applied KSBs...' : `${filteredItems.length} applied KSB${filteredItems.length === 1 ? '' : 's'} across ${totalPlacements} placement${totalPlacements === 1 ? '' : 's'}.`}
             </p>
@@ -1208,10 +1213,15 @@ function ApplyProgrammeKsbSourceModal({
   return createPortal(
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
       <div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl">
-        <div className="flex items-start justify-between gap-4 bg-[#070112] px-6 py-5 text-white">
+        <div
+          className="flex items-start justify-between gap-4 px-6 py-5 text-white"
+          style={{
+            background: 'radial-gradient(circle at 18% 0%, rgba(255,255,255,0.18), transparent 36%), linear-gradient(135deg, oklch(var(--primary-800)) 0%, oklch(var(--primary-900)) 46%, oklch(var(--primary-950)) 100%)',
+          }}
+        >
           <div>
             <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Apply KSB source</p>
-            <h3 className="mt-2 text-xl font-heading font-bold">{programme.name}</h3>
+            <h3 className="mt-2 text-xl font-heading font-bold text-white">{programme.name}</h3>
             <p className="mt-1 text-[12px] font-semibold text-white/70">Choose the profile or Skills Standard this programme must be measured against.</p>
           </div>
           <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB source">

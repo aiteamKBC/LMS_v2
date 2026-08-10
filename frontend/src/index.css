@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400;1,9..40,500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -1850,6 +1851,183 @@ table tbody td:last-child {
   right: 0.25rem;
 }
 
+/* ========================================================================== *
+   Portal-wide final surface contract
+
+   Keep the shared shell consistent for every portal.  These rules are scoped
+   to WorkspaceShell so public pages and feature-specific functionality keep
+   their own behaviour while all authenticated portals share one visual system.
+   ========================================================================== */
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop,
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-mobile {
+  background: transparent !important;
+  border-radius: 1.25rem !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel,
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-mobile .workspace-sidebar-panel {
+  background: linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 52%, oklch(var(--primary-800)) 100%) !important;
+  border: 0 !important;
+  border-radius: 1.25rem !important;
+  color: oklch(var(--background-50)) !important;
+  box-shadow: 0 20px 42px -28px oklch(var(--primary-950) / 0.66) !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-panel > div[class*="absolute"][class*="inset-0"] {
+  display: none !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > nav > div.space-y-1 {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 0.35rem !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > nav > div.space-y-1 > div > .workspace-sidebar-nav-item {
+  width: 100% !important;
+  min-height: 3.15rem !important;
+  margin-inline: 0 !important;
+  padding: 0.4rem !important;
+  border: 1px solid transparent !important;
+  border-radius: 0.85rem !important;
+  background: transparent !important;
+  color: oklch(var(--background-50) / 0.76) !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > nav > div.space-y-1 > div > .workspace-sidebar-nav-item:hover,
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > nav > div.space-y-1 > div > .workspace-sidebar-nav-item:focus-visible,
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > nav > div.space-y-1 > div > .workspace-sidebar-nav-item[aria-current="page"] {
+  border-color: oklch(var(--primary-400) / 0.78) !important;
+  background: oklch(var(--primary-600)) !important;
+  color: oklch(var(--background-50)) !important;
+  box-shadow: 0 10px 24px -18px oklch(var(--primary-950) / 0.8) !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-nav-icon {
+  width: 2.45rem !important;
+  height: 2.45rem !important;
+  flex: 0 0 2.45rem !important;
+  border-radius: 0.7rem !important;
+  background: oklch(var(--primary-700)) !important;
+  color: oklch(var(--background-50)) !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-nav-item:hover .workspace-sidebar-nav-icon,
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-nav-item:focus-visible .workspace-sidebar-nav-icon,
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-nav-item[aria-current="page"] .workspace-sidebar-nav-icon {
+  background: oklch(var(--primary-800)) !important;
+  color: oklch(var(--background-50)) !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-nav-icon svg {
+  width: 1.15rem !important;
+  height: 1.15rem !important;
+  color: currentColor !important;
+  stroke: currentColor !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-nav-icon[data-sidebar-icon="dashboard"] {
+  background: oklch(var(--primary-700)) !important;
+  border-radius: 0.7rem !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > nav > div.space-y-1 > div > .workspace-sidebar-nav-item > span[class*="w-0.5"],
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > div:last-child span[class*="w-0.5"] {
+  display: none !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > div:last-child {
+  border-top-color: oklch(var(--background-50) / 0.16) !important;
+  background: transparent !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > div:last-child a {
+  min-height: 2.3rem !important;
+  border: 1px solid transparent !important;
+  border-radius: 0.75rem !important;
+  background: transparent !important;
+  color: oklch(var(--background-50) / 0.72) !important;
+}
+
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > div:last-child a:hover,
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > div:last-child a:focus-visible,
+.dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop .workspace-sidebar-panel > div:last-child a[aria-current="page"] {
+  border-color: oklch(var(--primary-400) / 0.72) !important;
+  background: oklch(var(--primary-600)) !important;
+  color: oklch(var(--background-50)) !important;
+}
+
+/* Labels appear only when the temporary desktop expansion is open. */
+@media (min-width: 1024px) {
+  .dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop[class*="w-[300px]"] .workspace-sidebar-panel > nav > div.space-y-1 > div > .workspace-sidebar-nav-item {
+    min-height: 3.25rem !important;
+    justify-content: flex-start !important;
+    gap: 0.7rem !important;
+    padding: 0.45rem 0.65rem !important;
+    text-align: left !important;
+  }
+
+  .dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop[class*="w-[300px]"] .workspace-sidebar-nav-label {
+    display: block !important;
+    flex: 1 1 auto !important;
+    min-width: 0;
+    overflow: hidden;
+    color: inherit !important;
+    font-size: 0.78rem !important;
+    font-weight: 600 !important;
+    text-align: left !important;
+    text-overflow: ellipsis;
+    white-space: nowrap !important;
+  }
+
+  .dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop[class*="w-[300px]"] .workspace-sidebar-panel > div:last-child a {
+    justify-content: flex-start !important;
+    gap: 0.65rem !important;
+    padding-inline: 0.65rem !important;
+  }
+
+  .dashboard-theme.dashboard-theme.dashboard-theme .workspace-sidebar-desktop[class*="w-[300px]"] .workspace-sidebar-panel > div:last-child a > span:nth-child(2) {
+    display: block !important;
+    flex: 1 1 auto !important;
+    color: inherit !important;
+    white-space: nowrap !important;
+  }
+}
+
+/* Keep the content viewport stable while the sidebar expands on hover. */
+@media (min-width: 1024px) {
+  .dashboard-theme.dashboard-theme.dashboard-theme .workspace-viewport,
+  .dashboard-theme.dashboard-theme.dashboard-theme:has(.workspace-sidebar-desktop[class*="w-[300px]"]) .workspace-viewport {
+    margin-left: 88px !important;
+  }
+}
+
+/* Shared action controls: aligned icons and readable compact labels on every portal. */
+.dashboard-theme .workspace-main :is(button, a)[class*="inline-flex"] {
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.dashboard-theme .workspace-main :is(button, a)[class*="inline-flex"] > svg,
+.dashboard-theme .workspace-main :is(button, a)[class*="inline-flex"] > i {
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.dashboard-theme .workspace-main :is(button, a)[class*="rounded"][class*="px-"] {
+  min-height: 2.25rem;
+}
+
+/* Status pills remain legible on both light cards and purple surfaces. */
+.dashboard-theme .workspace-main :is(.workspace-sidebar-soon-badge, [class*="badge"], [class*="status"])[class*="rounded-full"] {
+  line-height: 1;
+  white-space: nowrap;
+}
+
 /* Active sidebar icons remain white on the purple selected surface. */
 .dashboard-theme .workspace-sidebar-panel nav :is(a, button)[aria-current="page"] .workspace-sidebar-nav-icon,
 .dashboard-theme .workspace-sidebar-panel nav :is(a, button)[aria-expanded="true"] .workspace-sidebar-nav-icon,
@@ -1935,7 +2113,7 @@ table tbody td:last-child {
   border: 1px solid oklch(var(--accent-600)) !important;
   border-radius: 9999px !important;
   background: oklch(var(--accent-500)) !important;
-  color: oklch(var(--primary-950)) !important;
+  color: oklch(var(--primary-700)) !important;
   font-size: 0.65rem !important;
   font-weight: 800 !important;
   letter-spacing: 0.05em !important;
@@ -2839,6 +3017,12 @@ table tbody td:last-child {
    shares the same soft surface rhythm as the workspace. */
 .public-home { background: oklch(var(--background-200)); }
 
+.public-home #portal-section,
+.public-home #portal-section > div:first-child,
+.public-home #portal-cards {
+  background: transparent !important;
+}
+
 .public-home > section:not(:first-of-type) {
   position: relative;
 }
@@ -2862,6 +3046,60 @@ table tbody td:last-child {
 .public-home > section:nth-of-type(4) > div,
 .public-home > section:nth-of-type(5) > div {
   background: oklch(var(--background-50) / 0.96);
+}
+
+.public-home > section:nth-of-type(3) > div:first-child {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.public-home .public-home-section-heading {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.public-home .feature-cards-grid {
+  background: transparent !important;
+}
+
+.public-home .feature-cards-grid > .card-premium {
+  background: oklch(var(--background-50)) !important;
+}
+
+.quiz-workspace-action-font {
+  font-family: 'Manrope', var(--font-body), sans-serif !important;
+  letter-spacing: -0.01em;
+}
+
+.quiz-workspace-page {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: clip;
+}
+
+.quiz-workspace-page .overflow-x-auto:has(> .quiz-workspace-table) {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.quiz-workspace-table {
+  width: 100%;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+.quiz-workspace-table th,
+.quiz-workspace-table td {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.quiz-workspace-table th {
+  white-space: nowrap;
 }
 
 .public-home .portal-card,
@@ -4007,7 +4245,7 @@ table tbody td:last-child {
 .dashboard-theme .workspace-sidebar-desktop {
   width: 88px !important;
   padding: 0.75rem 0.5rem !important;
-  transition-duration: 500ms !important;
+  transition-duration: 650ms !important;
 }
 
 .dashboard-theme .workspace-sidebar-desktop[class*="w-[88px]"] {
