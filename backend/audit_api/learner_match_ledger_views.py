@@ -81,13 +81,15 @@ def _period_of(iso_date):
 
 
 def _clock(value):
-    """Pull the ``HH:MM`` clock time out of a timestamp string
-    (``2024-11-17 19:04:59``, ``2024-11-17T19:04:59+01:00``). Anchored on the
-    ``T``/space separator so a bare date — or a ``+01:00`` offset — never
+    """Pull the ``HH:MM:SS`` clock time out of a timestamp string
+    (``2024-11-17 19:04:59``, ``2024-11-17T19:04:59+01:00``), keeping the
+    seconds so the ledger shows the exact stamp, not a minute-rounded one. The
+    seconds group is optional so a bare ``HH:MM`` value still matches. Anchored
+    on the ``T``/space separator so a bare date — or a ``+01:00`` offset — never
     matches. Returns None when there's no time-of-day part."""
     if not value:
         return None
-    match = re.search(r"[T ](\d{2}:\d{2})", str(value))
+    match = re.search(r"[T ](\d{2}:\d{2}(?::\d{2})?)", str(value))
     return match.group(1) if match else None
 
 

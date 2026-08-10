@@ -166,7 +166,7 @@ const statusConfig: Record<MonthlyStatus, { label: string; pill: string; border:
     soft: 'bg-amber-50 text-amber-700',
   },
   'at-risk': {
-    label: 'At Risk',
+    label: 'Priority',
     pill: 'bg-red-100 text-red-700 ring-red-200',
     border: 'border-red-200',
     soft: 'bg-red-50 text-red-700',
@@ -439,7 +439,6 @@ function addPdfText(
 
 function downloadLearnerMonthlyCyclePdf(learner: MonthlyLearnerActivity, monthLabel: string, monthKey: string) {
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const status = safeStatus(learner.status);
   const learningActivities = learner.activities.filter((activity) => ['learning', 'quiz', 'video'].includes(inlineActivityCategory(activity.type)));
   const counts = {
     quiz: learner.activities.filter((activity) => inlineActivityCategory(activity.type) === 'quiz').length,
@@ -449,72 +448,76 @@ function downloadLearnerMonthlyCyclePdf(learner: MonthlyLearnerActivity, monthLa
     evidence: learner.activities.filter((activity) => inlineActivityCategory(activity.type) === 'evidence').length,
   };
   const generatedDate = formatDateLabel(new Date().toISOString());
-  const pageBottom = PDF_PAGE_HEIGHT - 20;
+  const pageBottom = PDF_PAGE_HEIGHT - 18;
   const colors = {
-    navy: [15, 23, 42] as [number, number, number],
+    text: [15, 23, 42] as [number, number, number],
     muted: [100, 116, 139] as [number, number, number],
     border: [226, 232, 240] as [number, number, number],
     panel: [248, 250, 252] as [number, number, number],
-    purple: [84, 32, 138] as [number, number, number],
-    purpleSoft: [245, 243, 255] as [number, number, number],
+    accent: [84, 32, 138] as [number, number, number],
     emerald: [16, 185, 129] as [number, number, number],
     amber: [245, 158, 11] as [number, number, number],
     red: [239, 68, 68] as [number, number, number],
     white: [255, 255, 255] as [number, number, number],
   };
-  const statusAccent = learner.status === 'on-track' ? colors.emerald : learner.status === 'at-risk' ? colors.red : colors.amber;
-  const activityAccent = (category: InlineActivityFilter): [number, number, number] => {
-    if (category === 'quiz') return colors.amber;
-    if (category === 'video') return colors.red;
-    if (category === 'coaching') return colors.emerald;
-    if (category === 'evidence') return colors.purple;
-    return [99, 102, 241];
-  };
+  const summaryMetrics = [
+    { label: 'Total events', value: formatNumber(learner.activities.length) },
+    { label: 'Active days', value: formatNumber(uniqueActivityDays(learner.activities)) },
+    { label: 'Time logged', value: learner.otjh.monthlyHoursLabel },
+    { label: 'OTJ completed', value: formatHours(learner.otjh.completed) },
+    { label: 'OTJ target', value: formatHours(learner.otjh.target) },
+    { label: 'KSBs evidenced', value: formatNumber(learner.ksb.touched) },
+    { label: 'Learning', value: formatNumber(counts.learning) },
+    { label: 'Videos', value: formatNumber(counts.video) },
+    { label: 'Quizzes', value: formatNumber(counts.quiz) },
+    { label: 'Coaching', value: formatNumber(counts.coaching) },
+    { label: 'Evidence', value: formatNumber(counts.evidence) },
+  ];
+  const detailRows = [
+    { label: 'Programme', value: learner.programme || '--' },
+    { label: 'Cohort / Group', value: `${learner.cohortName || '--'} / ${learner.group || '--'}` },
+    { label: 'OTJ completed', value: formatHours(learner.otjh.completed) },
+    { label: 'OTJ target', value: formatHours(learner.otjh.target) },
+    { label: 'OTJH status', value: learner.otjhStatus || '--' },
+    { label: 'Last captured', value: learner.lastActivityLabel || 'No activity captured' },
+  ];
+  const tableColumns = [
+    { label: 'Date', width: 24 },
+    { label: 'Type', width: 22 },
+    { label: 'Activity', width: 68 },
+    { label: 'Details', width: PDF_CONTENT_WIDTH - 24 - 22 - 68 },
+  ];
   const setFill = (color: [number, number, number]) => doc.setFillColor(color[0], color[1], color[2]);
   const setStroke = (color: [number, number, number]) => doc.setDrawColor(color[0], color[1], color[2]);
-  const setText = (fontSize: number, fontStyle: 'normal' | 'bold' = 'normal', color: [number, number, number] = colors.navy) => {
+  const setText = (fontSize: number, fontStyle: 'normal' | 'bold' = 'normal', color: [number, number, number] = colors.text) => {
     doc.setFont('helvetica', fontStyle);
     doc.setFontSize(fontSize);
     doc.setTextColor(color[0], color[1], color[2]);
   };
-  const ensureSpace = (heightNeeded: number) => {
+  let y = PDF_MARGIN;
+  let tableRowIndex = 0;
+
+  function drawTableHeader(startY: number) {
+    setFill(colors.panel);
+    setStroke(colors.border);
+    doc.rect(PDF_MARGIN, startY, PDF_CONTENT_WIDTH, 8, 'FD');
+    let cursorX = PDF_MARGIN;
+    tableColumns.forEach((column, index) => {
+      if (index > 0) doc.line(cursorX, startY, cursorX, startY + 8);
+      setText(8, 'bold', colors.muted);
+      doc.text(column.label.toUpperCase(), cursorX + 2.5, startY + 5.2);
+      cursorX += column.width;
+    });
+    return startY + 8;
+  }
+
+  const ensureSpace = (heightNeeded: number, redrawTableHeader = false) => {
     if (y + heightNeeded <= pageBottom) return;
     doc.addPage();
     y = PDF_MARGIN;
-  };
-  const drawSummaryCard = (index: number, label: string, value: string, detail: string) => {
-    const gap = 3;
-    const width = (PDF_CONTENT_WIDTH - (gap * 3)) / 4;
-    const x = PDF_MARGIN + (index * (width + gap));
-    setFill(colors.panel);
-    setStroke(colors.border);
-    doc.roundedRect(x, y, width, 27, 3, 3, 'FD');
-    setFill(colors.purpleSoft);
-    doc.roundedRect(x + 4, y + 5, 8, 8, 2, 2, 'F');
-    setText(7, 'bold', colors.muted);
-    doc.text(label.toUpperCase(), x + 15, y + 9);
-    setText(16, 'bold', colors.navy);
-    doc.text(value, x + 15, y + 17);
-    setText(7.5, 'normal', colors.muted);
-    doc.text(detail, x + 15, y + 23);
-  };
-  const drawBreakdownCard = (index: number, label: string, value: number, accent: [number, number, number]) => {
-    const gap = 3;
-    const columns = 3;
-    const width = (PDF_CONTENT_WIDTH - (gap * (columns - 1))) / columns;
-    const row = Math.floor(index / columns);
-    const column = index % columns;
-    const x = PDF_MARGIN + (column * (width + gap));
-    const cardY = y + (row * 15);
-    setFill(colors.white);
-    setStroke(colors.border);
-    doc.roundedRect(x, cardY, width, 12, 2.5, 2.5, 'FD');
-    setFill(accent);
-    doc.roundedRect(x + 3, cardY + 3.2, 2.2, 5.6, 1, 1, 'F');
-    setText(8.5, 'bold', colors.navy);
-    doc.text(label, x + 8, cardY + 7.5);
-    setText(11, 'bold', colors.purple);
-    doc.text(formatNumber(value), x + width - 5, cardY + 7.5, { align: 'right' });
+    if (redrawTableHeader) {
+      y = drawTableHeader(y);
+    }
   };
   const addFooter = () => {
     const pageCount = doc.getNumberOfPages();
@@ -527,150 +530,124 @@ function downloadLearnerMonthlyCyclePdf(learner: MonthlyLearnerActivity, monthLa
       doc.text(`Page ${page} of ${pageCount}`, PDF_PAGE_WIDTH - PDF_MARGIN, PDF_PAGE_HEIGHT - 8, { align: 'right' });
     }
   };
+  const drawSectionTitle = (title: string) => {
+    y = addPdfDivider(doc, y);
+    y = addPdfText(doc, { text: title, y, fontSize: 11.5, fontStyle: 'bold', lineHeight: 6 });
+  };
+  const drawDetailRow = (label: string, value: string) => {
+    const safeValue = value || '--';
+    const labelWidth = 34;
+    const valueLines = doc.splitTextToSize(safeValue, PDF_CONTENT_WIDTH - labelWidth - 8) as string[];
+    const rowHeight = Math.max(9, (valueLines.length * 4) + 4);
+    ensureSpace(rowHeight);
+    setStroke(colors.border);
+    doc.rect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, rowHeight);
+    doc.line(PDF_MARGIN + labelWidth, y, PDF_MARGIN + labelWidth, y + rowHeight);
+    setText(8, 'bold', colors.muted);
+    doc.text(label.toUpperCase(), PDF_MARGIN + 3, y + 5.2);
+    setText(9, 'normal', colors.text);
+    doc.text(valueLines, PDF_MARGIN + labelWidth + 3, y + 5.2);
+    y += rowHeight;
+  };
+  const drawMetricCell = (x: number, cellY: number, width: number, label: string, value: string) => {
+    setText(8, 'bold', colors.muted);
+    doc.text(label.toUpperCase(), x + 3, cellY + 4.6);
+    setText(11, 'bold', colors.text);
+    doc.text(value, x + width - 3, cellY + 6.2, { align: 'right' });
+  };
 
-  let y = PDF_MARGIN;
+  setText(16, 'bold', colors.text);
+  doc.text('Monthly Activity Summary', PDF_MARGIN, y + 4);
+  setText(9, 'normal', colors.muted);
+  doc.text(monthLabel, PDF_MARGIN, y + 10);
 
-  setFill(colors.panel);
-  doc.rect(0, 0, PDF_PAGE_WIDTH, 5, 'F');
-  setFill(colors.purple);
-  doc.rect(PDF_MARGIN, 0, 46, 3, 'F');
-
-  setFill(colors.white);
+  y += 16;
   setStroke(colors.border);
-  doc.roundedRect(PDF_MARGIN, y + 5, PDF_CONTENT_WIDTH, 38, 4, 4, 'FD');
-  setFill(colors.purple);
-  doc.roundedRect(PDF_MARGIN, y + 5, 3, 38, 1.5, 1.5, 'F');
-  setFill(colors.purpleSoft);
-  doc.circle(PDF_MARGIN + 15, y + 24, 9, 'F');
-  setText(9, 'bold', colors.purple);
-  doc.text(learner.initials || 'LR', PDF_MARGIN + 15, y + 26, { align: 'center' });
+  doc.line(PDF_MARGIN, y, PDF_PAGE_WIDTH - PDF_MARGIN, y);
+  y += 8;
 
-  setText(7.5, 'bold', colors.purple);
-  doc.text('MONTHLY CYCLE REPORT', PDF_MARGIN + 30, y + 16);
-  setText(18, 'bold', colors.navy);
-  doc.text(learner.name, PDF_MARGIN + 30, y + 27);
-  setText(8.5, 'normal', colors.muted);
-  doc.text(`${monthLabel} | ${learner.cohortName} - ${learner.group}`, PDF_MARGIN + 30, y + 35);
+  setText(18, 'bold', colors.text);
+  doc.text(learner.name, PDF_MARGIN, y);
+  setText(9, 'normal', colors.muted);
+  doc.text(`${learner.programme || '--'} - ${monthLabel}`, PDF_MARGIN, y + 6);
+  y += 12;
 
-  const statusText = status.label.toUpperCase();
-  setText(6.7, 'bold', colors.white);
-  const statusWidth = Math.max(25, doc.getTextWidth(statusText) + 8);
-  const statusX = PDF_PAGE_WIDTH - PDF_MARGIN - statusWidth - 6;
-  setFill(statusAccent);
-  doc.roundedRect(statusX, y + 14, statusWidth, 8, 4, 4, 'F');
-  doc.text(statusText, statusX + (statusWidth / 2), y + 19.2, { align: 'center' });
+  drawSectionTitle('Learner details');
+  detailRows.forEach((row) => drawDetailRow(row.label, row.value));
 
-  setText(7.2, 'normal', colors.muted);
-  doc.text('Generated', PDF_PAGE_WIDTH - PDF_MARGIN - 6, y + 31, { align: 'right' });
-  setText(8, 'bold', colors.navy);
-  doc.text(generatedDate, PDF_PAGE_WIDTH - PDF_MARGIN - 6, y + 37, { align: 'right' });
+  drawSectionTitle('Monthly summary');
+  const metricGap = 4;
+  const metricWidth = (PDF_CONTENT_WIDTH - metricGap) / 2;
+  for (let index = 0; index < summaryMetrics.length; index += 2) {
+    ensureSpace(10);
+    setStroke(colors.border);
+    doc.rect(PDF_MARGIN, y, metricWidth, 10);
+    drawMetricCell(PDF_MARGIN, y, metricWidth, summaryMetrics[index].label, summaryMetrics[index].value);
 
-  y += 53;
-
-  setFill(colors.panel);
-  setStroke(colors.border);
-  doc.roundedRect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, 20, 3, 3, 'FD');
-  setText(8, 'bold', colors.muted);
-  doc.text('LAST CAPTURED', PDF_MARGIN + 6, y + 8);
-  doc.text('PROGRAMME', PDF_MARGIN + 65, y + 8);
-  doc.text('OTJH STATUS', PDF_MARGIN + 124, y + 8);
-  setText(9.5, 'bold', colors.navy);
-  doc.text(learner.lastActivityLabel || 'No activity captured', PDF_MARGIN + 6, y + 15);
-  doc.text(learner.programme || '--', PDF_MARGIN + 65, y + 15);
-  doc.text(learner.otjhStatus || status.label, PDF_MARGIN + 124, y + 15);
-
-  y += 30;
-  drawSummaryCard(0, 'Total events', formatNumber(learner.activities.length), 'Captured items');
-  drawSummaryCard(1, 'Active days', formatNumber(uniqueActivityDays(learner.activities)), 'With activity');
-  drawSummaryCard(2, 'Time logged', learner.otjh.monthlyHoursLabel, 'OTJH this month');
-  drawSummaryCard(3, 'KSBs evidenced', formatNumber(learner.ksb.touched), 'Unique codes');
-  y += 35;
-
-  y = addPdfText(doc, { text: 'Activity Breakdown', y, fontSize: 12, fontStyle: 'bold', lineHeight: 6 });
-  y += 1;
-  const breakdown = [
-    { label: 'All', value: learner.activities.length, accent: colors.purple },
-    { label: 'Learning', value: counts.learning, accent: activityAccent('learning') },
-    { label: 'Videos', value: counts.video, accent: activityAccent('video') },
-    { label: 'Quizzes', value: counts.quiz, accent: activityAccent('quiz') },
-    { label: 'Coaching', value: counts.coaching, accent: activityAccent('coaching') },
-    { label: 'Evidence', value: counts.evidence, accent: activityAccent('evidence') },
-  ];
-  breakdown.forEach((item, index) => drawBreakdownCard(index, item.label, item.value, item.accent));
-  y += 34;
-
-  if (learner.needsAction.length > 0) {
-    const actionLines = doc.splitTextToSize(learner.needsAction.join(' | '), PDF_CONTENT_WIDTH - 10) as string[];
-    const actionHeight = Math.max(16, 12 + (actionLines.length * 4));
-    ensureSpace(actionHeight + 8);
-    setFill([254, 242, 242]);
-    setStroke([254, 202, 202]);
-    doc.roundedRect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, actionHeight, 3, 3, 'FD');
-    setText(8, 'bold', colors.red);
-    doc.text('ACTION FLAGS', PDF_MARGIN + 5, y + 6);
-    setText(8.5, 'normal', colors.navy);
-    doc.text(actionLines, PDF_MARGIN + 5, y + 12);
-    y += actionHeight + 8;
+    const secondMetric = summaryMetrics[index + 1];
+    if (secondMetric) {
+      const secondX = PDF_MARGIN + metricWidth + metricGap;
+      doc.rect(secondX, y, metricWidth, 10);
+      drawMetricCell(secondX, y, metricWidth, secondMetric.label, secondMetric.value);
+    }
+    y += 10;
   }
 
-  y = addPdfDivider(doc, y);
-  y = addPdfText(doc, { text: 'Activity Timeline', y, fontSize: 13, fontStyle: 'bold', lineHeight: 7 });
+  if (learner.needsAction.length > 0) {
+    drawSectionTitle('Attention needed');
+    learner.needsAction.forEach((item) => {
+      const bulletLines = doc.splitTextToSize(item, PDF_CONTENT_WIDTH - 9) as string[];
+      const rowHeight = Math.max(8, (bulletLines.length * 4) + 3);
+      ensureSpace(rowHeight);
+      setText(9, 'bold', colors.text);
+      doc.text('-', PDF_MARGIN + 2, y + 5);
+      setText(8.8, 'normal', colors.text);
+      doc.text(bulletLines, PDF_MARGIN + 6, y + 5);
+      y += rowHeight;
+    });
+  }
+
+  drawSectionTitle('Activity log');
 
   if (!learner.activities.length) {
-    setFill(colors.panel);
+    ensureSpace(14);
     setStroke(colors.border);
-    doc.roundedRect(PDF_MARGIN, y + 2, PDF_CONTENT_WIDTH, 24, 3, 3, 'FD');
-    y = addPdfText(doc, { text: `No activity captured for ${monthLabel}.`, y: y + 10, x: PDF_MARGIN + 6, maxWidth: PDF_CONTENT_WIDTH - 12, textColor: colors.muted });
+    doc.rect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, 12);
+    setText(9, 'normal', colors.muted);
+    doc.text(`No activity captured for ${monthLabel}.`, PDF_MARGIN + 3, y + 7);
+    y += 12;
   } else {
-    let timelineIndex = 1;
-    groupActivitiesByDate(learner.activities).forEach(([day, activities]) => {
-      ensureSpace(14);
-      setFill(colors.purpleSoft);
-      setStroke([221, 214, 254]);
-      doc.roundedRect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, 10, 3, 3, 'FD');
-      setText(8.5, 'bold', colors.purple);
-      doc.text(formatDateLabel(day), PDF_MARGIN + 5, y + 6.5);
-      setText(8, 'normal', colors.muted);
-      doc.text(`${activities.length} item${activities.length === 1 ? '' : 's'}`, PDF_PAGE_WIDTH - PDF_MARGIN - 5, y + 6.5, { align: 'right' });
-      y += 14;
+    y = drawTableHeader(y);
+    learner.activities.forEach((activity) => {
+      const detailText = [formatSourceLabel(activity.source), activity.detail].filter(Boolean).join(' - ') || '--';
+      const dateLines = doc.splitTextToSize(formatDateLabel(activity.date), tableColumns[0].width - 5) as string[];
+      const typeLines = doc.splitTextToSize(activity.type || '--', tableColumns[1].width - 5) as string[];
+      const titleLines = doc.splitTextToSize(activity.title || 'Untitled activity', tableColumns[2].width - 5) as string[];
+      const detailLines = doc.splitTextToSize(detailText, tableColumns[3].width - 5) as string[];
+      const lineCount = Math.max(dateLines.length, typeLines.length, titleLines.length, detailLines.length);
+      const rowHeight = Math.max(10, 4 + (lineCount * 4));
 
-      activities.forEach((activity) => {
-        const category = inlineActivityCategory(activity.type);
-        const accent = activityAccent(category);
-        const titleLines = doc.splitTextToSize(activity.title || 'Untitled activity', PDF_CONTENT_WIDTH - 38) as string[];
-        const detailLines = doc.splitTextToSize(activity.detail || 'No detail captured', PDF_CONTENT_WIDTH - 38) as string[];
-        const cardHeight = Math.max(27, 19 + (titleLines.length * 4.5) + (detailLines.length * 4.2));
-        ensureSpace(cardHeight + 5);
+      ensureSpace(rowHeight, true);
+      setFill(tableRowIndex % 2 === 0 ? colors.white : colors.panel);
+      setStroke(colors.border);
+      doc.rect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, rowHeight, 'FD');
 
-        setFill(colors.white);
-        setStroke(colors.border);
-        doc.roundedRect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, cardHeight, 3, 3, 'FD');
-        setFill(accent);
-        doc.roundedRect(PDF_MARGIN, y, 2.2, cardHeight, 1, 1, 'F');
-
-        setFill(colors.panel);
-        doc.roundedRect(PDF_MARGIN + 7, y + 6, 11, 11, 3, 3, 'F');
-        setText(8, 'bold', accent);
-        doc.text(String(timelineIndex), PDF_MARGIN + 12.5, y + 13, { align: 'center' });
-
-        setFill(colors.purpleSoft);
-        doc.roundedRect(PDF_MARGIN + 23, y + 6, 25, 6.5, 2, 2, 'F');
-        setText(6.7, 'bold', colors.purple);
-        doc.text(activity.type.toUpperCase().slice(0, 18), PDF_MARGIN + 35.5, y + 10.5, { align: 'center' });
-
-        setText(7.5, 'normal', colors.muted);
-        doc.text(formatSourceLabel(activity.source), PDF_PAGE_WIDTH - PDF_MARGIN - 6, y + 10.5, { align: 'right' });
-
-        let textY = y + 18;
-        setText(9.5, 'bold', colors.navy);
-        doc.text(titleLines, PDF_MARGIN + 23, textY);
-        textY += titleLines.length * 4.5;
-        setText(8.2, 'normal', colors.muted);
-        doc.text(detailLines, PDF_MARGIN + 23, textY);
-
-        y += cardHeight + 5;
-        timelineIndex += 1;
+      let cursorX = PDF_MARGIN;
+      tableColumns.forEach((column, index) => {
+        if (index > 0) doc.line(cursorX, y, cursorX, y + rowHeight);
+        cursorX += column.width;
       });
+
+      const textY = y + 5;
+      setText(8.5, 'normal', colors.text);
+      doc.text(dateLines, PDF_MARGIN + 2.5, textY);
+      doc.text(typeLines, PDF_MARGIN + tableColumns[0].width + 2.5, textY);
+      doc.text(titleLines, PDF_MARGIN + tableColumns[0].width + tableColumns[1].width + 2.5, textY);
+      setText(8.2, 'normal', colors.muted);
+      doc.text(detailLines, PDF_MARGIN + tableColumns[0].width + tableColumns[1].width + tableColumns[2].width + 2.5, textY);
+
+      y += rowHeight;
+      tableRowIndex += 1;
     });
   }
 
@@ -1088,7 +1065,7 @@ export default function CoachMonthlyCycle() {
                   <div className="space-y-3">
                     <HealthRow label="On Track" value={summary.onTrack} total={summary.activeLearners} color="bg-emerald-500" />
                     <HealthRow label="Need Attention" value={summary.needAttention} total={summary.activeLearners} color="bg-amber-500" />
-                    <HealthRow label="At Risk" value={summary.atRisk} total={summary.activeLearners} color="bg-red-500" />
+                    <HealthRow label="Priority" value={summary.atRisk} total={summary.activeLearners} color="bg-red-500" />
                   </div>
                 </div>
 
