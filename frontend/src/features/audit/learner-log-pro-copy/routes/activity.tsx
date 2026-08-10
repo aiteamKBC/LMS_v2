@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import Swal from "sweetalert2";
+import { MreTable } from "@/features/audit/learner-log-pro-copy/components/MreTable";
 import {
   Table,
   TableBody,
@@ -391,33 +392,6 @@ function ActivityLogPage() {
     queryClient.invalidateQueries({ queryKey: ["search-filter-options"] });
   }
 
-  // Per-participant save — optimistic patch of the detail cache, then refetch.
-  async function saveParticipant(learnerId: number, patch: any) {
-    queryClient.setQueryData(["activity-detail", componentId], (old: any) => {
-      if (!old) return old;
-      return {
-        ...old,
-        participants: old.participants.map((p: any) =>
-          p.learner_id === learnerId
-            ? {
-                ...p,
-                planned: patch.planned_hours ?? p.planned,
-                actual:
-                  patch.attended != null
-                    ? patch.attended ? 2.5 : 0
-                    : patch.actual_hours ?? p.actual,
-                completed: patch.attended != null ? patch.attended : p.completed,
-                timestamp_display:
-                  patch.attended != null ? (patch.attended ? "attended" : "not attended") : p.timestamp_display,
-              }
-            : p,
-        ),
-      };
-    });
-    await editActivity({ aptem_id: learnerId, component_id: data!.component_id, patch });
-    await refreshAfterEdit();
-  }
-
   async function saveActivityLevel() {
     if (!primary) return;
     const patch: any = {};
@@ -539,48 +513,8 @@ function ActivityLogPage() {
                 </section>
               )}
 
-              {/* Participants + inline per-learner editing. */}
-              <section className="rounded-lg border border-border bg-card shadow-panel">
-                <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border px-7 py-5">
-                  <div>
-                    <h2 className="font-serif text-lg text-foreground">Learner activity records</h2>
-                    <p className="mt-1 text-sm text-muted-foreground">{data.participant_count} learner{data.participant_count === 1 ? "" : "s"} · {data.completed_count} completed. Click a learner to focus the snapshot on them; use “Edit” to change their hours, times or journal.</p>
-                  </div>
-                </header>
-                <div className="overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="hover:bg-transparent">
-                        <TableHead className="label-caps pl-7">Learner</TableHead>
-                        <TableHead className="label-caps">Plan ID</TableHead>
-                        <TableHead className="label-caps">Activity date</TableHead>
-                        <TableHead className="label-caps text-center">Time</TableHead>
-                        <TableHead className="label-caps">Category</TableHead>
-                        <TableHead className="label-caps">Activity</TableHead>
-                        <TableHead className="label-caps text-right">Planned</TableHead>
-                        <TableHead className="label-caps text-right">Actual</TableHead>
-                        <TableHead className="label-caps pr-7 text-right">Journal</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {data.participants.map((participant) => (
-                        <ParticipantRow
-                          key={participant.learner_id}
-                          participant={participant}
-                          category={category}
-                          componentId={data.component_id}
-                          isPrimary={participant.learner_id === primary?.learner_id}
-                          onFocus={(p) => router.navigate({ to: "/activity", search: { learner: (p.learner_name || "").toLowerCase(), activity: String(data.component_id) } })}
-                          onSaved={saveParticipant}
-                        />
-                      ))}
-                      {data.participants.length === 0 && (
-                        <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">No participants recorded for this activity.</TableCell></TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </section>
+              {/* The same inline CRUD row used by search and journal. */}
+              <MreTable component={String(data.component_id)} learner={primary?.learner_name} />
             </article>
 
             {/* Snapshot + activity-level editing. */}

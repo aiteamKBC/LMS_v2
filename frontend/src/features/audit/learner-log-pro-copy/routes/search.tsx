@@ -2,7 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight, FileText, Search, UserRound } from "lucide-react";
+import { ArrowLeft, ArrowRight, FileText, Plus, Search, UserRound } from "lucide-react";
+import { ActivityTableHeader, InlineActivityCreateRow, InlineActivityRow } from "@/features/audit/learner-log-pro-copy/components/InlineActivityRow";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import {
   Select,
@@ -129,11 +130,13 @@ function SearchPage() {
   const [learnerSearch, setLearnerSearch] = useState("");
   const [sharedPeriod, setSharedPeriod] = useState("");
   const [gapBand, setGapBand] = useState("all");
+  const [programmeName, setProgrammeName] = useState("");
 
   const [activitySearch, setActivitySearch] = useState("");
   const [activityLearner, setActivityLearner] = useState("");
   const [activityCategory, setActivityCategory] = useState("");
   const [page, setPage] = useState(0);
+  const [addingActivity, setAddingActivity] = useState(false);
 
   const filterOptions = useQuery({
     queryKey: ["search-filter-options"],
@@ -146,12 +149,13 @@ function SearchPage() {
   // to that month.
 
   const summaries = useQuery({
-    queryKey: ["learner-summaries", sharedPeriod, learnerSearch, gapBand],
+    queryKey: ["learner-summaries", sharedPeriod, learnerSearch, gapBand, programmeName],
     queryFn: () =>
       getLearners({
         period: sharedPeriod || undefined,
         search: learnerSearch || undefined,
         position: gapBand === "all" ? undefined : gapBand,
+        programme: programmeName || undefined,
       }),
     enabled: Boolean(filterOptions.data),
   });
@@ -163,6 +167,7 @@ function SearchPage() {
       activityLearner,
       sharedPeriod,
       activityCategory,
+      programmeName,
       page,
     ],
     queryFn: () =>
@@ -171,6 +176,7 @@ function SearchPage() {
         learner: activityLearner || undefined,
         period: sharedPeriod || undefined,
         category: activityCategory || undefined,
+        programme: programmeName || undefined,
         limit: pageSize,
         offset: page * pageSize,
       }),
@@ -181,6 +187,14 @@ function SearchPage() {
     enabled: Boolean(filterOptions.data) && Boolean(activityLearner || sharedPeriod),
   });
   const activitiesEnabled = Boolean(activityLearner || sharedPeriod);
+  const selectedActivityLearner = filterOptions.data?.learners.find(
+    (learner) =>
+      (learner.id === activityLearner || learner.name.toLowerCase() === activityLearner.toLowerCase()) &&
+      (!programmeName || learner.programme === programmeName),
+  );
+  const programmeOptions = [...new Set(filterOptions.data?.learners.map((learner) => learner.programme).filter(Boolean) ?? [])]
+    .sort()
+    .map((programme) => ({ value: programme, label: programme }));
 
   const totalPages = Math.max(1, Math.ceil((activities.data?.total ?? 0) / pageSize));
   const resetPage = () => setPage(0);
@@ -213,7 +227,7 @@ function SearchPage() {
             </p>
           </header>
 
-          <div className="grid gap-4 border-b border-border px-7 py-5 sm:grid-cols-3">
+          <div className="grid gap-4 border-b border-border px-7 py-5 sm:grid-cols-2 lg:grid-cols-4">
             <Filter label="Learner name">
               <span className="relative block">
                 <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -228,6 +242,18 @@ function SearchPage() {
                   }}
                 />
               </span>
+            </Filter>
+            <Filter label="Programme name">
+              <StyledFilterSelect
+                value={programmeName}
+                options={programmeOptions}
+                allLabel="All programmes"
+                onChange={(value) => {
+                  setProgrammeName(value);
+                  setActivityLearner("");
+                  resetPage();
+                }}
+              />
             </Filter>
             <Filter label="Activity month">
               <StyledFilterSelect
@@ -355,7 +381,9 @@ function SearchPage() {
               <StyledFilterSelect
                 value={activityLearner}
                 allLabel="All learners"
-                options={filterOptions.data?.learners.map((learner) => ({ value: learner.id, label: learner.name })) ?? []}
+                options={filterOptions.data?.learners
+                  .filter((learner) => !programmeName || learner.programme === programmeName)
+                  .map((learner) => ({ value: learner.id, label: learner.name })) ?? []}
                 onChange={(value) => {
                   // Only scopes the activity log below; leaves the cohort table untouched.
                   setActivityLearner(value);
@@ -382,6 +410,12 @@ function SearchPage() {
             </Filter>
           </div>
 
+          <div className="flex justify-end border-t border-border px-7 py-3">
+            <Button size="sm" disabled={!selectedActivityLearner || addingActivity} onClick={() => setAddingActivity(true)} title={!selectedActivityLearner ? "Choose one learner before adding an activity" : undefined}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Add activity
+            </Button>
+          </div>
+
           {activities.isError ? (
             <p className="px-7 py-10 text-center text-sm text-destructive">
               {activities.error instanceof Error ? activities.error.message : "Could not load activities."}
@@ -389,55 +423,19 @@ function SearchPage() {
           ) : (
             <div className="max-h-[36rem] overflow-auto">
               <Table>
-                <TableHeader>
-                  {/* A single "Timestamp" column carrying the combined from–to
-                      value (it'll later hold other kinds of value too). */}
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="label-caps pl-7">Activity ID</TableHead>
-                    <TableHead className="label-caps">Date</TableHead>
-                    <TableHead className="label-caps">Learner</TableHead>
-                    <TableHead className="label-caps">Month</TableHead>
-                    <TableHead className="label-caps">Category</TableHead>
-                    <TableHead className="label-caps">Activity</TableHead>
-                    <TableHead className="label-caps text-center">Timestamp</TableHead>
-                    <TableHead className="label-caps text-right">Planned</TableHead>
-                    <TableHead className="label-caps pr-7 text-right">Actual</TableHead>
-                  </TableRow>
-                </TableHeader>
+                <TableHeader><ActivityTableHeader /></TableHeader>
                 <TableBody>
+                  {addingActivity && selectedActivityLearner ? (
+                    <InlineActivityCreateRow learnerId={Number(selectedActivityLearner.id)} learnerName={selectedActivityLearner.name} onCancel={() => setAddingActivity(false)} />
+                  ) : null}
                   {!activitiesEnabled && (
-                    <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Pick a learner or an activity month above to load the evidence log.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Pick a learner or an activity month above to load the evidence log.</TableCell></TableRow>
                   )}
                   {activitiesEnabled && activities.isLoading && (
-                    <TableRow><TableCell colSpan={9} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading activity records…</TableCell></TableRow>
                   )}
                   {activities.data?.items.map((row) => (
-                    <TableRow key={row.id}>
-                      {/* Bundle ids (rqb:…) run long — clip them so they can't
-                          starve the narrow columns further right. */}
-                      <TableCell className="max-w-56 truncate pl-7 font-mono text-xs" title={row.plan_id}>{row.plan_id}</TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">{row.learner_activity_date ?? "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap text-sm font-medium">{row.learner}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.month_unit}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.activity_category}</TableCell>
-                      {/* The flexible column — capped so the slack on a wide
-                          screen doesn't open a gap before the Timestamp pair. */}
-                      <TableCell className="min-w-72 max-w-[44rem] text-sm">
-                        <Link
-                          to="/activity"
-                          search={{ learner: row.learner.toLowerCase(), activity: row.plan_id }}
-                          className="font-medium text-foreground hover:text-primary hover:underline"
-                        >
-                          {row.activity_unit}
-                        </Link>
-                        {row.activity_description ? (
-                          <p className="mt-1 text-xs text-muted-foreground">{row.activity_description}</p>
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.time_from_to ?? "—"}</TableCell>
-                      <TableCell className="text-right font-mono text-sm">{roundHours(row.planned_hours)}</TableCell>
-                      <TableCell className="pr-7 text-right font-mono text-sm text-success">{roundHours(row.actual_lms_hours)}</TableCell>
-                    </TableRow>
+                    <InlineActivityRow key={row.id} row={row} />
                   ))}
                 </TableBody>
               </Table>

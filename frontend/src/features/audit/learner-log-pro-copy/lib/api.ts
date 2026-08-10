@@ -16,6 +16,7 @@
 const BASE = "https://fetch-evidence.kentbusinesscollege.net/api/otjh";
 // Django endpoint that still backs the auditor-entered activity annotations.
 const ANNOTATION_BASE = "/audit_api/match-ledger";
+const OVERLAY_URL = `${ANNOTATION_BASE}/activity-overrides`;
 
 // ---------------------------------------------------------------------------
 // Existing UI contract (unchanged) — every route imports from these types.
@@ -167,6 +168,7 @@ export type LearnerActivitiesResponse = {
 export type LearnerSummary = {
   id: string;
   name: string;
+  programme: string;
   entries: number;
   planned_hours: number;
   actual_hours: number;
@@ -448,6 +450,33 @@ type LiveActivitiesResponse = {
   activities: LiveActivity[];
 };
 
+type ActivityOverlay = {
+  aptem_id: number;
+  activity_id: string;
+  operation: "created" | "deleted" | "replaced";
+  payload: LiveActivity;
+  source_payload: LiveActivity | null;
+  updated_by: string | null;
+  updated_at: string | null;
+};
+
+type ActivityOverlayResponse = { items: ActivityOverlay[] };
+
+export type ActivityRowInput = {
+  date: string;
+  category: string;
+  activity: string;
+  activity_subtitle?: string | null;
+  planned: number;
+  actual: number;
+  timestamp_from?: string | null;
+  timestamp_to?: string | null;
+  timestamp_display?: string;
+  completed?: boolean;
+  not_accepted?: boolean;
+  reporting_week_label?: string | null;
+};
+
 // The categories the activity feed uses (drives the "Category" filter).
 const CATEGORIES = ["attendance", "assignment", "video", "audio", "reading+quiz", "progress review"];
 
@@ -467,10 +496,86 @@ async function getJson<T>(path: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+let overlayPromise: Promise<ActivityOverlay[]> | null = null;
+async function fetchOverlays(): Promise<ActivityOverlay[]> {
+  if (!overlayPromise) {
+    overlayPromise = fetch(OVERLAY_URL)
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(payload?.error ?? `Activity overlay request failed (${response.status})`);
+        }
+        return ((await response.json()) as ActivityOverlayResponse).items ?? [];
+      })
+      .catch((error) => {
+        overlayPromise = null;
+        throw error;
+      });
+  }
+  return overlayPromise;
+}
+
+export function applyCohortOverlay(cohort: LiveCohortResponse, overlays: ActivityOverlay[]): LiveCohortResponse {
+  const learners = cohort.learners.map((learner) => ({
+    ...learner,
+    months: learner.months.map((month) => ({ ...month })),
+  }));
+  const adjustments = overlays.flatMap((override) => {
+    if (override.operation === "created") return [{ aptemId: override.aptem_id, activity: override.payload, direction: 1 }];
+    if (override.operation === "replaced") return [
+      ...(override.source_payload ? [{ aptemId: override.aptem_id, activity: override.source_payload, direction: -1 }] : []),
+      { aptemId: override.aptem_id, activity: override.payload, direction: 1 },
+    ];
+    // Deleting an audit-created row replaces its `created` record and should
+    // contribute zero. Deleting a live row subtracts its preserved snapshot.
+    if (String(override.activity_id).startsWith("audit:")) return [];
+    return [{ aptemId: override.aptem_id, activity: override.payload, direction: -1 }];
+  });
+  for (const { aptemId, activity, direction } of adjustments) {
+    const learner = learners.find((item) => item.aptem_id === aptemId);
+    if (!learner || !activity?.month) continue;
+    let month = learner.months.find((item) => item.month === activity.month);
+    if (!month && direction > 0) {
+      month = {
+        month: activity.month,
+        label: activity.month_label,
+        planned: 0,
+        actual: 0,
+        not_accepted: 0,
+        att_actual: 0,
+        asg_actual: 0,
+        media_actual: 0,
+        bundle_actual: 0,
+      };
+      learner.months.push(month);
+    }
+    if (!month) continue;
+    const plannedDelta = direction * Number(activity.planned || 0);
+    const actualDelta = direction * Number(activity.actual || 0);
+    month.planned = round2(Math.max(0, month.planned + plannedDelta));
+    learner.planned_total = round2(Math.max(0, learner.planned_total + plannedDelta));
+    if (activity.not_accepted) {
+      month.not_accepted = round2(Math.max(0, (month.not_accepted ?? 0) + actualDelta));
+      learner.not_accepted_total = round2(Math.max(0, (learner.not_accepted_total ?? 0) + actualDelta));
+      continue;
+    }
+    month.actual = round2(Math.max(0, month.actual + actualDelta));
+    learner.actual_total = round2(Math.max(0, learner.actual_total + actualDelta));
+    if (activity.category === "attendance") month.att_actual = round2(Math.max(0, month.att_actual + actualDelta));
+    else if (activity.category === "assignment") month.asg_actual = round2(Math.max(0, month.asg_actual + actualDelta));
+    else if (activity.category === "reading+quiz") month.bundle_actual = round2(Math.max(0, month.bundle_actual + actualDelta));
+    else month.media_actual = round2(Math.max(0, month.media_actual + actualDelta));
+  }
+  for (const learner of learners) learner.months.sort((a, b) => a.month.localeCompare(b.month));
+  return { learners };
+}
+
 let cohortPromise: Promise<LiveCohortResponse> | null = null;
 function fetchCohort(): Promise<LiveCohortResponse> {
   if (!cohortPromise) {
-    cohortPromise = getJson<LiveCohortResponse>("/cohort/").catch((error) => {
+    cohortPromise = Promise.all([getJson<LiveCohortResponse>("/cohort/"), fetchOverlays()])
+      .then(([cohort, overlays]) => applyCohortOverlay(cohort, overlays))
+      .catch((error) => {
       cohortPromise = null; // let a later call retry after a failure
       throw error;
     });
@@ -485,10 +590,26 @@ function fetchActivitiesRaw(aptemId: number, month?: string): Promise<LiveActivi
   if (cached) return cached;
   const query = new URLSearchParams({ aptem_id: String(aptemId) });
   if (month) query.set("month", month);
-  const request = getJson<LiveActivitiesResponse>(`/activities/?${query}`).catch((error) => {
-    activityCache.delete(key);
-    throw error;
-  });
+  const request = Promise.all([
+    getJson<LiveActivitiesResponse>(`/activities/?${query}`),
+    fetchOverlays(),
+  ]).then(([response, overlays]) => {
+    const applicable = overlays.filter((item) => item.aptem_id === aptemId);
+    const deleted = new Set(
+      applicable
+        .filter((item) => (item.operation === "deleted" || item.operation === "replaced") && (!month || (item.source_payload ?? item.payload).month === month))
+        .map((item) => String(item.activity_id)),
+    );
+    const created = applicable
+      .filter((item) => (item.operation === "created" || item.operation === "replaced") && (!month || item.payload.month === month))
+      .map((item) => item.payload);
+    const activities = [...response.activities.filter((item) => !deleted.has(String(item.activity_id))), ...created]
+      .sort((left, right) => `${left.date ?? ""}|${left.activity_id}`.localeCompare(`${right.date ?? ""}|${right.activity_id}`));
+    return { ...response, count: activities.length, activities };
+  }).catch((error) => {
+      activityCache.delete(key);
+      throw error;
+    });
   activityCache.set(key, request);
   return request;
 }
@@ -624,12 +745,13 @@ function buildPeriods(cohort: LiveCohortResponse): Array<{ value: string; label:
 // Public API — same signatures the routes already call.
 // ---------------------------------------------------------------------------
 
-export function getLearners(params: { period?: string; search?: string; position?: string } = {}) {
+export function getLearners(params: { period?: string; search?: string; position?: string; programme?: string } = {}) {
   return (async (): Promise<LearnersResponse> => {
     const cohort = await fetchCohort();
     const period = params.period;
     const search = (params.search ?? "").trim().toLowerCase();
     const position = params.position;
+    const programme = (params.programme ?? "").trim().toLowerCase();
 
     let rows = cohort.learners.map((learner) => {
       const month = period ? learner.months.find((item) => item.month === period) ?? null : null;
@@ -638,6 +760,7 @@ export function getLearners(params: { period?: string; search?: string; position
       return { learner, month, planned, actual };
     });
     if (search) rows = rows.filter((row) => row.learner.learner_name.toLowerCase().includes(search));
+    if (programme) rows = rows.filter((row) => row.learner.programme.toLowerCase() === programme);
     if (position === "behind") rows = rows.filter((row) => row.actual - row.planned < 0);
     if (position === "ahead") rows = rows.filter((row) => row.actual - row.planned >= 0);
 
@@ -664,6 +787,7 @@ export function getLearners(params: { period?: string; search?: string; position
       return {
         id: String(learner.aptem_id),
         name: learner.learner_name,
+        programme: learner.programme,
         entries: counts[String(learner.aptem_id)] ?? 0,
         planned_hours: round2(planned),
         actual_hours: round2(actual),
@@ -709,6 +833,7 @@ export function getLearnerActivities(params: {
   month?: number;
   category?: string;
   period?: string;
+  programme?: string;
 }) {
   return (async (): Promise<LearnerActivitiesResponse> => {
     const cohort = await fetchCohort();
@@ -717,11 +842,15 @@ export function getLearnerActivities(params: {
     // Which learners' activities to pull: one resolved learner, or the whole cohort.
     let targets: LiveCohortLearner[];
     let single: LiveCohortLearner | undefined;
+    const programme = (params.programme ?? "").trim().toLowerCase();
+    const eligibleLearners = programme
+      ? cohort.learners.filter((learner) => learner.programme.toLowerCase() === programme)
+      : cohort.learners;
     if (params.learner) {
       single = resolveLearner(cohort, params.learner);
-      targets = single ? [single] : [];
+      targets = single && eligibleLearners.some((learner) => learner.aptem_id === single!.aptem_id) ? [single] : [];
     } else {
-      targets = cohort.learners;
+      targets = eligibleLearners;
     }
 
     const pages = await Promise.all(
@@ -918,7 +1047,30 @@ export async function saveActivityAnnotation(payload: {
 
 export async function getActivityDetail(componentId: string | number): Promise<ActivityDetail> {
   try {
-    return await getJson<ActivityDetail>(`/activity/?component_id=${encodeURIComponent(String(componentId))}`);
+    const detail = await getJson<ActivityDetail>(`/activity/?component_id=${encodeURIComponent(String(componentId))}`);
+    const merged = await getActivityLearners({ component: String(componentId) });
+    if (!merged.items.length) throw new Error("This activity has been deleted from the audit view.");
+    const participants: ActivityParticipant[] = merged.items.map((row) => ({
+      learner_id: row.learner_id ?? 0,
+      learner_name: row.learner,
+      found_as: row.activity_category,
+      activity: row.activity_unit,
+      completed: Boolean(row.completed),
+      actual: row.actual_lms_hours,
+      planned: row.planned_hours,
+      month: row.activity_period,
+      date: row.activity_date,
+      timestamp_display: row.time_from_to ?? "",
+      item_title: null,
+    }));
+    return {
+      ...detail,
+      activity: merged.items[0].activity_unit,
+      category: merged.items[0].activity_category,
+      participant_count: participants.length,
+      completed_count: participants.filter((participant) => participant.completed).length,
+      participants,
+    };
   } catch (error) {
     // The /activity endpoint only resolves component-based items (video, audio,
     // reading+quiz bundles, attendance). Assignments use a separate id namespace
@@ -977,9 +1129,91 @@ export async function editActivity(payload: {
   return response.json() as Promise<EditActivityResponse>;
 }
 
+async function overlayMutation(method: "POST" | "PUT" | "PATCH" | "DELETE", body: Record<string, unknown>) {
+  const response = await fetch(OVERLAY_URL, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(error?.error ?? `Activity ${method.toLowerCase()} failed (${response.status})`);
+  }
+  invalidateOtjhCaches();
+  return response.json() as Promise<{ ok: boolean; activity_id: string; payload: LiveActivity }>;
+}
+
+function rowSnapshot(row: LearnerActivity): ActivityRowInput {
+  return {
+    date: row.activity_date ?? row.learner_activity_date ?? "",
+    category: row.activity_category,
+    activity: row.activity_unit,
+    activity_subtitle: row.activity_description,
+    planned: row.planned_hours ?? 0,
+    actual: row.actual_lms_hours ?? 0,
+    timestamp_from: row.time_from,
+    timestamp_to: row.time_to,
+    timestamp_display: row.time_from_to ?? "",
+    completed: Boolean(row.completed),
+    not_accepted: Boolean(row.not_accepted),
+    reporting_week_label: row.week,
+  };
+}
+
+export async function createActivity(aptemId: number, activity: ActivityRowInput, updatedBy?: string) {
+  return overlayMutation("POST", { aptem_id: aptemId, activity, updated_by: updatedBy });
+}
+
+export async function updateActivityRow(row: LearnerActivity, activity: ActivityRowInput, updatedBy?: string) {
+  const aptemId = row.learner_id;
+  if (!aptemId) throw new Error("The learner ID is missing from this activity.");
+  if (row.plan_id.startsWith("audit:")) {
+    return overlayMutation("PATCH", {
+      aptem_id: aptemId,
+      activity_id: row.plan_id,
+      patch: activity,
+      updated_by: updatedBy,
+    });
+  }
+
+  const current = rowSnapshot(row);
+  if (activity.date !== current.date) {
+    return overlayMutation("PUT", {
+      aptem_id: aptemId,
+      activity_id: row.plan_id,
+      activity,
+      snapshot: current,
+      updated_by: updatedBy,
+    });
+  }
+  const patch: EditPatch = {};
+  if (activity.activity !== current.activity) patch.front_end_name = activity.activity;
+  if (activity.planned !== current.planned) patch.planned_hours = activity.planned;
+  if (activity.category === "attendance") {
+    if ((activity.actual > 0) !== Boolean(row.completed)) patch.attended = activity.actual > 0;
+  } else if (activity.actual !== current.actual) patch.actual_hours = activity.actual;
+  if (activity.timestamp_from && activity.timestamp_from !== current.timestamp_from) patch.started_at = activity.timestamp_from;
+  if (activity.timestamp_to && activity.timestamp_to !== current.timestamp_to) patch.completed_at = activity.timestamp_to;
+  if (Object.keys(patch).length === 0) return { ok: true, changed: {}, also_applied_to: [] };
+  const result = await editActivity({ aptem_id: aptemId, component_id: row.plan_id, patch });
+  invalidateOtjhCaches();
+  return result;
+}
+
+export async function deleteActivityRow(row: LearnerActivity, updatedBy?: string) {
+  if (!row.learner_id) throw new Error("The learner ID is missing from this activity.");
+  return overlayMutation("DELETE", {
+    aptem_id: row.learner_id,
+    activity_id: row.plan_id,
+    snapshot: rowSnapshot(row),
+    updated_by: updatedBy,
+  });
+}
+
 // After an edit, reset the module-level read caches so react-query refetches
 // pull fresh data (the server busts its own cache too).
 export function invalidateOtjhCaches() {
   cohortPromise = null;
+  overlayPromise = null;
   activityCache.clear();
 }
