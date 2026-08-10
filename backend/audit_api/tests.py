@@ -5,6 +5,7 @@ from unittest.mock import patch
 from django.test import SimpleTestCase
 
 from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _signoff_row
+from .learner_match_ledger_views import _validate_overlay_activity
 
 
 class AptemLmsAuditPayloadTests(SimpleTestCase):
@@ -372,3 +373,56 @@ class LearnerMatchProfileTests(SimpleTestCase):
         )
 
         self.assertEqual(response.status_code, 404)
+
+
+class ActivityOverlayValidationTests(SimpleTestCase):
+    def validate(self, **overrides):
+        activity = {
+            "date": "2026-08-10",
+            "category": "assignment",
+            "activity": "Portfolio review",
+            "planned": 1.25,
+            "actual": 1.5,
+            **overrides,
+        }
+        return _validate_overlay_activity(
+            activity,
+            aptem_id=92,
+            learner_name="Test Learner",
+            activity_id="audit:test",
+        )
+
+    def test_valid_activity_preserves_actual_values_and_derives_month(self):
+        result = self.validate()
+        self.assertEqual(result["month"], "2026-08")
+        self.assertEqual(result["month_label"], "August 2026")
+        self.assertEqual(result["planned"], 1.25)
+        self.assertEqual(result["actual"], 1.5)
+        self.assertEqual(result["timestamp_display"], "input")
+        self.assertTrue(result["completed"])
+
+    def test_timestamps_are_validated_and_displayed_without_changing_actual(self):
+        result = self.validate(
+            actual=0.75,
+            timestamp_from="2026-08-10T09:15:00+01:00",
+            timestamp_to="2026-08-10T10:00:00+01:00",
+        )
+        self.assertEqual(result["actual"], 0.75)
+        self.assertEqual(result["timestamp_display"], "09:15–10:00")
+
+    def test_negative_or_over_cap_hours_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "planned must be between"):
+            self.validate(planned=-0.01)
+        with self.assertRaisesRegex(ValueError, "actual must be between"):
+            self.validate(actual=50.01)
+
+    def test_invalid_category_date_and_timestamp_order_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "category must be one of"):
+            self.validate(category="unknown")
+        with self.assertRaisesRegex(ValueError, "date must use"):
+            self.validate(date="10/08/2026")
+        with self.assertRaisesRegex(ValueError, "timestamp_to must be after"):
+            self.validate(
+                timestamp_from="2026-08-10T11:00:00",
+                timestamp_to="2026-08-10T10:00:00",
+            )

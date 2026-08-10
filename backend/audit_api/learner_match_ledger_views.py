@@ -40,6 +40,7 @@ import html
 import json
 import re
 import time
+import uuid
 
 from django.db import DatabaseError, connections
 from django.http import HttpRequest, JsonResponse
@@ -1567,3 +1568,269 @@ def save_activity_annotation(request: HttpRequest) -> JsonResponse:
     except (KeyError, DatabaseError) as error:
         return JsonResponse({"error": "Could not save activity annotation.", "details": str(error)}, status=503)
     return JsonResponse(_annotation_payload(row))
+
+
+# --- audit-copy activity create/delete overlay -----------------------------
+#
+# The deployed evidence service owns its source rows and exposes updates, but it
+# deliberately has no create/delete API.  New auditor rows and deletions are
+# therefore kept as an overlay in the enrolment database.  Deletes are soft
+# deletes (tombstones), which preserves the original evidence and gives the UI
+# enough information to reverse the corresponding planned/actual totals.
+
+_OVERLAY_CATEGORIES = {"attendance", "assignment", "video", "audio", "reading+quiz"}
+
+
+def _ensure_activity_overlay_table(cur):
+    cur.execute(
+        '''
+        create table if not exists "Audit".activity_overrides (
+            aptem_id bigint not null,
+            activity_id text not null,
+            operation text not null check (operation in ('created', 'deleted', 'replaced')),
+            payload jsonb not null,
+            source_payload jsonb,
+            updated_by text,
+            created_at timestamp with time zone not null default now(),
+            updated_at timestamp with time zone not null default now(),
+            primary key (aptem_id, activity_id)
+        )
+        '''
+    )
+    cur.execute('''alter table "Audit".activity_overrides add column if not exists source_payload jsonb''')
+    # Upgrade an early overlay table whose operation check pre-dated date
+    # replacement. The DO block is a no-op after the constraint is current.
+    cur.execute(
+        '''
+        do $$
+        begin
+            if exists (
+                select 1 from pg_constraint
+                where conname = 'activity_overrides_operation_check'
+                  and pg_get_constraintdef(oid) not like '%replaced%'
+            ) then
+                alter table "Audit".activity_overrides drop constraint activity_overrides_operation_check;
+                alter table "Audit".activity_overrides add constraint activity_overrides_operation_check
+                    check (operation in ('created', 'deleted', 'replaced'));
+            end if;
+        end $$
+        '''
+    )
+
+
+def _overlay_number(value, field):
+    if value in (None, ""):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be a number")
+    if number < 0 or number > 50:
+        raise ValueError(f"{field} must be between 0 and 50 hours")
+    return round(number, 4)
+
+
+def _overlay_timestamp(value, field):
+    if value in (None, ""):
+        return None
+    try:
+        parsed = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        raise ValueError(f"{field} must be an ISO timestamp")
+    return parsed.isoformat()
+
+
+def _validate_overlay_activity(raw, *, aptem_id, learner_name, activity_id):
+    if not isinstance(raw, dict):
+        raise ValueError("activity must be an object")
+    date = str(raw.get("date") or "").strip()
+    try:
+        parsed_date = datetime.date.fromisoformat(date)
+    except ValueError:
+        raise ValueError("date must use YYYY-MM-DD format")
+    category = str(raw.get("category") or "").strip().lower()
+    if category not in _OVERLAY_CATEGORIES:
+        raise ValueError(f"category must be one of: {', '.join(sorted(_OVERLAY_CATEGORIES))}")
+    name = str(raw.get("activity") or "").strip()
+    if not name:
+        raise ValueError("activity is required")
+    if len(name) > 500:
+        raise ValueError("activity must be at most 500 characters")
+
+    planned = _overlay_number(raw.get("planned"), "planned")
+    actual = _overlay_number(raw.get("actual"), "actual")
+    started = _overlay_timestamp(raw.get("timestamp_from"), "timestamp_from")
+    completed = _overlay_timestamp(raw.get("timestamp_to"), "timestamp_to")
+    if started and completed:
+        start_value = datetime.datetime.fromisoformat(started)
+        end_value = datetime.datetime.fromisoformat(completed)
+        if start_value.tzinfo is None and end_value.tzinfo is not None or start_value.tzinfo is not None and end_value.tzinfo is None:
+            raise ValueError("timestamps must use the same timezone style")
+        if end_value < start_value:
+            raise ValueError("timestamp_to must be after timestamp_from")
+
+    display = str(raw.get("timestamp_display") or "").strip()[:100]
+    if not display:
+        if started and completed:
+            display = f"{datetime.datetime.fromisoformat(started):%H:%M}–{datetime.datetime.fromisoformat(completed):%H:%M}"
+        elif actual > 0:
+            display = "input"
+
+    return {
+        "activity_id": activity_id,
+        "learner_id": aptem_id,
+        "learner_name": learner_name,
+        "date": parsed_date.isoformat(),
+        "month": parsed_date.strftime("%Y-%m"),
+        "month_label": parsed_date.strftime("%B %Y"),
+        "category": category,
+        "activity": name,
+        "activity_subtitle": str(raw.get("activity_subtitle") or "").strip()[:2000] or None,
+        "planned": planned,
+        "actual": actual,
+        "timestamp_from": started,
+        "timestamp_to": completed,
+        "timestamp_display": display,
+        "completed": bool(raw.get("completed", actual > 0)),
+        "ksbs": raw.get("ksbs") if isinstance(raw.get("ksbs"), dict) else {"K": [], "S": [], "B": []},
+        "iframe_url": None,
+        "not_accepted": bool(raw.get("not_accepted", False)),
+        "reporting_week_label": str(raw.get("reporting_week_label") or "").strip()[:200] or None,
+        "audit_created": bool(raw.get("audit_created", str(activity_id).startswith("audit:"))),
+    }
+
+
+def _overlay_learner(aptem_id):
+    for learner in _load_rows():
+        if int(learner["aptem_id"]) == aptem_id:
+            return learner
+    return None
+
+
+@csrf_exempt
+def activity_overrides(request: HttpRequest) -> JsonResponse:
+    """List/create/update/soft-delete audit-created activity overlays."""
+    if request.method == "GET":
+        raw_id = request.GET.get("aptem_id", "").strip()
+        try:
+            aptem_id = int(raw_id) if raw_id else None
+        except ValueError:
+            return JsonResponse({"error": "aptem_id must be an integer"}, status=400)
+        try:
+            with connections[CONN].cursor() as cur:
+                _ensure_activity_overlay_table(cur)
+                if aptem_id is None:
+                    cur.execute('''select aptem_id, activity_id, operation, payload, source_payload, updated_by, updated_at from "Audit".activity_overrides order by updated_at''')
+                else:
+                    cur.execute('''select aptem_id, activity_id, operation, payload, source_payload, updated_by, updated_at from "Audit".activity_overrides where aptem_id = %s order by updated_at''', [aptem_id])
+                rows = cur.fetchall()
+        except (KeyError, DatabaseError) as error:
+            return JsonResponse({"error": "Could not read activity overrides.", "details": str(error)}, status=503)
+        return JsonResponse({"items": [
+            {"aptem_id": row[0], "activity_id": row[1], "operation": row[2], "payload": row[3], "source_payload": row[4], "updated_by": row[5], "updated_at": row[6].isoformat() if row[6] else None}
+            for row in rows
+        ]})
+
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        body = json.loads(request.body or b"{}")
+        aptem_id = int(body.get("aptem_id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "aptem_id must be an integer"}, status=400)
+    try:
+        learner = _overlay_learner(aptem_id)
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not validate learner.", "details": str(error)}, status=503)
+    if not learner:
+        return JsonResponse({"error": "Learner is outside the audit-copy cohort."}, status=404)
+
+    updated_by = str(body.get("updated_by") or "").strip()[:200] or None
+    activity_id = str(body.get("activity_id") or "").strip()
+    source_payload = None
+    try:
+        if request.method == "POST":
+            activity_id = f"audit:{uuid.uuid4()}"
+            payload = _validate_overlay_activity(
+                body.get("activity"), aptem_id=aptem_id,
+                learner_name=learner["name"], activity_id=activity_id,
+            )
+            operation = "created"
+        elif request.method == "PUT":
+            if not activity_id:
+                raise ValueError("activity_id is required")
+            with connections[CONN].cursor() as cur:
+                _ensure_activity_overlay_table(cur)
+                cur.execute('''select source_payload from "Audit".activity_overrides where aptem_id = %s and activity_id = %s and operation = 'replaced' ''', [aptem_id, activity_id])
+                existing = cur.fetchone()
+            raw_source = existing[0] if existing and existing[0] else body.get("snapshot")
+            if not isinstance(raw_source, dict):
+                raise ValueError("snapshot is required for a reversible date change")
+            source_payload = _validate_overlay_activity(
+                raw_source, aptem_id=aptem_id,
+                learner_name=learner["name"], activity_id=activity_id,
+            )
+            payload = _validate_overlay_activity(
+                body.get("activity"), aptem_id=aptem_id,
+                learner_name=learner["name"], activity_id=activity_id,
+            )
+            payload["audit_replaced"] = True
+            operation = "replaced"
+        elif request.method == "PATCH":
+            if not activity_id.startswith("audit:"):
+                return JsonResponse({"error": "Only audit-created activities can be patched here."}, status=400)
+            with connections[CONN].cursor() as cur:
+                _ensure_activity_overlay_table(cur)
+                cur.execute('''select payload from "Audit".activity_overrides where aptem_id = %s and activity_id = %s and operation = 'created' ''', [aptem_id, activity_id])
+                existing = cur.fetchone()
+            if not existing:
+                return JsonResponse({"error": "Audit activity was not found."}, status=404)
+            merged = {**(existing[0] or {}), **(body.get("patch") or {})}
+            payload = _validate_overlay_activity(
+                merged, aptem_id=aptem_id,
+                learner_name=learner["name"], activity_id=activity_id,
+            )
+            operation = "created"
+        else:
+            if not activity_id:
+                raise ValueError("activity_id is required")
+            raw_snapshot = body.get("snapshot")
+            with connections[CONN].cursor() as cur:
+                _ensure_activity_overlay_table(cur)
+                cur.execute('''select source_payload from "Audit".activity_overrides where aptem_id = %s and activity_id = %s and operation = 'replaced' ''', [aptem_id, activity_id])
+                existing = cur.fetchone()
+            if existing and existing[0]:
+                raw_snapshot = existing[0]
+            if not isinstance(raw_snapshot, dict):
+                raise ValueError("snapshot is required for a reversible deletion")
+            payload = _validate_overlay_activity(
+                raw_snapshot, aptem_id=aptem_id,
+                learner_name=learner["name"], activity_id=activity_id,
+            )
+            operation = "deleted"
+    except ValueError as error:
+        return JsonResponse({"error": str(error)}, status=400)
+
+    try:
+        with connections[CONN].cursor() as cur:
+            _ensure_activity_overlay_table(cur)
+            cur.execute(
+                '''
+                insert into "Audit".activity_overrides (aptem_id, activity_id, operation, payload, source_payload, updated_by)
+                values (%s, %s, %s, %s::jsonb, %s::jsonb, %s)
+                on conflict (aptem_id, activity_id) do update set
+                    operation = excluded.operation, payload = excluded.payload,
+                    source_payload = excluded.source_payload,
+                    updated_by = excluded.updated_by, updated_at = now()
+                returning updated_at
+                ''',
+                [aptem_id, activity_id, operation, json.dumps(payload), json.dumps(source_payload) if source_payload else None, updated_by],
+            )
+            updated_at = cur.fetchone()[0]
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not save activity override.", "details": str(error)}, status=503)
+    return JsonResponse({
+        "ok": True, "aptem_id": aptem_id, "activity_id": activity_id,
+        "operation": operation, "payload": payload,
+        "updated_by": updated_by, "updated_at": updated_at.isoformat(),
+    })

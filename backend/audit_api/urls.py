@@ -4,6 +4,7 @@ from .views import audit_blob, learner_activity_stats, learner_audit, learner_au
 from .learner_log_views import health, learner_activities, learner_summaries, mre_list, mre_summary
 from .learner_match_ledger_views import (
     activity_annotation as match_activity_annotation,
+    activity_overrides as match_activity_overrides,
     activity_learners as match_activity_learners,
     attendance_session as match_attendance_session,
     health as match_health,
@@ -29,6 +30,7 @@ urlpatterns = [
     path("match-ledger/quiz-attempt", match_quiz_attempt, name="match-ledger-quiz-attempt"),
     path("match-ledger/activity-annotation", match_activity_annotation, name="match-ledger-activity-annotation"),
     path("match-ledger/activity-annotation/save", match_save_activity_annotation, name="match-ledger-activity-annotation-save"),
+    path("match-ledger/activity-overrides", match_activity_overrides, name="match-ledger-activity-overrides"),
     path("match-ledger/learners", match_learner_summaries, name="match-ledger-learners"),
     path("match-ledger/learner-profile", match_learner_profile, name="match-ledger-learner-profile"),
     path("learners/", learner_audit_list, name="audit-learners"),

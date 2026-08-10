@@ -4,10 +4,11 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import SignaturePad from "signature_pad";
 import Swal from "sweetalert2";
-import { ArrowLeft, ArrowRight, CheckCircle2, Download, LoaderCircle, PenLine, RotateCcw, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2, Download, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
 import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/api";
+import { ActivityTableHeader, InlineActivityCreateRow, InlineActivityRow } from "@/features/audit/learner-log-pro-copy/components/InlineActivityRow";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";
+import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";
 import { getLearnerActivities, getLearnerProfile, getLearners } from "@/features/audit/learner-log-pro-copy/lib/api";
 import { downloadLearnerJournalPdf } from "@/features/audit/learner-log-pro-copy/lib/journal-pdf";
 
@@ -217,6 +218,7 @@ function JournalPage() {
   const [learnerChoice, setLearnerChoice] = useState(routeSearch.learner);
   const [periodChoice, setPeriodChoice] = useState(routeSearch.period);
   const [activityPage, setActivityPage] = useState(0);
+  const [addingActivity, setAddingActivity] = useState(false);
   const [isPreparingPdf, setIsPreparingPdf] = useState(false);
   const [learnerSignature, setLearnerSignature] = useState("");
   const [coachSignature, setCoachSignature] = useState("");
@@ -322,7 +324,8 @@ function JournalPage() {
       setCoachSignatureSaved(Boolean(response.signoffs.coach?.signature_data));
     } catch (error) {
       setSignatureError(error instanceof Error ? error.message : "Could not save the signatures.");
-      setSignaturesSaved(false);
+      setLearnerSignatureSaved(false);
+      setCoachSignatureSaved(false);
     } finally {
       setIsSavingSignatures(false);
     }
@@ -458,54 +461,28 @@ function JournalPage() {
               <h2 className="text-lg font-semibold text-[#182d48]">Activity log</h2>
               <p className="mt-1 text-sm text-muted-foreground">Claimed and accepted off-the-job learning time</p>
             </div>
-            <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono text-xs font-medium text-[#182d48]">{activities.data?.total ?? 0} activities</span>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono text-xs font-medium text-[#182d48]">{activities.data?.total ?? 0} activities</span>
+              <Button size="sm" disabled={!learnerProfile.data || addingActivity} onClick={() => setAddingActivity(true)}><Plus className="h-3.5 w-3.5" /> Add activity</Button>
+            </div>
           </header>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader>
-                {/* A single "Timestamp" column carrying the combined from–to
-                    value (it'll later hold other kinds of value too). */}
-                <TableRow className="border-0 bg-[#182d48] hover:bg-[#182d48]">
-                  <TableHead className="label-caps pl-7 text-white">Plan ID</TableHead>
-                  <TableHead className="label-caps text-white">Date</TableHead>
-                  <TableHead className="label-caps text-white">Activity</TableHead>
-                  <TableHead className="label-caps text-white">Category</TableHead>
-                  <TableHead className="label-caps text-center text-white">Timestamp</TableHead>
-                  <TableHead className="label-caps text-right text-white">Planned</TableHead>
-                  <TableHead className="label-caps pr-7 text-right text-white">Actual</TableHead>
-                </TableRow>
-              </TableHeader>
+              <TableHeader><ActivityTableHeader dark /></TableHeader>
               <TableBody>
+                {addingActivity && learnerProfile.data ? (
+                  <InlineActivityCreateRow learnerId={Number(learnerProfile.data.aptem_id)} learnerName={learnerProfile.data.name} onCancel={() => setAddingActivity(false)} />
+                ) : null}
                 {activities.data?.items.map((row, index, rows) => (
                   <Fragment key={row.id}>
                   {(index === 0 || row.week !== rows[index - 1]?.week) && row.week ? (
                     <TableRow className="border-y border-[#cbd5e1] bg-[#eef3f8] hover:bg-[#eef3f8]">
-                      <TableCell colSpan={7} className="pl-7 text-xs font-semibold uppercase tracking-wider text-[#182d48]">
+                      <TableCell colSpan={10} className="pl-7 text-xs font-semibold uppercase tracking-wider text-[#182d48]">
                         {row.week}
                       </TableCell>
                     </TableRow>
                   ) : null}
-                  <TableRow
-                    role="link"
-                    tabIndex={0}
-                    title="Open activity details"
-                    onClick={() => router.navigate({ to: "/activity", search: { learner: row.learner.toLowerCase(), activity: row.plan_id } })}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        router.navigate({ to: "/activity", search: { learner: row.learner.toLowerCase(), activity: row.plan_id } });
-                      }
-                    }}
-                    className="cursor-pointer odd:bg-[#f7f9fc] hover:bg-[#eaf1f8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#673ab7]"
-                  >
-                    <TableCell className="max-w-64 truncate pl-7 font-mono text-xs">{row.plan_id}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{row.learner_activity_date ?? "—"}</TableCell>
-                    <TableCell className="max-w-md"><p className="text-sm font-medium">{row.activity_unit}</p><p className="mt-1 text-xs text-muted-foreground">{row.activity_description}</p></TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{row.activity_category}</TableCell>
-                    <TableCell className="text-center font-mono text-xs text-muted-foreground">{row.time_from_to ?? "—"}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{roundHours(row.planned_hours)}</TableCell>
-                    <TableCell className="pr-7 text-right font-mono text-sm font-medium text-success">{roundHours(row.actual_lms_hours)}</TableCell>
-                  </TableRow>
+                  <InlineActivityRow row={row} className="odd:bg-[#f7f9fc]" />
                   </Fragment>
                 ))}
               </TableBody>
