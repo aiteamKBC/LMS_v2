@@ -860,42 +860,17 @@ export function getQuizAttempt(params: { learner: string; component: string }) {
 
 export function getLearnerProfile(learnerId: string) {
   return (async (): Promise<LearnerProfile> => {
-    const cohort = await fetchCohort();
-    const learner = resolveLearner(cohort, learnerId);
-    if (!learner) throw new Error(`no PCP learner ${learnerId}`);
-    // The live cohort feed only carries OTJH-relevant fields; the richer profile
-    // sections (radar, contracts, certifications, employer, training plan) have
-    // no source here and render as the page's own empty states.
-    return {
-      id: String(learner.aptem_id),
-      aptem_id: String(learner.aptem_id),
-      name: learner.learner_name,
-      email: null,
-      programme: learner.programme,
-      programme_status: learner.withdrawn ? "Withdrawn" : "Active",
-      break_in_learning: {
-        has_break_in_learning: false,
-        last_learning_date: null,
-        expected_return_date: null,
-        has_return_to_learning: false,
-        return_to_learning_date: null,
-        revised_learning_planned_end_date: null,
-      },
-      coach: { name: null, email: null },
-      planned_hours: learner.planned_total,
-      learning_delivery: {
-        planned_hours: learner.planned_total,
-        actual_hours: learner.actual_total,
-        first_evidence_date: null,
-        first_evidence_items: [],
-      },
-      contracts: [],
-      training_plan: { total_modules: 0, completed_modules: 0, months: [] },
-      skills_radar: [],
-      certifications: [],
-      employment: null,
-      programme_understanding: { understanding_programme: null, career_development_progression: null },
-    };
+    // The public OTJH cohort feed deliberately contains only ledger totals. The
+    // profile needs the richer Audit/fetching_evidence joins (ILR, contracts,
+    // coach, training plan, skills radar, CV and programme responses), which
+    // remain served by the local Django match-ledger endpoint.
+    const query = new URLSearchParams({ learner: learnerId });
+    const response = await fetch(`${ANNOTATION_BASE}/learner-profile?${query}`);
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(payload?.error ?? `Could not load learner profile (${response.status})`);
+    }
+    return response.json() as Promise<LearnerProfile>;
   })();
 }
 
