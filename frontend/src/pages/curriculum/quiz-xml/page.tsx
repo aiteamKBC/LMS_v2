@@ -361,7 +361,7 @@ function QuizRowActions({
         <button
           type="button"
           onClick={onRestore}
-          className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-smooth"
+          className="inline-flex w-9 h-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-smooth"
           title="Restore to quizzes"
         >
           <AppIcon className="ri-arrow-go-back-line"></AppIcon>
@@ -370,29 +370,29 @@ function QuizRowActions({
       <button
         type="button"
         onClick={onPreview}
-        className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
+        className="inline-flex w-9 h-9 items-center justify-center rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
         title="Student preview"
       >
-        <AppIcon className={`${previewLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'}`}></AppIcon>
+        <AppIcon className={`${previewLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-eye-line'} text-[16px]`}></AppIcon>
       </button>
       <button
         type="button"
         onClick={onEdit}
-        className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
+        className="inline-flex w-9 h-9 items-center justify-center rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
         title="Review questions"
       >
-        <AppIcon className={`${editorLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-pencil-line'}`}></AppIcon>
+        <AppIcon className={`${editorLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-pencil-line'} text-[16px]`}></AppIcon>
       </button>
       <button
         type="button"
         onClick={onManageStudents}
-        className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
+        className="inline-flex w-9 h-9 items-center justify-center rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth"
         title="Manage students"
       >
-        <AppIcon className={`${studentsLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-team-line'}`}></AppIcon>
+        <AppIcon className={`${studentsLoadingId === quiz.id ? 'ri-loader-4-line animate-spin' : 'ri-team-line'} text-[16px]`}></AppIcon>
       </button>
-      <a href={`/quiz_api/quizzes/${quiz.id}/download/`} className="w-9 h-9 rounded-lg bg-background-100 hover:bg-primary-100 hover:text-primary-600 transition-smooth flex items-center justify-center" title="Download">
-        <AppIcon className="ri-download-line"></AppIcon>
+      <a href={`/quiz_api/quizzes/${quiz.id}/download/`} className="inline-flex w-9 h-9 items-center justify-center rounded-lg bg-background-100 text-foreground-600 hover:bg-primary-100 hover:text-primary-600 transition-smooth" title="Download">
+        <AppIcon className="ri-download-line text-[16px]"></AppIcon>
       </a>
     </div>
   );
@@ -834,6 +834,7 @@ function statusClasses(status: QuizStatus) {
   if (status === 'pending' || status === 'validating') return 'bg-amber-100 text-amber-700';
   if (status === 'trash') return 'bg-red-100 text-red-700';
   if (status === 'private') return 'bg-sky-100 text-sky-700';
+  if (status === 'draft') return 'bg-foreground-100 text-foreground-600';
   return 'bg-foreground-100 text-foreground-600';
 }
 
@@ -1100,12 +1101,6 @@ export default function QuizXmlWorkspacePage() {
   const pageEndIndex = pageStartIndex + numericPageSize;
   const paginatedQuizzes = visibleQuizzes.slice(pageStartIndex, pageEndIndex);
   const allVisibleSelected = paginatedQuizzes.length > 0 && paginatedQuizzes.every(q => selectedIds.includes(q.id));
-  const visiblePageNumbers = useMemo(() => {
-    const pages = new Set<number>([1, pageCount, safeCurrentPage]);
-    if (safeCurrentPage > 1) pages.add(safeCurrentPage - 1);
-    if (safeCurrentPage < pageCount) pages.add(safeCurrentPage + 1);
-    return Array.from(pages).filter(page => page >= 1 && page <= pageCount).sort((a, b) => a - b);
-  }, [pageCount, safeCurrentPage]);
   const bulkActionOptions = useMemo(() => {
     const statusActions = editableStatusOptions
       .filter(option => option.value !== 'trash')
@@ -1753,7 +1748,7 @@ export default function QuizXmlWorkspacePage() {
 
   return (
     <WorkspaceShell role="curriculum" roleLabel={curriculumNav.label} navItems={curriculumNav.items} workspaceLabel={curriculumNav.workspaceLabel} pageTitle={pageHeading} pageSubtitle={pageSubtitle} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
+      <div className="quiz-workspace-page w-full min-w-0 max-w-full p-4 sm:p-6 space-y-5 sm:space-y-6">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
           <div className="relative p-5 sm:p-8 flex flex-col md:flex-row items-start md:items-center gap-5">
             <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0"><AppIcon className="ri-code-box-line text-white text-2xl"></AppIcon></span>
@@ -1800,12 +1795,13 @@ export default function QuizXmlWorkspacePage() {
             disabled={!selectedCount}
             onChange={setBulkAction}
             className="w-full sm:w-44"
+            buttonClassName="quiz-workspace-action-font !border-[#d8dde6] !bg-white !text-[#5b2dbb] !text-[11px] disabled:!border-[#d8dde6] disabled:!bg-white disabled:!text-[#b8afc9]"
           />
           <button
             type="button"
             onClick={() => void applyBulkAction()}
             disabled={!selectedCount || !bulkAction}
-            className="h-10 px-4 rounded-lg bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 disabled:bg-[#c7d2fe] disabled:cursor-not-allowed transition-smooth whitespace-nowrap"
+            className="quiz-workspace-action-font h-10 px-4 rounded-lg !bg-[#6d28d9] !text-white !text-[11px] font-semibold hover:!bg-[#5b21b6] disabled:!bg-[#e8ddff] disabled:!text-[#9b8bbd] disabled:cursor-not-allowed transition-smooth whitespace-nowrap"
           >
             Apply
           </button>
@@ -1815,13 +1811,14 @@ export default function QuizXmlWorkspacePage() {
             options={statusOptions}
             onChange={handleStatusFilterChange}
             className="w-full sm:w-44 lg:ml-auto"
+            buttonClassName="text-xs"
           />
 
           <div className="relative w-full sm:w-52">
             <button
               type="button"
               onClick={() => setDateFilterOpen(open => !open)}
-              className={`h-10 w-full rounded-lg border px-3 text-left text-sm transition-smooth flex items-center gap-2 ${
+              className={`h-10 w-full rounded-lg border px-3 text-left text-xs transition-smooth flex items-center gap-2 ${
                 dateFilterOpen || dateFilterPreset !== 'all'
                   ? 'bg-white border-primary-300 text-primary-700 ring-1 ring-primary-200'
                   : 'bg-background-50 border-foreground-200/60 text-foreground-700 hover:border-primary-300'
@@ -1972,18 +1969,20 @@ export default function QuizXmlWorkspacePage() {
 
           <div className="basis-full h-px bg-foreground-200/50" />
 
-          <button onClick={() => setShowGenerator(true)} className="h-10 px-4 bg-[#0f172a] text-white rounded-lg text-sm font-semibold hover:bg-[#111827] transition-smooth whitespace-nowrap w-full sm:w-auto">
-            <AppIcon className="ri-sparkling-2-line mr-1"></AppIcon> Generate Questions
-          </button>
-          <button onClick={() => setShowCreate(true)} className="h-10 px-4 bg-primary-500 text-white rounded-lg text-sm font-semibold hover:bg-primary-600 transition-smooth whitespace-nowrap w-full sm:w-auto">
-            <AppIcon className="ri-add-circle-fill mr-1"></AppIcon> Add New Quiz
-          </button>
-          <Link to="/curriculum/quiz-xml/manual" className="h-10 px-4 bg-white border border-primary-200 rounded-lg text-sm font-semibold text-primary-700 hover:bg-primary-50 transition-smooth whitespace-nowrap flex items-center justify-center w-full sm:w-auto">
-            <AppIcon className="ri-edit-2-line mr-1"></AppIcon> Manual Quiz
-          </Link>
-          <button onClick={() => fileInputRef.current?.click()} className="h-10 px-4 bg-background-50 border border-foreground-200/60 rounded-lg text-sm font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap w-full sm:w-auto">
-            <AppIcon className="ri-upload-cloud-line mr-1"></AppIcon> Upload Quiz File
-          </button>
+          <div className="basis-full flex items-center gap-3 flex-wrap">
+            <button onClick={() => setShowGenerator(true)} className="quiz-workspace-action-font inline-flex items-center justify-center gap-1.5 h-10 px-4 !bg-[#5b2dbb] !text-white rounded-lg !text-[11px] font-semibold hover:!bg-[#4c1d95] transition-smooth whitespace-nowrap w-full sm:w-auto">
+              <AppIcon className="ri-sparkling-2-line"></AppIcon> Generate Questions
+            </button>
+            <button onClick={() => setShowCreate(true)} className="quiz-workspace-action-font inline-flex items-center justify-center gap-1.5 h-10 px-4 !bg-white !border-[#cdbdff] !text-[#5b2dbb] rounded-lg !text-[11px] font-semibold hover:!bg-[#f2edff] transition-smooth whitespace-nowrap w-full sm:w-auto">
+              <AppIcon name="ri-add-circle-line" size={15}></AppIcon> Add New Quiz
+            </button>
+            <Link to="/curriculum/quiz-xml/manual" className="quiz-workspace-action-font inline-flex items-center justify-center gap-1.5 h-10 px-4 !bg-[#f2edff] !border-[#cdbdff] rounded-lg !text-[11px] font-semibold !text-[#5b2dbb] hover:!bg-[#e8ddff] transition-smooth whitespace-nowrap w-full sm:w-auto">
+              <AppIcon className="ri-edit-2-line"></AppIcon> Manual Quiz
+            </Link>
+            <button onClick={() => fileInputRef.current?.click()} className="quiz-workspace-action-font inline-flex items-center justify-center gap-1.5 h-10 px-4 !bg-white !border-[#cdbdff] rounded-lg !text-[11px] font-semibold !text-[#5b2dbb] hover:!bg-[#f2edff] transition-smooth whitespace-nowrap w-full sm:w-auto">
+              <AppIcon className="ri-upload-cloud-line"></AppIcon> Upload Quiz File
+            </button>
+          </div>
         </div>
 
         {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
@@ -2071,7 +2070,7 @@ export default function QuizXmlWorkspacePage() {
           </div>
 
           <div className="hidden xl:block overflow-x-auto">
-            <table className="w-full min-w-[980px] text-left">
+            <table className="quiz-workspace-table w-full min-w-0 table-fixed text-left">
               <thead>
                 <tr className="border-b border-foreground-300/50 bg-background-100/60">
                   <th className="px-4 py-3 w-10"></th>
@@ -2119,11 +2118,11 @@ export default function QuizXmlWorkspacePage() {
                         className="w-48"
                       />
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <span className={`text-[11px] font-semibold px-2.5 py-1 rounded-full ${statusClasses(quiz.status)}`}>{statusLabel(quiz.status)}</span>
-                        <span className="text-xs text-foreground-400 uppercase">{quiz.packageType}</span>
-                        {quiz.schemaValid ? <AppIcon className="ri-checkbox-circle-line text-emerald-500"></AppIcon> : <AppIcon className="ri-error-warning-line text-red-500"></AppIcon>}
+                    <td className="px-4 py-3 align-middle">
+                      <div className="mx-auto grid w-fit grid-cols-[5.5rem_3.5rem_1.25rem] items-center gap-2">
+                        <span className={`justify-self-center text-[11px] font-semibold px-2.5 py-1 rounded-full ${statusClasses(quiz.status)}`}>{statusLabel(quiz.status)}</span>
+                        <span className="justify-self-start text-xs text-foreground-400 uppercase">{quiz.packageType}</span>
+                        {quiz.schemaValid ? <AppIcon className="ri-checkbox-circle-line justify-self-start text-emerald-500"></AppIcon> : <AppIcon className="ri-error-warning-line justify-self-start text-red-500"></AppIcon>}
                       </div>
                     </td>
                     <td className="px-4 py-3" onClick={event => event.stopPropagation()}>
@@ -2161,37 +2160,29 @@ export default function QuizXmlWorkspacePage() {
                   type="button"
                   onClick={() => setCurrentPage(page => Math.max(1, page - 1))}
                   disabled={safeCurrentPage === 1}
-                  className="w-9 h-9 rounded-lg bg-background-100 text-sm font-semibold text-foreground-600 hover:bg-primary-50 hover:text-primary-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="inline-flex w-9 h-9 items-center justify-center rounded-lg bg-background-100 text-sm font-semibold text-foreground-600 hover:bg-primary-50 hover:text-primary-600 disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Previous page"
                 >
-                  <AppIcon className="ri-arrow-left-line"></AppIcon>
+                  <AppIcon className="ri-arrow-left-line text-[16px]"></AppIcon>
                 </button>
-                {visiblePageNumbers.map((page, index) => (
-                  <div key={page} className="flex items-center gap-2">
-                    {index > 0 && page - visiblePageNumbers[index - 1] > 1 && <span className="px-1 text-xs text-foreground-400">...</span>}
-                    <button
-                      type="button"
-                      onClick={() => setCurrentPage(page)}
-                      className={`w-9 h-9 rounded-lg text-sm font-semibold transition-smooth ${safeCurrentPage === page ? 'bg-primary-50 text-primary-700' : 'bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-600'}`}
-                    >
-                      {page}
-                    </button>
-                  </div>
-                ))}
+                <span className="inline-flex w-9 h-9 items-center justify-center rounded-lg bg-primary-50 text-sm font-semibold text-primary-700" aria-label={`Current page ${safeCurrentPage}`}>
+                  {safeCurrentPage}
+                </span>
                 <button
                   type="button"
                   onClick={() => setCurrentPage(page => Math.min(pageCount, page + 1))}
                   disabled={safeCurrentPage === pageCount}
-                  className="w-9 h-9 rounded-lg bg-background-100 text-sm font-semibold text-foreground-600 hover:bg-primary-50 hover:text-primary-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="inline-flex w-9 h-9 items-center justify-center rounded-lg bg-background-100 text-sm font-semibold text-foreground-600 hover:bg-primary-50 hover:text-primary-600 disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Next page"
                 >
-                  <AppIcon className="ri-arrow-right-line"></AppIcon>
+                  <AppIcon className="ri-arrow-right-line text-[16px]"></AppIcon>
                 </button>
                 <ThemedSelect
                   value={pageSize}
                   options={pageSizeOptions}
                   onChange={setPageSize}
                   className="w-36 ml-0 md:ml-2"
+                  menuPlacement="auto"
                 />
               </div>
             </div>
