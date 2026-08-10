@@ -349,6 +349,44 @@ export type ActivityDetail = {
   participants: ActivityParticipant[];
 };
 
+function displayString(value: unknown, fallback = ""): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of ["front_end_name", "title", "name", "material_format", "content_type", "status"]) {
+      if (typeof record[key] === "string" && record[key]) return record[key];
+    }
+  }
+  return fallback;
+}
+
+export function normalizeActivityItem(value: unknown): ActivityItem {
+  const item = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const title = displayString(item.title, "Untitled activity");
+  // The live API's richer projection now uses `activity` for completion/OTJH
+  // metadata. Prefer its explicit front-end label and never pass that object to React.
+  const activity = typeof item.activity === "string"
+    ? item.activity
+    : displayString(item.front_end_name, title);
+  return {
+    component_id: typeof item.component_id === "string" || typeof item.component_id === "number" ? item.component_id : "",
+    title,
+    activity,
+    material_type: displayString(item.material_type, displayString(item.activity && typeof item.activity === "object" ? (item.activity as Record<string, unknown>).content_type : "", "activity")),
+    iframe_url: typeof item.iframe_url === "string" && item.iframe_url ? item.iframe_url : null,
+  };
+}
+
+function normalizeActivityDetail(detail: ActivityDetail): ActivityDetail {
+  return {
+    ...detail,
+    activity: displayString(detail.activity, "Untitled activity"),
+    category: displayString(detail.category, "activity"),
+    items: Array.isArray(detail.items) ? detail.items.map(normalizeActivityItem) : [],
+  };
+}
+
 // Only the server-whitelisted editable fields. Per-learner fields apply to the
 // row identified by aptem_id; shared fields are activity-level and broadcast to
 // every participant when apply_shared_to_all is true.
@@ -1047,7 +1085,9 @@ export async function saveActivityAnnotation(payload: {
 
 export async function getActivityDetail(componentId: string | number): Promise<ActivityDetail> {
   try {
-    const detail = await getJson<ActivityDetail>(`/activity/?component_id=${encodeURIComponent(String(componentId))}`);
+    const detail = normalizeActivityDetail(
+      await getJson<ActivityDetail>(`/activity/?component_id=${encodeURIComponent(String(componentId))}`),
+    );
     const merged = await getActivityLearners({ component: String(componentId) });
     if (!merged.items.length) throw new Error("This activity has been deleted from the audit view.");
     const participants: ActivityParticipant[] = merged.items.map((row) => ({

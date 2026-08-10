@@ -135,14 +135,20 @@ function QuizBody({ learner, component }: { learner: string; component: string |
 // detail; a quiz additionally gets a "View quiz" toggle that reveals the
 // focused learner's graded body + score inline.
 function BundleItem({ item, learner, onNavigate }: { item: any; learner: string; onNavigate: () => void }) {
-  const isQuiz = (item.material_type || "").toLowerCase() === "quiz";
+  const materialType = typeof item.material_type === "string" ? item.material_type : "activity";
+  const itemLabel = typeof item.activity === "string"
+    ? item.activity
+    : typeof item.front_end_name === "string"
+      ? item.front_end_name
+      : typeof item.title === "string" ? item.title : "Untitled activity";
+  const isQuiz = materialType.toLowerCase() === "quiz";
   const [open, setOpen] = useState(false);
   return (
     <li className="px-7 py-3">
       <div className="flex items-center justify-between gap-3">
         <button type="button" onClick={onNavigate} className="flex min-w-0 items-center gap-2 text-left">
-          <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase ${materialBadgeClass(item.material_type)}`}>{item.material_type}</span>
-          <span className="truncate text-sm font-medium text-foreground hover:text-primary hover:underline">{item.activity || item.title}</span>
+          <span className={`shrink-0 rounded-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase ${materialBadgeClass(materialType)}`}>{materialType}</span>
+          <span className="truncate text-sm font-medium text-foreground hover:text-primary hover:underline">{itemLabel}</span>
         </button>
         <div className="flex shrink-0 items-center gap-3">
           {isQuiz && (

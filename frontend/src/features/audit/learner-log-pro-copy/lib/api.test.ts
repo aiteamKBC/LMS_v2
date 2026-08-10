@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyCohortOverlay } from "./api";
+import { applyCohortOverlay, normalizeActivityItem } from "./api";
 
 const baseMonth = {
   month: "2026-07", label: "July 2026", planned: 10, actual: 8,
@@ -55,5 +55,28 @@ describe("audit-copy cohort overlay accounting", () => {
     expect(result.learners[0].actual_total).toBe(8);
     expect(result.learners[0].months.find((month) => month.month === "2026-07")?.actual).toBe(6.5);
     expect(result.learners[0].months.find((month) => month.month === "2026-08")?.actual).toBe(1.5);
+  });
+});
+
+describe("activity detail response normalization", () => {
+  it("turns the live activity metadata object into a renderable label", () => {
+    const item = normalizeActivityItem({
+      component_id: 50560,
+      title: "Project Framework Management",
+      front_end_name: "Lecture 3: Business Environment (Quiz)",
+      material_type: "quiz",
+      iframe_url: "https://example.test/quiz",
+      activity: {
+        otjh: { hours: 0, credited: false },
+        status: "passed",
+        completed: true,
+        content_type: "quiz",
+        time_spent_seconds: 4968,
+      },
+    });
+
+    expect(item.activity).toBe("Lecture 3: Business Environment (Quiz)");
+    expect(item.material_type).toBe("quiz");
+    expect(typeof item.activity).toBe("string");
   });
 });
