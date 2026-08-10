@@ -171,8 +171,8 @@ const versionStatusColor = (s: VersionStatus) => {
 const severityColor = (s: FindingSeverity) => {
   const map: Record<FindingSeverity, string> = {
     Critical: 'bg-red-100 text-red-700 border-red-200/50',
-    Major: 'bg-amber-100 text-amber-700 border-amber-200/50',
-    Minor: 'bg-secondary-100 text-secondary-700 border-secondary-200/50',
+    Major: 'bg-orange-100 text-orange-700 border-orange-200/50',
+    Minor: 'bg-lime-100 text-lime-700 border-lime-200/50',
     Advisory: 'bg-background-100 text-foreground-500 border-foreground-200/60',
   };
   return map[s] || '';
@@ -269,12 +269,14 @@ export default function CurriculumQAPage() {
             { label: 'Open Findings', value: stats.openFindings, icon: 'ri-error-warning-line', color: 'bg-amber-100 text-amber-700' },
             { label: 'Critical Issues', value: stats.criticalFindings, icon: 'ri-alarm-warning-line', color: 'bg-red-100 text-red-700' },
           ].map(s => (
-            <div key={s.label} className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
-              <div className={`w-7 h-7 rounded-lg flex items-center justify-center mb-2 ${s.color}`}>
+            <div key={s.label} className="rounded-xl border border-foreground-200/60 bg-background-50 p-4">
+              <div className={`mb-2 flex h-7 w-7 items-center justify-center rounded-lg ${s.color}`}>
                 <AppIcon className={`${s.icon} text-xs`}></AppIcon>
               </div>
-              <p className="text-[10px] text-foreground-400 uppercase tracking-wide font-medium leading-tight">{s.label}</p>
-              <p className="text-xl font-heading font-bold text-foreground-900">{s.value}</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-medium uppercase leading-tight tracking-wide text-foreground-400">{s.label}</p>
+                <p className="shrink-0 text-xl font-heading font-bold text-foreground-900">{s.value}</p>
+              </div>
             </div>
           ))}
         </div>
@@ -295,9 +297,12 @@ export default function CurriculumQAPage() {
             {/* Version List */}
             <div className="lg:col-span-2 space-y-3">
               <div className="flex items-center gap-2">
-                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="flex-1 px-3 py-2 bg-background-50 border border-background-200 rounded-xl text-[12px] text-foreground-700 outline-none focus:border-primary-400 cursor-pointer">
-                  {['All', 'Draft', 'In QA', 'Approved', 'Published', 'Rejected'].map(s => <option key={s}>{s}</option>)}
-                </select>
+                <div className="relative flex-1">
+                  <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-full appearance-none rounded-xl border border-background-200 bg-background-50 px-3 py-2 pr-9 text-[12px] text-foreground-700 outline-none focus:border-primary-400 cursor-pointer">
+                    {['All', 'Draft', 'In QA', 'Approved', 'Published', 'Rejected'].map(s => <option key={s}>{s}</option>)}
+                  </select>
+                  <AppIcon className="ri-arrow-down-s-line pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-foreground-500"></AppIcon>
+                </div>
               </div>
               {filteredVersions.map(v => (
                 <div
@@ -317,8 +322,8 @@ export default function CurriculumQAPage() {
                     {(v.findingsCount.critical + v.findingsCount.major + v.findingsCount.minor) > 0 && (
                       <span className="flex items-center gap-1">
                         {v.findingsCount.critical > 0 && <span className="text-red-600 font-semibold">{v.findingsCount.critical} critical</span>}
-                        {v.findingsCount.major > 0 && <span className="text-amber-600 font-semibold">{v.findingsCount.major} major</span>}
-                        {v.findingsCount.minor > 0 && <span className="text-foreground-400">{v.findingsCount.minor} minor</span>}
+                        {v.findingsCount.major > 0 && <span className="text-orange-600 font-semibold">{v.findingsCount.major} major</span>}
+                        {v.findingsCount.minor > 0 && <span className="text-lime-700 font-semibold">{v.findingsCount.minor} minor</span>}
                       </span>
                     )}
                   </div>
@@ -435,7 +440,7 @@ export default function CurriculumQAPage() {
                       <h4 className="text-sm font-heading font-semibold text-foreground-900 mb-3">Findings ({selectedVersionFindings.length})</h4>
                       <div className="space-y-2">
                         {selectedVersionFindings.map(f => (
-                          <div key={f.id} className={`p-3 rounded-xl border ${f.severity === 'Critical' ? 'bg-red-50 border-red-200/50' : f.severity === 'Major' ? 'bg-amber-50 border-amber-200/50' : 'bg-background-100/60 border-foreground-200/60'}`}>
+                          <div key={f.id} className={`p-3 rounded-xl border ${f.severity === 'Critical' ? 'bg-red-50 border-red-200/50' : f.severity === 'Major' ? 'bg-orange-50 border-orange-200/50' : f.severity === 'Minor' ? 'bg-lime-50 border-lime-200/50' : 'bg-background-100/60 border-foreground-200/60'}`}>
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-1 flex-wrap">

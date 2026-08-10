@@ -68,6 +68,7 @@ import {
   Heart,
   HeartPulse,
   History,
+  Hammer,
   Info,
   KeyRound,
   Layers3,
@@ -150,10 +151,13 @@ function resolveIcon(name: string): LucideIcon {
   if (/assessment-design/.test(key)) return ClipboardCheck;
   if (/delivery-planning/.test(key)) return CalendarDays;
   if (/quality.*publish/.test(key)) return ShieldCheck;
+  if (/node-tree|network|mind-map/.test(key)) return GitBranch;
+  if (/hammer|build|construction/.test(key)) return Hammer;
   if (/arrow-left-s/.test(key)) return ChevronLeft;
   if (/arrow-right-s/.test(key)) return ChevronRight;
   if (/arrow-up-s/.test(key)) return ChevronUp;
   if (/arrow-down-s/.test(key)) return ChevronDown;
+  if (/arrow-go-back|go-back/.test(key)) return RotateCcw;
   if (/arrow-left/.test(key)) return ArrowLeft;
   if (/arrow-right-up/.test(key)) return ArrowUpRight;
   if (/arrow-right/.test(key)) return ArrowRight;
@@ -247,6 +251,10 @@ function resolveIcon(name: string): LucideIcon {
   if (/alarm|warning|alert|risk|error|concern|escalat/.test(key)) return AlertTriangle;
   if (/info|information/.test(key)) return Info;
   if (/eye|view/.test(key)) return Eye;
+  if (/pencil|edit/.test(key)) return Pencil;
+  if (/group|team|organization|organisation|cohort|learner/.test(key)) return Users;
+  if (/download/.test(key)) return Download;
+  if (/archive/.test(key)) return FolderOpen;
   if (/external/.test(key)) return ExternalLink;
   if (/pin/.test(key)) return Pin;
   if (/headphone|podcast/.test(key)) return Headphones;

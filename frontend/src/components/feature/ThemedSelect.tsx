@@ -13,6 +13,7 @@ interface ThemedSelectProps<T extends string = string> {
   className?: string;
   buttonClassName?: string;
   menuClassName?: string;
+  menuPlacement?: 'auto' | 'below' | 'above';
   disabled?: boolean;
   placeholder?: string;
 }
@@ -24,11 +25,12 @@ export function ThemedSelect<T extends string = string>({
   className = '',
   buttonClassName = '',
   menuClassName = '',
+  menuPlacement = 'auto',
   disabled = false,
   placeholder = 'Select',
 }: ThemedSelectProps<T>) {
   const [open, setOpen] = useState(false);
-  const [menuRect, setMenuRect] = useState({ left: 0, top: 0, width: 0 });
+  const [menuRect, setMenuRect] = useState({ left: 0, top: 0, width: 0, maxHeight: 288 });
   const rootRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const selected = useMemo(() => options.find(option => option.value === value), [options, value]);
@@ -38,10 +40,14 @@ export function ThemedSelect<T extends string = string>({
     const positionMenu = () => {
       const rect = rootRef.current?.getBoundingClientRect();
       if (!rect) return;
+      const estimatedHeight = options.length * 36 + 8;
+      const maxHeight = Math.max(80, Math.min(288, estimatedHeight, window.innerHeight - 24));
+      const opensAbove = menuPlacement === 'above' || (menuPlacement === 'auto' && rect.bottom + maxHeight + 6 > window.innerHeight - 12);
       setMenuRect({
-        left: rect.left,
-        top: rect.bottom + 6,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - rect.width - 8)),
+        top: opensAbove ? Math.max(12, rect.top - maxHeight - 6) : rect.bottom + 6,
         width: rect.width,
+        maxHeight,
       });
     };
     positionMenu();
@@ -62,7 +68,7 @@ export function ThemedSelect<T extends string = string>({
       window.removeEventListener('resize', positionMenu);
       window.removeEventListener('scroll', positionMenu, true);
     };
-  }, [open]);
+  }, [open, menuPlacement, options.length]);
 
   return (
     <div ref={rootRef} className={`relative ${className}`}>
@@ -83,7 +89,7 @@ export function ThemedSelect<T extends string = string>({
         <div
           ref={menuRef}
           className={`fixed z-[120] max-h-72 overflow-y-auto rounded-xl border border-[#d8dde6] bg-white py-1 shadow-xl shadow-[#231942]/12 quiz-preview-scroll ${menuClassName}`}
-          style={{ left: menuRect.left, top: menuRect.top, width: menuRect.width }}
+          style={{ left: menuRect.left, top: menuRect.top, width: menuRect.width, maxHeight: menuRect.maxHeight }}
           role="listbox"
         >
           {options.map(option => {
