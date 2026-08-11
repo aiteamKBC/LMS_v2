@@ -2,14 +2,17 @@ import datetime
 import decimal
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import uuid
 from collections import defaultdict
-from urllib.parse import quote, unquote
+from html import escape
+from urllib.parse import quote, unquote, urlsplit
 
 from django.db import DatabaseError, connections
-from django.http import HttpResponseRedirect, JsonResponse
+from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
+from django.utils.http import content_disposition_header
 from django.views.decorators.csrf import csrf_exempt
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
@@ -2375,6 +2378,120 @@ def _signed_blob_url(client):
         expiry=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=30),
     )
     return f"{client.url}?{token}"
+
+
+def _parse_contract_azure_path(value):
+    """Return the fixed contract container/blob stored in an ``az://`` URI."""
+    parsed = urlsplit(str(value or "").strip())
+    if parsed.scheme.lower() != "az" or not parsed.netloc or parsed.query or parsed.fragment:
+        raise ValueError("Invalid contract Azure path.")
+
+    path = unquote(parsed.path).lstrip("/")
+    try:
+        container, blob_name = path.split("/", 1)
+    except ValueError as exc:
+        raise ValueError("Invalid contract Azure path.") from exc
+
+    blob_parts = blob_name.replace("\\", "/").split("/")
+    if (
+        container != "contracts"
+        or not blob_name.startswith("aptem_cv_contracts_probe/")
+        or any(part in {"", ".", ".."} for part in blob_parts)
+    ):
+        raise ValueError("Invalid contract Azure path.")
+    return container, blob_name
+
+
+def contract_file(request, contract_id):
+    """Render an audited Azure contract without exposing its storage path."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    if not _has_audit_permission(request):
+        return _error("Authentication or audit permission is required.", 403)
+
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                '''
+                select azure_path, document_name
+                from fetching_evidence.aptem_cv_contracts_probe
+                where id = %s
+                limit 1
+                ''',
+                [contract_id],
+            )
+            row = cursor.fetchone()
+    except (DatabaseError, KeyError):
+        return _error("Could not load contract metadata.", 502)
+
+    if not row:
+        return _error("Contract not found.", 404)
+    if not row[0]:
+        return _error("This contract is not available in Azure.", 404)
+
+    try:
+        container, blob_name = _parse_contract_azure_path(row[0])
+        service = _azure_service_client()
+        client = _blob_client_with_fallback(service, container, blob_name)
+        signed_url = _signed_blob_url(client)
+    except ValueError:
+        return _error("This contract has an invalid Azure path.", 409)
+    except RuntimeError as exc:
+        return _error(str(exc), 503)
+    except Exception:
+        return _error("The contract could not be opened from Azure.", 502)
+
+    download_requested = (request.GET.get("download") or "").strip().lower() in {"1", "true", "yes"}
+    extension = os.path.splitext(blob_name)[1].lower()
+    document_name = str(row[1] or "Contract").strip()[:180] or "Contract"
+    if not os.path.splitext(document_name)[1] and extension:
+        document_name = f"{document_name}{extension}"
+
+    if not download_requested and extension in {".doc", ".docx", ".docm", ".xls", ".xlsx", ".ppt", ".pptx"}:
+        viewer_url = f"https://view.officeapps.live.com/op/embed.aspx?src={quote(signed_url, safe='')}"
+        response = HttpResponse(
+            f'''<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(document_name)}</title>
+  <style>
+    html, body, iframe {{ width: 100%; height: 100%; margin: 0; border: 0; background: #f5f3ec; }}
+  </style>
+</head>
+<body><iframe src="{escape(viewer_url, quote=True)}" title="{escape(document_name, quote=True)}"></iframe></body>
+</html>''',
+            content_type="text/html; charset=utf-8",
+        )
+        response["Content-Security-Policy"] = (
+            "default-src 'none'; frame-src https://view.officeapps.live.com; "
+            "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+        )
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+    try:
+        downloader = client.download_blob()
+        properties = downloader.properties
+        guessed_content_type = mimetypes.guess_type(blob_name)[0]
+        stored_content_type = getattr(getattr(properties, "content_settings", None), "content_type", None)
+        content_type = (
+            guessed_content_type
+            or stored_content_type
+            or "application/octet-stream"
+        )
+        response = StreamingHttpResponse(downloader.chunks(), content_type=content_type)
+        content_length = getattr(properties, "size", None)
+        if content_length is not None:
+            response["Content-Length"] = str(content_length)
+    except Exception:
+        return _error("The contract could not be streamed from Azure.", 502)
+
+    response["Content-Disposition"] = content_disposition_header(download_requested, document_name)
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 def audit_blob(request):

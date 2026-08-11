@@ -21,11 +21,15 @@ export function MreTable({
   component,
   attendanceKey,
   programme,
+  completionFilter = "all",
+  onCompletionFilterChange,
 }: {
   learner?: string;
   component?: string;
   attendanceKey?: string;
   programme?: string;
+  completionFilter?: "all" | "reading" | "quiz" | "activity";
+  onCompletionFilterChange?: (value: "all" | "reading" | "quiz" | "activity") => void;
 }) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
@@ -46,18 +50,24 @@ export function MreTable({
   });
   // The session endpoint returns every attendee at once (no server-side search),
   // so filter client-side to keep the search box working in that mode.
-  const items = bySession && search.trim()
+  const searchedItems = bySession && search.trim()
     ? (query.data?.items ?? []).filter((activity) =>
         activity.learner.toLowerCase().includes(search.trim().toLowerCase())
       )
     : query.data?.items ?? [];
+  const items = searchedItems.filter((activity) => {
+    if (!byComponent || completionFilter === "all") return true;
+    if (completionFilter === "reading") return activity.reading_completed === true;
+    if (completionFilter === "quiz") return activity.quiz_attempted === true;
+    return activity.completed === true;
+  });
   const totalPages = singlePage ? 1 : Math.max(1, Math.ceil((query.data?.total ?? 0) / pageSize));
   const addLearner = learner
     ? items.find((item) => item.learner.toLowerCase() === learner.toLowerCase() || String(item.learner_id) === learner)
     : !singlePage ? items[0] : undefined;
 
   return (
-    <section className="rounded-lg border border-border bg-card shadow-panel">
+    <section id="learner-activity-records" className="rounded-lg border border-border bg-card shadow-panel">
       <header className="flex flex-wrap items-end justify-between gap-4 border-b border-border px-7 py-5">
         <div>
           <div className="flex items-center gap-2">
@@ -73,6 +83,14 @@ export function MreTable({
               ? `Live Neon activity records for ${learner}.`
               : "Student columns from Neon are converted into one real activity row per learner."}
           </p>
+          {byComponent && completionFilter !== "all" ? (
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              <span className="rounded-full bg-success/10 px-2.5 py-1 font-semibold text-success">
+                Showing {completionFilter === "reading" ? "reading completed" : completionFilter === "quiz" ? "quiz attempted" : "activity completed"}
+              </span>
+              <button type="button" onClick={() => onCompletionFilterChange?.("all")} className="font-medium text-primary hover:underline">Show all learners</button>
+            </div>
+          ) : null}
         </div>
         <div className="flex w-full max-w-lg items-center gap-2">
           <label className="relative block min-w-0 flex-1">
@@ -108,7 +126,7 @@ export function MreTable({
       )}
 
       <footer className="flex items-center justify-between border-t border-border px-7 py-4 text-xs text-muted-foreground">
-        <span>{query.data ? `${bySession ? items.length : query.data.total} records` : "Connecting…"}</span>
+        <span>{query.data ? `${singlePage ? items.length : query.data.total} records` : "Connecting…"}</span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" disabled={page === 0} onClick={() => setPage((value) => value - 1)} aria-label="Previous page">
             <ChevronLeft className="h-4 w-4" />
