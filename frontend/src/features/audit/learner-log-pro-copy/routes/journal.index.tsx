@@ -456,10 +456,10 @@ function JournalPage() {
                 <ProfileGroup label="Coach" value={learnerProfile.data?.coach.name ?? "—"} secondaryLabel="Planned end" secondaryValue={learnerProfile.data?.learning_delivery.planned_end_date ?? "—"} />
               </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Stat label="Monthly plan" value={`${learner.planned_hours.toFixed(2)} h`} />
-                <Stat label="Claimed" value={`${learner.actual_hours.toFixed(2)} h`} tone="purple" />
-                <Stat label="Not accepted" value={`${(learner.not_accepted_hours ?? 0).toFixed(2)} h`} tone="warning" />
-                <Stat label="Variance" value={`${learner.gap_hours > 0 ? "+" : ""}${learner.gap_hours.toFixed(2)} h`} tone={learner.gap_hours < 0 ? "warning" : "success"} />
+                <Stat label="Monthly plan" value={learner.hours_mapped === false ? "—" : `${learner.planned_hours.toFixed(2)} h`} />
+                <Stat label="Claimed" value={learner.hours_mapped === false ? "—" : `${learner.actual_hours.toFixed(2)} h`} tone="purple" />
+                <Stat label="Not accepted" value={learner.hours_mapped === false ? "—" : `${(learner.not_accepted_hours ?? 0).toFixed(2)} h`} tone="warning" />
+                <Stat label="Variance" value={learner.hours_mapped === false ? "—" : `${learner.gap_hours > 0 ? "+" : ""}${learner.gap_hours.toFixed(2)} h`} tone={learner.gap_hours < 0 ? "warning" : "success"} />
               </div>
               <OtjhCard otjh={activities.data?.otjh} />
             </div>
@@ -474,7 +474,12 @@ function JournalPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono text-xs font-medium text-[#182d48]">{activities.data?.total ?? 0} activities</span>
-              <Button size="sm" disabled={!learnerProfile.data || addingActivity} onClick={() => setAddingActivity(true)}><Plus className="h-3.5 w-3.5" /> Add activity</Button>
+              <Button
+                size="sm"
+                disabled={!learnerProfile.data || addingActivity}
+                onClick={() => setAddingActivity(true)}
+                title={!learnerProfile.data ? "Choose a learner first" : undefined}
+              ><Plus className="h-3.5 w-3.5" /> Add activity</Button>
             </div>
           </header>
           <div className="overflow-x-auto">

@@ -29,6 +29,7 @@ export const Route = createFileRoute("/search")({
 const field =
   "h-9 w-full rounded-md border border-border bg-card px-2.5 text-sm text-foreground outline-none focus:border-primary";
 const pageSize = 30;
+const learnerPageSize = 10;
 
 function Filter({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -73,6 +74,8 @@ function otjhChipClass(status: string) {
 function flagLabel(flag: string) {
   switch (flag) {
     case "no_attendance_recorded": return "No attendance recorded";
+    case "lms_not_matched": return "LMS not matched";
+    case "hours_not_mapped": return "Hours not mapped";
     case "withdrawn": return "Withdrawn";
     default: return flag.replace(/_/g, " ");
   }
@@ -131,6 +134,7 @@ function SearchPage() {
   const [sharedPeriod, setSharedPeriod] = useState("");
   const [gapBand, setGapBand] = useState("all");
   const [programmeName, setProgrammeName] = useState("");
+  const [learnerPage, setLearnerPage] = useState(0);
 
   const [activitySearch, setActivitySearch] = useState("");
   const [activityLearner, setActivityLearner] = useState("");
@@ -184,20 +188,28 @@ function SearchPage() {
     // A learner's full (all-month) activity history is large (~1 MB+), so the
     // activity log only loads once a learner OR a specific month is chosen —
     // never a whole-cohort, all-months fan-out on first paint.
-    enabled: Boolean(filterOptions.data) && Boolean(activityLearner || sharedPeriod),
+    enabled: Boolean(filterOptions.data) && Boolean(activityLearner || (sharedPeriod && sharedPeriod !== "undated")),
   });
-  const activitiesEnabled = Boolean(activityLearner || sharedPeriod);
+  const activitiesEnabled = Boolean(activityLearner || (sharedPeriod && sharedPeriod !== "undated"));
   const selectedActivityLearner = filterOptions.data?.learners.find(
     (learner) =>
       (learner.id === activityLearner || learner.name.toLowerCase() === activityLearner.toLowerCase()) &&
-      (!programmeName || learner.programme === programmeName),
+      (!programmeName || (learner.programmes ?? [learner.programme]).includes(programmeName)),
   );
-  const programmeOptions = [...new Set(filterOptions.data?.learners.map((learner) => learner.programme).filter(Boolean) ?? [])]
+  const programmeOptions = [...new Set(filterOptions.data?.learners.flatMap((learner) => learner.programmes?.length ? learner.programmes : [learner.programme]).filter(Boolean) ?? [])]
     .sort()
     .map((programme) => ({ value: programme, label: programme }));
-  const learnerNumberById = new Map(
-    (filterOptions.data?.learners ?? []).map((learner, index) => [learner.id, index + 1]),
+  const summaryLearners = summaries.data?.learners ?? [];
+  const learnerTotalPages = Math.max(1, Math.ceil(summaryLearners.length / learnerPageSize));
+  const pagedLearners = summaryLearners.slice(
+    learnerPage * learnerPageSize,
+    (learnerPage + 1) * learnerPageSize,
   );
+
+  useEffect(() => setLearnerPage(0), [sharedPeriod, learnerSearch, gapBand, programmeName]);
+  useEffect(() => {
+    if (learnerPage >= learnerTotalPages) setLearnerPage(learnerTotalPages - 1);
+  }, [learnerPage, learnerTotalPages]);
 
   const totalPages = Math.max(1, Math.ceil((activities.data?.total ?? 0) / pageSize));
   const resetPage = () => setPage(0);
@@ -293,7 +305,6 @@ function SearchPage() {
                     <TableHead className="label-caps text-right">Activities</TableHead>
                     <TableHead className="label-caps text-right">Planned hours</TableHead>
                     <TableHead className="label-caps text-right">Actual hours</TableHead>
-                    <TableHead className="label-caps text-right">Not accepted</TableHead>
                     <TableHead className="label-caps text-right">Actual vs plan</TableHead>
                     <TableHead className="label-caps">Last activity</TableHead>
                     <TableHead className="label-caps text-right">Learner profile</TableHead>
@@ -302,17 +313,22 @@ function SearchPage() {
                 </TableHeader>
                 <TableBody>
                   {summaries.isLoading && (
-                    <TableRow><TableCell colSpan={12} className="py-10 text-center text-sm text-muted-foreground">Loading learners…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={11} className="py-10 text-center text-sm text-muted-foreground">Loading learners…</TableCell></TableRow>
                   )}
-                  {summaries.data?.learners.map((learner) => (
+                  {pagedLearners.map((learner, index) => (
                     <TableRow key={learner.id} className={learner.has_break_in_learning ? "bg-warning/5 hover:bg-warning/10" : undefined}>
-                      <TableCell className="pl-7 font-mono text-sm font-semibold text-muted-foreground">{learnerNumberById.get(learner.id) ?? "—"}</TableCell>
-                      <TableCell className="text-sm font-semibold text-foreground">{learner.name}</TableCell>
+                      <TableCell className="pl-7 font-mono text-sm font-semibold text-muted-foreground">{learnerPage * learnerPageSize + index + 1}</TableCell>
+                      <TableCell>
+                        <p className="text-sm font-semibold text-foreground">{learner.name}</p>
+                        {learner.email ? <p className="mt-0.5 text-xs text-muted-foreground">{learner.email}</p> : null}
+                      </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${learnerStatusClass(learner.program_status)}`}>{learner.program_status}</span>
                           {learner.has_break_in_learning && <span className="rounded-full bg-warning/20 px-2.5 py-1 text-xs font-semibold text-foreground ring-1 ring-warning/40">Break in learning</span>}
-                          {(learner.flags ?? []).filter((flag) => flag !== "withdrawn").map((flag) => (
+                          {(learner.flags ?? []).filter(
+                            (flag) => !["withdrawn", "lms_not_matched", "hours_not_mapped"].includes(flag),
+                          ).map((flag) => (
                             <span key={flag} className={`rounded-full px-2.5 py-1 text-xs font-semibold ${flagChipClass(flag)}`}>⚑ {flagLabel(flag)}</span>
                           ))}
                           {learner.otjh?.month_flagged && learner.otjh.month ? (
@@ -326,14 +342,11 @@ function SearchPage() {
                         <p className="text-sm font-medium text-foreground">{learner.coach.name ?? "—"}</p>
                         {learner.coach.email && <p className="mt-0.5 text-xs text-muted-foreground">{learner.coach.email}</p>}
                       </TableCell>
-                      {/* Activity counts are only fetched per-month; in the
-                          cumulative (All months) view we don't load them. */}
-                      <TableCell className="text-right font-mono text-sm">{sharedPeriod ? learner.entries : "—"}</TableCell>
-                      <TableCell className="text-right font-mono text-sm">{formatHours(learner.planned_hours)}</TableCell>
-                      <TableCell className="text-right font-mono text-sm text-success">{formatHours(learner.actual_hours)}</TableCell>
-                      <TableCell className={`text-right font-mono text-sm ${learner.not_accepted_hours > 0 ? "text-warning" : "text-muted-foreground"}`}>{formatHours(learner.not_accepted_hours)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{learner.entries}</TableCell>
+                      <TableCell className="text-right font-mono text-sm">{learner.planned_hours_available === false ? "—" : formatHours(learner.planned_hours)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm text-success">{learner.hours_mapped === false ? "—" : formatHours(learner.actual_hours)}</TableCell>
                       <TableCell className={`text-right font-mono text-sm ${learner.gap_hours < 0 ? "text-warning" : "text-success"}`}>
-                        {learner.gap_hours > 0 ? "+" : ""}{formatHours(learner.gap_hours)}
+                        {learner.hours_mapped === false || learner.planned_hours_available === false ? "—" : <>{learner.gap_hours > 0 ? "+" : ""}{formatHours(learner.gap_hours)}</>}
                       </TableCell>
                       <TableCell className="font-mono text-xs text-muted-foreground">{learner.last_activity_date ?? "—"}</TableCell>
                       <TableCell className="text-right">
@@ -360,6 +373,24 @@ function SearchPage() {
               </Table>
             </div>
           )}
+          <footer className="flex items-center justify-between border-t border-border px-7 py-4 text-xs text-muted-foreground">
+            <span>
+              {summaryLearners.length === 0
+                ? "0 learners"
+                : `${learnerPage * learnerPageSize + 1}–${Math.min((learnerPage + 1) * learnerPageSize, summaryLearners.length)} of ${summaryLearners.length} learners`}
+            </span>
+            <div className="flex items-center gap-3">
+              <span>Page {learnerPage + 1} of {learnerTotalPages}</span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" disabled={learnerPage === 0} onClick={() => setLearnerPage((value) => Math.max(0, value - 1))}>
+                  <ArrowLeft className="mr-1 h-3.5 w-3.5" /> Previous
+                </Button>
+                <Button variant="outline" size="sm" disabled={learnerPage + 1 >= learnerTotalPages} onClick={() => setLearnerPage((value) => Math.min(learnerTotalPages - 1, value + 1))}>
+                  Next <ArrowRight className="ml-1 h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          </footer>
         </section>
 
         <section className="rounded-lg border border-border bg-card shadow-panel">
@@ -383,7 +414,7 @@ function SearchPage() {
                 value={activityLearner}
                 allLabel="All learners"
                 options={filterOptions.data?.learners
-                  .filter((learner) => !programmeName || learner.programme === programmeName)
+                  .filter((learner) => !programmeName || (learner.programmes ?? [learner.programme]).includes(programmeName))
                   .map((learner) => ({ value: learner.id, label: learner.name })) ?? []}
                 onChange={(value) => {
                   // Only scopes the activity log below; leaves the cohort table untouched.

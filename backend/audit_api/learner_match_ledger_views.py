@@ -35,6 +35,7 @@ mirrors how ``audit_api/views.py`` reaches the same table.
 """
 
 import collections
+import copy
 import datetime
 import html
 import json
@@ -79,6 +80,58 @@ def _iso_date(value):
 
 def _period_of(iso_date):
     return iso_date[:7] if iso_date else None
+
+
+def _training_plan_from_audit(raw_plan):
+    """Normalise the deployed ``Audit.learner_match.aptem_training_plan``."""
+    if isinstance(raw_plan, str):
+        try:
+            raw_plan = json.loads(raw_plan)
+        except ValueError:
+            raw_plan = []
+    if not isinstance(raw_plan, list):
+        raw_plan = []
+
+    # Keep a lossless copy as part of the API contract.  The structured fields
+    # below drive the current profile UI, while ``raw`` guarantees that a new
+    # Aptem field is not silently discarded before the frontend knows how to
+    # present it.
+    source_plan = copy.deepcopy(raw_plan)
+    months = []
+    total = 0
+    completed = 0
+    for month in raw_plan:
+        if not isinstance(month, dict):
+            continue
+        modules = []
+        for item in month.get("modules") or []:
+            if not isinstance(item, dict):
+                continue
+            component = item.get("components") if isinstance(item.get("components"), dict) else {}
+            status = component.get("status") or "Unknown"
+            total += 1
+            if str(status).strip().lower() == "completed":
+                completed += 1
+            modules.append({
+                "name": item.get("module") or "Untitled module",
+                "type": component.get("type") or "",
+                "status": status,
+                "components": copy.deepcopy(component),
+                "raw": copy.deepcopy(item),
+            })
+        months.append({
+            "month": month.get("month") or "",
+            "date": _iso_date(month.get("date")),
+            "modules": modules,
+            "raw": copy.deepcopy(month),
+        })
+
+    return {
+        "total_modules": total,
+        "completed_modules": completed,
+        "months": months,
+        "raw": source_plan,
+    }
 
 
 def _clock(value):
@@ -834,26 +887,19 @@ def learner_summaries(request: HttpRequest) -> JsonResponse:
 
 @require_GET
 def learner_profile(request: HttpRequest) -> JsonResponse:
-    """Return the cross-source profile for one REAL-workspace learner."""
+    """Return the rich cross-source profile for any Last_audit learner."""
     learner_key = request.GET.get("learner", "").strip().lower()
     if not learner_key or len(learner_key) > 200:
         return JsonResponse({"error": "A valid learner is required."}, status=400)
 
     try:
-        learners = _load_rows()
+        learner = _load_profile_learner(learner_key)
     except (KeyError, DatabaseError) as error:
         return JsonResponse(
-            {"error": "Could not read Audit.learner_match from the enrolment database.", "details": str(error)},
+            {"error": "Could not read the learner from Last_audit.", "details": str(error)},
             status=503,
         )
 
-    learner = next(
-        (
-            item for item in learners
-            if learner_key in (_learner_id(item["name"]), str(item["aptem_id"]).lower())
-        ),
-        None,
-    )
     if learner is None:
         return JsonResponse({"error": "Learner not found."}, status=404)
 
@@ -865,31 +911,7 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
             status=503,
         )
 
-    training_months = []
-    total_modules = 0
-    completed_modules = 0
-    for month in learner.get("training_plan") or []:
-        if not isinstance(month, dict):
-            continue
-        modules = []
-        for item in month.get("modules") or []:
-            if not isinstance(item, dict):
-                continue
-            component = item.get("components") if isinstance(item.get("components"), dict) else {}
-            status = component.get("status") or "Unknown"
-            total_modules += 1
-            if str(status).strip().lower() == "completed":
-                completed_modules += 1
-            modules.append({
-                "name": item.get("module") or "Untitled module",
-                "type": component.get("type") or "",
-                "status": status,
-            })
-        training_months.append({
-            "month": month.get("month") or "",
-            "date": _iso_date(month.get("date")),
-            "modules": modules,
-        })
+    training_plan = _training_plan_from_audit(learner.get("training_plan"))
 
     return JsonResponse({
         "id": _learner_id(learner["name"]),
@@ -897,22 +919,66 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
         "name": learner["name"],
         "email": learner.get("email"),
         "programme": learner.get("programme_name") or PROGRAMME_NAME,
-        "programme_status": sources["programme_status"],
+        "programme_status": (
+            sources["programme_status"]
+            if sources["programme_status"] not in (None, "", "Unknown")
+            else learner.get("programme_status") or "Unknown"
+        ),
         "break_in_learning": sources["break_in_learning"],
         "coach": learner.get("coach") or {"name": None, "email": None},
         "planned_hours": sources["learning_delivery"].get("planned_hours"),
         "learning_delivery": sources["learning_delivery"],
         "contracts": sources["contracts"],
-        "training_plan": {
-            "total_modules": total_modules,
-            "completed_modules": completed_modules,
-            "months": training_months,
-        },
+        "training_plan": training_plan,
         "skills_radar": sources["skills_radar"],
         "certifications": sources["certifications"],
         "employment": sources["employment"],
         "programme_understanding": sources["programme_understanding"],
     })
+
+
+def _load_profile_learner(learner_key):
+    """Resolve one Aptem-first learner without loading the legacy PCP cohort.
+
+    ``Last_audit.learners`` is the canonical learner list. The Training Plan
+    follows the deployed profile and is joined from
+    ``Audit.learner_match.aptem_training_plan`` by Aptem ID.
+    """
+    with connections[CONN].cursor() as cursor:
+        cursor.execute(
+            '''
+            select l.aptem_id, l.learner_name, l.learner_email,
+                   l.programme_name, l.programme_status,
+                   l.coach_name, l.coach_email,
+                   lm.aptem_training_plan
+            from "Last_audit".learners l
+            left join "Audit".learner_match lm
+              on lm.aptem_id = l.aptem_id
+            where l.aptem_id::text = %s
+               or lower(l.learner_name) = %s
+            order by case when l.aptem_id::text = %s then 0 else 1 end
+            limit 1
+            ''',
+            [learner_key, learner_key, learner_key],
+        )
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    (
+        aptem_id, learner_name, learner_email, programme_name,
+        programme_status, coach_name, coach_email, training_plan,
+    ) = row
+    return {
+        "aptem_id": aptem_id,
+        "name": learner_name,
+        "email": learner_email,
+        "programme_name": programme_name,
+        "programme_status": programme_status,
+        "coach": {"name": coach_name, "email": coach_email},
+        "training_plan": training_plan,
+    }
 
 
 def _load_profile_sources(aptem_id, learner_email):
@@ -945,7 +1011,7 @@ def _load_profile_sources(aptem_id, learner_email):
             '''
             select id, document_name, status, date, learner_signed_date,
                    fully_signed_date, requested_date, program_name,
-                   program_start_date, planned_end_date, file
+                   program_start_date, planned_end_date, azure_path
             from fetching_evidence.aptem_cv_contracts_probe
             where learner_id = %s
             order by date desc nulls last, id desc
@@ -964,7 +1030,7 @@ def _load_profile_sources(aptem_id, learner_email):
                 "programme": row[7],
                 "programme_start_date": row[8],
                 "planned_end_date": row[9],
-                "file": row[10],
+                "file": f"/audit_api/contracts/{row[0]}/open" if row[10] else None,
             })
 
         cursor.execute(
@@ -1701,10 +1767,29 @@ def _validate_overlay_activity(raw, *, aptem_id, learner_name, activity_id):
 
 
 def _overlay_learner(aptem_id):
-    for learner in _load_rows():
-        if int(learner["aptem_id"]) == aptem_id:
-            return learner
-    return None
+    """Resolve a writable audit learner without the legacy PCP-only filter.
+
+    The journal reads the expanded live multi-programme cohort, while
+    ``_load_rows`` intentionally remains restricted to the original Project
+    Controls report.  Overlay writes therefore validate directly against the
+    shared ``Audit.learner_match`` source by Aptem ID.  This keeps the legacy
+    report endpoints unchanged while allowing create/date-replace/delete for
+    every learner that the expanded audit workspace can surface.
+    """
+    with connections[CONN].cursor() as cur:
+        cur.execute(
+            '''
+            select learner_name
+            from "Audit".learner_match
+            where aptem_id = %s
+            limit 1
+            ''',
+            [aptem_id],
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {"aptem_id": aptem_id, "name": row[0] or f"Learner {aptem_id}"}
 
 
 @csrf_exempt

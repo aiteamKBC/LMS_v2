@@ -4,8 +4,76 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _signoff_row
-from .learner_match_ledger_views import _validate_overlay_activity
+from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _parse_contract_azure_path, _signoff_row
+from .learner_match_ledger_views import _training_plan_from_audit, _validate_overlay_activity
+
+
+class ContractAzurePathTests(SimpleTestCase):
+    def test_parses_audited_contract_blob_path(self):
+        container, blob_name = _parse_contract_azure_path(
+            "az://kbcdocs/contracts/aptem_cv_contracts_probe/21148/agreement.docx"
+        )
+
+        self.assertEqual(container, "contracts")
+        self.assertEqual(blob_name, "aptem_cv_contracts_probe/21148/agreement.docx")
+
+    def test_rejects_non_contract_or_external_paths(self):
+        invalid_paths = [
+            "https://kentbusinesscollege.aptem.co.uk/document/1",
+            "az://kbcdocs/evidence/aptem_cv_contracts_probe/21148/agreement.pdf",
+            "az://kbcdocs/contracts/other_source/21148/agreement.pdf",
+            "az://kbcdocs/contracts/aptem_cv_contracts_probe/../secret.pdf",
+        ]
+
+        for value in invalid_paths:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                _parse_contract_azure_path(value)
+
+
+class AuditTrainingPlanTests(SimpleTestCase):
+    def test_normalises_the_deployed_training_plan_shape(self):
+        plan = _training_plan_from_audit([{
+            "month": "May 2025",
+            "date": "2025-05-01",
+            "modules": [
+                {"module": "LMS-Activity", "components": {"type": "Online training – external", "status": "Completed"}},
+                {"module": "Review", "components": {"type": "Review", "status": "Not started"}},
+            ],
+        }])
+
+        self.assertEqual(plan["total_modules"], 2)
+        self.assertEqual(plan["completed_modules"], 1)
+        self.assertEqual(plan["months"][0]["modules"][0]["name"], "LMS-Activity")
+
+    def test_training_plan_preserves_the_complete_source_payload(self):
+        source = [{
+            "month": "September 2026",
+            "date": "2026-09-01",
+            "aptem_month_id": "month-9",
+            "modules": [{
+                "module": "Governance",
+                "due_date": "2026-09-18",
+                "components": {
+                    "type": "Digital learning",
+                    "status": "In progress",
+                    "planned_hours": 4.5,
+                },
+            }],
+        }]
+
+        plan = _training_plan_from_audit(source)
+
+        self.assertEqual(plan["raw"], source)
+        self.assertEqual(plan["months"][0]["raw"], source[0])
+        self.assertEqual(
+            plan["months"][0]["modules"][0]["components"]["planned_hours"],
+            4.5,
+        )
+        self.assertEqual(
+            plan["months"][0]["modules"][0]["raw"]["due_date"],
+            "2026-09-18",
+        )
+        self.assertEqual(plan["months"][0]["modules"][0]["name"], "Governance")
 
 
 class AptemLmsAuditPayloadTests(SimpleTestCase):
@@ -301,9 +369,9 @@ class LearnerMatchProfileTests(SimpleTestCase):
         }
 
     @patch("audit_api.learner_match_ledger_views._load_profile_sources")
-    @patch("audit_api.learner_match_ledger_views._load_rows")
-    def test_profile_is_selected_by_request_learner(self, load_rows, load_sources):
-        load_rows.return_value = [self.learner]
+    @patch("audit_api.learner_match_ledger_views._load_profile_learner")
+    def test_profile_is_selected_by_request_learner(self, load_learner, load_sources):
+        load_learner.return_value = self.learner
         load_sources.return_value = {
             "contracts": [{"id": "10", "document_name": "Training Plan", "status": "Verified"}],
             "skills_radar": [{"skill": "Communication", "knowledge": 2, "skill_score": 3, "behaviour": 2, "maximum": 8}],
@@ -365,8 +433,8 @@ class LearnerMatchProfileTests(SimpleTestCase):
         self.assertEqual(payload["training_plan"]["total_modules"], 2)
         self.assertEqual(payload["training_plan"]["completed_modules"], 1)
 
-    @patch("audit_api.learner_match_ledger_views._load_rows", return_value=[])
-    def test_unknown_learner_returns_404(self, _load_rows):
+    @patch("audit_api.learner_match_ledger_views._load_profile_learner", return_value=None)
+    def test_unknown_learner_returns_404(self, _load_learner):
         response = self.client.get(
             "/audit_api/match-ledger/learner-profile",
             {"learner": "missing learner"},

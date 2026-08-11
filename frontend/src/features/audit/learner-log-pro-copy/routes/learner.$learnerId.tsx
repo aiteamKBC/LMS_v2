@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { ArrowLeft, Award, BriefcaseBusiness, CalendarClock, ExternalLink, Eye, FileCheck2, Mail, UserRound, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, LoaderCircle, Mail, UserRound, X } from "lucide-react";
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -10,7 +10,6 @@ import {
   RadarChart,
   ResponsiveContainer,
   Tooltip,
-  Legend,
 } from "recharts";
 import {
   Table,
@@ -20,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/features/audit/learner-log-pro-copy/components/ui/table";
-import { getLearnerProfile } from "@/features/audit/learner-log-pro-copy/lib/api";
+import { getLearnerProfile, type LearnerProfile } from "@/features/audit/learner-log-pro-copy/lib/api";
 
 export const Route = createFileRoute("/learner/$learnerId")({
   component: LearnerProfilePage,
@@ -49,13 +48,147 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   return <p className="px-7 py-10 text-center text-sm text-muted-foreground">{children}</p>;
 }
 
+type SkillDimension = "knowledge" | "skill_score" | "behaviour";
+
+type SkillRadarEntry = {
+  skill: string;
+  knowledge: number | null;
+  skill_score: number | null;
+  behaviour: number | null;
+  maximum: 8;
+};
+
+type SkillChartPoint = {
+  code: string;
+  description: string;
+  score: number;
+};
+
+const SKILL_DIMENSIONS: Array<{
+  key: SkillDimension;
+  label: string;
+  prefix: string;
+  colour: string;
+  softColour: string;
+}> = [
+  { key: "knowledge", label: "Knowledge", prefix: "K", colour: "#31505d", softColour: "#e8eef0" },
+  { key: "skill_score", label: "Skills", prefix: "S", colour: "#16856b", softColour: "#e5f3ef" },
+  { key: "behaviour", label: "Behaviours", prefix: "B", colour: "#c47a16", softColour: "#fbf0df" },
+];
+
+function skillCode(value: string, prefix: string, index: number) {
+  return value.match(/(?:^|\s)([KSB]\d+)\s*[:.\-]/i)?.[1]?.toUpperCase() ?? `${prefix}${index + 1}`;
+}
+
+function skillDescription(value: string) {
+  return value.replace(/^\s*[KSB]\d+\s*[:.\-]\s*/i, "").trim() || value;
+}
+
+function skillChartPoints(entries: SkillRadarEntry[], dimension: SkillDimension, prefix: string) {
+  return entries.flatMap((entry, index) => {
+    const score = entry[dimension];
+    if (score == null) return [];
+    return [{
+      code: skillCode(entry.skill, prefix, index),
+      description: skillDescription(entry.skill),
+      score,
+    }];
+  });
+}
+
+function SkillRadarTooltip({ active, payload }: {
+  active?: boolean;
+  payload?: Array<{ payload?: SkillChartPoint }>;
+}) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+  return (
+    <div className="max-w-xs rounded-md border border-border bg-card px-3 py-2 shadow-lg">
+      <p className="text-xs font-bold text-foreground">{point.code} · {point.score.toFixed(0)} / 8</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">{point.description}</p>
+    </div>
+  );
+}
+
+function downloadFilename(disposition: string | null, fallback: string) {
+  const encoded = disposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      // Fall through to the ordinary filename or document title.
+    }
+  }
+  return disposition?.match(/filename="([^"]+)"/i)?.[1] ?? fallback;
+}
+
 function LearnerProfilePage() {
   const { learnerId } = Route.useParams();
   const [showFirstEvidence, setShowFirstEvidence] = useState(false);
+  const [skillDimension, setSkillDimension] = useState<SkillDimension>("knowledge");
+  const [previewContract, setPreviewContract] = useState<LearnerProfile["contracts"][number] | null>(null);
+  const [contractPreviewUrl, setContractPreviewUrl] = useState<string | null>(null);
+  const [contractPreviewError, setContractPreviewError] = useState<string | null>(null);
+  const [downloadingContractId, setDownloadingContractId] = useState<string | null>(null);
   const profile = useQuery({
     queryKey: ["learner-profile", learnerId],
     queryFn: () => getLearnerProfile(learnerId),
   });
+
+  useEffect(() => {
+    const source = previewContract?.file;
+    if (!source) {
+      setContractPreviewUrl(null);
+      setContractPreviewError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    setContractPreviewUrl(null);
+    setContractPreviewError(null);
+
+    fetch(source, { credentials: "same-origin", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("The document preview could not be loaded.");
+        return response.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        setContractPreviewUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setContractPreviewError(error instanceof Error ? error.message : "The document preview could not be loaded.");
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [previewContract?.file]);
+
+  async function downloadContract(contract: LearnerProfile["contracts"][number]) {
+    if (!contract.file || downloadingContractId) return;
+    setDownloadingContractId(contract.id);
+    try {
+      const separator = contract.file.includes("?") ? "&" : "?";
+      const response = await fetch(`${contract.file}${separator}download=1`, { credentials: "same-origin" });
+      if (!response.ok) throw new Error("The document could not be downloaded.");
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = downloadFilename(response.headers.get("Content-Disposition"), contract.document_name);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } finally {
+      setDownloadingContractId(null);
+    }
+  }
 
   if (profile.isLoading) {
     return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">Loading learner profile…</div>;
@@ -77,6 +210,16 @@ function LearnerProfilePage() {
   const employment = learner.employment;
   const planPercent = learner.training_plan.total_modules
     ? Math.round((learner.training_plan.completed_modules / learner.training_plan.total_modules) * 100)
+    : 0;
+  const skillGroups = SKILL_DIMENSIONS.map((dimension) => ({
+    ...dimension,
+    points: skillChartPoints(learner.skills_radar, dimension.key, dimension.prefix),
+  }));
+  const activeSkillGroup = skillGroups.find((group) => group.key === skillDimension && group.points.length)
+    ?? skillGroups.find((group) => group.points.length)
+    ?? skillGroups[0];
+  const activeSkillAverage = activeSkillGroup.points.length
+    ? activeSkillGroup.points.reduce((total, point) => total + point.score, 0) / activeSkillGroup.points.length
     : 0;
 
   return (
@@ -204,22 +347,89 @@ function LearnerProfilePage() {
           <div className="rounded-lg border border-border bg-card shadow-panel">
             <header className="border-b border-border px-7 py-5">
               <h2 className="font-serif text-lg text-foreground">Skills radar</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Assessed competency scores, shown out of 8.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Assessed competency scores out of 8. Select a group to explore its competencies.</p>
             </header>
             {learner.skills_radar.length ? (
-              <div className="h-[34rem] px-3 py-5">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart data={learner.skills_radar} outerRadius="67%">
-                    <PolarGrid stroke="#d9d6cd" />
-                    <PolarAngleAxis dataKey="skill" tick={{ fill: "#334155", fontSize: 10 }} />
-                    <PolarRadiusAxis angle={90} domain={[0, 8]} tickCount={9} tick={{ fill: "#64748b", fontSize: 10 }} />
-                    <Tooltip formatter={(value, name) => [`${Number(value).toFixed(0)} / 8`, name]} />
-                    <Legend />
-                    <Radar name="Knowledge" dataKey="knowledge" stroke="#31505d" fill="#31505d" fillOpacity={0.16} strokeWidth={2} />
-                    <Radar name="Skills" dataKey="skill_score" stroke="#16856b" fill="#16856b" fillOpacity={0.12} strokeWidth={2} />
-                    <Radar name="Behaviours" dataKey="behaviour" stroke="#c47a16" fill="#c47a16" fillOpacity={0.1} strokeWidth={2} />
-                  </RadarChart>
-                </ResponsiveContainer>
+              <div className="p-5">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {skillGroups.map((group) => {
+                    const average = group.points.length
+                      ? group.points.reduce((total, point) => total + point.score, 0) / group.points.length
+                      : null;
+                    const selected = activeSkillGroup.key === group.key;
+                    return (
+                      <button
+                        key={group.key}
+                        type="button"
+                        disabled={!group.points.length}
+                        onClick={() => setSkillDimension(group.key)}
+                        className={`rounded-md border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${selected ? "border-foreground/20 shadow-sm" : "border-border bg-background hover:bg-secondary"}`}
+                        style={selected ? { backgroundColor: group.softColour } : undefined}
+                      >
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: group.colour }} />
+                            {group.label}
+                          </span>
+                          <span className="font-mono text-sm font-bold" style={{ color: group.colour }}>
+                            {average == null ? "—" : average.toFixed(1)}
+                          </span>
+                        </span>
+                        <span className="mt-1.5 block text-xs text-muted-foreground">{group.points.length} assessed competenc{group.points.length === 1 ? "y" : "ies"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-5 grid gap-5 2xl:grid-cols-[minmax(0,1.15fr)_minmax(19rem,0.85fr)]">
+                  <div className="rounded-md border border-border bg-background p-3">
+                    <div className="flex items-center justify-between gap-3 px-2 pt-1">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{activeSkillGroup.label} profile</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">Hover an axis to see the full competency.</p>
+                      </div>
+                      <span className="rounded-full px-3 py-1 font-mono text-xs font-bold" style={{ color: activeSkillGroup.colour, backgroundColor: activeSkillGroup.softColour }}>
+                        Average {activeSkillAverage.toFixed(1)} / 8
+                      </span>
+                    </div>
+                    <div className="h-[29rem] min-h-[24rem] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <RadarChart data={activeSkillGroup.points} outerRadius="72%" margin={{ top: 24, right: 30, bottom: 24, left: 30 }}>
+                          <PolarGrid stroke="#d9d6cd" />
+                          <PolarAngleAxis dataKey="code" tick={{ fill: "#334155", fontSize: 11, fontWeight: 700 }} />
+                          <PolarRadiusAxis angle={90} domain={[0, 8]} tickCount={5} tick={{ fill: "#64748b", fontSize: 10 }} />
+                          <Tooltip content={<SkillRadarTooltip />} />
+                          <Radar name={activeSkillGroup.label} dataKey="score" stroke={activeSkillGroup.colour} fill={activeSkillGroup.colour} fillOpacity={0.18} strokeWidth={2.5} />
+                        </RadarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded-md border border-border bg-background">
+                    <div className="border-b border-border px-4 py-3">
+                      <p className="text-sm font-semibold text-foreground">Competency scores</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">Full descriptions for the selected group.</p>
+                    </div>
+                    <div className="max-h-[32.5rem] divide-y divide-border overflow-y-auto">
+                      {activeSkillGroup.points.map((point, index) => (
+                        <article key={`${point.code}-${index}`} className="px-4 py-3">
+                          <div className="flex items-start gap-3">
+                            <span className="mt-0.5 min-w-10 rounded px-2 py-1 text-center font-mono text-xs font-bold" style={{ color: activeSkillGroup.colour, backgroundColor: activeSkillGroup.softColour }}>{point.code}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-xs leading-5 text-foreground">{point.description}</p>
+                                <span className="shrink-0 font-mono text-sm font-bold" style={{ color: activeSkillGroup.colour }}>{point.score.toFixed(0)}<span className="text-xs font-normal text-muted-foreground">/8</span></span>
+                              </div>
+                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                                <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, point.score / 8 * 100))}%`, backgroundColor: activeSkillGroup.colour }} />
+                              </div>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : <EmptyState>No assessed skills radar scores are available for this learner.</EmptyState>}
           </div>
@@ -256,7 +466,7 @@ function LearnerProfilePage() {
                   <TableHead className="label-caps">Document date</TableHead>
                   <TableHead className="label-caps">Learner signed</TableHead>
                   <TableHead className="label-caps">Fully signed</TableHead>
-                  <TableHead className="label-caps pr-7">File</TableHead>
+                  <TableHead className="label-caps pr-7">Actions</TableHead>
                 </TableRow></TableHeader>
                 <TableBody>{learner.contracts.map((contract) => (
                   <TableRow key={contract.id}>
@@ -265,7 +475,30 @@ function LearnerProfilePage() {
                     <TableCell className="font-mono text-xs text-muted-foreground">{dateOnly(contract.date)}</TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">{dateOnly(contract.learner_signed_date)}</TableCell>
                     <TableCell className="font-mono text-xs text-muted-foreground">{dateOnly(contract.fully_signed_date)}</TableCell>
-                    <TableCell className="pr-7 text-xs">{contract.file && /^https?:\/\//i.test(contract.file) ? <a href={contract.file} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold hover:underline">Open <ExternalLink className="h-3.5 w-3.5" /></a> : "—"}</TableCell>
+                    <TableCell className="pr-7 text-xs">
+                      {contract.file ? (
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPreviewContract(contract)}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 font-semibold text-foreground hover:bg-secondary"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> Preview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void downloadContract(contract)}
+                            disabled={downloadingContractId !== null}
+                            className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 font-semibold text-background hover:opacity-90"
+                          >
+                            {downloadingContractId === contract.id
+                              ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                              : <Download className="h-3.5 w-3.5" />}
+                            Download
+                          </button>
+                        </div>
+                      ) : "—"}
+                    </TableCell>
                   </TableRow>
                 ))}</TableBody>
               </Table>
@@ -312,7 +545,24 @@ function LearnerProfilePage() {
                     <Table>
                       <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="label-caps">Module</TableHead><TableHead className="label-caps">Type</TableHead><TableHead className="label-caps text-right">Status</TableHead></TableRow></TableHeader>
                       <TableBody>{month.modules.map((module, moduleIndex) => (
-                        <TableRow key={`${module.name}-${moduleIndex}`}><TableCell className="text-sm font-medium">{module.name}</TableCell><TableCell className="text-xs text-muted-foreground">{module.type || "—"}</TableCell><TableCell className="text-right"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(module.status)}`}>{module.status}</span></TableCell></TableRow>
+                        <TableRow key={`${module.name}-${moduleIndex}`}>
+                          <TableCell className="text-sm font-medium">
+                            <p>{module.name}</p>
+                            <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs font-normal text-muted-foreground sm:grid-cols-2">
+                              {Object.entries({
+                                ...Object.fromEntries(Object.entries(module.raw ?? {}).filter(([key]) => !["module", "components"].includes(key))),
+                                ...Object.fromEntries(Object.entries(module.components ?? {}).filter(([key]) => !["type", "status"].includes(key))),
+                              }).filter(([, value]) => value != null && value !== "").map(([key, value]) => (
+                                <div key={key} className="flex gap-1.5">
+                                  <dt className="font-semibold text-foreground/70">{key.replace(/_/g, " ")}:</dt>
+                                  <dd className="break-all">{typeof value === "object" ? JSON.stringify(value) : String(value)}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{module.type || "—"}</TableCell>
+                          <TableCell className="text-right"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(module.status)}`}>{module.status}</span></TableCell>
+                        </TableRow>
                       ))}</TableBody>
                     </Table>
                   </div>
@@ -322,6 +572,70 @@ function LearnerProfilePage() {
           ) : <EmptyState>No training plan content is available for this learner.</EmptyState>}
         </section>
       </main>
+
+      {previewContract?.file && (
+        <div
+          className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPreviewContract(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="contract-preview-title"
+            className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
+          >
+            <header className="flex items-center justify-between gap-4 border-b border-border bg-card px-5 py-4">
+              <div className="min-w-0">
+                <p className="label-caps">Document preview</p>
+                <h2 id="contract-preview-title" className="mt-1 truncate font-serif text-lg text-foreground">{previewContract.document_name}</h2>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void downloadContract(previewContract)}
+                  disabled={downloadingContractId !== null}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90"
+                >
+                  {downloadingContractId === previewContract.id
+                    ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                    : <Download className="h-4 w-4" />}
+                  Download
+                </button>
+                <button
+                  type="button"
+                  aria-label="Close document preview"
+                  onClick={() => setPreviewContract(null)}
+                  className="rounded-md border border-border p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </header>
+            <div className="relative min-h-0 flex-1 bg-slate-800 p-2">
+              {!contractPreviewUrl && !contractPreviewError && (
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white">
+                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading preview…
+                </div>
+              )}
+              {contractPreviewError && (
+                <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm font-semibold text-white">
+                  {contractPreviewError}
+                </div>
+              )}
+              {contractPreviewUrl && (
+                <iframe
+                  src={contractPreviewUrl}
+                  title={`${previewContract.document_name} preview`}
+                  className="h-full w-full rounded bg-white"
+                />
+              )}
+            </div>
+          </section>
+        </div>
+      )}
 
       {showFirstEvidence && (
         <div

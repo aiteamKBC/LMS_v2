@@ -1,4 +1,36 @@
-# Auditor-copy OTJH workspace — data source
+# Auditor-copy OTJH workspace — Last_audit migration
+
+> Current read source (2026-08-11): the LMS-local
+> `/audit_api/last-audit/` endpoints backed by the normalized PostgreSQL
+> `"Last_audit"` schema. Learner Search keeps its existing table/filter order.
+> Activity rows are read-only during this first migration phase, and planned /
+> actual hours remain unavailable until `mapped_seconds` is populated.
+
+The endpoint flow is:
+
+```text
+Last_audit.learners (580 Aptem identities; optional learner_id = LMS id)
+    LEFT JOIN group_learners + groups + LMS activity_results
+    -> GET /audit_api/last-audit/cohort/
+
+Last_audit.activity_results + activities
+Last_audit.learner_attendance (linked from AiTeamKBC.kbc_attendance by Aptem ID)
+    -> GET /audit_api/last-audit/activities/?aptem_id=<id>
+    -> GET /audit_api/last-audit/activity/?component_id=la:<group>:<activity>
+    -> GET /audit_api/last-audit/activity/?component_id=att:<source_key>
+```
+
+Attendance rows use the source `lecture_name` as the Activity/Lecture name,
+with `module` retained as supporting context and `date` as the real attendance
+date. Refresh the mirror with `python manage.py sync_last_audit_attendance`.
+
+The cohort is Aptem-first and reads only `Last_audit.learners`: all Aptem rows
+remain visible. LMS activities attach through the optional, unique
+`learner_id`; an Aptem learner without it receives `lms_not_matched` and never
+inherits another learner's LMS activity rows.
+
+The notes below describe the preceding OTJH feed and are retained as migration
+context for write/annotation features that have not moved yet.
 
 This workspace (`/workspace/auditor-copy`) shows PLANNED vs ACTUAL off-the-job
 hours for the 6 **Level 6 Project Controls Professional** apprentices and lets an
