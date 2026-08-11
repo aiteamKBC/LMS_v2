@@ -1284,7 +1284,11 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Learner not found."}, status=404)
 
     try:
-        sources = _load_profile_sources(learner["aptem_id"], learner.get("email"))
+        sources = _load_profile_sources(
+            learner["aptem_id"],
+            learner.get("email"),
+            learner.get("name"),
+        )
     except DatabaseError as error:
         return JsonResponse(
             {"error": "Could not load the learner profile sources.", "details": str(error)},
@@ -1361,7 +1365,7 @@ def _load_profile_learner(learner_key):
     }
 
 
-def _load_profile_sources(aptem_id, learner_email):
+def _load_profile_sources(aptem_id, learner_email, learner_name=None):
     """Read the profile's external sources without retaining user selection.
 
     Every query is keyed by this request's learner id/email. The returned data
@@ -1549,7 +1553,9 @@ def _load_profile_sources(aptem_id, learner_email):
             if employment is None:
                 employment = _first_employment_details(employment_value)
 
-        if learner_email:
+        if learner_email or learner_name:
+            learner_email = str(learner_email or "").strip()
+            learner_name = str(learner_name or "").strip()
             cursor.execute(
                 '''
                 select learn_ref_number, planned_hours, otj_actual_hours,
@@ -1566,11 +1572,22 @@ def _load_profile_sources(aptem_id, learner_email):
                        nullif(btrim(postcode), '') as learner_postcode,
                        nullif(btrim(delivery_location_postcode), '') as employer_postcode
                 from "Audit".ilr_learning_deliveries
-                where lower(email) = lower(%s) and planned_hours is not null
-                order by aim_seq_number, updated_at desc nulls last, id desc
+                where planned_hours is not null
+                  and (
+                    (%s <> '' and lower(btrim(email)) = lower(%s))
+                    or
+                    (%s <> '' and lower(btrim(concat_ws(' ', given_names, family_name))) = lower(%s))
+                  )
+                order by
+                    case when %s <> '' and lower(btrim(email)) = lower(%s) then 0 else 1 end,
+                    aim_seq_number, updated_at desc nulls last, id desc
                 limit 1
                 ''',
-                [learner_email],
+                [
+                    learner_email, learner_email,
+                    learner_name, learner_name,
+                    learner_email, learner_email,
+                ],
             )
             delivery = cursor.fetchone()
             if delivery:
