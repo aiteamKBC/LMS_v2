@@ -16,7 +16,11 @@
 // LMS backend. Writes remain on the legacy service until the Last_audit write
 // workflow is introduced explicitly; read rows are marked read-only below so a
 // user cannot accidentally edit the old Audit source while viewing new data.
-const READ_BASE = "/audit_api/last-audit";
+// Reads now come from the fetch-evidence backend (the deployed OTJH/Last_audit
+// API), not the local /audit_api. Same endpoint contract (cohort / activities /
+// activity / attendance-sheet / quiz-attempt), now enriched with per-activity
+// planned + actual hours, reporting method and timestamps.
+const READ_BASE = "https://fetch-evidence.kentbusinesscollege.net/api/last-audit-ledger";
 const LEGACY_WRITE_BASE = "https://fetch-evidence.kentbusinesscollege.net/api/otjh";
 const LAST_AUDIT_UNDATED_PERIOD = "undated";
 // Django endpoint that still backs the auditor-entered activity annotations.
