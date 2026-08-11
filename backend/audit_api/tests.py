@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
 
+from .contract_documents import _safe_upload_filename
 from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _parse_contract_azure_path, _signoff_row
 from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _fetch_profile_source_row, _training_plan_from_audit, _validate_overlay_activity
 
@@ -28,6 +29,30 @@ class ContractAzurePathTests(SimpleTestCase):
         for value in invalid_paths:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 _parse_contract_azure_path(value)
+
+
+class ContractDocumentManagementTests(SimpleTestCase):
+    def test_upload_filename_removes_paths_and_unsafe_characters(self):
+        self.assertEqual(
+            _safe_upload_filename(r"..\unsafe folder\Learner<>Agreement.pdf"),
+            "Learner_Agreement.pdf",
+        )
+
+    def test_upload_requires_a_file(self):
+        response = self.client.post("/audit_api/contracts/upload", {"learner_id": "4609"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "A document file is required.")
+
+    def test_archive_requires_boolean_state(self):
+        response = self.client.patch(
+            "/audit_api/contracts/4018/archive",
+            data=json.dumps({"archived": "yes"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "archived must be true or false.")
 
 
 class AuditTrainingPlanTests(SimpleTestCase):

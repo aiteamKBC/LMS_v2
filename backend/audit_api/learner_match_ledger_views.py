@@ -52,6 +52,8 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
+from .contract_documents import ensure_contract_archive_table
+
 try:
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 except ImportError:  # pragma: no cover - exercised only when optional Azure SDK is absent.
@@ -1384,14 +1386,21 @@ def _load_profile_sources(aptem_id, learner_email):
     }
 
     with connections[CONN].cursor() as cursor:
+        ensure_contract_archive_table(cursor)
         cursor.execute(
             '''
-            select id, document_name, status, date, learner_signed_date,
-                   fully_signed_date, requested_date, program_name,
-                   program_start_date, planned_end_date, file, azure_path
-            from fetching_evidence.aptem_cv_contracts_probe
-            where learner_id = %s
-            order by date desc nulls last, id desc
+            select contracts.id, contracts.document_name, contracts.status, contracts.date,
+                   contracts.learner_signed_date, contracts.fully_signed_date,
+                   contracts.requested_date, contracts.program_name,
+                   contracts.program_start_date, contracts.planned_end_date,
+                   contracts.file, contracts.azure_path,
+                   archive.archived_at, archive.archived_by
+            from fetching_evidence.aptem_cv_contracts_probe contracts
+            left join "Audit".contract_document_archive archive
+              on archive.contract_id = contracts.id
+            where contracts.learner_id = %s
+              and archive.deleted_at is null
+            order by contracts.date desc nulls last, contracts.id desc
             ''',
             [aptem_id],
         )
@@ -1421,13 +1430,16 @@ def _load_profile_sources(aptem_id, learner_email):
                 "file": f"/audit_api/contracts/{row[0]}/open" if row[11] else row[10],
                 "download_file": row[10],
                 "azure_path_available": bool(row[11]),
+                "archived": bool(row[12]),
+                "archived_at": row[12],
+                "archived_by": row[13],
             })
 
         cursor.execute(
             '''
             select program_status, "Break in learning"
             from fetching_evidence.aptem_cv_contracts_probe
-            where learner_id = %s
+            where learner_id = %s and source <> 'audit_upload'
             order by fetched_at desc nulls last, id desc
             limit 1
             ''',
@@ -1540,7 +1552,18 @@ def _load_profile_sources(aptem_id, learner_email):
             cursor.execute(
                 '''
                 select learn_ref_number, planned_hours, otj_actual_hours,
-                       learn_start_date, learn_plan_end_date, completion_status
+                       learn_start_date, learn_plan_end_date, completion_status,
+                       nullif(
+                           concat_ws(', ',
+                               nullif(btrim(address_line_1), ''),
+                               nullif(btrim(address_line_2), ''),
+                               nullif(btrim(address_line_3), ''),
+                               nullif(btrim(address_line_4), '')
+                           ),
+                           ''
+                       ) as learner_address,
+                       nullif(btrim(postcode), '') as learner_postcode,
+                       nullif(btrim(delivery_location_postcode), '') as employer_postcode
                 from "Audit".ilr_learning_deliveries
                 where lower(email) = lower(%s) and planned_hours is not null
                 order by aim_seq_number, updated_at desc nulls last, id desc
@@ -1557,6 +1580,9 @@ def _load_profile_sources(aptem_id, learner_email):
                     "start_date": delivery[3],
                     "planned_end_date": delivery[4],
                     "completion_status": delivery[5],
+                    "learner_address": delivery[6],
+                    "learner_postcode": delivery[7],
+                    "employer_postcode": delivery[8],
                     "first_evidence_date": None,
                     "first_evidence_items": [],
                 }
