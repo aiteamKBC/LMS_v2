@@ -2,10 +2,10 @@ import datetime
 import json
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _parse_contract_azure_path, _signoff_row
-from .learner_match_ledger_views import _training_plan_from_audit, _validate_overlay_activity
+from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _fetch_profile_source_row, _training_plan_from_audit, _validate_overlay_activity
 
 
 class ContractAzurePathTests(SimpleTestCase):
@@ -74,8 +74,6 @@ class AuditTrainingPlanTests(SimpleTestCase):
             "2026-09-18",
         )
         self.assertEqual(plan["months"][0]["modules"][0]["name"], "Governance")
-
-
 class AptemLmsAuditPayloadTests(SimpleTestCase):
     def setUp(self):
         super().setUp()
@@ -433,14 +431,145 @@ class LearnerMatchProfileTests(SimpleTestCase):
         self.assertEqual(payload["training_plan"]["total_modules"], 2)
         self.assertEqual(payload["training_plan"]["completed_modules"], 1)
 
+    @patch("audit_api.learner_match_ledger_views._load_profile_sources")
+    @patch("audit_api.learner_match_ledger_views._fetch_profile_row")
     @patch("audit_api.learner_match_ledger_views._load_profile_learner", return_value=None)
-    def test_unknown_learner_returns_404(self, _load_learner):
+    def test_profile_falls_back_to_all_programme_match_row(self, _load_learner, fetch_profile_row, load_sources):
+        learner = {**self.learner, "aptem_id": 5678, "name": "Other Learner", "programme_name": "Other Programme"}
+        fetch_profile_row.return_value = learner
+        load_sources.return_value = {
+            "contracts": [],
+            "skills_radar": [],
+            "certifications": [],
+            "employment": None,
+            "programme_understanding": {
+                "understanding_programme": None,
+                "career_development_progression": None,
+            },
+            "programme_status": "Active",
+            "break_in_learning": {
+                "has_break_in_learning": False,
+                "last_learning_date": None,
+                "expected_return_date": None,
+                "has_return_to_learning": False,
+                "return_to_learning_date": None,
+                "revised_learning_planned_end_date": None,
+            },
+            "learning_delivery": {"planned_hours": 400},
+        }
+
+        response = self.client.get(
+            "/audit_api/match-ledger/learner-profile",
+            {"learner": "5678"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["name"], "Other Learner")
+        self.assertEqual(payload["aptem_id"], "5678")
+        self.assertEqual(payload["programme"], "Other Programme")
+        self.assertEqual(payload["planned_hours"], 400)
+        fetch_profile_row.assert_called_once_with("5678")
+
+    @patch("audit_api.learner_match_ledger_views._fetch_profile_row", return_value=None)
+    @patch("audit_api.learner_match_ledger_views._load_profile_learner", return_value=None)
+    def test_unknown_learner_returns_404(self, _load_learner, _fetch_profile_row):
         response = self.client.get(
             "/audit_api/match-ledger/learner-profile",
             {"learner": "missing learner"},
         )
 
         self.assertEqual(response.status_code, 404)
+
+
+class ContractPreviewUrlTests(SimpleTestCase):
+    @override_settings(AZURE_STORAGE_ACCOUNT="kbcdocs", AZURE_STORAGE_KEY="test-key")
+    @patch("audit_api.learner_match_ledger_views.generate_blob_sas", return_value="sig")
+    def test_contract_preview_url_uses_azure_path_with_inline_disposition(self, generate_sas):
+        url = _contract_preview_url(
+            "az://kbcdocs/contracts/learners/Training%20Plan.pdf",
+            "Training Plan.pdf",
+        )
+
+        self.assertEqual(
+            url,
+            "https://kbcdocs.blob.core.windows.net/contracts/learners/Training%20Plan.pdf?sig",
+        )
+        self.assertEqual(generate_sas.call_args.kwargs["container_name"], "contracts")
+        self.assertEqual(generate_sas.call_args.kwargs["blob_name"], "learners/Training Plan.pdf")
+        self.assertEqual(generate_sas.call_args.kwargs["content_type"], "application/pdf")
+        self.assertEqual(
+            generate_sas.call_args.kwargs["content_disposition"],
+            'inline; filename="Training Plan.pdf"',
+        )
+
+    def test_contract_signature_dates_read_apprentice_date_from_document_text(self):
+        dates = _contract_signature_dates_from_text(
+            "Signatories: Apprentice: S. Molai Date: 14/03/2025 Employer: Example Ltd Date: 17/03/2025"
+        )
+
+        self.assertEqual(dates["learner_signed_date"], "2025-03-14")
+        self.assertEqual(dates["fully_signed_date"], "2025-03-17")
+
+    def test_contract_signature_dates_accept_iso_dates(self):
+        dates = _contract_signature_dates_from_text(
+            "Learner signature Date: 2026-06-01 Provider signature Date: 2026-06-03"
+        )
+
+        self.assertEqual(dates["learner_signed_date"], "2026-06-01")
+        self.assertEqual(dates["fully_signed_date"], "2026-06-03")
+
+    def test_contract_signature_dates_ignore_training_plan_schedule_dates(self):
+        dates = _contract_signature_dates_from_text(
+            "Planned review date 13/03/2028 Planned end date 13/09/2028 "
+            "Signatures & Declarations Apprentice Employer Training Provider "
+            "Name: Learner Name Name: Employer Name Name: Provider Name "
+            "Signature: signed Signature: signed Signature: signed "
+            "Date: 01/06/2026 Date: 01/06/2026 Date: 01/06/2026"
+        )
+
+        self.assertEqual(dates["learner_signed_date"], "2026-06-01")
+        self.assertEqual(dates["fully_signed_date"], "2026-06-01")
+
+
+class ProfileSourceFallbackTests(SimpleTestCase):
+    def test_fetch_profile_source_row_builds_profile_shell_from_contract_source(self):
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, *_args, **_kwargs):
+                return None
+
+            def fetchone(self):
+                return (
+                    4321,
+                    "New Learner",
+                    "new@example.com",
+                    "Level 4 Example Programme",
+                    "OnBreak",
+                    json.dumps({"has_break_in_learning": True}),
+                    "Coach Name",
+                    "coach@example.com",
+                )
+
+        class Connection:
+            def cursor(self):
+                return Cursor()
+
+        with patch("audit_api.learner_match_ledger_views.connections", {"enrolment": Connection()}):
+            row = _fetch_profile_source_row("4321")
+
+        self.assertEqual(row["aptem_id"], 4321)
+        self.assertEqual(row["name"], "New Learner")
+        self.assertEqual(row["programme_name"], "Level 4 Example Programme")
+        self.assertTrue(row["has_break_in_learning"])
+        self.assertEqual(row["coach"]["email"], "coach@example.com")
+        self.assertEqual(row["training_plan"], [])
+        self.assertEqual(row["activities"], [])
 
 
 class ActivityOverlayValidationTests(SimpleTestCase):
