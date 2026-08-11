@@ -29,6 +29,7 @@ def ensure_contract_archive_table(cursor):
             learner_id bigint not null,
             archived_at timestamptz,
             deleted_at timestamptz,
+            display_name text,
             archived_by text,
             updated_at timestamptz not null default now()
         )
@@ -38,6 +39,12 @@ def ensure_contract_archive_table(cursor):
         '''
         alter table "Audit".contract_document_archive
         add column if not exists deleted_at timestamptz
+        '''
+    )
+    cursor.execute(
+        '''
+        alter table "Audit".contract_document_archive
+        add column if not exists display_name text
         '''
     )
     cursor.execute(
@@ -262,4 +269,54 @@ def archive_contract(request, contract_id):
         "contract_id": str(contract_id),
         "archived": archived,
         "archived_at": archived_at.isoformat() if archived_at else None,
+    })
+
+
+@csrf_exempt
+def rename_contract(request, contract_id):
+    if request.method != "PATCH":
+        return _error("Method not allowed.", 405)
+    if not _has_audit_permission(request, write=True):
+        return _error("Authentication or audit permission is required.", 403)
+    try:
+        body = json.loads(request.body or b"{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return _error("Invalid JSON body.", 400)
+    display_name = re.sub(r"[\r\n]+", " ", str(body.get("document_name") or "")).strip()
+    if not display_name:
+        return _error("document_name is required.", 400)
+    if len(display_name) > 180:
+        return _error("document_name must be 180 characters or fewer.", 400)
+
+    try:
+        with connections[CONN].cursor() as cursor:
+            cursor.execute(
+                '''select learner_id from fetching_evidence.aptem_cv_contracts_probe where id = %s limit 1''',
+                [contract_id],
+            )
+            row = cursor.fetchone()
+            if not row:
+                return _error("Contract not found.", 404)
+            ensure_contract_archive_table(cursor)
+            cursor.execute(
+                '''
+                insert into "Audit".contract_document_archive (
+                    contract_id, learner_id, display_name, updated_at
+                ) values (%s, %s, %s, now())
+                on conflict (contract_id) do update set
+                    learner_id = excluded.learner_id,
+                    display_name = excluded.display_name,
+                    updated_at = now()
+                returning display_name
+                ''',
+                [contract_id, row[0], display_name],
+            )
+            saved_name = cursor.fetchone()[0]
+    except (KeyError, DatabaseError):
+        return _error("Could not rename the contract.", 503)
+
+    return JsonResponse({
+        "ok": True,
+        "contract_id": str(contract_id),
+        "document_name": saved_name,
     })

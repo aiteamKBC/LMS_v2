@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, LoaderCircle, Mail, Trash2, Upload, UserRound, X } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, LoaderCircle, Mail, Pencil, Save, Trash2, Upload, UserRound, X } from "lucide-react";
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/features/audit/learner-log-pro-copy/components/ui/table";
-import { deleteArchivedContract, getLearnerProfile, setContractArchived, uploadContract, type LearnerProfile } from "@/features/audit/learner-log-pro-copy/lib/api";
+import { deleteArchivedContract, deleteArchivedEvidence, getLearnerProfile, renameContract, setContractArchived, setEvidenceArchived, updateEvidenceDate, uploadContract, uploadEvidence, type LearnerProfile } from "@/features/audit/learner-log-pro-copy/lib/api";
 
 export const Route = createFileRoute("/learner/$learnerId")({
   component: LearnerProfilePage,
@@ -122,10 +122,25 @@ function downloadFilename(disposition: string | null, fallback: string) {
   return disposition?.match(/filename="([^"]+)"/i)?.[1] ?? fallback;
 }
 
+type EvidenceItem = NonNullable<LearnerProfile["learning_delivery"]["first_evidence_items"]>[number];
+
 function LearnerProfilePage() {
   const { learnerId } = Route.useParams();
   const queryClient = useQueryClient();
   const [showFirstEvidence, setShowFirstEvidence] = useState(false);
+  const [previewEvidence, setPreviewEvidence] = useState<EvidenceItem | null>(null);
+  const [evidencePreviewUrl, setEvidencePreviewUrl] = useState<string | null>(null);
+  const [evidencePreviewError, setEvidencePreviewError] = useState<string | null>(null);
+  const [evidenceUploadDate, setEvidenceUploadDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [uploadingEvidence, setUploadingEvidence] = useState(false);
+  const [editingEvidenceId, setEditingEvidenceId] = useState<string | null>(null);
+  const [editingEvidenceDate, setEditingEvidenceDate] = useState("");
+  const [savingEvidenceDate, setSavingEvidenceDate] = useState(false);
+  const [showArchivedEvidence, setShowArchivedEvidence] = useState(false);
+  const [archivingEvidenceId, setArchivingEvidenceId] = useState<string | null>(null);
+  const [deletingEvidenceId, setDeletingEvidenceId] = useState<string | null>(null);
+  const [evidenceActionError, setEvidenceActionError] = useState<string | null>(null);
+  const [evidenceActionMessage, setEvidenceActionMessage] = useState<string | null>(null);
   const [skillDimension, setSkillDimension] = useState<SkillDimension>("knowledge");
   const [previewContract, setPreviewContract] = useState<LearnerProfile["contracts"][number] | null>(null);
   const [contractPreviewUrl, setContractPreviewUrl] = useState<string | null>(null);
@@ -135,6 +150,9 @@ function LearnerProfilePage() {
   const [uploadingContract, setUploadingContract] = useState(false);
   const [archivingContractId, setArchivingContractId] = useState<string | null>(null);
   const [deletingContractId, setDeletingContractId] = useState<string | null>(null);
+  const [editingContractId, setEditingContractId] = useState<string | null>(null);
+  const [editingContractName, setEditingContractName] = useState("");
+  const [savingContractName, setSavingContractName] = useState(false);
   const [contractActionError, setContractActionError] = useState<string | null>(null);
   const [contractActionMessage, setContractActionMessage] = useState<string | null>(null);
   const profile = useQuery({
@@ -175,6 +193,43 @@ function LearnerProfilePage() {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [previewContract?.file]);
+
+  useEffect(() => {
+    const source = previewEvidence?.file;
+    if (!source) {
+      setEvidencePreviewUrl(null);
+      setEvidencePreviewError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    setEvidencePreviewUrl(null);
+    setEvidencePreviewError(null);
+
+    fetch(source, { credentials: "same-origin", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(payload?.error ?? "The evidence preview could not be loaded.");
+        }
+        return response.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        setEvidencePreviewUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setEvidencePreviewError(error instanceof Error ? error.message : "The evidence preview could not be loaded.");
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [previewEvidence?.file]);
 
   async function downloadContract(contract: LearnerProfile["contracts"][number]) {
     if (!contract.file || downloadingContractId) return;
@@ -253,6 +308,90 @@ function LearnerProfilePage() {
     }
   }
 
+  async function handleContractRename(contract: LearnerProfile["contracts"][number]) {
+    const nextName = editingContractName.trim();
+    if (!nextName || savingContractName) return;
+    setSavingContractName(true);
+    setContractActionError(null);
+    setContractActionMessage(null);
+    try {
+      await renameContract(contract.id, nextName);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEditingContractId(null);
+      setContractActionMessage(`The document was renamed to ${nextName}.`);
+    } catch (error) {
+      setContractActionError(error instanceof Error ? error.message : "The document could not be renamed.");
+    } finally {
+      setSavingContractName(false);
+    }
+  }
+
+  async function handleEvidenceUpload(file: File | undefined) {
+    if (!file || !profile.data || uploadingEvidence || !evidenceUploadDate) return;
+    setUploadingEvidence(true);
+    setEvidenceActionError(null);
+    setEvidenceActionMessage(null);
+    try {
+      await uploadEvidence(Number(profile.data.aptem_id), file, evidenceUploadDate);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEvidenceActionMessage(`${file.name} was uploaded to Azure.`);
+    } catch (error) {
+      setEvidenceActionError(error instanceof Error ? error.message : "The evidence could not be uploaded.");
+    } finally {
+      setUploadingEvidence(false);
+    }
+  }
+
+  async function handleEvidenceDateSave(evidence: EvidenceItem) {
+    if (!editingEvidenceDate || savingEvidenceDate) return;
+    setSavingEvidenceDate(true);
+    setEvidenceActionError(null);
+    setEvidenceActionMessage(null);
+    try {
+      await updateEvidenceDate(evidence.id, Number(profile.data?.aptem_id), editingEvidenceDate);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEditingEvidenceId(null);
+      setEvidenceActionMessage(`The date for ${evidence.name} was updated.`);
+    } catch (error) {
+      setEvidenceActionError(error instanceof Error ? error.message : "The evidence date could not be updated.");
+    } finally {
+      setSavingEvidenceDate(false);
+    }
+  }
+
+  async function handleEvidenceArchive(evidence: EvidenceItem) {
+    if (archivingEvidenceId) return;
+    setArchivingEvidenceId(evidence.id);
+    setEvidenceActionError(null);
+    setEvidenceActionMessage(null);
+    try {
+      await setEvidenceArchived(evidence.id, Number(profile.data?.aptem_id), !evidence.archived);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEvidenceActionMessage(evidence.archived ? `${evidence.name} was restored.` : `${evidence.name} was archived.`);
+    } catch (error) {
+      setEvidenceActionError(error instanceof Error ? error.message : "The evidence archive state could not be updated.");
+    } finally {
+      setArchivingEvidenceId(null);
+    }
+  }
+
+  async function handleEvidenceDelete(evidence: EvidenceItem) {
+    if (!evidence.archived || deletingEvidenceId) return;
+    if (!window.confirm(`Delete "${evidence.name}" from the evidence archive?`)) return;
+    setDeletingEvidenceId(evidence.id);
+    setEvidenceActionError(null);
+    setEvidenceActionMessage(null);
+    try {
+      await deleteArchivedEvidence(evidence.id, Number(profile.data?.aptem_id));
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEvidenceActionMessage(`${evidence.name} was deleted.`);
+    } catch (error) {
+      setEvidenceActionError(error instanceof Error ? error.message : "The evidence could not be deleted.");
+    } finally {
+      setDeletingEvidenceId(null);
+    }
+  }
+
   if (profile.isLoading) {
     return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">Loading learner profile…</div>;
   }
@@ -270,6 +409,10 @@ function LearnerProfilePage() {
   }
 
   const learner = profile.data;
+  const archivedEvidenceItems = learner.learning_delivery.archived_evidence_items ?? [];
+  const evidenceItems = showArchivedEvidence
+    ? archivedEvidenceItems
+    : learner.learning_delivery.first_evidence_items ?? [];
   const visibleContracts = showArchivedContracts
     ? learner.contracts
     : learner.contracts.filter((contract) => !contract.archived);
@@ -345,7 +488,15 @@ function LearnerProfilePage() {
                     >
                       {dateOnly(learner.learning_delivery.first_evidence_date)} <Eye className="h-3.5 w-3.5" />
                     </button>
-                  ) : <span className="font-mono">—</span>}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowFirstEvidence(true)}
+                      className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground hover:underline"
+                    >
+                      Add evidence <Upload className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </dd>
               </div>
               <div><dt className="label-caps">Planned end</dt><dd className="mt-1 font-mono">{dateOnly(learner.learning_delivery.planned_end_date)}</dd></div>
@@ -583,10 +734,50 @@ function LearnerProfilePage() {
                 <TableBody>{visibleContracts.map((contract) => (
                   <TableRow key={contract.id} className={contract.archived ? "opacity-65" : undefined}>
                     <TableCell className="pl-7 text-sm font-semibold">
-                      <span className="inline-flex items-center gap-2">
-                        <FileCheck2 className="h-4 w-4" />{contract.document_name}
-                        {contract.archived && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Archived</span>}
-                      </span>
+                      {editingContractId === contract.id ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <FileCheck2 className="h-4 w-4 shrink-0" />
+                          <input
+                            type="text"
+                            value={editingContractName}
+                            maxLength={180}
+                            autoFocus
+                            onChange={(event) => setEditingContractName(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") void handleContractRename(contract);
+                              if (event.key === "Escape") setEditingContractId(null);
+                            }}
+                            className="min-w-64 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleContractRename(contract)}
+                            disabled={savingContractName || !editingContractName.trim()}
+                            className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-2 text-xs font-semibold text-background disabled:opacity-60"
+                          >
+                            {savingContractName ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                          </button>
+                          <button type="button" onClick={() => setEditingContractId(null)} className="px-2 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground">Cancel</button>
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center gap-2">
+                          <FileCheck2 className="h-4 w-4" />{contract.document_name}
+                          <button
+                            type="button"
+                            aria-label={`Rename ${contract.document_name}`}
+                            onClick={() => {
+                              setEditingContractId(contract.id);
+                              setEditingContractName(contract.document_name);
+                              setContractActionError(null);
+                              setContractActionMessage(null);
+                            }}
+                            className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          {contract.archived && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Archived</span>}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell className="pr-7 text-xs">
                       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -794,34 +985,216 @@ function LearnerProfilePage() {
           >
             <header className="sticky top-0 flex items-start justify-between gap-4 border-b border-border bg-card px-6 py-5">
               <div>
-                <p className="label-caps">First qualifying evidence</p>
+                <p className="label-caps">{showArchivedEvidence ? "Evidence archive" : "First qualifying evidence"}</p>
                 <h2 id="first-evidence-title" className="mt-1 font-serif text-xl text-foreground">{learner.name}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Uploaded on {dateOnly(learner.learning_delivery.first_evidence_date)} after excluding Welcome evidence.</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {showArchivedEvidence
+                    ? `${archivedEvidenceItems.length} archived evidence document${archivedEvidenceItems.length === 1 ? "" : "s"}.`
+                    : `Uploaded on ${dateOnly(learner.learning_delivery.first_evidence_date)} after excluding Welcome evidence.`}
+                </p>
               </div>
               <button type="button" aria-label="Close evidence details" onClick={() => setShowFirstEvidence(false)} className="rounded-md border border-border p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"><X className="h-4 w-4" /></button>
             </header>
             <div className="space-y-4 p-6">
-              {(learner.learning_delivery.first_evidence_items ?? []).map((evidence) => (
+              <div className="rounded-md border border-border bg-secondary/30 p-4">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <label className="text-xs font-semibold text-foreground">
+                    <span className="label-caps mb-1 block">Evidence date</span>
+                    <input
+                      type="date"
+                      value={evidenceUploadDate}
+                      onChange={(event) => setEvidenceUploadDate(event.target.value)}
+                      className="rounded-md border border-border bg-card px-3 py-2 font-mono text-xs text-foreground"
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowArchivedEvidence((value) => !value)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                    >
+                      {showArchivedEvidence ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
+                      {showArchivedEvidence ? "Back to current" : `Show archived (${archivedEvidenceItems.length})`}
+                    </button>
+                    <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${uploadingEvidence ? "pointer-events-none opacity-60" : ""}`}>
+                      {uploadingEvidence
+                        ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                        : <Upload className="h-4 w-4" />}
+                      {uploadingEvidence ? "Uploading…" : "Upload evidence"}
+                      <input
+                        type="file"
+                        className="sr-only"
+                        disabled={uploadingEvidence || !evidenceUploadDate}
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.png,.jpg,.jpeg"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0];
+                          event.currentTarget.value = "";
+                          void handleEvidenceUpload(file);
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+                {evidenceActionError && <p className="mt-3 text-xs font-medium text-destructive">{evidenceActionError}</p>}
+                {evidenceActionMessage && <p className="mt-3 text-xs font-medium text-success">{evidenceActionMessage}</p>}
+              </div>
+              {evidenceItems.map((evidence) => (
                 <article key={evidence.id} className="rounded-md border border-border bg-background p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-foreground">{evidence.name}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{evidence.component_name || "Component not recorded"}</p>
                     </div>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(evidence.status)}`}>{evidence.status || "Unknown"}</span>
+                    <div className="flex items-center gap-2">
+                      {evidence.archived && <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">Archived</span>}
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(evidence.status)}`}>{evidence.status || "Unknown"}</span>
+                    </div>
                   </div>
                   <dl className="mt-4 grid grid-cols-2 gap-4 text-xs">
                     <div><dt className="label-caps">Evidence ID</dt><dd className="mt-1 font-mono">{evidence.id}</dd></div>
                     <div><dt className="label-caps">Type</dt><dd className="mt-1">{evidence.kind || "—"}</dd></div>
-                    <div><dt className="label-caps">Created date</dt><dd className="mt-1 font-mono">{dateOnly(evidence.date)}</dd></div>
+                    <div>
+                      <dt className="label-caps">Created date</dt>
+                      {editingEvidenceId === evidence.id ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <input
+                            type="date"
+                            value={editingEvidenceDate}
+                            onChange={(event) => setEditingEvidenceDate(event.target.value)}
+                            className="rounded-md border border-border bg-card px-2 py-1.5 font-mono text-xs text-foreground"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleEvidenceDateSave(evidence)}
+                            disabled={savingEvidenceDate || !editingEvidenceDate}
+                            className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1.5 font-semibold text-background disabled:opacity-60"
+                          >
+                            {savingEvidenceDate ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                          </button>
+                          <button type="button" onClick={() => setEditingEvidenceId(null)} className="px-2 py-1.5 font-semibold text-muted-foreground hover:text-foreground">Cancel</button>
+                        </div>
+                      ) : (
+                        <div className="mt-1 flex items-center gap-2">
+                          <dd className="font-mono">{dateOnly(evidence.date)}</dd>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingEvidenceId(evidence.id);
+                              setEditingEvidenceDate(dateOnly(evidence.date));
+                              setEvidenceActionError(null);
+                              setEvidenceActionMessage(null);
+                            }}
+                            className="inline-flex items-center gap-1 font-semibold text-foreground hover:underline"
+                          >
+                            <Pencil className="h-3 w-3" /> Edit date
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </dl>
                   {evidence.content && <p className="mt-4 whitespace-pre-wrap rounded-md bg-muted p-3 text-xs leading-5 text-foreground">{evidence.content}</p>}
-                  {evidence.file && /^https?:\/\//i.test(evidence.file) && (
-                    <a href={evidence.file} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline">Open evidence <ExternalLink className="h-3.5 w-3.5" /></a>
-                  )}
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    {evidence.file && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewEvidence(evidence)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> Preview evidence
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void handleEvidenceArchive(evidence)}
+                      disabled={archivingEvidenceId !== null}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
+                    >
+                      {archivingEvidenceId === evidence.id
+                        ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        : evidence.archived
+                          ? <ArchiveRestore className="h-3.5 w-3.5" />
+                          : <Archive className="h-3.5 w-3.5" />}
+                      {evidence.archived ? "Restore" : "Archive"}
+                    </button>
+                    {evidence.archived && (
+                      <button
+                        type="button"
+                        onClick={() => void handleEvidenceDelete(evidence)}
+                        disabled={deletingEvidenceId !== null}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10 disabled:opacity-60"
+                      >
+                        {deletingEvidenceId === evidence.id
+                          ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                          : <Trash2 className="h-3.5 w-3.5" />}
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </article>
               ))}
-              {!learner.learning_delivery.first_evidence_items?.length && <EmptyState>The evidence details are unavailable.</EmptyState>}
+              {!evidenceItems.length && <EmptyState>{showArchivedEvidence ? "No archived evidence documents." : "No qualifying evidence document is available yet."}</EmptyState>}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {previewEvidence?.file && (
+        <div
+          className="fixed inset-0 z-[1400] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPreviewEvidence(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="evidence-preview-title"
+            className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
+          >
+            <header className="flex items-center justify-between gap-4 border-b border-border bg-card px-5 py-4">
+              <div className="min-w-0">
+                <p className="label-caps">Evidence preview</p>
+                <h2 id="evidence-preview-title" className="mt-1 truncate font-serif text-lg text-foreground">{previewEvidence.name}</h2>
+                <p className="mt-1 font-mono text-xs text-muted-foreground">Evidence ID {previewEvidence.id}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <a
+                  href={previewEvidence.file}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                >
+                  <ExternalLink className="h-4 w-4" /> Open in new tab
+                </a>
+                <button
+                  type="button"
+                  aria-label="Close evidence preview"
+                  onClick={() => setPreviewEvidence(null)}
+                  className="rounded-md border border-border p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </header>
+            <div className="relative min-h-0 flex-1 bg-slate-800 p-2">
+              {!evidencePreviewUrl && !evidencePreviewError && (
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white">
+                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading preview…
+                </div>
+              )}
+              {evidencePreviewError && (
+                <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm font-semibold text-white">
+                  {evidencePreviewError}
+                </div>
+              )}
+              {evidencePreviewUrl && (
+                <iframe
+                  src={evidencePreviewUrl}
+                  title={`${previewEvidence.name} preview`}
+                  className="h-full w-full rounded bg-white"
+                />
+              )}
             </div>
           </section>
         </div>

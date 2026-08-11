@@ -6,7 +6,7 @@ from django.test import SimpleTestCase, override_settings
 
 from .contract_documents import _safe_upload_filename
 from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _parse_contract_azure_path, _signoff_row
-from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _fetch_profile_source_row, _training_plan_from_audit, _validate_overlay_activity
+from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _fetch_profile_source_row, _partition_evidence_items, _training_plan_from_audit, _validate_overlay_activity
 
 
 class ContractAzurePathTests(SimpleTestCase):
@@ -31,6 +31,66 @@ class ContractAzurePathTests(SimpleTestCase):
                 _parse_contract_azure_path(value)
 
 
+class EvidenceAzureManifestEndpointTests(SimpleTestCase):
+    def test_rejects_invalid_learner_id_before_manifest_lookup(self):
+        response = self.client.get(
+            "/audit_api/evidence/43527/open",
+            {"learner_id": "not-a-number"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "learner_id must be an integer.")
+
+    def test_evidence_file_is_read_only(self):
+        response = self.client.post("/audit_api/evidence/43527/open")
+
+        self.assertEqual(response.status_code, 405)
+
+
+class EvidenceDocumentManagementTests(SimpleTestCase):
+    def test_archiving_original_evidence_does_not_promote_next_aptem_item(self):
+        items = [
+            {"id": "first", "date": "2026-05-19", "archived": True, "deleted": False, "uploaded": False},
+            {"id": "next-aptem", "date": "2026-06-10", "archived": False, "deleted": False, "uploaded": False},
+            {"id": "replacement", "date": "2026-08-11", "archived": False, "deleted": False, "uploaded": True},
+        ]
+
+        first_date, first_items, archived_items = _partition_evidence_items(items)
+
+        self.assertEqual(first_date, "2026-08-11")
+        self.assertEqual([item["id"] for item in first_items], ["replacement"])
+        self.assertEqual([item["id"] for item in archived_items], ["first"])
+
+    def test_upload_requires_an_evidence_file(self):
+        response = self.client.post(
+            "/audit_api/evidence/upload",
+            {"learner_id": "4609", "evidence_date": "2026-08-11"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "An evidence file is required.")
+
+    def test_date_update_requires_iso_date(self):
+        response = self.client.patch(
+            "/audit_api/evidence/43527/date",
+            data=json.dumps({"learner_id": 18518, "evidence_date": "11/08/2026"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "evidence_date must use YYYY-MM-DD.")
+
+    def test_archive_requires_boolean_state(self):
+        response = self.client.patch(
+            "/audit_api/evidence/43527/archive",
+            data=json.dumps({"learner_id": 18518, "archived": "yes"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "archived must be true or false.")
+
+
 class ContractDocumentManagementTests(SimpleTestCase):
     def test_upload_filename_removes_paths_and_unsafe_characters(self):
         self.assertEqual(
@@ -53,6 +113,16 @@ class ContractDocumentManagementTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "archived must be true or false.")
+
+    def test_rename_requires_a_document_name(self):
+        response = self.client.patch(
+            "/audit_api/contracts/4018/name",
+            data=json.dumps({"document_name": "   "}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "document_name is required.")
 
 
 class AuditTrainingPlanTests(SimpleTestCase):
