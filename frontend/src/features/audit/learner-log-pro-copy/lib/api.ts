@@ -264,6 +264,18 @@ export type LearnerProfile = {
       file: string | null;
       content: string | null;
       date: string;
+      archived: boolean;
+    }>;
+    archived_evidence_items?: Array<{
+      id: string;
+      name: string;
+      component_name: string;
+      kind: string;
+      status: string;
+      file: string | null;
+      content: string | null;
+      date: string;
+      archived: boolean;
     }>;
     planned_end_date?: string;
     completion_status?: number;
@@ -1341,6 +1353,75 @@ export async function deleteArchivedContract(contractId: string) {
     throw new Error(payload?.error ?? `Could not delete document (${response.status})`);
   }
   return response.json() as Promise<{ ok: boolean; contract_id: string; deleted: boolean }>;
+}
+
+export async function renameContract(contractId: string, documentName: string) {
+  const response = await fetch(`/audit_api/contracts/${encodeURIComponent(contractId)}/name`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_name: documentName }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not rename document (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; contract_id: string; document_name: string }>;
+}
+
+export async function uploadEvidence(learnerId: number, file: File, evidenceDate: string) {
+  const body = new FormData();
+  body.append("learner_id", String(learnerId));
+  body.append("evidence_date", evidenceDate);
+  body.append("document_name", file.name);
+  body.append("file", file);
+  const response = await fetch("/audit_api/evidence/upload", {
+    method: "POST",
+    body,
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not upload evidence (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; evidence_id: string; evidence_date: string }>;
+}
+
+export async function updateEvidenceDate(evidenceId: string, learnerId: number, evidenceDate: string) {
+  const response = await fetch(`/audit_api/evidence/${encodeURIComponent(evidenceId)}/date`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learner_id: learnerId, evidence_date: evidenceDate }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not update evidence date (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; evidence_id: string; evidence_date: string }>;
+}
+
+export async function setEvidenceArchived(evidenceId: string, learnerId: number, archived: boolean) {
+  const response = await fetch(`/audit_api/evidence/${encodeURIComponent(evidenceId)}/archive`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learner_id: learnerId, archived }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not update evidence (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; evidence_id: string; archived: boolean }>;
+}
+
+export async function deleteArchivedEvidence(evidenceId: string, learnerId: number) {
+  const response = await fetch(`/audit_api/evidence/${encodeURIComponent(evidenceId)}/archive`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learner_id: learnerId }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not delete evidence (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; evidence_id: string; deleted: boolean }>;
 }
 
 // ---------------------------------------------------------------------------

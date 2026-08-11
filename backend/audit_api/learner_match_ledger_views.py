@@ -53,6 +53,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from .contract_documents import ensure_contract_archive_table
+from .evidence_documents import ensure_evidence_override_table
 
 try:
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
@@ -1389,7 +1390,7 @@ def _load_profile_sources(aptem_id, learner_email):
         ensure_contract_archive_table(cursor)
         cursor.execute(
             '''
-            select contracts.id, contracts.document_name, contracts.status, contracts.date,
+            select contracts.id, coalesce(nullif(archive.display_name, ''), contracts.document_name), contracts.status, contracts.date,
                    contracts.learner_signed_date, contracts.fully_signed_date,
                    contracts.requested_date, contracts.program_name,
                    contracts.program_start_date, contracts.planned_end_date,
@@ -1585,7 +1586,9 @@ def _load_profile_sources(aptem_id, learner_email):
                     "employer_postcode": delivery[8],
                     "first_evidence_date": None,
                     "first_evidence_items": [],
+                    "archived_evidence_items": [],
                 }
+                ensure_evidence_override_table(cursor)
                 cursor.execute(
                     '''
                     with raw_candidates as (
@@ -1618,30 +1621,54 @@ def _load_profile_sources(aptem_id, learner_email):
                         from raw_candidates
                         order by evidence_id, evidence_date
                     )
-                    select evidence_id, evidence_name, component_name, evidence_kind,
-                           evidence_status, evidence_file, evidence_content, evidence_date
+                    select candidates.evidence_id, candidates.evidence_name,
+                           candidates.component_name, candidates.evidence_kind,
+                           candidates.evidence_status, candidates.evidence_file,
+                           candidates.evidence_content,
+                           coalesce(overrides.evidence_date, candidates.evidence_date) as evidence_date,
+                           overrides.archived_at is not null as archived,
+                           overrides.deleted_at is not null as deleted,
+                           false as uploaded
                     from candidates
-                    where evidence_date = (select min(evidence_date) from candidates)
-                    order by evidence_id
+                    left join "Audit".learner_evidence_overrides overrides
+                      on overrides.learner_id = %s
+                     and overrides.is_uploaded = false
+                     and overrides.source_evidence_id::text = candidates.evidence_id
+                    union all
+                    select uploads.evidence_id, uploads.document_name,
+                           uploads.component_name, uploads.evidence_kind,
+                           uploads.evidence_status, null, null, uploads.evidence_date,
+                           uploads.archived_at is not null as archived,
+                           uploads.deleted_at is not null as deleted,
+                           true as uploaded
+                    from "Audit".learner_evidence_overrides uploads
+                    where uploads.learner_id = %s and uploads.is_uploaded = true
+                    order by evidence_date, evidence_id
                     ''',
-                    [aptem_id, delivery[3]],
+                    [aptem_id, delivery[3], aptem_id, aptem_id],
                 )
-                first_evidence_rows = cursor.fetchall()
-                if first_evidence_rows:
-                    learning_delivery["first_evidence_date"] = first_evidence_rows[0][7]
-                    learning_delivery["first_evidence_items"] = [
+                evidence_rows = cursor.fetchall()
+                if evidence_rows:
+                    evidence_items = [
                         {
                             "id": row[0],
                             "name": row[1] or "Untitled evidence",
                             "component_name": row[2] or "",
                             "kind": row[3] or "",
                             "status": row[4] or "",
-                            "file": row[5],
+                            "file": f"/audit_api/evidence/{quote(str(row[0]), safe='')}/open?learner_id={aptem_id}" if row[0] else None,
                             "content": row[6],
                             "date": row[7],
+                            "archived": bool(row[8]),
+                            "deleted": bool(row[9]),
+                            "uploaded": bool(row[10]),
                         }
-                        for row in first_evidence_rows
+                        for row in evidence_rows
                     ]
+                    first_date, first_items, archived_items = _partition_evidence_items(evidence_items)
+                    learning_delivery["archived_evidence_items"] = archived_items
+                    learning_delivery["first_evidence_date"] = first_date
+                    learning_delivery["first_evidence_items"] = first_items
 
     skills_radar = [
         {
@@ -1663,6 +1690,31 @@ def _load_profile_sources(aptem_id, learner_email):
         "programme_status": programme_status,
         "break_in_learning": break_in_learning,
     }
+
+
+def _partition_evidence_items(evidence_items):
+    """Keep Aptem's original first evidence fixed; uploads may replace it.
+
+    Archiving the original source evidence must not promote Aptem's second
+    evidence. An auditor-uploaded item is the only replacement candidate.
+    """
+    archived_items = [
+        item for item in evidence_items if item["archived"] and not item["deleted"]
+    ]
+    source_items = [item for item in evidence_items if not item["uploaded"]]
+    original_source_date = min((item["date"] for item in source_items), default=None)
+    qualifying_items = [
+        item for item in evidence_items
+        if not item["archived"]
+        and not item["deleted"]
+        and (
+            item["uploaded"]
+            or (original_source_date is not None and item["date"] == original_source_date)
+        )
+    ]
+    first_date = min((item["date"] for item in qualifying_items), default=None)
+    first_items = [item for item in qualifying_items if item["date"] == first_date]
+    return first_date, first_items, archived_items
 
 
 def _first_employment_details(value):
