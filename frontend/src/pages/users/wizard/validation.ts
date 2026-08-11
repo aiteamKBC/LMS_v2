@@ -59,10 +59,12 @@ function personalDetailsMissing(d: WizardDraft): string[] {
 
 /* ── Step 2 — Skills Radar ────────────────────────────────────────────── */
 /**
- * Every rated KSB needs a level. The KSB list itself is fetched by the step from
- * the learner's programme profile, so it isn't available here — completeness is
- * measured against the assessments that exist, and a learner whose programme has
- * no authored competencies is not blocked on a step they cannot complete.
+ * Every KSB needs a level. The KSB list itself is fetched by the step from the
+ * learner's programme profile, so it isn't available here — completeness is
+ * measured against the assessments in the draft, which the step seeds with an
+ * unrated row per competency as soon as it loads the profile. A learner whose
+ * programme has no authored competencies has nothing to seed, and so is not
+ * blocked on a step they cannot complete.
  */
 function skillsRadarMissing(d: WizardDraft): string[] {
   const rows = Object.values(d.skillsRadar.assessments ?? {});
@@ -208,6 +210,27 @@ export function missingForStep(stepIndex: number, draft: WizardDraft): string[] 
 
 export function isStepComplete(stepIndex: number, draft: WizardDraft): boolean {
   return missingForStep(stepIndex, draft).length === 0;
+}
+
+/**
+ * First step that still has unfilled fields, or -1 when the whole wizard is
+ * complete. Drives the learner's step gating: they may not run ahead of it.
+ */
+export function firstIncompleteStep(draft: WizardDraft, stepCount: number): number {
+  for (let i = 0; i < stepCount; i++) {
+    if (!isStepComplete(i, draft)) return i;
+  }
+  return -1;
+}
+
+/**
+ * Furthest step a learner is allowed to open: the first incomplete one (they
+ * must be able to reach the step they still have to fill in), or the last step
+ * once nothing is outstanding. Steps behind it stay open for review/editing.
+ */
+export function maxReachableStep(draft: WizardDraft, stepCount: number): number {
+  const gap = firstIncompleteStep(draft, stepCount);
+  return gap === -1 ? stepCount - 1 : gap;
 }
 
 /** Every unfilled field across the whole wizard, in step order. */

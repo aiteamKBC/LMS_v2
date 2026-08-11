@@ -966,11 +966,16 @@ export default function LearnerOverview() {
     { icon: 'ri-medal-line', label: 'Top Performer', color: 'amber' as const },
   ];
 
-  // Redirect is in flight — don't flash the overview on the way to the wizard.
-  if (redirectingToOnboarding) {
+  // Nothing of the overview is rendered until the learner's programme status is
+  // known. The onboarding redirect can only decide once the detail has loaded,
+  // so painting the overview while the fetch is in flight showed an onboarding
+  // learner the full delivery page for a moment before bouncing them to their
+  // wizard. Waiting here is the whole fix — the redirect itself was correct.
+  if (isRealMode && (loading || redirectingToOnboarding)) {
     return (
       <div className="min-h-screen flex items-center justify-center text-[13px] text-foreground-400">
-        <AppIcon className="ri-loader-4-line animate-spin mr-2" />Opening your enrolment…
+        <AppIcon className="ri-loader-4-line animate-spin mr-2" />
+        {redirectingToOnboarding ? 'Opening your enrolment…' : 'Loading your workspace…'}
       </div>
     );
   }

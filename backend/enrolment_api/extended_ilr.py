@@ -102,6 +102,32 @@ def _empty_payload(kind, learner_id, learner_name):
     }
 
 
+def read_extended_ilr(kind, learner_id, learner_name):
+    """The GET payload, as a plain dict.
+
+    Split out from the view so the wizard-bootstrap endpoint can compose this
+    with the learner's board in one response without re-implementing the
+    fallbacks below or paying a second HTTP round-trip. Raises DatabaseError,
+    which the caller is expected to turn into its own error response.
+    """
+    row = ExtendedIlr.objects.filter(learner_kind=kind, learner_id=learner_id).first()
+    if row is None:
+        # No ILR row, but the per-step tables may still hold a partly-filled
+        # wizard (e.g. a learner who only completed Personal Details).
+        payload = _empty_payload(kind, int(learner_id), learner_name)
+        projected = read_projection(kind, int(learner_id))
+        if projected:
+            payload["draft"] = projected
+        return payload
+
+    payload = _payload(row)
+    # Rows written before Wizard_draft existed have an empty draft; rebuild it
+    # from the per-step tables so nothing looks lost in the wizard.
+    if not payload["draft"]:
+        payload["draft"] = read_projection(kind, int(learner_id))
+    return payload
+
+
 @csrf_exempt
 def extended_ilr(request, kind, learner_id):
     model = KINDS.get(kind)
@@ -118,25 +144,9 @@ def extended_ilr(request, kind, learner_id):
 
     if request.method == "GET":
         try:
-            row = ExtendedIlr.objects.filter(learner_kind=kind, learner_id=learner_id).first()
+            return JsonResponse(read_extended_ilr(kind, learner_id, learner_name))
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        if row is None:
-            # No ILR row, but the per-step tables may still hold a partly-filled
-            # wizard (e.g. a learner who only completed Personal Details).
-            projected = read_projection(kind, int(learner_id))
-            if not projected:
-                return JsonResponse(_empty_payload(kind, int(learner_id), learner_name))
-            payload = _empty_payload(kind, int(learner_id), learner_name)
-            payload["draft"] = projected
-            return JsonResponse(payload)
-
-        payload = _payload(row)
-        # Rows written before Wizard_draft existed have an empty draft; rebuild it
-        # from the per-step tables so nothing looks lost in the wizard.
-        if not payload["draft"]:
-            payload["draft"] = read_projection(kind, int(learner_id))
-        return JsonResponse(payload)
 
     if request.method in ("PUT", "PATCH", "POST"):
         if not request.body:

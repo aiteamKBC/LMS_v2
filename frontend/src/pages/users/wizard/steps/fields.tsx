@@ -39,6 +39,7 @@ export function LabeledInput({
   required,
   placeholder,
   helper,
+  readOnly,
 }: {
   label: string;
   type?: string;
@@ -47,24 +48,31 @@ export function LabeledInput({
   required?: boolean;
   placeholder?: string;
   helper?: ReactNode;
+  /** Derived value — shown, but not typed into (e.g. Age, from the DOB). */
+  readOnly?: boolean;
 }) {
   // Complain only after the learner has left the field, so an address isn't
   // marked invalid while it is still being typed.
   const [touched, setTouched] = useState(false);
-  const error = touched ? formatError(type, value) : '';
+  // A derived value is never the learner's mistake to fix, so it is never flagged.
+  const error = touched && !readOnly ? formatError(type, value) : '';
 
   return (
     <FieldRow label={label} required={required}>
       <input
         type={type}
         value={value}
+        readOnly={readOnly}
+        // readOnly alone still leaves number inputs stepper-adjustable and the
+        // field looking editable, so tab focus and the caret go too.
+        tabIndex={readOnly ? -1 : undefined}
         placeholder={placeholder ?? (type === 'email' ? 'name@example.com' : type === 'tel' ? '07123 456789' : undefined)}
         inputMode={type === 'tel' ? 'tel' : type === 'email' ? 'email' : undefined}
         autoComplete={type === 'email' ? 'email' : type === 'tel' ? 'tel' : undefined}
         onChange={(e) => onChange(e.target.value)}
         onBlur={() => setTouched(true)}
         aria-invalid={error ? true : undefined}
-        className={`${inputClass}${error ? ' !border-red-400 focus:!border-red-400' : ''}`}
+        className={`${inputClass}${error ? ' !border-red-400 focus:!border-red-400' : ''}${readOnly ? ' bg-background-100 text-foreground-500 cursor-default' : ''}`}
       />
       {error && <p className="text-[11px] text-red-600 mt-1"><i className="ri-error-warning-line mr-1" />{error}</p>}
       {helper && !error && <p className="text-[11px] text-foreground-400 mt-1">{helper}</p>}

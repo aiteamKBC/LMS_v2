@@ -60,6 +60,11 @@ urlpatterns = [
         employer_portal.employer_portal_learner,
         name="employer-portal-learner",
     ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/plan/",
+        employer_portal.employer_portal_learner_plan,
+        name="employer-portal-learner-plan",
+    ),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),

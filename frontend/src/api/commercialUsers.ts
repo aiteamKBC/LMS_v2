@@ -7,6 +7,8 @@
 import type { TrainingPlan } from './trainingPlan';
 import type { EnrolmentBoard } from '@/pages/users/types';
 import type { AptemUserFields } from './enrolmentUsers';
+import { invalidateWizardCacheById } from './extendedIlr';
+import { invalidateLearnerDetailCache } from './learnerDetail';
 
 const BASE = '/learner_api/commercial-users';
 const UNIFIED_ENROLMENT_BASE = '/learner_api/enrolment-users';
@@ -117,11 +119,15 @@ export function fetchCommercialBoard(id: string): Promise<EnrolmentBoard> {
 }
 
 /** Save wizard edits for a commercial learner (flat columns + training plan). */
-export function updateCommercialBoard(id: string, patch: Record<string, unknown>): Promise<EnrolmentBoard> {
-  return request<EnrolmentBoard>(`${UNIFIED_ENROLMENT_BASE}/${id}/`, {
+export async function updateCommercialBoard(id: string, patch: Record<string, unknown>): Promise<EnrolmentBoard> {
+  const board = await request<EnrolmentBoard>(`${UNIFIED_ENROLMENT_BASE}/${id}/`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
+  // Same row the cached wizard bootstrap carries — see updateEnrolmentUser.
+  invalidateWizardCacheById(id);
+  invalidateLearnerDetailCache();
+  return board;
 }
 
 /** Patch any writable commercial-user fields (e.g. status). */

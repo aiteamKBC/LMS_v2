@@ -39,6 +39,42 @@ function fmtDate(iso: string): string {
 }
 
 export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; loading: boolean }) {
+  return (
+    <WorkspaceShell
+      role="learner"
+      roleLabel={learnerNav.label}
+      navItems={learnerNav.items}
+      workspaceLabel={learnerNav.workspaceLabel}
+      pageTitle="Off-the-Job Hours"
+      pageSubtitle={real?.programme || 'Off-the-job training hours'}
+      userName={real?.name || 'Learner'}
+      userRole="Learner"
+    >
+      <OtjhBody real={real} loading={loading} />
+    </WorkspaceShell>
+  );
+}
+
+/**
+ * The hours themselves, without page chrome — shared with the employer portal,
+ * which shows an employer the same figures their apprentice sees.
+ *
+ * `audience` only swaps the second-person copy: an employer reading "your logged
+ * hours" about someone else is confusing, and the numbers are identical either way.
+ */
+export function OtjhBody({
+  real,
+  loading,
+  showHero = true,
+  audience = 'learner',
+}: {
+  real: LearnerDetail | null;
+  loading: boolean;
+  showHero?: boolean;
+  audience?: 'learner' | 'observer';
+}) {
+  const isObserver = audience === 'observer';
+  const who = isObserver ? (real?.name?.split(' ')[0] || 'This learner') : 'You';
   const completed = parseHours(real?.completedHours);
   const target = parseHours(real?.targetHours);
   const planned = parseHours(real?.plannedHours ?? real?.totalExpectedOtjh);
@@ -85,18 +121,9 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
   }, [rows]);
 
   return (
-    <WorkspaceShell
-      role="learner"
-      roleLabel={learnerNav.label}
-      navItems={learnerNav.items}
-      workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Off-the-Job Hours"
-      pageSubtitle={real?.programme || 'Off-the-job training hours'}
-      userName={real?.name || 'Learner'}
-      userRole="Learner"
-    >
-      <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+    <div className={showHero ? 'p-3 md:p-6 space-y-5 md:space-y-6' : 'space-y-4 md:space-y-5'}>
         {/* Hero */}
+        {showHero && (
         <section className="relative min-h-[170px] overflow-hidden rounded-3xl border border-primary-700/40 p-6 text-white shadow-[0_18px_45px_rgba(35,8,76,0.20)] md:p-7" style={{ background: 'linear-gradient(115deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 45%, oklch(var(--primary-700)) 100%)' }}>
           <div className="pointer-events-none absolute -left-24 -top-32 h-72 w-72 rounded-full bg-primary-400/20 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-36 right-36 h-72 w-72 rounded-full bg-secondary-400/15 blur-3xl" />
@@ -106,7 +133,9 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
                 <span className={`w-1.5 h-1.5 rounded-full ${rag.dot}`} />{status}
               </span>
               <h1 className="mt-3 text-2xl font-heading font-bold tracking-tight !text-white md:text-3xl">Off-the-Job Training Hours</h1>
-              <p className="mt-1 max-w-xl text-sm !text-white/65">Your logged learning hours from completed quizzes, videos and learning activities.</p>
+              <p className="mt-1 max-w-xl text-sm !text-white/65">
+                {isObserver ? `${who}'s logged` : 'Your logged'} learning hours from completed quizzes, videos and learning activities.
+              </p>
             </div>
             <div className="flex w-full shrink-0 items-center gap-4 rounded-2xl border border-white/15 bg-white/10 p-4 shadow-lg shadow-black/10 backdrop-blur-md md:w-auto md:min-w-[260px]">
               <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/10 text-emerald-300">
@@ -128,6 +157,7 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
             </div>
           </div>
         </section>
+        )}
 
         {/* Stat strip */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 md:gap-4">
@@ -147,8 +177,10 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
           </div>
           <p className="text-[11px] text-foreground-400 mt-1.5">
             {progressHours < 0
-              ? `${formatHoursMinutes(Math.abs(progressHours))} behind the ${formatHoursMinutes(target)} you should have logged by now.`
-              : `You're on or ahead of your ${formatHoursMinutes(target)} target — keep it up.`}
+              ? `${formatHoursMinutes(Math.abs(progressHours))} behind the ${formatHoursMinutes(target)} ${isObserver ? 'due' : 'you should have logged'} by now.`
+              : isObserver
+                ? `On or ahead of the ${formatHoursMinutes(target)} target for this point in the programme.`
+                : `You're on or ahead of your ${formatHoursMinutes(target)} target — keep it up.`}
           </p>
         </section>
 
@@ -168,7 +200,7 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
             {loading ? (
               <div className="p-5"><EmptyState text="Loading…" /></div>
             ) : rows.length === 0 ? (
-              <div className="p-5"><EmptyState text="No logged activity yet — complete a quiz or video to see it here." /></div>
+              <div className="p-5"><EmptyState text={isObserver ? 'No logged activity yet.' : 'No logged activity yet — complete a quiz or video to see it here.'} /></div>
             ) : (
               <div className="max-h-[520px] divide-y divide-foreground-100 overflow-y-auto">
                 {rows.map((r, i) => (
@@ -227,8 +259,7 @@ export function RealOtjhView({ real, loading }: { real: LearnerDetail | null; lo
             )}
           </section>
         </div>
-      </div>
-    </WorkspaceShell>
+    </div>
   );
 }
 

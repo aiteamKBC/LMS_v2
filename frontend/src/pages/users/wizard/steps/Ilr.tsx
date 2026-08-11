@@ -225,8 +225,9 @@ export default function Ilr() {
           <button className={btnPrimary} onClick={() => downloadIlrDocument(ilr, board)}>
             <AppIcon className="ri-file-download-line" />Download ILR document
           </button>
-          {/* Plain "Save progress" lives in the wizard footer on every step; this
-              one additionally files the PDF into Compliance documents. */}
+          {/* A plain save is the wizard footer's job — Next on the learner side,
+              "Save progress" on the staff side; this one additionally files the
+              PDF into Compliance documents. */}
           <button className={btnSecondary} onClick={saveAndFile} disabled={ilrSaving || ilrFiling}>
             {ilrFiling ? <><AppIcon className="ri-loader-4-line animate-spin" />Filing…</> : <><AppIcon className="ri-folder-upload-line" />Save &amp; file document</>}
           </button>

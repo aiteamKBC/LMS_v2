@@ -1181,34 +1181,22 @@ def _annotate_otjh(components):
     return components, round(total, 2)
 
 
-def learner_detail(request, kind, pk):
-    if request.method != "GET":
-        return _error("Method not allowed.", 405)
+def build_learner_detail(source, pk):
+    """The learner's full workspace payload for one already-loaded source row.
 
-    model = SOURCE_MODELS.get(kind)
-    if model is None:
-        return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
-
-    try:
-        # all_learners, not objects: the default manager is scoped to
-        # apprenticeship rows, so a commercial learner would 404 here.
-        source = model.all_learners.get(pk=pk)
-    except model.DoesNotExist:
-        return _error("Learner not found.", 404)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
-
-    try:
-        # Date-based activation has no user action of its own. Re-checking here
-        # keeps the learner workspace correct between scheduled daily sweeps.
-        advance_learner(source)
-        # Plans selected during enrolment used to contain only module ids. Fill
-        # in the authored weeks/components before serialising the learner page,
-        # which also repairs learners activated before this behaviour existed.
-        hydrate_source_training_plan(source)
-        learner_profile = _active_profile_for_source(source, pk)
-    except DatabaseError as exc:
-        return _error(f"Database error: {exc}", 502)
+    Split out of the view so other callers can serve the same shape behind their
+    own authorisation — the employer portal shows an employer their own learner's
+    plan, hours and KSBs without reimplementing any of this. Raises DatabaseError;
+    callers decide what that means for their response.
+    """
+    # Date-based activation has no user action of its own. Re-checking here
+    # keeps the learner workspace correct between scheduled daily sweeps.
+    advance_learner(source)
+    # Plans selected during enrolment used to contain only module ids. Fill
+    # in the authored weeks/components before serialising the learner page,
+    # which also repairs learners activated before this behaviour existed.
+    hydrate_source_training_plan(source)
+    learner_profile = _active_profile_for_source(source, pk)
 
     if learner_profile and not learner_profile.ksbs:
         try:
@@ -1238,4 +1226,27 @@ def learner_detail(request, kind, pk):
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
 
-    return JsonResponse(detail)
+    return detail
+
+
+def learner_detail(request, kind, pk):
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
+
+    try:
+        # all_learners, not objects: the default manager is scoped to
+        # apprenticeship rows, so a commercial learner would 404 here.
+        source = model.all_learners.get(pk=pk)
+    except model.DoesNotExist:
+        return _error("Learner not found.", 404)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    try:
+        return JsonResponse(build_learner_detail(source, pk))
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)

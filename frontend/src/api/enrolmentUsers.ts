@@ -3,6 +3,8 @@
 // Talks to the Django backend at /learner_api (proxied to :8000 by Vite in dev).
 // ============================================================================
 import type { UserListRow, EnrolmentBoard } from '@/pages/users/types';
+import { invalidateWizardCacheById } from './extendedIlr';
+import { invalidateLearnerDetailCache } from './learnerDetail';
 
 const BASE = '/learner_api/enrolment-users';
 
@@ -144,8 +146,13 @@ export function createEnrolmentUser(input: CreateEnrolmentUserInput): Promise<Us
 }
 
 /** Update flat fields on a user (e.g. wizard save-back); returns the board. */
-export function updateEnrolmentUser(id: string, patch: Partial<CreateEnrolmentUserInput> & Record<string, unknown>): Promise<EnrolmentBoard> {
-  return request<EnrolmentBoard>(`${BASE}/${id}/`, { method: 'PATCH', body: JSON.stringify(patch) });
+export async function updateEnrolmentUser(id: string, patch: Partial<CreateEnrolmentUserInput> & Record<string, unknown>): Promise<EnrolmentBoard> {
+  const board = await request<EnrolmentBoard>(`${BASE}/${id}/`, { method: 'PATCH', body: JSON.stringify(patch) });
+  // This row is half of the cached wizard bootstrap, so a stale copy would show
+  // the learner their pre-edit details on the next open.
+  invalidateWizardCacheById(id);
+  invalidateLearnerDetailCache();
+  return board;
 }
 
 /**
@@ -153,6 +160,11 @@ export function updateEnrolmentUser(id: string, patch: Partial<CreateEnrolmentUs
  * only makes a learner Active after all compliance documents are signed and
  * their programme start date has arrived.
  */
-export function finishEnrolment(id: string): Promise<EnrolmentBoard> {
-  return request<EnrolmentBoard>(`${BASE}/${id}/finish/`, { method: 'POST' });
+export async function finishEnrolment(id: string): Promise<EnrolmentBoard> {
+  const board = await request<EnrolmentBoard>(`${BASE}/${id}/finish/`, { method: 'POST' });
+  // Activation changes programme status, which decides the learner's whole
+  // navigation — a stale board here would keep them on the onboarding menu.
+  invalidateWizardCacheById(id);
+  invalidateLearnerDetailCache();
+  return board;
 }
