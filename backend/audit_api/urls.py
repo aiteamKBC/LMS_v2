@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import audit_blob, contract_file, learner_activity_stats, learner_audit, learner_audit_list, learner_signoff
+from .contract_documents import archive_contract, upload_contract
 from .learner_log_views import health, learner_activities, learner_summaries, mre_list, mre_summary
 from .last_audit_ledger_views import (
     activities as last_audit_activities,
@@ -55,5 +56,7 @@ urlpatterns = [
     path("learners/<int:learner_id>/", learner_audit, name="audit-learner"),
     path("learners/<int:learner_id>/signoff/", learner_signoff, name="audit-learner-signoff"),
     path("contracts/<int:contract_id>/open", contract_file, name="audit-contract-file"),
+    path("contracts/<int:contract_id>/archive", archive_contract, name="audit-contract-archive"),
+    path("contracts/upload", upload_contract, name="audit-contract-upload"),
     path("blob/", audit_blob, name="audit-blob"),
 ]
