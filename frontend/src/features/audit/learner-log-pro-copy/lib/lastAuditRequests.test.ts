@@ -168,6 +168,68 @@ describe("Last_audit request scoping", () => {
     expect(result.learners[0].flags).toContain("invalid_activity_date");
   });
 
+  it("hides post-cutoff planned-only months but keeps pre-cutoff and active ones", async () => {
+    const mixedCohort = {
+      ...cohort,
+      learners: cohort.learners.map((learner) => ({
+        ...learner,
+        months: [
+          // pre-cutoff planned-only: kept (real past plan)
+          { month: "2026-05", label: "May 2026", planned: 20, actual: 0, not_accepted: 0,
+            att_actual: 0, asg_actual: 0, media_actual: 0, bundle_actual: 0, unallocated_actual: 0 },
+          // post-cutoff WITH fetched actual: kept
+          { month: "2026-09", label: "September 2026", planned: 24, actual: 12, not_accepted: 0,
+            att_actual: 12, asg_actual: 0, media_actual: 0, bundle_actual: 0, unallocated_actual: 0 },
+          // post-cutoff planned-only (preserved future Aptem plan): hidden
+          { month: "2027-07", label: "July 2027", planned: 4, actual: 0, not_accepted: 0,
+            att_actual: 0, asg_actual: 0, media_actual: 0, bundle_actual: 0, unallocated_actual: 0 },
+        ],
+      })),
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("activity-overrides")) return jsonResponse({ items: [] });
+      return jsonResponse(mixedCohort);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { getLearners } = await import("./api");
+
+    const result = await getLearners({ learner: "1930" });
+    const periodValues = result.learners[0].periods.map((period) => period.value);
+
+    expect(periodValues).toContain("2026-05");
+    expect(periodValues).toContain("2026-09");
+    expect(periodValues).not.toContain("2027-07");
+    // The cohort-wide period list drops the phantom future month too.
+    expect(result.periods.some((period) => period.value === "2027-07")).toBe(false);
+  });
+
+  it("labels OTJH provenance as fetched after the cutoff and engineered before", async () => {
+    const datedCohort = {
+      ...cohort,
+      learners: cohort.learners.map((learner) => ({
+        ...learner,
+        months: [
+          { month: "2026-05", label: "May 2026", planned: 20, actual: 18, not_accepted: 0,
+            att_actual: 18, asg_actual: 0, media_actual: 0, bundle_actual: 0, unallocated_actual: 0 },
+          { month: "2026-09", label: "September 2026", planned: 24, actual: 21.26, not_accepted: 0,
+            att_actual: 21.26, asg_actual: 0, media_actual: 0, bundle_actual: 0, unallocated_actual: 0 },
+        ],
+      })),
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("activity-overrides")) return jsonResponse({ items: [] });
+      return jsonResponse(datedCohort);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { getLearners } = await import("./api");
+
+    const pre = await getLearners({ learner: "1930", period: "2026-05" });
+    expect(pre.learners[0].otjh.month?.provenance).toBe("engineered");
+
+    const post = await getLearners({ learner: "1930", period: "2026-09" });
+    expect(post.learners[0].otjh.month?.provenance).toBe("fetched");
+  });
+
   it("treats reading, quiz and reading+quiz as one filter family", async () => {
     const datedCohort = {
       ...cohort,

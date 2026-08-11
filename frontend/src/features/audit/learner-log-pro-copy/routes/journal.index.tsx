@@ -162,11 +162,13 @@ function OtjhCard({ otjh }: { otjh?: any }) {
   const hour = (value: number | null | undefined) =>
     value == null ? "—" : `${Number(value).toFixed(2)} h`;
   const flagged = Boolean(otjh.flagged);
+  // Fetched-only months (2026-09+) must not be labelled "engineered".
+  const provenanceLabel = otjh.provenance === "fetched" ? "fetched" : "engineered";
   return (
     <div className={`rounded-lg border px-5 py-4 ${flagged ? "border-red-300 bg-red-50" : "border-border bg-[#f6f8fb]"}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Off-the-job hours (engineered)</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Off-the-job hours ({provenanceLabel})</p>
           {otjh.applied_date && <p className="mt-0.5 text-xs text-muted-foreground">Adjustment applied {otjh.applied_date}</p>}
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${flagged ? "bg-red-600 text-white" : "bg-emerald-600/10 text-emerald-700"}`}>
