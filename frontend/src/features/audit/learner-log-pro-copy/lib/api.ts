@@ -247,6 +247,9 @@ export type LearnerProfile = {
   planned_hours: number | null;
   learning_delivery: {
     learner_reference?: string;
+    learner_address?: string | null;
+    learner_postcode?: string | null;
+    employer_postcode?: string | null;
     planned_hours?: number;
     actual_hours?: number | null;
     start_date?: string;
@@ -276,6 +279,9 @@ export type LearnerProfile = {
     programme_start_date: string | null;
     planned_end_date: string | null;
     file: string | null;
+    archived: boolean;
+    archived_at: string | null;
+    archived_by: string | null;
   }>;
   training_plan: {
     total_modules: number;
@@ -1197,6 +1203,48 @@ export function getLearnerProfile(learnerId: string) {
     }
     return response.json() as Promise<LearnerProfile>;
   })();
+}
+
+export async function uploadContract(learnerId: number, file: File) {
+  const body = new FormData();
+  body.append("learner_id", String(learnerId));
+  body.append("document_name", file.name);
+  body.append("file", file);
+  const response = await fetch("/audit_api/contracts/upload", {
+    method: "POST",
+    body,
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not upload document (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; contract_id: string; document_name: string }>;
+}
+
+export async function setContractArchived(contractId: string, archived: boolean) {
+  const response = await fetch(`/audit_api/contracts/${encodeURIComponent(contractId)}/archive`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ archived }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not update document (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; contract_id: string; archived: boolean }>;
+}
+
+export async function deleteArchivedContract(contractId: string) {
+  const response = await fetch(`/audit_api/contracts/${encodeURIComponent(contractId)}/archive`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not delete document (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; contract_id: string; deleted: boolean }>;
 }
 
 // ---------------------------------------------------------------------------

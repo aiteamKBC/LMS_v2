@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, LoaderCircle, Mail, UserRound, X } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, LoaderCircle, Mail, Trash2, Upload, UserRound, X } from "lucide-react";
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/features/audit/learner-log-pro-copy/components/ui/table";
-import { getLearnerProfile, type LearnerProfile } from "@/features/audit/learner-log-pro-copy/lib/api";
+import { deleteArchivedContract, getLearnerProfile, setContractArchived, uploadContract, type LearnerProfile } from "@/features/audit/learner-log-pro-copy/lib/api";
 
 export const Route = createFileRoute("/learner/$learnerId")({
   component: LearnerProfilePage,
@@ -124,12 +124,19 @@ function downloadFilename(disposition: string | null, fallback: string) {
 
 function LearnerProfilePage() {
   const { learnerId } = Route.useParams();
+  const queryClient = useQueryClient();
   const [showFirstEvidence, setShowFirstEvidence] = useState(false);
   const [skillDimension, setSkillDimension] = useState<SkillDimension>("knowledge");
   const [previewContract, setPreviewContract] = useState<LearnerProfile["contracts"][number] | null>(null);
   const [contractPreviewUrl, setContractPreviewUrl] = useState<string | null>(null);
   const [contractPreviewError, setContractPreviewError] = useState<string | null>(null);
   const [downloadingContractId, setDownloadingContractId] = useState<string | null>(null);
+  const [showArchivedContracts, setShowArchivedContracts] = useState(false);
+  const [uploadingContract, setUploadingContract] = useState(false);
+  const [archivingContractId, setArchivingContractId] = useState<string | null>(null);
+  const [deletingContractId, setDeletingContractId] = useState<string | null>(null);
+  const [contractActionError, setContractActionError] = useState<string | null>(null);
+  const [contractActionMessage, setContractActionMessage] = useState<string | null>(null);
   const profile = useQuery({
     queryKey: ["learner-profile", learnerId],
     queryFn: () => getLearnerProfile(learnerId),
@@ -190,6 +197,62 @@ function LearnerProfilePage() {
     }
   }
 
+  async function handleContractUpload(file: File | undefined) {
+    if (!file || !profile.data || uploadingContract) return;
+    setUploadingContract(true);
+    setContractActionError(null);
+    setContractActionMessage(null);
+    try {
+      await uploadContract(Number(profile.data.aptem_id), file);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setContractActionMessage(`${file.name} was uploaded successfully.`);
+    } catch (error) {
+      setContractActionError(error instanceof Error ? error.message : "The document could not be uploaded.");
+    } finally {
+      setUploadingContract(false);
+    }
+  }
+
+  async function handleContractArchive(contract: LearnerProfile["contracts"][number]) {
+    if (archivingContractId) return;
+    setArchivingContractId(contract.id);
+    setContractActionError(null);
+    setContractActionMessage(null);
+    try {
+      await setContractArchived(contract.id, !contract.archived);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setContractActionMessage(
+        contract.archived
+          ? `${contract.document_name} was restored.`
+          : `${contract.document_name} was archived.`,
+      );
+    } catch (error) {
+      setContractActionError(error instanceof Error ? error.message : "The document could not be updated.");
+    } finally {
+      setArchivingContractId(null);
+    }
+  }
+
+  async function handleContractDelete(contract: LearnerProfile["contracts"][number]) {
+    if (!contract.archived || deletingContractId) return;
+    const confirmed = window.confirm(
+      `Delete "${contract.document_name}" from this learner's contract list? This action is restricted to archived documents.`,
+    );
+    if (!confirmed) return;
+    setDeletingContractId(contract.id);
+    setContractActionError(null);
+    setContractActionMessage(null);
+    try {
+      await deleteArchivedContract(contract.id);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setContractActionMessage(`${contract.document_name} was deleted.`);
+    } catch (error) {
+      setContractActionError(error instanceof Error ? error.message : "The document could not be deleted.");
+    } finally {
+      setDeletingContractId(null);
+    }
+  }
+
   if (profile.isLoading) {
     return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">Loading learner profile…</div>;
   }
@@ -207,6 +270,10 @@ function LearnerProfilePage() {
   }
 
   const learner = profile.data;
+  const visibleContracts = showArchivedContracts
+    ? learner.contracts
+    : learner.contracts.filter((contract) => !contract.archived);
+  const archivedContractCount = learner.contracts.filter((contract) => contract.archived).length;
   const employment = learner.employment;
   const planPercent = learner.training_plan.total_modules
     ? Math.round((learner.training_plan.completed_modules / learner.training_plan.total_modules) * 100)
@@ -252,7 +319,14 @@ function LearnerProfilePage() {
               </div>
             </div>
             <dl className="grid grid-cols-2 gap-x-10 gap-y-3 text-sm">
-              <div><dt className="label-caps">Aptem ID</dt><dd className="mt-1 font-mono">{learner.aptem_id}</dd></div>
+              <div>
+                <dt className="label-caps">Learner address</dt>
+                <dd className="mt-1 max-w-64 text-sm">{learner.learning_delivery.learner_address ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="label-caps">Learner postcode</dt>
+                <dd className="mt-1 font-mono">{learner.learning_delivery.learner_postcode ?? "—"}</dd>
+              </div>
               <div><dt className="label-caps">ILR reference</dt><dd className="mt-1 font-mono">{learner.learning_delivery.learner_reference ?? "—"}</dd></div>
               <div>
                 <dt className="label-caps">Coach</dt>
@@ -447,6 +521,7 @@ function LearnerProfilePage() {
                 <div><dt className="label-caps">Contracted hours per week</dt><dd className="mt-1.5 text-sm">{employment.contracted_hours_per_week == null ? "—" : `${employment.contracted_hours_per_week} h`}</dd></div>
                 <div><dt className="label-caps">Line manager</dt><dd className="mt-1.5 text-sm">{employment.line_manager?.name ?? "—"}{employment.line_manager?.job_title ? ` — ${employment.line_manager.job_title}` : ""}</dd></div>
                 <div><dt className="label-caps">Workplace address</dt><dd className="mt-1.5 whitespace-pre-line text-sm leading-6">{employment.workplace_address ?? "—"}</dd></div>
+                <div><dt className="label-caps">Employer postcode</dt><dd className="mt-1.5 font-mono text-sm">{learner.learning_delivery.employer_postcode ?? "—"}</dd></div>
               </dl>
             ) : <EmptyState>No employer details were found in the CV evidence.</EmptyState>}
           </div>
@@ -454,34 +529,73 @@ function LearnerProfilePage() {
 
         <section className="rounded-lg border border-border bg-card shadow-panel">
           <header className="border-b border-border px-7 py-5">
-            <h2 className="font-serif text-lg text-foreground">Contracts</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Contract documents from fetching_evidence.aptem_cv_contracts_probe.</p>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="font-serif text-lg text-foreground">Contracts</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Contract documents from fetching_evidence.aptem_cv_contracts_probe.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowArchivedContracts((value) => !value)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                >
+                  {showArchivedContracts
+                    ? <ArchiveRestore className="h-4 w-4" />
+                    : <Archive className="h-4 w-4" />}
+                  {showArchivedContracts ? "Hide archived" : `Show archived (${archivedContractCount})`}
+                </button>
+                <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${uploadingContract ? "pointer-events-none opacity-60" : ""}`}>
+                  {uploadingContract
+                    ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                    : <Upload className="h-4 w-4" />}
+                  {uploadingContract ? "Uploading…" : "Upload document"}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    disabled={uploadingContract}
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.png,.jpg,.jpeg"
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = "";
+                      void handleContractUpload(file);
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+            {contractActionError && <p className="mt-3 text-sm font-medium text-destructive">{contractActionError}</p>}
+            {contractActionMessage && <p className="mt-3 text-sm font-medium text-success">{contractActionMessage}</p>}
           </header>
-          {learner.contracts.length ? (
+          {visibleContracts.length ? (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader><TableRow className="hover:bg-transparent">
                   <TableHead className="label-caps pl-7">Document</TableHead>
-                  <TableHead className="label-caps">Status</TableHead>
-                  <TableHead className="label-caps">Document date</TableHead>
-                  <TableHead className="label-caps">Learner signed</TableHead>
-                  <TableHead className="label-caps">Fully signed</TableHead>
-                  <TableHead className="label-caps pr-7">Actions</TableHead>
+                  <TableHead className="label-caps pr-7">
+                    <div className="flex items-center justify-end gap-2">
+                      <span aria-hidden="true" className="w-[92px]" />
+                      <span className="w-[104px] text-center">Actions</span>
+                      <span aria-hidden="true" className="w-[90px]" />
+                    </div>
+                  </TableHead>
                 </TableRow></TableHeader>
-                <TableBody>{learner.contracts.map((contract) => (
-                  <TableRow key={contract.id}>
-                    <TableCell className="pl-7 text-sm font-semibold"><span className="inline-flex items-center gap-2"><FileCheck2 className="h-4 w-4" />{contract.document_name}</span></TableCell>
-                    <TableCell><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(contract.status)}`}>{contract.status}</span></TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{dateOnly(contract.date)}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{dateOnly(contract.learner_signed_date)}</TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">{dateOnly(contract.fully_signed_date)}</TableCell>
+                <TableBody>{visibleContracts.map((contract) => (
+                  <TableRow key={contract.id} className={contract.archived ? "opacity-65" : undefined}>
+                    <TableCell className="pl-7 text-sm font-semibold">
+                      <span className="inline-flex items-center gap-2">
+                        <FileCheck2 className="h-4 w-4" />{contract.document_name}
+                        {contract.archived && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Archived</span>}
+                      </span>
+                    </TableCell>
                     <TableCell className="pr-7 text-xs">
-                      {contract.file ? (
-                        <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {contract.file && (
+                          <>
                           <button
                             type="button"
                             onClick={() => setPreviewContract(contract)}
-                            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 font-semibold text-foreground hover:bg-secondary"
+                            className="inline-flex w-[92px] items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 font-semibold text-foreground hover:bg-secondary"
                           >
                             <Eye className="h-3.5 w-3.5" /> Preview
                           </button>
@@ -489,21 +603,48 @@ function LearnerProfilePage() {
                             type="button"
                             onClick={() => void downloadContract(contract)}
                             disabled={downloadingContractId !== null}
-                            className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 font-semibold text-background hover:opacity-90"
+                            className="inline-flex w-[104px] items-center justify-center gap-1.5 rounded-md bg-foreground px-3 py-2 font-semibold text-background hover:opacity-90"
                           >
                             {downloadingContractId === contract.id
                               ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                               : <Download className="h-3.5 w-3.5" />}
                             Download
                           </button>
-                        </div>
-                      ) : "—"}
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void handleContractArchive(contract)}
+                          disabled={archivingContractId !== null}
+                          className="inline-flex w-[90px] items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
+                        >
+                          {archivingContractId === contract.id
+                            ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            : contract.archived
+                              ? <ArchiveRestore className="h-3.5 w-3.5" />
+                              : <Archive className="h-3.5 w-3.5" />}
+                          {contract.archived ? "Restore" : "Archive"}
+                        </button>
+                        {contract.archived && (
+                          <button
+                            type="button"
+                            onClick={() => void handleContractDelete(contract)}
+                            disabled={deletingContractId !== null}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 font-semibold text-destructive hover:bg-destructive/10 disabled:opacity-60"
+                          >
+                            {deletingContractId === contract.id
+                              ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                              : <Trash2 className="h-3.5 w-3.5" />}
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}</TableBody>
               </Table>
             </div>
-          ) : <EmptyState>No contracts were found for this learner.</EmptyState>}
+          ) : <EmptyState>{archivedContractCount && !showArchivedContracts ? "All contract documents are archived." : "No contracts were found for this learner."}</EmptyState>}
         </section>
 
         <section className="rounded-lg border border-border bg-card shadow-panel">
