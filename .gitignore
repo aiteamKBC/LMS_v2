@@ -102,3 +102,4 @@ desktop.ini
 /frontend/src/pages/curriculum/week-builder/quizLinkPersistence.test.tsx
 /frontend/src/pages/curriculum/week-builder/WeekComponentRail.test.tsx
 /frontend/src/pages/curriculum/week-builder/weekTemplateData.test.ts
+/.codex-local-ui-test
