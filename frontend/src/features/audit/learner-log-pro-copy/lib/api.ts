@@ -23,6 +23,12 @@
 const READ_BASE = "https://fetch-evidence.kentbusinesscollege.net/api/last-audit-ledger";
 const LEGACY_WRITE_BASE = "https://fetch-evidence.kentbusinesscollege.net/api/otjh";
 const LAST_AUDIT_UNDATED_PERIOD = "undated";
+// Engineered OTJH values are permitted only through 2026-08-01 (inclusive). From
+// 2026-09 onward the ledger reports fetched source values only. A post-cutoff
+// month that carries ONLY preserved Aptem planned hours (no actual, no
+// not-accepted) is a future plan with no learner activity — it must not surface
+// as a reporting period, and its OTJH card is "fetched", not "engineered".
+const OTJH_ENGINEERING_CUTOFF_MONTH = "2026-08";
 // Django endpoint that still backs the auditor-entered activity annotations.
 const ANNOTATION_BASE = "/audit_api/match-ledger";
 const OVERLAY_URL = `${ANNOTATION_BASE}/activity-overrides`;
@@ -151,6 +157,10 @@ export type OtjhMonth = {
   status: string;
   path?: string | null;
   flagged: boolean;
+  // "engineered" for months on/before the 2026-08 cutoff (values are generated);
+  // "fetched" for 2026-09+ months (values come straight from source). Drives the
+  // OTJH card heading so it stops claiming "engineered" for fetched-only months.
+  provenance?: "engineered" | "fetched";
   applied_date?: string | null;
   note?: string | null;
   att_h?: number | null;
@@ -642,6 +652,13 @@ function isValidActivityDate(value: string | null | undefined): value is string 
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
 
+// A month strictly after the engineering cutoff ("2026-08"), i.e. 2026-09+,
+// where only fetched source values are reported. Month keys are "YYYY-MM" so a
+// lexical compare is a chronological compare. "undated" is never post-cutoff.
+function isPostCutoffMonth(value: string | null | undefined): boolean {
+  return isValidMonthKey(value) && value > OTJH_ENGINEERING_CUTOFF_MONTH;
+}
+
 function mergeMonth(target: LiveCohortMonth, source: LiveCohortMonth) {
   target.planned = round2(target.planned + Number(source.planned || 0));
   target.actual = round2(target.actual + Number(source.actual || 0));
@@ -946,6 +963,7 @@ function buildMonthOtjh(month: LiveCohortMonth): OtjhMonth {
   return {
     status: monthStatus(month.planned, month.actual),
     flagged: unallocated > 0,
+    provenance: isPostCutoffMonth(month.month) ? "fetched" : "engineered",
     att_h: month.att_actual,
     asg_h: month.asg_actual,
     lms_h: lms,
@@ -965,10 +983,20 @@ function buildMonthOtjh(month: LiveCohortMonth): OtjhMonth {
 
 function buildPeriods(cohort: LiveCohortResponse): Array<{ value: string; label: string }> {
   const byMonth = new Map<string, string>();
+  // Months where at least one learner has real activity (fetched actual or
+  // not-accepted). A post-cutoff month absent here is planned-only across the
+  // whole cohort and is dropped below.
+  const monthsWithActivity = new Set<string>();
   for (const learner of cohort.learners) {
-    for (const month of learner.months) byMonth.set(month.month, month.label);
+    for (const month of learner.months) {
+      byMonth.set(month.month, month.label);
+      if (Math.abs(Number(month.actual ?? 0)) > 0 || Math.abs(Number(month.not_accepted ?? 0)) > 0) {
+        monthsWithActivity.add(month.month);
+      }
+    }
   }
   const periods = [...byMonth.entries()]
+    .filter(([value]) => !isPostCutoffMonth(value) || monthsWithActivity.has(value))
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([value, label]) => ({ value, label }));
   if (!byMonth.has(LAST_AUDIT_UNDATED_PERIOD) && cohort.source === "Last_audit" && cohort.learners.some(
@@ -1021,11 +1049,16 @@ export function getLearners(params: { period?: string; search?: string; position
 
     const learners: LearnerSummary[] = rows.map(({ learner, month, planned, actual, plannedAvailable }) => {
       const periods = learner.months
-        .filter((item) =>
-          Math.abs(Number(item.planned ?? 0)) > 0 ||
-          Math.abs(Number(item.actual ?? 0)) > 0 ||
-          Math.abs(Number(item.not_accepted ?? 0)) > 0,
-        )
+        .filter((item) => {
+          const hasClaimed =
+            Math.abs(Number(item.actual ?? 0)) > 0 ||
+            Math.abs(Number(item.not_accepted ?? 0)) > 0;
+          // After the cutoff, a planned-only month is a preserved future Aptem
+          // plan with no journal activity — hide it. Before the cutoff, keep the
+          // month if it has planned OR claimed hours (unchanged behaviour).
+          if (isPostCutoffMonth(item.month)) return hasClaimed;
+          return hasClaimed || Math.abs(Number(item.planned ?? 0)) > 0;
+        })
         .map((item) => ({ value: item.month, label: item.label }))
         .sort((left, right) => left.value.localeCompare(right.value));
       if (
