@@ -517,6 +517,7 @@ class LearnerMatchProfileTests(SimpleTestCase):
         self.assertEqual(payload["employment"]["employer_name"], "Example Ltd")
         self.assertEqual(payload["programme_status"], "OnBreak")
         self.assertEqual(payload["coach"]["name"], "Example Coach")
+        load_sources.assert_called_once_with(1234, "test@example.com", "Test Learner")
         self.assertEqual(payload["break_in_learning"]["last_learning_date"], "2026-01-15")
         self.assertEqual(payload["break_in_learning"]["return_to_learning_date"], "2026-03-10")
         self.assertEqual(
