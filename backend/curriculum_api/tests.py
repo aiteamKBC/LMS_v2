@@ -1391,7 +1391,7 @@ class StaffProfileSchemaRepairTests(TestCase):
         views._TABLE_COLUMNS_CACHE.clear()
         views.invalidate_curriculum_cache()
 
-    def test_ensure_staff_profile_tables_backfills_missing_status_column(self):
+    def test_ensure_staff_profile_tables_does_not_restore_removed_staff_columns(self):
         for table in ("coaches", "tutors"):
             with connection.cursor() as cursor:
                 cursor.execute(f'drop table if exists {views.table_name(table)}')
@@ -1407,7 +1407,9 @@ class StaffProfileSchemaRepairTests(TestCase):
 
         views.ensure_staff_profile_tables()
 
-        self.assertIn("status", views.column_names("coaches"))
-        self.assertIn("status", views.column_names("tutors"))
+        self.assertNotIn("status", views.column_names("coaches"))
+        self.assertNotIn("status", views.column_names("tutors"))
+        self.assertNotIn("specialisms", views.column_names("coaches"))
+        self.assertNotIn("specialisms", views.column_names("tutors"))
         self.assertIn("assigned_group_ids", views.column_names("coaches"))
         self.assertIn("assigned_module_ids", views.column_names("tutors"))

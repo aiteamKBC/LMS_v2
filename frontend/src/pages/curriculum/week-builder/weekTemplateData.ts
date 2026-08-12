@@ -137,7 +137,6 @@ export interface WeekTemplateInput {
   moduleCatalogueId?: string;
   groupId?: string;
   groupName?: string;
-  status?: string;
   ksbMappings?: KsbMapping[];
   author?: string;
   components?: ModuleComponent[];
@@ -399,7 +398,6 @@ export interface FetchWeekTemplatesOptions {
   programmeId?: string;
   moduleCatalogueId?: string;
   groupId?: string;
-  status?: string;
   search?: string;
 }
 
@@ -409,7 +407,6 @@ export async function fetchWeekTemplates(options: FetchWeekTemplatesOptions = {}
   if (options.programmeId) query.set('programmeId', options.programmeId);
   if (options.moduleCatalogueId) query.set('moduleCatalogueId', options.moduleCatalogueId);
   if (options.groupId) query.set('groupId', options.groupId);
-  if (options.status) query.set('status', options.status);
   if (options.search) query.set('search', options.search);
   const suffix = query.toString() ? `?${query.toString()}` : '';
   const payload = await request<WeekTemplateCollection>(`/curriculum/week-templates/${suffix}`, { signal });
@@ -506,7 +503,6 @@ export function toWeekTemplateInput(template: WeekTemplate): WeekTemplateInput {
     moduleCatalogueId: template.moduleCatalogueId,
     groupId: template.groupId,
     groupName: template.groupName,
-    status: template.status,
     ksbMappings: template.ksbMappings,
     author: template.author,
     components: template.components,
