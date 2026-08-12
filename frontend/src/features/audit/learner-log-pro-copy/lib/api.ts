@@ -9,19 +9,11 @@
 // layout and route order stay stable. Last_audit does not yet contain mapped
 // hours or occurrence dates, so unavailable values remain explicit.
 //
-// The two AUDITOR WRITE features the live (read-only) API does not cover — the
-// per-activity annotation (planned-hours override + notes) and the monthly
-// sign-off — stay pointed at the existing Django endpoints, which still own them.
-// Read learner/activity data from the normalized Last_audit mirror through the
-// LMS backend. Writes remain on the legacy service until the Last_audit write
-// workflow is introduced explicitly; read rows are marked read-only below so a
-// user cannot accidentally edit the old Audit source while viewing new data.
-// Reads now come from the fetch-evidence backend (the deployed OTJH/Last_audit
-// API), not the local /audit_api. Same endpoint contract (cohort / activities /
-// activity / attendance-sheet / quiz-attempt), now enriched with per-activity
-// planned + actual hours, reporting method and timestamps.
-const READ_BASE = "https://fetch-evidence.kentbusinesscollege.net/api/last-audit-ledger";
-const LEGACY_WRITE_BASE = "https://fetch-evidence.kentbusinesscollege.net/api/otjh";
+// Every read AND write is same-origin Django now. Auditor edits are stored as
+// reversible overlays (activity-overrides); the employee-arranged journal has
+// its own module in ./manualApi.ts. The legacy external fetch-evidence write
+// service is gone.
+const READ_BASE = "/audit_api/last-audit";
 const LAST_AUDIT_UNDATED_PERIOD = "undated";
 // Engineered OTJH values are permitted only through 2026-08-01 (inclusive). From
 // 2026-09 onward the ledger reports fetched source values only. A post-cutoff
@@ -464,48 +456,11 @@ function normalizeActivityDetail(detail: ActivityDetail): ActivityDetail {
     activity: displayString(detail.activity, "Untitled activity"),
     category: displayString(detail.category, "activity"),
     items: Array.isArray(detail.items) ? detail.items.map(normalizeActivityItem) : [],
-    participants: Array.isArray(detail.participants)
-      ? detail.participants.map((participant) => (
-          isValidActivityDate(participant.date) && isValidMonthKey(participant.month)
-            ? participant
-            : {
-                ...participant,
-                date: null,
-                month: LAST_AUDIT_UNDATED_PERIOD,
-              }
-        ))
-      : [],
   };
 }
 
-// Only the server-whitelisted editable fields. Per-learner fields apply to the
-// row identified by aptem_id; shared fields are activity-level and broadcast to
-// every participant when apply_shared_to_all is true.
-export type EditPatch = Partial<{
-  // per-learner
-  planned_hours: number;
-  actual_hours: number;
-  started_at: string; // ISO
-  completed_at: string; // ISO
-  journal: string;
-  attended: boolean; // attendance only — server auto-sets 2.5/0 + timestamp
-  // shared (activity-level)
-  front_end_name: string;
-  description: string;
-  auditor_notes: string;
-  ksb_notes: string;
-  auditor_ksbs: string[];
-  edited_by: string;
-}>;
-
-export type EditActivityResponse = {
-  ok: boolean;
-  changed: Record<string, unknown>;
-  also_applied_to: number[];
-};
-
 // ---------------------------------------------------------------------------
-// Live API response shapes (what fetch-evidence actually returns).
+// Live API response shapes (what the Django last-audit endpoints return).
 // ---------------------------------------------------------------------------
 
 type LiveCohortMonth = {
@@ -1494,9 +1449,8 @@ export async function saveActivityAnnotation(payload: {
 }
 
 // ---------------------------------------------------------------------------
-// Activity Detail — live from the evidence API. GET returns the activity, its
-// sub-activities (bundle items) and every participant; POST edits whitelisted
-// fields. Both are read/write on the live service (CORS + preflight handled).
+// Activity Detail — GET returns the activity, its sub-activities (bundle
+// items) and every participant from the same-origin Django last-audit API.
 // ---------------------------------------------------------------------------
 
 export async function getActivityDetail(componentId: string | number, learnerId?: string): Promise<ActivityDetail> {
@@ -1537,8 +1491,8 @@ export async function getActivityDetail(componentId: string | number, learnerId?
   } catch (error) {
     // The /activity endpoint only resolves component-based items (video, audio,
     // reading+quiz bundles, attendance). Assignments use a separate id namespace
-    // and 404 there — but /edit DOES accept them. Reconstruct a minimal detail
-    // from the flat activities feed so assignment rows still open and stay editable.
+    // and 404 there. Reconstruct a minimal detail from the flat activities feed
+    // so assignment rows still open and stay editable via overlays.
     const learners = await getActivityLearners({ component: String(componentId), programme });
     if (!learners.items.length) throw error; // genuinely unknown id
     const participants: ActivityParticipant[] = learners.items.map((row) => ({
@@ -1569,33 +1523,6 @@ export async function getActivityDetail(componentId: string | number, learnerId?
       participants,
     };
   }
-}
-
-export async function editActivity(payload: {
-  aptem_id: number;
-  component_id: number | string;
-  patch: EditPatch;
-  apply_shared_to_all?: boolean;
-}): Promise<EditActivityResponse> {
-  if (String(payload.component_id).startsWith("la:")) {
-    throw new Error("Last_audit activities are read-only until the hours/edit mapping step is enabled.");
-  }
-  const response = await fetch(`${LEGACY_WRITE_BASE}/edit/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      aptem_id: payload.aptem_id,
-      component_id: payload.component_id,
-      patch: payload.patch,
-      apply_shared_to_all: payload.apply_shared_to_all ?? false,
-    }),
-  });
-  if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { error?: string; editable?: string[] } | null;
-    const allowed = error?.editable ? ` (allowed: ${error.editable.join(", ")})` : "";
-    throw new Error((error?.error ?? `Edit failed (${response.status})`) + allowed);
-  }
-  return response.json() as Promise<EditActivityResponse>;
 }
 
 async function overlayMutation(method: "POST" | "PUT" | "PATCH" | "DELETE", body: Record<string, unknown>) {
@@ -1645,30 +1572,16 @@ export async function updateActivityRow(row: LearnerActivity, activity: Activity
     });
   }
 
-  const current = rowSnapshot(row);
-  // Last_audit is an immutable source mirror.  Every edit is stored as a
-  // reversible replacement overlay, even when the date itself is unchanged.
-  if (row.source === "Last_audit" || row.plan_id.startsWith("la:") || activity.date !== current.date) {
-    return overlayMutation("PUT", {
-      aptem_id: aptemId,
-      activity_id: row.plan_id,
-      activity,
-      snapshot: current,
-      updated_by: updatedBy,
-    });
-  }
-  const patch: EditPatch = {};
-  if (activity.activity !== current.activity) patch.front_end_name = activity.activity;
-  if (activity.planned !== current.planned) patch.planned_hours = activity.planned;
-  if (activity.category === "attendance") {
-    if ((activity.actual > 0) !== Boolean(row.completed)) patch.attended = activity.actual > 0;
-  } else if (activity.actual !== current.actual) patch.actual_hours = activity.actual;
-  if (activity.timestamp_from && activity.timestamp_from !== current.timestamp_from) patch.started_at = activity.timestamp_from;
-  if (activity.timestamp_to && activity.timestamp_to !== current.timestamp_to) patch.completed_at = activity.timestamp_to;
-  if (Object.keys(patch).length === 0) return { ok: true, changed: {}, also_applied_to: [] };
-  const result = await editActivity({ aptem_id: aptemId, component_id: row.plan_id, patch });
-  invalidateOtjhCaches();
-  return result;
+  // Every source row — Last_audit mirror or legacy — is immutable here. All
+  // edits are stored as reversible replacement overlays on our own Django
+  // backend; the external fetch-evidence write service is no longer called.
+  return overlayMutation("PUT", {
+    aptem_id: aptemId,
+    activity_id: row.plan_id,
+    activity,
+    snapshot: rowSnapshot(row),
+    updated_by: updatedBy,
+  });
 }
 
 export async function deleteActivityRow(row: LearnerActivity, updatedBy?: string) {

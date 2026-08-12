@@ -87,6 +87,14 @@ class Command(BaseCommand):
                 )
                 source_rows = list(cursor.fetchall())
 
+        if not source_rows:
+            # An empty result almost certainly means a broken/misdirected source
+            # connection; deleting the whole mirror on it would destroy data.
+            raise CommandError(
+                "kbc_attendance returned no rows for the synced learners; "
+                "refusing to wipe the mirror."
+            )
+
         rows = [
             (
                 row["source_key"],
@@ -112,7 +120,20 @@ class Command(BaseCommand):
                 cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_la_attendance_learner_date ON {TABLE} (learner_id, attendance_date)")
                 cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_la_attendance_aptem ON {TABLE} (aptem_id)")
                 cursor.executemany(UPSERT, rows)
+                # The source deletes and re-keys rows; an upsert-only mirror
+                # keeps those forever and drifts. Full-replace per synced
+                # learner: drop mirror rows whose key the source no longer has.
+                cursor.execute(
+                    f"""
+                    DELETE FROM {TABLE}
+                    WHERE aptem_id = ANY(%s)
+                      AND NOT (source_key = ANY(%s))
+                    """,
+                    [list(learner_by_aptem), [row[0] for row in rows]],
+                )
+                deleted = cursor.rowcount
 
         self.stdout.write(self.style.SUCCESS(
-            f"Synced {len(rows)} attendance rows for {len(learner_by_aptem)} Aptem learners."
+            f"Synced {len(rows)} attendance rows for {len(learner_by_aptem)} "
+            f"Aptem learners; removed {deleted} stale mirror rows."
         ))

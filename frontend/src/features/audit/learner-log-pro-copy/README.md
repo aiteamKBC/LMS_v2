@@ -1,10 +1,16 @@
 # Auditor-copy OTJH workspace — Last_audit migration
 
-> Current read source (2026-08-11): the LMS-local
-> `/audit_api/last-audit/` endpoints backed by the normalized PostgreSQL
-> `"Last_audit"` schema. Learner Search keeps its existing table/filter order.
-> Activity rows are read-only during this first migration phase, and planned /
-> actual hours remain unavailable until `mapped_seconds` is populated.
+> Current state (2026-08-12): everything is same-origin Django. Reads come from
+> `/audit_api/last-audit/` (normalized `"Last_audit"` schema). The **monthly
+> journal is now employee-arranged**: original planned hours come from
+> `Last_audit.learners.planned_hours_monthly`, and the activity log lists only
+> rows employees add via `/audit_api/last-audit/manual/*` (schema
+> `structured_manual_activities`, see `lib/manualApi.ts`). Actual hours have no
+> automatic source. Assignment rows take evidence uploads (Azure container
+> `learner-assignments`), and every activity row opens the `/ledger` route:
+> definition (iframe / reading / quiz body) + all employee-arranged participant
+> rows. The external `fetch-evidence.kentbusinesscollege.net` write service is
+> no longer called from anywhere in this workspace.
 
 The endpoint flow is:
 
@@ -147,34 +153,18 @@ Each `items[]` entry is itself clickable → drills into
 participants. The snapshot's **Mapped KSBs** still come from the `/activities`
 row payload (endpoint 2), not this one.
 
-### 4. `POST /api/otjh/edit/`  (write)
+### 4. Writes
 
-Edits whitelisted fields (`editActivity` / `EditPatch`). CORS + OPTIONS preflight
-are handled server-side.
+The legacy external `POST /api/otjh/edit/` (fetch-evidence) call has been
+**removed**. All writes are same-origin Django:
 
-```jsonc
-{ "aptem_id": 92, "component_id": 50560,
-  "patch": { /* only whitelisted fields */ },
-  "apply_shared_to_all": false }              // true → push shared fields to every participant
-```
-
-| Scope | Fields |
-| --- | --- |
-| per-learner (applies to `aptem_id`'s row) | `planned_hours`, `actual_hours`, `started_at` (ISO), `completed_at` (ISO), `journal`, `attended` (attendance only — auto-sets 2.5/0 + timestamp) |
-| shared (activity-level; broadcast with `apply_shared_to_all:true`) | `front_end_name`, `description`, `auditor_notes`, `ksb_notes`, `auditor_ksbs` (array), `edited_by` |
-
-Response: `{ "ok": true, "changed": {…}, "also_applied_to": [learner ids] }`.
-Errors: `400` for a non-whitelisted field (returns the allowed list) / bad body,
-`404` for an unknown learner/activity. `actual_hours` edits keep the underlying
-OTJH in sync. After a successful edit the UI calls `invalidateOtjhCaches()` and
-invalidates the cohort/activities/activity-detail react-query keys so every view
-refetches fresh (the server busts its own cache too).
-
-The Activity Detail UI: the aside is an activity-level editor (name, planned
-hours for the primary learner, auditor KSB notes, edited-by, + "apply shared
-fields to all learners"); each participant row has an inline editor (planned,
-actual / attended, started/completed times, journal) that POSTs just that
-learner's row with optimistic update + a toast.
+- **Row edits on the read-only mirror** — reversible replacement overlays via
+  `/audit_api/match-ledger/activity-overrides` (`updateActivityRow` /
+  `deleteActivityRow` / `createActivity` in `lib/api.ts`).
+- **Employee-arranged journal rows** — CRUD on
+  `/audit_api/last-audit/manual/rows`, assignment uploads on
+  `/audit_api/last-audit/manual/documents` (`lib/manualApi.ts`), stored in the
+  `structured_manual_activities` schema.
 
 ## Caching notes
 
