@@ -26,6 +26,22 @@ ALLOWED_EVIDENCE_EXTENSIONS = {
 def ensure_evidence_override_table(cursor):
     cursor.execute(
         '''
+        select column_name
+        from information_schema.columns
+        where table_schema = 'Audit' and table_name = 'learner_evidence_overrides'
+        '''
+    )
+    existing_columns = {row[0] for row in cursor.fetchall()}
+    required_columns = {
+        "evidence_id", "learner_id", "source_evidence_id", "is_uploaded",
+        "document_name", "component_name", "evidence_kind", "evidence_status",
+        "evidence_date", "azure_container", "azure_blob_name", "archived_at",
+        "deleted_at", "archived_by", "uploaded_by", "created_at", "updated_at",
+    }
+    if required_columns.issubset(existing_columns):
+        return
+    cursor.execute(
+        '''
         create table if not exists "Audit".learner_evidence_overrides (
             evidence_id text primary key,
             learner_id bigint not null,

@@ -417,6 +417,7 @@ function LearnerProfilePage() {
     ? learner.contracts
     : learner.contracts.filter((contract) => !contract.archived);
   const archivedContractCount = learner.contracts.filter((contract) => contract.archived).length;
+  const activeContractCount = learner.contracts.length - archivedContractCount;
   const employment = learner.employment;
   const planPercent = learner.training_plan.total_modules
     ? Math.round((learner.training_plan.completed_modules / learner.training_plan.total_modules) * 100)
@@ -540,7 +541,7 @@ function LearnerProfilePage() {
           </div>
           <div className="rounded-lg border border-border bg-card p-5 shadow-panel">
             <p className="label-caps">Contracts</p>
-            <p className="mt-3 font-mono text-3xl font-semibold text-foreground">{learner.contracts.length}</p>
+            <p className="mt-3 font-mono text-3xl font-semibold text-foreground">{activeContractCount}</p>
             <p className="mt-2 text-xs text-muted-foreground">Documents found for this learner</p>
           </div>
         </section>
