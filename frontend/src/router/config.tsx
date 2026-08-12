@@ -32,6 +32,8 @@ const AttendancePage = lazy(() => import("../pages/learner/attendance/page"));
 const AttendanceRiskPage = lazy(() => import("../pages/engagement/attendance-risk/page"));
 const AuditorWorkspace = lazy(() => import("../pages/workspace/auditor/page"));
 const AuditorCopyWorkspace = lazy(() => import("../pages/workspace/auditor-copy/page"));
+const AuditorManualWorkspace = lazy(() => import("../pages/workspace/auditor-manual/page"));
+const AuditSelectPage = lazy(() => import("../pages/workspace/audit-select/page"));
 const BadgeDetailPage = lazy(() => import("../pages/learner/rewards/badge-detail/page"));
 const BoardPage = lazy(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazy(() => import("../pages/employer/EmployerPortalPage"));
@@ -68,6 +70,7 @@ const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CoachTimetable = lazy(() => import("../pages/coach/timetable/page"));
 const CommunicationPage = lazy(() => import("../pages/communication/page"));
 const CurriculumDashboard = lazy(() => import("../pages/workspace/curriculum/page"));
+const CurriculumFreeCourses = lazy(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CurriculumProgrammes = lazy(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazy(() => import("../pages/curriculum/published/page"));
@@ -748,6 +751,10 @@ const routes: RouteObject[] = [
     element: <CurriculumProgrammes />,
   },
   {
+    path: "/curriculum/free-courses",
+    element: <CurriculumFreeCourses />,
+  },
+  {
     path: "/curriculum/module-builder",
     element: <ModuleBuilder />,
   },
@@ -831,6 +838,15 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/auditor-copy",
     element: <AuditorCopyWorkspace />,
+  },
+  {
+    // AUDIT chooser: Automatic (auditor-copy) vs Manual (auditor-manual).
+    path: "/workspace/audit",
+    element: <AuditSelectPage />,
+  },
+  {
+    path: "/workspace/auditor-manual",
+    element: <AuditorManualWorkspace />,
   },
   {
     path: "/workspace/auditor/learner/:auditLearnerId",

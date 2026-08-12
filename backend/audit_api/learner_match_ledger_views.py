@@ -52,6 +52,9 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
+from .contract_documents import ensure_contract_archive_table
+from .evidence_documents import ensure_evidence_override_table
+
 try:
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
 except ImportError:  # pragma: no cover - exercised only when optional Azure SDK is absent.
@@ -1281,7 +1284,11 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Learner not found."}, status=404)
 
     try:
-        sources = _load_profile_sources(learner["aptem_id"], learner.get("email"))
+        sources = _load_profile_sources(
+            learner["aptem_id"],
+            learner.get("email"),
+            learner.get("name"),
+        )
     except DatabaseError as error:
         return JsonResponse(
             {"error": "Could not load the learner profile sources.", "details": str(error)},
@@ -1358,7 +1365,7 @@ def _load_profile_learner(learner_key):
     }
 
 
-def _load_profile_sources(aptem_id, learner_email):
+def _load_profile_sources(aptem_id, learner_email, learner_name=None):
     """Read the profile's external sources without retaining user selection.
 
     Every query is keyed by this request's learner id/email. The returned data
@@ -1368,6 +1375,7 @@ def _load_profile_sources(aptem_id, learner_email):
     skill_groups = {}
     certifications = []
     employment = None
+    cv_employment_candidates = []
     learning_delivery = {}
     programme_understanding = {
         "understanding_programme": None,
@@ -1384,14 +1392,21 @@ def _load_profile_sources(aptem_id, learner_email):
     }
 
     with connections[CONN].cursor() as cursor:
+        ensure_contract_archive_table(cursor)
         cursor.execute(
             '''
-            select id, document_name, status, date, learner_signed_date,
-                   fully_signed_date, requested_date, program_name,
-                   program_start_date, planned_end_date, file, azure_path
-            from fetching_evidence.aptem_cv_contracts_probe
-            where learner_id = %s
-            order by date desc nulls last, id desc
+            select contracts.id, coalesce(nullif(archive.display_name, ''), contracts.document_name), contracts.status, contracts.date,
+                   contracts.learner_signed_date, contracts.fully_signed_date,
+                   contracts.requested_date, contracts.program_name,
+                   contracts.program_start_date, contracts.planned_end_date,
+                   contracts.file, contracts.azure_path,
+                   archive.archived_at, archive.archived_by
+            from fetching_evidence.aptem_cv_contracts_probe contracts
+            left join "Audit".contract_document_archive archive
+              on archive.contract_id = contracts.id
+            where contracts.learner_id = %s
+              and archive.deleted_at is null
+            order by contracts.date desc nulls last, contracts.id desc
             ''',
             [aptem_id],
         )
@@ -1421,13 +1436,16 @@ def _load_profile_sources(aptem_id, learner_email):
                 "file": f"/audit_api/contracts/{row[0]}/open" if row[11] else row[10],
                 "download_file": row[10],
                 "azure_path_available": bool(row[11]),
+                "archived": bool(row[12]),
+                "archived_at": row[12],
+                "archived_by": row[13],
             })
 
         cursor.execute(
             '''
             select program_status, "Break in learning"
             from fetching_evidence.aptem_cv_contracts_probe
-            where learner_id = %s
+            where learner_id = %s and source <> 'audit_upload'
             order by fetched_at desc nulls last, id desc
             limit 1
             ''',
@@ -1490,14 +1508,8 @@ def _load_profile_sources(aptem_id, learner_email):
             [aptem_id],
         )
         for characteristic, assessed_level in cursor.fetchall():
-            match = re.match(
-                r"Understanding of (.+?) \((Knowledge|Skill|Behaviour)\)",
-                characteristic or "",
-            )
-            domain = match.group(1).strip() if match else (characteristic or "Skill").split(" - ")[0].strip()
+            domain, field = _skill_radar_characteristic(characteristic)
             score = max(0, min(8, int(assessed_level)))
-            score_type = match.group(2).lower() if match else "skill"
-            field = {"knowledge": "knowledge", "skill": "skill_score", "behaviour": "behaviour"}[score_type]
             skill_groups.setdefault(domain, {})[field] = score
 
         cursor.execute(
@@ -1516,11 +1528,6 @@ def _load_profile_sources(aptem_id, learner_email):
                     certification_value = json.loads(certification_value)
                 except ValueError:
                     certification_value = []
-            if isinstance(employment_value, str):
-                try:
-                    employment_value = json.loads(employment_value)
-                except ValueError:
-                    employment_value = []
             if isinstance(certification_value, list):
                 for certification in certification_value:
                     if not isinstance(certification, dict):
@@ -1533,20 +1540,62 @@ def _load_profile_sources(aptem_id, learner_email):
                         continue
                     seen_certifications.add(key)
                     certifications.append(certification)
-            if employment is None:
-                employment = _first_employment_details(employment_value)
+            cv_employment_terms = _cv_employment_terms(employment_value)
+            if cv_employment_terms:
+                cv_employment_candidates.append(cv_employment_terms)
 
-        if learner_email:
+        cursor.execute(
+            '''
+            select learner_employer_details
+            from fetching_evidence.aptem_cv_contracts_probe
+            where learner_id = %s
+              and learner_employer_details is not null
+              and learner_employer_details <> '{}'::jsonb
+            order by fetched_at desc nulls last, id desc
+            limit 1
+            ''',
+            [aptem_id],
+        )
+        employer_row = cursor.fetchone()
+        if employer_row:
+            employment = _employer_details_from_contract_profile(employer_row[0])
+        employment = _merge_matching_cv_employment_terms(employment, cv_employment_candidates)
+
+        if learner_email or learner_name:
+            learner_email = str(learner_email or "").strip()
+            learner_name = str(learner_name or "").strip()
             cursor.execute(
                 '''
                 select learn_ref_number, planned_hours, otj_actual_hours,
-                       learn_start_date, learn_plan_end_date, completion_status
+                       learn_start_date, learn_plan_end_date, completion_status,
+                       nullif(
+                           concat_ws(', ',
+                               nullif(btrim(address_line_1), ''),
+                               nullif(btrim(address_line_2), ''),
+                               nullif(btrim(address_line_3), ''),
+                               nullif(btrim(address_line_4), '')
+                           ),
+                           ''
+                       ) as learner_address,
+                       nullif(btrim(postcode), '') as learner_postcode,
+                       nullif(btrim(delivery_location_postcode), '') as employer_postcode
                 from "Audit".ilr_learning_deliveries
-                where lower(email) = lower(%s) and planned_hours is not null
-                order by aim_seq_number, updated_at desc nulls last, id desc
+                where planned_hours is not null
+                  and (
+                    (%s <> '' and lower(btrim(email)) = lower(%s))
+                    or
+                    (%s <> '' and lower(btrim(concat_ws(' ', given_names, family_name))) = lower(%s))
+                  )
+                order by
+                    case when %s <> '' and lower(btrim(email)) = lower(%s) then 0 else 1 end,
+                    aim_seq_number, updated_at desc nulls last, id desc
                 limit 1
                 ''',
-                [learner_email],
+                [
+                    learner_email, learner_email,
+                    learner_name, learner_name,
+                    learner_email, learner_email,
+                ],
             )
             delivery = cursor.fetchone()
             if delivery:
@@ -1557,9 +1606,14 @@ def _load_profile_sources(aptem_id, learner_email):
                     "start_date": delivery[3],
                     "planned_end_date": delivery[4],
                     "completion_status": delivery[5],
+                    "learner_address": delivery[6],
+                    "learner_postcode": delivery[7],
+                    "employer_postcode": delivery[8],
                     "first_evidence_date": None,
                     "first_evidence_items": [],
+                    "archived_evidence_items": [],
                 }
+                ensure_evidence_override_table(cursor)
                 cursor.execute(
                     '''
                     with raw_candidates as (
@@ -1592,30 +1646,54 @@ def _load_profile_sources(aptem_id, learner_email):
                         from raw_candidates
                         order by evidence_id, evidence_date
                     )
-                    select evidence_id, evidence_name, component_name, evidence_kind,
-                           evidence_status, evidence_file, evidence_content, evidence_date
+                    select candidates.evidence_id, candidates.evidence_name,
+                           candidates.component_name, candidates.evidence_kind,
+                           candidates.evidence_status, candidates.evidence_file,
+                           candidates.evidence_content,
+                           coalesce(overrides.evidence_date, candidates.evidence_date) as evidence_date,
+                           overrides.archived_at is not null as archived,
+                           overrides.deleted_at is not null as deleted,
+                           false as uploaded
                     from candidates
-                    where evidence_date = (select min(evidence_date) from candidates)
-                    order by evidence_id
+                    left join "Audit".learner_evidence_overrides overrides
+                      on overrides.learner_id = %s
+                     and overrides.is_uploaded = false
+                     and overrides.source_evidence_id::text = candidates.evidence_id
+                    union all
+                    select uploads.evidence_id, uploads.document_name,
+                           uploads.component_name, uploads.evidence_kind,
+                           uploads.evidence_status, null, null, uploads.evidence_date,
+                           uploads.archived_at is not null as archived,
+                           uploads.deleted_at is not null as deleted,
+                           true as uploaded
+                    from "Audit".learner_evidence_overrides uploads
+                    where uploads.learner_id = %s and uploads.is_uploaded = true
+                    order by evidence_date, evidence_id
                     ''',
-                    [aptem_id, delivery[3]],
+                    [aptem_id, delivery[3], aptem_id, aptem_id],
                 )
-                first_evidence_rows = cursor.fetchall()
-                if first_evidence_rows:
-                    learning_delivery["first_evidence_date"] = first_evidence_rows[0][7]
-                    learning_delivery["first_evidence_items"] = [
+                evidence_rows = cursor.fetchall()
+                if evidence_rows:
+                    evidence_items = [
                         {
                             "id": row[0],
                             "name": row[1] or "Untitled evidence",
                             "component_name": row[2] or "",
                             "kind": row[3] or "",
                             "status": row[4] or "",
-                            "file": row[5],
+                            "file": f"/audit_api/evidence/{quote(str(row[0]), safe='')}/open?learner_id={aptem_id}" if row[0] else None,
                             "content": row[6],
                             "date": row[7],
+                            "archived": bool(row[8]),
+                            "deleted": bool(row[9]),
+                            "uploaded": bool(row[10]),
                         }
-                        for row in first_evidence_rows
+                        for row in evidence_rows
                     ]
+                    first_date, first_items, archived_items = _partition_evidence_items(evidence_items)
+                    learning_delivery["archived_evidence_items"] = archived_items
+                    learning_delivery["first_evidence_date"] = first_date
+                    learning_delivery["first_evidence_items"] = first_items
 
     skills_radar = [
         {
@@ -1625,7 +1703,7 @@ def _load_profile_sources(aptem_id, learner_email):
             "behaviour": scores.get("behaviour"),
             "maximum": 8,
         }
-        for domain, scores in sorted(skill_groups.items())
+        for domain, scores in sorted(skill_groups.items(), key=lambda item: _skill_radar_sort_key(item[0]))
     ]
     return {
         "contracts": contracts,
@@ -1639,19 +1717,193 @@ def _load_profile_sources(aptem_id, learner_email):
     }
 
 
-def _first_employment_details(value):
-    if isinstance(value, dict):
-        nested = value.get("employment_details")
-        if isinstance(nested, dict) and nested.get("section_found", True):
-            return nested
-        if value.get("employer_name") and value.get("section_found", True):
-            return value
+def _partition_evidence_items(evidence_items):
+    """Keep Aptem's original first evidence fixed; uploads may replace it.
+
+    Archiving the original source evidence must not promote Aptem's second
+    evidence. An auditor-uploaded item is the only replacement candidate.
+    """
+    archived_items = [
+        item for item in evidence_items if item["archived"] and not item["deleted"]
+    ]
+    source_items = [item for item in evidence_items if not item["uploaded"]]
+    original_source_date = min((item["date"] for item in source_items), default=None)
+    qualifying_items = [
+        item for item in evidence_items
+        if not item["archived"]
+        and not item["deleted"]
+        and (
+            item["uploaded"]
+            or (original_source_date is not None and item["date"] == original_source_date)
+        )
+    ]
+    first_date = min((item["date"] for item in qualifying_items), default=None)
+    first_items = [item for item in qualifying_items if item["date"] == first_date]
+    return first_date, first_items, archived_items
+
+
+def _employer_details_from_contract_profile(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    if not isinstance(value, dict):
+        return None
+
+    employer = value.get("employer")
+    if not isinstance(employer, dict):
+        employer = {}
+    raw = value.get("raw")
+    if not isinstance(raw, dict):
+        raw = {}
+    manager = employer.get("manager")
+    if not isinstance(manager, dict):
+        manager = {}
+    address = employer.get("address")
+    if not isinstance(address, dict):
+        address = {}
+
+    employer_name = employer.get("name") or raw.get("UserEmployer_Organization")
+    job_title = employer.get("job_title") or raw.get("UserILRSummary_JobTitle")
+    workplace_address = address.get("formatted") or raw.get("UserEmployer_Address")
+    manager_name = manager.get("name") or raw.get("UserEmployer_ManagerName")
+    manager_email = manager.get("email") or raw.get("UserEmployer_ManagerEmail")
+    manager_phone = manager.get("phone_number") or raw.get("UserEmployer_ManagerPhone")
+    if not any((employer_name, job_title, workplace_address, manager_name, manager_email, manager_phone)):
+        return None
+    return {
+        "employer_name": employer_name or None,
+        "job_title": job_title or None,
+        "workplace_address": workplace_address or None,
+        "employment_start_date": None,
+        "contracted_hours_per_week": None,
+        "employment_type": None,
+        "working_pattern": None,
+        "line_manager": {
+            "name": manager_name or None,
+            "email": manager_email or None,
+            "phone": manager_phone or None,
+            "job_title": None,
+        },
+    }
+
+
+def _cv_employment_terms(value):
+    """Read the two contract terms that only exist in the extracted CV data."""
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return None
+        if decoded == value:
+            return None
+        return _cv_employment_terms(decoded)
+
     if isinstance(value, list):
         for item in value:
-            details = _first_employment_details(item)
-            if details:
-                return details
+            terms = _cv_employment_terms(item)
+            if terms:
+                return terms
+        return None
+
+    if not isinstance(value, dict):
+        return None
+
+    if value.get("section_found", True):
+        employer_name = _cv_optional_text(value.get("employer_name"))
+        start_date = _cv_optional_text(value.get("employment_start_date"))
+        contracted_hours = _to_float(value.get("contracted_hours_per_week"))
+        if start_date is not None or contracted_hours is not None:
+            return {
+                "employer_name": employer_name,
+                "employment_start_date": start_date,
+                "contracted_hours_per_week": contracted_hours,
+            }
+
+    for nested in value.values():
+        terms = _cv_employment_terms(nested)
+        if terms:
+            return terms
     return None
+
+
+def _cv_optional_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text.lower() in {"", "none", "null", "n/a", "-"}:
+        return None
+    return text
+
+
+def _skill_radar_characteristic(value):
+    text = str(value or "").strip() or "Skill"
+    labelled_match = re.match(
+        r"Understanding of (.+?) \((Knowledge|Skill|Behaviour)\)",
+        text,
+        re.IGNORECASE,
+    )
+    if labelled_match:
+        score_type = labelled_match.group(2).lower()
+        field = {
+            "knowledge": "knowledge",
+            "skill": "skill_score",
+            "behaviour": "behaviour",
+        }[score_type]
+        return labelled_match.group(1).strip(), field
+
+    code_match = re.search(r"(?:^|[\s(:.\-])([KSB])\d+\b", text, re.IGNORECASE)
+    prefix = code_match.group(1).upper() if code_match else "S"
+    field = {
+        "K": "knowledge",
+        "S": "skill_score",
+        "B": "behaviour",
+    }[prefix]
+    return text, field
+
+
+def _skill_radar_sort_key(value):
+    text = str(value or "")
+    code_match = re.search(r"(?:^|[\s(:.\-])([KSB])(\d+)\b", text, re.IGNORECASE)
+    if not code_match:
+        return (3, 0, text.lower())
+    prefix_order = {"K": 0, "S": 1, "B": 2}
+    return (prefix_order[code_match.group(1).upper()], int(code_match.group(2)), text.lower())
+
+
+def _normalise_employer_name(value):
+    text = _cv_optional_text(value)
+    if text is None:
+        return None
+    words = re.findall(r"[a-z0-9]+", text.lower().replace("&", " and "))
+    suffixes = {"limited", "ltd"}
+    while words and words[-1] in suffixes:
+        words.pop()
+    return " ".join(words) or None
+
+
+def _merge_matching_cv_employment_terms(employment, candidates):
+    if not isinstance(employment, dict):
+        return employment
+    employer_name = employment.get("employer_name")
+    matching_terms = next(
+        (
+            candidate
+            for candidate in candidates
+            if _normalise_employer_name(candidate.get("employer_name"))
+            == _normalise_employer_name(employer_name)
+            and _normalise_employer_name(employer_name) is not None
+        ),
+        None,
+    )
+    if matching_terms is None:
+        return employment
+    if employment.get("employment_start_date") is None:
+        employment["employment_start_date"] = matching_terms.get("employment_start_date")
+    if employment.get("contracted_hours_per_week") is None:
+        employment["contracted_hours_per_week"] = matching_terms.get("contracted_hours_per_week")
+    return employment
 
 
 def _period_label(value):

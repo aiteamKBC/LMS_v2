@@ -3,7 +3,7 @@
 //
 //   GET /audit_api/last-audit/cohort/               -> all matched LMS learners
 //   GET /audit_api/last-audit/activities/?aptem_id= -> one learner's normalized results
-//   GET /audit_api/last-audit/activity/?component_id= -> shared definition + participants
+//   GET /audit_api/last-audit/activity/?activity_id= -> shared definition + participants
 //
 // This module preserves the existing UI types/signatures so the learner-search
 // layout and route order stay stable. Last_audit does not yet contain mapped
@@ -15,6 +15,12 @@
 // service is gone.
 const READ_BASE = "/audit_api/last-audit";
 const LAST_AUDIT_UNDATED_PERIOD = "undated";
+// Engineered OTJH values are permitted only through 2026-08-01 (inclusive). From
+// 2026-09 onward the ledger reports fetched source values only. A post-cutoff
+// month that carries ONLY preserved Aptem planned hours (no actual, no
+// not-accepted) is a future plan with no learner activity — it must not surface
+// as a reporting period, and its OTJH card is "fetched", not "engineered".
+const OTJH_ENGINEERING_CUTOFF_MONTH = "2026-08";
 // Django endpoint that still backs the auditor-entered activity annotations.
 const ANNOTATION_BASE = "/audit_api/match-ledger";
 const OVERLAY_URL = `${ANNOTATION_BASE}/activity-overrides`;
@@ -128,6 +134,7 @@ export type LearnerActivity = {
   component_total?: number;
   source?: string;
   hours_mapped?: boolean;
+  reporting_method?: string | null;
 };
 
 export type CompletionRecord = {
@@ -142,6 +149,10 @@ export type OtjhMonth = {
   status: string;
   path?: string | null;
   flagged: boolean;
+  // "engineered" for months on/before the 2026-08 cutoff (values are generated);
+  // "fetched" for 2026-09+ months (values come straight from source). Drives the
+  // OTJH card heading so it stops claiming "engineered" for fetched-only months.
+  provenance?: "engineered" | "fetched";
   applied_date?: string | null;
   note?: string | null;
   att_h?: number | null;
@@ -239,6 +250,9 @@ export type LearnerProfile = {
   planned_hours: number | null;
   learning_delivery: {
     learner_reference?: string;
+    learner_address?: string | null;
+    learner_postcode?: string | null;
+    employer_postcode?: string | null;
     planned_hours?: number;
     actual_hours?: number | null;
     start_date?: string;
@@ -252,6 +266,18 @@ export type LearnerProfile = {
       file: string | null;
       content: string | null;
       date: string;
+      archived: boolean;
+    }>;
+    archived_evidence_items?: Array<{
+      id: string;
+      name: string;
+      component_name: string;
+      kind: string;
+      status: string;
+      file: string | null;
+      content: string | null;
+      date: string;
+      archived: boolean;
     }>;
     planned_end_date?: string;
     completion_status?: number;
@@ -268,6 +294,9 @@ export type LearnerProfile = {
     programme_start_date: string | null;
     planned_end_date: string | null;
     file: string | null;
+    archived: boolean;
+    archived_at: string | null;
+    archived_by: string | null;
   }>;
   training_plan: {
     total_modules: number;
@@ -523,6 +552,7 @@ type LiveActivity = {
   source?: string;
   hours_mapped?: boolean;
   mapped_seconds?: number | null;
+  reporting_method?: string | null;
 };
 
 type LiveActivitiesResponse = {
@@ -562,6 +592,80 @@ export type ActivityRowInput = {
 
 // The categories the activity feed uses (drives the "Category" filter).
 const CATEGORIES = ["attendance", "video", "audio", "reading+quiz"];
+
+function isValidMonthKey(value: string | null | undefined): value is string {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(value ?? "");
+  if (!match) return false;
+  const year = Number(match[1]);
+  return year >= 2000 && year <= 2099;
+}
+
+function isValidActivityDate(value: string | null | undefined): value is string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value ?? "");
+  if (!match || !isValidMonthKey(`${match[1]}-${match[2]}`)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+// A month strictly after the engineering cutoff ("2026-08"), i.e. 2026-09+,
+// where only fetched source values are reported. Month keys are "YYYY-MM" so a
+// lexical compare is a chronological compare. "undated" is never post-cutoff.
+function isPostCutoffMonth(value: string | null | undefined): boolean {
+  return isValidMonthKey(value) && value > OTJH_ENGINEERING_CUTOFF_MONTH;
+}
+
+function mergeMonth(target: LiveCohortMonth, source: LiveCohortMonth) {
+  target.planned = round2(target.planned + Number(source.planned || 0));
+  target.actual = round2(target.actual + Number(source.actual || 0));
+  target.not_accepted = round2(target.not_accepted + Number(source.not_accepted || 0));
+  target.att_actual = round2(target.att_actual + Number(source.att_actual || 0));
+  target.asg_actual = round2(target.asg_actual + Number(source.asg_actual || 0));
+  target.media_actual = round2(target.media_actual + Number(source.media_actual || 0));
+  target.bundle_actual = round2(target.bundle_actual + Number(source.bundle_actual || 0));
+  target.unallocated_actual = round2(
+    Number(target.unallocated_actual || 0) + Number(source.unallocated_actual || 0),
+  );
+}
+
+function sanitizeCohortDates(cohort: LiveCohortResponse): LiveCohortResponse {
+  return {
+    ...cohort,
+    learners: cohort.learners.map((learner) => {
+      const months: LiveCohortMonth[] = [];
+      let hasInvalidDate = false;
+      for (const sourceMonth of learner.months) {
+        const month = isValidMonthKey(sourceMonth.month)
+          ? { ...sourceMonth }
+          : {
+              ...sourceMonth,
+              month: LAST_AUDIT_UNDATED_PERIOD,
+              label: "Undated LMS activities",
+            };
+        hasInvalidDate ||= month.month === LAST_AUDIT_UNDATED_PERIOD;
+        const existing = months.find((item) => item.month === month.month);
+        if (existing) mergeMonth(existing, month);
+        else months.push(month);
+      }
+      return {
+        ...learner,
+        months,
+        flags: hasInvalidDate
+          ? [...new Set([...(learner.flags ?? []), "invalid_activity_date"])]
+          : learner.flags,
+      };
+    }),
+  };
+}
+
+function sanitizeActivityDate(activity: LiveActivity): LiveActivity {
+  if (isValidActivityDate(activity.date) && isValidMonthKey(activity.month)) return activity;
+  return {
+    ...activity,
+    date: null,
+    month: LAST_AUDIT_UNDATED_PERIOD,
+    month_label: "Undated LMS activities",
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Low-level fetch + module-level caches.
@@ -604,15 +708,15 @@ export function applyCohortOverlay(cohort: LiveCohortResponse, overlays: Activit
     months: learner.months.map((month) => ({ ...month })),
   }));
   const adjustments = overlays.flatMap((override) => {
-    if (override.operation === "created") return [{ aptemId: override.aptem_id, activity: override.payload, direction: 1 }];
+    if (override.operation === "created") return [{ aptemId: override.aptem_id, activity: sanitizeActivityDate(override.payload), direction: 1 }];
     if (override.operation === "replaced") return [
-      ...(override.source_payload ? [{ aptemId: override.aptem_id, activity: override.source_payload, direction: -1 }] : []),
-      { aptemId: override.aptem_id, activity: override.payload, direction: 1 },
+      ...(override.source_payload ? [{ aptemId: override.aptem_id, activity: sanitizeActivityDate(override.source_payload), direction: -1 }] : []),
+      { aptemId: override.aptem_id, activity: sanitizeActivityDate(override.payload), direction: 1 },
     ];
     // Deleting an audit-created row replaces its `created` record and should
     // contribute zero. Deleting a live row subtracts its preserved snapshot.
     if (String(override.activity_id).startsWith("audit:")) return [];
-    return [{ aptemId: override.aptem_id, activity: override.payload, direction: -1 }];
+    return [{ aptemId: override.aptem_id, activity: sanitizeActivityDate(override.payload), direction: -1 }];
   });
   for (const { aptemId, activity, direction } of adjustments) {
     const learner = learners.find((item) => item.aptem_id === aptemId);
@@ -657,7 +761,7 @@ let cohortPromise: Promise<LiveCohortResponse> | null = null;
 function fetchCohort(): Promise<LiveCohortResponse> {
   if (!cohortPromise) {
     cohortPromise = Promise.all([
-      getJson<LiveCohortResponse>("/cohort/"),
+      getJson<LiveCohortResponse>("/cohort/").then(sanitizeCohortDates),
       fetchOverlays(),
     ]).then(([cohort, overlays]) => applyCohortOverlay(cohort, overlays))
       .catch((error) => {
@@ -674,18 +778,24 @@ function fetchActivitiesRaw(aptemId: number, month?: string): Promise<LiveActivi
   const cached = activityCache.get(key);
   if (cached) return cached;
   const query = new URLSearchParams({ aptem_id: String(aptemId) });
-  if (month) query.set("month", month);
+  // Invalid source dates are grouped under "undated" in the browser. Fetch the
+  // learner's complete feed for that bucket so malformed source years are not
+  // silently discarded or presented as genuine audit dates.
+  if (month && month !== LAST_AUDIT_UNDATED_PERIOD) query.set("month", month);
   const request = Promise.all([
     getJson<LiveActivitiesResponse>(`/activities/?${query}`),
     fetchOverlays(),
   ]).then(([response, overlays]) => {
     const relevant = overlays.filter((item) => item.aptem_id === aptemId);
-    const byId = new Map(response.activities.map((activity) => [String(activity.activity_id), activity]));
+    const byId = new Map(response.activities.map((activity) => {
+      const sanitized = sanitizeActivityDate(activity);
+      return [String(sanitized.activity_id), sanitized];
+    }));
     for (const override of relevant) {
       if (override.operation === "deleted") {
         byId.delete(String(override.activity_id));
       } else {
-        byId.set(String(override.activity_id), override.payload);
+        byId.set(String(override.activity_id), sanitizeActivityDate(override.payload));
       }
     }
     const activities = [...byId.values()].filter(
@@ -784,6 +894,7 @@ function toActivity(a: LiveActivity): LearnerActivity {
     azure_blob: a.azure_blob ?? null,
     source: a.source,
     hours_mapped: a.hours_mapped,
+    reporting_method: a.reporting_method ?? null,
   };
 }
 
@@ -807,6 +918,7 @@ function buildMonthOtjh(month: LiveCohortMonth): OtjhMonth {
   return {
     status: monthStatus(month.planned, month.actual),
     flagged: unallocated > 0,
+    provenance: isPostCutoffMonth(month.month) ? "fetched" : "engineered",
     att_h: month.att_actual,
     asg_h: month.asg_actual,
     lms_h: lms,
@@ -826,13 +938,23 @@ function buildMonthOtjh(month: LiveCohortMonth): OtjhMonth {
 
 function buildPeriods(cohort: LiveCohortResponse): Array<{ value: string; label: string }> {
   const byMonth = new Map<string, string>();
+  // Months where at least one learner has real activity (fetched actual or
+  // not-accepted). A post-cutoff month absent here is planned-only across the
+  // whole cohort and is dropped below.
+  const monthsWithActivity = new Set<string>();
   for (const learner of cohort.learners) {
-    for (const month of learner.months) byMonth.set(month.month, month.label);
+    for (const month of learner.months) {
+      byMonth.set(month.month, month.label);
+      if (Math.abs(Number(month.actual ?? 0)) > 0 || Math.abs(Number(month.not_accepted ?? 0)) > 0) {
+        monthsWithActivity.add(month.month);
+      }
+    }
   }
   const periods = [...byMonth.entries()]
+    .filter(([value]) => !isPostCutoffMonth(value) || monthsWithActivity.has(value))
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([value, label]) => ({ value, label }));
-  if (cohort.source === "Last_audit" && cohort.learners.some(
+  if (!byMonth.has(LAST_AUDIT_UNDATED_PERIOD) && cohort.source === "Last_audit" && cohort.learners.some(
     (learner) => (learner.lms_activity_count ?? (learner.months.length === 0 ? learner.activity_count : 0) ?? 0) > 0,
   )) {
     periods.push({ value: LAST_AUDIT_UNDATED_PERIOD, label: "Undated LMS activities" });
@@ -855,15 +977,17 @@ export function getLearners(params: { period?: string; search?: string; position
 
     let rows = cohort.learners.map((learner) => {
       const month = period ? learner.months.find((item) => item.month === period) ?? null : null;
-      const undated = period === LAST_AUDIT_UNDATED_PERIOD;
-      const planned = period && !undated ? month?.planned ?? 0 : learner.planned_total;
-      const actual = period && !undated ? month?.actual ?? 0 : learner.actual_total;
+      const planned = period ? month?.planned ?? 0 : learner.planned_total;
+      const actual = period ? month?.actual ?? 0 : learner.actual_total;
       const plannedAvailable = period
-        ? cohort.source !== "Last_audit" && month != null
+        ? month != null && learner.planned_hours_available !== false
         : learner.planned_hours_available !== false;
       return { learner, month, planned, actual, plannedAvailable };
     });
-    if (search) rows = rows.filter((row) => row.learner.learner_name.toLowerCase().includes(search));
+    if (search) rows = rows.filter((row) =>
+      row.learner.learner_name.toLowerCase().includes(search) ||
+      (row.learner.learner_email ?? "").toLowerCase().includes(search),
+    );
     if (learnerFilter) rows = rows.filter(
       (row) => String(row.learner.aptem_id) === learnerFilter || row.learner.learner_name.toLowerCase() === learnerFilter,
     );
@@ -879,6 +1003,25 @@ export function getLearners(params: { period?: string; search?: string; position
     );
 
     const learners: LearnerSummary[] = rows.map(({ learner, month, planned, actual, plannedAvailable }) => {
+      const periods = learner.months
+        .filter((item) => {
+          const hasClaimed =
+            Math.abs(Number(item.actual ?? 0)) > 0 ||
+            Math.abs(Number(item.not_accepted ?? 0)) > 0;
+          // After the cutoff, a planned-only month is a preserved future Aptem
+          // plan with no journal activity — hide it. Before the cutoff, keep the
+          // month if it has planned OR claimed hours (unchanged behaviour).
+          if (isPostCutoffMonth(item.month)) return hasClaimed;
+          return hasClaimed || Math.abs(Number(item.planned ?? 0)) > 0;
+        })
+        .map((item) => ({ value: item.month, label: item.label }))
+        .sort((left, right) => left.value.localeCompare(right.value));
+      if (
+        !periods.some((item) => item.value === LAST_AUDIT_UNDATED_PERIOD) &&
+        (learner.lms_activity_count ?? (learner.months.length === 0 ? learner.activity_count : 0) ?? 0) > 0
+      ) {
+        periods.push({ value: LAST_AUDIT_UNDATED_PERIOD, label: "Undated LMS activities" });
+      }
       return {
         id: String(learner.aptem_id),
         name: learner.learner_name,
@@ -887,19 +1030,7 @@ export function getLearners(params: { period?: string; search?: string; position
         declared_lms_id: learner.declared_lms_id ?? null,
         lms_matched: learner.lms_matched === true,
         programme: learner.programme,
-        periods: (learner.months
-          .filter((item) =>
-            Math.abs(Number(item.planned ?? 0)) > 0 ||
-            Math.abs(Number(item.actual ?? 0)) > 0 ||
-            Math.abs(Number(item.not_accepted ?? 0)) > 0,
-          )
-          .map((item) => ({ value: item.month, label: item.label }))
-          .sort((left, right) => left.value.localeCompare(right.value)))
-          .concat(
-            (learner.lms_activity_count ?? (learner.months.length === 0 ? learner.activity_count : 0) ?? 0) > 0
-              ? [{ value: LAST_AUDIT_UNDATED_PERIOD, label: "Undated LMS activities" }]
-              : [],
-          ),
+        periods,
         // This count is already aggregated by /cohort. Never fetch every
         // learner's /activities page just to populate the search table.
         entries: learner.activity_count ?? 0,
@@ -1012,7 +1143,12 @@ export function getLearnerActivities(params: {
           item.learner.toLowerCase().includes(searchTerm),
       );
     }
-    if (params.category) items = items.filter((item) => item.activity_category === params.category);
+    if (params.category) {
+      const categories = params.category === "reading+quiz"
+        ? new Set(["reading", "quiz", "reading+quiz"])
+        : new Set([params.category]);
+      items = items.filter((item) => categories.has(item.activity_category));
+    }
 
     // Chronological, then by learner, for a stable audit log.
     items.sort((left, right) => {
@@ -1050,7 +1186,7 @@ export function getActivityLearners(params: { component: string; search?: string
     // /activity performs one set-based database query and returns all
     // participants. Do not scan /activities once for every learner.
     const detail = normalizeActivityDetail(
-      await getJson<ActivityDetail>(`/activity/?component_id=${encodeURIComponent(params.component)}`),
+      await getJson<ActivityDetail>(`/activity/?activity_id=${encodeURIComponent(params.component)}`),
     );
     let items = detail.participants.map((participant): LearnerActivity => ({
       id: `${participant.learner_id}:${detail.component_id}`,
@@ -1165,6 +1301,117 @@ export function getLearnerProfile(learnerId: string) {
   })();
 }
 
+export async function uploadContract(learnerId: number, file: File) {
+  const body = new FormData();
+  body.append("learner_id", String(learnerId));
+  body.append("document_name", file.name);
+  body.append("file", file);
+  const response = await fetch("/audit_api/contracts/upload", {
+    method: "POST",
+    body,
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not upload document (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; contract_id: string; document_name: string }>;
+}
+
+export async function setContractArchived(contractId: string, archived: boolean) {
+  const response = await fetch(`/audit_api/contracts/${encodeURIComponent(contractId)}/archive`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ archived }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not update document (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; contract_id: string; archived: boolean }>;
+}
+
+export async function deleteArchivedContract(contractId: string) {
+  const response = await fetch(`/audit_api/contracts/${encodeURIComponent(contractId)}/archive`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not delete document (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; contract_id: string; deleted: boolean }>;
+}
+
+export async function renameContract(contractId: string, documentName: string) {
+  const response = await fetch(`/audit_api/contracts/${encodeURIComponent(contractId)}/name`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_name: documentName }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not rename document (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; contract_id: string; document_name: string }>;
+}
+
+export async function uploadEvidence(learnerId: number, file: File, evidenceDate: string) {
+  const body = new FormData();
+  body.append("learner_id", String(learnerId));
+  body.append("evidence_date", evidenceDate);
+  body.append("document_name", file.name);
+  body.append("file", file);
+  const response = await fetch("/audit_api/evidence/upload", {
+    method: "POST",
+    body,
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not upload evidence (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; evidence_id: string; evidence_date: string }>;
+}
+
+export async function updateEvidenceDate(evidenceId: string, learnerId: number, evidenceDate: string) {
+  const response = await fetch(`/audit_api/evidence/${encodeURIComponent(evidenceId)}/date`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learner_id: learnerId, evidence_date: evidenceDate }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not update evidence date (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; evidence_id: string; evidence_date: string }>;
+}
+
+export async function setEvidenceArchived(evidenceId: string, learnerId: number, archived: boolean) {
+  const response = await fetch(`/audit_api/evidence/${encodeURIComponent(evidenceId)}/archive`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learner_id: learnerId, archived }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not update evidence (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; evidence_id: string; archived: boolean }>;
+}
+
+export async function deleteArchivedEvidence(evidenceId: string, learnerId: number) {
+  const response = await fetch(`/audit_api/evidence/${encodeURIComponent(evidenceId)}/archive`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learner_id: learnerId }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not delete evidence (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; evidence_id: string; deleted: boolean }>;
+}
+
 // ---------------------------------------------------------------------------
 // Auditor annotations — still owned by the Django match-ledger backend, since
 // the live evidence API is read-only and does not store auditor input.
@@ -1213,7 +1460,7 @@ export async function getActivityDetail(componentId: string | number, learnerId?
   const programmeQuery = programme ? `&programme=${encodeURIComponent(programme)}` : "";
   try {
     const detail = normalizeActivityDetail(
-      await getJson<ActivityDetail>(`/activity/?component_id=${encodeURIComponent(String(componentId))}${programmeQuery}`),
+      await getJson<ActivityDetail>(`/activity/?activity_id=${encodeURIComponent(String(componentId))}${programmeQuery}`),
     );
     if (detail.source === "Last_audit") return detail;
     const merged = await getActivityLearners({ component: String(componentId), programme });

@@ -4,8 +4,9 @@ from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
 
+from .contract_documents import _safe_upload_filename
 from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _parse_contract_azure_path, _signoff_row
-from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _fetch_profile_source_row, _training_plan_from_audit, _validate_overlay_activity
+from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _cv_employment_terms, _employer_details_from_contract_profile, _fetch_profile_source_row, _merge_matching_cv_employment_terms, _partition_evidence_items, _skill_radar_characteristic, _skill_radar_sort_key, _training_plan_from_audit, _validate_overlay_activity
 
 
 class ContractAzurePathTests(SimpleTestCase):
@@ -28,6 +29,196 @@ class ContractAzurePathTests(SimpleTestCase):
         for value in invalid_paths:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 _parse_contract_azure_path(value)
+
+
+class EvidenceAzureManifestEndpointTests(SimpleTestCase):
+    def test_rejects_invalid_learner_id_before_manifest_lookup(self):
+        response = self.client.get(
+            "/audit_api/evidence/43527/open",
+            {"learner_id": "not-a-number"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "learner_id must be an integer.")
+
+    def test_evidence_file_is_read_only(self):
+        response = self.client.post("/audit_api/evidence/43527/open")
+
+        self.assertEqual(response.status_code, 405)
+
+
+class EvidenceDocumentManagementTests(SimpleTestCase):
+    def test_archiving_original_evidence_does_not_promote_next_aptem_item(self):
+        items = [
+            {"id": "first", "date": "2026-05-19", "archived": True, "deleted": False, "uploaded": False},
+            {"id": "next-aptem", "date": "2026-06-10", "archived": False, "deleted": False, "uploaded": False},
+            {"id": "replacement", "date": "2026-08-11", "archived": False, "deleted": False, "uploaded": True},
+        ]
+
+        first_date, first_items, archived_items = _partition_evidence_items(items)
+
+        self.assertEqual(first_date, "2026-08-11")
+        self.assertEqual([item["id"] for item in first_items], ["replacement"])
+        self.assertEqual([item["id"] for item in archived_items], ["first"])
+
+    def test_upload_requires_an_evidence_file(self):
+        response = self.client.post(
+            "/audit_api/evidence/upload",
+            {"learner_id": "4609", "evidence_date": "2026-08-11"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "An evidence file is required.")
+
+    def test_date_update_requires_iso_date(self):
+        response = self.client.patch(
+            "/audit_api/evidence/43527/date",
+            data=json.dumps({"learner_id": 18518, "evidence_date": "11/08/2026"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "evidence_date must use YYYY-MM-DD.")
+
+    def test_archive_requires_boolean_state(self):
+        response = self.client.patch(
+            "/audit_api/evidence/43527/archive",
+            data=json.dumps({"learner_id": 18518, "archived": "yes"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "archived must be true or false.")
+
+
+class EmployerContractProfileTests(SimpleTestCase):
+    def test_maps_employer_profile_json_to_dashboard_shape(self):
+        details = _employer_details_from_contract_profile({
+            "employer": {
+                "name": "Newlon Housing Trust",
+                "job_title": "Marketing Officer",
+                "address": {"formatted": "Newlon House, London"},
+                "manager": {
+                    "name": "Qammer Hussain",
+                    "email": "qammer@example.com",
+                    "phone_number": "0123456789",
+                },
+            },
+        })
+
+        self.assertEqual(details["employer_name"], "Newlon Housing Trust")
+        self.assertEqual(details["job_title"], "Marketing Officer")
+        self.assertEqual(details["workplace_address"], "Newlon House, London")
+        self.assertEqual(details["line_manager"]["name"], "Qammer Hussain")
+        self.assertEqual(details["line_manager"]["email"], "qammer@example.com")
+        self.assertEqual(details["line_manager"]["phone"], "0123456789")
+
+    def test_reads_start_date_and_hours_from_cv_employment_json(self):
+        details = _cv_employment_terms(json.dumps([{
+            "file_name": "Training Plan.pdf",
+            "employment_details": {
+                "employer_name": "Example Ltd",
+                "employment_start_date": "02/01/2012",
+                "contracted_hours_per_week": "40",
+            },
+        }]))
+
+        self.assertEqual(details["employment_start_date"], "02/01/2012")
+        self.assertEqual(details["contracted_hours_per_week"], 40.0)
+
+    def test_merges_cv_terms_only_when_employer_names_match(self):
+        employment = {
+            "employer_name": "Example Limited",
+            "employment_start_date": None,
+            "contracted_hours_per_week": None,
+        }
+        candidates = [
+            {
+                "employer_name": "Previous Employer Ltd",
+                "employment_start_date": "01/01/2001",
+                "contracted_hours_per_week": 20.0,
+            },
+            {
+                "employer_name": "Example Ltd.",
+                "employment_start_date": "02/01/2012",
+                "contracted_hours_per_week": 40.0,
+            },
+        ]
+
+        result = _merge_matching_cv_employment_terms(employment, candidates)
+
+        self.assertEqual(result["employment_start_date"], "02/01/2012")
+        self.assertEqual(result["contracted_hours_per_week"], 40.0)
+
+    def test_does_not_merge_cv_terms_for_a_different_employer(self):
+        employment = {
+            "employer_name": "Current Employer Ltd",
+            "employment_start_date": None,
+            "contracted_hours_per_week": None,
+        }
+
+        result = _merge_matching_cv_employment_terms(employment, [{
+            "employer_name": "Previous Employer Ltd",
+            "employment_start_date": "01/01/2001",
+            "contracted_hours_per_week": 20.0,
+        }])
+
+        self.assertIsNone(result["employment_start_date"])
+        self.assertIsNone(result["contracted_hours_per_week"])
+
+
+class SkillsRadarClassificationTests(SimpleTestCase):
+    def test_classifies_competencies_by_ksb_prefix(self):
+        self.assertEqual(_skill_radar_characteristic("K1: Project principles")[1], "knowledge")
+        self.assertEqual(_skill_radar_characteristic("S4 - Interpret information")[1], "skill_score")
+        self.assertEqual(_skill_radar_characteristic("B2: Works collaboratively")[1], "behaviour")
+
+    def test_keeps_explicit_dimension_from_understanding_label(self):
+        domain, field = _skill_radar_characteristic(
+            "Understanding of Communication (Behaviour) - B8: Collaboration"
+        )
+
+        self.assertEqual(domain, "Communication")
+        self.assertEqual(field, "behaviour")
+
+    def test_sorts_numbered_competencies_naturally(self):
+        values = ["S10: Ten", "S2: Two", "S1: One"]
+
+        self.assertEqual(sorted(values, key=_skill_radar_sort_key), ["S1: One", "S2: Two", "S10: Ten"])
+
+
+class ContractDocumentManagementTests(SimpleTestCase):
+    def test_upload_filename_removes_paths_and_unsafe_characters(self):
+        self.assertEqual(
+            _safe_upload_filename(r"..\unsafe folder\Learner<>Agreement.pdf"),
+            "Learner_Agreement.pdf",
+        )
+
+    def test_upload_requires_a_file(self):
+        response = self.client.post("/audit_api/contracts/upload", {"learner_id": "4609"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "A document file is required.")
+
+    def test_archive_requires_boolean_state(self):
+        response = self.client.patch(
+            "/audit_api/contracts/4018/archive",
+            data=json.dumps({"archived": "yes"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "archived must be true or false.")
+
+    def test_rename_requires_a_document_name(self):
+        response = self.client.patch(
+            "/audit_api/contracts/4018/name",
+            data=json.dumps({"document_name": "   "}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "document_name is required.")
 
 
 class AuditTrainingPlanTests(SimpleTestCase):
@@ -422,6 +613,7 @@ class LearnerMatchProfileTests(SimpleTestCase):
         self.assertEqual(payload["employment"]["employer_name"], "Example Ltd")
         self.assertEqual(payload["programme_status"], "OnBreak")
         self.assertEqual(payload["coach"]["name"], "Example Coach")
+        load_sources.assert_called_once_with(1234, "test@example.com", "Test Learner")
         self.assertEqual(payload["break_in_learning"]["last_learning_date"], "2026-01-15")
         self.assertEqual(payload["break_in_learning"]["return_to_learning_date"], "2026-03-10")
         self.assertEqual(

@@ -2411,11 +2411,17 @@ def contract_file(request, contract_id):
 
     try:
         with connections["enrolment"].cursor() as cursor:
+            from .contract_documents import ensure_contract_archive_table
+
+            ensure_contract_archive_table(cursor)
             cursor.execute(
                 '''
-                select azure_path, document_name
-                from fetching_evidence.aptem_cv_contracts_probe
-                where id = %s
+                select contracts.azure_path,
+                       coalesce(nullif(archive.display_name, ''), contracts.document_name)
+                from fetching_evidence.aptem_cv_contracts_probe contracts
+                left join "Audit".contract_document_archive archive
+                  on archive.contract_id = contracts.id
+                where contracts.id = %s
                 limit 1
                 ''',
                 [contract_id],
@@ -2487,6 +2493,123 @@ def contract_file(request, contract_id):
             response["Content-Length"] = str(content_length)
     except Exception:
         return _error("The contract could not be streamed from Azure.", 502)
+
+    response["Content-Disposition"] = content_disposition_header(download_requested, document_name)
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+def evidence_file(request, evidence_id):
+    """Open an Aptem evidence submission from its audited Azure manifest."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    if not _has_audit_permission(request):
+        return _error("Authentication or audit permission is required.", 403)
+
+    raw_learner_id = (request.GET.get("learner_id") or "").strip()
+    try:
+        learner_id = int(raw_learner_id) if raw_learner_id else None
+    except ValueError:
+        return _error("learner_id must be an integer.", 400)
+
+    try:
+        if str(evidence_id).startswith("audit-"):
+            from .evidence_documents import uploaded_evidence_location
+
+            row = uploaded_evidence_location(str(evidence_id), learner_id)
+        else:
+            if not str(evidence_id).isdigit():
+                return _error("Evidence ID is invalid.", 400)
+            conditions = ["item ->> 'evidence_id' = %s"]
+            params = [str(evidence_id)]
+            if learner_id is not None:
+                conditions.append("evidence.learner_id = %s")
+                params.append(learner_id)
+            with connections["enrolment"].cursor() as cursor:
+                cursor.execute(
+                    f'''
+                    select evidence.azure_manifest ->> 'container',
+                           item -> 'submission' ->> 'blob',
+                           item -> 'submission' ->> 'filename',
+                           item -> 'submission' ->> 'status'
+                    from fetching_evidence.learner_evidence evidence
+                    cross join lateral json_array_elements(
+                        case
+                            when json_typeof(evidence.azure_manifest -> 'items') = 'array'
+                                then evidence.azure_manifest -> 'items'
+                            else '[]'::json
+                        end
+                    ) item
+                    where {' and '.join(conditions)}
+                    order by evidence.fetched_at desc nulls last, evidence.id desc
+                    limit 1
+                    ''',
+                    params,
+                )
+                row = cursor.fetchone()
+    except (DatabaseError, KeyError):
+        return _error("Could not load the evidence Azure manifest.", 502)
+
+    if not row:
+        return _error("Evidence file was not found in the Azure manifest.", 404)
+    container, blob_name, filename, manifest_status = row
+    if manifest_status != "present" or not container or not blob_name:
+        return _error("Evidence file is not available in Azure.", 404)
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?", container):
+        return _error("Evidence manifest contains an invalid container.", 409)
+    blob_parts = str(blob_name).replace("\\", "/").split("/")
+    if any(part in {"", ".", ".."} for part in blob_parts):
+        return _error("Evidence manifest contains an invalid blob path.", 409)
+
+    try:
+        service = _azure_service_client()
+        client = _blob_client_with_fallback(service, container, blob_name)
+        signed_url = _signed_blob_url(client)
+    except RuntimeError as exc:
+        return _error(str(exc), 503)
+    except Exception:
+        return _error("The evidence file could not be opened from Azure.", 502)
+
+    document_name = str(filename or blob_parts[-1] or f"Evidence {evidence_id}").strip()[:180]
+    extension = os.path.splitext(document_name)[1].lower() or os.path.splitext(blob_name)[1].lower()
+    if extension in {".doc", ".docx", ".docm", ".xls", ".xlsx", ".ppt", ".pptx"}:
+        viewer_url = f"https://view.officeapps.live.com/op/embed.aspx?src={quote(signed_url, safe='')}"
+        response = HttpResponse(
+            f'''<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(document_name)}</title>
+  <style>html, body, iframe {{ width: 100%; height: 100%; margin: 0; border: 0; }}</style>
+</head>
+<body><iframe src="{escape(viewer_url, quote=True)}" title="{escape(document_name, quote=True)}"></iframe></body>
+</html>''',
+            content_type="text/html; charset=utf-8",
+        )
+        response["Content-Security-Policy"] = (
+            "default-src 'none'; frame-src https://view.officeapps.live.com; "
+            "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"
+        )
+        response["Cache-Control"] = "private, no-store"
+        return response
+
+    download_requested = (request.GET.get("download") or "").strip().lower() in {"1", "true", "yes"}
+    try:
+        downloader = client.download_blob()
+        properties = downloader.properties
+        guessed_content_type = mimetypes.guess_type(document_name)[0] or mimetypes.guess_type(blob_name)[0]
+        stored_content_type = getattr(getattr(properties, "content_settings", None), "content_type", None)
+        response = StreamingHttpResponse(
+            downloader.chunks(),
+            content_type=guessed_content_type or stored_content_type or "application/octet-stream",
+        )
+        content_length = getattr(properties, "size", None)
+        if content_length is not None:
+            response["Content-Length"] = str(content_length)
+    except Exception:
+        return _error("The evidence file could not be streamed from Azure.", 502)
 
     response["Content-Disposition"] = content_disposition_header(download_requested, document_name)
     response["Cache-Control"] = "private, no-store"

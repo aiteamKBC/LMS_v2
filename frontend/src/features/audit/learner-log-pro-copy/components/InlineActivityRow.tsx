@@ -100,7 +100,6 @@ export function InlineActivityRow({ row, className = "" }: { row: LearnerActivit
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState(() => inputFromRow(row));
   const isAuditCreated = row.plan_id.startsWith("audit:");
-  const isLastAudit = row.source === "Last_audit" || row.plan_id.startsWith("la:");
 
   useEffect(() => setDraft(inputFromRow(row)), [row]);
   const set = (patch: Partial<ActivityRowInput>) => setDraft((value) => ({ ...value, ...patch }));
@@ -176,7 +175,7 @@ export function InlineActivityRow({ row, className = "" }: { row: LearnerActivit
           ) : null}
         </TableCell>
         <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.time_from_to || "—"}</TableCell>
-        <TableCell className="text-right font-mono text-sm">{isLastAudit ? "—" : hours(row.planned_hours)}</TableCell>
+        <TableCell className="text-right font-mono text-sm">{hours(row.planned_hours)}</TableCell>
         <TableCell className="text-right font-mono text-sm text-success">{row.hours_mapped === false ? "—" : hours(row.actual_lms_hours)}</TableCell>
         <TableCell className="pr-7 text-right">
           <div className="flex justify-end gap-1">

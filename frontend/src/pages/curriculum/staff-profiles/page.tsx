@@ -37,6 +37,11 @@ const EMPTY_FORM: ProfileForm = {
   notes: '',
 };
 
+type FormErrors = Partial<Record<keyof ProfileForm, string>> & { duplicate?: string };
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_PATTERN = /^[+()\d\s.-]{7,20}$/;
+
 type AssignmentStatusKey = 'inProgress' | 'future' | 'completed';
 type AssignedModule = NonNullable<CurriculumStaffProfile['assignedModules']>[number];
 type AssignedGroup = Pick<CurriculumGroup, 'id' | 'name' | 'programme' | 'cohort' | 'schedule' | 'startDate' | 'endDate' | 'status'>;
@@ -51,6 +56,10 @@ function normalise(value: unknown) {
 
 function roleLabel(role: StaffRole) {
   return role === 'coach' ? 'Coach' : 'Tutor';
+}
+
+function rolePluralLabel(role: StaffRole) {
+  return role === 'coach' ? 'Coaches' : 'Tutors';
 }
 
 function profileInitials(profile: CurriculumStaffProfile) {
@@ -82,16 +91,16 @@ function todayValue() {
 
 function assignmentStatus(item: Pick<CurriculumModule | CurriculumGroup, 'startDate' | 'endDate' | 'status'> & { deliveryStatus?: string }): AssignmentStatusKey {
   const status = normalise(item.deliveryStatus || item.status);
-  if (['completed', 'complete', 'done', 'closed'].includes(status)) return 'completed';
-  if (['planned', 'future', 'upcoming', 'scheduled'].includes(status)) return 'future';
-  if (['active', 'in_progress', 'in-progress', 'live'].includes(status)) return 'inProgress';
-
   const today = todayValue();
   const start = dateValue(item.startDate);
   const end = dateValue(item.endDate);
+
+  if (['completed', 'complete', 'done', 'closed'].includes(status)) return 'completed';
   if (end && end < today) return 'completed';
   if (start && start > today) return 'future';
   if (start && end && start <= today && today <= end) return 'inProgress';
+  if (['planned', 'future', 'upcoming', 'scheduled'].includes(status)) return 'future';
+  if (['active', 'in_progress', 'in-progress', 'live'].includes(status)) return 'inProgress';
   return 'inProgress';
 }
 
@@ -123,6 +132,34 @@ function formsMatch(a: ProfileForm, b: ProfileForm) {
   );
 }
 
+function validateProfileForm(form: ProfileForm, role: StaffRole, profiles: CurriculumStaffProfile[], editing: CurriculumStaffProfile | 'new' | null): FormErrors {
+  const errors: FormErrors = {};
+  const name = clean(form.name);
+  const email = clean(form.email);
+  const phone = clean(form.phone);
+  const currentId = editing && editing !== 'new' ? clean(editing.id) : '';
+
+  if (!name) errors.name = 'Name is required.';
+  else if (name.length < 2) errors.name = 'Name must be at least 2 characters.';
+  else if (name.length > 120) errors.name = 'Name must be 120 characters or less.';
+
+  if (!email) errors.email = 'Email is required.';
+  else if (!EMAIL_PATTERN.test(email)) errors.email = 'Enter a valid email address.';
+
+  if (phone && !PHONE_PATTERN.test(phone)) errors.phone = 'Enter a valid phone number.';
+  if (clean(form.jobTitle).length > 120) errors.jobTitle = 'Job title must be 120 characters or less.';
+  if (clean(form.notes).length > 1000) errors.notes = 'Notes must be 1000 characters or less.';
+
+  const duplicate = profiles.find(profile => clean(profile.id) !== currentId && normalise(profile.email) === normalise(email));
+  if (email && duplicate) errors.duplicate = `A ${roleLabel(role).toLowerCase()} profile already exists with this email.`;
+
+  return errors;
+}
+
+function firstFormError(errors: FormErrors) {
+  return errors.name || errors.email || errors.phone || errors.jobTitle || errors.notes || errors.duplicate || '';
+}
+
 export default function StaffProfilesPage() {
   const location = useLocation();
   const [data, setData] = useState<CurriculumOverview | null>(null);
@@ -134,6 +171,7 @@ export default function StaffProfilesPage() {
   const [editing, setEditing] = useState<CurriculumStaffProfile | 'new' | null>(null);
   const [form, setForm] = useState<ProfileForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -174,11 +212,12 @@ export default function StaffProfilesPage() {
       if (params.get('create') === '1') {
         setEditing('new');
         setForm(EMPTY_FORM);
+        setSubmitted(false);
       }
     }
   }, [location.search]);
 
-  const profiles = useMemo(() => role === 'coach' ? data?.coaches || [] : data?.tutors || [], [data?.coaches, data?.tutors, role]);
+  const profiles = useMemo(() => (role === 'coach' ? data?.coaches || [] : data?.tutors || []).filter(profile => clean(profile.name) || clean(profile.email)), [data?.coaches, data?.tutors, role]);
   const groups = useMemo(() => data?.groups || [], [data?.groups]);
   const initialLoading = loading && !data;
 
@@ -203,6 +242,10 @@ export default function StaffProfilesPage() {
     const inProgress = role === 'coach' ? 0 : profiles.reduce((sum, profile) => sum + (profile.inProgressCount || 0), 0);
     return { people, assigned, inProgress };
   }, [profiles, role]);
+
+  const formErrors = useMemo(() => validateProfileForm(form, role, profiles, editing), [editing, form, profiles, role]);
+  const visibleFormErrors = submitted ? formErrors : {};
+  const hasFormErrors = Boolean(firstFormError(formErrors));
 
   const selectedModulesByStatus = useMemo(() => {
     if (role !== 'tutor' || !selected) return splitByStatus<AssignedModule>([]);
@@ -242,11 +285,13 @@ export default function StaffProfilesPage() {
     setRole(nextRole);
     setEditing('new');
     setForm(EMPTY_FORM);
+    setSubmitted(false);
   };
 
   const openEdit = (profile: CurriculumStaffProfile) => {
     setEditing(profile);
     setForm(profileToForm(profile));
+    setSubmitted(false);
   };
 
   const closeProfilePopup = async () => {
@@ -268,8 +313,11 @@ export default function StaffProfilesPage() {
 
   const saveProfile = async (event: FormEvent) => {
     event.preventDefault();
-    if (!form.name.trim()) {
-      await showCurriculumAlert({ title: 'Name required', text: 'Add a profile name before saving.', icon: 'warning' });
+    setSubmitted(true);
+    const validationErrors = validateProfileForm(form, role, profiles, editing);
+    const validationMessage = firstFormError(validationErrors);
+    if (validationMessage) {
+      await showCurriculumAlert({ title: 'Check profile details', text: validationMessage, icon: 'warning' });
       return;
     }
     setSaving(true);
@@ -329,6 +377,10 @@ export default function StaffProfilesPage() {
   };
 
   const deleteProfile = async (profile: CurriculumStaffProfile) => {
+    if (!clean(profile.id)) {
+      await showCurriculumAlert({ title: 'Cannot delete profile', text: 'This profile has no saved identifier. Refresh the page and try again.', icon: 'error' });
+      return;
+    }
     await showCurriculumConfirm({
       title: `Delete ${roleLabel(role).toLowerCase()} profile?`,
       text: `This archives ${profile.name} and removes their current ${role === 'coach' ? 'group' : 'module'} assignments.`,
@@ -351,8 +403,8 @@ export default function StaffProfilesPage() {
       roleLabel="Curriculum Designer"
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
-      pageTitle="Staff Profiles"
-      pageSubtitle="Maintain coach and tutor details, with programme assignments shown read-only"
+      pageTitle="Profiles"
+      pageSubtitle="Maintain coach and tutor profiles in one place, with programme assignments shown read-only"
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
@@ -381,7 +433,7 @@ export default function StaffProfilesPage() {
                   className={`h-9 px-3 rounded-md text-[12px] font-semibold transition-smooth ${role === item ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'}`}
                 >
                   <AppIcon className={`${item === 'coach' ? 'ri-user-star-line' : 'ri-presentation-line'} mr-1.5`}></AppIcon>
-                  {roleLabel(item)} Profiles
+                  {rolePluralLabel(item)}
                 </button>
               ))}
             </div>
@@ -393,7 +445,7 @@ export default function StaffProfilesPage() {
               <input
                 value={search}
                 onChange={event => setSearch(event.target.value)}
-                placeholder={`Search ${role}s...`}
+                placeholder={`Search ${rolePluralLabel(role).toLowerCase()}...`}
                 className="h-10 w-full min-w-[220px] rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none focus:border-primary-300"
               />
             </div>
@@ -459,7 +511,7 @@ export default function StaffProfilesPage() {
                 <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
                   <AppIcon className="ri-user-search-line text-lg"></AppIcon>
                 </div>
-                <p className="mt-3 text-sm font-semibold text-foreground-900">No {role}s found</p>
+                <p className="mt-3 text-sm font-semibold text-foreground-900">No {rolePluralLabel(role).toLowerCase()} found</p>
                 <p className="mt-1 text-[12px] text-foreground-400">Add a profile or adjust the current filters.</p>
               </div>
             )}
@@ -543,20 +595,21 @@ export default function StaffProfilesPage() {
 
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
                 <div className="space-y-4">
-                  <FormField label="Name" value={form.name} onChange={value => setForm(prev => ({ ...prev, name: value }))} required />
-                  <FormField label="Email" type="email" value={form.email} onChange={value => setForm(prev => ({ ...prev, email: value }))} />
-                  <FormField label="Phone" value={form.phone} onChange={value => setForm(prev => ({ ...prev, phone: value }))} />
-                  <FormField label="Job title" value={form.jobTitle} onChange={value => setForm(prev => ({ ...prev, jobTitle: value }))} />
+                  <FormField label="Name" value={form.name} onChange={value => setForm(prev => ({ ...prev, name: value }))} error={visibleFormErrors.name} required />
+                  <FormField label="Email" type="email" value={form.email} onChange={value => setForm(prev => ({ ...prev, email: value }))} error={visibleFormErrors.email || visibleFormErrors.duplicate} required />
+                  <FormField label="Phone" value={form.phone} onChange={value => setForm(prev => ({ ...prev, phone: value }))} error={visibleFormErrors.phone} />
+                  <FormField label="Job title" value={form.jobTitle} onChange={value => setForm(prev => ({ ...prev, jobTitle: value }))} error={visibleFormErrors.jobTitle} />
                   <label className="block">
                     <span className="text-[10px] font-bold uppercase text-foreground-400">Notes</span>
-                    <textarea value={form.notes} onChange={event => setForm(prev => ({ ...prev, notes: event.target.value }))} rows={4} className="mt-1 w-full resize-none rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[13px] text-foreground-900 outline-none focus:border-primary-300" />
+                    <textarea value={form.notes} onChange={event => setForm(prev => ({ ...prev, notes: event.target.value }))} rows={4} className={`mt-1 w-full resize-none rounded-lg border bg-background-50 px-3 py-2 text-[13px] text-foreground-900 outline-none focus:border-primary-300 ${visibleFormErrors.notes ? 'border-red-300' : 'border-background-200'}`} />
+                    {visibleFormErrors.notes && <span className="mt-1 block text-[11px] font-semibold text-red-600">{visibleFormErrors.notes}</span>}
                   </label>
                 </div>
               </div>
 
               <div className="flex justify-end gap-2 border-t border-background-200 px-5 py-4">
                 <button type="button" onClick={closeProfilePopup} disabled={saving} className="rounded-lg border border-background-200 px-4 py-2 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
-                <button type="submit" disabled={saving} className="rounded-lg bg-primary-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-primary-600 disabled:opacity-50">
+                <button type="submit" disabled={saving || (submitted && hasFormErrors)} className="rounded-lg bg-primary-500 px-4 py-2 text-[12px] font-semibold text-white hover:bg-primary-600 disabled:opacity-50">
                   <AppIcon className="ri-save-line mr-1.5"></AppIcon>
                   {saving ? 'Saving...' : 'Save profile'}
                 </button>
@@ -681,7 +734,7 @@ function EmptyDetail({ text }: { text: string }) {
   );
 }
 
-function FormField({ label, value, onChange, type = 'text', placeholder = '', required = false }: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string; required?: boolean }) {
+function FormField({ label, value, onChange, type = 'text', placeholder = '', required = false, error = '' }: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string; required?: boolean; error?: string }) {
   return (
     <label className="block">
       <span className="text-[10px] font-bold uppercase text-foreground-400">{label}{required ? ' *' : ''}</span>
@@ -691,8 +744,9 @@ function FormField({ label, value, onChange, type = 'text', placeholder = '', re
         required={required}
         placeholder={placeholder}
         onChange={event => onChange(event.target.value)}
-        className="mt-1 h-10 w-full rounded-lg border border-background-200 bg-background-50 px-3 text-[13px] text-foreground-900 outline-none focus:border-primary-300"
+        className={`mt-1 h-10 w-full rounded-lg border bg-background-50 px-3 text-[13px] text-foreground-900 outline-none focus:border-primary-300 ${error ? 'border-red-300' : 'border-background-200'}`}
       />
+      {error && <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>}
     </label>
   );
 }

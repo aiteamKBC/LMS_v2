@@ -260,9 +260,9 @@ function JournalPage() {
     retry: false,
   });
   const savedSignoff = useQuery({
-    queryKey: ["journal-signoff", learnerProfile.data?.aptem_id, selectedPeriod],
-    queryFn: () => fetchAuditSignoff(learnerProfile.data!.aptem_id, selectedPeriod),
-    enabled: Boolean(learnerProfile.data?.aptem_id && selectedPeriod),
+    queryKey: ["journal-signoff", selectedLearner, selectedPeriod],
+    queryFn: () => fetchAuditSignoff(selectedLearner, selectedPeriod),
+    enabled: Boolean(selectedLearner && selectedPeriod),
     retry: false,
   });
 

@@ -28,6 +28,23 @@ GROUP_LEARNERS = '"Last_audit"."group_learners"'
 ACTIVITIES = '"Last_audit"."activities"'
 ACTIVITY_RESULTS = '"Last_audit"."activity_results"'
 LEARNER_ATTENDANCE = '"Last_audit"."learner_attendance"'
+# Per-activity OTJH hours mapped by the fetch-evidence pipeline (planned + actual
+# with reporting method + timestamps). Keyed (learner_id, kind, ref); ref = the
+# LMS activity_id (video/audio/reading_quiz) or the attendance source_key.
+ACTIVITY_PLANNED_HOURS = '"Last_audit"."activity_planned_hours"'
+ACTIVITY_ACTUAL_HOURS = '"Last_audit"."activity_actual_hours"'
+
+# LEFT JOIN fragment shared by the per-learner feed and the cross-learner view,
+# so every learner's row carries their own planned / actual / method / timestamp.
+_OTJH_JOIN = f"""
+    LEFT JOIN {ACTIVITY_PLANNED_HOURS} ph
+           ON ph.learner_id = r.learner_id AND ph.ref = r.activity_id::text
+    LEFT JOIN {ACTIVITY_ACTUAL_HOURS} ah
+           ON ah.learner_id = r.learner_id AND ah.ref = r.activity_id::text
+"""
+_OTJH_COLS = ("ph.planned_hours AS otjh_planned, ah.actual_hours AS otjh_actual, "
+              "ah.reporting_method AS otjh_method, ah.timestamp_label AS otjh_timestamp, "
+              "ah.start_time AS otjh_from, ah.end_time AS otjh_to")
 
 
 def _connection():
@@ -302,7 +319,19 @@ def _activity_payload(row):
     mapped_seconds = row.get("mapped_seconds")
     if mapped_seconds is None and row.get("mapped_hours") is not None:
         mapped_seconds = int(round(float(row["mapped_hours"]) * 3600))
-    hours_mapped = mapped_seconds is not None
+    # OTJH pipeline values (from activity_planned_hours / activity_actual_hours)
+    # take precedence over the reserved mapped_* columns when the join supplied
+    # them. Absent (other callers) -> fall back to the previous behaviour.
+    otjh_planned = row.get("otjh_planned")
+    otjh_actual = row.get("otjh_actual")
+    otjh_from = row.get("otjh_from")
+    otjh_to = row.get("otjh_to")
+    if otjh_actual is not None:
+        actual_hours = float(otjh_actual)
+        hours_mapped = True
+    else:
+        hours_mapped = mapped_seconds is not None
+        actual_hours = _hours(mapped_seconds) if hours_mapped else 0.0
     group_id = int(row["group_id"])
     activity_id = int(row["activity_id"])
     activity_date = row.get("activity_date")
@@ -321,13 +350,14 @@ def _activity_payload(row):
         "category": _activity_category(row),
         "activity": row.get("title") or f"Activity {activity_id}",
         "activity_subtitle": row.get("status"),
-        "planned": 0.0,
-        "actual": _hours(mapped_seconds) if hours_mapped else 0.0,
+        "planned": float(otjh_planned) if otjh_planned is not None else 0.0,
+        "actual": actual_hours,
         "mapped_seconds": mapped_seconds,
         "hours_mapped": hours_mapped,
-        "timestamp_from": None,
-        "timestamp_to": None,
-        "timestamp_display": "",
+        "reporting_method": row.get("otjh_method"),
+        "timestamp_from": otjh_from.strftime("%H:%M:%S") if otjh_from else None,
+        "timestamp_to": otjh_to.strftime("%H:%M:%S") if otjh_to else None,
+        "timestamp_display": row.get("otjh_timestamp") or "",
         "status": row.get("status"),
         "completed": _is_completed(row),
         "video_started": row.get("video_started"),
@@ -596,11 +626,13 @@ def activities(request: HttpRequest) -> JsonResponse:
                            a.configured_duration_min, r.status,
                            r.video_started, r.video_completed, r.reading_viewed,
                            r.quiz_attempted, r.quiz_passed, r.quiz_score,
-                           r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours
+                           r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,
+                           {_OTJH_COLS}
                     FROM {ACTIVITY_RESULTS} r
                     JOIN {LEARNERS} l ON l.learner_id = r.learner_id
                     JOIN {ACTIVITIES} a ON a.activity_id = r.activity_id
                     LEFT JOIN {GROUPS} g ON g.group_id = r.group_id
+                    {_OTJH_JOIN}
                     WHERE {' AND '.join(conditions)}
                 """, params)
                 lms_rows = _dict_rows(cursor)
@@ -654,20 +686,44 @@ def activities(request: HttpRequest) -> JsonResponse:
     })
 
 
+def _grouped(participants):
+    """Nest participants under their cohort so the UI can show them grouped."""
+    buckets, order = {}, []
+    for p in participants:
+        key = (p.get("group_id"), p.get("group_name"))
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(p)
+    return [{"group_id": k[0], "group_name": k[1],
+             "participant_count": len(buckets[k]), "participants": buckets[k]}
+            for k in order]
+
+
 @require_GET
 def activity(request: HttpRequest) -> JsonResponse:
-    """Return a shared definition and all learner results for one activity."""
+    """Return a shared definition and all learner results for one activity.
+
+    Learners are grouped by their cohort (`groups[]`). For attendance the
+    activity is a live session: we match on the session key (the source_key with
+    the leading learner id removed = date + lecture), so every learner in that
+    session appears — attended or not — not just the one whose key was clicked.
+    """
     raw_id = request.GET.get("activity_id") or request.GET.get("component_id")
     if str(raw_id or "").startswith("att:"):
-        source_key = str(raw_id)[4:]
+        session_key = _session_key(raw_id)      # 'att:{id}_{date}_{slug}' -> '{date}_{slug}'
+        if not session_key:
+            return JsonResponse({"error": "invalid attendance key"}, status=400)
         try:
             with _connection().cursor() as cursor:
                 cursor.execute(f"""
                     SELECT la.*, l.learner_name
                     FROM {LEARNER_ATTENDANCE} la
                     JOIN {LEARNERS} l ON l.aptem_id = la.aptem_id
-                    WHERE la.source_key = %s
-                """, [source_key])
+                    WHERE substring(la.source_key from position('_' in la.source_key) + 1) = %s
+                    ORDER BY (la.attendance_value = 1) DESC,
+                             lower(COALESCE(l.learner_name, '')), la.aptem_id
+                """, [session_key])
                 rows = _dict_rows(cursor)
         except DatabaseError as error:
             return JsonResponse(
@@ -676,8 +732,9 @@ def activity(request: HttpRequest) -> JsonResponse:
             )
         if not rows:
             return JsonResponse({"error": f"no Last_audit attendance {raw_id}"}, status=404)
-        item = _attendance_payload(rows[0])
-        participant = {
+        items = [_attendance_payload(row) for row in rows]
+        first = items[0]
+        participants = [{
             "learner_id": item["learner_id"],
             "learner_name": item["learner_name"],
             "found_as": "attendance",
@@ -688,6 +745,7 @@ def activity(request: HttpRequest) -> JsonResponse:
             "quiz_passed": False,
             "actual": item["actual"] if item["hours_mapped"] else None,
             "planned": None,
+            "reporting_method": "Attendance",
             "month": item["month"] or None,
             "date": item["date"],
             "timestamp_from": None,
@@ -695,23 +753,27 @@ def activity(request: HttpRequest) -> JsonResponse:
             "timestamp_display": item["timestamp_display"],
             "item_title": item.get("group_name"),
             "status": item["status"],
-        }
+            "group_id": None,
+            "group_name": item.get("group_name"),
+        } for item in items]
         return JsonResponse({
             "source": "Last_audit",
-            "component_id": item["activity_id"],
-            "source_activity_id": source_key,
-            "activity": item["activity"],
+            "component_id": first["activity_id"],
+            "source_activity_id": session_key,
+            "session_key": session_key,
+            "activity": first["activity"],
             "category": "attendance",
             "has_reading": False,
             "has_quiz": False,
-            "participant_count": 1,
-            "completed_count": 1 if item["completed"] else 0,
+            "participant_count": len(participants),
+            "completed_count": sum(1 for p in participants if p["completed"]),
             "reading_completed_count": 0,
             "quiz_attempted_count": 0,
             "quiz_completed_count": 0,
             "items": [],
             "item_count": 0,
-            "participants": [participant],
+            "participants": participants,
+            "groups": _grouped(participants),
         })
     try:
         group_id, activity_id = _parse_activity_ref(raw_id)
@@ -733,13 +795,16 @@ def activity(request: HttpRequest) -> JsonResponse:
                a.configured_duration_min, r.status,
                r.video_started, r.video_completed, r.reading_viewed,
                r.quiz_attempted, r.quiz_passed, r.quiz_score,
-               r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours
+               r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,
+               {_OTJH_COLS}
         FROM {ACTIVITY_RESULTS} r
         JOIN {LEARNERS} l ON l.learner_id = r.learner_id
         JOIN {ACTIVITIES} a ON a.activity_id = r.activity_id
         LEFT JOIN {GROUPS} g ON g.group_id = r.group_id
+        {_OTJH_JOIN}
         WHERE {' AND '.join(conditions)}
-        ORDER BY lower(COALESCE(l.learner_name, '')), l.learner_id
+        ORDER BY lower(COALESCE(g.group_name, '')), r.group_id,
+                 lower(COALESCE(l.learner_name, '')), l.learner_id
     """
     try:
         with _connection().cursor() as cursor:
@@ -765,19 +830,23 @@ def activity(request: HttpRequest) -> JsonResponse:
         "quiz_attempted": item["quiz_attempted"] is True,
         "quiz_passed": item["quiz_passed"] is True,
         "actual": item["actual"] if item["hours_mapped"] else None,
-        "planned": None,
+        "planned": item["planned"] or None,
+        "reporting_method": item.get("reporting_method"),
         "month": item["month"] or None,
         "date": item["date"],
-        "timestamp_from": None,
-        "timestamp_to": None,
-        "timestamp_display": "",
+        "timestamp_from": item["timestamp_from"],
+        "timestamp_to": item["timestamp_to"],
+        "timestamp_display": item["timestamp_display"],
         "item_title": None,
         "status": item["status"],
+        "group_id": item["group_id"],
+        "group_name": item["group_name"],
     } for item in items]
     return JsonResponse({
         "source": "Last_audit",
         "component_id": first["activity_id"],
         "source_activity_id": activity_id,
+        "groups": _grouped(participants),
         "activity": first["activity"],
         "category": first["category"],
         "has_reading": first["has_reading"],
