@@ -608,7 +608,7 @@ function ActivityLogPage() {
               </dl>
 
               <section className="border-t border-border px-6 py-6">
-                <h3 className="label-caps">Completion on Aptem</h3>
+                <h3 className="label-caps">Completion record</h3>
                 <div className="mt-3 space-y-3">
                   {data.has_reading ? (
                     <div className="rounded-md border border-border bg-background/40 p-3">

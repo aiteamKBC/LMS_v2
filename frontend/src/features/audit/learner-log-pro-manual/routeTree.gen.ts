@@ -13,8 +13,8 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as SearchRouteImport } from './routes/search'
-import { Route as GroupsRouteImport } from './routes/groups'
-import { Route as GroupsGroupIdRouteImport } from './routes/groups.$groupId'
+import { Route as LearnersRouteImport } from './routes/learners'
+import { Route as LearnersPlanIdRouteImport } from './routes/learners.$planId'
 import { Route as LearnerLearnerIdRouteImport } from './routes/learner.$learnerId'
 import { Route as JournalIndexRouteImport } from './routes/journal.index'
 
@@ -38,14 +38,14 @@ const SearchRoute = SearchRouteImport.update({
   path: '/search',
   getParentRoute: () => rootRouteImport,
 } as any)
-const GroupsRoute = GroupsRouteImport.update({
-  id: '/groups',
-  path: '/groups',
+const LearnersRoute = LearnersRouteImport.update({
+  id: '/learners',
+  path: '/learners',
   getParentRoute: () => rootRouteImport,
 } as any)
-const GroupsGroupIdRoute = GroupsGroupIdRouteImport.update({
-  id: '/groups/$groupId',
-  path: '/groups/$groupId',
+const LearnersPlanIdRoute = LearnersPlanIdRouteImport.update({
+  id: '/learners/$planId',
+  path: '/learners/$planId',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LearnerLearnerIdRoute = LearnerLearnerIdRouteImport.update({
@@ -64,8 +64,8 @@ export interface FileRoutesByFullPath {
   '/activity': typeof ActivityRoute
   '/journal': typeof JournalRouteWithChildren
   '/search': typeof SearchRoute
-  '/groups': typeof GroupsRoute
-  '/groups/$groupId': typeof GroupsGroupIdRoute
+  '/learners': typeof LearnersRoute
+  '/learners/$planId': typeof LearnersPlanIdRoute
   '/learner/$learnerId': typeof LearnerLearnerIdRoute
   '/journal/': typeof JournalIndexRoute
 }
@@ -73,8 +73,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
   '/search': typeof SearchRoute
-  '/groups': typeof GroupsRoute
-  '/groups/$groupId': typeof GroupsGroupIdRoute
+  '/learners': typeof LearnersRoute
+  '/learners/$planId': typeof LearnersPlanIdRoute
   '/learner/$learnerId': typeof LearnerLearnerIdRoute
   '/journal': typeof JournalIndexRoute
 }
@@ -84,17 +84,17 @@ export interface FileRoutesById {
   '/activity': typeof ActivityRoute
   '/journal': typeof JournalRouteWithChildren
   '/search': typeof SearchRoute
-  '/groups': typeof GroupsRoute
-  '/groups/$groupId': typeof GroupsGroupIdRoute
+  '/learners': typeof LearnersRoute
+  '/learners/$planId': typeof LearnersPlanIdRoute
   '/learner/$learnerId': typeof LearnerLearnerIdRoute
   '/journal/': typeof JournalIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/activity' | '/journal' | '/search' | '/groups' | '/groups/$groupId' | '/learner/$learnerId' | '/journal/'
+  fullPaths: '/' | '/activity' | '/journal' | '/search' | '/learners' | '/learners/$planId' | '/learner/$learnerId' | '/journal/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/activity' | '/search' | '/groups' | '/groups/$groupId' | '/learner/$learnerId' | '/journal'
-  id: '__root__' | '/' | '/activity' | '/journal' | '/search' | '/groups' | '/groups/$groupId' | '/learner/$learnerId' | '/journal/'
+  to: '/' | '/activity' | '/search' | '/learners' | '/learners/$planId' | '/learner/$learnerId' | '/journal'
+  id: '__root__' | '/' | '/activity' | '/journal' | '/search' | '/learners' | '/learners/$planId' | '/learner/$learnerId' | '/journal/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -102,8 +102,8 @@ export interface RootRouteChildren {
   ActivityRoute: typeof ActivityRoute
   JournalRoute: typeof JournalRouteWithChildren
   SearchRoute: typeof SearchRoute
-  GroupsRoute: typeof GroupsRoute
-  GroupsGroupIdRoute: typeof GroupsGroupIdRoute
+  LearnersRoute: typeof LearnersRoute
+  LearnersPlanIdRoute: typeof LearnersPlanIdRoute
   LearnerLearnerIdRoute: typeof LearnerLearnerIdRoute
 }
 
@@ -137,18 +137,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SearchRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/groups': {
-      id: '/groups'
-      path: '/groups'
-      fullPath: '/groups'
-      preLoaderRoute: typeof GroupsRouteImport
+    '/learners': {
+      id: '/learners'
+      path: '/learners'
+      fullPath: '/learners'
+      preLoaderRoute: typeof LearnersRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/groups/$groupId': {
-      id: '/groups/$groupId'
-      path: '/groups/$groupId'
-      fullPath: '/groups/$groupId'
-      preLoaderRoute: typeof GroupsGroupIdRouteImport
+    '/learners/$planId': {
+      id: '/learners/$planId'
+      path: '/learners/$planId'
+      fullPath: '/learners/$planId'
+      preLoaderRoute: typeof LearnersPlanIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/learner/$learnerId': {
@@ -184,8 +184,8 @@ const rootRouteChildren: RootRouteChildren = {
   ActivityRoute: ActivityRoute,
   JournalRoute: JournalRouteWithChildren,
   SearchRoute: SearchRoute,
-  GroupsRoute: GroupsRoute,
-  GroupsGroupIdRoute: GroupsGroupIdRoute,
+  LearnersRoute: LearnersRoute,
+  LearnersPlanIdRoute: LearnersPlanIdRoute,
   LearnerLearnerIdRoute: LearnerLearnerIdRoute,
 }
 export const routeTree = rootRouteImport

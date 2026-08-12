@@ -7,6 +7,7 @@ audit workspace). It owns the ``Manual_audit`` schema and never imports from
 
 import datetime
 import os
+import time
 
 from django.http import JsonResponse
 
@@ -26,6 +27,31 @@ SCHEMA = "Manual_audit"
 
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
+
+
+# The read-only state is server-wide, so one cached answer serves every
+# connection — without the cache each ensure-table call would add a round
+# trip to Neon on every request. Read-only expires fast (recovery should be
+# picked up quickly); writable lingers longer.
+_READ_ONLY_CACHE = {"value": False, "expires": 0.0}
+
+
+def db_is_read_only(cur):
+    """Neon flips the endpoint read-only at times (plan limits, maintenance).
+    DDL/writes abort then, so the lazy ensure-table helpers use this to keep
+    the read paths alive — real writes still fail loudly on their own."""
+    now = time.monotonic()
+    if now < _READ_ONLY_CACHE["expires"]:
+        return _READ_ONLY_CACHE["value"]
+    try:
+        cur.execute("select current_setting('transaction_read_only', true)")
+        row = cur.fetchone()
+    except Exception:  # non-Postgres backends (sqlite tests) have no GUCs
+        return False
+    value = bool(row) and str(row[0]).strip().lower() == "on"
+    _READ_ONLY_CACHE["value"] = value
+    _READ_ONLY_CACHE["expires"] = now + (5.0 if value else 15.0)
+    return value
 
 
 def _has_audit_permission(request, write=False):
