@@ -1426,7 +1426,7 @@ def _overlay_timestamp(value, field):
     return parsed.isoformat()
 
 
-def _validate_overlay_activity(raw, *, aptem_id, learner_name, activity_id):
+def _validate_overlay_activity(raw, *, aptem_id, learner_name, activity_id, allow_any_category=False):
     if not isinstance(raw, dict):
         raise ValueError("activity must be an object")
     date = str(raw.get("date") or "").strip()
@@ -1436,7 +1436,12 @@ def _validate_overlay_activity(raw, *, aptem_id, learner_name, activity_id):
         raise ValueError("date must use YYYY-MM-DD format")
     category = str(raw.get("category") or "").strip().lower()
     if category not in _OVERLAY_CATEGORIES:
-        raise ValueError(f"category must be one of: {', '.join(sorted(_OVERLAY_CATEGORIES))}")
+        # Edits of MIRROR rows must not be blocked (or silently recategorised)
+        # by source spellings outside the canonical five — e.g. "reading",
+        # "quiz", or the "activity" fallback. New audit-created rows stay
+        # strict: their category comes from the UI select.
+        if not (allow_any_category and re.fullmatch(r"[a-z0-9+][a-z0-9+ _-]{0,49}", category)):
+            raise ValueError(f"category must be one of: {', '.join(sorted(_OVERLAY_CATEGORIES))}")
     name = str(raw.get("activity") or "").strip()
     if not name:
         raise ValueError("activity is required")
@@ -1483,6 +1488,10 @@ def _validate_overlay_activity(raw, *, aptem_id, learner_name, activity_id):
         "not_accepted": bool(raw.get("not_accepted", False)),
         "reporting_week_label": str(raw.get("reporting_week_label") or "").strip()[:200] or None,
         "audit_created": bool(raw.get("audit_created", str(activity_id).startswith("audit:"))),
+        # Soft reference to an uploaded manual-audit evidence file (assignment
+        # uploads); served by /manual_audit_api/evidence/<id>/open.
+        "evidence_id": str(raw.get("evidence_id") or "").strip()[:100] or None,
+        "evidence_name": str(raw.get("evidence_name") or "").strip()[:300] or None,
     }
 
 
@@ -1517,14 +1526,14 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
             with connections[CONN].cursor() as cur:
                 _ensure_activity_overlay_table(cur)
                 if aptem_id is None:
-                    cur.execute('''select aptem_id, activity_id, operation, payload, source_payload, updated_by, updated_at from "Manual_audit".activity_overrides order by updated_at''')
+                    cur.execute('''select aptem_id, activity_id, operation, payload, source_payload, updated_by, updated_at, created_at from "Manual_audit".activity_overrides order by updated_at''')
                 else:
-                    cur.execute('''select aptem_id, activity_id, operation, payload, source_payload, updated_by, updated_at from "Manual_audit".activity_overrides where aptem_id = %s order by updated_at''', [aptem_id])
+                    cur.execute('''select aptem_id, activity_id, operation, payload, source_payload, updated_by, updated_at, created_at from "Manual_audit".activity_overrides where aptem_id = %s order by updated_at''', [aptem_id])
                 rows = cur.fetchall()
         except (KeyError, DatabaseError) as error:
             return JsonResponse({"error": "Could not read activity overrides.", "details": str(error)}, status=503)
         return JsonResponse({"items": [
-            {"aptem_id": row[0], "activity_id": row[1], "operation": row[2], "payload": row[3], "source_payload": row[4], "updated_by": row[5], "updated_at": row[6].isoformat() if row[6] else None}
+            {"aptem_id": row[0], "activity_id": row[1], "operation": row[2], "payload": row[3], "source_payload": row[4], "updated_by": row[5], "updated_at": row[6].isoformat() if row[6] else None, "created_at": row[7].isoformat() if row[7] else None}
             for row in rows
         ]})
 
@@ -1545,6 +1554,70 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
     updated_by = str(body.get("updated_by") or "").strip()[:200] or None
     activity_id = str(body.get("activity_id") or "").strip()
     source_payload = None
+
+    # POST with group_id: create the SAME activity once per member of that LMS
+    # group (each learner tracks their own hours/completion, so per-learner
+    # overlay rows are the shared-activity mechanism here).
+    if request.method == "POST" and body.get("group_id") not in (None, ""):
+        try:
+            lms_group_id = int(body.get("group_id"))
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "group_id must be an integer"}, status=400)
+        try:
+            with connections[CONN].cursor() as cur:
+                cur.execute(
+                    '''
+                    select distinct l.aptem_id, l.learner_name
+                    from "Manual_audit".group_learners gl
+                    join "Manual_audit".learners l on l.learner_id = gl.learner_id
+                    where gl.group_id = %s and l.aptem_id is not null
+                    ''',
+                    [lms_group_id],
+                )
+                members = {int(row[0]): row[1] for row in cur.fetchall()}
+        except (KeyError, DatabaseError) as error:
+            return JsonResponse({"error": "Could not load the LMS group's members.", "details": str(error)}, status=503)
+        # The learner the row was created from always gets it, member or not.
+        members.setdefault(aptem_id, learner["name"])
+        try:
+            per_member = []
+            for member_id, member_name in sorted(members.items()):
+                member_activity_id = f"audit:{uuid.uuid4()}"
+                per_member.append((member_id, member_activity_id, _validate_overlay_activity(
+                    body.get("activity"), aptem_id=member_id,
+                    learner_name=member_name or f"Learner {member_id}",
+                    activity_id=member_activity_id,
+                )))
+        except ValueError as error:
+            return JsonResponse({"error": str(error)}, status=400)
+        try:
+            with transaction.atomic(using=CONN):
+                with connections[CONN].cursor() as cur:
+                    _ensure_activity_overlay_table(cur)
+                    for member_id, member_activity_id, member_payload in per_member:
+                        cur.execute(
+                            '''
+                            insert into "Manual_audit".activity_overrides (aptem_id, activity_id, operation, payload, source_payload, updated_by)
+                            values (%s, %s, 'created', %s::jsonb, null, %s)
+                            ''',
+                            [member_id, member_activity_id, json.dumps(member_payload), updated_by],
+                        )
+                    cur.execute("select now()")
+                    updated_at = cur.fetchone()[0]
+        except (KeyError, DatabaseError) as error:
+            return JsonResponse({"error": "Could not save the group's activities.", "details": str(error)}, status=503)
+        own_id, own_payload = next(
+            (member_activity_id, member_payload)
+            for member_id, member_activity_id, member_payload in per_member
+            if member_id == aptem_id
+        )
+        return JsonResponse({
+            "ok": True, "aptem_id": aptem_id, "activity_id": own_id,
+            "operation": "created", "payload": own_payload,
+            "group_id": lms_group_id, "created_for": len(per_member),
+            "updated_by": updated_by, "updated_at": updated_at.isoformat(),
+        })
+
     try:
         if request.method == "POST":
             activity_id = f"audit:{uuid.uuid4()}"
@@ -1566,10 +1639,12 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
             source_payload = _validate_overlay_activity(
                 raw_source, aptem_id=aptem_id,
                 learner_name=learner["name"], activity_id=activity_id,
+                allow_any_category=True,
             )
             payload = _validate_overlay_activity(
                 body.get("activity"), aptem_id=aptem_id,
                 learner_name=learner["name"], activity_id=activity_id,
+                allow_any_category=True,
             )
             payload["audit_replaced"] = True
             operation = "replaced"
@@ -1586,6 +1661,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
             payload = _validate_overlay_activity(
                 merged, aptem_id=aptem_id,
                 learner_name=learner["name"], activity_id=activity_id,
+                allow_any_category=True,
             )
             operation = "created"
         else:
@@ -1603,6 +1679,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
             payload = _validate_overlay_activity(
                 raw_snapshot, aptem_id=aptem_id,
                 learner_name=learner["name"], activity_id=activity_id,
+                allow_any_category=True,
             )
             operation = "deleted"
     except ValueError as error:

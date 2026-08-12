@@ -105,6 +105,10 @@ export type LearnerActivity = {
   quiz_passed?: boolean;
   not_accepted?: boolean; // progress-review row → shown as "Accepted: No"
   azure_blob?: string | null;
+  // Uploaded assignment file attached to this row (manual-audit evidence id),
+  // opened via evidenceFileUrl().
+  evidence_id?: string | null;
+  evidence_name?: string | null;
   plan_id: string;
   month_no: number;
   month_unit: string;
@@ -559,6 +563,7 @@ type LiveCohortLearner = {
   lms_matched?: boolean;
   programme: string;
   programmes?: string[];
+  groups?: string[];
   withdrawn: boolean;
   programme_status?: string;
   planned_total: number;
@@ -611,6 +616,8 @@ type LiveActivity = {
   iframe_url: string | null;
   not_accepted?: boolean; // progress-review rows
   azure_blob?: string | null;
+  evidence_id?: string | null;
+  evidence_name?: string | null;
   reporting_month?: string | null;
   reporting_week_index?: number | null;
   reporting_week_start?: string | null;
@@ -624,6 +631,9 @@ type LiveActivity = {
   hours_mapped?: boolean;
   mapped_seconds?: number | null;
   reporting_method?: string | null;
+  // When the row was added: catalogue first_seen (LMS), attendance source
+  // created_at, plan_activities.created_at, or the overlay's created_at.
+  created_at?: string | null;
   plan?: {
     activity_key: string;
     group_id: number;
@@ -651,6 +661,7 @@ type ActivityOverlay = {
   source_payload: LiveActivity | null;
   updated_by: string | null;
   updated_at: string | null;
+  created_at?: string | null;
 };
 
 type ActivityOverlayResponse = { items: ActivityOverlay[] };
@@ -668,6 +679,8 @@ export type ActivityRowInput = {
   completed?: boolean;
   not_accepted?: boolean;
   reporting_week_label?: string | null;
+  evidence_id?: string | null;
+  evidence_name?: string | null;
 };
 
 // The categories the activity feed uses (drives the "Category" filter).
@@ -943,7 +956,20 @@ function fetchActivitiesRaw(aptemId: number, month?: string): Promise<LiveActivi
       if (override.operation === "deleted") {
         byId.delete(String(override.activity_id));
       } else {
-        byId.set(String(override.activity_id), sanitizeActivityDate(override.payload));
+        // Merge the overlay OVER the mirror row instead of replacing it, so
+        // display-only mirror fields the overlay whitelist cannot carry
+        // (source, reading/quiz ticks, plan chip, content iframe, …) survive
+        // an edit. Overlay values still win for everything it stores.
+        const existing = byId.get(String(override.activity_id));
+        const payload = sanitizeActivityDate(override.payload);
+        const merged: LiveActivity = existing ? { ...existing, ...payload } : { ...payload };
+        if (existing) {
+          if (payload.iframe_url == null && existing.iframe_url) merged.iframe_url = existing.iframe_url;
+          // The auditor explicitly set these hours — always display them.
+          merged.hours_mapped = true;
+        }
+        if (!merged.created_at) merged.created_at = override.created_at ?? override.updated_at ?? null;
+        byId.set(String(override.activity_id), merged);
       }
     }
     const activities = [...byId.values()].filter(
@@ -1033,13 +1059,15 @@ function toActivity(a: LiveActivity): LearnerActivity {
     source_course: null,
     source_url: a.iframe_url, // "Activity content" iframe on the detail page
     source_basis: null,
-    created_at: null,
+    created_at: a.created_at ?? null,
     configured_duration: null,
     week: a.reporting_week_label ?? null,
     ksbs: flattenKsbs(a.ksbs),
     completion_records: [],
     not_accepted: a.not_accepted === true,
     azure_blob: a.azure_blob ?? null,
+    evidence_id: a.evidence_id ?? null,
+    evidence_name: a.evidence_name ?? null,
     source: a.source,
     hours_mapped: a.hours_mapped,
     reporting_method: a.reporting_method ?? null,
@@ -1251,6 +1279,40 @@ export function getLearners(params: { period?: string; search?: string; position
   })();
 }
 
+// Column sorting for the activities tables. `key` matches the sortable
+// columns; omitted sort = the default "newest added first" ordering.
+export type ActivitySort = {
+  key: "date" | "category" | "activity" | "planned" | "actual" | "created";
+  dir: "asc" | "desc";
+};
+
+// Cycle a column's sort on header click: ascending → descending → back to the
+// default (newest-added-first) ordering.
+export function nextActivitySort(current: ActivitySort | undefined, key: ActivitySort["key"]): ActivitySort | undefined {
+  if (current?.key !== key) return { key, dir: "asc" };
+  return current.dir === "asc" ? { key, dir: "desc" } : undefined;
+}
+
+function compareActivities(left: LearnerActivity, right: LearnerActivity, sort?: ActivitySort): number {
+  if (!sort) {
+    // Default: latest added first; rows without a created timestamp fall back
+    // to their activity date so nothing sorts arbitrarily.
+    const added = (right.created_at ?? right.activity_date ?? "").localeCompare(left.created_at ?? left.activity_date ?? "");
+    if (added !== 0) return added;
+    const byDate = (right.activity_date ?? "").localeCompare(left.activity_date ?? "");
+    return byDate !== 0 ? byDate : left.learner.localeCompare(right.learner);
+  }
+  let compared = 0;
+  if (sort.key === "date") compared = (left.activity_date ?? "").localeCompare(right.activity_date ?? "");
+  else if (sort.key === "created") compared = (left.created_at ?? "").localeCompare(right.created_at ?? "");
+  else if (sort.key === "category") compared = left.activity_category.localeCompare(right.activity_category);
+  else if (sort.key === "activity") compared = left.activity_unit.toLowerCase().localeCompare(right.activity_unit.toLowerCase());
+  else if (sort.key === "planned") compared = (left.planned_hours ?? 0) - (right.planned_hours ?? 0);
+  else compared = (left.actual_lms_hours ?? 0) - (right.actual_lms_hours ?? 0);
+  if (compared === 0) compared = (left.activity_date ?? "").localeCompare(right.activity_date ?? "");
+  return sort.dir === "desc" ? -compared : compared;
+}
+
 export function getLearnerActivities(params: {
   search: string;
   offset: number;
@@ -1261,6 +1323,7 @@ export function getLearnerActivities(params: {
   category?: string;
   period?: string;
   programme?: string;
+  sort?: ActivitySort;
 }) {
   return (async (): Promise<LearnerActivitiesResponse> => {
     const cohort = await fetchCohort();
@@ -1321,11 +1384,8 @@ export function getLearnerActivities(params: {
       items = items.filter((item) => categories.has(item.activity_category));
     }
 
-    // Chronological, then by learner, for a stable audit log.
-    items.sort((left, right) => {
-      const byDate = (left.activity_date ?? "").localeCompare(right.activity_date ?? "");
-      return byDate !== 0 ? byDate : left.learner.localeCompare(right.learner);
-    });
+    // Default: newest added first; a header click overrides via params.sort.
+    items.sort((left, right) => compareActivities(left, right, params.sort));
 
     const total = items.length;
     const plannedTotal = round2(items.reduce((sum, item) => sum + (item.planned_hours ?? 0), 0));
@@ -1549,11 +1609,12 @@ export async function renameContract(contractId: string, documentName: string) {
   return response.json() as Promise<{ ok: boolean; contract_id: string; document_name: string }>;
 }
 
-export async function uploadEvidence(learnerId: number, file: File, evidenceDate: string) {
+export async function uploadEvidence(learnerId: number, file: File, evidenceDate: string, componentName?: string) {
   const body = new FormData();
   body.append("learner_id", String(learnerId));
   body.append("evidence_date", evidenceDate);
   body.append("document_name", file.name);
+  if (componentName) body.append("component_name", componentName);
   body.append("file", file);
   const response = await fetch("/manual_audit_api/evidence/upload", {
     method: "POST",
@@ -1563,7 +1624,13 @@ export async function uploadEvidence(learnerId: number, file: File, evidenceDate
     const payload = (await response.json().catch(() => null)) as { error?: string } | null;
     throw new Error(payload?.error ?? `Could not upload evidence (${response.status})`);
   }
-  return response.json() as Promise<{ ok: boolean; evidence_id: string; evidence_date: string }>;
+  return response.json() as Promise<{ ok: boolean; evidence_id: string; document_name?: string; evidence_date: string }>;
+}
+
+// Where an uploaded evidence file opens (streams the blob; Office documents get
+// the Office-online viewer wrapper).
+export function evidenceFileUrl(evidenceId: string): string {
+  return `/manual_audit_api/evidence/${encodeURIComponent(evidenceId)}/open`;
 }
 
 export async function updateEvidenceDate(evidenceId: string, learnerId: number, evidenceDate: string) {
@@ -1741,7 +1808,7 @@ async function overlayMutation(method: "POST" | "PUT" | "PATCH" | "DELETE", body
     throw new Error(error?.error ?? `Activity ${method.toLowerCase()} failed (${response.status})`);
   }
   invalidateOtjhCaches();
-  return response.json() as Promise<{ ok: boolean; activity_id: string; payload: LiveActivity }>;
+  return response.json() as Promise<{ ok: boolean; activity_id: string; payload: LiveActivity; created_for?: number }>;
 }
 
 function rowSnapshot(row: LearnerActivity): ActivityRowInput {
@@ -1758,11 +1825,27 @@ function rowSnapshot(row: LearnerActivity): ActivityRowInput {
     completed: Boolean(row.completed),
     not_accepted: Boolean(row.not_accepted),
     reporting_week_label: row.week,
+    evidence_id: row.evidence_id ?? null,
+    evidence_name: row.evidence_name ?? null,
   };
 }
 
-export async function createActivity(aptemId: number, activity: ActivityRowInput, updatedBy?: string) {
-  return overlayMutation("POST", { aptem_id: aptemId, activity, updated_by: updatedBy });
+export async function createActivity(aptemId: number, activity: ActivityRowInput, updatedBy?: string, groupId?: number) {
+  return overlayMutation("POST", {
+    aptem_id: aptemId,
+    activity,
+    updated_by: updatedBy,
+    // With group_id the backend creates the same activity once per member of
+    // that LMS group (the current learner always included).
+    ...(groupId ? { group_id: groupId } : {}),
+  });
+}
+
+// LMS group names the cohort feed records for one learner (may be empty).
+export async function getLearnerGroupNames(aptemId: number): Promise<string[]> {
+  const cohort = await fetchCohort();
+  const learner = cohort.learners.find((item) => item.aptem_id === aptemId);
+  return learner?.groups ?? [];
 }
 
 export async function updateActivityRow(row: LearnerActivity, activity: ActivityRowInput, updatedBy?: string) {

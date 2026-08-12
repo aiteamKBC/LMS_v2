@@ -24,7 +24,9 @@ from .plan_pickers import (
     picker_assignment_evidence,
     picker_assignments,
     picker_attendance_grid,
+    picker_attendance_modules,
     picker_attendance_sessions,
+    picker_group_activities,
     picker_ksbs,
     picker_lms_groups,
     picker_materials,
@@ -73,11 +75,13 @@ urlpatterns = [
     # Plan builder pickers (select from the group's own data).
     path("plan/pickers/attendance-sessions", picker_attendance_sessions, name="manual-plan-picker-attendance"),
     path("plan/pickers/attendance-grid", picker_attendance_grid, name="manual-plan-picker-attendance-grid"),
+    path("plan/pickers/attendance-modules", picker_attendance_modules, name="manual-plan-picker-attendance-modules"),
     path("plan/pickers/materials", picker_materials, name="manual-plan-picker-materials"),
     path("plan/pickers/assignments", picker_assignments, name="manual-plan-picker-assignments"),
     path("plan/pickers/assignment-evidence", picker_assignment_evidence, name="manual-plan-picker-assignment-evidence"),
     path("plan/pickers/ksbs", picker_ksbs, name="manual-plan-picker-ksbs"),
     path("plan/pickers/lms-groups", picker_lms_groups, name="manual-plan-picker-lms-groups"),
+    path("plan/pickers/group-activities", picker_group_activities, name="manual-plan-picker-group-activities"),
     # Monthly journal sign-off.
     path("learners/<str:learner_id>/signoff/", learner_signoff, name="manual-learner-signoff"),
     # Contract / evidence documents (manual-owned writes).

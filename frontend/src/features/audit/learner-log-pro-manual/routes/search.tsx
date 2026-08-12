@@ -21,7 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/features/audit/learner-log-pro-manual/components/ui/table";
-import { getLearnerActivities, getLearners, saveLearnerHours } from "@/features/audit/learner-log-pro-manual/lib/api";
+import { getLearnerActivities, getLearners, nextActivitySort, saveLearnerHours, type ActivitySort } from "@/features/audit/learner-log-pro-manual/lib/api";
 
 export const Route = createFileRoute("/search")({
   component: SearchPage,
@@ -239,6 +239,8 @@ function SearchPage() {
   const [activityLearner, setActivityLearner] = useState("");
   const [activityCategory, setActivityCategory] = useState("");
   const [page, setPage] = useState(0);
+  // undefined = the default "newest added first" ordering.
+  const [activitySort, setActivitySort] = useState<ActivitySort | undefined>(undefined);
   const [addingActivity, setAddingActivity] = useState(false);
 
   const filterOptions = useQuery({
@@ -272,6 +274,7 @@ function SearchPage() {
       activityCategory,
       programmeName,
       page,
+      activitySort,
     ],
     queryFn: () =>
       getLearnerActivities({
@@ -282,6 +285,7 @@ function SearchPage() {
         programme: programmeName || undefined,
         limit: pageSize,
         offset: page * pageSize,
+        sort: activitySort,
       }),
     placeholderData: keepPreviousData,
     // A learner's full (all-month) activity history is large (~1 MB+), so the
@@ -590,10 +594,25 @@ function SearchPage() {
           ) : (
             <div className="max-h-[36rem] overflow-auto">
               <Table>
-                <TableHeader><ActivityTableHeader /></TableHeader>
+                <TableHeader>
+                  <ActivityTableHeader
+                    sort={activitySort}
+                    onSort={(key) => {
+                      setActivitySort((current) => nextActivitySort(current, key));
+                      setPage(0);
+                    }}
+                  />
+                </TableHeader>
                 <TableBody>
                   {addingActivity && selectedActivityLearner ? (
-                    <InlineActivityCreateRow learnerId={Number(selectedActivityLearner.id)} learnerName={selectedActivityLearner.name} onCancel={() => setAddingActivity(false)} />
+                    <InlineActivityCreateRow
+                      learnerId={Number(selectedActivityLearner.id)}
+                      learnerName={selectedActivityLearner.name}
+                      onCancel={() => setAddingActivity(false)}
+                      // Land new rows in the month being viewed so the month
+                      // filter cannot hide them the moment they are saved.
+                      defaultDate={/^\d{4}-\d{2}$/.test(sharedPeriod) ? `${sharedPeriod}-01` : undefined}
+                    />
                   ) : null}
                   {!activitiesEnabled && (
                     <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Pick a learner or an activity month above to load the evidence log.</TableCell></TableRow>

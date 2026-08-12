@@ -10,8 +10,17 @@ from the group's data, or build by hand):
 * assignments          -> "Last_audit".learner_assignments aggregated by the
   normalised component NAME (component ids are unique per learner);
 * KSBs                 -> curriculum.standard_ksbs (the IfATE standard list);
-* LMS groups           -> mirror groups/group_learners as membership seeds.
+* LMS groups           -> mirror groups/group_learners as membership seeds;
+* attendance modules   -> "Last_audit".learner_attendance module -> lecture
+  pairs, cohort-wide (the inline activity-row name picker);
+* group activities     -> "Last_audit".group_activities x activities with
+  per-group title overrides (the same picker's media categories).
 """
+
+import os
+
+import psycopg
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from django.db import DatabaseError, connections
 from django.http import HttpRequest, JsonResponse
@@ -22,6 +31,27 @@ from .plan_tables import assignment_name_key, ensure_plan_tables
 
 # Catalog casing differs from the wire categories ('Reading+Quiz' vs 'reading+quiz').
 _CATALOG_TYPES = {"video": "video", "reading+quiz": "Reading+Quiz", "audio": "audio"}
+
+# The MAIN attendance table lives in the AiTeamKBC database reached through
+# the KBCDATABASE connection string (same convention as audit_api/coach_api:
+# the DSN's dbname is overridden because the env var points at the server).
+_KBC_ATTENDANCE_DATABASE = "AiTeamKBC"
+
+
+def _kbc_attendance_dsn():
+    connection_string = os.environ.get("KBCDATABASE", "")
+    if not connection_string:
+        return ""
+    conninfo = conninfo_to_dict(connection_string)
+    conninfo["dbname"] = os.environ.get("KBC_ATTENDANCE_DATABASE", _KBC_ATTENDANCE_DATABASE)
+    return make_conninfo(**conninfo)
+
+
+def _date_label(value):
+    """ISO-ish display string for a date that may arrive as date or text."""
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
 
 
 def _member_ids(cur, group_id):
@@ -526,6 +556,128 @@ def picker_lms_groups(request: HttpRequest) -> JsonResponse:
     return JsonResponse({
         "items": [
             {"aptem_id": row[0], "name": row[1], "email": row[2], "status": row[3] or "Unknown"}
+            for row in rows
+        ]
+    })
+
+
+@require_GET
+def picker_attendance_modules(request: HttpRequest) -> JsonResponse:
+    """Distinct attendance modules (?module= lists that module's lectures).
+
+    Feeds the inline activity-row name picker, cohort-wide, straight from the
+    MAIN attendance table — AiTeamKBC's public.kbc_attendance via KBCDATABASE
+    — because the Last_audit/Manual_audit mirrors lag it and are scoped to
+    already-linked learners. Blank/NULL modules are bucketed as '(No module)'
+    (the same coalesce runs in both queries so the value a client sends back
+    always round-trips); blank lecture names never appear.
+    """
+    module = str(request.GET.get("module") or "").strip()[:300]
+    dsn = _kbc_attendance_dsn()
+    if not dsn:
+        return JsonResponse({"error": "KBCDATABASE is not configured."}, status=503)
+    try:
+        with psycopg.connect(dsn) as connection:
+            with connection.cursor() as cur:
+                if not module:
+                    cur.execute(
+                        '''
+                        select coalesce(nullif(btrim(module), ''), '(No module)') as module,
+                               count(distinct nullif(btrim(lecture_name), '')) as lecture_count,
+                               max(date) as last_date
+                        from public.kbc_attendance
+                        group by 1
+                        order by 1
+                        '''
+                    )
+                    return JsonResponse({
+                        "items": [
+                            {
+                                "module": row[0],
+                                "lecture_count": row[1],
+                                "last_date": _date_label(row[2]),
+                            }
+                            for row in cur.fetchall()
+                        ]
+                    })
+                cur.execute(
+                    '''
+                    select btrim(lecture_name) as lecture,
+                           count(distinct "ID") as learner_count,
+                           max(date) as last_date
+                    from public.kbc_attendance
+                    where coalesce(btrim(lecture_name), '') <> ''
+                      and coalesce(nullif(btrim(module), ''), '(No module)') = %s
+                    group by 1
+                    order by 1
+                    ''',
+                    [module],
+                )
+                rows = cur.fetchall()
+    except psycopg.Error as error:
+        return JsonResponse({"error": "Could not load attendance modules.", "details": str(error)}, status=503)
+    return JsonResponse({
+        "items": [
+            {
+                "lecture": row[0],
+                "learner_count": row[1],
+                "last_date": _date_label(row[2]),
+            }
+            for row in rows
+        ]
+    })
+
+
+@require_GET
+def picker_group_activities(request: HttpRequest) -> JsonResponse:
+    """One LMS group's curriculum titles (?group_id=&type=), overrides applied.
+
+    group_activities x activities with coalesce(override.title, title) —
+    group_activity_overrides holds per-group edits where NULL/blank means
+    "inherit the shared value". These tables exist only in "Last_audit"
+    (never mirrored), so this reads the source schema directly, like
+    picker_assignments does for learner_assignments.
+    """
+    try:
+        group_id = int(request.GET.get("group_id", ""))
+    except ValueError:
+        return JsonResponse({"error": "group_id is required"}, status=400)
+    type_param = str(request.GET.get("type") or "").strip().lower()
+    if type_param and type_param not in _CATALOG_TYPES:
+        return JsonResponse({"error": "type must be video, reading+quiz, or audio"}, status=400)
+    catalog_type = _CATALOG_TYPES.get(type_param, "")
+
+    try:
+        with connections[CONN].cursor() as cur:
+            cur.execute(
+                '''
+                select a.activity_id,
+                       coalesce(nullif(btrim(o.title), ''), a.title) as title,
+                       a.activity_type,
+                       a.activity_date,
+                       ga.position
+                from "Last_audit".group_activities ga
+                join "Last_audit".activities a on a.activity_id = ga.activity_id
+                left join "Last_audit".group_activity_overrides o
+                  on o.group_id = ga.group_id and o.activity_id = ga.activity_id
+                where ga.group_id = %s
+                  and (%s = '' or lower(a.activity_type) = lower(%s))
+                order by ga.position nulls last, title, a.activity_id
+                ''',
+                [group_id, catalog_type, catalog_type],
+            )
+            rows = cur.fetchall()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not load the group's activities.", "details": str(error)}, status=503)
+    return JsonResponse({
+        "items": [
+            {
+                "activity_id": row[0],
+                "title": row[1],
+                "activity_type": row[2],
+                "activity_date": row[3].isoformat() if row[3] else None,
+                "position": row[4],
+            }
             for row in rows
         ]
     })
