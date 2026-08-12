@@ -28,7 +28,9 @@ const WORKSPACE_SECTIONS: WorkspaceSection[] = [
   // { slug: 'mis', label: 'MIS User', icon: 'ri-database-2-line', email: 'mis@kbc.test', workspacePath: '/workspace/mis' },
   { slug: 'curriculum', label: 'Curriculum', icon: 'ri-book-open-line', email: 'tutor@kbc.test', workspacePath: '/workspace/curriculum', highlighted: true },
   { slug: 'engagement', label: 'Engagement', icon: 'ri-megaphone-line', email: 'compliance@kbc.test', workspacePath: '/workspace/engagement', highlighted: true },
-  { slug: 'audit-copy', label: 'AUDIT', icon: 'ri-file-search-line', email: 'auditor@kbc.test', workspacePath: '/workspace/auditor-copy', highlighted: true },
+  // AUDIT opens a chooser page with two independent systems: Automatic
+  // (the existing auditor-copy workspace) and Manual (the new manual workspace).
+  { slug: 'audit-copy', label: 'AUDIT', icon: 'ri-file-search-line', email: 'auditor@kbc.test', workspacePath: '/workspace/audit', highlighted: true },
   // { slug: 'leadership', label: 'Leadership', icon: 'ri-vip-crown-line', email: 'leadership@kbc.test', workspacePath: '/workspace/leadership' },
   //{ slug: 'admin', label: 'Admin', icon: 'ri-settings-3-line', email: 'admin@kbc.test', workspacePath: '/workspace/admin', highlighted: true },
   // { slug: 'finance', label: 'Finance', icon: 'ri-money-pound-circle-line', email: 'finance@kbc.test', workspacePath: '/workspace/finance' },
