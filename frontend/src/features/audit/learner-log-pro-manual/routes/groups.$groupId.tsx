@@ -241,9 +241,78 @@ function PlanTab({ data, activeMonth, onMonth, refresh }: {
   data: PlanGroupDetail; activeMonth: number | null;
   onMonth: (index: number) => void; refresh: () => Promise<unknown> | unknown;
 }) {
+  const queryClient = useQueryClient();
   const [picker, setPicker] = useState<null | { kind: string; weekSlot: number }>(null);
   const [editingMonths, setEditingMonths] = useState(false);
   const [ksbFor, setKsbFor] = useState<PlanActivity | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  // The month's matrix feeds the per-activity "who did it" counters and the
+  // inline learner list — the plan view answers "حلّها ولا لأ" in place.
+  const matrix = useQuery({
+    queryKey: ["plan-matrix", data.id, activeMonth],
+    queryFn: () => getPlanMatrix(data.id, activeMonth as number),
+    enabled: activeMonth != null,
+  });
+  const matrixCells = matrix.data?.cells ?? {};
+  const matrixMembers = matrix.data?.members ?? [];
+  const refreshMatrix = () => queryClient.invalidateQueries({ queryKey: ["plan-matrix", data.id, activeMonth] });
+
+  function activityStats(activity: PlanActivity) {
+    const eligible = matrixMembers.filter((member) => !activity.exempted.includes(member.aptem_id));
+    let confirmed = 0;
+    let suggested = 0;
+    for (const member of eligible) {
+      const cell = matrixCells[`${member.aptem_id}:${activity.activity_key}`];
+      if (cell?.progress && !cell.progress.rejected && cell.progress.status === "completed") confirmed += 1;
+      else if (cell?.suggestion && (cell.suggestion.completed || cell.suggestion.attended)) suggested += 1;
+    }
+    return { confirmed, suggested, total: eligible.length };
+  }
+
+  async function quickSet(activity: PlanActivity, member: { aptem_id: number }, done: boolean) {
+    const cell = matrixCells[`${member.aptem_id}:${activity.activity_key}`];
+    const suggestion = cell?.suggestion;
+    try {
+      await savePlanProgress({
+        aptem_id: member.aptem_id,
+        activity_key: activity.activity_key,
+        patch: done
+          ? {
+              status: "completed",
+              actual_hours: suggestion?.actual_hours ?? activity.planned_hours,
+              completion_date: suggestion?.date ?? activity.planned_date,
+              ...(activity.category === "attendance" ? { attendance_status: "attended" as const } : {}),
+              reading_viewed: suggestion?.reading_viewed ?? null,
+              quiz_attempted: suggestion?.quiz_attempted ?? null,
+              quiz_passed: suggestion?.quiz_passed ?? null,
+              suggestion_accepted: Boolean(suggestion),
+            }
+          : {
+              status: "not_started",
+              actual_hours: 0,
+              ...(activity.category === "attendance" ? { attendance_status: "absent" as const } : {}),
+            },
+      });
+      await refreshMatrix();
+    } catch (cause) {
+      fail("Could not save", cause);
+    }
+  }
+
+  async function confirmAllSuggested(activity: PlanActivity) {
+    const todo = matrixMembers.filter((member) => {
+      if (activity.exempted.includes(member.aptem_id)) return false;
+      const cell = matrixCells[`${member.aptem_id}:${activity.activity_key}`];
+      return !cell?.progress && cell?.suggestion && (cell.suggestion.completed || cell.suggestion.attended);
+    });
+    if (!todo.length) return;
+    for (const member of todo) {
+      // Each confirmation carries that learner's own suggested hours/date.
+      // eslint-disable-next-line no-await-in-loop
+      await quickSet(activity, member, true);
+    }
+    toast(`${todo.length} suggestions confirmed`);
+  }
   const month = data.months.find((item) => item.month_index === activeMonth) ?? null;
   const monthActivities = data.activities
     .filter((item) => item.month_index === activeMonth && item.included)
@@ -325,28 +394,84 @@ function PlanTab({ data, activeMonth, onMonth, refresh }: {
               <p className="px-5 py-4 text-xs text-muted-foreground">Nothing planned this week yet.</p>
             ) : (
               <ul className="divide-y divide-border">
-                {weekActivities.map((activity) => (
-                  <li key={activity.activity_key} className="flex flex-wrap items-center gap-3 px-5 py-3">
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${categoryChip(activity.category)}`}>{activity.category}</span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-foreground">{activity.title}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {activity.planned_hours} h
-                        {activity.planned_date ? ` · ${activity.planned_date}` : ""}
-                        {activity.material_ref ? ` · ${activity.material_ref}` : " · manual"}
-                        {activity.exempted.length > 0 ? ` · ${activity.exempted.length} exempted` : ""}
-                      </p>
-                    </div>
-                    <button type="button" title="KSBs" onClick={() => setKsbFor(activity)} className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
-                      <Tags className="h-4 w-4" />
-                      {(activity.ksbs?.K?.length ?? 0) + (activity.ksbs?.S?.length ?? 0) + (activity.ksbs?.B?.length ?? 0) > 0 && (
-                        <span className="ml-0.5 align-middle text-[10px] font-semibold">{(activity.ksbs?.K?.length ?? 0) + (activity.ksbs?.S?.length ?? 0) + (activity.ksbs?.B?.length ?? 0)}</span>
+                {weekActivities.map((activity) => {
+                  const stats = activityStats(activity);
+                  const isExpanded = expandedKey === activity.activity_key;
+                  return (
+                    <li key={activity.activity_key} className="px-5 py-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${categoryChip(activity.category)}`}>{activity.category}</span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-foreground">{activity.title}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {activity.planned_hours} h
+                            {activity.planned_date ? ` · ${activity.planned_date}` : ""}
+                            {activity.material_ref ? ` · ${activity.material_ref}` : " · manual"}
+                            {activity.exempted.length > 0 ? ` · ${activity.exempted.length} exempted` : ""}
+                          </p>
+                        </div>
+                        {/* "who did it" counter: solid = confirmed, ghost = the
+                            data says done but awaits the auditor's confirm. */}
+                        <button
+                          type="button"
+                          onClick={() => setExpandedKey(isExpanded ? null : activity.activity_key)}
+                          title="Show every learner's status"
+                          className={`rounded-full px-2.5 py-1 font-mono text-[11px] font-semibold transition-colors ${isExpanded ? "bg-[#182d48] text-white" : "bg-secondary text-foreground hover:bg-[#eef3f8]"}`}
+                        >
+                          ✓ {stats.confirmed}/{stats.total}{stats.suggested > 0 ? ` · ✓? ${stats.suggested}` : ""}
+                        </button>
+                        <button type="button" title="KSBs" onClick={() => setKsbFor(activity)} className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground">
+                          <Tags className="h-4 w-4" />
+                          {(activity.ksbs?.K?.length ?? 0) + (activity.ksbs?.S?.length ?? 0) + (activity.ksbs?.B?.length ?? 0) > 0 && (
+                            <span className="ml-0.5 align-middle text-[10px] font-semibold">{(activity.ksbs?.K?.length ?? 0) + (activity.ksbs?.S?.length ?? 0) + (activity.ksbs?.B?.length ?? 0)}</span>
+                          )}
+                        </button>
+                        <button type="button" title="Edit" onClick={() => void editActivity(activity)} className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"><Pencil className="h-4 w-4" /></button>
+                        <button type="button" title="Remove" onClick={() => void exclude(activity)} className="rounded p-1.5 text-destructive transition-colors hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></button>
+                      </div>
+                      {isExpanded && (
+                        <div className="mt-3 rounded-lg border border-border bg-[#f7f9fc] px-4 py-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-xs font-semibold text-[#182d48]">Learners — did they do it?</span>
+                            {stats.suggested > 0 && (
+                              <Button size="sm" variant="outline" onClick={() => void confirmAllSuggested(activity)}>
+                                <Check className="mr-1 h-3.5 w-3.5" /> Confirm all suggested ({stats.suggested})
+                              </Button>
+                            )}
+                          </div>
+                          <ul className="grid gap-1 sm:grid-cols-2 lg:grid-cols-3">
+                            {matrixMembers
+                              .filter((member) => !activity.exempted.includes(member.aptem_id))
+                              .map((member) => {
+                                const cell = matrixCells[`${member.aptem_id}:${activity.activity_key}`];
+                                const progress = cell?.progress && !cell.progress.rejected ? cell.progress : null;
+                                const suggestion = cell?.suggestion;
+                                const done = progress?.status === "completed";
+                                const suggestedDone = !progress && suggestion && (suggestion.completed || suggestion.attended);
+                                return (
+                                  <li key={member.aptem_id} className="flex items-center gap-2 rounded-md bg-card px-2.5 py-1.5 text-xs">
+                                    <span className={`font-bold ${done ? "text-success" : suggestedDone ? "text-amber-600" : "text-muted-foreground"}`}>
+                                      {done ? "✓" : suggestedDone ? "✓?" : "✗"}
+                                    </span>
+                                    <span className="min-w-0 flex-1 truncate font-medium text-foreground" title={member.name ?? String(member.aptem_id)}>
+                                      {member.name ?? member.aptem_id}
+                                    </span>
+                                    {done ? (
+                                      <button type="button" onClick={() => void quickSet(activity, member, false)} className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-secondary">undo</button>
+                                    ) : (
+                                      <button type="button" onClick={() => void quickSet(activity, member, true)} className="rounded border border-success/40 bg-success/10 px-1.5 py-0.5 text-[10px] font-semibold text-success hover:bg-success/20">
+                                        {suggestedDone ? "confirm" : "done"}
+                                      </button>
+                                    )}
+                                  </li>
+                                );
+                              })}
+                          </ul>
+                        </div>
                       )}
-                    </button>
-                    <button type="button" title="Edit" onClick={() => void editActivity(activity)} className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"><Pencil className="h-4 w-4" /></button>
-                    <button type="button" title="Remove" onClick={() => void exclude(activity)} className="rounded p-1.5 text-destructive transition-colors hover:bg-destructive/10"><Trash2 className="h-4 w-4" /></button>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

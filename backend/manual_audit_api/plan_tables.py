@@ -62,6 +62,7 @@ def ensure_plan_tables(cur):
             kind text not null default 'cohort' check (kind in ('cohort', 'individual')),
             programme_id bigint,
             programme_name text,
+            aptem_group text,
             status text not null default 'draft' check (status in ('draft', 'active', 'archived')),
             start_month text,
             created_by text,
@@ -70,6 +71,10 @@ def ensure_plan_tables(cur):
             updated_at timestamp with time zone not null default now()
         )
         '''
+    )
+    # Existing deployments predate the Aptem-group linkage column.
+    cur.execute(
+        'alter table "Manual_audit".plan_groups add column if not exists aptem_group text'
     )
     cur.execute(
         '''
@@ -170,6 +175,18 @@ def ensure_plan_tables(cur):
     )
     cur.execute(
         '''
+        create table if not exists "Manual_audit".plan_member_months (
+            group_id bigint not null,
+            aptem_id bigint not null,
+            month_index integer not null,
+            calendar_month text not null,
+            anchor_date date,
+            primary key (group_id, aptem_id, month_index)
+        )
+        '''
+    )
+    cur.execute(
+        '''
         create table if not exists "Manual_audit".plan_activity_exemptions (
             activity_key uuid not null,
             aptem_id bigint not null,
@@ -228,6 +245,55 @@ def log_plan_event(cur, entity_type, entity_id, action, *, old=None, new=None, a
 
 
 _NAME_KEY_STRIP = re.compile(r"[^a-z0-9]+")
+
+# Cohort noise inside Aptem programme names: months, years, stages, re-runs.
+# Stripping it clusters the ~34 name variants into their real programmes
+# ("الطلاب اللي البروجرام نيم بتاعهم شبه بعض") so a programme's groups are the
+# union of its variants' groups.
+_PROGRAMME_NOISE = {
+    "new", "onboarding", "stage", "v1", "1",
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "sept",
+    "oct", "nov", "dec",
+    "january", "february", "march", "april", "june", "july", "august",
+    "september", "october", "november", "december",
+    "pcp",
+}
+_PROGRAMME_SINGULAR = {"controls": "control", "managers": "manager", "executives": "executive"}
+
+
+def _programme_tokens(name):
+    text = re.sub(r"[^a-z0-9]+", " ", str(name or "").lower())
+    tokens = []
+    for tok in text.split():
+        if tok in _PROGRAMME_NOISE:
+            continue
+        if re.fullmatch(r"(19|20)\d{2}", tok):
+            continue
+        if re.fullmatch(r"2[0-9]", tok):  # 2-digit cohort years ('25', '26')
+            continue
+        if tok in {"lv4", "lv6"}:
+            tokens.extend(["level", tok[-1]])
+            continue
+        tokens.append(_PROGRAMME_SINGULAR.get(tok, tok))
+    return tokens
+
+
+def programme_key(name):
+    """Cluster key: variants of the same real programme share one key."""
+    return " ".join(sorted(set(_programme_tokens(name)))) or "unnamed"
+
+
+def clean_programme_display(name):
+    """The original name with the cohort noise removed, order preserved."""
+    kept = []
+    for word in re.split(r"[\s]+", str(name or "").strip()):
+        bare = re.sub(r"[^a-z0-9]+", "", word.lower())
+        if not bare:
+            continue
+        if bare in _PROGRAMME_NOISE or re.fullmatch(r"(19|20)\d{2}", bare) or re.fullmatch(r"2[0-9]", bare):
+            continue
+        kept.append(word.strip("-–|,"))
+    return " ".join(part for part in kept if part) or str(name or "").strip()
 
 
 def assignment_name_key(component_name):

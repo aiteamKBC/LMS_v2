@@ -166,7 +166,7 @@ def _group_row(cur, group_id):
     cur.execute(
         '''
         select id, name, kind, programme_id, programme_name, status, start_month,
-               created_by, created_at, updated_by, updated_at
+               created_by, created_at, updated_by, updated_at, aptem_group
         from "Manual_audit".plan_groups where id = %s
         ''',
         [group_id],
@@ -187,6 +187,7 @@ def _group_payload(row):
         "created_at": row[8].isoformat() if row[8] else None,
         "updated_by": row[9],
         "updated_at": row[10].isoformat() if row[10] else None,
+        "aptem_group": row[11] if len(row) > 11 else None,
     }
 
 
@@ -271,6 +272,141 @@ def _activities_payload(cur, group_id):
     ]
 
 
+# --- training-plan month sync ---------------------------------------------------
+#
+# One shared plan per group, but each learner keeps THEIR OWN calendar dates:
+# the group months hold the majority training-plan window, and every member
+# whose Aptem training plan differs gets per-member month rows
+# (plan_member_months) that the projection prefers over the group months.
+
+def _training_plan_months(cur, aptem_ids):
+    """aptem_id -> ['YYYY-MM', ...] from Audit.learner_match.aptem_training_plan."""
+    if not aptem_ids:
+        return {}
+    cur.execute(
+        '''
+        select lm.aptem_id, tp.ord, tp.item ->> 'date'
+        from "Audit".learner_match lm,
+             lateral jsonb_array_elements(lm.aptem_training_plan::jsonb)
+                 with ordinality as tp(item, ord)
+        where lm.aptem_id = any(%s)
+          and lm.aptem_training_plan is not null
+          and jsonb_typeof(lm.aptem_training_plan::jsonb) = 'array'
+        order by lm.aptem_id, tp.ord
+        ''',
+        [list(set(aptem_ids))],
+    )
+    plans = {}
+    for aptem_id, _ord, date_text in cur.fetchall():
+        month = str(date_text or "")[:7]
+        if _MONTH_RE.match(month):
+            plans.setdefault(aptem_id, []).append(month)
+    return plans
+
+
+def _seed_group_months_from_plans(cur, group_id, plans):
+    """Group months = the most common training-plan month list among members."""
+    if not plans:
+        return []
+    counted = {}
+    for months in plans.values():
+        counted[tuple(months)] = counted.get(tuple(months), 0) + 1
+    majority = list(max(counted, key=counted.get))
+    for index, month in enumerate(majority, start=1):
+        cur.execute(
+            '''
+            insert into "Manual_audit".plan_months
+                (group_id, month_index, calendar_month, label, anchor_date)
+            values (%s, %s, %s, %s, %s)
+            on conflict (group_id, month_index) do nothing
+            ''',
+            [group_id, index, month, _month_label(month), datetime.date.fromisoformat(f"{month}-01")],
+        )
+    return majority
+
+
+def _sync_member_months(cur, group_id, aptem_ids):
+    """Store each member's OWN training-plan months where they differ from the
+    group's months — the projection buckets that learner's rows under their
+    own calendar dates."""
+    cur.execute(
+        'select month_index, calendar_month from "Manual_audit".plan_months '
+        'where group_id = %s order by month_index',
+        [group_id],
+    )
+    group_months = [row[1] for row in cur.fetchall()]
+    if not group_months:
+        return 0
+    plans = _training_plan_months(cur, aptem_ids)
+    synced = 0
+    for aptem_id, months in plans.items():
+        if months == group_months:
+            # Identical to the group -> no override rows needed.
+            cur.execute(
+                'delete from "Manual_audit".plan_member_months where group_id = %s and aptem_id = %s',
+                [group_id, aptem_id],
+            )
+            continue
+        cur.execute(
+            'delete from "Manual_audit".plan_member_months where group_id = %s and aptem_id = %s',
+            [group_id, aptem_id],
+        )
+        # Map by index: the learner's Nth plan month replaces group month N.
+        # A learner with a shorter plan simply follows the group for the tail.
+        for index, month in enumerate(months[: max(len(group_months), len(months))], start=1):
+            cur.execute(
+                '''
+                insert into "Manual_audit".plan_member_months
+                    (group_id, aptem_id, month_index, calendar_month, anchor_date)
+                values (%s, %s, %s, %s, %s)
+                on conflict (group_id, aptem_id, month_index) do update set
+                    calendar_month = excluded.calendar_month,
+                    anchor_date = excluded.anchor_date
+                ''',
+                [group_id, aptem_id, index, month, datetime.date.fromisoformat(f"{month}-01")],
+            )
+        synced += 1
+    return synced
+
+
+def _aptem_group_learners(cur, programme_name, aptem_group):
+    """Cohort learners of one Aptem (programme, group) pair — the exact
+    row-by-row linkage as it appears in Aptem."""
+    cur.execute(
+        '''
+        select l.aptem_id, l.learner_name, l.learner_email
+        from "LMS"."Aptem_users" au
+        join "Manual_audit".learners l on l.aptem_id = au."ID"
+        where btrim(au."Program Name") = %s and btrim(au."Group") = %s
+        order by l.learner_name
+        ''',
+        [programme_name, aptem_group],
+    )
+    return cur.fetchall()
+
+
+def _lms_group_learners(cur, lms_group_id, programme_name=None):
+    """Aptem-linked learners of one mirror LMS group.
+
+    LMS groups mix learners from several programme-name variants; when the
+    creation flow picked a programme first, only ITS learners are assigned
+    (matching the programme -> groups -> its learners cascade).
+    """
+    condition = "and l.programme_name = %s" if programme_name else ""
+    params = [lms_group_id] + ([programme_name] if programme_name else [])
+    cur.execute(
+        f'''
+        select distinct l.aptem_id, l.learner_name, l.learner_email
+        from "Manual_audit".group_learners gl
+        join "Manual_audit".learners l on l.learner_id = gl.learner_id
+        where gl.group_id = %s and l.aptem_id is not null {condition}
+        order by l.learner_name
+        ''',
+        params,
+    )
+    return cur.fetchall()
+
+
 # --- groups ------------------------------------------------------------------
 
 @csrf_exempt
@@ -284,7 +420,7 @@ def plan_groups(request: HttpRequest) -> JsonResponse:
                     '''
                     select g.id, g.name, g.kind, g.programme_id, g.programme_name,
                            g.status, g.start_month, g.created_by, g.created_at,
-                           g.updated_by, g.updated_at,
+                           g.updated_by, g.updated_at, g.aptem_group,
                            coalesce(m.member_count, 0), coalesce(a.activity_count, 0)
                     from "Manual_audit".plan_groups g
                     left join (
@@ -305,9 +441,9 @@ def plan_groups(request: HttpRequest) -> JsonResponse:
             return JsonResponse({"error": "Could not list plan groups.", "details": str(error)}, status=503)
         groups = []
         for row in rows:
-            payload = _group_payload(row[:11])
-            payload["member_count"] = row[11]
-            payload["activity_count"] = row[12]
+            payload = _group_payload(row[:12])
+            payload["member_count"] = row[12]
+            payload["activity_count"] = row[13]
             groups.append(payload)
         return JsonResponse({"items": groups})
 
@@ -341,12 +477,32 @@ def plan_groups(request: HttpRequest) -> JsonResponse:
         if parsed is None:
             return JsonResponse({"error": f"invalid member aptem_id: {item!r}"}, status=400)
         member_ids.append(parsed)
+    lms_group_id = _int_or_none(body.get("lms_group_id"))
+    aptem_group = str(body.get("aptem_group") or "").strip()[:300] or None
+    if aptem_group and not programme_name:
+        return JsonResponse({"error": "aptem_group requires programme_name"}, status=400)
+    # Default when an Aptem/LMS group drives the creation: months come from
+    # the members' Aptem training plans (per-learner dates included).
+    months_from_plan = bool(
+        body.get("months_from_training_plan", bool(lms_group_id or aptem_group))
+    )
     actor = _actor(body)
 
     try:
         with transaction.atomic(using=CONN):
             with connections[CONN].cursor() as cur:
                 ensure_plan_tables(cur)
+                if aptem_group:
+                    # Aptem is the source of truth: the group's learners come
+                    # from Aptem's own (Program Name, Group) assignment.
+                    member_ids.extend(
+                        row[0] for row in _aptem_group_learners(cur, programme_name, aptem_group)
+                    )
+                if lms_group_id:
+                    member_ids.extend(
+                        row[0] for row in _lms_group_learners(cur, lms_group_id, programme_name)
+                    )
+                member_ids = list(dict.fromkeys(member_ids))
                 known = _learner_rows(cur, member_ids)
                 missing = [item for item in member_ids if item not in known]
                 if missing:
@@ -357,12 +513,13 @@ def plan_groups(request: HttpRequest) -> JsonResponse:
                 cur.execute(
                     '''
                     insert into "Manual_audit".plan_groups
-                        (name, kind, programme_id, programme_name, status, start_month, created_by, updated_by)
-                    values (%s, %s, %s, %s, 'draft', %s, %s, %s)
+                        (name, kind, programme_id, programme_name, aptem_group,
+                         status, start_month, created_by, updated_by)
+                    values (%s, %s, %s, %s, %s, 'draft', %s, %s, %s)
                     returning id, name, kind, programme_id, programme_name, status, start_month,
-                              created_by, created_at, updated_by, updated_at
+                              created_by, created_at, updated_by, updated_at, aptem_group
                     ''',
-                    [name, kind, programme_id, programme_name, start_month, actor, actor],
+                    [name, kind, programme_id, programme_name, aptem_group, start_month, actor, actor],
                 )
                 row = cur.fetchone()
                 group_id = row[0]
@@ -378,7 +535,7 @@ def plan_groups(request: HttpRequest) -> JsonResponse:
                             ''',
                             [group_id, index + 1, month, _month_label(month)],
                         )
-                for aptem_id in dict.fromkeys(member_ids):
+                for aptem_id in member_ids:
                     learner_name, learner_email = known[aptem_id]
                     cur.execute(
                         '''
@@ -388,10 +545,20 @@ def plan_groups(request: HttpRequest) -> JsonResponse:
                         ''',
                         [group_id, aptem_id, learner_name, learner_email, actor],
                     )
+                members_synced = 0
+                if months_from_plan and member_ids:
+                    # Group months = the majority training plan; each learner
+                    # whose own plan differs keeps THEIR dates via
+                    # plan_member_months (the projection prefers them).
+                    plans = _training_plan_months(cur, member_ids)
+                    _seed_group_months_from_plans(cur, group_id, plans)
+                    members_synced = _sync_member_months(cur, group_id, member_ids)
                 log_plan_event(cur, "group", group_id, "created", new={
                     "name": name, "kind": kind, "programme_name": programme_name,
                     "start_month": start_month, "months_count": months_count,
-                    "members": member_ids,
+                    "lms_group_id": lms_group_id, "aptem_group": aptem_group,
+                    "months_from_plan": months_from_plan,
+                    "members": member_ids, "member_month_overrides": members_synced,
                 }, actor=actor)
                 payload = _group_payload(row)
                 payload["months"] = _months_payload(cur, group_id)
@@ -519,6 +686,9 @@ def plan_group_members(request: HttpRequest, group_id: int) -> JsonResponse:
                         [group_id, aptem_id, learner_name, learner_email, actor, group_id, aptem_id],
                     )
                     (added if cur.fetchone() else skipped).append(aptem_id)
+                # Late joiners keep their OWN training-plan dates too.
+                if added:
+                    _sync_member_months(cur, group_id, added)
                 removed = []
                 for aptem_id in dict.fromkeys(remove):
                     cur.execute(
