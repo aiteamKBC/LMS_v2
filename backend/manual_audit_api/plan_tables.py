@@ -24,7 +24,7 @@ import re
 
 from django.db import connections
 
-from .common import CONN
+from .common import CONN, db_is_read_only
 
 
 # The five categories the ledger wire contract understands. Free-hand rows
@@ -33,7 +33,15 @@ PLAN_CATEGORIES = ("attendance", "assignment", "video", "audio", "reading+quiz")
 
 
 def ensure_plan_tables(cur):
-    """Create every plan-builder table (idempotent)."""
+    """Create every plan-builder table (idempotent).
+
+    Skipped entirely while the database is read-only (returns False so
+    callers know the DDL did NOT run): the tables already exist in practice,
+    and GET endpoints must not 503 just because their lazy DDL cannot run —
+    real writes still fail loudly on their own.
+    """
+    if db_is_read_only(cur):
+        return False
     cur.execute(
         '''
         create table if not exists "Manual_audit".manual_programmes (
@@ -223,6 +231,7 @@ def ensure_plan_tables(cur):
         )
         '''
     )
+    return True
 
 
 def log_plan_event(cur, entity_type, entity_id, action, *, old=None, new=None, actor=None):

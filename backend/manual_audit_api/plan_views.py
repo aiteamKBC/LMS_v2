@@ -569,6 +569,188 @@ def plan_groups(request: HttpRequest) -> JsonResponse:
     return JsonResponse(payload, status=201)
 
 
+# --- learner-first plans -------------------------------------------------------
+#
+# The manual workspace pivoted to learner-first: the auditor adds ONE learner
+# at a time (picked from Aptem) and gets that learner's own training-plan
+# months (Aptem's labels and dates, untouched) with 4 weeks inside each to
+# fill with activities. Under the hood a learner-plan is a plan_groups row
+# with kind='individual' and a single member, so the whole engine (pickers,
+# progress, suggestions, journal projection) works unchanged. Shared cohort
+# filtering stays possible later because activities keep material_ref and the
+# plan keeps the learner's Aptem programme/group linkage.
+
+def _learner_plan_payload(row):
+    (plan_id, name, programme_name, aptem_group, status, created_at, updated_at,
+     aptem_id, learner_name, learner_email, month_count, activity_count) = row
+    return {
+        "id": plan_id,
+        "name": name,
+        "aptem_id": aptem_id,
+        "learner_name": learner_name or name,
+        "learner_email": learner_email,
+        "programme_name": programme_name,
+        "aptem_group": aptem_group,
+        "status": status,
+        "created_at": created_at.isoformat() if created_at else None,
+        "updated_at": updated_at.isoformat() if updated_at else None,
+        "month_count": month_count,
+        "activity_count": activity_count,
+    }
+
+
+def _seed_months_from_learner_plan(cur, group_id, aptem_id):
+    """Seed plan months straight from THIS learner's Aptem training plan —
+    labels exactly as Aptem shows them, dates untouched."""
+    cur.execute(
+        '''
+        select lm.aptem_training_plan from "Audit".learner_match lm
+        where lm.aptem_id = %s and lm.aptem_training_plan is not null
+        ''',
+        [aptem_id],
+    )
+    row = cur.fetchone()
+    if not row:
+        return 0
+    from .match_ledger_views import _training_plan_from_audit
+
+    plan = _training_plan_from_audit(row[0])
+    index = 0
+    for month in plan["months"]:
+        date_text = str(month.get("date") or "")[:10]
+        calendar_month = date_text[:7]
+        if not _MONTH_RE.match(calendar_month):
+            continue
+        index += 1
+        label = str(month.get("month") or "").strip() or _month_label(calendar_month)
+        cur.execute(
+            '''
+            insert into "Manual_audit".plan_months
+                (group_id, month_index, calendar_month, label, anchor_date)
+            values (%s, %s, %s, %s, %s)
+            on conflict (group_id, month_index) do nothing
+            ''',
+            [group_id, index, calendar_month, label[:200], datetime.date.fromisoformat(date_text)],
+        )
+    return index
+
+
+@csrf_exempt
+def plan_learners(request: HttpRequest) -> JsonResponse:
+    """GET: list learner-plans. POST: add one learner (from Aptem) manually."""
+    if request.method == "GET":
+        try:
+            with connections[CONN].cursor() as cur:
+                ensure_plan_tables(cur)
+                cur.execute(
+                    '''
+                    select g.id, g.name, g.programme_name, g.aptem_group, g.status,
+                           g.created_at, g.updated_at,
+                           m.aptem_id, m.learner_name, m.learner_email,
+                           coalesce(mo.month_count, 0), coalesce(a.activity_count, 0)
+                    from "Manual_audit".plan_groups g
+                    join "Manual_audit".plan_group_members m
+                      on m.group_id = g.id and m.left_at is null
+                    left join (
+                        select group_id, count(*) as month_count
+                        from "Manual_audit".plan_months group by group_id
+                    ) mo on mo.group_id = g.id
+                    left join (
+                        select group_id, count(*) as activity_count
+                        from "Manual_audit".plan_activities
+                        where included group by group_id
+                    ) a on a.group_id = g.id
+                    where g.kind = 'individual' and g.status <> 'archived'
+                    order by g.created_at desc
+                    '''
+                )
+                rows = cur.fetchall()
+        except (KeyError, DatabaseError) as error:
+            return JsonResponse({"error": "Could not list learner plans.", "details": str(error)}, status=503)
+        return JsonResponse({"items": [_learner_plan_payload(row) for row in rows]})
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    body = _body(request)
+    if body is None:
+        return JsonResponse({"error": "Invalid JSON body."}, status=400)
+    aptem_id = _int_or_none(body.get("aptem_id"))
+    if aptem_id is None:
+        return JsonResponse({"error": "aptem_id is required"}, status=400)
+    actor = _actor(body)
+
+    try:
+        with transaction.atomic(using=CONN):
+            with connections[CONN].cursor() as cur:
+                ensure_plan_tables(cur)
+                known = _learner_rows(cur, [aptem_id])
+                if aptem_id not in known:
+                    return JsonResponse(
+                        {"error": "This learner is outside the manual-audit cohort."}, status=404,
+                    )
+                learner_name, learner_email = known[aptem_id]
+                # One active plan per learner — reopen attempts return it.
+                cur.execute(
+                    '''
+                    select g.id from "Manual_audit".plan_groups g
+                    join "Manual_audit".plan_group_members m
+                      on m.group_id = g.id and m.left_at is null
+                    where g.kind = 'individual' and g.status <> 'archived'
+                      and m.aptem_id = %s
+                    ''',
+                    [aptem_id],
+                )
+                existing = cur.fetchone()
+                if existing:
+                    return JsonResponse(
+                        {"error": "This learner already has a plan.", "id": existing[0]},
+                        status=409,
+                    )
+                # The learner's own Aptem linkage (programme + group), kept for
+                # the shared cohort filtering that comes later.
+                cur.execute(
+                    '''
+                    select btrim(au."Program Name"), btrim(au."Group")
+                    from "LMS"."Aptem_users" au where au."ID" = %s
+                    ''',
+                    [aptem_id],
+                )
+                aptem_row = cur.fetchone()
+                programme_name = (aptem_row[0] or None) if aptem_row else None
+                aptem_group = (aptem_row[1] or None) if aptem_row else None
+                cur.execute(
+                    '''
+                    insert into "Manual_audit".plan_groups
+                        (name, kind, programme_name, aptem_group, status, created_by, updated_by)
+                    values (%s, 'individual', %s, %s, 'active', %s, %s)
+                    returning id, created_at, updated_at
+                    ''',
+                    [learner_name or f"Learner {aptem_id}", programme_name, aptem_group, actor, actor],
+                )
+                plan_id, created_at, updated_at = cur.fetchone()
+                cur.execute(
+                    '''
+                    insert into "Manual_audit".plan_group_members
+                        (group_id, aptem_id, learner_name, learner_email, added_by)
+                    values (%s, %s, %s, %s, %s)
+                    ''',
+                    [plan_id, aptem_id, learner_name, learner_email, actor],
+                )
+                month_count = _seed_months_from_learner_plan(cur, plan_id, aptem_id)
+                log_plan_event(cur, "group", plan_id, "created", new={
+                    "kind": "individual", "aptem_id": aptem_id,
+                    "programme_name": programme_name, "aptem_group": aptem_group,
+                    "months_seeded": month_count,
+                }, actor=actor)
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not add the learner.", "details": str(error)}, status=503)
+    return JsonResponse(_learner_plan_payload((
+        plan_id, learner_name or f"Learner {aptem_id}", programme_name, aptem_group,
+        "active", created_at, updated_at, aptem_id, learner_name, learner_email,
+        month_count, 0,
+    )), status=201)
+
+
 @csrf_exempt
 def plan_group_detail(request: HttpRequest, group_id: int) -> JsonResponse:
     """GET: the full group (months, members, activities). PATCH: rename/status."""
@@ -804,8 +986,8 @@ def _validate_activity_input(item):
     if not month_index or month_index < 1 or month_index > 60:
         raise ValueError("month_index must be 1..60")
     week_slot = _int_or_none(item.get("week_slot")) or 1
-    if week_slot < 1 or week_slot > 6:
-        raise ValueError("week_slot must be 1..6")
+    if week_slot < 1 or week_slot > 4:
+        raise ValueError("week_slot must be 1..4")
     return {
         "category": category,
         "title": title,
@@ -1050,8 +1232,8 @@ def plan_activities(request: HttpRequest) -> JsonResponse:
                         params.append(_date_or_none(patch.get("planned_date"), "planned_date"))
                     if "week_slot" in patch:
                         week_slot = _int_or_none(patch.get("week_slot"))
-                        if not week_slot or week_slot < 1 or week_slot > 6:
-                            raise ValueError("week_slot must be 1..6")
+                        if not week_slot or week_slot < 1 or week_slot > 4:
+                            raise ValueError("week_slot must be 1..4")
                         updates.append("week_slot = %s")
                         params.append(week_slot)
                     if "month_index" in patch:
@@ -1537,6 +1719,192 @@ def plan_matrix(request: HttpRequest, group_id: int) -> JsonResponse:
         "activities": activities,
         "members": members,
         "cells": cells,
+    })
+
+
+# --- the group's Aptem training plan -----------------------------------------
+
+def _tp_status_bucket(status):
+    """Fold Aptem's free-text module status into a countable bucket."""
+    text = str(status or "").strip().lower()
+    if text == "completed":
+        return "completed"
+    if "progress" in text:
+        return "in_progress"
+    if text in ("not started", "notstarted", ""):
+        return "not_started"
+    return "other"
+
+
+@require_GET
+def plan_group_training_plan(request: HttpRequest, group_id: int) -> JsonResponse:
+    """The group's Aptem training plan — the general (majority) plan backbone
+    with every member's own module status and month date beside it.
+
+    Group months were seeded from the same majority signature, so
+    ``month_index`` here lines up with the Plan tab's month pills. Learners
+    share the plan structure with shifted dates, so each member's module is
+    matched by name within the same month index first, then anywhere in
+    their plan (their months can lag the majority).
+    """
+    try:
+        with connections[CONN].cursor() as cur:
+            ensure_plan_tables(cur)
+            if not _group_row(cur, group_id):
+                return JsonResponse({"error": "Plan group not found."}, status=404)
+            cur.execute(
+                '''
+                select gm.aptem_id, coalesce(l.learner_name, gm.learner_name),
+                       lm.aptem_training_plan
+                from "Manual_audit".plan_group_members gm
+                left join "Manual_audit".learners l on l.aptem_id = gm.aptem_id
+                left join "Audit".learner_match lm on lm.aptem_id = gm.aptem_id
+                where gm.group_id = %s and gm.left_at is null
+                order by 2
+                ''',
+                [group_id],
+            )
+            member_rows = cur.fetchall()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse(
+            {"error": "Could not load the group's training plan.", "details": str(error)},
+            status=503,
+        )
+
+    from .match_ledger_views import _training_plan_from_audit
+
+    members_total = len(member_rows)
+    plans = {}
+    names = {}
+    no_plan = []
+    for aptem_id, name, raw_plan in member_rows:
+        names[aptem_id] = name
+        plan = _training_plan_from_audit(raw_plan) if raw_plan else None
+        if plan and plan["months"]:
+            plans[aptem_id] = plan["months"]
+        else:
+            no_plan.append({"aptem_id": aptem_id, "name": name})
+
+    if not plans:
+        return JsonResponse({
+            "group_id": group_id, "members_total": members_total,
+            "members_with_plan": 0, "majority_count": 0,
+            "members_without_plan": no_plan, "months": [],
+        })
+
+    # The general plan = the most common month signature among members. Ties
+    # break on the signature itself so the pick is deterministic across
+    # requests (dict iteration order would otherwise decide).
+    signatures = {}
+    for aptem_id, months in plans.items():
+        signature = tuple(str(month.get("date") or "")[:7] for month in months)
+        bucket = signatures.setdefault(signature, {"count": 0, "months": months, "signature": signature})
+        bucket["count"] += 1
+    top = max(signatures.values(), key=lambda item: (item["count"], item["signature"]))
+    backbone = top["months"]
+
+    def _month_num(calendar):
+        try:
+            year, month = calendar.split("-")
+            return int(year) * 12 + int(month)
+        except (AttributeError, ValueError):
+            return None
+
+    # Precompute each member's module lookup once (backbone x members x
+    # modules would otherwise re-normalise names inside three nested loops):
+    # per month position name_key -> [instances in order] (module names DO
+    # repeat within one month), plus every occurrence anywhere for the
+    # cross-month fallback (shifted starts push modules across months).
+    member_maps = {}
+    for aptem_id, own_months in plans.items():
+        by_month = []
+        anywhere = {}
+        for own_month in own_months:
+            local = {}
+            own_cal = str(own_month.get("date") or "")[:7]
+            for module in own_month.get("modules", []):
+                key = assignment_name_key(module.get("name"))
+                local.setdefault(key, []).append(module)
+                anywhere.setdefault(key, []).append((_month_num(own_cal), own_month, module))
+            by_month.append((own_month, local))
+        member_maps[aptem_id] = (by_month, anywhere)
+
+    # Month numbering matches the seeders: months without a real YYYY-MM date
+    # (the trailing EPA/end-of-programme rows) are skipped, so month_index
+    # here lines up with the plan_months pills. Member matching still uses the
+    # raw backbone position, which aligns with the members' raw plans.
+    numbered = []
+    seen_index = 0
+    for month_pos, month in enumerate(backbone):
+        if _MONTH_RE.match(str(month.get("date") or "")[:7]):
+            seen_index += 1
+            numbered.append((seen_index, month_pos, month))
+
+    months_payload = []
+    for month_index, month_pos, month in numbered:
+        modules_payload = []
+        backbone_num = _month_num(str(month.get("date") or "")[:7])
+        ordinals = {}
+        for module in month.get("modules", []):
+            name_key = assignment_name_key(module.get("name"))
+            ordinal = ordinals.get(name_key, 0)
+            ordinals[name_key] = ordinal + 1
+            counts = {"completed": 0, "in_progress": 0, "not_started": 0, "other": 0, "missing": 0}
+            learners = []
+            for aptem_id in plans:
+                by_month, anywhere = member_maps[aptem_id]
+                own_month, own = None, None
+                # Same month, same occurrence ordinal (repeated names map
+                # 1st -> 1st, 2nd -> 2nd instead of collapsing onto the first).
+                if month_pos < len(by_month):
+                    instances = by_month[month_pos][1].get(name_key) or []
+                    if ordinal < len(instances):
+                        own_month, own = by_month[month_pos][0], instances[ordinal]
+                if own is None:
+                    # Fallback: the occurrence closest in calendar time to the
+                    # backbone month — recurring modules (progress reviews,
+                    # monthly job activities) must not all map to the first.
+                    occurrences = anywhere.get(name_key) or []
+                    if occurrences:
+                        _, own_month, own = min(
+                            occurrences,
+                            key=lambda occ: abs(occ[0] - backbone_num)
+                            if occ[0] is not None and backbone_num is not None else 10 ** 9,
+                        )
+                if own is None:
+                    counts["missing"] += 1
+                    learners.append({
+                        "aptem_id": aptem_id, "name": names.get(aptem_id),
+                        "status": "Not on plan", "bucket": "missing", "date": None,
+                    })
+                    continue
+                bucket = _tp_status_bucket(own.get("status"))
+                counts[bucket] += 1
+                learners.append({
+                    "aptem_id": aptem_id, "name": names.get(aptem_id),
+                    "status": own.get("status") or "Unknown", "bucket": bucket,
+                    "date": str(own_month.get("date") or "")[:10] or None,
+                })
+            modules_payload.append({
+                "name": module.get("name"),
+                "type": module.get("type"),
+                "counts": counts,
+                "learners": learners,
+            })
+        months_payload.append({
+            "month_index": month_index,
+            "label": month.get("month"),
+            "date": str(month.get("date") or "")[:10] or None,
+            "modules": modules_payload,
+        })
+
+    return JsonResponse({
+        "group_id": group_id,
+        "members_total": members_total,
+        "members_with_plan": len(plans),
+        "majority_count": top["count"],
+        "members_without_plan": no_plan,
+        "months": months_payload,
     })
 
 

@@ -21,7 +21,7 @@ const AUDIT_SYSTEMS: AuditSystemCard[] = [
   {
     slug: 'automatic',
     label: 'Automatic',
-    description: 'The live audit workspace fed automatically from the fetched Aptem/LMS evidence pipeline.',
+    description: 'The live audit workspace fed automatically from the fetched evidence pipeline.',
     icon: 'ri-flashlight-line',
     path: '/workspace/auditor-copy',
     accent: 'primary',
