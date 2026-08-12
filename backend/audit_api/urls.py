@@ -10,6 +10,17 @@ from .last_audit_ledger_views import (
     health as last_audit_health,
     quiz_attempt as last_audit_quiz_attempt,
 )
+from .manual_ledger_views import (
+    activity_ledger as manual_activity_ledger,
+    attendance_options as manual_attendance_options,
+    documents as manual_documents,
+    group_activities as manual_group_activities,
+    groups as manual_groups,
+    import_candidates as manual_import_candidates,
+    rows as manual_rows,
+    rows_bulk as manual_rows_bulk,
+    summary as manual_summary,
+)
 from .learner_match_ledger_views import (
     activity_annotation as match_activity_annotation,
     activity_overrides as match_activity_overrides,
@@ -34,6 +45,17 @@ urlpatterns = [
     path("last-audit/activity/", last_audit_activity, name="last-audit-activity"),
     path("last-audit/quiz-attempt/", last_audit_quiz_attempt, name="last-audit-quiz-attempt"),
     path("last-audit/attendance-sheet/", last_audit_attendance_sheet, name="last-audit-attendance-sheet"),
+    # Employee-arranged monthly ledger (structured_manual_activities schema).
+    # Additive: nothing above changes, the sibling learner-log-pro keeps working.
+    path("last-audit/manual/summary", manual_summary, name="last-audit-manual-summary"),
+    path("last-audit/manual/groups", manual_groups, name="last-audit-manual-groups"),
+    path("last-audit/manual/group-activities", manual_group_activities, name="last-audit-manual-group-activities"),
+    path("last-audit/manual/attendance-options", manual_attendance_options, name="last-audit-manual-attendance-options"),
+    path("last-audit/manual/rows", manual_rows, name="last-audit-manual-rows"),
+    path("last-audit/manual/rows/bulk", manual_rows_bulk, name="last-audit-manual-rows-bulk"),
+    path("last-audit/manual/import-candidates", manual_import_candidates, name="last-audit-manual-import-candidates"),
+    path("last-audit/manual/documents", manual_documents, name="last-audit-manual-documents"),
+    path("last-audit/manual/activity-ledger", manual_activity_ledger, name="last-audit-manual-activity-ledger"),
     path("ledger/health", health, name="learner-log-health"),
     path("ledger/mre", mre_list, name="learner-log-mre"),
     path("ledger/mre/summary", mre_summary, name="learner-log-mre-summary"),
