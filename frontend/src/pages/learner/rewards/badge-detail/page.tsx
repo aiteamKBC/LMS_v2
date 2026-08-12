@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { toPng } from 'html-to-image';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import BadgeShareCard from '@/components/feature/BadgeShareCard';
@@ -46,12 +46,13 @@ export default function BadgeDetailPage() {
           </span>
           <h2 className="text-xl font-heading font-bold text-foreground-900 mb-2">Badge Not Found</h2>
           <p className="text-sm text-foreground-500 mb-6">We couldn&apos;t find a badge with that identifier.</p>
-          <Link
-            to="/learner/rewards"
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
             className="px-5 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-all whitespace-nowrap"
           >
             <AppIcon className="ri-arrow-left-line mr-1.5"></AppIcon> Back to Rewards
-          </Link>
+          </button>
         </div>
       </WorkspaceShell>
     );
@@ -95,7 +96,7 @@ export default function BadgeDetailPage() {
 
         {/* Back link */}
         <button
-          onClick={() => navigate('/learner/rewards')}
+          onClick={() => navigate(-1)}
           className="inline-flex items-center gap-1.5 text-sm text-foreground-500 hover:text-foreground-700 transition-all cursor-pointer whitespace-nowrap"
         >
           <AppIcon className="ri-arrow-left-line"></AppIcon>

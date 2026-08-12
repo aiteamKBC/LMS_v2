@@ -24,6 +24,20 @@ ALLOWED_CONTRACT_EXTENSIONS = {
 def ensure_contract_archive_table(cursor):
     cursor.execute(
         '''
+        select column_name
+        from information_schema.columns
+        where table_schema = 'Audit' and table_name = 'contract_document_archive'
+        '''
+    )
+    existing_columns = {row[0] for row in cursor.fetchall()}
+    required_columns = {
+        "contract_id", "learner_id", "archived_at", "deleted_at",
+        "display_name", "archived_by", "updated_at",
+    }
+    if required_columns.issubset(existing_columns):
+        return
+    cursor.execute(
+        '''
         create table if not exists "Audit".contract_document_archive (
             contract_id bigint primary key,
             learner_id bigint not null,

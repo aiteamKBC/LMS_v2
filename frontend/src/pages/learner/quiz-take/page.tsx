@@ -125,8 +125,6 @@ export default function QuizTakePage() {
     }
   };
 
-  const backHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
-
   return (
     <WorkspaceShell
       role="learner"
@@ -144,7 +142,7 @@ export default function QuizTakePage() {
         ) : loadError || !quiz ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError || 'Quiz not found.'} /></div>
         ) : phase === 'intro' ? (
-          <IntroScreen quiz={quiz} totalPoints={totalPoints} onStart={startQuiz} onBack={() => navigate(backHref)} />
+          <IntroScreen quiz={quiz} totalPoints={totalPoints} onStart={startQuiz} onBack={() => navigate(-1)} />
         ) : phase === 'quiz' ? (
           <QuizScreen
             quiz={quiz}
@@ -176,10 +174,10 @@ export default function QuizTakePage() {
               learnerKind={kind as LearnerKind}
               learnerId={id}
               evidenceSectionRef={`quiz-${quiz.id}`}
-              onClose={() => navigate(backHref)}
+              onClose={() => navigate(-1)}
             />
         ) : (
-          result && <ResultsScreen quiz={quiz} result={result} onBack={() => navigate(backHref)} />
+          result && <ResultsScreen quiz={quiz} result={result} onBack={() => navigate(-1)} />
         )}
       </div>
     </WorkspaceShell>

@@ -2,7 +2,7 @@
 // The builder authors group plans; the Learner Journal / Activity Log render
 // the result through the existing ledger feed (see lib/api.ts) — this module
 // never touches those read paths beyond invalidating their caches after writes.
-import { invalidateOtjhCaches } from "@/features/audit/learner-log-pro-manual/lib/api";
+import { getLearnerGroupNames, invalidateOtjhCaches } from "@/features/audit/learner-log-pro-manual/lib/api";
 
 const PLAN_BASE = "/manual_audit_api/plan";
 
@@ -121,6 +121,18 @@ export type AssignmentOption = {
 };
 
 export type LmsGroupOption = { group_id: number; name: string; learner_count: number };
+
+// Inline activity-row name pickers (attendance module -> lecture, LMS group ->
+// activity title). Cohort-wide, read from Last_audit live.
+export type AttendanceModuleOption = { module: string; lecture_count: number; last_date: string | null };
+export type AttendanceLectureOption = { lecture: string; learner_count: number; last_date: string | null };
+export type GroupActivityOption = {
+  activity_id: number;
+  title: string;
+  activity_type: string | null;
+  activity_date: string | null;
+  position: number | null;
+};
 
 export type ProgressPatch = Partial<{
   status: "not_started" | "in_progress" | "completed" | "not_accepted";
@@ -546,4 +558,27 @@ export function pickLmsGroupMembers(lmsGroupId: number) {
   return request<{ items: Array<{ aptem_id: number; name: string; email: string | null; status: string }> }>(
     `/pickers/lms-groups?group_id=${lmsGroupId}`,
   );
+}
+
+// The learner's own LMS groups, resolved to ids: cohort group NAMES matched
+// (case-insensitively) against the LMS groups picker list.
+export async function learnerLmsGroups(aptemId: number): Promise<LmsGroupOption[]> {
+  const [names, groups] = await Promise.all([getLearnerGroupNames(aptemId), pickLmsGroups()]);
+  const wanted = new Set(names.map((name) => name.trim().toLowerCase()));
+  return groups.items.filter((group) => wanted.has(group.name.trim().toLowerCase()));
+}
+
+export function pickAttendanceModules() {
+  return request<{ items: AttendanceModuleOption[] }>("/pickers/attendance-modules");
+}
+
+export function pickAttendanceLectures(module: string) {
+  const query = new URLSearchParams({ module });
+  return request<{ items: AttendanceLectureOption[] }>(`/pickers/attendance-modules?${query}`);
+}
+
+export function pickGroupActivities(groupId: number, type?: "video" | "audio" | "reading+quiz") {
+  const query = new URLSearchParams({ group_id: String(groupId) });
+  if (type) query.set("type", type);
+  return request<{ items: GroupActivityOption[] }>(`/pickers/group-activities?${query}`);
 }

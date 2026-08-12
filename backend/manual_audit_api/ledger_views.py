@@ -11,6 +11,7 @@ deriving or inventing them from activity status or video duration.
 """
 
 import json
+import re
 
 from django.db import DatabaseError, connections
 from django.http import HttpRequest, JsonResponse
@@ -250,6 +251,115 @@ def _activity_ref(group_id, activity_id):
     return f"la:{group_id}:{activity_id}"
 
 
+def _merge_title_key(value):
+    """Normalise an activity title for reading↔quiz pairing.
+
+    LMS imports sometimes model one learning activity as a reading-only
+    catalogue row plus a quiz-only catalogue row sharing the same title STEM.
+    Real catalogue patterns (inspected live): quizzes carry a numbering
+    prefix — "Q2-What is Project?", "Q1: Project Context" — while readings
+    carry "Additional Reading:" / "Optional Reading:" prefixes. Lowercase,
+    collapse every non-alphanumeric run, then strip those marker prefixes and
+    a trailing "reading"/"quiz" word so both halves reduce to the same stem.
+    """
+    text = re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+    text = re.sub(r"^(?:q(?:uiz)?\s*\d*|(?:additional|optional)\s+reading|reading)\b\s*", "", text)
+    text = re.sub(r"\s*\b(?:reading|quiz)$", "", text)
+    return text.strip()
+
+
+def merge_reading_quiz_rows(items, protected_ids=frozenset()):
+    """Collapse reading-only + quiz-only halves of one activity into one row.
+
+    Pairs LMS mirror rows (``la:`` ids) whose categories are ``reading`` and
+    ``quiz`` when they share the same learner, group, month, and normalised
+    title. The merged row keeps the READING row's identity (id, date), takes
+    the quiz fields from the quiz half, and SUMS the hours — each half carries
+    its own OTJH allocation, so the sum preserves ``actual_total`` exactly.
+    Rows whose id is in ``protected_ids`` (touched by an auditor overlay) are
+    never merged, so client-side overlay merges keep pointing at a live row.
+    Runs at read time — future imports flow through it with no backfill.
+    """
+    def pair_key(item):
+        return (item["learner_id"], item.get("group_id"), item["month"], _merge_title_key(item["activity"]))
+
+    def mergeable(item, category):
+        return (
+            item["category"] == category
+            and str(item["activity_id"]).startswith("la:")
+            and str(item["activity_id"]) not in protected_ids
+            and _merge_title_key(item["activity"])
+        )
+
+    quiz_pool = {}
+    for index, item in enumerate(items):
+        if mergeable(item, "quiz"):
+            quiz_pool.setdefault(pair_key(item), []).append(index)
+
+    # Pass 1 — decide the pairs up front. Deciding while emitting would let a
+    # quiz half that appears EARLIER in the list slip into the output before
+    # its reading partner claims it (list order is arbitrary at this point).
+    quiz_owner = {}
+    for index, item in enumerate(items):
+        if not mergeable(item, "reading"):
+            continue
+        candidates = quiz_pool.get(pair_key(item)) or []
+        quiz_index = next((candidate for candidate in candidates if candidate not in quiz_owner and candidate != index), None)
+        if quiz_index is not None:
+            quiz_owner[quiz_index] = index
+    if not quiz_owner:
+        return items
+    reading_partner = {reading_index: quiz_index for quiz_index, reading_index in quiz_owner.items()}
+
+    # Pass 2 — emit: drop consumed quiz halves, upgrade their reading halves.
+    out = []
+    for index, item in enumerate(items):
+        if index in quiz_owner:
+            continue
+        quiz_index = reading_partner.get(index)
+        if quiz_index is None:
+            out.append(item)
+            continue
+        quiz = items[quiz_index]
+        merged = dict(item)
+        merged["category"] = "reading+quiz"
+        merged["planned"] = round(float(item.get("planned") or 0) + float(quiz.get("planned") or 0), 2)
+        merged["actual"] = round(float(item.get("actual") or 0) + float(quiz.get("actual") or 0), 2)
+        seconds = [value for value in (item.get("mapped_seconds"), quiz.get("mapped_seconds")) if value is not None]
+        merged["mapped_seconds"] = sum(seconds) if seconds else None
+        merged["hours_mapped"] = bool(item.get("hours_mapped") or quiz.get("hours_mapped"))
+        merged["has_reading"] = True
+        merged["has_quiz"] = True
+        merged["completed"] = bool(item.get("completed")) or bool(quiz.get("completed"))
+        merged["reporting_method"] = item.get("reporting_method") or quiz.get("reporting_method")
+        merged["timestamp_display"] = item.get("timestamp_display") or quiz.get("timestamp_display") or ""
+        merged["activity_subtitle"] = item.get("activity_subtitle") or quiz.get("activity_subtitle")
+        merged["iframe_url"] = item.get("iframe_url") or quiz.get("iframe_url")
+        merged["created_at"] = min(
+            (value for value in (item.get("created_at"), quiz.get("created_at")) if value),
+            default=None,
+        )
+        for key in ("quiz_attempted", "quiz_passed", "quiz_score", "quiz_maximum_score"):
+            if merged.get(key) is None:
+                merged[key] = quiz.get(key)
+        # Keep both source ids so the quiz half remains traceable.
+        merged["merged_source_activity_ids"] = [item.get("source_activity_id"), quiz.get("source_activity_id")]
+        out.append(merged)
+    return out
+
+
+def _overlay_touched_ids(cursor, aptem_id):
+    """Ids of this learner's rows an auditor overlay references (or none)."""
+    cursor.execute("SELECT to_regclass('\"Manual_audit\".\"activity_overrides\"')")
+    if cursor.fetchone()[0] is None:
+        return frozenset()
+    cursor.execute(
+        'SELECT activity_id FROM "Manual_audit"."activity_overrides" WHERE aptem_id = %s',
+        [aptem_id],
+    )
+    return frozenset(str(row[0]) for row in cursor.fetchall())
+
+
 def _attendance_ref(source_key):
     return f"att:{source_key}"
 
@@ -295,6 +405,11 @@ def _attendance_payload(row):
         "configured_duration_minutes": None,
         "ksbs": None,
         "iframe_url": None,
+        "created_at": (
+            row["source_created_at"].isoformat() if row.get("source_created_at")
+            else row["synced_at"].isoformat() if row.get("synced_at")
+            else None
+        ),
         "source": "Manual_audit",
     }
 
@@ -377,6 +492,9 @@ def _activity_payload(row):
             row.get("reading_iframe_url"),
             row.get("reading_type"),
         ),
+        # When the catalogue row was first synced into the mirror — the closest
+        # thing an LMS import has to "when was this activity added".
+        "created_at": row["first_seen"].isoformat() if row.get("first_seen") else None,
         "source": "Manual_audit",
     }
 
@@ -460,18 +578,69 @@ def cohort(request: HttpRequest) -> JsonResponse:
             WHERE attendance_date IS NOT NULL
             GROUP BY aptem_id, date_trunc('month', attendance_date),
                      to_char(attendance_date, 'YYYY-MM'), to_char(attendance_date, 'FMMonth YYYY')
+        ), lms_hour_rows AS (
+            -- One row per LMS activity result with the SAME hours precedence
+            -- the activities feed applies per row (OTJH actual, else the
+            -- mirror's mapped seconds/hours) so the monthly buckets reconcile
+            -- with the sum of the visible rows' Actual column.
+            SELECT l.aptem_id,
+                   a.activity_date,
+                   lower(COALESCE(a.activity_type, r.activity_type, '')) AS activity_type,
+                   CASE
+                       WHEN ah.actual_hours IS NOT NULL THEN ah.actual_hours
+                       WHEN r.mapped_seconds IS NOT NULL THEN round(r.mapped_seconds / 3600.0, 2)
+                       WHEN r.mapped_hours IS NOT NULL THEN round(round(r.mapped_hours * 3600) / 3600.0, 2)
+                       ELSE NULL
+                   END AS actual_hours
+            FROM {ACTIVITY_RESULTS} r
+            JOIN {LEARNERS} l ON l.learner_id = r.learner_id
+            JOIN {ACTIVITIES} a ON a.activity_id = r.activity_id
+            LEFT JOIN {ACTIVITY_ACTUAL_HOURS} ah
+                   ON ah.learner_id = r.learner_id AND ah.ref = r.activity_id::text
+        ), lms_month_rows AS (
+            SELECT aptem_id,
+                   to_char(activity_date, 'YYYY-MM') AS month,
+                   to_char(activity_date, 'FMMonth YYYY') AS label,
+                   COALESCE(sum(actual_hours) FILTER (WHERE activity_type <> 'reading+quiz'), 0) AS media_actual,
+                   COALESCE(sum(actual_hours) FILTER (WHERE activity_type = 'reading+quiz'), 0) AS bundle_actual
+            FROM lms_hour_rows
+            WHERE activity_date IS NOT NULL
+            GROUP BY aptem_id, date_trunc('month', activity_date),
+                     to_char(activity_date, 'YYYY-MM'), to_char(activity_date, 'FMMonth YYYY')
+        ), lms_actual_totals AS (
+            SELECT aptem_id, COALESCE(sum(actual_hours), 0) AS lms_actual_hours
+            FROM lms_hour_rows
+            GROUP BY aptem_id
+        ), month_rows AS (
+            SELECT aptem_id, month, label,
+                   actual AS att_actual,
+                   0::numeric AS media_actual, 0::numeric AS bundle_actual
+            FROM attendance_month_rows
+            UNION ALL
+            SELECT aptem_id, month, label,
+                   0::numeric, media_actual, bundle_actual
+            FROM lms_month_rows
+        ), combined_month_rows AS (
+            SELECT aptem_id, month, max(label) AS label,
+                   sum(att_actual) AS att_actual,
+                   sum(media_actual) AS media_actual,
+                   sum(bundle_actual) AS bundle_actual
+            FROM month_rows
+            GROUP BY aptem_id, month
         ), attendance_months AS (
             SELECT aptem_id,
                    jsonb_agg(
                        jsonb_build_object(
                            'month', month, 'label', label, 'planned', 0,
-                           'actual', actual, 'not_accepted', 0,
-                           'att_actual', actual, 'asg_actual', 0,
-                           'media_actual', 0, 'bundle_actual', 0,
+                           'actual', round(att_actual + media_actual + bundle_actual, 2),
+                           'not_accepted', 0,
+                           'att_actual', round(att_actual, 2), 'asg_actual', 0,
+                           'media_actual', round(media_actual, 2),
+                           'bundle_actual', round(bundle_actual, 2),
                            'unallocated_actual', 0
                        ) ORDER BY month
                    ) AS months
-            FROM attendance_month_rows
+            FROM combined_month_rows
             GROUP BY aptem_id
         ), ilr_profiles AS (
             SELECT DISTINCT ON (lower(email))
@@ -496,6 +665,7 @@ def cohort(request: HttpRequest) -> JsonResponse:
                COALESCE(rt.mapped_count, 0) AS lms_mapped_count,
                COALESCE(rt.mapped_seconds, 0) AS lms_mapped_seconds,
                COALESCE(at.mapped_seconds, 0) AS attendance_seconds,
+               COALESCE(lat.lms_actual_hours, 0) AS lms_actual_hours,
                ilr.planned_hours AS ilr_planned_hours,
                COALESCE(am.months, '[]'::jsonb) AS months
         FROM {LEARNERS} l
@@ -503,6 +673,7 @@ def cohort(request: HttpRequest) -> JsonResponse:
         LEFT JOIN result_totals rt ON rt.learner_id = l.learner_id
         LEFT JOIN attendance_totals at ON at.aptem_id = l.aptem_id
         LEFT JOIN attendance_months am ON am.aptem_id = l.aptem_id
+        LEFT JOIN lms_actual_totals lat ON lat.aptem_id = l.aptem_id
         LEFT JOIN ilr_profiles ilr ON ilr.email_key = lower(l.learner_email)
         {where}
         ORDER BY lower(COALESCE(l.learner_name, '')), l.aptem_id
@@ -552,13 +723,18 @@ def cohort(request: HttpRequest) -> JsonResponse:
             # A missing ILR row is unavailable data, not a real zero.
             "planned_total": float(row["ilr_planned_hours"]) if row["ilr_planned_hours"] is not None else 0.0,
             "planned_hours_available": row["ilr_planned_hours"] is not None,
-            # Attendance source hours are not the learner's approved OTJ actual
-            # total. Keep Actual unavailable until every LMS activity has an
-            # explicit mapped duration; do not surface the attendance sum as a
-            # misleading programme total.
-            "actual_total": _hours(row["lms_mapped_seconds"]) if actual_hours_available else 0.0,
+            # Claimed hours = the sum of the learner's per-activity Actual
+            # hours (attendance + LMS, same per-row precedence as the feed),
+            # so the header stat always reconciles with the visible rows.
+            "actual_total": round(
+                float(row["lms_actual_hours"]) + float(row["attendance_seconds"]) / 3600, 2
+            ),
             "not_accepted_total": 0.0,
-            "hours_mapped": actual_hours_available,
+            "hours_mapped": (
+                actual_hours_available
+                or float(row["lms_actual_hours"]) > 0
+                or float(row["attendance_seconds"]) > 0
+            ),
             "mapped_activity_count": mapped_count,
             "activity_count": int(row["activity_count"]),
             "lms_activity_count": lms_activity_count,
@@ -623,8 +799,9 @@ def activities(request: HttpRequest) -> JsonResponse:
                            COALESCE(a.activity_type, r.activity_type) AS activity_type,
                            a.title, a.activity_date,
                            a.video_iframe_url, a.reading_iframe_url,
-                           a.reading_type, a.quiz_id, a.quiz_questions,
-                           a.configured_duration_min, r.status,
+                           a.reading_type, a.reading_text_body,
+                           a.quiz_id, a.quiz_questions,
+                           a.configured_duration_min, a.first_seen, r.status,
                            r.video_started, r.video_completed, r.reading_viewed,
                            r.quiz_attempted, r.quiz_passed, r.quiz_score,
                            r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,
@@ -662,6 +839,7 @@ def activities(request: HttpRequest) -> JsonResponse:
             plan_rows, plan_claims = plan_rows_for_learner(
                 cursor, aptem_id, month=month, category=category, search=search,
             )
+            overlay_touched = _overlay_touched_ids(cursor, aptem_id)
     except DatabaseError as error:
         return JsonResponse(
             {"error": "Could not read Manual_audit activities.", "details": str(error)},
@@ -670,6 +848,9 @@ def activities(request: HttpRequest) -> JsonResponse:
     all_items = [_activity_payload(row) for row in lms_rows]
     all_items.extend(_attendance_payload(row) for row in attendance_rows)
     all_items, plan_suppressed_ids = suppress_claimed_mirror_rows(all_items, plan_claims)
+    # After suppression (so a plan claim on either half wins), fold split
+    # reading/quiz halves of one learning activity into a single row.
+    all_items = merge_reading_quiz_rows(all_items, protected_ids=overlay_touched)
     all_items.extend(plan_rows)
     all_items.sort(key=lambda item: (
         item["date"] is None,

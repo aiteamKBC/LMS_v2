@@ -3,6 +3,7 @@ import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, 
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -38,7 +39,7 @@ import {
   type WeekTemplateCourseType,
   type WorkspaceQuizSummary,
 } from './weekTemplateData';
-import { CONTENT_STATUSES, MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
+import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
@@ -52,14 +53,7 @@ export type WeekComponentUploader = (componentId: string, file: File, componentT
 
 const curriculumNav = roleNavMap.curriculum;
 
-const STATUS_OPTIONS = ['draft', 'review', 'published'] as const;
 const KSB_TYPES: KsbMapping['type'][] = ['main', 'secondary', 'possible'];
-
-const STATUS_BADGE: Record<string, string> = {
-  published: 'bg-emerald-100 text-emerald-700 ring-emerald-200',
-  review: 'bg-amber-100 text-amber-700 ring-amber-200',
-  draft: 'bg-foreground-100 text-foreground-500 ring-foreground-200',
-};
 
 // The course type is the one structural identity signal on the page.
 const COURSE: Record<WeekTemplateCourseType, { label: string; kicker: string; icon: string; text: string; bar: string; soft: string; ring: string }> = {
@@ -91,6 +85,8 @@ function toneFor(type: string): ToneStyle {
 // Root — catalogue ⇄ editor.
 // ---------------------------------------------------------------------------
 export default function WeekBuilderPage() {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [templates, setTemplates] = useState<WeekTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -133,11 +129,22 @@ export default function WeekBuilderPage() {
     }
   }, []);
 
-  const closeEditor = useCallback((changed: boolean) => {
+  useEffect(() => {
+    const templateId = searchParams.get('template');
+    if (!templateId || working?.id === templateId) return;
+    void openEditorForExisting(templateId);
+  }, [openEditorForExisting, searchParams, working?.id]);
+
+  const closeEditor = useCallback((changed: boolean, returnToPrevious = false) => {
     setWorking(null);
     setWorkingIsNew(false);
+    if (returnToPrevious) {
+      navigate(-1);
+      return;
+    }
+    setSearchParams({}, { replace: true });
     if (changed) loadTemplates();
-  }, [loadTemplates]);
+  }, [loadTemplates, navigate, setSearchParams]);
 
   const handleDelete = useCallback(async (template: WeekTemplate) => {
     const confirmed = await showCurriculumConfirm({
@@ -156,7 +163,6 @@ export default function WeekBuilderPage() {
       await createWeekTemplate(toWeekTemplateInput({
         ...detail,
         title: `${detail.title} (copy)`,
-        status: 'draft',
         components: detail.components.map(component => ({ ...component, id: makeAuthoringId('component') })),
       }));
       loadTemplates();
@@ -178,7 +184,7 @@ export default function WeekBuilderPage() {
       userRole="Curriculum Designer"
     >
       {working ? (
-        <TemplateEditor initial={working} isNew={workingIsNew} onClose={closeEditor} />
+        <TemplateEditor initial={working} isNew={workingIsNew} onClose={closeEditor} returnToPrevious={searchParams.get('from') === 'free-courses'} />
       ) : (
         <TemplateListView
           templates={templates}
@@ -212,18 +218,16 @@ function TemplateListView({
   onDuplicate: (template: WeekTemplate) => void;
 }) {
   const [courseFilter, setCourseFilter] = useState<'all' | WeekTemplateCourseType>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | string>('all');
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
     return templates.filter(template => {
       if (courseFilter !== 'all' && template.courseType !== courseFilter) return false;
-      if (statusFilter !== 'all' && template.status !== statusFilter) return false;
       if (term && !template.title.toLowerCase().includes(term)) return false;
       return true;
     });
-  }, [templates, courseFilter, statusFilter, search]);
+  }, [templates, courseFilter, search]);
 
   const paidCount = templates.filter(t => t.courseType === 'paid').length;
   const freeCount = templates.filter(t => t.courseType === 'free').length;
@@ -261,10 +265,6 @@ function TemplateListView({
             </button>
           ))}
         </div>
-        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="rounded-full border border-background-200 bg-background-50 px-4 py-2 text-[11px] font-semibold text-foreground-700">
-          <option value="all">Any status</option>
-          {STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
-        </select>
         <div className="relative flex-1 min-w-[180px] max-w-[300px]">
           <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search templates" className="w-full rounded-full border border-background-200 bg-background-50 pl-9 pr-4 py-2 text-[12px]" />
@@ -308,7 +308,6 @@ function TemplateCard({ template, onOpen, onDuplicate, onDelete }: { template: W
       <button onClick={onOpen} className="text-left p-5 pl-6 flex-1">
         <div className="flex items-center justify-between gap-2">
           <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.12em] ${course.text}`}><AppIcon className={course.icon}></AppIcon>{course.kicker}</span>
-          <span className={`text-[9px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ring-1 ${STATUS_BADGE[template.status] || STATUS_BADGE.draft}`}>{template.status}</span>
         </div>
         <h3 className="mt-2.5 font-heading text-[16px] font-bold text-foreground-950 leading-snug line-clamp-2 group-hover:text-primary-700 transition-smooth">{template.title || 'Untitled week'}</h3>
         <p className="mt-1 text-[11px] text-foreground-400 truncate">{template.courseType === 'paid' ? `${template.programmeName || 'Programme'} · ${template.groupName || 'Group'}` : 'Standalone open content'}</p>
@@ -498,7 +497,7 @@ function ScopeSelect({ icon, value, placeholder, options, onChange, disabled }: 
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
-function TemplateEditor({ initial, isNew, onClose }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean) => void }) {
+function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
   const [template, setTemplate] = useState<WeekTemplate>(initial);
   const [persistedId, setPersistedId] = useState(isNew ? '' : initial.id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -625,7 +624,7 @@ function TemplateEditor({ initial, isNew, onClose }: { initial: WeekTemplate; is
       const leave = await showCurriculumConfirm({ title: 'Discard unsaved changes?', text: 'Your edits to this week template will be lost.', confirmButtonText: 'Discard', cancelButtonText: 'Keep editing', onConfirm: async () => {} });
       if (!leave) return;
     }
-    onClose(savedChanges.current);
+    onClose(savedChanges.current, returnToPrevious);
   };
 
   useEffect(() => {
@@ -657,7 +656,7 @@ function TemplateEditor({ initial, isNew, onClose }: { initial: WeekTemplate; is
       <div className="relative rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
         <span className={`absolute left-0 top-0 bottom-0 w-1.5 ${course.bar}`} />
         <div className="p-5 pl-7">
-          <button onClick={back} className="inline-flex items-center gap-1 text-[11px] font-bold text-foreground-400 hover:text-foreground-800 transition-smooth"><AppIcon className="ri-arrow-left-line"></AppIcon> All templates</button>
+          <button onClick={back} className="inline-flex items-center gap-1 text-[11px] font-bold text-foreground-400 hover:text-foreground-800 transition-smooth"><AppIcon className="ri-arrow-left-line"></AppIcon>{returnToPrevious ? 'Back' : 'All templates'}</button>
           <div className="mt-2 flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -669,12 +668,6 @@ function TemplateEditor({ initial, isNew, onClose }: { initial: WeekTemplate; is
               <FlowStrip components={template.components} selectedId={selectedId} onJump={jumpTo} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <div className="relative">
-                <select value={template.status} onChange={e => update(prev => ({ ...prev, status: e.target.value }))} className={`appearance-none rounded-full pl-3 pr-7 py-1.5 text-[11px] font-bold uppercase tracking-wide ring-1 ${STATUS_BADGE[template.status] || STATUS_BADGE.draft}`}>
-                  {STATUS_OPTIONS.map(status => <option key={status} value={status}>{status}</option>)}
-                </select>
-                <AppIcon className="ri-arrow-down-s-line absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-current opacity-60 text-xs"></AppIcon>
-              </div>
               <button onClick={save} disabled={saving || !dirty} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
                 {saving ? <><AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Saving</> : <><AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save' : 'Create'}</>}
               </button>
@@ -685,10 +678,12 @@ function TemplateEditor({ initial, isNew, onClose }: { initial: WeekTemplate; is
             <Meter icon="ri-puzzle-line" value={String(template.componentCount)} label="components" />
             <Meter icon="ri-time-line" value={String(template.totalOtjh)} label="OTJH" />
             <Meter icon="ri-medal-line" value={String(template.points)} label="points" />
-            <span className={`inline-flex items-center gap-1.5 font-semibold ${issues ? 'text-amber-600' : 'text-emerald-600'}`}>
-              <AppIcon className={issues ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'}></AppIcon>
-              {issues ? `${issues} to resolve` : 'Ready to publish'}
-            </span>
+            {issues > 0 && (
+              <span className="inline-flex items-center gap-1.5 font-semibold text-amber-600">
+                <AppIcon className="ri-error-warning-line"></AppIcon>
+                {issues} to resolve
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -1215,7 +1210,7 @@ function AssureChip({ icon, value, label }: { icon: string; value: number; label
 
 function SaveStatus({ dirty, saving, isNew }: { dirty: boolean; saving: boolean; isNew: boolean }) {
   if (saving) return <span className="inline-flex items-center gap-1.5 text-primary-600 font-semibold"><AppIcon className="ri-loader-4-line animate-spin" />Saving…</span>;
-  if (dirty) return <span className="inline-flex items-center gap-1.5 text-amber-600 font-semibold"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />{isNew ? 'Draft — not created yet' : 'Unsaved changes'}</span>;
+  if (dirty) return <span className="inline-flex items-center gap-1.5 text-amber-600 font-semibold"><span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />{isNew ? 'Not created yet' : 'Unsaved changes'}</span>;
   return <span className="inline-flex items-center gap-1.5 text-emerald-600 font-semibold"><AppIcon className="ri-checkbox-circle-fill" />All changes saved</span>;
 }
 
@@ -1368,12 +1363,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, restoreT
       </Section>
 
       <Section title="Publishing">
-        <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Status">
-            <select value={s('contentStatus') || 'Draft'} onChange={e => setSetting('contentStatus', e.target.value)} className={inputClass}>
-              {CONTENT_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-            </select>
-          </Field>
+        <div className="grid gap-4 max-w-md">
           <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
@@ -1444,12 +1434,7 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
       </Section>
 
       <Section title="Publishing">
-        <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Status">
-            <select value={s('contentStatus') || 'Draft'} onChange={e => setSetting('contentStatus', e.target.value)} className={inputClass}>
-              {CONTENT_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-            </select>
-          </Field>
+        <div className="grid gap-4 max-w-md">
           <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
@@ -1530,12 +1515,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
       </Section>
 
       <Section title="Publishing">
-        <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Status">
-            <select value={s('contentStatus') || 'Draft'} onChange={e => setSetting('contentStatus', e.target.value)} className={inputClass}>
-              {CONTENT_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-            </select>
-          </Field>
+        <div className="grid gap-4 max-w-md">
           <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
@@ -1630,12 +1610,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
       </Section>
 
       <Section title="Publishing">
-        <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Status">
-            <select value={s('contentStatus') || 'Draft'} onChange={e => setSetting('contentStatus', e.target.value)} className={inputClass}>
-              {CONTENT_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-            </select>
-          </Field>
+        <div className="grid gap-4 max-w-md">
           <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
@@ -1726,12 +1701,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
       </Section>
 
       <Section title="Publishing">
-        <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Status">
-            <select value={s('contentStatus') || 'Draft'} onChange={e => setSetting('contentStatus', e.target.value)} className={inputClass}>
-              {CONTENT_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-            </select>
-          </Field>
+        <div className="grid gap-4 max-w-md">
           <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
@@ -1780,7 +1750,6 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
 
   const linkedQuiz = quizzes.find(quiz => String(quiz.id) === linkedQuizId) || null;
   const linkedQuestions = linkedQuiz ? Number(linkedQuiz.questions || 0) : Number(s('numberOfQuestions') || 0);
-  const linkedStatus = linkedQuiz?.status || s('quizStatus');
   const linkedTitle = linkedQuiz?.title || s('linkedActivity');
   // A checkpoint quiz is intentionally excluded from the workspace quiz list
   // (that list is assessmentType=quiz), so track the type from the linked quiz
@@ -1885,7 +1854,6 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
                 <p className="mt-0.5 text-[15px] font-heading font-black text-foreground-950 truncate">{linkedTitle || 'Untitled quiz'}</p>
                 <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-foreground-500">
                   <span className="tabular-nums"><strong className="text-foreground-800">{linkedQuestions}</strong> question{linkedQuestions === 1 ? '' : 's'}</span>
-                  {linkedStatus && <span className="capitalize">{linkedStatus}</span>}
                   {isCheckpoint && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-700"><AppIcon className="ri-flag-2-line"></AppIcon>Checkpoint</span>}
                   {!linkedQuiz && !loading && !isCheckpoint && <span className="text-amber-600"><AppIcon className="ri-error-warning-line mr-0.5"></AppIcon>Not found in workspace</span>}
                 </p>
@@ -1913,7 +1881,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
               <div className="flex items-center gap-2">
                 <select value="" onChange={e => { const quiz = quizzes.find(item => String(item.id) === e.target.value); if (quiz) link(quiz); }} className={inputClass} disabled={loading || !matchingQuizzes.length}>
                   <option value="">{loading ? 'Loading quizzes…' : matchingQuizzes.length ? 'Choose a quiz to import' : 'No matching quizzes'}</option>
-                  {matchingQuizzes.map(quiz => <option key={quiz.id} value={quiz.id}>{quiz.title} · {Number(quiz.questions || 0)} q{quiz.status ? ` · ${quiz.status}` : ''}</option>)}
+                  {matchingQuizzes.map(quiz => <option key={quiz.id} value={quiz.id}>{quiz.title} · {Number(quiz.questions || 0)} q</option>)}
                 </select>
                 <button type="button" onClick={() => loadQuizzes()} title="Refresh" className="grid place-items-center w-9 h-9 shrink-0 rounded-lg border border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100 transition-smooth"><AppIcon className={loading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon></button>
               </div>
@@ -2030,12 +1998,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
       </Section>
 
       <Section title="Publishing">
-        <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-          <Field label="Status">
-            <select value={s('contentStatus') || 'Draft'} onChange={e => setSetting('contentStatus', e.target.value)} className={inputClass}>
-              {CONTENT_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}
-            </select>
-          </Field>
+        <div className="grid gap-4 max-w-md">
           <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>

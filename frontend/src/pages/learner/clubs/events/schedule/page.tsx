@@ -83,7 +83,7 @@ export default function MySchedulePage() {
         {/* Back */}
         <div className="flex items-center gap-2">
           <button
-            onClick={() => navigate('/learner/clubs/events')}
+            onClick={() => navigate(-1)}
             className="flex items-center gap-1.5 text-xs text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer whitespace-nowrap"
           >
             <AppIcon className="ri-arrow-left-s-line"></AppIcon> Back to Events

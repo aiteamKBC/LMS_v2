@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
@@ -329,6 +329,7 @@ export function ProgressReviewsListPage() {
 }
 
 export default function ProgressReviewsPage() {
+  const navigate = useNavigate();
   const { reviewId } = useParams<{ reviewId: string }>();
   const myLearner = useMyLearner();
   const [learner, setLearner] = useState<LearnerDetail | null>(null);
@@ -460,9 +461,9 @@ export default function ProgressReviewsPage() {
       <div className="space-y-5 p-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
 
-        <Link to="/learner/progress-reviews" className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:-translate-x-0.5 hover:bg-primary-100">
+        <button type="button" onClick={() => navigate(-1)} className="inline-flex h-9 items-center gap-2 self-start rounded-xl border border-primary-200 bg-primary-50 px-3.5 text-xs font-bold text-primary-700 shadow-sm transition hover:-translate-x-0.5 hover:bg-primary-100">
           <AppIcon className="ri-arrow-left-line" /> Back to progress reviews
-        </Link>
+        </button>
 
         <section className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#190532] via-[#32105d] to-[#602396] p-5 text-white shadow-xl shadow-primary-950/10 sm:p-6">
           <div className="pointer-events-none absolute -right-24 -top-28 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>

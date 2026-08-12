@@ -80,7 +80,7 @@ export default function EventDetailPage() {
       >
         <div className="p-8 text-center">
           <p className="text-foreground-400 text-sm">Event not found.</p>
-          <button onClick={() => navigate('/learner/clubs/events')} className="mt-4 px-4 py-2 bg-primary-500 text-white rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap">
+          <button onClick={() => navigate(-1)} className="mt-4 px-4 py-2 bg-primary-500 text-white rounded-lg text-sm font-semibold cursor-pointer whitespace-nowrap">
             Back to Events
           </button>
         </div>
@@ -215,7 +215,7 @@ export default function EventDetailPage() {
         {/* Back */}
         <div className="flex items-center gap-2">
           <button
-            onClick={() => navigate('/learner/clubs/events')}
+            onClick={() => navigate(-1)}
             className="flex items-center gap-1.5 text-xs text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer whitespace-nowrap"
           >
             <AppIcon className="ri-arrow-left-s-line"></AppIcon> Back to Events

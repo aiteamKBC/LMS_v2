@@ -1820,7 +1820,7 @@ export default function ProgrammeDetailPage() {
               {error || `There is no live curriculum programme matching "${id || 'this route'}". It may have been renamed or removed.`}
             </p>
             <div className="mt-5 flex flex-wrap justify-center gap-2">
-              <button onClick={() => window.REACT_APP_NAVIGATE('/curriculum/programmes')} className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 hover:bg-background-100">
+              <button onClick={() => window.history.back()} className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 hover:bg-background-100">
                 <AppIcon className="ri-arrow-left-line"></AppIcon> All programmes
               </button>
               {error && (

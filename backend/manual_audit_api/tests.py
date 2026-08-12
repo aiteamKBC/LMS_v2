@@ -11,10 +11,13 @@ projection depends on.
 
 import datetime
 import json
+from unittest import mock
 
 from django.test import RequestFactory, SimpleTestCase
 
-from .match_ledger_views import learner_hours
+from .ledger_views import _merge_title_key, merge_reading_quiz_rows
+from .match_ledger_views import _validate_overlay_activity, learner_hours
+from .plan_pickers import picker_attendance_modules, picker_group_activities
 from .plan_projection import _resolve_date, suppress_claimed_mirror_rows
 from .plan_tables import assignment_name_key
 from .plan_views import (
@@ -159,6 +162,121 @@ class ViewValidationTests(SimpleTestCase):
     def test_learner_hours_rejects_non_dict_body(self):
         response = _post(learner_hours, "/match-ledger/learner-hours", [1, 2])
         self.assertEqual(response.status_code, 400)
+
+    def test_attendance_modules_requires_kbc_config(self):
+        request = RequestFactory().get("/plan/pickers/attendance-modules")
+        with mock.patch.dict("os.environ", {"KBCDATABASE": ""}):
+            response = picker_attendance_modules(request)
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("KBCDATABASE", json.loads(response.content)["error"])
+
+    def test_group_activities_requires_group(self):
+        request = RequestFactory().get("/plan/pickers/group-activities")
+        response = picker_group_activities(request)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("group_id", json.loads(response.content)["error"])
+
+    def test_group_activities_rejects_unknown_type(self):
+        request = RequestFactory().get("/plan/pickers/group-activities", {"group_id": "1", "type": "webinar"})
+        response = picker_group_activities(request)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("type", json.loads(response.content)["error"])
+
+
+def _half(activity_id, category, title, *, actual=0.0, month="2026-03", group=2, learner=10, **extra):
+    row = {
+        "activity_id": activity_id, "source_activity_id": int(activity_id.split(":")[-1]),
+        "learner_id": learner, "group_id": group, "month": month,
+        "category": category, "activity": title, "actual": actual,
+        "planned": 0.0, "mapped_seconds": None, "hours_mapped": actual > 0,
+        "completed": False, "created_at": None,
+    }
+    row.update(extra)
+    return row
+
+
+class ReadingQuizMergeTests(SimpleTestCase):
+    def test_title_key_ignores_punctuation_and_marker_words(self):
+        self.assertEqual(_merge_title_key("Study Skills — Quiz"), _merge_title_key("study skills"))
+        self.assertEqual(_merge_title_key("Reading: Study Skills!"), _merge_title_key("Study   Skills"))
+        self.assertEqual(_merge_title_key(None), "")
+
+    def test_title_key_matches_real_catalogue_prefixes(self):
+        # Live catalogue patterns: Q-numbered quizzes vs "Additional Reading:".
+        self.assertEqual(_merge_title_key("Q2-What is Project?"), _merge_title_key("Additional Reading: What is Project?"))
+        self.assertEqual(_merge_title_key("Q2: Organisation Structure"), _merge_title_key("Organisation Structure"))
+        # Content numbering (P1-PPT...) is NOT a marker — different stems stay apart.
+        self.assertNotEqual(_merge_title_key("P1-PPT-Course Overview"), _merge_title_key("P2-PPT-Course Overview"))
+
+    def test_matched_pair_becomes_one_bundle_with_summed_hours(self):
+        items = [
+            _half("la:2:11", "reading", "Study Skills (Reading)", actual=1.5, reading_viewed=True),
+            _half("la:2:12", "quiz", "Study Skills — Quiz", actual=0.5, quiz_attempted=True, quiz_passed=True),
+        ]
+        merged = merge_reading_quiz_rows(items)
+        self.assertEqual(len(merged), 1)
+        row = merged[0]
+        self.assertEqual(row["category"], "reading+quiz")
+        self.assertEqual(row["activity_id"], "la:2:11")  # reading half keeps identity
+        self.assertEqual(row["actual"], 2.0)             # summed, never double-counted
+        self.assertTrue(row["quiz_passed"])
+        self.assertEqual(row["merged_source_activity_ids"], [11, 12])
+
+    def test_singletons_and_other_months_stay_untouched(self):
+        items = [
+            _half("la:2:11", "reading", "Study Skills", actual=1.0),
+            _half("la:2:12", "quiz", "Study Skills", month="2026-04"),
+            _half("la:2:13", "video", "Study Skills"),
+        ]
+        merged = merge_reading_quiz_rows(items)
+        self.assertEqual(len(merged), 3)
+        self.assertEqual({row["category"] for row in merged}, {"reading", "quiz", "video"})
+
+    def test_quiz_listed_before_reading_still_merges(self):
+        # Regression: list order is arbitrary — a quiz half that appears FIRST
+        # must not slip into the output before its reading partner claims it.
+        items = [
+            _half("la:2:12", "quiz", "Q2-What is Project?", actual=0.25),
+            _half("la:2:11", "reading", "Additional Reading: What is Project?", actual=1.0),
+        ]
+        merged = merge_reading_quiz_rows(items)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["category"], "reading+quiz")
+        self.assertEqual(merged[0]["actual"], 1.25)
+
+    def test_overlay_touched_rows_are_never_merged(self):
+        items = [
+            _half("la:2:11", "reading", "Study Skills"),
+            _half("la:2:12", "quiz", "Study Skills"),
+        ]
+        merged = merge_reading_quiz_rows(items, protected_ids=frozenset({"la:2:12"}))
+        self.assertEqual(len(merged), 2)
+
+
+class OverlayCategoryTests(SimpleTestCase):
+    BASE = {"date": "2026-03-04", "activity": "Row", "planned": 1, "actual": 1}
+
+    def _validate(self, category, **kwargs):
+        return _validate_overlay_activity(
+            {**self.BASE, "category": category},
+            aptem_id=1, learner_name="L", activity_id="la:2:11", **kwargs,
+        )
+
+    def test_new_rows_stay_strict(self):
+        with self.assertRaises(ValueError):
+            self._validate("reading")
+
+    def test_mirror_edits_keep_their_source_category(self):
+        payload = self._validate("reading", allow_any_category=True)
+        self.assertEqual(payload["category"], "reading")
+        payload = self._validate("Activity", allow_any_category=True)
+        self.assertEqual(payload["category"], "activity")
+
+    def test_garbage_categories_still_rejected(self):
+        with self.assertRaises(ValueError):
+            self._validate("", allow_any_category=True)
+        with self.assertRaises(ValueError):
+            self._validate("x" * 60, allow_any_category=True)
 
 
 class ProjectionHelperTests(SimpleTestCase):

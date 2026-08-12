@@ -9,7 +9,7 @@ import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/learner-lo
 import { ActivityTableHeader, InlineActivityCreateRow, InlineActivityRow } from "@/features/audit/learner-log-pro-manual/components/InlineActivityRow";
 import { Button } from "@/features/audit/learner-log-pro-manual/components/ui/button";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/features/audit/learner-log-pro-manual/components/ui/table";
-import { getLearnerActivities, getLearnerProfile, getLearners, saveLearnerHours, saveProfileDates } from "@/features/audit/learner-log-pro-manual/lib/api";
+import { getLearnerActivities, getLearnerProfile, getLearners, nextActivitySort, saveLearnerHours, saveProfileDates, type ActivitySort } from "@/features/audit/learner-log-pro-manual/lib/api";
 import { downloadLearnerJournalPdf } from "@/features/audit/learner-log-pro-manual/lib/journal-pdf";
 
 export const Route = createFileRoute("/journal/")({
@@ -238,6 +238,11 @@ function ProfileGroup({ label, value, secondaryLabel, secondaryValue, onEditSeco
   );
 }
 
+function localToday(): string {
+  const now = new Date();
+  return new Date(now.getTime() - now.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+}
+
 function JournalPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -245,6 +250,8 @@ function JournalPage() {
   const [learnerChoice, setLearnerChoice] = useState(routeSearch.learner);
   const [periodChoice, setPeriodChoice] = useState(routeSearch.period);
   const [activityPage, setActivityPage] = useState(0);
+  // undefined = the default "newest added first" ordering.
+  const [activitySort, setActivitySort] = useState<ActivitySort | undefined>(undefined);
   const [addingActivity, setAddingActivity] = useState(false);
   const [isPreparingPdf, setIsPreparingPdf] = useState(false);
   const [learnerSignature, setLearnerSignature] = useState("");
@@ -330,13 +337,14 @@ function JournalPage() {
     enabled: Boolean(selectedLearner && selectedPeriod),
   });
   const activities = useQuery({
-    queryKey: ["journal-activities", selectedLearner, selectedPeriod, activityPage],
+    queryKey: ["journal-activities", selectedLearner, selectedPeriod, activityPage, activitySort],
     queryFn: () => getLearnerActivities({
       learner: selectedLearner,
       period: selectedPeriod,
       search: "",
       limit: activityPageSize,
       offset: activityPage * activityPageSize,
+      sort: activitySort,
     }),
     enabled: Boolean(selectedLearner && selectedPeriod),
     placeholderData: keepPreviousData,
@@ -625,12 +633,32 @@ function JournalPage() {
           </header>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader><ActivityTableHeader dark /></TableHeader>
+              <TableHeader>
+                <ActivityTableHeader
+                  dark
+                  sort={activitySort}
+                  onSort={(key) => {
+                    setActivitySort((current) => nextActivitySort(current, key));
+                    setActivityPage(0);
+                  }}
+                />
+              </TableHeader>
               <TableBody>
                 {addingActivity && selectedLearner && learner ? (
-                  <InlineActivityCreateRow learnerId={Number(selectedLearner)} learnerName={learner.name} onCancel={() => setAddingActivity(false)} />
+                  <InlineActivityCreateRow
+                    learnerId={Number(selectedLearner)}
+                    learnerName={learner.name}
+                    onCancel={() => setAddingActivity(false)}
+                    // New rows must land in the month being viewed, or the
+                    // month filter hides them the moment they are saved.
+                    defaultDate={selectedPeriod && !localToday().startsWith(selectedPeriod) ? `${selectedPeriod}-01` : localToday()}
+                  />
                 ) : null}
                 {activities.data?.items.map((row, index, rows) => {
+                  // Week headers only make sense while rows run in date order
+                  // (they group consecutive rows); other sort orders interleave
+                  // weeks and would spray duplicate headers.
+                  const weekHeaders = activitySort?.key === "date" && activitySort.dir === "asc";
                   // A week header appears when the label differs from the last
                   // NON-NULL label — week-less mirror rows interleaved between
                   // plan rows must not retrigger the same header.
@@ -640,7 +668,7 @@ function JournalPage() {
                   );
                   return (
                     <Fragment key={row.id}>
-                    {row.week && row.week !== lastWeek ? (
+                    {weekHeaders && row.week && row.week !== lastWeek ? (
                       <TableRow className="border-y border-[#cbd5e1] bg-[#eef3f8] hover:bg-[#eef3f8]">
                         <TableCell colSpan={10} className="pl-7 text-xs font-semibold uppercase tracking-wider text-[#182d48]">
                           {row.week}

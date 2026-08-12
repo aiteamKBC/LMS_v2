@@ -193,7 +193,7 @@ export default function CoachAttendanceProfile() {
                       <p className="mt-1 text-[10px] text-white/55">{display(learner.email)}</p>
                     </div>
                   </div>
-                  <button type="button" onClick={() => navigate('/coach/attendance')} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[10px] font-bold text-primary-800 shadow-sm hover:bg-primary-50">
+                  <button type="button" onClick={() => navigate(-1)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[10px] font-bold text-primary-800 shadow-sm hover:bg-primary-50">
                     <AppIcon className="ri-arrow-left-line"></AppIcon> Back to Attendance
                   </button>
                 </div>
