@@ -18,6 +18,7 @@ export type PlanGroup = {
   kind: "cohort" | "individual";
   programme_id: number | null;
   programme_name: string | null;
+  aptem_group?: string | null;
   status: "draft" | "active" | "archived";
   start_month: string | null;
   created_by: string | null;
@@ -195,6 +196,12 @@ export function createPlanGroup(payload: {
   start_month?: string | null;
   months_count?: number;
   members?: number[];
+  // Aptem-group driven creation (the source of truth): the (programme, group)
+  // pair's Aptem learners are assigned automatically and the months come from
+  // their Aptem training plans (each learner keeping their OWN dates).
+  aptem_group?: string | null;
+  lms_group_id?: number | null;
+  months_from_training_plan?: boolean;
   created_by?: string;
 }) {
   return mutate<PlanGroupDetail>("/groups", { method: "POST", body: JSON.stringify(payload) });
@@ -429,8 +436,43 @@ export function pickAssignmentEvidence(groupId: number, nameKey: string) {
   return request<{ items: AssignmentEvidence[] }>(`/pickers/assignment-evidence?${query}`);
 }
 
-export function pickLmsGroups() {
-  return request<{ items: LmsGroupOption[] }>("/pickers/lms-groups");
+export function pickLmsGroups(programme?: string) {
+  const query = programme ? `?programme=${encodeURIComponent(programme)}` : "";
+  return request<{ items: LmsGroupOption[] }>(`/pickers/lms-groups${query}`);
+}
+
+// Aptem is the source of truth: programmes exactly as named (cohort included),
+// and each programme's groups from Aptem's own Group field.
+export function pickAptemProgrammes() {
+  return request<{ items: Array<{ programme: string; aptem_learners: number; in_cohort: number }> }>(
+    "/pickers/aptem-programmes",
+  );
+}
+
+export function pickAptemGroups(programme: string) {
+  return request<{ items: Array<{ group: string; aptem_learners: number; in_cohort: number }> }>(
+    `/pickers/aptem-groups?programme=${encodeURIComponent(programme)}`,
+  );
+}
+
+// The programme's GENERAL training plan (the majority plan among its
+// learners): months with their modules, straight from Aptem.
+export type GeneralTrainingPlan = {
+  programme: string;
+  learners_with_plan: number;
+  majority_count?: number;
+  total_modules?: number;
+  months?: Array<{
+    month: string | null;
+    date: string | null;
+    modules: Array<{ name: string | null; type: string | null; status: string | null }>;
+  }> | null;
+};
+
+export function pickTrainingPlan(programme: string) {
+  return request<GeneralTrainingPlan>(
+    `/pickers/training-plan?programme=${encodeURIComponent(programme)}`,
+  );
 }
 
 export function pickLmsGroupMembers(lmsGroupId: number) {

@@ -518,22 +518,184 @@ def picker_assignment_evidence(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"items": list(learners.values()), "name_key": name_key})
 
 
+def _programme_variant_rows(cur):
+    """(programme variant, aptem count, cohort count) straight from Aptem."""
+    cur.execute(
+        '''
+        select btrim(au."Program Name") as programme,
+               count(*) as aptem_learners,
+               count(l.aptem_id) as in_cohort
+        from "LMS"."Aptem_users" au
+        left join "Manual_audit".learners l on l.aptem_id = au."ID"
+        where coalesce(btrim(au."Program Name"), '') <> ''
+        group by 1
+        '''
+    )
+    return cur.fetchall()
+
+
+@require_GET
+def picker_aptem_programmes(request: HttpRequest) -> JsonResponse:
+    """Aptem programmes exactly as named (FULL name including the cohort) —
+    each one holds precisely the groups its learner rows link it to."""
+    try:
+        with connections[CONN].cursor() as cur:
+            rows = _programme_variant_rows(cur)
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not load Aptem programmes.", "details": str(error)}, status=503)
+    items = [
+        {"programme": programme, "aptem_learners": aptem_learners, "in_cohort": in_cohort}
+        for programme, aptem_learners, in_cohort in rows
+    ]
+    items.sort(key=lambda item: -item["aptem_learners"])
+    return JsonResponse({"items": items})
+
+
+@require_GET
+def picker_aptem_groups(request: HttpRequest) -> JsonResponse:
+    """One programme's groups from Aptem's own Group field — the exact
+    (Program Name, Group) linkage as it appears row by row in Aptem."""
+    programme = str(request.GET.get("programme") or "").strip()
+    if not programme:
+        return JsonResponse({"error": "programme is required"}, status=400)
+    try:
+        with connections[CONN].cursor() as cur:
+            cur.execute(
+                '''
+                select btrim(au."Group") as group_name,
+                       count(*) as aptem_learners,
+                       count(l.aptem_id) as in_cohort
+                from "LMS"."Aptem_users" au
+                left join "Manual_audit".learners l on l.aptem_id = au."ID"
+                where btrim(au."Program Name") = %s
+                  and coalesce(btrim(au."Group"), '') <> ''
+                group by 1
+                order by 2 desc, 1
+                ''',
+                [programme],
+            )
+            rows = cur.fetchall()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not load Aptem groups.", "details": str(error)}, status=503)
+    return JsonResponse({
+        "items": [
+            {"group": row[0], "aptem_learners": row[1], "in_cohort": row[2]}
+            for row in rows
+        ],
+        "programme": programme,
+    })
+
+
+@require_GET
+def picker_training_plan(request: HttpRequest) -> JsonResponse:
+    """The GENERAL training plan of one programme (full Aptem name).
+
+    Learners of a cohort share one plan structure with per-learner date
+    shifts, so the "general" plan = the most common month signature among the
+    programme's learners; its representative content (months + modules) is
+    what the auditor sees under the programme.
+    """
+    programme = str(request.GET.get("programme") or "").strip()
+    if not programme:
+        return JsonResponse({"error": "programme is required"}, status=400)
+    try:
+        with connections[CONN].cursor() as cur:
+            cur.execute(
+                '''
+                select lm.aptem_id, lm.aptem_training_plan
+                from "LMS"."Aptem_users" au
+                join "Manual_audit".learners l on l.aptem_id = au."ID"
+                join "Audit".learner_match lm on lm.aptem_id = l.aptem_id
+                where btrim(au."Program Name") = %s
+                  and lm.aptem_training_plan is not null
+                  and jsonb_typeof(lm.aptem_training_plan::jsonb) = 'array'
+                  and jsonb_array_length(lm.aptem_training_plan::jsonb) > 0
+                ''',
+                [programme],
+            )
+            rows = cur.fetchall()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not load the training plan.", "details": str(error)}, status=503)
+
+    if not rows:
+        return JsonResponse({
+            "programme": programme, "learners_with_plan": 0, "plan": None,
+        })
+
+    # Normalise every learner's plan with the same helper the profile uses,
+    # then pick the most common month signature as "the general plan".
+    from .match_ledger_views import _training_plan_from_audit
+
+    signatures = {}
+    for aptem_id, raw_plan in rows:
+        plan = _training_plan_from_audit(raw_plan)
+        signature = tuple(str(month.get("date") or "")[:7] for month in plan["months"])
+        bucket = signatures.setdefault(signature, {"count": 0, "plan": plan, "aptem_id": aptem_id})
+        bucket["count"] += 1
+    top = max(signatures.values(), key=lambda item: item["count"])
+    plan = top["plan"]
+
+    months = [
+        {
+            "month": month.get("month"),
+            "date": str(month.get("date") or "")[:10] or None,
+            "modules": [
+                {
+                    "name": module.get("name"),
+                    "type": module.get("type"),
+                    "status": module.get("status"),
+                }
+                for module in month.get("modules", [])
+            ],
+        }
+        for month in plan["months"]
+    ]
+    return JsonResponse({
+        "programme": programme,
+        "learners_with_plan": len(rows),
+        "majority_count": top["count"],
+        "total_modules": plan.get("total_modules"),
+        "months": months,
+    })
+
+
 @require_GET
 def picker_lms_groups(request: HttpRequest) -> JsonResponse:
-    """Mirror LMS groups as membership seeds (?group_id= lists its learners)."""
+    """Mirror LMS groups as membership seeds (?group_id= lists its learners).
+
+    ?programme= narrows the list to that Aptem programme: the count becomes
+    "this programme's learners inside the group" and groups without any of
+    them disappear — the programme -> its groups cascade.
+    """
     lms_group_id = str(request.GET.get("group_id") or "").strip()
+    programme = str(request.GET.get("programme") or "").strip()
     try:
         with connections[CONN].cursor() as cur:
             if not lms_group_id:
-                cur.execute(
-                    '''
-                    select g.group_id, g.group_name, count(distinct gl.learner_id)
-                    from "Manual_audit".groups g
-                    left join "Manual_audit".group_learners gl on gl.group_id = g.group_id
-                    group by g.group_id, g.group_name
-                    order by g.group_name
-                    '''
-                )
+                if programme:
+                    cur.execute(
+                        '''
+                        select g.group_id, g.group_name, count(distinct l.aptem_id)
+                        from "Manual_audit".groups g
+                        join "Manual_audit".group_learners gl on gl.group_id = g.group_id
+                        join "Manual_audit".learners l
+                          on l.learner_id = gl.learner_id and l.aptem_id is not null
+                        where l.programme_name = %s
+                        group by g.group_id, g.group_name
+                        order by count(distinct l.aptem_id) desc, g.group_name
+                        ''',
+                        [programme],
+                    )
+                else:
+                    cur.execute(
+                        '''
+                        select g.group_id, g.group_name, count(distinct gl.learner_id)
+                        from "Manual_audit".groups g
+                        left join "Manual_audit".group_learners gl on gl.group_id = g.group_id
+                        group by g.group_id, g.group_name
+                        order by g.group_name
+                        '''
+                    )
                 return JsonResponse({
                     "items": [
                         {"group_id": row[0], "name": row[1], "learner_count": row[2]}

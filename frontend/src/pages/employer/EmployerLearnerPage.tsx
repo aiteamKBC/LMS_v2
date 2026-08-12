@@ -410,7 +410,7 @@ export default function EmployerLearnerPage() {
             }
             right={
               <button
-                onClick={() => navigate(`/employers/${employerId}`)}
+                onClick={() => navigate(-1)}
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white/15 backdrop-blur-sm border border-white/25 text-white rounded-xl text-[13px] font-semibold hover:bg-white/25 transition-smooth cursor-pointer"
               >
                 <i className="ri-arrow-left-line" />All learners

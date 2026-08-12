@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 CURRICULUM_SCHEMA = 'curriculum'
 TRAINING_MODULE_CATALOGUE_COLUMN = 'module_catalogue_id'
 CANONICAL_MODULE_ID_PATTERN = re.compile(r'^MOD-[A-Z0-9][A-Z0-9_-]*$', re.I)
+STAFF_PROFILE_EMAIL_PATTERN = re.compile(r'^[^\s@]+@[^\s@]+\.[^\s@]+$')
+STAFF_PROFILE_PHONE_PATTERN = re.compile(r'^[+()\d\s.\-]{7,20}$')
 CURRICULUM_CACHE_TTL_SECONDS = 300
 _CURRICULUM_CACHE = {}
 _CURRICULUM_CACHE_LOCK = threading.Lock()
@@ -1996,7 +1998,7 @@ def parse_delivery_days(value):
 
 
 def build_group_schedule(week_days='', start_time='', end_time='', fallback=''):
-    """Persist group delivery day and time in one schedule string."""
+    """Format group delivery day and time for API display."""
     days = ', '.join(clean_str(day) for day in week_days if clean_str(day)) if isinstance(week_days, list) else clean_str(week_days)
     start = clean_str(start_time)
     end = clean_str(end_time)
@@ -2013,6 +2015,26 @@ def schedule_time_parts(value):
     if not match:
         return '', ''
     return clean_str(match.group(1)), clean_str(match.group(2))
+
+
+def schedule_day_part(value):
+    text = clean_str(value)
+    if not text:
+        return ''
+    start, _ = schedule_time_parts(text)
+    if start:
+        text = text.split(start, 1)[0]
+    return clean_str(re.sub(r'[-â€“]+$', '', text).strip(' ,|-'))
+
+
+def group_schedule_value(group):
+    group = group or {}
+    return build_group_schedule(
+        group.get('session_week_day') or schedule_day_part(group.get('schedule')),
+        group.get('session_start_time') or schedule_time_parts(group.get('schedule'))[0],
+        group.get('session_end_time') or schedule_time_parts(group.get('schedule'))[1],
+        group.get('schedule'),
+    )
 
 
 def holiday_date_set(holidays):
@@ -2095,8 +2117,18 @@ def unique_prefixed_id(prefix, value='', existing_values=None):
     requested = clean_str(value)
     existing = {clean_str(value) for value in (existing_values or []) if clean_str(value)}
     if re.match(rf'^{re.escape(prefix)}-[A-Z0-9][A-Z0-9_-]*$', requested, re.I):
-        return requested if requested not in existing else requested
+        suffix = requested.split('-', 1)[1]
+        canonical = f'{prefix}-{suffix}'
+        return canonical if canonical not in existing else canonical
 
+    while True:
+        candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}'
+        if candidate not in existing:
+            return candidate
+
+
+def unique_timestamp_prefixed_id(prefix, existing_values=None):
+    existing = {clean_str(value) for value in (existing_values or []) if clean_str(value)}
     while True:
         candidate = f'{prefix}-{datetime.utcnow().strftime("%Y%m%d%H%M%S%f")}'
         if candidate not in existing:
@@ -2362,6 +2394,16 @@ def ksb_profile_source_id(profile):
     return clean_str((profile or {}).get('ksb_profile_id')) or unique_ksb_profile_id((profile or {}).get('name') or '')
 
 
+def normalise_ksb_profile_source_value(value):
+    source = clean_str(value)
+    if ':' not in source:
+        return source
+    prefix, source_id = source.split(':', 1)
+    if prefix.lower() in {'profile', 'framework'}:
+        return clean_str(source_id)
+    return source
+
+
 def ksb_profile_context_ids(profile, key, primary_value=''):
     values = parse_json_value((profile or {}).get(key), [])
     if not isinstance(values, list):
@@ -2399,14 +2441,13 @@ def unlink_programmes_from_other_ksb_profiles(active_profile_id, programme_value
 
 
 def cascade_ksb_profile_source_to_programme_modules(programme_values, source_id):
-    source_id = clean_str(source_id)
-    return set_programme_modules_ksb_source(programme_values, f'profile:{source_id}' if source_id else '')
+    return set_programme_modules_ksb_source(programme_values, source_id)
 
 
 def set_programme_modules_ksb_source(programme_values, source_value):
     raw_targets = unique([clean_str(value) for value in programme_values if clean_str(value)])
     targets = {normalise(value) for value in raw_targets if normalise(value)}
-    source_value = clean_str(source_value)
+    source_value = normalise_ksb_profile_source_value(source_value)
     if not raw_targets:
         return 0
     ensure_module_authoring_tables()
@@ -2601,14 +2642,14 @@ def authoring_modules_as_training_rows(*, ensure_tables=True):
             'module_name': module.get('title') or f'Module {module_id}',
             'status': clean_str(module.get('status') or 'draft').lower(),
             'sessions_number': module.get('sessions_number') or 0,
-            'Tutor_name': module.get('tutor_name') or group.get('tutor_name') or '',
+            'Tutor_name': module.get('tutor_name') or '',
             'coach_name': group.get('coach_name') or '',
             'Starting_date_lable': cohort.get('start_date') or module.get('start_date'),
-            'start_date': module.get('start_date') or group.get('start_date') or cohort.get('start_date'),
-            'end_date': module.get('end_date') or group.get('end_date') or cohort.get('end_date'),
-            'session_week_day': group.get('schedule') or '',
-            'session_start_time': schedule_time_parts(group.get('schedule'))[0],
-            'session_end_time': schedule_time_parts(group.get('schedule'))[1],
+            'start_date': module.get('start_date') or cohort.get('start_date'),
+            'end_date': module.get('end_date') or cohort.get('end_date'),
+            'session_week_day': group.get('session_week_day') or schedule_day_part(group.get('schedule')),
+            'session_start_time': group.get('session_start_time') or schedule_time_parts(group.get('schedule'))[0],
+            'session_end_time': group.get('session_end_time') or schedule_time_parts(group.get('schedule'))[1],
             'session_ksb_json': '[]',
             'notes': append_notes_meta(module.get('description') or '', meta),
             'is_archived': clean_str(module.get('status')).lower() == 'archived',
@@ -2649,6 +2690,8 @@ def authoring_modules_as_catalogue_rows():
             'Module ID': module_id,
             'Module_name': module.get('title') or f'Module {module_id}',
             'Number of sessions': module.get('sessions_number') or len(session_names),
+            'start_date': module.get('start_date'),
+            'end_date': module.get('end_date'),
             'Module_colour': module.get('color') or '#6941c6',
             'Notes': module.get('description') or '',
             'session_names_json': json_db_value(session_names),
@@ -2687,7 +2730,7 @@ def _notes_with_authoring_meta(module_row, programme_row=None, cohort_row=None, 
     meta = {
         'program_id': module_row.get('programme_id') or programme_row.get('program_id'),
         'cohort_id': module_row.get('cohort_id') or cohort_row.get('cohort_id') or group_row.get('cohort_id'),
-        'cohort_end_date': module_row.get('end_date') or cohort_row.get('end_date') or group_row.get('end_date'),
+        'cohort_end_date': module_row.get('end_date') or cohort_row.get('end_date'),
         'group_id': module_row.get('group_id') or group_row.get('group_id'),
         'group_name': module_row.get('group_name') or group_row.get('group_name'),
         'coach_name': group_row.get('coach_name'),
@@ -2728,8 +2771,8 @@ def get_training_rows_from_authoring_tables():
         )
         cohort_name = clean_str(module.get('cohort_name')) or clean_str(cohort.get('cohort_name'))
         group_name = clean_str(module.get('group_name')) or clean_str(group.get('group_name'))
-        start_date = module.get('start_date') or group.get('start_date') or cohort.get('start_date')
-        end_date = module.get('end_date') or group.get('end_date') or cohort.get('end_date')
+        start_date = module.get('start_date') or cohort.get('start_date')
+        end_date = module.get('end_date') or cohort.get('end_date')
         status = clean_str(module.get('status') or programme.get('status')).lower()
         is_archived = (
             status == 'archived'
@@ -2748,10 +2791,10 @@ def get_training_rows_from_authoring_tables():
             'start_date': start_date,
             'end_date': end_date,
             'sessions_number': parse_int(module.get('sessions_number'), 0),
-            'session_week_day': clean_str(group.get('schedule')) or clean_str(group_name),
-            'session_start_time': schedule_time_parts(group.get('schedule'))[0],
-            'session_end_time': schedule_time_parts(group.get('schedule'))[1],
-            'Tutor_name': group.get('tutor_name') or '',
+            'session_week_day': clean_str(group.get('session_week_day') or schedule_day_part(group.get('schedule'))) or clean_str(group_name),
+            'session_start_time': group.get('session_start_time') or schedule_time_parts(group.get('schedule'))[0],
+            'session_end_time': group.get('session_end_time') or schedule_time_parts(group.get('schedule'))[1],
+            'Tutor_name': '',
             'coach_name': group.get('coach_name') or '',
             'notes': _notes_with_authoring_meta(module, programme, cohort, group),
             'is_archived': is_archived,
@@ -2783,6 +2826,8 @@ def get_module_rows():
                 'Module ID': row.get('module_catalogue_id'),
                 'Module_name': row.get('title') or row.get('module_catalogue_id') or 'Module',
                 'Number of sessions': row.get('sessions_number') or 0,
+                'start_date': row.get('start_date'),
+                'end_date': row.get('end_date'),
                 'Module_colour': row.get('color') or '#6941c6',
                 'Notes': row.get('description') or '',
                 'session_ksb_json': '',
@@ -2968,8 +3013,6 @@ def ensure_staff_profile_tables():
             'email': "varchar(255) not null default ''",
             'phone': "varchar(64) not null default ''",
             'job_title': "varchar(255) not null default ''",
-            'status': "varchar(32) not null default 'active'",
-            'specialisms': json_type,
             assignment_column: json_type,
             'notes': "text not null default ''",
             'is_archived': 'boolean not null default false',
@@ -3071,7 +3114,14 @@ def staff_profile_email(profile):
     return clean_str((profile or {}).get('email'))
 
 
+def is_blank_staff_assignment(value):
+    value = clean_str(value)
+    return not value or normalise(value) in {'empty-string', 'unassigned'}
+
+
 def staff_assignment_key(value):
+    if is_blank_staff_assignment(value):
+        return ''
     return normalise(value)
 
 
@@ -3083,6 +3133,37 @@ def staff_profile_identity_key(name='', email=''):
     if name_key and name_key != 'unassigned':
         return f'name:{name_key}'
     return ''
+
+
+def validate_staff_profile_payload(payload, existing=None):
+    existing = existing or {}
+    name = clean_str(payload.get('name') if 'name' in payload else existing.get('name'))
+    email = clean_str(payload.get('email') if 'email' in payload else existing.get('email'))
+    phone = clean_str(payload.get('phone') if 'phone' in payload else existing.get('phone'))
+    job_title = clean_str(
+        payload.get('jobTitle') if 'jobTitle' in payload
+        else payload.get('job_title') if 'job_title' in payload
+        else existing.get('job_title')
+    )
+    notes = clean_str(payload.get('notes') if 'notes' in payload else existing.get('notes'))
+    errors = {}
+    if is_blank_staff_assignment(name):
+        errors['name'] = 'Name is required.'
+    elif len(name) < 2:
+        errors['name'] = 'Name must be at least 2 characters.'
+    elif len(name) > 120:
+        errors['name'] = 'Name must be 120 characters or less.'
+    if not email:
+        errors['email'] = 'Email is required.'
+    elif not STAFF_PROFILE_EMAIL_PATTERN.match(email):
+        errors['email'] = 'Enter a valid email address.'
+    if phone and not STAFF_PROFILE_PHONE_PATTERN.match(phone):
+        errors['phone'] = 'Enter a valid phone number.'
+    if len(job_title) > 120:
+        errors['jobTitle'] = 'Job title must be 120 characters or less.'
+    if len(notes) > 1000:
+        errors['notes'] = 'Notes must be 1000 characters or less.'
+    return errors
 
 
 def staff_profile_identity_key_for_row(row):
@@ -3312,11 +3393,19 @@ def assigned_modules_for_staff(name, role, modules, stored_ids=None, stored_grou
     return assigned
 
 
-def serialize_staff_profile(row, role, modules=None):
+def serialize_staff_profile(row, role, modules=None, groups=None):
     row = row or {}
     name = staff_profile_name(row)
     stored_ids = as_json_value(row.get('assigned_module_ids') or row.get('assignedModuleIds'), []) if role == 'tutor' else []
     stored_group_ids = as_json_value(row.get('assigned_group_ids') or row.get('assignedGroupIds'), []) if role == 'coach' else []
+    valid_group_ids = {
+        clean_str(group.get('id') or group.get('groupId'))
+        for group in groups or []
+        if clean_str(group.get('id') or group.get('groupId'))
+    }
+    assigned_group_ids = [clean_str(item) for item in stored_group_ids if clean_str(item)]
+    if groups is not None:
+        assigned_group_ids = [item for item in assigned_group_ids if item in valid_group_ids]
     assigned_modules = assigned_modules_for_staff(name, role, modules or [], stored_ids, stored_group_ids) if role == 'tutor' else []
     active_modules = [module for module in assigned_modules if module.get('status') == 'in_progress']
     profile = {
@@ -3334,9 +3423,9 @@ def serialize_staff_profile(row, role, modules=None):
     }
     if role == 'coach':
         profile.update({
-            'assignedGroupIds': [clean_str(item) for item in stored_group_ids if clean_str(item)],
+            'assignedGroupIds': assigned_group_ids,
             'storedAssignedGroupIds': [clean_str(item) for item in stored_group_ids if clean_str(item)],
-            'groupCount': len([item for item in stored_group_ids if clean_str(item)]),
+            'groupCount': len(assigned_group_ids),
         })
     else:
         profile.update({
@@ -3350,13 +3439,15 @@ def serialize_staff_profile(row, role, modules=None):
     return profile
 
 
-def build_staff_profiles(training_rows, profile_rows, role, modules=None):
+def build_staff_profiles(training_rows, profile_rows, role, modules=None, groups=None):
     column_name = STAFF_PROFILE_ASSIGNMENT_COLUMNS[role]
     modules = modules or enrich_modules_with_authoring(build_modules(get_module_rows(), training_rows, get_program_config_rows()))
     merged = {}
     merged_name_keys = set()
     for row in profile_rows or []:
-        serialized = serialize_staff_profile(row, role, modules)
+        serialized = serialize_staff_profile(row, role, modules, groups)
+        if not clean_str(serialized.get('name')) and not clean_str(serialized.get('email')):
+            continue
         key = staff_profile_identity_key(serialized.get('name'), serialized.get('email')) or clean_str(serialized['id'])
         merged[key] = serialized
         name_key = staff_assignment_key(serialized.get('name'))
@@ -3368,7 +3459,7 @@ def build_staff_profiles(training_rows, profile_rows, role, modules=None):
         name_key = staff_assignment_key(profile.get('name'))
         if key in merged or (name_key and name_key in merged_name_keys):
             continue
-        merged[key] = serialize_staff_profile(profile, role, modules)
+        merged[key] = serialize_staff_profile(profile, role, modules, groups)
         if name_key:
             merged_name_keys.add(name_key)
 
@@ -3391,7 +3482,13 @@ def build_staff_profile_collection(role, visibility='operational'):
         include_unused=visibility == 'all',
     )
     modules = apply_staff_assignments_to_modules(modules, get_tutor_rows())
-    return build_staff_profiles(training_rows, profile_rows, role, modules)
+    _, groups = build_cohorts_and_groups(
+        training_rows,
+        get_program_config_rows(),
+        include_archived=visibility == 'all',
+    )
+    groups = apply_staff_assignments_to_groups(groups, get_coach_rows())
+    return build_staff_profiles(training_rows, profile_rows, role, modules, groups)
 
 
 def get_curriculum_rows(compact=False):
@@ -3457,6 +3554,19 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
         canonical_module_id = catalogue_id or delivery_module_id
         session_count = parse_int(row.get('sessions_number'), parse_int((catalogue or {}).get('Number of sessions'), 0))
         ksb_codes = codes_from_session_ksb(row.get('session_ksb_json')) or codes_from_session_ksb((catalogue or {}).get('session_ksb_json'))
+        start_date = format_date(
+            row.get('start_date')
+            or row.get('startDate')
+            or row.get('Starting_date_lable')
+            or (catalogue or {}).get('start_date')
+            or (catalogue or {}).get('startDate')
+        )
+        end_date = format_date(
+            row.get('end_date')
+            or row.get('endDate')
+            or (catalogue or {}).get('end_date')
+            or (catalogue or {}).get('endDate')
+        )
         modules.append({
             'id': canonical_module_id,
             'moduleId': canonical_module_id,
@@ -3483,6 +3593,8 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
             'status': 'published',
             'authoringStatus': 'published',
             'deliveryStatus': delivery_status_for_training_row(row),
+            'startDate': start_date,
+            'endDate': end_date,
             'author': '',
             'tutor': row.get('Tutor_name') or '',
             'coach': row.get('coach_name') or '',
@@ -3502,6 +3614,8 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
             name = row.get('Module_name') or f'Module {module_id}'
             session_count = parse_int(row.get('Number of sessions'), len(get_module_session_names(row)))
             ksb_codes = codes_from_session_ksb(row.get('session_ksb_json'))
+            start_date = format_date(row.get('start_date') or row.get('startDate') or row.get('Starting_date_lable'))
+            end_date = format_date(row.get('end_date') or row.get('endDate'))
             modules.append({
                 'id': f'catalogue-module-{module_id}',
             'sourceId': row.get('Module ID'),
@@ -3522,6 +3636,8 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
                 'status': 'published',
                 'authoringStatus': 'published',
                 'deliveryStatus': 'unknown',
+                'startDate': start_date,
+                'endDate': end_date,
                 'author': '',
                 'tutor': '',
                 'coach': '',
@@ -3633,7 +3749,7 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
                 group_keys.add(row_group['id'])
         required_ksb_codes = ksb_profile_required_codes(profile)
         ksb_total = len(required_ksb_codes)
-        profile_source = f'profile:{ksb_profile_source_id(profile)}' if profile else ''
+        profile_source = ksb_profile_source_id(profile) if profile else ''
         config_archived = is_archived_program_config(config)
         archived = (rows and not operational_rows) or (not rows and config_archived)
         standard = (config or {}).get('sub') or (config or {}).get('standard') or (profile.get('name') if profile else name)
@@ -3665,7 +3781,7 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             'color': (config or {}).get('color') or (rows[0].get('_meta', {}).get('cohort_color') if rows else '#6941c6'),
             'description': (config or {}).get('description') or (profile or {}).get('description') or '',
             'structureType': structure_type,
-            'ksbProfileSourceId': (config or {}).get('ksb_profile_source_id') or '',
+            'ksbProfileSourceId': normalise_ksb_profile_source_value((config or {}).get('ksb_profile_source_id') or ''),
             'freeComponents': parse_int(free_counts.get('components'), 0),
         })
     return programmes
@@ -3887,7 +4003,7 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
                 normalise(first_module.get('cohort_name')),
                 normalise(first_module.get('group_name')),
             ), 0),
-            'coach': clean_str(first_module.get('coach_name')) or 'Unassigned',
+            'coach': 'Unassigned',
             'tutor': clean_str(first_module.get('tutor_name')) or 'Unassigned',
             'startDate': format_date(first_module.get('start_date')),
             'endDate': format_date(first_module.get('end_date')),
@@ -4612,8 +4728,8 @@ def build_curriculum_payload_from_rows(rows, visibility='operational', compact=F
         'holidays': [] if compact else [serialize_holiday_row(item) for item in holiday_rows],
         'cohortAuthoringDetails': [] if compact else cohort_authoring_detail_rows(),
         'groupAuthoringDetails': [] if compact else group_authoring_detail_rows(),
-        'tutors': [] if compact else build_staff_profiles(training_rows, rows['tutors'], 'tutor', modules),
-        'coaches': [] if compact else build_staff_profiles(training_rows, rows['coaches'], 'coach', modules),
+        'tutors': [] if compact else build_staff_profiles(training_rows, rows['tutors'], 'tutor', modules, groups),
+        'coaches': [] if compact else build_staff_profiles(training_rows, rows['coaches'], 'coach', modules, groups),
         'tutorModules': [] if compact else rows['tutor_modules'],
     }
     return payload
@@ -5394,13 +5510,9 @@ def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
         *[row.get('title') for row in module_rows if row.get('title')],
         *[name for name in (group.get('modules') or []) if name],
     ])
-    training_plan_ids = unique([
+    source_ids = unique([
         *[row.get('id') for row in rows if row.get('id') not in (None, '')],
-        *[
-            row.get('source_id')
-            for row in module_rows
-            if row.get('source_id')
-        ],
+        *[row.get('source_id') for row in module_rows if row.get('source_id')],
     ])
     payload = {
         'group_id': group_id,
@@ -5411,17 +5523,15 @@ def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
         'programme_name': programme_name,
         'module_ids': json_db_value(module_ids),
         'module_names': json_db_value(module_names),
-        'training_plan_ids': json_db_value(training_plan_ids),
         'coach_name': canonical_staff_assignment_name('coach', group.get('coach') or group.get('coachName') or first_row.get('coach_name') or existing_group.get('coach_name')),
-        'tutor_name': canonical_staff_assignment_name('tutor', group.get('tutor') or group.get('tutorName') or first_row.get('Tutor_name') or existing_group.get('tutor_name')),
-        'start_date': format_date(group.get('startDate') or first_row.get('start_date')) or None,
-        'end_date': format_date(group.get('endDate') or first_row.get('end_date')) or None,
-        'schedule': clean_str(group.get('schedule') or existing_group.get('schedule')),
+        'session_week_day': clean_str(group.get('weekDays') or group.get('deliveryDays') or group.get('sessionWeekDay') or group.get('session_week_day') or schedule_day_part(group.get('schedule')) or existing_group.get('session_week_day') or schedule_day_part(existing_group.get('schedule'))),
+        'session_start_time': clean_str(group.get('startTime') or group.get('start_time') or group.get('sessionStartTime') or group.get('session_start_time') or existing_group.get('session_start_time') or schedule_time_parts(group.get('schedule') or existing_group.get('schedule'))[0]),
+        'session_end_time': clean_str(group.get('endTime') or group.get('end_time') or group.get('sessionEndTime') or group.get('session_end_time') or existing_group.get('session_end_time') or schedule_time_parts(group.get('schedule') or existing_group.get('schedule'))[1]),
         'color': clean_str(group.get('color') or existing_group.get('color')),
         'status': clean_str(group.get('status') or existing_group.get('status')) or 'planned',
         'notes': clean_str(first_row.get('notes') or group.get('notes')),
         'source_type': 'curriculum_authoring',
-        'source_id': training_plan_ids[0] if training_plan_ids else '',
+        'source_id': source_ids[0] if source_ids else '',
     }
     payload.update(extra or {})
     return payload
@@ -5448,12 +5558,14 @@ def serialize_group_authoring_detail(row):
         'programme': row.get('programme_name'),
         'modules': as_json_value(row.get('module_names'), []),
         'moduleIds': as_json_value(row.get('module_ids'), []),
-        'trainingPlanIds': as_json_value(row.get('training_plan_ids'), []),
         'coach': row.get('coach_name') or 'Unassigned',
-        'tutor': row.get('tutor_name') or 'Unassigned',
-        'startDate': format_date(row.get('start_date')),
-        'endDate': format_date(row.get('end_date')),
-        'schedule': row.get('schedule') or '',
+        'tutor': 'Unassigned',
+        'startDate': '',
+        'endDate': '',
+        'weekDays': row.get('session_week_day') or schedule_day_part(row.get('schedule')),
+        'startTime': row.get('session_start_time') or schedule_time_parts(row.get('schedule'))[0],
+        'endTime': row.get('session_end_time') or schedule_time_parts(row.get('schedule'))[1],
+        'schedule': group_schedule_value(row),
         'color': row.get('color') or '',
         'status': row.get('status') or 'planned',
         'notes': row.get('notes') or '',
@@ -5465,13 +5577,28 @@ def serialize_group_authoring_detail(row):
 
 def group_authoring_detail_rows():
     try:
-        return [
+        details = [
             serialize_group_authoring_detail(row)
-            for row in authoring_fetch_all(
-                GROUPS_TABLE,
-                order_sql='programme_name, cohort_name, group_name, start_date',
-            )
+            for row in authoring_fetch_all(GROUPS_TABLE, order_sql='programme_name, cohort_name, group_name')
         ]
+        module_dates_by_group = defaultdict(lambda: {'start': [], 'end': []})
+        for module in safe_authoring_module_rows():
+            group_id = clean_str(module.get('group_id'))
+            if not group_id:
+                continue
+            start = format_date(module.get('start_date'))
+            end = format_date(module.get('end_date'))
+            if start:
+                module_dates_by_group[group_id]['start'].append(start)
+            if end:
+                module_dates_by_group[group_id]['end'].append(end)
+        for detail in details:
+            bounds = module_dates_by_group.get(clean_str(detail.get('id')), {})
+            starts = bounds.get('start') or []
+            ends = bounds.get('end') or []
+            detail['startDate'] = min(starts) if starts else ''
+            detail['endDate'] = max(ends) if ends else ''
+        return details
     except (Exception, AssertionError) as exc:
         logger.warning('Could not read group authoring details: %s', exc)
         return []
@@ -5493,22 +5620,21 @@ def sync_group_authoring_details_from_modules():
                 'cohort': clean_str(row.get('cohort_name')),
                 'programmeId': clean_str(row.get('programme_id')),
                 'programme': clean_str(row.get('programme_name')),
-                'startDate': format_date(row.get('start_date')),
-                'endDate': format_date(row.get('end_date')),
+                'weekDays': clean_str(row.get('session_week_day')),
+                'startTime': clean_str(row.get('session_start_time')),
+                'endTime': clean_str(row.get('session_end_time')),
                 'mode': 'Live',
                 'status': clean_str(row.get('status')) or 'planned',
                 'modules': [],
             })
             if row.get('title'):
                 group['modules'].append(row.get('title'))
-            row_start = parse_date(row.get('start_date'))
-            group_start = parse_date(group.get('startDate'))
-            if row_start and (not group_start or row_start < group_start):
-                group['startDate'] = format_date(row_start)
-            row_end = parse_date(row.get('end_date'))
-            group_end = parse_date(group.get('endDate'))
-            if row_end and (not group_end or row_end > group_end):
-                group['endDate'] = format_date(row_end)
+            if not clean_str(group.get('weekDays')) and clean_str(row.get('session_week_day')):
+                group['weekDays'] = clean_str(row.get('session_week_day'))
+            if not clean_str(group.get('startTime')) and clean_str(row.get('session_start_time')):
+                group['startTime'] = clean_str(row.get('session_start_time'))
+            if not clean_str(group.get('endTime')) and clean_str(row.get('session_end_time')):
+                group['endTime'] = clean_str(row.get('session_end_time'))
         for group in groups_by_id.values():
             group['modules'] = unique(group.get('modules') or [])
             persist_group_authoring_detail(group, [], module_rows)
@@ -5777,7 +5903,8 @@ AUTHORING_COMPLETION_TABLE = 'module_completion_criteria'
 AUTHORING_ADVANCED_TABLE = 'module_details'
 COHORT_AUTHORING_DETAILS_TABLE = 'cohorts'
 GROUPS_TABLE = 'groups'
-FREE_PROGRAMME_MODULES_TABLE = 'free_programme_modules'
+FREE_COURSES_TABLE = 'free_courses'
+FREE_PROGRAMME_MODULES_TABLE = 'free_course_weeks'
 FREE_PROGRAMME_COMPONENTS_TABLE = 'free_programme_components'
 AUTHORING_MODULES_TABLE = 'modules'
 AUTHORING_WEEKS_TABLE = 'weeks'
@@ -5922,7 +6049,6 @@ def ensure_module_authoring_tables():
                 group_id varchar(255),
                 group_name varchar(255),
                 tutor_name varchar(255),
-                coach_name varchar(255),
                 title varchar(500) not null,
                 description text,
                 color varchar(32),
@@ -5952,7 +6078,6 @@ def ensure_module_authoring_tables():
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_start_time varchar(32)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_end_time varchar(32)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists tutor_name varchar(255)')
-            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists coach_name varchar(255)')
         else:
             cursor.execute(f'pragma table_info({quote_ident(AUTHORING_MODULES_TABLE)})')
             columns = {row[1] for row in cursor.fetchall()}
@@ -5980,8 +6105,6 @@ def ensure_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column session_end_time varchar(32)')
             if 'tutor_name' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column tutor_name varchar(255)')
-            if 'coach_name' not in columns:
-                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column coach_name varchar(255)')
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_WEEKS_TABLE)} (
                 id varchar(128) primary key,
@@ -6252,10 +6375,9 @@ def ensure_module_authoring_tables():
                 module_ids {json_type},
                 module_names {json_type},
                 coach_name varchar(255),
-                tutor_name varchar(255),
-                start_date date,
-                end_date date,
-                schedule varchar(255),
+                session_week_day varchar(255),
+                session_start_time varchar(32),
+                session_end_time varchar(32),
                 color varchar(32),
                 notes text,
                 created_at timestamp not null default current_timestamp,
@@ -6265,6 +6387,9 @@ def ensure_module_authoring_tables():
         if connection.vendor == 'postgresql':
             cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists module_ids {json_type}')
             cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists module_names {json_type}')
+            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists session_week_day varchar(255)')
+            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists session_start_time varchar(32)')
+            cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists session_end_time varchar(32)')
             cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column if not exists color varchar(32)')
             cursor.execute(f'create index if not exists curriculum_groups_programme_idx on {authoring_table_name(GROUPS_TABLE)} (programme_id)')
             cursor.execute(f'create index if not exists curriculum_groups_cohort_idx on {authoring_table_name(GROUPS_TABLE)} (cohort_id)')
@@ -6278,6 +6403,12 @@ def ensure_module_authoring_tables():
         else:
             cursor.execute(f'pragma table_info({quote_ident(GROUPS_TABLE)})')
             group_columns = {row[1] for row in cursor.fetchall()}
+            if 'session_week_day' not in group_columns:
+                cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column session_week_day varchar(255)')
+            if 'session_start_time' not in group_columns:
+                cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column session_start_time varchar(32)')
+            if 'session_end_time' not in group_columns:
+                cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column session_end_time varchar(32)')
             if 'color' not in group_columns:
                 cursor.execute(f'alter table {authoring_table_name(GROUPS_TABLE)} add column color varchar(32)')
             cursor.execute(f'create index if not exists curriculum_groups_programme_idx on {authoring_table_name(GROUPS_TABLE)} (programme_id)')
@@ -6314,14 +6445,30 @@ def ensure_free_programme_tables():
         if connection.vendor == 'postgresql':
             cursor.execute(f'create schema if not exists {quote_ident(CURRICULUM_SCHEMA)}')
         cursor.execute(f'''
+            create table if not exists {authoring_table_name(FREE_COURSES_TABLE)} (
+                id varchar(128) primary key,
+                course_name varchar(500) not null default '',
+                description text,
+                cover_image_url text,
+                week_builder_week_ids {json_type} not null default '[]',
+                display_order integer not null default 0,
+                week_count integer not null default 0,
+                component_count integer not null default 0,
+                total_otjh numeric(8,2) not null default 0,
+                created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp
+            )
+        ''')
+        cursor.execute(f'''
             create table if not exists {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} (
                 id varchar(128) primary key,
-                programme_id varchar(255) not null,
-                programme_name varchar(255),
-                title varchar(500) not null,
+                course_id varchar(128) not null,
+                week_id varchar(128),
+                course_name varchar(500) not null,
                 description text,
-                status varchar(32) not null default 'draft',
-                color varchar(32),
+                cover_image_url text,
+                week_number integer not null default 1,
+                week_title varchar(500) not null default '',
                 display_order integer not null default 0,
                 component_count integer not null default 0,
                 total_otjh numeric(8,2) not null default 0,
@@ -6333,6 +6480,7 @@ def ensure_free_programme_tables():
             create table if not exists {authoring_table_name(FREE_PROGRAMME_COMPONENTS_TABLE)} (
                 id varchar(128) primary key,
                 free_module_id varchar(128) not null,
+                week_id varchar(128),
                 programme_id varchar(255) not null,
                 type varchar(64) not null,
                 title varchar(500) not null default '',
@@ -6350,6 +6498,66 @@ def ensure_free_programme_tables():
         ''')
         if connection.vendor == 'postgresql':
             cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists course_name varchar(500) not null default ''
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists description text
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists cover_image_url text
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists week_builder_week_ids {json_type} not null default '[]'
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists display_order integer not null default 0
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists week_count integer not null default 0
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists component_count integer not null default 0
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_COURSES_TABLE)}
+                add column if not exists total_otjh numeric(8,2) not null default 0
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
+                add column if not exists course_id varchar(128)
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
+                add column if not exists week_id varchar(128)
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
+                add column if not exists course_name varchar(500) not null default ''
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
+                add column if not exists week_number integer not null default 1
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
+                add column if not exists week_title varchar(500) not null default ''
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)}
+                add column if not exists cover_image_url text
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(FREE_PROGRAMME_COMPONENTS_TABLE)}
+                add column if not exists week_id varchar(128)
+            ''')
+            cursor.execute(f'''
                 alter table {authoring_table_name(FREE_PROGRAMME_COMPONENTS_TABLE)}
                 add column if not exists reflection_required boolean not null default false
             ''')
@@ -6366,9 +6574,52 @@ def ensure_free_programme_tables():
                 add column if not exists settings_json {json_type}
             ''')
             cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_COMPONENTS_TABLE)} alter column expected_otjh set default 2')
+            cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} drop column if exists programme_id')
+            cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} drop column if exists programme_name')
+            cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} drop column if exists title')
+            cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} drop column if exists status')
+            cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} drop column if exists color')
+            cursor.execute(f'create index if not exists curriculum_free_courses_order_idx on {authoring_table_name(FREE_COURSES_TABLE)} (display_order, id)')
+            cursor.execute(f'create index if not exists curriculum_free_course_weeks_course_idx on {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} (course_id)')
+            cursor.execute(f'create index if not exists curriculum_free_courses_week_idx on {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} (week_id)')
+            cursor.execute(f'create index if not exists curriculum_free_programme_components_week_idx on {authoring_table_name(FREE_PROGRAMME_COMPONENTS_TABLE)} (week_id)')
         else:
             cursor.execute(f'pragma table_info({quote_ident(FREE_PROGRAMME_COMPONENTS_TABLE)})')
             columns = {row[1] for row in cursor.fetchall()}
+            cursor.execute(f'pragma table_info({quote_ident(FREE_PROGRAMME_MODULES_TABLE)})')
+            module_columns = {row[1] for row in cursor.fetchall()}
+            cursor.execute(f'pragma table_info({quote_ident(FREE_COURSES_TABLE)})')
+            course_columns = {row[1] for row in cursor.fetchall()}
+            if 'course_name' not in course_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column course_name varchar(500) not null default ""')
+            if 'description' not in course_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column description text')
+            if 'cover_image_url' not in course_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column cover_image_url text')
+            if 'week_builder_week_ids' not in course_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column week_builder_week_ids {json_type} not null default "[]"')
+            if 'display_order' not in course_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column display_order integer not null default 0')
+            if 'week_count' not in course_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column week_count integer not null default 0')
+            if 'component_count' not in course_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column component_count integer not null default 0')
+            if 'total_otjh' not in course_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_COURSES_TABLE)} add column total_otjh numeric(8,2) not null default 0')
+            if 'course_id' not in module_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column course_id varchar(128) not null default ""')
+            if 'week_id' not in module_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_id varchar(128)')
+            if 'course_name' not in module_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column course_name varchar(500) not null default ""')
+            if 'week_number' not in module_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_number integer not null default 1')
+            if 'week_title' not in module_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column week_title varchar(500) not null default ""')
+            if 'cover_image_url' not in module_columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_MODULES_TABLE)} add column cover_image_url text')
+            if 'week_id' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_COMPONENTS_TABLE)} add column week_id varchar(128)')
             if 'reflection_required' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(FREE_PROGRAMME_COMPONENTS_TABLE)} add column reflection_required boolean not null default false')
             if 'workplace_evidence_required' not in columns:
@@ -8113,6 +8364,8 @@ def get_authoring_structure_payload(module_catalogue_id):
     if not module_rows:
         return None
     module = module_rows[0]
+    group_rows = authoring_fetch_all(GROUPS_TABLE, 'group_id = %s', [module.get('group_id')]) if module.get('group_id') else []
+    group_coach_name = clean_str((group_rows[0] if group_rows else {}).get('coach_name'))
     week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id')
     component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, id'))
     mapping_rows = mappings_with_inferred_sources(
@@ -8184,9 +8437,9 @@ def get_authoring_structure_payload(module_catalogue_id):
         'description': module.get('description') or '',
         'color': module.get('color') or '#6941c6',
         'status': module.get('status') or 'draft',
-        'ksbProfileSourceId': module.get('ksb_profile_source_id') or '',
+        'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
         'tutor': module.get('tutor_name') or '',
-        'coach': module.get('coach_name') or '',
+        'coach': group_coach_name,
         'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)),
         'startDate': format_date(module.get('start_date')),
         'endDate': format_date(module.get('end_date')),
@@ -8277,6 +8530,14 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
     )
     completion_rows = authoring_fetch_all(AUTHORING_COMPLETION_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
     advanced_rows = authoring_fetch_all(AUTHORING_ADVANCED_TABLE, f'module_catalogue_id in ({placeholders})', found_ids) if include_extra else []
+    group_ids = unique([clean_str(row.get('group_id')) for row in module_rows])
+    group_rows_by_id = {}
+    if group_ids:
+        group_placeholders = ', '.join(['%s'] * len(group_ids))
+        group_rows_by_id = {
+            clean_str(row.get('group_id')): row
+            for row in authoring_fetch_all(GROUPS_TABLE, f'group_id in ({group_placeholders})', group_ids)
+        }
 
     week_rows_by_module = defaultdict(list)
     for row in week_rows:
@@ -8348,6 +8609,7 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             })
         module_mappings = module_mappings_by_module.get(catalogue_id, [])
         module_components = component_rows_by_module.get(catalogue_id, [])
+        group_coach_name = clean_str(group_rows_by_id.get(clean_str(module.get('group_id')), {}).get('coach_name'))
         payload = {
             'id': f'module-{catalogue_id}',
             'moduleId': catalogue_id,
@@ -8364,9 +8626,9 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'description': module.get('description') or '',
             'color': module.get('color') or '#6941c6',
             'status': module.get('status') or 'draft',
-            'ksbProfileSourceId': module.get('ksb_profile_source_id') or '',
+            'ksbProfileSourceId': normalise_ksb_profile_source_value(module.get('ksb_profile_source_id') or ''),
             'tutor': module.get('tutor_name') or '',
-            'coach': module.get('coach_name') or '',
+            'coach': group_coach_name,
             'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)),
             'startDate': format_date(module.get('start_date')),
             'endDate': format_date(module.get('end_date')),
@@ -8392,7 +8654,7 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
                 'cohort': payload.get('cohort') or '',
                 'groupId': payload.get('groupId') or '',
                 'group': payload.get('group') or '',
-                'coach': payload.get('coach') or '',
+                'coach': group_coach_name,
                 'tutor': payload.get('tutor') or '',
                 'color': payload.get('color') or '',
             }
@@ -8417,9 +8679,19 @@ def authoring_catalogue_summaries():
         logger.exception('Unable to read module authoring catalogue rows.')
         return {}
 
+    group_ids = unique([clean_str(row.get('group_id')) for row in module_rows])
+    group_rows_by_id = {}
+    if group_ids:
+        group_placeholders = ', '.join(['%s'] * len(group_ids))
+        group_rows_by_id = {
+            clean_str(row.get('group_id')): row
+            for row in authoring_fetch_all(GROUPS_TABLE, f'group_id in ({group_placeholders})', group_ids)
+        }
+
     summaries = {}
     for row in module_rows:
         catalogue_id = str(row.get('module_catalogue_id'))
+        group_coach_name = clean_str(group_rows_by_id.get(clean_str(row.get('group_id')), {}).get('coach_name'))
         summaries[catalogue_id] = {
             'catalogueId': catalogue_id,
             'title': row.get('title') or f'Module {catalogue_id}',
@@ -8433,9 +8705,9 @@ def authoring_catalogue_summaries():
             'status': row.get('status') or 'draft',
             'sourceType': row.get('source_type') or '',
             'sourceId': row.get('source_id') or '',
-            'ksbProfileSourceId': row.get('ksb_profile_source_id') or '',
+            'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or ''),
             'tutor': row.get('tutor_name') or '',
-            'coach': row.get('coach_name') or '',
+            'coach': group_coach_name,
             'sessionsNumber': parse_int(row.get('sessions_number'), 0),
             'startDate': format_date(row.get('start_date')),
             'endDate': format_date(row.get('end_date')),
@@ -9094,7 +9366,6 @@ def save_module_authoring_structure(module_catalogue_id, payload):
     group_id = clean_str(payload.get('groupId') or payload.get('group_id') or delivery_metadata.get('groupId') or delivery_metadata.get('group_id'))
     group_name = clean_str(payload.get('groupName') or payload.get('group_name') or payload.get('group') or delivery_metadata.get('group'))
     tutor_name = canonical_staff_assignment_name('tutor', payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or delivery_metadata.get('tutor'))
-    coach_name = canonical_staff_assignment_name('coach', payload.get('coach') or payload.get('coachName') or payload.get('coach_name') or delivery_metadata.get('coach'))
     saved_module_row = None
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
@@ -9106,7 +9377,6 @@ def save_module_authoring_structure(module_catalogue_id, payload):
             'group_id': group_id,
             'group_name': group_name,
             'tutor_name': tutor_name,
-            'coach_name': coach_name,
             'title': payload.get('title') or payload.get('name') or f'Module {module_catalogue_id}',
             'description': payload.get('description') or '',
             'color': payload.get('color') or delivery_metadata.get('color') or '',
@@ -9118,12 +9388,11 @@ def save_module_authoring_structure(module_catalogue_id, payload):
             'quality_score': quality_score,
             'source_type': payload.get('sourceType') or payload.get('source_type') or None,
             'source_id': payload.get('sourceId') or payload.get('source_id') or None,
-            'ksb_profile_source_id': payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_module_row.get('ksb_profile_source_id'),
+            'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_module_row.get('ksb_profile_source_id')),
             'session_week_day': payload.get('weekDays') or payload.get('sessionWeekDay') or payload.get('session_week_day') or payload.get('deliveryDays') or None,
             'session_start_time': payload.get('startTime') or payload.get('sessionStartTime') or payload.get('session_start_time') or None,
             'session_end_time': payload.get('endTime') or payload.get('sessionEndTime') or payload.get('session_end_time') or None,
             'tutor_name': tutor_name or None,
-            'coach_name': coach_name or None,
         })
         link_live_session_series_to_module(module_catalogue_id, {**payload, 'weekStructure': weeks})
         authoring_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
@@ -9226,14 +9495,9 @@ def save_module_authoring_structure(module_catalogue_id, payload):
             'cohort': cohort_name,
             'programmeId': programme_id,
             'programme': programme_name,
-            'startDate': payload.get('startDate') or payload.get('start_date') or None,
-            'endDate': payload.get('endDate') or payload.get('end_date') or None,
-            'schedule': build_group_schedule(
-                payload.get('weekDays') or payload.get('deliveryDays') or delivery_metadata.get('weekDays') or delivery_metadata.get('deliveryDays'),
-                payload.get('startTime') or payload.get('start_time') or delivery_metadata.get('startTime') or delivery_metadata.get('start_time'),
-                payload.get('endTime') or payload.get('end_time') or delivery_metadata.get('endTime') or delivery_metadata.get('end_time'),
-                delivery_metadata.get('schedule'),
-            ),
+            'weekDays': payload.get('weekDays') or payload.get('deliveryDays') or delivery_metadata.get('weekDays') or delivery_metadata.get('deliveryDays'),
+            'startTime': payload.get('startTime') or payload.get('start_time') or delivery_metadata.get('startTime') or delivery_metadata.get('start_time'),
+            'endTime': payload.get('endTime') or payload.get('end_time') or delivery_metadata.get('endTime') or delivery_metadata.get('end_time'),
             'modules': [payload.get('title') or payload.get('name') or f'Module {module_catalogue_id}'],
         }, [], [saved_module_row] if saved_module_row else [])
 
@@ -9243,11 +9507,41 @@ def save_module_authoring_structure(module_catalogue_id, payload):
     return result
 
 
+def free_programme_course_id(module, existing=None):
+    requested = clean_str(module.get('courseId') or module.get('course_id'))
+    if re.match(r'^FREECOURSE-[0-9]{20}$', requested):
+        return requested
+    return unique_timestamp_prefixed_id('FREECOURSE', existing or [])
+
+
 def free_programme_module_id(programme_id, module, index):
     requested = clean_str(module.get('id') or module.get('moduleId') or module.get('catalogueId'))
-    if requested:
-        return canonical_authoring_id('FREEMOD', requested)
-    return canonical_authoring_id('FREEMOD', f'{programme_id}-{index + 1}-{module.get("title") or module.get("name")}')
+    if re.match(r'^(FREECOURSE|FREEWEEK)-[0-9]{20}$', requested):
+        return requested
+    existing = [row.get('id') for row in free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE)]
+    return unique_timestamp_prefixed_id('FREEWEEK', existing)
+
+
+def free_programme_week_payload(course_id, module, index):
+    week = None
+    week_structure = module.get('weekStructure') if isinstance(module.get('weekStructure'), list) else module.get('weeks')
+    if isinstance(week_structure, list) and week_structure:
+        week = next((item for item in week_structure if isinstance(item, dict)), None)
+    week = week or {}
+    week_number = parse_int(module.get('weekNumber') or module.get('week_number') or week.get('weekNumber') or week.get('week_number'), index + 1)
+    course_name = clean_str(module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name'))
+    week_title = clean_str(module.get('weekTitle') or module.get('week_title') or week.get('title') or course_name or f'Week {week_number}')
+    requested_week_id = clean_str(module.get('weekId') or module.get('week_id') or week.get('id'))
+    week_id = requested_week_id or unique_timestamp_prefixed_id('WEEK')
+    return {
+        'id': week_id,
+        'module_catalogue_id': course_id,
+        'week_number': week_number,
+        'title': week_title,
+        'summary': clean_str(week.get('summary') or module.get('description') or ''),
+        'learning_outcomes': json_db_value(week.get('learningOutcomes') or week.get('learning_outcomes') or []),
+        'display_order': parse_int(module.get('displayOrder') or module.get('display_order'), index),
+    }
 
 
 def free_programme_component_payload(component, index):
@@ -9264,7 +9558,7 @@ def free_programme_component_payload(component, index):
         'expected_otjh': component_expected_otjh(component),
         'points': parse_int(component.get('points'), 0),
         'reflection_required': bool_payload(component.get('reflectionRequired') or component.get('reflection_required')),
-        'workplace_evidence_required': False,
+        'workplace_evidence_required': bool_payload(component.get('workplaceEvidenceRequired') or component.get('workplace_evidence_required')),
         'tutor_validation_required': bool_payload(component.get('tutorValidationRequired') or component.get('tutor_validation_required')),
         'display_order': parse_int(requested_display_order, index),
         'settings_json': json_db_value(component.get('settings') or {}),
@@ -9275,6 +9569,7 @@ def free_programme_component_response(row):
     return {
         'id': row.get('id'),
         'moduleId': row.get('free_module_id'),
+        'weekId': row.get('week_id') or '',
         'type': frontend_component_type(row.get('type')),
         'title': row.get('title') or '',
         'description': row.get('description') or '',
@@ -9288,8 +9583,9 @@ def free_programme_component_response(row):
     }
 
 
-def free_programme_module_response(row, components):
+def free_programme_module_response(row, components, course=None):
     module_id = row.get('id')
+    course = course or {}
     module_components = [
         free_programme_component_response(component)
         for component in components
@@ -9298,12 +9594,15 @@ def free_programme_module_response(row, components):
     ]
     return {
         'id': module_id,
-        'programmeId': row.get('programme_id'),
-        'programmeName': row.get('programme_name') or '',
-        'title': row.get('title') or '',
-        'description': row.get('description') or '',
-        'status': row.get('status') or 'draft',
-        'color': row.get('color') or '',
+        'courseId': row.get('course_id') or course.get('id') or module_id,
+        'weekId': row.get('week_id') or '',
+        'weekNumber': parse_int(row.get('week_number'), 1),
+        'weekTitle': row.get('week_title') or '',
+        'courseName': course.get('course_name') or row.get('course_name') or row.get('title') or '',
+        'title': course.get('course_name') or row.get('course_name') or row.get('title') or '',
+        'description': course.get('description') if course.get('description') is not None else row.get('description') or '',
+        'coverImageUrl': course.get('cover_image_url') if course.get('cover_image_url') is not None else row.get('cover_image_url') or '',
+        'weekBuilderWeekIds': as_json_value(course.get('week_builder_week_ids'), []),
         'displayOrder': parse_int(row.get('display_order'), 0),
         'componentCount': len(module_components),
         'totalOtjh': parse_float(row.get('total_otjh'), 0),
@@ -9313,11 +9612,20 @@ def free_programme_module_response(row, components):
 
 def get_free_programme_modules_payload(programme_id):
     programme_id = clean_str(programme_id)
+    courses = {
+        clean_str(course.get('id')): course
+        for course in free_programme_fetch_all(
+            FREE_COURSES_TABLE,
+            '',
+            [],
+            'display_order, course_name, id',
+        )
+    }
     modules = free_programme_fetch_all(
         FREE_PROGRAMME_MODULES_TABLE,
-        'programme_id = %s',
-        [programme_id],
-        'display_order, title',
+        '',
+        [],
+        'display_order, course_name, week_number, id',
     )
     components = active_component_rows(free_programme_fetch_all(
         FREE_PROGRAMME_COMPONENTS_TABLE,
@@ -9325,7 +9633,7 @@ def get_free_programme_modules_payload(programme_id):
         [programme_id],
         'display_order, title',
     ))
-    return [free_programme_module_response(module, components) for module in modules]
+    return [free_programme_module_response(module, components, courses.get(clean_str(module.get('course_id')))) for module in modules]
 
 
 def save_free_programme_modules(programme_id, payload):
@@ -9338,26 +9646,76 @@ def save_free_programme_modules(programme_id, payload):
         modules = []
 
     with transaction.atomic():
+        existing_free_courses = free_programme_fetch_all(FREE_COURSES_TABLE)
+        existing_free_weeks = free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE)
+        existing_free_course_ids = [clean_str(row.get('id')) for row in existing_free_courses if clean_str(row.get('id'))]
+        existing_free_week_ids = [clean_str(row.get('id')) for row in existing_free_weeks if clean_str(row.get('id'))]
         free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [programme_id])
-        free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, 'programme_id = %s', [programme_id])
+        free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, '1 = 1')
+        free_programme_delete(FREE_COURSES_TABLE, '1 = 1')
+        authoring_delete_ids = [*existing_free_course_ids, *existing_free_week_ids]
+        if authoring_delete_ids:
+            placeholders = ', '.join(['%s'] * len(authoring_delete_ids))
+            authoring_delete(
+                AUTHORING_WEEKS_TABLE,
+                f'module_catalogue_id in ({placeholders}) or id in ({placeholders})',
+                [*authoring_delete_ids, *authoring_delete_ids],
+            )
+        used_course_ids = set(existing_free_course_ids)
+        course_ids_by_key = {}
+        course_groups = {}
         for module_index, module in enumerate(modules):
             if not isinstance(module, dict):
                 continue
+            course_key = (
+                clean_str(module.get('courseId') or module.get('course_id')),
+                clean_str(module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name')),
+                clean_str(module.get('description') or ''),
+                clean_str(module.get('coverImageUrl') or module.get('cover_image_url') or ''),
+            )
+            course_id = course_key[0]
+            if not course_id:
+                fallback_key = course_key[1:]
+                if fallback_key not in course_ids_by_key:
+                    course_ids_by_key[fallback_key] = free_programme_course_id(module, used_course_ids)
+                    used_course_ids.add(course_ids_by_key[fallback_key])
+                course_id = course_ids_by_key[fallback_key]
+            elif course_id not in used_course_ids:
+                used_course_ids.add(course_id)
             module_id = free_programme_module_id(programme_id, module, module_index)
+            week_payload = free_programme_week_payload(course_id, module, module_index)
+            week_id = week_payload['id']
             components = active_components_payload(module.get('components') if isinstance(module.get('components'), list) else [])
             total_otjh = sum(component_expected_otjh(component) for component in components if isinstance(component, dict))
+            authoring_upsert(AUTHORING_WEEKS_TABLE, ['id'], week_payload)
             free_programme_upsert(FREE_PROGRAMME_MODULES_TABLE, ['id'], {
                 'id': module_id,
-                'programme_id': programme_id,
-                'programme_name': programme_name,
-                'title': module.get('title') or module.get('name') or f'Free module {module_index + 1}',
+                'course_id': course_id,
+                'week_id': week_id,
+                'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {module_index + 1}',
                 'description': module.get('description') or '',
-                'status': clean_str(module.get('status') or 'draft').lower(),
-                'color': module.get('color') or '',
+                'cover_image_url': module.get('coverImageUrl') or module.get('cover_image_url') or '',
+                'week_number': week_payload['week_number'],
+                'week_title': week_payload['title'],
                 'display_order': module_index,
                 'component_count': len(components),
                 'total_otjh': total_otjh,
             })
+            group = course_groups.setdefault(course_id, {
+                'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {len(course_groups) + 1}',
+                'description': module.get('description') or '',
+                'cover_image_url': module.get('coverImageUrl') or module.get('cover_image_url') or '',
+                'display_order': len(course_groups),
+                'week_count': 0,
+                'component_count': 0,
+                'total_otjh': 0,
+                'week_builder_week_ids': [],
+            })
+            group['week_count'] += 1
+            group['component_count'] += len(components)
+            group['total_otjh'] += total_otjh
+            if week_id:
+                group['week_builder_week_ids'].append(week_id)
             for component_index, component in enumerate(components):
                 if not isinstance(component, dict):
                     continue
@@ -9367,8 +9725,15 @@ def save_free_programme_modules(programme_id, payload):
                 free_programme_upsert(FREE_PROGRAMME_COMPONENTS_TABLE, ['id'], {
                     **component_payload,
                     'free_module_id': module_id,
+                    'week_id': week_id,
                     'programme_id': programme_id,
                 })
+        for course_id, group in course_groups.items():
+            group['week_builder_week_ids'] = json_db_value(group.get('week_builder_week_ids') or [])
+            free_programme_upsert(FREE_COURSES_TABLE, ['id'], {
+                'id': course_id,
+                **group,
+            })
 
     invalidate_curriculum_cache()
     return get_free_programme_modules_payload(programme_id)
@@ -9496,9 +9861,18 @@ def delete_programme_authoring_structure(identifier, programme=None, config=None
             placeholders = ', '.join(['%s'] * len(cohort_ids))
             authoring_delete(COHORT_AUTHORING_DETAILS_TABLE, f'{quote_ident("cohort_id")} in ({placeholders})', list(cohort_ids))
 
+        existing_free_courses = free_programme_fetch_all(FREE_COURSES_TABLE)
+        existing_free_weeks = free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE)
+        existing_free_course_ids = [clean_str(row.get('id')) for row in existing_free_courses if clean_str(row.get('id'))]
+        existing_free_week_ids = [clean_str(row.get('id')) for row in existing_free_weeks if clean_str(row.get('id'))]
         for candidate in programme_id_candidates:
             free_programme_delete(FREE_PROGRAMME_COMPONENTS_TABLE, 'programme_id = %s', [candidate])
-            free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, 'programme_id = %s', [candidate])
+        free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, '1 = 1')
+        free_programme_delete(FREE_COURSES_TABLE, '1 = 1')
+        existing_free_authoring_ids = unique([*existing_free_course_ids, *existing_free_week_ids])
+        if existing_free_authoring_ids:
+            placeholders = ', '.join(['%s'] * len(existing_free_authoring_ids))
+            authoring_delete(AUTHORING_WEEKS_TABLE, f'module_catalogue_id in ({placeholders}) or id in ({placeholders})', [*existing_free_authoring_ids, *existing_free_authoring_ids])
 
         if config:
             key_column = programme_config_key_column()
@@ -9815,7 +10189,7 @@ def curriculum_programme_detail(request, identifier):
             'color': payload.get('color') or programme.get('color') or '#6941c6',
             'description': payload.get('description') or programme.get('description') or '',
             'structure_type': structure_type,
-            'ksb_profile_source_id': payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or programme.get('ksbProfileSourceId') or '',
+            'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or programme.get('ksbProfileSourceId') or ''),
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),
         })
@@ -9831,7 +10205,7 @@ def curriculum_programme_detail(request, identifier):
             'color': payload.get('color') or config.get('color'),
             'description': payload.get('description'),
             'structure_type': structure_type,
-            'ksb_profile_source_id': payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else config.get('ksb_profile_source_id'),
+            'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else config.get('ksb_profile_source_id')),
             'updated_at': datetime.utcnow(),
         }
         try:
@@ -9860,7 +10234,7 @@ def curriculum_programme_detail(request, identifier):
             'programme': {
                 'id': identifier,
                 'sourceId': identifier,
-                'ksbProfileSourceId': payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') or '',
+                'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') or ''),
             },
         })
     return JsonResponse({'updated': True, 'programme': programme_response(identifier) or programme_response(name) or {'id': identifier}})
@@ -9932,7 +10306,7 @@ def curriculum_programme_collection(request):
             'color': payload.get('color') or existing_config.get('color') or '#6941c6',
             'description': payload.get('description') if 'description' in payload else existing_config.get('description'),
             'structure_type': programme_structure_type(payload, existing_config.get('structure_type') or 'scheduled'),
-            'ksb_profile_source_id': payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_config.get('ksb_profile_source_id'),
+            'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_config.get('ksb_profile_source_id')),
             'updated_at': datetime.utcnow(),
         }
         try:
@@ -9958,7 +10332,7 @@ def curriculum_programme_collection(request):
         'color': payload.get('color') or '#6941c6',
         'description': payload.get('description') or '',
         'structure_type': structure_type,
-        'ksb_profile_source_id': payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or '',
+        'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or ''),
         'is_active': True,
         'is_archived': False,
         'created_at': datetime.utcnow(),
@@ -9991,7 +10365,7 @@ def upsert_programme_for_tree(payload):
         'color': payload.get('color') or '#6941c6',
         'description': payload.get('description') or '',
         'structure_type': structure_type,
-        'ksb_profile_source_id': payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or (config or {}).get('ksb_profile_source_id') or '',
+        'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or (config or {}).get('ksb_profile_source_id') or ''),
         'is_active': True,
         'is_archived': False,
         'updated_at': datetime.utcnow(),
@@ -10011,7 +10385,7 @@ def upsert_programme_for_tree(payload):
             'color': updates['color'],
             'description': updates['description'],
             'structureType': structure_type,
-            'ksbProfileSourceId': updates.get('ksb_profile_source_id') or '',
+            'ksbProfileSourceId': normalise_ksb_profile_source_value(updates.get('ksb_profile_source_id') or ''),
         }
 
     source_id = unique_program_id(requested_id or name, get_program_config_rows())
@@ -10032,7 +10406,7 @@ def upsert_programme_for_tree(payload):
         'color': row.get('color') or updates['color'],
         'description': row.get('description') or updates['description'],
         'structureType': structure_type,
-        'ksbProfileSourceId': row.get('ksb_profile_source_id') or updates.get('ksb_profile_source_id') or '',
+        'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or updates.get('ksb_profile_source_id') or ''),
     }
 
 
@@ -10102,10 +10476,9 @@ def save_tree_group(group, cohort_row):
         'programmeId': cohort['programmeId'],
         'programme': cohort['programmeName'],
         'coach': canonical_staff_assignment_name('coach', group.get('coach')) if 'coach' in group else clean_str(existing.get('coach_name')),
-        'tutor': canonical_staff_assignment_name('tutor', group.get('tutor')) if 'tutor' in group else clean_str(existing.get('tutor_name')),
-        'startDate': group.get('startDate') or cohort['startDate'],
-        'endDate': group.get('endDate') or cohort['endDate'],
-        'schedule': build_group_schedule(group.get('weekDays') or group.get('deliveryDays'), group.get('startTime'), group.get('endTime'), existing.get('schedule')),
+        'weekDays': group.get('weekDays') or group.get('deliveryDays') or existing.get('session_week_day') or schedule_day_part(existing.get('schedule')),
+        'startTime': group.get('startTime') or existing.get('session_start_time') or schedule_time_parts(existing.get('schedule'))[0],
+        'endTime': group.get('endTime') or existing.get('session_end_time') or schedule_time_parts(existing.get('schedule'))[1],
         'color': group.get('color') or existing.get('color') or '',
         'status': group.get('status') or existing.get('status') or 'planned',
     }
@@ -10117,7 +10490,7 @@ def save_tree_group(group, cohort_row):
         previous_cohort = fetch_cohort_row(previous_cohort_id) or {}
         update_cohort_fields(previous_cohort_id, {'group_ids': json_array_remove(previous_cohort.get('group_ids'), group_id)})
     update_cohort_fields(cohort['cohortId'], {'group_ids': json_array_add(cohort_row.get('group_ids'), group_id)})
-    sync_group_staff_profile_links(group_id, coach_name=group_payload['coach'], tutor_name=group_payload['tutor'], module_assignment_ids=[])
+    sync_group_staff_profile_links(group_id, coach_name=group_payload['coach'], module_assignment_ids=[])
     return curriculum_group_from_authoring_detail(serialize_group_authoring_detail(row))
 
 
@@ -10133,7 +10506,7 @@ def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
             requested_catalogue_id = ''
         catalogue_id = contentful_catalogue_id_for_attachment(module, group, cohort, module_name, requested_catalogue_id) or unique_module_catalogue_id(requested_catalogue_id or module_name)
         current_structure = get_authoring_structure_payload(catalogue_id) if authoring_module_exists(catalogue_id) else None
-        start_date = module.get('startDate') or group.get('startDate') or cohort.get('startDate')
+        start_date = module.get('startDate') or cohort.get('startDate')
         # `weeks` is overloaded in the attachment payload: the wizard's catalogue
         # shape sends it as an integer session count, while older tree payloads
         # sent it as a list of authored weeks. Only accept the list form as a
@@ -10141,8 +10514,8 @@ def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
         # every authored week (and its components) is dropped on save.
         attachment_weeks = attachment_week_structure(module, current_structure)
         session_count = attachment_session_count(module, attachment_weeks)
-        session_plan = build_module_session_plan(start_date, session_count, module.get('weekDays') or group.get('schedule'), module.get('holidays') or module.get('linkedHolidays') or [])
-        end_date = session_plan.get('finalEndDate') or module.get('endDate') or group.get('endDate') or cohort.get('endDate')
+        session_plan = build_module_session_plan(start_date, session_count, module.get('weekDays') or group.get('weekDays') or group.get('schedule'), module.get('holidays') or module.get('linkedHolidays') or [])
+        end_date = session_plan.get('finalEndDate') or module.get('endDate') or cohort.get('endDate')
         structure_payload = module_attachment_authoring_payload(
             {
                 **module,
@@ -10409,7 +10782,7 @@ def curriculum_module_collection(request):
             'epaRequirements': payload.get('epaRequirements') or [],
             'qualificationOutcomes': payload.get('qualificationOutcomes') or [],
             'weekStructure': payload.get('weekStructure') or [],
-            'ksbProfileSourceId': payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or '',
+            'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or ''),
         }
         try:
             result = save_module_authoring_structure(module_catalogue_id, module_payload)
@@ -10473,7 +10846,7 @@ def curriculum_module_collection(request):
         'completionCriteria': payload.get('completionCriteria') or default_completion_payload(),
         'advancedDetails': payload.get('advancedDetails') or {},
         'sourceType': payload.get('sourceType') or 'authoring',
-        'ksbProfileSourceId': payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or '',
+        'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or ''),
     })
     return JsonResponse({'created': True, 'moduleCatalogueId': result.get('catalogueId') or module_catalogue_id, 'module': result}, status=201)
 
@@ -11857,7 +12230,7 @@ def curriculum_module_detail(request, identifier):
             'startTime': payload.get('startTime') or current.get('startTime') or current_delivery_metadata.get('startTime') or '',
             'endTime': payload.get('endTime') or current.get('endTime') or current_delivery_metadata.get('endTime') or '',
             'moduleKsbMappings': payload.get('ksbMappings') if 'ksbMappings' in payload else payload.get('moduleKsbMappings') or current.get('moduleKsbMappings') or [],
-            'ksbProfileSourceId': payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else current.get('ksbProfileSourceId') or '',
+            'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else current.get('ksbProfileSourceId') or ''),
             'completionCriteria': payload.get('completionCriteria') or current.get('completionCriteria') or default_completion_payload(),
             'advancedDetails': payload.get('advancedDetails') or current.get('advancedDetails') or {},
             'weekStructure': payload.get('weekStructure') or current.get('weekStructure') or [],
@@ -12057,7 +12430,7 @@ def curriculum_group_from_authoring_detail(detail):
         'programmeId': detail.get('programmeId') or detail.get('programme_id') or '',
         'programme': detail.get('programme') or detail.get('programmeName') or detail.get('programme_name') or '',
         'coach': detail.get('coach') or detail.get('coach_name') or '',
-        'tutor': detail.get('tutor') or detail.get('tutor_name') or '',
+        'tutor': detail.get('tutor') or '',
         'startDate': detail.get('startDate') or detail.get('start_date') or '',
         'endDate': detail.get('endDate') or detail.get('end_date') or '',
         'schedule': detail.get('schedule') or '',
@@ -12345,11 +12718,9 @@ def create_curriculum_group(payload):
     programme = clean_str(cohort_row.get('programme_name'))
     group_name = clean_str(payload.get('name'))
     group_id = unique_group_id(payload.get('id') or payload.get('groupId') or payload.get('group_id'))
-    requested_schedule = build_group_schedule(
-        payload.get('weekDays'),
-        payload.get('startTime'),
-        payload.get('endTime'),
-    )
+    requested_week_day = clean_str(payload.get('weekDays') or payload.get('deliveryDays') or payload.get('sessionWeekDay') or payload.get('session_week_day'))
+    requested_start_time = clean_str(payload.get('startTime') or payload.get('start_time') or payload.get('sessionStartTime') or payload.get('session_start_time'))
+    requested_end_time = clean_str(payload.get('endTime') or payload.get('end_time') or payload.get('sessionEndTime') or payload.get('session_end_time'))
 
     duplicate = next((
         detail for detail in group_authoring_detail_rows()
@@ -12370,10 +12741,9 @@ def create_curriculum_group(payload):
             'programme_id': programme_id,
             'programme_name': programme,
             'coach_name': canonical_staff_assignment_name('coach', payload.get('coach')) if 'coach' in payload else clean_str(duplicate.get('coach')),
-            'tutor_name': canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else clean_str(duplicate.get('tutor')),
-            'start_date': payload.get('startDate') or format_date(cohort_row.get('start_date')),
-            'end_date': payload.get('endDate') or format_date(cohort_row.get('end_date')),
-            'schedule': requested_schedule if any(key in payload for key in ('weekDays', 'startTime', 'endTime')) else clean_str(duplicate.get('schedule')),
+            'session_week_day': requested_week_day if any(key in payload for key in ('weekDays', 'deliveryDays', 'sessionWeekDay', 'session_week_day')) else clean_str(duplicate.get('weekDays') or duplicate.get('session_week_day')),
+            'session_start_time': requested_start_time if any(key in payload for key in ('startTime', 'start_time', 'sessionStartTime', 'session_start_time')) else clean_str(duplicate.get('startTime') or duplicate.get('session_start_time')),
+            'session_end_time': requested_end_time if any(key in payload for key in ('endTime', 'end_time', 'sessionEndTime', 'session_end_time')) else clean_str(duplicate.get('endTime') or duplicate.get('session_end_time')),
             'color': clean_str(payload.get('color')) if 'color' in payload else clean_str(duplicate.get('color')),
             'status': clean_str(duplicate.get('status')) or 'planned',
         }
@@ -12387,7 +12757,6 @@ def create_curriculum_group(payload):
         sync_group_staff_profile_links(
             existing_id,
             coach_name=updates['coach_name'],
-            tutor_name=updates['tutor_name'],
             module_assignment_ids=module_assignment_ids,
             previous_coach_name=clean_str(duplicate.get('coach')),
         )
@@ -12400,10 +12769,11 @@ def create_curriculum_group(payload):
             'programmeId': programme_id,
             'programme': programme,
             'coach': updates['coach_name'],
-            'tutor': updates['tutor_name'],
-            'startDate': updates['start_date'],
-            'endDate': updates['end_date'],
-            'schedule': updates['schedule'],
+            'tutor': duplicate.get('tutor') or 'Unassigned',
+            'weekDays': updates['session_week_day'],
+            'startTime': updates['session_start_time'],
+            'endTime': updates['session_end_time'],
+            'schedule': build_group_schedule(updates['session_week_day'], updates['session_start_time'], updates['session_end_time']),
             'color': updates.get('color') or '',
             'status': updates['status'],
             'modules': parse_notes_id_list(duplicate.get('modules') or duplicate.get('moduleNames')),
@@ -12417,10 +12787,9 @@ def create_curriculum_group(payload):
         'programmeId': programme_id,
         'programme': programme,
         'coach': canonical_staff_assignment_name('coach', payload.get('coach')),
-        'tutor': canonical_staff_assignment_name('tutor', payload.get('tutor')),
-        'startDate': payload.get('startDate') or format_date(cohort_row.get('start_date')),
-        'endDate': payload.get('endDate') or format_date(cohort_row.get('end_date')),
-        'schedule': requested_schedule,
+        'weekDays': requested_week_day,
+        'startTime': requested_start_time,
+        'endTime': requested_end_time,
         'color': payload.get('color') or '',
         'status': 'planned',
         'modules': [payload.get('moduleName')] if clean_str(payload.get('moduleName')) else [],
@@ -12432,7 +12801,6 @@ def create_curriculum_group(payload):
     sync_group_staff_profile_links(
         group_id,
         coach_name=group['coach'],
-        tutor_name=group['tutor'],
         module_assignment_ids=[],
     )
     invalidate_curriculum_cache()
@@ -12444,10 +12812,11 @@ def create_curriculum_group(payload):
         'programmeId': programme_id,
         'programme': programme,
         'coach': group['coach'],
-        'tutor': group['tutor'],
-        'startDate': group['startDate'],
-        'endDate': group['endDate'],
-        'schedule': group['schedule'],
+        'tutor': 'Unassigned',
+        'weekDays': group['weekDays'],
+        'startTime': group['startTime'],
+        'endTime': group['endTime'],
+        'schedule': build_group_schedule(group['weekDays'], group['startTime'], group['endTime']),
         'color': group['color'],
         'status': group['status'],
         'modules': group['modules'],
@@ -12494,8 +12863,8 @@ def curriculum_group_detail(request, identifier):
 
     # Resolve the group by its stored canonical id in curriculum.groups. Updates
     # target this row in place, preserving group_id, cohort_id, programme_id,
-    # module relationships, dates, status and any staff assignment not being
-    # explicitly changed.
+    # module relationships, status and any staff assignment not being explicitly
+    # changed.
     group_row = resolve_group_row(identifier)
     if not group_row:
         return json_error('Group not found.', status=404)
@@ -12516,27 +12885,19 @@ def curriculum_group_detail(request, identifier):
         return json_error('Invalid JSON body.')
 
     previous_coach = clean_str(group_row.get('coach_name'))
-    stored_tutor = clean_str(group_row.get('tutor_name'))
     stored_coach = clean_str(group_row.get('coach_name'))
 
     updates = {}
     if 'name' in payload and clean_str(payload.get('name')):
         updates['group_name'] = clean_str(payload.get('name'))
-    if 'tutor' in payload:
-        updates['tutor_name'] = canonical_staff_assignment_name('tutor', payload.get('tutor'))
     if 'coach' in payload:
         updates['coach_name'] = canonical_staff_assignment_name('coach', payload.get('coach'))
-    if 'startDate' in payload:
-        updates['start_date'] = payload.get('startDate') or None
-    if 'endDate' in payload:
-        updates['end_date'] = payload.get('endDate') or None
-    if any(key in payload for key in ('weekDays', 'startTime', 'endTime')):
-        updates['schedule'] = build_group_schedule(
-            payload.get('weekDays') if 'weekDays' in payload else group_row.get('schedule'),
-            payload.get('startTime'),
-            payload.get('endTime'),
-            group_row.get('schedule'),
-        )
+    if any(key in payload for key in ('weekDays', 'deliveryDays', 'sessionWeekDay', 'session_week_day')):
+        updates['session_week_day'] = clean_str(payload.get('weekDays') or payload.get('deliveryDays') or payload.get('sessionWeekDay') or payload.get('session_week_day'))
+    if any(key in payload for key in ('startTime', 'start_time', 'sessionStartTime', 'session_start_time')):
+        updates['session_start_time'] = clean_str(payload.get('startTime') or payload.get('start_time') or payload.get('sessionStartTime') or payload.get('session_start_time'))
+    if any(key in payload for key in ('endTime', 'end_time', 'sessionEndTime', 'session_end_time')):
+        updates['session_end_time'] = clean_str(payload.get('endTime') or payload.get('end_time') or payload.get('sessionEndTime') or payload.get('session_end_time'))
     if 'color' in payload:
         updates['color'] = clean_str(payload.get('color'))
     if 'status' in payload and clean_str(payload.get('status')):
@@ -12585,11 +12946,18 @@ def curriculum_group_detail(request, identifier):
             for row in safe_authoring_module_rows()
             if clean_str(row.get('group_id')) == next_group_id and row.get('module_catalogue_id')
         ]
+        next_tutor = canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else ''
+        if next_tutor or 'tutor' in payload:
+            for module_id in module_assignment_ids:
+                update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
+                    'tutor_name': next_tutor or None,
+                    'updated_at': datetime.utcnow(),
+                })
         sync_group_staff_profile_links(
             next_group_id,
             coach_name=canonical_staff_assignment_name('coach', payload.get('coach')) if 'coach' in payload else stored_coach,
-            tutor_name=canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else stored_tutor,
-            module_assignment_ids=module_assignment_ids,
+            tutor_name=next_tutor,
+            module_assignment_ids=module_assignment_ids if 'tutor' in payload else [],
             previous_coach_name=previous_coach,
         )
     invalidate_curriculum_cache()
@@ -12598,11 +12966,9 @@ def curriculum_group_detail(request, identifier):
 
 def module_attachment_authoring_payload(item, group, cohort, catalogue_id, module_name, session_count, start_date, end_date, current_structure=None, source_type='module_authoring', source_id=''):
     current_structure = current_structure or {}
-    schedule = clean_str(item.get('weekDays') or item.get('deliveryDays') or group.get('schedule'))
+    schedule = clean_str(item.get('weekDays') or item.get('deliveryDays') or group.get('weekDays') or group.get('schedule'))
     explicit_tutor = clean_str(item.get('tutor'))
-    explicit_coach = clean_str(item.get('coach'))
     group_tutor = '' if staff_assignment_key(group.get('tutor')) == 'unassigned' else clean_str(group.get('tutor'))
-    group_coach = '' if staff_assignment_key(group.get('coach')) == 'unassigned' else clean_str(group.get('coach'))
     return {
         **current_structure,
         'catalogueId': catalogue_id,
@@ -12613,7 +12979,6 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'groupId': group['id'],
         'groupName': group.get('name') or '',
         'tutor': explicit_tutor if explicit_tutor and staff_assignment_key(explicit_tutor) != 'unassigned' else group_tutor,
-        'coach': explicit_coach if explicit_coach and staff_assignment_key(explicit_coach) != 'unassigned' else group_coach,
         'title': module_name,
         'description': visible_notes(item.get('notes') or current_structure.get('description') or ''),
         'color': item.get('color') or current_structure.get('color') or '',
@@ -12622,8 +12987,8 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'startDate': start_date,
         'endDate': end_date,
         'weekDays': schedule,
-        'startTime': item.get('startTime') or '',
-        'endTime': item.get('endTime') or '',
+        'startTime': item.get('startTime') or group.get('startTime') or '',
+        'endTime': item.get('endTime') or group.get('endTime') or '',
         # Prefer a structure the caller authored; fall back to what is stored so a
         # metadata-only reattachment never blanks existing weeks/components.
         'weekStructure': attachment_week_structure(item, current_structure),
@@ -12635,7 +13000,7 @@ def module_attachment_authoring_payload(item, group, cohort, catalogue_id, modul
         'qualificationOutcomes': current_structure.get('qualificationOutcomes') or [],
         'sourceType': source_type,
         'sourceId': clean_str(source_id or item.get('sourceId') or catalogue_id),
-        'ksbProfileSourceId': item.get('ksbProfileSourceId') if 'ksbProfileSourceId' in item else item.get('ksb_profile_source_id') if 'ksb_profile_source_id' in item else current_structure.get('ksbProfileSourceId') or '',
+        'ksbProfileSourceId': normalise_ksb_profile_source_value(item.get('ksbProfileSourceId') if 'ksbProfileSourceId' in item else item.get('ksb_profile_source_id') if 'ksb_profile_source_id' in item else current_structure.get('ksbProfileSourceId') or ''),
     }
 
 
@@ -12807,7 +13172,7 @@ def curriculum_group_modules(request, identifier):
             requested_value = clean_str(explicit_catalogue_value or item.get('catalogueId') or item.get('moduleId'))
             requested_catalogue_id = requested_value if is_canonical_module_catalogue_id(requested_value) else ''
 
-            start_date = item.get('startDate') or group.get('startDate') or cohort.get('startDate')
+            start_date = item.get('startDate') or cohort.get('startDate')
             module_start = parse_date(start_date)
             cohort_start = parse_date(cohort.get('startDate'))
             cohort_end = parse_date(cohort.get('endDate'))
@@ -12824,10 +13189,10 @@ def curriculum_group_modules(request, identifier):
                     status=400,
                 )
 
-            delivery_days = item.get('weekDays') or group.get('schedule')
+            delivery_days = item.get('weekDays') or group.get('weekDays') or group.get('schedule')
             session_count = attachment_session_count(item)
             session_plan = build_module_session_plan(start_date, session_count, delivery_days, item.get('holidays') or item.get('linkedHolidays') or [])
-            end_date = session_plan.get('finalEndDate') or item.get('endDate') or group.get('endDate') or cohort.get('endDate')
+            end_date = session_plan.get('finalEndDate') or item.get('endDate') or cohort.get('endDate')
             catalogue_id = contentful_catalogue_id_for_attachment(
                 item,
                 group,
@@ -13006,24 +13371,28 @@ def update_staffing_assignment(identifier, payload):
     previous_coach = clean_str(group_row.get('coach_name'))
 
     updates = {}
-    if 'tutor' in payload:
-        updates['tutor_name'] = canonical_staff_assignment_name('tutor', payload.get('tutor'))
     if 'coach' in payload:
         updates['coach_name'] = canonical_staff_assignment_name('coach', payload.get('coach'))
     update_group_fields(group_id, updates)
 
-    next_tutor = canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else clean_str(group_row.get('tutor_name'))
+    next_tutor = canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else ''
     next_coach = canonical_staff_assignment_name('coach', payload.get('coach')) if 'coach' in payload else clean_str(group_row.get('coach_name'))
     module_assignment_ids = [
         clean_str(row.get('module_catalogue_id'))
         for row in safe_authoring_module_rows()
         if clean_str(row.get('group_id')) == group_id and row.get('module_catalogue_id')
     ]
+    if 'tutor' in payload:
+        for module_id in module_assignment_ids:
+            update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
+                'tutor_name': next_tutor or None,
+                'updated_at': datetime.utcnow(),
+            })
     sync_group_staff_profile_links(
         group_id,
         coach_name=next_coach,
         tutor_name=next_tutor,
-        module_assignment_ids=module_assignment_ids,
+        module_assignment_ids=module_assignment_ids if 'tutor' in payload else [],
         previous_coach_name=previous_coach,
     )
     invalidate_curriculum_cache()
@@ -13033,8 +13402,9 @@ def update_staffing_assignment(identifier, payload):
 def staff_profile_payload(role, payload, existing=None):
     existing = existing or {}
     name = clean_str(payload.get('name') if 'name' in payload else existing.get('name'))
+    profile_id = clean_str(existing.get('id'))
     profile = {
-        'id': clean_str(existing.get('id') or payload.get('id')) or unique_prefixed_id(role.upper(), payload.get('name')),
+        'id': profile_id or unique_timestamp_prefixed_id(role.upper()),
         'name': name,
         'email': clean_str(payload.get('email') if 'email' in payload else existing.get('email')),
         'phone': clean_str(payload.get('phone') if 'phone' in payload else existing.get('phone')),
@@ -13137,7 +13507,7 @@ def clean_assignment_ids(values):
 
 def add_staff_profile_assignments(role, staff_name, column, assignment_ids):
     staff_name = clean_str(staff_name)
-    if not staff_name or staff_assignment_key(staff_name) == 'unassigned':
+    if is_blank_staff_assignment(staff_name):
         return []
     assignment_ids = clean_assignment_ids(assignment_ids)
     if not assignment_ids:
@@ -13162,7 +13532,7 @@ def add_staff_profile_assignments(role, staff_name, column, assignment_ids):
 def remove_staff_profile_assignments(role, staff_name, column, assignment_ids):
     staff_name = clean_str(staff_name)
     assignment_ids = set(clean_assignment_ids(assignment_ids))
-    if not staff_name or not assignment_ids or staff_assignment_key(staff_name) == 'unassigned':
+    if is_blank_staff_assignment(staff_name) or not assignment_ids:
         return []
     table = staff_profile_table(role)
     if column not in column_names(table):
@@ -13232,7 +13602,6 @@ def rebuild_staff_profile_assignments_from_authoring():
         ensure_staff_profile_tables()
         module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
         group_rows = authoring_fetch_all(GROUPS_TABLE)
-        valid_group_ids = {clean_str(row.get('group_id')) for row in group_rows if clean_str(row.get('group_id'))}
         tutor_module_ids = defaultdict(list)
         coach_group_ids = defaultdict(list)
         tutor_names = {}
@@ -13246,12 +13615,6 @@ def rebuild_staff_profile_assignments_from_authoring():
                 if tutor_key and tutor_key != 'unassigned':
                     tutor_names.setdefault(tutor_key, clean_str(module.get('tutor_name')))
                     tutor_module_ids[tutor_key].append(module_id)
-            group_id = clean_str(module.get('group_id'))
-            coach_key = staff_assignment_key(module.get('coach_name'))
-            if coach_key and coach_key != 'unassigned' and group_id and (not valid_group_ids or group_id in valid_group_ids):
-                coach_names.setdefault(coach_key, clean_str(module.get('coach_name')))
-                coach_group_ids[coach_key].append(group_id)
-
         for group in group_rows:
             group_id = clean_str(group.get('group_id'))
             coach_key = staff_assignment_key(group.get('coach_name'))
@@ -13344,7 +13707,8 @@ def current_staff_profile_payload(role, identifier):
         return None
     payload = build_curriculum_payload('all')
     modules = payload.get('modules') or []
-    return serialize_staff_profile(row, role, modules)
+    groups = payload.get('groups') or []
+    return serialize_staff_profile(row, role, modules, groups)
 
 
 @csrf_exempt
@@ -13361,8 +13725,9 @@ def curriculum_staff_profile_collection(request, role):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
-    if not clean_str(payload.get('name')):
-        return json_error('Missing required fields.', fields=['name'])
+    validation_errors = validate_staff_profile_payload(payload)
+    if validation_errors:
+        return json_error('Invalid staff profile details.', fields=validation_errors)
 
     table = staff_profile_table(role)
     duplicate_rows = staff_profile_rows_by_identity(
@@ -13398,7 +13763,7 @@ def curriculum_staff_profile_collection(request, role):
         existing_ids = [row.get('id') for row in get_staff_profile_rows(role, include_archived=True)]
         profile_payload = staff_profile_payload(role, {
             **payload,
-            'id': clean_str(payload.get('id')) or unique_prefixed_id(role.upper(), payload.get('name'), existing_ids),
+            'id': clean_str(payload.get('id')) or unique_timestamp_prefixed_id(role.upper(), existing_ids),
         })
         row = insert_row(table, profile_payload)
         if role == 'tutor':
@@ -13434,11 +13799,13 @@ def curriculum_staff_profile_detail(request, role, identifier):
             ) or [row]:
                 if staff_profile_is_archived(duplicate):
                     continue
-                update_rows(table, 'id = %s', [duplicate.get('id')], {
-                    'status': 'archived',
+                archive_updates = {
                     'is_archived': True,
                     'updated_at': datetime.utcnow(),
-                })
+                }
+                if has_column(table, 'status'):
+                    archive_updates['status'] = 'archived'
+                update_rows(table, 'id = %s', [duplicate.get('id')], archive_updates)
                 archived_ids.append(duplicate.get('id'))
             if role == 'tutor':
                 sync_staff_profile_module_assignments(role, staff_profile_name(row), [], previous_name=staff_profile_name(row), clear_missing=True)
@@ -13450,8 +13817,9 @@ def curriculum_staff_profile_detail(request, role, identifier):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
-    if 'name' in payload and not clean_str(payload.get('name')):
-        return json_error('Name cannot be blank.', fields=['name'])
+    validation_errors = validate_staff_profile_payload(payload, row)
+    if validation_errors:
+        return json_error('Invalid staff profile details.', fields=validation_errors)
 
     row, duplicates_changed = normalize_staff_profile_duplicates(
         role,

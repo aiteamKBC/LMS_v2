@@ -21,6 +21,8 @@ from .match_ledger_views import (
     save_activity_annotation,
 )
 from .plan_pickers import (
+    picker_aptem_groups,
+    picker_aptem_programmes,
     picker_assignment_evidence,
     picker_assignments,
     picker_attendance_grid,
@@ -30,6 +32,7 @@ from .plan_pickers import (
     picker_ksbs,
     picker_lms_groups,
     picker_materials,
+    picker_training_plan,
 )
 from .plan_views import (
     plan_activities,
@@ -81,7 +84,9 @@ urlpatterns = [
     path("plan/pickers/assignment-evidence", picker_assignment_evidence, name="manual-plan-picker-assignment-evidence"),
     path("plan/pickers/ksbs", picker_ksbs, name="manual-plan-picker-ksbs"),
     path("plan/pickers/lms-groups", picker_lms_groups, name="manual-plan-picker-lms-groups"),
-    path("plan/pickers/group-activities", picker_group_activities, name="manual-plan-picker-group-activities"),
+    path("plan/pickers/aptem-programmes", picker_aptem_programmes, name="manual-plan-picker-aptem-programmes"),
+    path("plan/pickers/aptem-groups", picker_aptem_groups, name="manual-plan-picker-aptem-groups"),
+    path("plan/pickers/training-plan", picker_training_plan, name="manual-plan-picker-training-plan"),
     # Monthly journal sign-off.
     path("learners/<str:learner_id>/signoff/", learner_signoff, name="manual-learner-signoff"),
     # Contract / evidence documents (manual-owned writes).

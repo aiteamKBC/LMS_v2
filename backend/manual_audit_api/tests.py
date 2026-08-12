@@ -36,6 +36,42 @@ def _post(view, path, payload, method="post", **kwargs):
     return view(request, **kwargs)
 
 
+class ProgrammeKeyTests(SimpleTestCase):
+    """Similar programme-name variants must cluster into one key."""
+
+    def test_pcp_variants_share_one_key(self):
+        from .plan_tables import programme_key
+        variants = [
+            "Project Controls Professional Level 6 - Feb 2026",
+            "Level 6 Project Controls Professional PCP - May 25",
+            "Project Controls Professional Level 6 (Onboarding Stage)",
+            "Level 6 Project Controls Professional Oct.25",
+            "NEW Level 6 Project Controls Professional PCP July 25",
+            "Project Controls Professional Level 6 Onboarding v1.1",
+            "Level 6 Project Controls Professional",
+        ]
+        keys = {programme_key(v) for v in variants}
+        self.assertEqual(len(keys), 1, keys)
+
+    def test_different_programmes_stay_apart(self):
+        from .plan_tables import programme_key
+        self.assertNotEqual(
+            programme_key("Marketing Executive Level 4 - June 2026"),
+            programme_key("Marketing Manager Level 6 - June 2026"),
+        )
+        self.assertNotEqual(
+            programme_key("Level 4 Marketing Executive"),
+            programme_key("Level 4 Market Research Executive"),
+        )
+
+    def test_display_strips_cohort_noise(self):
+        from .plan_tables import clean_programme_display
+        self.assertEqual(
+            clean_programme_display("Project Controls Professional Level 6 - Feb 2026"),
+            "Project Controls Professional Level 6",
+        )
+
+
 class AssignmentNameKeyTests(SimpleTestCase):
     def test_trailing_space_and_symbols_collapse(self):
         self.assertEqual(
