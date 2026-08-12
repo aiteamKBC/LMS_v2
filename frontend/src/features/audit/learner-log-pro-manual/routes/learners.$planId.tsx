@@ -314,26 +314,61 @@ function PlanBody({ data, member, activeMonth, onMonth, refresh }: {
   }
 
   async function editActivity(activity: PlanActivity) {
+    const cell = matrixCells[`${member.aptem_id}:${activity.activity_key}`];
+    const progress = cell?.progress && !cell.progress.rejected ? cell.progress : null;
+    const currentActual = progress?.actual_hours != null ? String(Number(progress.actual_hours)) : "";
     const { value: formValues } = await Swal.fire({
       title: "Edit activity",
       html:
         `<input id="plan-edit-title" class="swal2-input" style="width:85%" value="${esc(activity.title)}" placeholder="Title (the lecture)">` +
         `<input id="plan-edit-subtitle" class="swal2-input" style="width:85%" value="${esc(activity.subtitle ?? "")}" placeholder="Subtitle (the module)">` +
-        `<input id="plan-edit-hours" type="number" min="0" max="50" step="0.25" class="swal2-input" style="width:40%" value="${esc(activity.planned_hours)}" placeholder="Planned hours">` +
-        `<input id="plan-edit-date" type="date" class="swal2-input" style="width:40%" value="${esc(activity.planned_date ?? "")}">`,
+        `<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">` +
+        `<label style="font-size:11px;color:#64748b;text-transform:uppercase">Planned h<input id="plan-edit-hours" type="number" min="0" max="50" step="0.25" class="swal2-input" style="width:110px;margin:4px 0 0" value="${esc(activity.planned_hours)}"></label>` +
+        `<label style="font-size:11px;color:#64748b;text-transform:uppercase">Actual h (yours)<input id="plan-edit-actual" type="number" min="0" max="50" step="0.25" class="swal2-input" style="width:110px;margin:4px 0 0" value="${esc(currentActual)}" placeholder="—"></label>` +
+        `<label style="font-size:11px;color:#64748b;text-transform:uppercase">Date<input id="plan-edit-date" type="date" class="swal2-input" style="width:150px;margin:4px 0 0" value="${esc(activity.planned_date ?? "")}"></label>` +
+        `</div>`,
       focusConfirm: false, showCancelButton: true, confirmButtonText: "Save",
       preConfirm: () => ({
         title: (document.getElementById("plan-edit-title") as HTMLInputElement).value,
         subtitle: (document.getElementById("plan-edit-subtitle") as HTMLInputElement).value || null,
         planned_hours: Number((document.getElementById("plan-edit-hours") as HTMLInputElement).value),
         planned_date: (document.getElementById("plan-edit-date") as HTMLInputElement).value || null,
+        actual_raw: (document.getElementById("plan-edit-actual") as HTMLInputElement).value.trim(),
       }),
     });
     if (!formValues) return;
+    const { actual_raw: actualRaw, ...structural } = formValues;
     try {
-      const result = await patchPlanActivity(activity.activity_key, formValues);
+      const result = await patchPlanActivity(activity.activity_key, structural);
       warnSigned(result.signed_warnings);
+      // The learner's OWN hours: empty leaves the progress untouched, a
+      // number confirms completion with those hours (0 = back to not done).
+      if (actualRaw !== "" && actualRaw !== currentActual) {
+        const actualNumber = Number(actualRaw);
+        if (Number.isFinite(actualNumber) && actualNumber >= 0 && actualNumber <= 50) {
+          const progressResult = await savePlanProgress({
+            aptem_id: member.aptem_id,
+            activity_key: activity.activity_key,
+            patch: actualNumber > 0
+              ? {
+                  status: "completed",
+                  actual_hours: actualNumber,
+                  completion_date: progress?.completion_date ?? structural.planned_date ?? activity.planned_date,
+                  ...(activity.category === "attendance" ? { attendance_status: "attended" as const } : {}),
+                }
+              : {
+                  status: "not_started",
+                  actual_hours: 0,
+                  ...(activity.category === "attendance" ? { attendance_status: "absent" as const } : {}),
+                },
+          });
+          warnSigned(progressResult.signed_warnings);
+        } else {
+          void Swal.fire({ icon: "error", title: "Check the actual hours", text: "Actual hours must be between 0 and 50 — the other changes were saved." });
+        }
+      }
       await refresh();
+      await refreshMatrix();
       toast("Activity updated");
     } catch (cause) {
       fail("Could not update the activity", cause);
