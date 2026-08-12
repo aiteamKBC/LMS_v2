@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const cohort = {
-  source: "Last_audit",
+  source: "Manual_audit",
   programmes: ["Programme KSBs"],
   learners: [{
     aptem_id: 1930,
@@ -35,7 +35,7 @@ function jsonResponse(payload: unknown) {
   });
 }
 
-describe("Last_audit request scoping", () => {
+describe("Manual_audit request scoping", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.restoreAllMocks();
@@ -49,8 +49,8 @@ describe("Last_audit request scoping", () => {
     const result = await getLearnerActivities({ search: "", limit: 20, offset: 0 });
 
     expect(result.items).toEqual([]);
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/last-audit-ledger/cohort/"))).toBe(true);
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/last-audit-ledger/activities/"))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/manual_audit_api/ledger/cohort/"))).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/manual_audit_api/ledger/activities/"))).toBe(false);
   });
 
   it("keeps Aptem identity and exposes the verified LMS match", async () => {
@@ -78,7 +78,7 @@ describe("Last_audit request scoping", () => {
       const url = String(input);
       if (url.includes("/cohort/")) return jsonResponse(cohort);
       return jsonResponse({
-        source: "Last_audit",
+        source: "Manual_audit",
         aptem_id: 1930,
         learner_name: "Abigail Rooney",
         count: 0,
@@ -96,7 +96,7 @@ describe("Last_audit request scoping", () => {
       offset: 0,
     });
 
-    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/last-audit-ledger/activities/"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/manual_audit_api/ledger/activities/"))).toHaveLength(1);
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("aptem_id=1930"))).toBe(true);
   });
 
@@ -126,8 +126,8 @@ describe("Last_audit request scoping", () => {
     const result = await getLearners({ period: "2026-08" });
 
     expect(result.learners[0].entries).toBe(1);
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/last-audit-ledger/cohort/"))).toBe(true);
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/last-audit-ledger/activities/"))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/manual_audit_api/ledger/cohort/"))).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/manual_audit_api/ledger/activities/"))).toBe(false);
   });
 
   it("quarantines impossible source years as undated without changing their hours", async () => {
@@ -259,14 +259,14 @@ describe("Last_audit request scoping", () => {
       completed: true,
       ksbs: null,
       iframe_url: null,
-      source: "Last_audit",
+      source: "Manual_audit",
       hours_mapped: true,
     }));
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("activity-overrides")) return jsonResponse({ items: [] });
       if (url.includes("/activities/")) return jsonResponse({
-        source: "Last_audit", aptem_id: 1930, learner_name: "Abigail Rooney",
+        source: "Manual_audit", aptem_id: 1930, learner_name: "Abigail Rooney",
         month: "2026-08", count: activities.length, activities,
       });
       return jsonResponse(datedCohort);
@@ -290,7 +290,7 @@ describe("Last_audit request scoping", () => {
 
   it("loads an activity's participants with one set-based request", async () => {
     const detail = {
-      source: "Last_audit",
+      source: "Manual_audit",
       component_id: "la:10:20",
       activity: "Example activity",
       category: "video",
@@ -322,7 +322,7 @@ describe("Last_audit request scoping", () => {
 
     expect(result.total).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0][0])).toContain("/last-audit-ledger/activity/?activity_id=la%3A10%3A20");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/manual_audit_api/ledger/activity/?activity_id=la%3A10%3A20");
   });
 
   it("loads the rich learner profile for every programme", async () => {
@@ -356,7 +356,7 @@ describe("Last_audit request scoping", () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain("/match-ledger/learner-profile?learner=1930");
   });
 
-  it("stores Last_audit edits as reversible replacement overlays", async () => {
+  it("stores Manual_audit edits as reversible replacement overlays", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => jsonResponse({
       ok: true,
       activity_id: "la:10:20",
@@ -369,7 +369,7 @@ describe("Last_audit request scoping", () => {
       learner_id: 1930,
       learner: "Abigail Rooney",
       plan_id: "la:10:20",
-      source: "Last_audit",
+      source: "Manual_audit",
       activity_date: "2026-08-12",
       learner_activity_date: "2026-08-12",
       activity_category: "reading+quiz",
