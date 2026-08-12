@@ -423,9 +423,9 @@ export default function ManualQuizPage() {
       <form onSubmit={saveManualQuiz} className="min-h-screen bg-[#f7f6f4] p-4 sm:p-6 space-y-5">
         <div className="rounded-2xl border border-[#e3dee9] bg-white p-5 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="min-w-0">
-            <Link to="/curriculum/quiz-xml" className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">
+            <button type="button" onClick={() => navigate(-1)} className="text-xs font-semibold text-[#5b2dbb] hover:text-[#43207d]">
               <AppIcon className="ri-arrow-left-line mr-1"></AppIcon> Back to Quiz Workspace
-            </Link>
+            </button>
             <h2 className="mt-2 text-2xl font-heading font-bold text-foreground-900">Manual Quiz Builder</h2>
             <p className="text-sm text-[#647083]">Build the quiz, questions and learner settings before publishing.</p>
           </div>

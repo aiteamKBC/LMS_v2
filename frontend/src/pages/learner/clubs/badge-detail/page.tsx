@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
@@ -53,12 +53,13 @@ export default function ClubBadgeDetailPage() {
           </span>
           <h2 className="text-xl font-heading font-bold text-foreground-900 mb-2">Badge Not Found</h2>
           <p className="text-sm text-foreground-500 mb-6">We couldn&apos;t find a community badge with that identifier.</p>
-          <Link
-            to="/learner/clubs"
+          <button
+            type="button"
+            onClick={() => navigate(-1)}
             className="px-5 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-all whitespace-nowrap"
           >
             <AppIcon className="ri-arrow-left-line mr-1.5"></AppIcon> Back to Clubs
-          </Link>
+          </button>
         </div>
       </WorkspaceShell>
     );
@@ -118,7 +119,7 @@ export default function ClubBadgeDetailPage() {
 
         {/* Back link */}
         <button
-          onClick={() => navigate('/learner/clubs')}
+          onClick={() => navigate(-1)}
           className="inline-flex items-center gap-1.5 text-sm text-foreground-500 hover:text-foreground-700 transition-all cursor-pointer whitespace-nowrap"
         >
           <AppIcon className="ri-arrow-left-line"></AppIcon>

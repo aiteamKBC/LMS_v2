@@ -70,6 +70,7 @@ const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CoachTimetable = lazy(() => import("../pages/coach/timetable/page"));
 const CommunicationPage = lazy(() => import("../pages/communication/page"));
 const CurriculumDashboard = lazy(() => import("../pages/workspace/curriculum/page"));
+const CurriculumFreeCourses = lazy(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CurriculumProgrammes = lazy(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazy(() => import("../pages/curriculum/published/page"));
@@ -748,6 +749,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/programmes",
     element: <CurriculumProgrammes />,
+  },
+  {
+    path: "/curriculum/free-courses",
+    element: <CurriculumFreeCourses />,
   },
   {
     path: "/curriculum/module-builder",

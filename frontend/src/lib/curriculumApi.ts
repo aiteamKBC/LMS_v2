@@ -560,6 +560,9 @@ export interface CurriculumGroup {
   startDate: string;
   endDate: string;
   status: string;
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
   schedule: string;
   color?: string;
   mode: string;
@@ -688,6 +691,7 @@ export interface CurriculumOverview {
 export interface FreeProgrammeComponent {
   id: string;
   moduleId?: string;
+  weekId?: string;
   displayOrder: number;
   type: string;
   title: string;
@@ -702,12 +706,17 @@ export interface FreeProgrammeComponent {
 
 export interface FreeProgrammeModule {
   id: string;
-  programmeId: string;
-  programmeName: string;
+  courseId?: string;
+  weekId?: string;
+  weekNumber?: number;
+  weekTitle?: string;
+  programmeId?: string;
+  programmeName?: string;
+  courseName?: string;
   title: string;
   description: string;
-  status: string;
-  color?: string;
+  coverImageUrl?: string;
+  weekBuilderWeekIds?: string[];
   displayOrder: number;
   componentCount: number;
   totalOtjh: number;
@@ -1435,10 +1444,14 @@ export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
 };
 export type FreeProgrammeModuleInput = {
   id?: string;
+  courseId?: string;
+  weekId?: string;
+  weekNumber?: number;
+  weekTitle?: string;
+  courseName?: string;
   title: string;
   description?: string;
-  status?: string;
-  color?: string;
+  coverImageUrl?: string;
   components?: FreeProgrammeComponentInput[];
 };
 

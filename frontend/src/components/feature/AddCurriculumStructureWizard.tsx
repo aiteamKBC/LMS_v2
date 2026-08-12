@@ -2604,12 +2604,15 @@ function reorderFreeComponentInDraft(draft: ModuleDraft, sourceComponentId: stri
 }
 
 function freeProgrammeModuleInput(draft: ModuleDraft, moduleId: string, moduleName: string): FreeProgrammeModuleInput {
+  const firstWeek = draft.weeks[0];
   return {
     id: moduleId,
+    weekId: firstWeek?.id,
+    weekNumber: firstWeek?.sessionNumber || 1,
+    weekTitle: firstWeek?.title || 'Components',
+    courseName: moduleName,
     title: moduleName,
     description: userFacingNotes(draft.notes),
-    status: 'draft',
-    color: draft.color,
     components: draft.weeks.flatMap(week => week.components).map((component, componentIndex) => ({
       id: component.sourceId || component.id,
       displayOrder: componentIndex,
@@ -2621,6 +2624,7 @@ function freeProgrammeModuleInput(draft: ModuleDraft, moduleId: string, moduleNa
       reflectionRequired: component.reflectionRequired,
       workplaceEvidenceRequired: false,
       tutorValidationRequired: component.tutorValidationRequired,
+      weekId: component.weekId || firstWeek?.id,
       settings: component.settings,
     })),
   };
@@ -2775,15 +2779,15 @@ function freeProgrammeModulesToDrafts(modules: FreeProgrammeModule[], programmeN
   const group = cohort.groups[0] || emptyGroupDraft();
   const moduleDrafts = modules.map((module, moduleIndex): ModuleDraft => {
     const localId = module.id ? `${module.id}-${moduleIndex + 1}` : `free-module-${moduleIndex + 1}`;
-    const weekId = `${localId}-components`;
+    const weekId = module.weekId || `${localId}-components`;
     return {
       ...emptyModuleDraft(),
       localId,
       sourceId: module.id,
       mode: 'new',
       catalogueId: '',
-      name: module.title || `Free module ${moduleIndex + 1}`,
-      color: module.color || '#7c3aed',
+      name: module.courseName || module.title || `Free module ${moduleIndex + 1}`,
+      color: '#7c3aed',
       startDate: todayIso(),
       endDate: todayIso(),
       sessionsNumber: '1',
@@ -2792,11 +2796,11 @@ function freeProgrammeModulesToDrafts(modules: FreeProgrammeModule[], programmeN
       notes: module.description || '',
       weeks: [{
         id: weekId,
-        sessionNumber: 1,
+        sessionNumber: module.weekNumber || 1,
         date: todayIso(),
         day: 'Self-paced',
         startTime: '09:00',
-        title: 'Components',
+        title: module.weekTitle || 'Components',
         components: [...(module.components || [])]
           .sort((left, right) => Number(left.displayOrder ?? 0) - Number(right.displayOrder ?? 0))
           .map((component, componentIndex): ModuleComponent => ({
@@ -4625,12 +4629,12 @@ export function AddCurriculumStructureWizard({
         color: programme?.color || programmeForm.color,
         description: programme?.description || programmeForm.description,
         structureType: programme?.structureType || programmeForm.structureType,
-        ksbProfileSourceId: `profile:${selectedProfileId}`,
+        ksbProfileSourceId: selectedProfileId,
       });
       // Compact is safe here: the cascade reads only programme/name/colour/notes and
       // identity fields, and this array is local to the callback (never stored).
       const modulesForCascade = modules.length ? modules : await fetchCurriculumModules(undefined, { compact: true });
-      await cascadeWizardKsbSourceToProgrammeModules(programmeSourceId, programmeName, modulesForCascade, `profile:${selectedProfileId}`);
+      await cascadeWizardKsbSourceToProgrammeModules(programmeSourceId, programmeName, modulesForCascade, selectedProfileId);
       return;
     }
 
