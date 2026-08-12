@@ -6,7 +6,7 @@ from django.test import SimpleTestCase, override_settings
 
 from .contract_documents import _safe_upload_filename
 from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _parse_contract_azure_path, _signoff_row
-from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _fetch_profile_source_row, _partition_evidence_items, _training_plan_from_audit, _validate_overlay_activity
+from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _cv_employment_terms, _employer_details_from_contract_profile, _fetch_profile_source_row, _merge_matching_cv_employment_terms, _partition_evidence_items, _skill_radar_characteristic, _skill_radar_sort_key, _training_plan_from_audit, _validate_overlay_activity
 
 
 class ContractAzurePathTests(SimpleTestCase):
@@ -89,6 +89,102 @@ class EvidenceDocumentManagementTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "archived must be true or false.")
+
+
+class EmployerContractProfileTests(SimpleTestCase):
+    def test_maps_employer_profile_json_to_dashboard_shape(self):
+        details = _employer_details_from_contract_profile({
+            "employer": {
+                "name": "Newlon Housing Trust",
+                "job_title": "Marketing Officer",
+                "address": {"formatted": "Newlon House, London"},
+                "manager": {
+                    "name": "Qammer Hussain",
+                    "email": "qammer@example.com",
+                    "phone_number": "0123456789",
+                },
+            },
+        })
+
+        self.assertEqual(details["employer_name"], "Newlon Housing Trust")
+        self.assertEqual(details["job_title"], "Marketing Officer")
+        self.assertEqual(details["workplace_address"], "Newlon House, London")
+        self.assertEqual(details["line_manager"]["name"], "Qammer Hussain")
+        self.assertEqual(details["line_manager"]["email"], "qammer@example.com")
+        self.assertEqual(details["line_manager"]["phone"], "0123456789")
+
+    def test_reads_start_date_and_hours_from_cv_employment_json(self):
+        details = _cv_employment_terms(json.dumps([{
+            "file_name": "Training Plan.pdf",
+            "employment_details": {
+                "employer_name": "Example Ltd",
+                "employment_start_date": "02/01/2012",
+                "contracted_hours_per_week": "40",
+            },
+        }]))
+
+        self.assertEqual(details["employment_start_date"], "02/01/2012")
+        self.assertEqual(details["contracted_hours_per_week"], 40.0)
+
+    def test_merges_cv_terms_only_when_employer_names_match(self):
+        employment = {
+            "employer_name": "Example Limited",
+            "employment_start_date": None,
+            "contracted_hours_per_week": None,
+        }
+        candidates = [
+            {
+                "employer_name": "Previous Employer Ltd",
+                "employment_start_date": "01/01/2001",
+                "contracted_hours_per_week": 20.0,
+            },
+            {
+                "employer_name": "Example Ltd.",
+                "employment_start_date": "02/01/2012",
+                "contracted_hours_per_week": 40.0,
+            },
+        ]
+
+        result = _merge_matching_cv_employment_terms(employment, candidates)
+
+        self.assertEqual(result["employment_start_date"], "02/01/2012")
+        self.assertEqual(result["contracted_hours_per_week"], 40.0)
+
+    def test_does_not_merge_cv_terms_for_a_different_employer(self):
+        employment = {
+            "employer_name": "Current Employer Ltd",
+            "employment_start_date": None,
+            "contracted_hours_per_week": None,
+        }
+
+        result = _merge_matching_cv_employment_terms(employment, [{
+            "employer_name": "Previous Employer Ltd",
+            "employment_start_date": "01/01/2001",
+            "contracted_hours_per_week": 20.0,
+        }])
+
+        self.assertIsNone(result["employment_start_date"])
+        self.assertIsNone(result["contracted_hours_per_week"])
+
+
+class SkillsRadarClassificationTests(SimpleTestCase):
+    def test_classifies_competencies_by_ksb_prefix(self):
+        self.assertEqual(_skill_radar_characteristic("K1: Project principles")[1], "knowledge")
+        self.assertEqual(_skill_radar_characteristic("S4 - Interpret information")[1], "skill_score")
+        self.assertEqual(_skill_radar_characteristic("B2: Works collaboratively")[1], "behaviour")
+
+    def test_keeps_explicit_dimension_from_understanding_label(self):
+        domain, field = _skill_radar_characteristic(
+            "Understanding of Communication (Behaviour) - B8: Collaboration"
+        )
+
+        self.assertEqual(domain, "Communication")
+        self.assertEqual(field, "behaviour")
+
+    def test_sorts_numbered_competencies_naturally(self):
+        values = ["S10: Ten", "S2: Two", "S1: One"]
+
+        self.assertEqual(sorted(values, key=_skill_radar_sort_key), ["S1: One", "S2: Two", "S10: Ten"])
 
 
 class ContractDocumentManagementTests(SimpleTestCase):
