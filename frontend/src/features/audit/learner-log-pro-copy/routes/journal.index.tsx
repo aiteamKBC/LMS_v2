@@ -9,7 +9,7 @@ import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/api";
 import { ActivityTableHeader, InlineActivityCreateRow, InlineActivityRow } from "@/features/audit/learner-log-pro-copy/components/InlineActivityRow";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";
-import { getLearnerActivities, getLearnerProfile, getLearners } from "@/features/audit/learner-log-pro-copy/lib/api";
+import { getLearnerActivities, getLearners } from "@/features/audit/learner-log-pro-copy/lib/api";
 import { downloadLearnerJournalPdf } from "@/features/audit/learner-log-pro-copy/lib/journal-pdf";
 
 export const Route = createFileRoute("/journal/")({
@@ -162,11 +162,13 @@ function OtjhCard({ otjh }: { otjh?: any }) {
   const hour = (value: number | null | undefined) =>
     value == null ? "—" : `${Number(value).toFixed(2)} h`;
   const flagged = Boolean(otjh.flagged);
+  // Fetched-only months (2026-09+) must not be labelled "engineered".
+  const provenanceLabel = otjh.provenance === "fetched" ? "fetched" : "engineered";
   return (
     <div className={`rounded-lg border px-5 py-4 ${flagged ? "border-red-300 bg-red-50" : "border-border bg-[#f6f8fb]"}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Off-the-job hours (engineered)</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">Off-the-job hours ({provenanceLabel})</p>
           {otjh.applied_date && <p className="mt-0.5 text-xs text-muted-foreground">Adjustment applied {otjh.applied_date}</p>}
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${flagged ? "bg-red-600 text-white" : "bg-emerald-600/10 text-emerald-700"}`}>
@@ -267,16 +269,10 @@ function JournalPage() {
     enabled: Boolean(selectedLearner && selectedPeriod),
     placeholderData: keepPreviousData,
   });
-  const learnerProfile = useQuery({
-    queryKey: ["learner-profile", selectedLearner],
-    queryFn: () => getLearnerProfile(selectedLearner),
-    enabled: Boolean(selectedLearner),
-    retry: false,
-  });
   const savedSignoff = useQuery({
-    queryKey: ["journal-signoff", learnerProfile.data?.aptem_id, selectedPeriod],
-    queryFn: () => fetchAuditSignoff(learnerProfile.data!.aptem_id, selectedPeriod),
-    enabled: Boolean(learnerProfile.data?.aptem_id && selectedPeriod),
+    queryKey: ["journal-signoff", selectedLearner, selectedPeriod],
+    queryFn: () => fetchAuditSignoff(selectedLearner, selectedPeriod),
+    enabled: Boolean(selectedLearner && selectedPeriod),
     retry: false,
   });
 
@@ -299,11 +295,14 @@ function JournalPage() {
   const activityTo = Math.min((activityPage + 1) * activityPageSize, activityTotal);
 
   async function handleDownloadPdf() {
-    if (!learner || !learnerProfile.data || !selectedLearner || !selectedPeriod) return;
+    if (!learner || !selectedLearner || !selectedPeriod) return;
     setIsPreparingPdf(true);
     try {
       const allRows = await getAllJournalActivities(selectedLearner, selectedPeriod);
-      await downloadLearnerJournalPdf(learner, monthLabel, allRows, cumulativeLearner, learnerProfile.data, {
+      await downloadLearnerJournalPdf(learner, monthLabel, allRows, cumulativeLearner, {
+        programme: cumulativeLearner?.programme,
+        coach: cumulativeLearner?.coach,
+      }, {
         learner: learnerSignature,
         coach: coachSignature,
       });
@@ -313,7 +312,7 @@ function JournalPage() {
   }
 
   async function handleSaveSignatures() {
-    const aptemId = learnerProfile.data?.aptem_id;
+    const aptemId = selectedLearner;
     if (!aptemId || !learner || !learnerSignature || !coachSignature) return;
     setIsSavingSignatures(true);
     setSignatureError("");
@@ -323,7 +322,7 @@ function JournalPage() {
         monthKey: selectedPeriod,
         roles: {
           learner: { signerName: learner.name, signature: learnerSignature, confirmed: true, signedAt: now },
-          coach: { signerName: learnerProfile.data?.coach.name ?? "", signature: coachSignature, confirmed: true, signedAt: now },
+          coach: { signerName: cumulativeLearner?.coach.name ?? "", signature: coachSignature, confirmed: true, signedAt: now },
         },
       });
       queryClient.setQueryData(["journal-signoff", aptemId, selectedPeriod], response);
@@ -341,7 +340,7 @@ function JournalPage() {
   }
 
   async function handleRemoveSignature(role: "learner" | "coach") {
-    const aptemId = learnerProfile.data?.aptem_id;
+    const aptemId = selectedLearner;
     if (!aptemId || !learner) return;
     const roleLabel = role === "learner" ? "learner" : "coach";
     const confirmation = await Swal.fire({
@@ -365,7 +364,7 @@ function JournalPage() {
         monthKey: selectedPeriod,
         roles: {
           learner: { signerName: learner.name, signature: nextLearnerSignature, confirmed: Boolean(nextLearnerSignature), signedAt: nextLearnerSignature ? now : "" },
-          coach: { signerName: learnerProfile.data?.coach.name ?? "", signature: nextCoachSignature, confirmed: Boolean(nextCoachSignature), signedAt: nextCoachSignature ? now : "" },
+          coach: { signerName: cumulativeLearner?.coach.name ?? "", signature: nextCoachSignature, confirmed: Boolean(nextCoachSignature), signedAt: nextCoachSignature ? now : "" },
         },
       });
       queryClient.setQueryData(["journal-signoff", aptemId, selectedPeriod], response);
@@ -385,9 +384,7 @@ function JournalPage() {
   const isLoading =
     metadata.isLoading ||
     (Boolean(selectedPeriod) && monthSummaries.isLoading) ||
-    (Boolean(selectedLearner && selectedPeriod) && activities.isLoading) ||
-    (Boolean(selectedLearner) && learnerProfile.isLoading) ||
-    (Boolean(learnerProfile.data?.aptem_id && selectedPeriod) && savedSignoff.isLoading);
+    (Boolean(selectedLearner && selectedPeriod) && activities.isLoading);
   // Rich profile/sign-off data is optional for newly added programmes. Core
   // cohort/month/activity failures still block the journal; optional 404s do not.
   const pageError = metadata.error || monthSummaries.error || activities.error;
@@ -426,7 +423,7 @@ function JournalPage() {
               </div>
               <Button
                 className="gap-2 bg-[#182d48] hover:bg-[#243f61]"
-                disabled={!learner || !activities.data || !learnerProfile.data || !signaturesSaved || isPreparingPdf}
+                disabled={!learner || !activities.data || !signaturesSaved || isPreparingPdf}
                 onClick={handleDownloadPdf}
               >
                 {isPreparingPdf ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -451,15 +448,15 @@ function JournalPage() {
           ) : learner ? (
             <div className="space-y-5 px-7 py-6">
               <div className="grid rounded-lg bg-[#f6f8fb] px-5 lg:grid-cols-3">
-                <ProfileGroup label="Learner" value={learner.name} secondaryLabel="Start date" secondaryValue={learnerProfile.data?.learning_delivery.start_date ?? "—"} />
-                <ProfileGroup label="Programme" value={learnerProfile.data?.programme ?? "—"} secondaryLabel="First evidence" secondaryValue={learnerProfile.data?.learning_delivery.first_evidence_date ?? "—"} />
-                <ProfileGroup label="Coach" value={learnerProfile.data?.coach.name ?? "—"} secondaryLabel="Planned end" secondaryValue={learnerProfile.data?.learning_delivery.planned_end_date ?? "—"} />
+                <ProfileGroup label="Learner" value={learner.name} secondaryLabel="Start date" secondaryValue="—" />
+                <ProfileGroup label="Programme" value={cumulativeLearner?.programme ?? "—"} secondaryLabel="First evidence" secondaryValue="—" />
+                <ProfileGroup label="Coach" value={cumulativeLearner?.coach.name ?? "—"} secondaryLabel="Planned end" secondaryValue="—" />
               </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Stat label="Monthly plan" value={`${learner.planned_hours.toFixed(2)} h`} />
-                <Stat label="Claimed" value={`${learner.actual_hours.toFixed(2)} h`} tone="purple" />
-                <Stat label="Not accepted" value={`${(learner.not_accepted_hours ?? 0).toFixed(2)} h`} tone="warning" />
-                <Stat label="Variance" value={`${learner.gap_hours > 0 ? "+" : ""}${learner.gap_hours.toFixed(2)} h`} tone={learner.gap_hours < 0 ? "warning" : "success"} />
+                <Stat label="Monthly plan" value={learner.hours_mapped === false ? "—" : `${learner.planned_hours.toFixed(2)} h`} />
+                <Stat label="Claimed" value={learner.hours_mapped === false ? "—" : `${learner.actual_hours.toFixed(2)} h`} tone="purple" />
+                <Stat label="Not accepted" value={learner.hours_mapped === false ? "—" : `${(learner.not_accepted_hours ?? 0).toFixed(2)} h`} tone="warning" />
+                <Stat label="Variance" value={learner.hours_mapped === false ? "—" : `${learner.gap_hours > 0 ? "+" : ""}${learner.gap_hours.toFixed(2)} h`} tone={learner.gap_hours < 0 ? "warning" : "success"} />
               </div>
               <OtjhCard otjh={activities.data?.otjh} />
             </div>
@@ -474,15 +471,20 @@ function JournalPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono text-xs font-medium text-[#182d48]">{activities.data?.total ?? 0} activities</span>
-              <Button size="sm" disabled={!learnerProfile.data || addingActivity} onClick={() => setAddingActivity(true)}><Plus className="h-3.5 w-3.5" /> Add activity</Button>
+              <Button
+                size="sm"
+                disabled={!selectedLearner || !learner || addingActivity}
+                onClick={() => setAddingActivity(true)}
+                title={!selectedLearner ? "Choose a learner first" : undefined}
+              ><Plus className="h-3.5 w-3.5" /> Add activity</Button>
             </div>
           </header>
           <div className="overflow-x-auto">
             <Table>
               <TableHeader><ActivityTableHeader dark /></TableHeader>
               <TableBody>
-                {addingActivity && learnerProfile.data ? (
-                  <InlineActivityCreateRow learnerId={Number(learnerProfile.data.aptem_id)} learnerName={learnerProfile.data.name} onCancel={() => setAddingActivity(false)} />
+                {addingActivity && selectedLearner && learner ? (
+                  <InlineActivityCreateRow learnerId={Number(selectedLearner)} learnerName={learner.name} onCancel={() => setAddingActivity(false)} />
                 ) : null}
                 {activities.data?.items.map((row, index, rows) => (
                   <Fragment key={row.id}>
@@ -538,7 +540,7 @@ function JournalPage() {
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <SignatureCapture label="Learner signature" signer={learner?.name ?? ""} value={learnerSignature} onChange={(value) => { setLearnerSignature(value); setLearnerSignatureSaved(false); }} onRemove={() => handleRemoveSignature("learner")} canRemove={learnerSignatureSaved} isRemoving={isSavingSignatures} />
-            <SignatureCapture label="Coach signature" signer={learnerProfile.data?.coach.name ?? ""} value={coachSignature} onChange={(value) => { setCoachSignature(value); setCoachSignatureSaved(false); }} onRemove={() => handleRemoveSignature("coach")} canRemove={coachSignatureSaved} isRemoving={isSavingSignatures} />
+            <SignatureCapture label="Coach signature" signer={cumulativeLearner?.coach.name ?? ""} value={coachSignature} onChange={(value) => { setCoachSignature(value); setCoachSignatureSaved(false); }} onRemove={() => handleRemoveSignature("coach")} canRemove={coachSignatureSaved} isRemoving={isSavingSignatures} />
           </div>
         </section>
       </main>

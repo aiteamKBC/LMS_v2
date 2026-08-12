@@ -49,17 +49,25 @@ function isoOrNull(value: string) {
   return value ? new Date(value).toISOString() : null;
 }
 
+function timestampOnActivityDate(value: string | null | undefined, activityDate: string) {
+  const local = localDateTime(value);
+  return local && activityDate ? `${activityDate}${local.slice(10)}` : local;
+}
+
 function inputFromRow(row: LearnerActivity): ActivityRowInput {
+  const date = row.activity_date ?? row.learner_activity_date ?? "";
+  const timestampDisplay = row.time_from_to ?? "";
+  const isUserInput = timestampDisplay.trim().toLowerCase() === "input";
   return {
-    date: row.activity_date ?? row.learner_activity_date ?? "",
+    date,
     category: row.activity_category,
     activity: row.activity_unit,
     activity_subtitle: row.activity_description,
     planned: row.planned_hours ?? 0,
     actual: row.actual_lms_hours ?? 0,
-    timestamp_from: row.time_from,
-    timestamp_to: row.time_to,
-    timestamp_display: row.time_from_to ?? "",
+    timestamp_from: isUserInput ? null : timestampOnActivityDate(row.time_from, date),
+    timestamp_to: isUserInput ? null : timestampOnActivityDate(row.time_to, date),
+    timestamp_display: isUserInput ? "input" : timestampDisplay,
     completed: Boolean(row.completed),
     not_accepted: Boolean(row.not_accepted),
     reporting_week_label: row.week,
@@ -97,11 +105,15 @@ export function InlineActivityRow({ row, className = "" }: { row: LearnerActivit
   const set = (patch: Partial<ActivityRowInput>) => setDraft((value) => ({ ...value, ...patch }));
 
   async function save() {
+    const isUserInput = draft.timestamp_display?.trim().toLowerCase() === "input";
     const normalized = {
       ...draft,
       activity: draft.activity.trim(),
-      timestamp_from: isoOrNull(String(draft.timestamp_from ?? "")),
-      timestamp_to: isoOrNull(String(draft.timestamp_to ?? "")),
+      timestamp_from: isUserInput ? null : isoOrNull(String(draft.timestamp_from ?? "")),
+      timestamp_to: isUserInput ? null : isoOrNull(String(draft.timestamp_to ?? "")),
+      // The backend derives the visible range from edited timestamps. User-input
+      // records deliberately retain their source reporting method verbatim.
+      timestamp_display: isUserInput ? "input" : "",
       completed: draft.actual > 0,
     };
     const error = validate(normalized);
@@ -118,6 +130,8 @@ export function InlineActivityRow({ row, className = "" }: { row: LearnerActivit
       setSaving(false);
     }
   }
+
+  const isUserInput = draft.timestamp_display?.trim().toLowerCase() === "input";
 
   async function remove() {
     const confirmation = await Swal.fire({
@@ -152,10 +166,17 @@ export function InlineActivityRow({ row, className = "" }: { row: LearnerActivit
         <TableCell className="min-w-64 max-w-[38rem] text-sm">
           <Link to="/activity" search={{ learner: row.learner.toLowerCase(), activity: row.plan_id } as never} className="font-medium text-foreground hover:text-primary hover:underline">{row.activity_unit}</Link>
           {row.activity_description ? <p className="mt-1 text-xs text-muted-foreground">{row.activity_description}</p> : null}
+          {(row.reading_completed || row.quiz_attempted || row.completed) ? (
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {row.reading_completed ? <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success">Reading viewed</span> : null}
+              {row.quiz_attempted ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Quiz attempted</span> : null}
+              {row.completed ? <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success">Activity complete</span> : null}
+            </div>
+          ) : null}
         </TableCell>
         <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.time_from_to || "—"}</TableCell>
         <TableCell className="text-right font-mono text-sm">{hours(row.planned_hours)}</TableCell>
-        <TableCell className="text-right font-mono text-sm text-success">{hours(row.actual_lms_hours)}</TableCell>
+        <TableCell className="text-right font-mono text-sm text-success">{row.hours_mapped === false ? "—" : hours(row.actual_lms_hours)}</TableCell>
         <TableCell className="pr-7 text-right">
           <div className="flex justify-end gap-1">
             <button type="button" onClick={() => setEditing(true)} className="rounded-md border border-border p-1.5 hover:bg-secondary" title="Edit in this row" aria-label="Edit activity"><Pencil className="h-3.5 w-3.5" /></button>
@@ -169,7 +190,15 @@ export function InlineActivityRow({ row, className = "" }: { row: LearnerActivit
   return (
     <TableRow className="bg-primary/5 hover:bg-primary/5">
       <TableCell className="max-w-48 truncate pl-7 font-mono text-xs" title={row.plan_id}>{row.plan_id}</TableCell>
-      <TableCell><RowInput type="date" value={draft.date} onChange={(e) => set({ date: e.target.value })} className="w-36" title={!isAuditCreated ? "Changing a source date keeps the original evidence and records a reversible audit replacement." : undefined} /></TableCell>
+      <TableCell><RowInput type="date" value={draft.date} onChange={(e) => {
+        const date = e.target.value;
+        setDraft((value) => ({
+          ...value,
+          date,
+          timestamp_from: isUserInput ? null : timestampOnActivityDate(value.timestamp_from, date),
+          timestamp_to: isUserInput ? null : timestampOnActivityDate(value.timestamp_to, date),
+        }));
+      }} className="w-36" title={!isAuditCreated ? "Changing a source date keeps the original evidence and records a reversible audit replacement." : undefined} /></TableCell>
       <TableCell className="whitespace-nowrap text-sm font-medium">{row.learner}</TableCell>
       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{draft.date ? new Date(`${draft.date}T12:00:00`).toLocaleString("en-GB", { month: "long", year: "numeric" }) : "—"}</TableCell>
       <TableCell>
@@ -179,8 +208,14 @@ export function InlineActivityRow({ row, className = "" }: { row: LearnerActivit
       </TableCell>
       <TableCell><RowInput value={draft.activity} onChange={(e) => set({ activity: e.target.value })} className="w-full min-w-56" maxLength={500} /></TableCell>
       <TableCell className="min-w-44 space-y-1">
-        <RowInput type="datetime-local" value={localDateTime(draft.timestamp_from)} onChange={(e) => set({ timestamp_from: e.target.value })} className="w-full" aria-label="Started at" />
-        <RowInput type="datetime-local" value={localDateTime(draft.timestamp_to)} onChange={(e) => set({ timestamp_to: e.target.value })} className="w-full" aria-label="Completed at" />
+        {isUserInput ? (
+          <span className="block text-center font-mono text-xs text-muted-foreground">input</span>
+        ) : (
+          <>
+            <RowInput type="datetime-local" value={localDateTime(draft.timestamp_from)} onChange={(e) => set({ timestamp_from: e.target.value })} className="w-full" aria-label="Started at" />
+            <RowInput type="datetime-local" value={localDateTime(draft.timestamp_to)} onChange={(e) => set({ timestamp_to: e.target.value })} className="w-full" aria-label="Completed at" />
+          </>
+        )}
       </TableCell>
       <TableCell><RowInput type="number" min="0" max="50" step="0.01" value={draft.planned} onChange={(e) => set({ planned: Number(e.target.value) })} className="w-20 text-right" /></TableCell>
       <TableCell><RowInput type="number" min="0" max="50" step="0.01" value={draft.actual} onChange={(e) => set({ actual: Number(e.target.value) })} className="w-20 text-right" /></TableCell>

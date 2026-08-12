@@ -1,7 +1,17 @@
 from django.urls import path
 
-from .views import audit_blob, learner_activity_stats, learner_audit, learner_audit_list, learner_signoff
+from .views import audit_blob, contract_file, evidence_file, learner_activity_stats, learner_audit, learner_audit_list, learner_signoff
+from .contract_documents import archive_contract, rename_contract, upload_contract
+from .evidence_documents import archive_evidence, update_evidence_date, upload_evidence
 from .learner_log_views import health, learner_activities, learner_summaries, mre_list, mre_summary
+from .last_audit_ledger_views import (
+    activities as last_audit_activities,
+    activity as last_audit_activity,
+    attendance_sheet as last_audit_attendance_sheet,
+    cohort as last_audit_cohort,
+    health as last_audit_health,
+    quiz_attempt as last_audit_quiz_attempt,
+)
 from .learner_match_ledger_views import (
     activity_annotation as match_activity_annotation,
     activity_overrides as match_activity_overrides,
@@ -17,6 +27,15 @@ from .learner_match_ledger_views import (
 
 
 urlpatterns = [
+    # Normalized LMS mirror used by the auditor-copy workspace.  Keep this
+    # separate from the legacy Audit.mre / Audit.learner_match routes while the
+    # frontend is migrated incrementally.
+    path("last-audit/health", last_audit_health, name="last-audit-health"),
+    path("last-audit/cohort/", last_audit_cohort, name="last-audit-cohort"),
+    path("last-audit/activities/", last_audit_activities, name="last-audit-activities"),
+    path("last-audit/activity/", last_audit_activity, name="last-audit-activity"),
+    path("last-audit/quiz-attempt/", last_audit_quiz_attempt, name="last-audit-quiz-attempt"),
+    path("last-audit/attendance-sheet/", last_audit_attendance_sheet, name="last-audit-attendance-sheet"),
     path("ledger/health", health, name="learner-log-health"),
     path("ledger/mre", mre_list, name="learner-log-mre"),
     path("ledger/mre/summary", mre_summary, name="learner-log-mre-summary"),
@@ -37,5 +56,13 @@ urlpatterns = [
     path("learners/stats/", learner_activity_stats, name="audit-learner-activity-stats"),
     path("learners/<int:learner_id>/", learner_audit, name="audit-learner"),
     path("learners/<int:learner_id>/signoff/", learner_signoff, name="audit-learner-signoff"),
+    path("contracts/<int:contract_id>/open", contract_file, name="audit-contract-file"),
+    path("evidence/<str:evidence_id>/open", evidence_file, name="audit-evidence-file"),
+    path("evidence/<str:evidence_id>/date", update_evidence_date, name="audit-evidence-date"),
+    path("evidence/<str:evidence_id>/archive", archive_evidence, name="audit-evidence-archive"),
+    path("evidence/upload", upload_evidence, name="audit-evidence-upload"),
+    path("contracts/<int:contract_id>/archive", archive_contract, name="audit-contract-archive"),
+    path("contracts/<int:contract_id>/name", rename_contract, name="audit-contract-name"),
+    path("contracts/upload", upload_contract, name="audit-contract-upload"),
     path("blob/", audit_blob, name="audit-blob"),
 ]

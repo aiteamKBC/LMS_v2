@@ -65,23 +65,39 @@ function scoreClass(status: string | null) {
   return "bg-muted text-muted-foreground";
 }
 
-// One learner's graded quiz attempt: a score header + every question with the
-// learner's answer marked right/wrong. Fetched lazily (only once opened) from
-// the Django match-ledger, since the live evidence feed carries no quiz bodies.
-function QuizBody({ learner, component }: { learner: string; component: string | number }) {
+// One learner's graded quiz attempt, merged by the Last_audit API from the
+// shared quiz definition and this Aptem learner's result row.
+function QuizBody({ aptemId, learnerName, component }: {
+  aptemId?: number;
+  learnerName: string;
+  component: string | number;
+}) {
   const query = useQuery({
-    queryKey: ["quiz-attempt", learner, String(component)],
-    queryFn: () => getQuizAttempt({ learner, component: String(component) }),
-    enabled: Boolean(learner && component),
+    queryKey: ["last-audit-quiz-attempt", aptemId, String(component)],
+    queryFn: () => getQuizAttempt({ aptemId: aptemId!, component: String(component) }),
+    enabled: Boolean(aptemId && component),
   });
   if (query.isLoading) return <p className="px-4 py-3 text-xs text-muted-foreground">Loading quiz…</p>;
   if (query.isError) return <p className="px-4 py-3 text-xs text-destructive">Could not load the quiz body.</p>;
+  if (query.data?.state === "not_quiz") return null;
+  if (query.data?.state === "not_attempted") {
+    return (
+      <div className="px-4 py-4">
+        <p className="text-sm font-medium text-foreground">Quiz not attempted</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {learnerName || "This learner"} has not attempted this quiz. Questions, correct answers and solutions are intentionally hidden.
+        </p>
+      </div>
+    );
+  }
   const attempt = query.data?.attempt;
-  if (!attempt) return <p className="px-4 py-3 text-xs text-muted-foreground">No graded attempt stored for {learner || "this learner"}.</p>;
+  if (!attempt) return <p className="px-4 py-3 text-xs text-muted-foreground">No graded attempt is available.</p>;
   const questions = attempt.quiz_body?.questions ?? [];
   const total = questions.length;
   const correct = questions.filter((q) => q.is_correct).length;
-  const percent = total ? Math.round((correct / total) * 100) : null;
+  const percent = attempt.maximum_score && attempt.score != null
+    ? Math.round((attempt.score / attempt.maximum_score) * 100)
+    : total ? Math.round((correct / total) * 100) : null;
   return (
     <div className="space-y-3 px-4 py-3">
       {/* Score header — the pass/fail status and the derived percentage. */}
@@ -92,6 +108,7 @@ function QuizBody({ learner, component }: { learner: string; component: string |
         {percent != null && (
           <span className="rounded-sm bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">{percent}%</span>
         )}
+        {attempt.attempt_number > 0 && <span className="text-xs text-muted-foreground">Attempt {attempt.attempt_number}</span>}
         <span className="text-xs text-muted-foreground">{correct}/{total} correct</span>
       </div>
       {questions.map((question, qi) => (
@@ -134,7 +151,12 @@ function QuizBody({ learner, component }: { learner: string; component: string |
 // One bundle sub-activity row. The title still drills into the item's own
 // detail; a quiz additionally gets a "View quiz" toggle that reveals the
 // focused learner's graded body + score inline.
-function BundleItem({ item, learner, onNavigate }: { item: any; learner: string; onNavigate: () => void }) {
+function BundleItem({ item, aptemId, learnerName, onNavigate }: {
+  item: any;
+  aptemId?: number;
+  learnerName: string;
+  onNavigate: () => void;
+}) {
   const materialType = typeof item.material_type === "string" ? item.material_type : "activity";
   const itemLabel = typeof item.activity === "string"
     ? item.activity
@@ -153,7 +175,7 @@ function BundleItem({ item, learner, onNavigate }: { item: any; learner: string;
         <div className="flex shrink-0 items-center gap-3">
           {isQuiz && (
             <button type="button" onClick={() => setOpen((value) => !value)} className="text-xs font-medium text-primary hover:underline">
-              {open ? "Hide quiz" : "View quiz"}
+              {open ? "Hide learner response" : "View learner response"}
             </button>
           )}
           {item.iframe_url && (
@@ -163,7 +185,7 @@ function BundleItem({ item, learner, onNavigate }: { item: any; learner: string;
       </div>
       {isQuiz && open && (
         <div className="mt-2 overflow-hidden rounded-md border border-border bg-card">
-          <QuizBody learner={learner} component={item.component_id} />
+          <QuizBody aptemId={aptemId} learnerName={learnerName} component={item.component_id} />
         </div>
       )}
     </li>
@@ -177,6 +199,14 @@ function roundHours(value: number | null | undefined) {
 // A number|null field pre-fill: "" when absent so the input starts empty.
 function asInput(value: number | null | undefined) {
   return value == null ? "" : String(value);
+}
+
+function localDateTimeOnActivityDate(value: string | null | undefined, activityDate: string | null | undefined) {
+  if (!value) return "";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "";
+  const local = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  return activityDate ? `${activityDate}${local.slice(10)}` : local;
 }
 
 // One editable participant row (+ an expandable editor beneath it).
@@ -200,8 +230,11 @@ function ParticipantRow({
   const [planned, setPlanned] = useState(asInput(participant.planned));
   const [actual, setActual] = useState(asInput(participant.actual));
   const [attended, setAttended] = useState(Boolean(participant.completed));
-  const [startedAt, setStartedAt] = useState("");
-  const [completedAt, setCompletedAt] = useState("");
+  const isUserInput = String(participant.timestamp_display || "").trim().toLowerCase() === "input";
+  const initialStartedAt = isUserInput ? "" : localDateTimeOnActivityDate(participant.timestamp_from, participant.date);
+  const initialCompletedAt = isUserInput ? "" : localDateTimeOnActivityDate(participant.timestamp_to, participant.date);
+  const [startedAt, setStartedAt] = useState(initialStartedAt);
+  const [completedAt, setCompletedAt] = useState(initialCompletedAt);
   const [journal, setJournal] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -210,7 +243,9 @@ function ParticipantRow({
     setPlanned(asInput(participant.planned));
     setActual(asInput(participant.actual));
     setAttended(Boolean(participant.completed));
-  }, [participant.planned, participant.actual, participant.completed]);
+    setStartedAt(initialStartedAt);
+    setCompletedAt(initialCompletedAt);
+  }, [participant.planned, participant.actual, participant.completed, initialStartedAt, initialCompletedAt]);
 
   function buildPatch() {
     const patch: any = {};
@@ -220,8 +255,8 @@ function ParticipantRow({
     } else if (actual !== asInput(participant.actual) && actual !== "") {
       patch.actual_hours = Number(actual);
     }
-    if (startedAt) patch.started_at = new Date(startedAt).toISOString();
-    if (completedAt) patch.completed_at = new Date(completedAt).toISOString();
+    if (!isUserInput && startedAt && startedAt !== initialStartedAt) patch.started_at = new Date(startedAt).toISOString();
+    if (!isUserInput && completedAt && completedAt !== initialCompletedAt) patch.completed_at = new Date(completedAt).toISOString();
     if (journal.trim()) patch.journal = journal.trim();
     return patch;
   }
@@ -312,14 +347,23 @@ function ParticipantRow({
         <TableRow className="bg-[#f7f9fc] hover:bg-[#f7f9fc]">
           <TableCell colSpan={9} className="px-7 py-4">
             <div className="grid gap-4 lg:grid-cols-[repeat(2,minmax(0,1fr))_2fr]">
-              <label className="block">
-                <span className="label-caps">Started at</span>
-                <input type="datetime-local" value={startedAt} onChange={(e) => setStartedAt(e.target.value)} className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-2.5 text-sm outline-none focus:border-primary" />
-              </label>
-              <label className="block">
-                <span className="label-caps">Completed at</span>
-                <input type="datetime-local" value={completedAt} onChange={(e) => setCompletedAt(e.target.value)} className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-2.5 text-sm outline-none focus:border-primary" />
-              </label>
+              {isUserInput ? (
+                <div className="lg:col-span-2">
+                  <span className="label-caps">Timestamp</span>
+                  <p className="mt-1.5 h-9 rounded-md border border-border bg-muted px-2.5 py-2 font-mono text-sm text-muted-foreground">input</p>
+                </div>
+              ) : (
+                <>
+                  <label className="block">
+                    <span className="label-caps">Started at</span>
+                    <input type="datetime-local" value={startedAt} onChange={(e) => setStartedAt(e.target.value)} className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-2.5 text-sm outline-none focus:border-primary" />
+                  </label>
+                  <label className="block">
+                    <span className="label-caps">Completed at</span>
+                    <input type="datetime-local" value={completedAt} onChange={(e) => setCompletedAt(e.target.value)} className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-2.5 text-sm outline-none focus:border-primary" />
+                  </label>
+                </>
+              )}
               <label className="block">
                 <span className="label-caps">Journal entry</span>
                 <textarea value={journal} onChange={(e) => setJournal(e.target.value)} rows={2} placeholder="Off-the-job reflection for this learner…" className="mt-1.5 w-full rounded-md border border-border bg-card px-2.5 py-2 text-sm outline-none focus:border-primary" />
@@ -330,7 +374,9 @@ function ParticipantRow({
                 {saving ? "Saving…" : "Save row"}
               </button>
               <span className="text-xs text-muted-foreground">
-                Edits {participant.learner_name}'s record only. Time fields are optional; leave blank to keep the current value.
+                {isUserInput
+                  ? `Edits ${participant.learner_name}'s record only. This is a user-input record, so no system timestamp is required.`
+                  : `Edits ${participant.learner_name}'s record only. Timestamp dates default to the activity date.`}
               </span>
             </div>
           </TableCell>
@@ -344,6 +390,7 @@ function ActivityLogPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { learner, activity: componentId } = Route.useSearch();
+  const [completionFilter, setCompletionFilter] = useState<"all" | "reading" | "quiz" | "activity">("all");
 
   // The activity + its sub-activities + participants come from the /activity endpoint.
   const detail = useQuery({
@@ -352,6 +399,7 @@ function ActivityLogPage() {
     enabled: Boolean(componentId),
   });
   const data = detail.data;
+  useEffect(() => setCompletionFilter("all"), [componentId]);
 
   // The snapshot's Mapped KSBs + content iframe come from the /activities row payload.
   const row = useQuery({
@@ -430,8 +478,14 @@ function ActivityLogPage() {
   }
 
   const category = data?.category ?? activityRow?.activity_category ?? "";
-  // The learner whose per-learner quiz attempt (score + graded body) we read.
-  const focusedLearner = (primary?.learner_name || learner || "").toLowerCase();
+  // Quiz results use Aptem identity; the name is display text only.
+  const focusedLearnerName = primary?.learner_name || learner || "";
+  const showCompletedLearners = (filter: "reading" | "quiz" | "activity") => {
+    setCompletionFilter(filter);
+    window.requestAnimationFrame(() => {
+      document.getElementById("learner-activity-records")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -482,7 +536,8 @@ function ActivityLogPage() {
                       <BundleItem
                         key={item.component_id}
                         item={item}
-                        learner={focusedLearner}
+                        aptemId={primary?.learner_id}
+                        learnerName={focusedLearnerName}
                         onNavigate={() => router.navigate({ to: "/activity", search: { learner, activity: String(item.component_id) } })}
                       />
                     ))}
@@ -492,7 +547,7 @@ function ActivityLogPage() {
 
               {/* A drilled-into quiz leaf (no sub-items): show the focused
                   learner's graded body + score directly. */}
-              {data.items.length === 0 && category.toLowerCase().includes("quiz") && (
+              {data.items.length === 0 && data.has_quiz === true && (
                 <section className="rounded-lg border border-border bg-card shadow-panel">
                   <header className="border-b border-border px-7 py-5">
                     <h2 className="font-serif text-lg text-foreground">Quiz result</h2>
@@ -500,7 +555,7 @@ function ActivityLogPage() {
                       {primary?.learner_name ? `${primary.learner_name}'s graded attempt.` : "Graded attempt for the focused learner."}
                     </p>
                   </header>
-                  <QuizBody learner={focusedLearner} component={data.component_id} />
+                  <QuizBody aptemId={primary?.learner_id} learnerName={focusedLearnerName} component={data.component_id} />
                 </section>
               )}
 
@@ -520,7 +575,13 @@ function ActivityLogPage() {
               )}
 
               {/* The same inline CRUD row used by search and journal. */}
-              <MreTable component={String(data.component_id)} learner={primary?.learner_name} programme={data.programme} />
+              <MreTable
+                component={String(data.component_id)}
+                learner={primary?.learner_name}
+                programme={data.programme}
+                completionFilter={completionFilter}
+                onCompletionFilterChange={setCompletionFilter}
+              />
             </article>
 
             {/* Snapshot + activity-level editing. */}
@@ -545,6 +606,44 @@ function ActivityLogPage() {
                   </div>
                 )}
               </dl>
+
+              <section className="border-t border-border px-6 py-6">
+                <h3 className="label-caps">Completion on Aptem</h3>
+                <div className="mt-3 space-y-3">
+                  {data.has_reading ? (
+                    <div className="rounded-md border border-border bg-background/40 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold text-foreground">Reading viewed</p>
+                          <p className="mt-0.5 font-mono text-sm text-success">{data.reading_completed_count ?? 0} / {data.participant_count}</p>
+                        </div>
+                        <button type="button" onClick={() => showCompletedLearners("reading")} className="rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-semibold text-primary hover:bg-secondary">See learners completed</button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {data.has_quiz ? (
+                    <div className="rounded-md border border-border bg-background/40 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-semibold text-foreground">Quiz attempted</p>
+                          <p className="mt-0.5 font-mono text-sm text-primary">{data.quiz_attempted_count ?? 0} / {data.participant_count}</p>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground">{data.quiz_completed_count ?? 0} passed</p>
+                        </div>
+                        <button type="button" onClick={() => showCompletedLearners("quiz")} className="rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-semibold text-primary hover:bg-secondary">See learners completed</button>
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="rounded-md border border-success/30 bg-success/5 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold text-foreground">Activity complete</p>
+                        <p className="mt-0.5 font-mono text-sm text-success">{data.completed_count} / {data.participant_count}</p>
+                      </div>
+                      <button type="button" onClick={() => showCompletedLearners("activity")} className="rounded-md bg-primary px-2.5 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90">See learners completed</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
 
               {/* Mapped KSBs from the /activities row payload. */}
               <section className="border-t border-border px-6 py-6">

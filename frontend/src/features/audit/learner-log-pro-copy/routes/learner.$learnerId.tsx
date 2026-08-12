@@ -1,7 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useState } from "react";
-import { ArrowLeft, Award, BriefcaseBusiness, CalendarClock, ExternalLink, Eye, FileCheck2, Mail, UserRound, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, LoaderCircle, Mail, Pencil, Save, Trash2, Upload, UserRound, X } from "lucide-react";
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -10,7 +10,6 @@ import {
   RadarChart,
   ResponsiveContainer,
   Tooltip,
-  Legend,
 } from "recharts";
 import {
   Table,
@@ -20,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/features/audit/learner-log-pro-copy/components/ui/table";
-import { getLearnerProfile } from "@/features/audit/learner-log-pro-copy/lib/api";
+import { deleteArchivedContract, deleteArchivedEvidence, getLearnerProfile, renameContract, setContractArchived, setEvidenceArchived, updateEvidenceDate, uploadContract, uploadEvidence, type LearnerProfile } from "@/features/audit/learner-log-pro-copy/lib/api";
 
 export const Route = createFileRoute("/learner/$learnerId")({
   component: LearnerProfilePage,
@@ -49,31 +48,349 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   return <p className="px-7 py-10 text-center text-sm text-muted-foreground">{children}</p>;
 }
 
-function isOfficeDocument(url: string) {
-  const path = (() => {
-    try {
-      return new URL(url).pathname;
-    } catch {
-      return url.split("?", 1)[0];
-    }
-  })().toLowerCase();
-  return /\.(docx?|xlsx?|pptx?)$/i.test(path);
+type SkillDimension = "knowledge" | "skill_score" | "behaviour";
+
+type SkillRadarEntry = {
+  skill: string;
+  knowledge: number | null;
+  skill_score: number | null;
+  behaviour: number | null;
+  maximum: 8;
+};
+
+type SkillChartPoint = {
+  code: string;
+  description: string;
+  score: number;
+};
+
+const SKILL_DIMENSIONS: Array<{
+  key: SkillDimension;
+  label: string;
+  prefix: string;
+  colour: string;
+  softColour: string;
+}> = [
+  { key: "knowledge", label: "Knowledge", prefix: "K", colour: "#31505d", softColour: "#e8eef0" },
+  { key: "skill_score", label: "Skills", prefix: "S", colour: "#16856b", softColour: "#e5f3ef" },
+  { key: "behaviour", label: "Behaviours", prefix: "B", colour: "#c47a16", softColour: "#fbf0df" },
+];
+
+function skillCode(value: string, prefix: string, index: number) {
+  return value.match(/(?:^|\s)([KSB]\d+)\s*[:.\-]/i)?.[1]?.toUpperCase() ?? `${prefix}${index + 1}`;
 }
 
-function documentViewerUrl(url: string) {
-  return isOfficeDocument(url)
-    ? `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`
-    : url;
+function skillDescription(value: string) {
+  return value.replace(/^\s*[KSB]\d+\s*[:.\-]\s*/i, "").trim() || value;
 }
+
+function skillChartPoints(entries: SkillRadarEntry[], dimension: SkillDimension, prefix: string) {
+  return entries.flatMap((entry, index) => {
+    const score = entry[dimension];
+    if (score == null) return [];
+    return [{
+      code: skillCode(entry.skill, prefix, index),
+      description: skillDescription(entry.skill),
+      score,
+    }];
+  });
+}
+
+function SkillRadarTooltip({ active, payload }: {
+  active?: boolean;
+  payload?: Array<{ payload?: SkillChartPoint }>;
+}) {
+  const point = payload?.[0]?.payload;
+  if (!active || !point) return null;
+  return (
+    <div className="max-w-xs rounded-md border border-border bg-card px-3 py-2 shadow-lg">
+      <p className="text-xs font-bold text-foreground">{point.code} · {point.score.toFixed(0)} / 8</p>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">{point.description}</p>
+    </div>
+  );
+}
+
+function downloadFilename(disposition: string | null, fallback: string) {
+  const encoded = disposition?.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      // Fall through to the ordinary filename or document title.
+    }
+  }
+  return disposition?.match(/filename="([^"]+)"/i)?.[1] ?? fallback;
+}
+
+type EvidenceItem = NonNullable<LearnerProfile["learning_delivery"]["first_evidence_items"]>[number];
 
 function LearnerProfilePage() {
   const { learnerId } = Route.useParams();
+  const queryClient = useQueryClient();
   const [showFirstEvidence, setShowFirstEvidence] = useState(false);
-  const [contractPreview, setContractPreview] = useState<{ title: string; url: string } | null>(null);
+  const [previewEvidence, setPreviewEvidence] = useState<EvidenceItem | null>(null);
+  const [evidencePreviewUrl, setEvidencePreviewUrl] = useState<string | null>(null);
+  const [evidencePreviewError, setEvidencePreviewError] = useState<string | null>(null);
+  const [evidenceUploadDate, setEvidenceUploadDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [uploadingEvidence, setUploadingEvidence] = useState(false);
+  const [editingEvidenceId, setEditingEvidenceId] = useState<string | null>(null);
+  const [editingEvidenceDate, setEditingEvidenceDate] = useState("");
+  const [savingEvidenceDate, setSavingEvidenceDate] = useState(false);
+  const [showArchivedEvidence, setShowArchivedEvidence] = useState(false);
+  const [archivingEvidenceId, setArchivingEvidenceId] = useState<string | null>(null);
+  const [deletingEvidenceId, setDeletingEvidenceId] = useState<string | null>(null);
+  const [evidenceActionError, setEvidenceActionError] = useState<string | null>(null);
+  const [evidenceActionMessage, setEvidenceActionMessage] = useState<string | null>(null);
+  const [skillDimension, setSkillDimension] = useState<SkillDimension>("knowledge");
+  const [previewContract, setPreviewContract] = useState<LearnerProfile["contracts"][number] | null>(null);
+  const [contractPreviewUrl, setContractPreviewUrl] = useState<string | null>(null);
+  const [contractPreviewError, setContractPreviewError] = useState<string | null>(null);
+  const [downloadingContractId, setDownloadingContractId] = useState<string | null>(null);
+  const [showArchivedContracts, setShowArchivedContracts] = useState(false);
+  const [uploadingContract, setUploadingContract] = useState(false);
+  const [archivingContractId, setArchivingContractId] = useState<string | null>(null);
+  const [deletingContractId, setDeletingContractId] = useState<string | null>(null);
+  const [editingContractId, setEditingContractId] = useState<string | null>(null);
+  const [editingContractName, setEditingContractName] = useState("");
+  const [savingContractName, setSavingContractName] = useState(false);
+  const [contractActionError, setContractActionError] = useState<string | null>(null);
+  const [contractActionMessage, setContractActionMessage] = useState<string | null>(null);
   const profile = useQuery({
     queryKey: ["learner-profile", learnerId],
     queryFn: () => getLearnerProfile(learnerId),
   });
+
+  useEffect(() => {
+    const source = previewContract?.file;
+    if (!source) {
+      setContractPreviewUrl(null);
+      setContractPreviewError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    setContractPreviewUrl(null);
+    setContractPreviewError(null);
+
+    fetch(source, { credentials: "same-origin", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("The document preview could not be loaded.");
+        return response.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        setContractPreviewUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setContractPreviewError(error instanceof Error ? error.message : "The document preview could not be loaded.");
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [previewContract?.file]);
+
+  useEffect(() => {
+    const source = previewEvidence?.file;
+    if (!source) {
+      setEvidencePreviewUrl(null);
+      setEvidencePreviewError(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    setEvidencePreviewUrl(null);
+    setEvidencePreviewError(null);
+
+    fetch(source, { credentials: "same-origin", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(payload?.error ?? "The evidence preview could not be loaded.");
+        }
+        return response.blob();
+      })
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        setEvidencePreviewUrl(objectUrl);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setEvidencePreviewError(error instanceof Error ? error.message : "The evidence preview could not be loaded.");
+        }
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [previewEvidence?.file]);
+
+  async function downloadContract(contract: LearnerProfile["contracts"][number]) {
+    if (!contract.file || downloadingContractId) return;
+    setDownloadingContractId(contract.id);
+    try {
+      const separator = contract.file.includes("?") ? "&" : "?";
+      const response = await fetch(`${contract.file}${separator}download=1`, { credentials: "same-origin" });
+      if (!response.ok) throw new Error("The document could not be downloaded.");
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = downloadFilename(response.headers.get("Content-Disposition"), contract.document_name);
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } finally {
+      setDownloadingContractId(null);
+    }
+  }
+
+  async function handleContractUpload(file: File | undefined) {
+    if (!file || !profile.data || uploadingContract) return;
+    setUploadingContract(true);
+    setContractActionError(null);
+    setContractActionMessage(null);
+    try {
+      await uploadContract(Number(profile.data.aptem_id), file);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setContractActionMessage(`${file.name} was uploaded successfully.`);
+    } catch (error) {
+      setContractActionError(error instanceof Error ? error.message : "The document could not be uploaded.");
+    } finally {
+      setUploadingContract(false);
+    }
+  }
+
+  async function handleContractArchive(contract: LearnerProfile["contracts"][number]) {
+    if (archivingContractId) return;
+    setArchivingContractId(contract.id);
+    setContractActionError(null);
+    setContractActionMessage(null);
+    try {
+      await setContractArchived(contract.id, !contract.archived);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setContractActionMessage(
+        contract.archived
+          ? `${contract.document_name} was restored.`
+          : `${contract.document_name} was archived.`,
+      );
+    } catch (error) {
+      setContractActionError(error instanceof Error ? error.message : "The document could not be updated.");
+    } finally {
+      setArchivingContractId(null);
+    }
+  }
+
+  async function handleContractDelete(contract: LearnerProfile["contracts"][number]) {
+    if (!contract.archived || deletingContractId) return;
+    const confirmed = window.confirm(
+      `Delete "${contract.document_name}" from this learner's contract list? This action is restricted to archived documents.`,
+    );
+    if (!confirmed) return;
+    setDeletingContractId(contract.id);
+    setContractActionError(null);
+    setContractActionMessage(null);
+    try {
+      await deleteArchivedContract(contract.id);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setContractActionMessage(`${contract.document_name} was deleted.`);
+    } catch (error) {
+      setContractActionError(error instanceof Error ? error.message : "The document could not be deleted.");
+    } finally {
+      setDeletingContractId(null);
+    }
+  }
+
+  async function handleContractRename(contract: LearnerProfile["contracts"][number]) {
+    const nextName = editingContractName.trim();
+    if (!nextName || savingContractName) return;
+    setSavingContractName(true);
+    setContractActionError(null);
+    setContractActionMessage(null);
+    try {
+      await renameContract(contract.id, nextName);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEditingContractId(null);
+      setContractActionMessage(`The document was renamed to ${nextName}.`);
+    } catch (error) {
+      setContractActionError(error instanceof Error ? error.message : "The document could not be renamed.");
+    } finally {
+      setSavingContractName(false);
+    }
+  }
+
+  async function handleEvidenceUpload(file: File | undefined) {
+    if (!file || !profile.data || uploadingEvidence || !evidenceUploadDate) return;
+    setUploadingEvidence(true);
+    setEvidenceActionError(null);
+    setEvidenceActionMessage(null);
+    try {
+      await uploadEvidence(Number(profile.data.aptem_id), file, evidenceUploadDate);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEvidenceActionMessage(`${file.name} was uploaded to Azure.`);
+    } catch (error) {
+      setEvidenceActionError(error instanceof Error ? error.message : "The evidence could not be uploaded.");
+    } finally {
+      setUploadingEvidence(false);
+    }
+  }
+
+  async function handleEvidenceDateSave(evidence: EvidenceItem) {
+    if (!editingEvidenceDate || savingEvidenceDate) return;
+    setSavingEvidenceDate(true);
+    setEvidenceActionError(null);
+    setEvidenceActionMessage(null);
+    try {
+      await updateEvidenceDate(evidence.id, Number(profile.data?.aptem_id), editingEvidenceDate);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEditingEvidenceId(null);
+      setEvidenceActionMessage(`The date for ${evidence.name} was updated.`);
+    } catch (error) {
+      setEvidenceActionError(error instanceof Error ? error.message : "The evidence date could not be updated.");
+    } finally {
+      setSavingEvidenceDate(false);
+    }
+  }
+
+  async function handleEvidenceArchive(evidence: EvidenceItem) {
+    if (archivingEvidenceId) return;
+    setArchivingEvidenceId(evidence.id);
+    setEvidenceActionError(null);
+    setEvidenceActionMessage(null);
+    try {
+      await setEvidenceArchived(evidence.id, Number(profile.data?.aptem_id), !evidence.archived);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEvidenceActionMessage(evidence.archived ? `${evidence.name} was restored.` : `${evidence.name} was archived.`);
+    } catch (error) {
+      setEvidenceActionError(error instanceof Error ? error.message : "The evidence archive state could not be updated.");
+    } finally {
+      setArchivingEvidenceId(null);
+    }
+  }
+
+  async function handleEvidenceDelete(evidence: EvidenceItem) {
+    if (!evidence.archived || deletingEvidenceId) return;
+    if (!window.confirm(`Delete "${evidence.name}" from the evidence archive?`)) return;
+    setDeletingEvidenceId(evidence.id);
+    setEvidenceActionError(null);
+    setEvidenceActionMessage(null);
+    try {
+      await deleteArchivedEvidence(evidence.id, Number(profile.data?.aptem_id));
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEvidenceActionMessage(`${evidence.name} was deleted.`);
+    } catch (error) {
+      setEvidenceActionError(error instanceof Error ? error.message : "The evidence could not be deleted.");
+    } finally {
+      setDeletingEvidenceId(null);
+    }
+  }
 
   if (profile.isLoading) {
     return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">Loading learner profile…</div>;
@@ -92,9 +409,27 @@ function LearnerProfilePage() {
   }
 
   const learner = profile.data;
+  const archivedEvidenceItems = learner.learning_delivery.archived_evidence_items ?? [];
+  const evidenceItems = showArchivedEvidence
+    ? archivedEvidenceItems
+    : learner.learning_delivery.first_evidence_items ?? [];
+  const visibleContracts = showArchivedContracts
+    ? learner.contracts
+    : learner.contracts.filter((contract) => !contract.archived);
+  const archivedContractCount = learner.contracts.filter((contract) => contract.archived).length;
   const employment = learner.employment;
   const planPercent = learner.training_plan.total_modules
     ? Math.round((learner.training_plan.completed_modules / learner.training_plan.total_modules) * 100)
+    : 0;
+  const skillGroups = SKILL_DIMENSIONS.map((dimension) => ({
+    ...dimension,
+    points: skillChartPoints(learner.skills_radar, dimension.key, dimension.prefix),
+  }));
+  const activeSkillGroup = skillGroups.find((group) => group.key === skillDimension && group.points.length)
+    ?? skillGroups.find((group) => group.points.length)
+    ?? skillGroups[0];
+  const activeSkillAverage = activeSkillGroup.points.length
+    ? activeSkillGroup.points.reduce((total, point) => total + point.score, 0) / activeSkillGroup.points.length
     : 0;
 
   return (
@@ -127,7 +462,14 @@ function LearnerProfilePage() {
               </div>
             </div>
             <dl className="grid grid-cols-2 gap-x-10 gap-y-3 text-sm">
-              <div><dt className="label-caps">Aptem ID</dt><dd className="mt-1 font-mono">{learner.aptem_id}</dd></div>
+              <div>
+                <dt className="label-caps">Learner address</dt>
+                <dd className="mt-1 max-w-64 text-sm">{learner.learning_delivery.learner_address ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="label-caps">Learner postcode</dt>
+                <dd className="mt-1 font-mono">{learner.learning_delivery.learner_postcode ?? "—"}</dd>
+              </div>
               <div><dt className="label-caps">ILR reference</dt><dd className="mt-1 font-mono">{learner.learning_delivery.learner_reference ?? "—"}</dd></div>
               <div>
                 <dt className="label-caps">Coach</dt>
@@ -146,7 +488,15 @@ function LearnerProfilePage() {
                     >
                       {dateOnly(learner.learning_delivery.first_evidence_date)} <Eye className="h-3.5 w-3.5" />
                     </button>
-                  ) : <span className="font-mono">—</span>}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setShowFirstEvidence(true)}
+                      className="inline-flex items-center gap-1.5 text-sm font-semibold text-foreground hover:underline"
+                    >
+                      Add evidence <Upload className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </dd>
               </div>
               <div><dt className="label-caps">Planned end</dt><dd className="mt-1 font-mono">{dateOnly(learner.learning_delivery.planned_end_date)}</dd></div>
@@ -222,22 +572,89 @@ function LearnerProfilePage() {
           <div className="rounded-lg border border-border bg-card shadow-panel">
             <header className="border-b border-border px-7 py-5">
               <h2 className="font-serif text-lg text-foreground">Skills radar</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Assessed competency scores, shown out of 8.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Assessed competency scores out of 8. Select a group to explore its competencies.</p>
             </header>
             {learner.skills_radar.length ? (
-              <div className="h-[34rem] px-3 py-5">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart data={learner.skills_radar} outerRadius="67%">
-                    <PolarGrid stroke="#d9d6cd" />
-                    <PolarAngleAxis dataKey="skill" tick={{ fill: "#334155", fontSize: 10 }} />
-                    <PolarRadiusAxis angle={90} domain={[0, 8]} tickCount={9} tick={{ fill: "#64748b", fontSize: 10 }} />
-                    <Tooltip formatter={(value, name) => [`${Number(value).toFixed(0)} / 8`, name]} />
-                    <Legend />
-                    <Radar name="Knowledge" dataKey="knowledge" stroke="#31505d" fill="#31505d" fillOpacity={0.16} strokeWidth={2} />
-                    <Radar name="Skills" dataKey="skill_score" stroke="#16856b" fill="#16856b" fillOpacity={0.12} strokeWidth={2} />
-                    <Radar name="Behaviours" dataKey="behaviour" stroke="#c47a16" fill="#c47a16" fillOpacity={0.1} strokeWidth={2} />
-                  </RadarChart>
-                </ResponsiveContainer>
+              <div className="p-5">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {skillGroups.map((group) => {
+                    const average = group.points.length
+                      ? group.points.reduce((total, point) => total + point.score, 0) / group.points.length
+                      : null;
+                    const selected = activeSkillGroup.key === group.key;
+                    return (
+                      <button
+                        key={group.key}
+                        type="button"
+                        disabled={!group.points.length}
+                        onClick={() => setSkillDimension(group.key)}
+                        className={`rounded-md border px-4 py-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${selected ? "border-foreground/20 shadow-sm" : "border-border bg-background hover:bg-secondary"}`}
+                        style={selected ? { backgroundColor: group.softColour } : undefined}
+                      >
+                        <span className="flex items-center justify-between gap-3">
+                          <span className="inline-flex items-center gap-2 text-sm font-semibold text-foreground">
+                            <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: group.colour }} />
+                            {group.label}
+                          </span>
+                          <span className="font-mono text-sm font-bold" style={{ color: group.colour }}>
+                            {average == null ? "—" : average.toFixed(1)}
+                          </span>
+                        </span>
+                        <span className="mt-1.5 block text-xs text-muted-foreground">{group.points.length} assessed competenc{group.points.length === 1 ? "y" : "ies"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-5 grid gap-5 2xl:grid-cols-[minmax(0,1.15fr)_minmax(19rem,0.85fr)]">
+                  <div className="rounded-md border border-border bg-background p-3">
+                    <div className="flex items-center justify-between gap-3 px-2 pt-1">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{activeSkillGroup.label} profile</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">Hover an axis to see the full competency.</p>
+                      </div>
+                      <span className="rounded-full px-3 py-1 font-mono text-xs font-bold" style={{ color: activeSkillGroup.colour, backgroundColor: activeSkillGroup.softColour }}>
+                        Average {activeSkillAverage.toFixed(1)} / 8
+                      </span>
+                    </div>
+                    <div className="h-[29rem] min-h-[24rem] w-full">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <RadarChart data={activeSkillGroup.points} outerRadius="72%" margin={{ top: 24, right: 30, bottom: 24, left: 30 }}>
+                          <PolarGrid stroke="#d9d6cd" />
+                          <PolarAngleAxis dataKey="code" tick={{ fill: "#334155", fontSize: 11, fontWeight: 700 }} />
+                          <PolarRadiusAxis angle={90} domain={[0, 8]} tickCount={5} tick={{ fill: "#64748b", fontSize: 10 }} />
+                          <Tooltip content={<SkillRadarTooltip />} />
+                          <Radar name={activeSkillGroup.label} dataKey="score" stroke={activeSkillGroup.colour} fill={activeSkillGroup.colour} fillOpacity={0.18} strokeWidth={2.5} />
+                        </RadarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="overflow-hidden rounded-md border border-border bg-background">
+                    <div className="border-b border-border px-4 py-3">
+                      <p className="text-sm font-semibold text-foreground">Competency scores</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">Full descriptions for the selected group.</p>
+                    </div>
+                    <div className="max-h-[32.5rem] divide-y divide-border overflow-y-auto">
+                      {activeSkillGroup.points.map((point, index) => (
+                        <article key={`${point.code}-${index}`} className="px-4 py-3">
+                          <div className="flex items-start gap-3">
+                            <span className="mt-0.5 min-w-10 rounded px-2 py-1 text-center font-mono text-xs font-bold" style={{ color: activeSkillGroup.colour, backgroundColor: activeSkillGroup.softColour }}>{point.code}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-start justify-between gap-3">
+                                <p className="text-xs leading-5 text-foreground">{point.description}</p>
+                                <span className="shrink-0 font-mono text-sm font-bold" style={{ color: activeSkillGroup.colour }}>{point.score.toFixed(0)}<span className="text-xs font-normal text-muted-foreground">/8</span></span>
+                              </div>
+                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
+                                <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, point.score / 8 * 100))}%`, backgroundColor: activeSkillGroup.colour }} />
+                              </div>
+                            </div>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : <EmptyState>No assessed skills radar scores are available for this learner.</EmptyState>}
           </div>
@@ -255,6 +672,7 @@ function LearnerProfilePage() {
                 <div><dt className="label-caps">Contracted hours per week</dt><dd className="mt-1.5 text-sm">{employment.contracted_hours_per_week == null ? "—" : `${employment.contracted_hours_per_week} h`}</dd></div>
                 <div><dt className="label-caps">Line manager</dt><dd className="mt-1.5 text-sm">{employment.line_manager?.name ?? "—"}{employment.line_manager?.job_title ? ` — ${employment.line_manager.job_title}` : ""}</dd></div>
                 <div><dt className="label-caps">Workplace address</dt><dd className="mt-1.5 whitespace-pre-line text-sm leading-6">{employment.workplace_address ?? "—"}</dd></div>
+                <div><dt className="label-caps">Employer postcode</dt><dd className="mt-1.5 font-mono text-sm">{learner.learning_delivery.employer_postcode ?? "—"}</dd></div>
               </dl>
             ) : <EmptyState>No employer details were found in the CV evidence.</EmptyState>}
           </div>
@@ -262,35 +680,162 @@ function LearnerProfilePage() {
 
         <section className="rounded-lg border border-border bg-card shadow-panel">
           <header className="border-b border-border px-7 py-5">
-            <h2 className="font-serif text-lg text-foreground">Contracts</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Contract documents from fetching_evidence.aptem_cv_contracts_probe.</p>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="font-serif text-lg text-foreground">Contracts</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Contract documents from fetching_evidence.aptem_cv_contracts_probe.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowArchivedContracts((value) => !value)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                >
+                  {showArchivedContracts
+                    ? <ArchiveRestore className="h-4 w-4" />
+                    : <Archive className="h-4 w-4" />}
+                  {showArchivedContracts ? "Hide archived" : `Show archived (${archivedContractCount})`}
+                </button>
+                <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${uploadingContract ? "pointer-events-none opacity-60" : ""}`}>
+                  {uploadingContract
+                    ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                    : <Upload className="h-4 w-4" />}
+                  {uploadingContract ? "Uploading…" : "Upload document"}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    disabled={uploadingContract}
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.png,.jpg,.jpeg"
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = "";
+                      void handleContractUpload(file);
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
+            {contractActionError && <p className="mt-3 text-sm font-medium text-destructive">{contractActionError}</p>}
+            {contractActionMessage && <p className="mt-3 text-sm font-medium text-success">{contractActionMessage}</p>}
           </header>
-          {learner.contracts.length ? (
+          {visibleContracts.length ? (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader><TableRow className="hover:bg-transparent">
                   <TableHead className="label-caps pl-7">Document</TableHead>
-                  <TableHead className="label-caps pr-7">File</TableHead>
+                  <TableHead className="label-caps pr-7">
+                    <div className="flex items-center justify-end gap-2">
+                      <span aria-hidden="true" className="w-[92px]" />
+                      <span className="w-[104px] text-center">Actions</span>
+                      <span aria-hidden="true" className="w-[90px]" />
+                    </div>
+                  </TableHead>
                 </TableRow></TableHeader>
-                <TableBody>{learner.contracts.map((contract) => (
-                  <TableRow key={contract.id}>
-                    <TableCell className="pl-7 text-sm font-semibold"><span className="inline-flex items-center gap-2"><FileCheck2 className="h-4 w-4" />{contract.document_name}</span></TableCell>
+                <TableBody>{visibleContracts.map((contract) => (
+                  <TableRow key={contract.id} className={contract.archived ? "opacity-65" : undefined}>
+                    <TableCell className="pl-7 text-sm font-semibold">
+                      {editingContractId === contract.id ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <FileCheck2 className="h-4 w-4 shrink-0" />
+                          <input
+                            type="text"
+                            value={editingContractName}
+                            maxLength={180}
+                            autoFocus
+                            onChange={(event) => setEditingContractName(event.target.value)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") void handleContractRename(contract);
+                              if (event.key === "Escape") setEditingContractId(null);
+                            }}
+                            className="min-w-64 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleContractRename(contract)}
+                            disabled={savingContractName || !editingContractName.trim()}
+                            className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-2 text-xs font-semibold text-background disabled:opacity-60"
+                          >
+                            {savingContractName ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                          </button>
+                          <button type="button" onClick={() => setEditingContractId(null)} className="px-2 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground">Cancel</button>
+                        </div>
+                      ) : (
+                        <span className="inline-flex items-center gap-2">
+                          <FileCheck2 className="h-4 w-4" />{contract.document_name}
+                          <button
+                            type="button"
+                            aria-label={`Rename ${contract.document_name}`}
+                            onClick={() => {
+                              setEditingContractId(contract.id);
+                              setEditingContractName(contract.document_name);
+                              setContractActionError(null);
+                              setContractActionMessage(null);
+                            }}
+                            className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          {contract.archived && <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Archived</span>}
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="pr-7 text-xs">
-                      {contract.file && /^https?:\/\//i.test(contract.file) ? (
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        {contract.file && (
+                          <>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewContract(contract)}
+                            className="inline-flex w-[92px] items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 font-semibold text-foreground hover:bg-secondary"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> Preview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void downloadContract(contract)}
+                            disabled={downloadingContractId !== null}
+                            className="inline-flex w-[104px] items-center justify-center gap-1.5 rounded-md bg-foreground px-3 py-2 font-semibold text-background hover:opacity-90"
+                          >
+                            {downloadingContractId === contract.id
+                              ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                              : <Download className="h-3.5 w-3.5" />}
+                            Download
+                          </button>
+                          </>
+                        )}
                         <button
                           type="button"
-                          onClick={() => setContractPreview({ title: contract.document_name, url: documentViewerUrl(contract.file!) })}
-                          className="inline-flex items-center gap-1 font-semibold hover:underline"
+                          onClick={() => void handleContractArchive(contract)}
+                          disabled={archivingContractId !== null}
+                          className="inline-flex w-[90px] items-center justify-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
                         >
-                          <Eye className="h-3.5 w-3.5" /> Preview
+                          {archivingContractId === contract.id
+                            ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                            : contract.archived
+                              ? <ArchiveRestore className="h-3.5 w-3.5" />
+                              : <Archive className="h-3.5 w-3.5" />}
+                          {contract.archived ? "Restore" : "Archive"}
                         </button>
-                      ) : "—"}
+                        {contract.archived && (
+                          <button
+                            type="button"
+                            onClick={() => void handleContractDelete(contract)}
+                            disabled={deletingContractId !== null}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 font-semibold text-destructive hover:bg-destructive/10 disabled:opacity-60"
+                          >
+                            {deletingContractId === contract.id
+                              ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                              : <Trash2 className="h-3.5 w-3.5" />}
+                            Delete
+                          </button>
+                        )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}</TableBody>
               </Table>
             </div>
-          ) : <EmptyState>No contracts were found for this learner.</EmptyState>}
+          ) : <EmptyState>{archivedContractCount && !showArchivedContracts ? "All contract documents are archived." : "No contracts were found for this learner."}</EmptyState>}
         </section>
 
         <section className="rounded-lg border border-border bg-card shadow-panel">
@@ -332,7 +877,24 @@ function LearnerProfilePage() {
                     <Table>
                       <TableHeader><TableRow className="hover:bg-transparent"><TableHead className="label-caps">Module</TableHead><TableHead className="label-caps">Type</TableHead><TableHead className="label-caps text-right">Status</TableHead></TableRow></TableHeader>
                       <TableBody>{month.modules.map((module, moduleIndex) => (
-                        <TableRow key={`${module.name}-${moduleIndex}`}><TableCell className="text-sm font-medium">{module.name}</TableCell><TableCell className="text-xs text-muted-foreground">{module.type || "—"}</TableCell><TableCell className="text-right"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(module.status)}`}>{module.status}</span></TableCell></TableRow>
+                        <TableRow key={`${module.name}-${moduleIndex}`}>
+                          <TableCell className="text-sm font-medium">
+                            <p>{module.name}</p>
+                            <dl className="mt-2 grid gap-x-4 gap-y-1 text-xs font-normal text-muted-foreground sm:grid-cols-2">
+                              {Object.entries({
+                                ...Object.fromEntries(Object.entries(module.raw ?? {}).filter(([key]) => !["module", "components"].includes(key))),
+                                ...Object.fromEntries(Object.entries(module.components ?? {}).filter(([key]) => !["type", "status"].includes(key))),
+                              }).filter(([, value]) => value != null && value !== "").map(([key, value]) => (
+                                <div key={key} className="flex gap-1.5">
+                                  <dt className="font-semibold text-foreground/70">{key.replace(/_/g, " ")}:</dt>
+                                  <dd className="break-all">{typeof value === "object" ? JSON.stringify(value) : String(value)}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{module.type || "—"}</TableCell>
+                          <TableCell className="text-right"><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(module.status)}`}>{module.status}</span></TableCell>
+                        </TableRow>
                       ))}</TableBody>
                     </Table>
                   </div>
@@ -342,6 +904,70 @@ function LearnerProfilePage() {
           ) : <EmptyState>No training plan content is available for this learner.</EmptyState>}
         </section>
       </main>
+
+      {previewContract?.file && (
+        <div
+          className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPreviewContract(null);
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="contract-preview-title"
+            className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
+          >
+            <header className="flex items-center justify-between gap-4 border-b border-border bg-card px-5 py-4">
+              <div className="min-w-0">
+                <p className="label-caps">Document preview</p>
+                <h2 id="contract-preview-title" className="mt-1 truncate font-serif text-lg text-foreground">{previewContract.document_name}</h2>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void downloadContract(previewContract)}
+                  disabled={downloadingContractId !== null}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90"
+                >
+                  {downloadingContractId === previewContract.id
+                    ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                    : <Download className="h-4 w-4" />}
+                  Download
+                </button>
+                <button
+                  type="button"
+                  aria-label="Close document preview"
+                  onClick={() => setPreviewContract(null)}
+                  className="rounded-md border border-border p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </header>
+            <div className="relative min-h-0 flex-1 bg-slate-800 p-2">
+              {!contractPreviewUrl && !contractPreviewError && (
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white">
+                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading preview…
+                </div>
+              )}
+              {contractPreviewError && (
+                <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm font-semibold text-white">
+                  {contractPreviewError}
+                </div>
+              )}
+              {contractPreviewUrl && (
+                <iframe
+                  src={contractPreviewUrl}
+                  title={`${previewContract.document_name} preview`}
+                  className="h-full w-full rounded bg-white"
+                />
+              )}
+            </div>
+          </section>
+        </div>
+      )}
 
       {showFirstEvidence && (
         <div
@@ -359,61 +985,217 @@ function LearnerProfilePage() {
           >
             <header className="sticky top-0 flex items-start justify-between gap-4 border-b border-border bg-card px-6 py-5">
               <div>
-                <p className="label-caps">First qualifying evidence</p>
+                <p className="label-caps">{showArchivedEvidence ? "Evidence archive" : "First qualifying evidence"}</p>
                 <h2 id="first-evidence-title" className="mt-1 font-serif text-xl text-foreground">{learner.name}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Uploaded on {dateOnly(learner.learning_delivery.first_evidence_date)} after excluding Welcome evidence.</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {showArchivedEvidence
+                    ? `${archivedEvidenceItems.length} archived evidence document${archivedEvidenceItems.length === 1 ? "" : "s"}.`
+                    : `Uploaded on ${dateOnly(learner.learning_delivery.first_evidence_date)} after excluding Welcome evidence.`}
+                </p>
               </div>
               <button type="button" aria-label="Close evidence details" onClick={() => setShowFirstEvidence(false)} className="rounded-md border border-border p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"><X className="h-4 w-4" /></button>
             </header>
             <div className="space-y-4 p-6">
-              {(learner.learning_delivery.first_evidence_items ?? []).map((evidence) => (
+              <div className="rounded-md border border-border bg-secondary/30 p-4">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <label className="text-xs font-semibold text-foreground">
+                    <span className="label-caps mb-1 block">Evidence date</span>
+                    <input
+                      type="date"
+                      value={evidenceUploadDate}
+                      onChange={(event) => setEvidenceUploadDate(event.target.value)}
+                      className="rounded-md border border-border bg-card px-3 py-2 font-mono text-xs text-foreground"
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowArchivedEvidence((value) => !value)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                    >
+                      {showArchivedEvidence ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
+                      {showArchivedEvidence ? "Back to current" : `Show archived (${archivedEvidenceItems.length})`}
+                    </button>
+                    <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${uploadingEvidence ? "pointer-events-none opacity-60" : ""}`}>
+                      {uploadingEvidence
+                        ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                        : <Upload className="h-4 w-4" />}
+                      {uploadingEvidence ? "Uploading…" : "Upload evidence"}
+                      <input
+                        type="file"
+                        className="sr-only"
+                        disabled={uploadingEvidence || !evidenceUploadDate}
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.png,.jpg,.jpeg"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0];
+                          event.currentTarget.value = "";
+                          void handleEvidenceUpload(file);
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+                {evidenceActionError && <p className="mt-3 text-xs font-medium text-destructive">{evidenceActionError}</p>}
+                {evidenceActionMessage && <p className="mt-3 text-xs font-medium text-success">{evidenceActionMessage}</p>}
+              </div>
+              {evidenceItems.map((evidence) => (
                 <article key={evidence.id} className="rounded-md border border-border bg-background p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-semibold text-foreground">{evidence.name}</p>
                       <p className="mt-1 text-xs text-muted-foreground">{evidence.component_name || "Component not recorded"}</p>
                     </div>
-                    <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(evidence.status)}`}>{evidence.status || "Unknown"}</span>
+                    <div className="flex items-center gap-2">
+                      {evidence.archived && <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-muted-foreground">Archived</span>}
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusClass(evidence.status)}`}>{evidence.status || "Unknown"}</span>
+                    </div>
                   </div>
                   <dl className="mt-4 grid grid-cols-2 gap-4 text-xs">
                     <div><dt className="label-caps">Evidence ID</dt><dd className="mt-1 font-mono">{evidence.id}</dd></div>
                     <div><dt className="label-caps">Type</dt><dd className="mt-1">{evidence.kind || "—"}</dd></div>
-                    <div><dt className="label-caps">Created date</dt><dd className="mt-1 font-mono">{dateOnly(evidence.date)}</dd></div>
+                    <div>
+                      <dt className="label-caps">Created date</dt>
+                      {editingEvidenceId === evidence.id ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          <input
+                            type="date"
+                            value={editingEvidenceDate}
+                            onChange={(event) => setEditingEvidenceDate(event.target.value)}
+                            className="rounded-md border border-border bg-card px-2 py-1.5 font-mono text-xs text-foreground"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleEvidenceDateSave(evidence)}
+                            disabled={savingEvidenceDate || !editingEvidenceDate}
+                            className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1.5 font-semibold text-background disabled:opacity-60"
+                          >
+                            {savingEvidenceDate ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                          </button>
+                          <button type="button" onClick={() => setEditingEvidenceId(null)} className="px-2 py-1.5 font-semibold text-muted-foreground hover:text-foreground">Cancel</button>
+                        </div>
+                      ) : (
+                        <div className="mt-1 flex items-center gap-2">
+                          <dd className="font-mono">{dateOnly(evidence.date)}</dd>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingEvidenceId(evidence.id);
+                              setEditingEvidenceDate(dateOnly(evidence.date));
+                              setEvidenceActionError(null);
+                              setEvidenceActionMessage(null);
+                            }}
+                            className="inline-flex items-center gap-1 font-semibold text-foreground hover:underline"
+                          >
+                            <Pencil className="h-3 w-3" /> Edit date
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </dl>
                   {evidence.content && <p className="mt-4 whitespace-pre-wrap rounded-md bg-muted p-3 text-xs leading-5 text-foreground">{evidence.content}</p>}
-                  {evidence.file && /^https?:\/\//i.test(evidence.file) && (
-                    <a href={evidence.file} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline">Open evidence <ExternalLink className="h-3.5 w-3.5" /></a>
-                  )}
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    {evidence.file && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewEvidence(evidence)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> Preview evidence
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void handleEvidenceArchive(evidence)}
+                      disabled={archivingEvidenceId !== null}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-60"
+                    >
+                      {archivingEvidenceId === evidence.id
+                        ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                        : evidence.archived
+                          ? <ArchiveRestore className="h-3.5 w-3.5" />
+                          : <Archive className="h-3.5 w-3.5" />}
+                      {evidence.archived ? "Restore" : "Archive"}
+                    </button>
+                    {evidence.archived && (
+                      <button
+                        type="button"
+                        onClick={() => void handleEvidenceDelete(evidence)}
+                        disabled={deletingEvidenceId !== null}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10 disabled:opacity-60"
+                      >
+                        {deletingEvidenceId === evidence.id
+                          ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                          : <Trash2 className="h-3.5 w-3.5" />}
+                        Delete
+                      </button>
+                    )}
+                  </div>
                 </article>
               ))}
-              {!learner.learning_delivery.first_evidence_items?.length && <EmptyState>The evidence details are unavailable.</EmptyState>}
+              {!evidenceItems.length && <EmptyState>{showArchivedEvidence ? "No archived evidence documents." : "No qualifying evidence document is available yet."}</EmptyState>}
             </div>
           </section>
         </div>
       )}
 
-      {contractPreview && (
+      {previewEvidence?.file && (
         <div
-          className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/45 p-4"
+          className="fixed inset-0 z-[1400] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
           role="presentation"
           onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setContractPreview(null);
+            if (event.target === event.currentTarget) setPreviewEvidence(null);
           }}
         >
           <section
             role="dialog"
             aria-modal="true"
-            aria-labelledby="contract-preview-title"
-            className="flex h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
+            aria-labelledby="evidence-preview-title"
+            className="flex h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
           >
-            <header className="flex items-start justify-between gap-4 border-b border-border bg-card px-6 py-5">
-              <div>
-                <p className="label-caps">Contract document</p>
-                <h2 id="contract-preview-title" className="mt-1 font-serif text-xl text-foreground">{contractPreview.title}</h2>
+            <header className="flex items-center justify-between gap-4 border-b border-border bg-card px-5 py-4">
+              <div className="min-w-0">
+                <p className="label-caps">Evidence preview</p>
+                <h2 id="evidence-preview-title" className="mt-1 truncate font-serif text-lg text-foreground">{previewEvidence.name}</h2>
+                <p className="mt-1 font-mono text-xs text-muted-foreground">Evidence ID {previewEvidence.id}</p>
               </div>
-              <button type="button" aria-label="Close document preview" onClick={() => setContractPreview(null)} className="rounded-md border border-border p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"><X className="h-4 w-4" /></button>
+              <div className="flex shrink-0 items-center gap-2">
+                <a
+                  href={previewEvidence.file}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+                >
+                  <ExternalLink className="h-4 w-4" /> Open in new tab
+                </a>
+                <button
+                  type="button"
+                  aria-label="Close evidence preview"
+                  onClick={() => setPreviewEvidence(null)}
+                  className="rounded-md border border-border p-2 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </header>
-            <iframe title={contractPreview.title} src={contractPreview.url} className="min-h-0 flex-1 bg-white" />
+            <div className="relative min-h-0 flex-1 bg-slate-800 p-2">
+              {!evidencePreviewUrl && !evidencePreviewError && (
+                <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm font-semibold text-white">
+                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading preview…
+                </div>
+              )}
+              {evidencePreviewError && (
+                <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-sm font-semibold text-white">
+                  {evidencePreviewError}
+                </div>
+              )}
+              {evidencePreviewUrl && (
+                <iframe
+                  src={evidencePreviewUrl}
+                  title={`${previewEvidence.name} preview`}
+                  className="h-full w-full rounded bg-white"
+                />
+              )}
+            </div>
           </section>
         </div>
       )}
