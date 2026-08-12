@@ -56,6 +56,23 @@ DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() 
 # Seconds to wait for a database connection before giving up. Keeps a stalled DNS
 # resolver or unreachable Neon endpoint from hanging a request indefinitely.
 DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '10'))
+# psycopg 3 connection pooling. Neon is remote, so a fresh connection costs a
+# ~1s TLS handshake; CONN_MAX_AGE alone cannot avoid that under the threaded
+# dev server (persistent connections are per-thread and runserver spawns a new
+# thread per request). A per-process pool is shared across threads instead.
+# Django requires CONN_MAX_AGE=0 when a pool is configured.
+DB_POOL = os.environ.get('DB_POOL', 'true').lower() != 'false'
+DB_POOL_OPTIONS = {
+    'min_size': 1,
+    'max_size': int(os.environ.get('DB_POOL_MAX_SIZE', '10')),
+    'timeout': DB_CONNECT_TIMEOUT,
+    # Neon closes idle server-side connections; retire pooled connections
+    # before that happens so requests never receive a dead socket. Django 6
+    # already installs psycopg_pool's check_connection on every pool it
+    # builds, so no explicit 'check' entry here (passing one crashes startup
+    # with a duplicate-keyword error).
+    'max_idle': int(os.environ.get('DB_POOL_MAX_IDLE', '180')),
+}
 
 
 def database_from_url(database_url):
@@ -81,6 +98,9 @@ def database_from_url(database_url):
     # Bound how long a connection attempt can hang. Without it a stalled DNS
     # resolver leaves requests waiting on the OS default instead of failing fast.
     options.setdefault('connect_timeout', DB_CONNECT_TIMEOUT)
+    pooled = DB_POOL and scheme == 'postgres'
+    if pooled:
+        options['pool'] = dict(DB_POOL_OPTIONS)
     return {
         'ENGINE': engine_by_scheme[scheme],
         'NAME': unquote(parsed.path.lstrip('/')),
@@ -89,8 +109,8 @@ def database_from_url(database_url):
         'HOST': parsed.hostname or '',
         'PORT': str(parsed.port or ''),
         'OPTIONS': options,
-        'CONN_MAX_AGE': DB_CONN_MAX_AGE,
-        'CONN_HEALTH_CHECKS': DB_CONN_HEALTH_CHECKS,
+        'CONN_MAX_AGE': 0 if pooled else DB_CONN_MAX_AGE,
+        'CONN_HEALTH_CHECKS': False if pooled else DB_CONN_HEALTH_CHECKS,
     }
 
 
@@ -172,6 +192,7 @@ INSTALLED_APPS = [
     'coach_api',
     'learner_api',
     'audit_api',
+    'manual_audit_api',
     'curriculum_api',
     'engagement_api',
     'enrolment_api',
@@ -311,6 +332,8 @@ if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     parsed_db = urlparse(DATABASE_URL)
     db_options = dict(parse_qsl(parsed_db.query))
     db_options.setdefault("connect_timeout", DB_CONNECT_TIMEOUT)
+    if DB_POOL:
+        db_options["pool"] = dict(DB_POOL_OPTIONS)
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -320,8 +343,8 @@ if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
             "HOST": parsed_db.hostname,
             "PORT": parsed_db.port or "5432",
             "OPTIONS": db_options,
-            "CONN_MAX_AGE": DB_CONN_MAX_AGE,
-            "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
+            "CONN_MAX_AGE": 0 if DB_POOL else DB_CONN_MAX_AGE,
+            "CONN_HEALTH_CHECKS": False if DB_POOL else DB_CONN_HEALTH_CHECKS,
         }
     }
 else:
