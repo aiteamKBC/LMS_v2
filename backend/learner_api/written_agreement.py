@@ -29,6 +29,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from enrolment_api.auth import enrolment_login_required
+
 from .apprenticeship_agreement import (
     _employer_address,
     _group_dates,
@@ -227,12 +229,18 @@ def _document_json(document):
     }
 
 
-def _active_document(learner_kind, learner_id):
-    return WrittenAgreement.objects.filter(
+def _active_document(learner_kind, learner_id, lock=False):
+    """The learner's active written agreement. `lock=True` takes a row lock for
+    the caller's transaction — only valid inside
+    `transaction.atomic(using="enrolment")`."""
+    qs = WrittenAgreement.objects.filter(
         learner_kind=learner_kind,
         learner_id=learner_id,
         status=WrittenAgreement.STATUS_ACTIVE,
-    ).first()
+    )
+    if lock:
+        qs = qs.select_for_update()
+    return qs.first()
 
 
 def _learner_kind(learner):
@@ -242,6 +250,7 @@ def _learner_kind(learner):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@enrolment_login_required
 @csrf_exempt
 def written_agreement(request, pk):
     """The learner's Written Agreement, plus the content a new one would carry."""
@@ -279,6 +288,7 @@ def written_agreement(request, pk):
     })
 
 
+@enrolment_login_required
 @csrf_exempt
 def issue_written_agreement(request, pk):
     """Issue the agreement, snapshotting the current content onto a new row."""
@@ -293,8 +303,10 @@ def issue_written_agreement(request, pk):
         kind = _learner_kind(learner)
         derived = derive_content(learner)
 
-        with transaction.atomic():
-            existing = _active_document(kind, learner.pk)
+        # `using="enrolment"` is required — a bare atomic() opens on `default`
+        # and leaves this supersede+create unprotected. See BE-1.
+        with transaction.atomic(using="enrolment"):
+            existing = _active_document(kind, learner.pk, lock=True)
             if existing is not None:
                 existing.status = WrittenAgreement.STATUS_SUPERSEDED
                 existing.save(update_fields=["status", "updated_at"])
@@ -315,6 +327,7 @@ def issue_written_agreement(request, pk):
     return JsonResponse({"document": _document_json(document)}, status=201)
 
 
+@enrolment_login_required
 @csrf_exempt
 def sign_written_agreement(request, pk):
     """Record one party's signature. Empty signature withdraws that sign-off."""
@@ -349,18 +362,21 @@ def sign_written_agreement(request, pk):
         if learner is None:
             return _error("Learner not found.", 404)
 
-        document = _active_document(_learner_kind(learner), learner.pk)
-        if document is None:
-            return _error("No written agreement has been issued for this learner yet.", 404)
+        # Lock the row for the read-modify-write so concurrent signers (learner,
+        # employer, provider) can't overwrite each other's signature. See BE-4.
+        with transaction.atomic(using="enrolment"):
+            document = _active_document(_learner_kind(learner), learner.pk, lock=True)
+            if document is None:
+                return _error("No written agreement has been issued for this learner yet.", 404)
 
-        now = timezone.now() if signature else None
-        setattr(document, f"{party}_signature", signature)
-        setattr(document, f"{party}_signed_name", name if signature else "")
-        setattr(document, f"{party}_position", position if signature else "")
-        setattr(document, f"{party}_signed_at", now)
+            now = timezone.now() if signature else None
+            setattr(document, f"{party}_signature", signature)
+            setattr(document, f"{party}_signed_name", name if signature else "")
+            setattr(document, f"{party}_position", position if signature else "")
+            setattr(document, f"{party}_signed_at", now)
 
-        document.recalculate_signed()
-        document.save()
+            document.recalculate_signed()
+            document.save()
         promoted = advance_learner(learner)
     except DatabaseError as exc:
         logger.exception("sign_written_agreement: failed")

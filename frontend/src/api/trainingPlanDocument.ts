@@ -69,7 +69,7 @@ async function readJson<T>(res: Response): Promise<T> {
 export async function fetchTrainingPlanDocument(
   learnerId: string | number,
 ): Promise<TrainingPlanResponse> {
-  return readJson(await fetch(`${BASE}/${learnerId}/`));
+  return readJson(await fetch(`${BASE}/${learnerId}/`, { credentials: 'include' }));
 }
 
 /** Issue the plan, freezing the current content onto a new row. */
@@ -77,7 +77,7 @@ export async function issueTrainingPlanDocument(
   learnerId: string | number,
 ): Promise<TrainingPlanDocument> {
   const data = await readJson<{ document: TrainingPlanDocument }>(
-    await fetch(`${BASE}/${learnerId}/issue/`, { method: 'POST' }),
+    await fetch(`${BASE}/${learnerId}/issue/`, { method: 'POST', credentials: 'include' }),
   );
   return data.document;
 }
@@ -93,6 +93,7 @@ export async function signTrainingPlanDocument(
   const data = await readJson<{ document: TrainingPlanDocument }>(
     await fetch(`${BASE}/${learnerId}/sign/`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ party, name, signature, position }),
     }),

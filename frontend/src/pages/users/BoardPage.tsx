@@ -536,6 +536,14 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
   const [docs, setDocs] = useState<EnrolmentDocument[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  // `null` on each document below means two different things — still fetching, or
+  // fetched and not issued — and the "not issued yet" rows render on the latter.
+  // The five fetches settle independently, so gating those rows on their own
+  // value alone flashed every placeholder in the instant a fetch resolved, then
+  // swapped each to the real document as the rest landed. `loaded` holds the
+  // whole list behind the spinner until every fetch has settled, so the section
+  // goes straight from "Loading…" to its final state with no flicker.
+  const [loaded, setLoaded] = useState(false);
 
   // The Apprenticeship Agreement lives in its own table, so it is fetched
   // separately and shown alongside the generic documents as one list.
@@ -552,21 +560,29 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
 
   useEffect(() => {
     let cancelled = false;
-    fetchEnrolmentDocuments(kind, learnerId)
-      .then((r) => !cancelled && setDocs(r))
-      .catch((e: Error) => !cancelled && setErr(e.message));
-    fetchAgreement(learnerId)
-      .then((r) => !cancelled && setAgreement(r.agreement))
-      .catch(() => { /* No agreement yet is normal, not an error worth showing. */ });
-    fetchIlrDocument(learnerId)
-      .then((r) => !cancelled && setIlr(r.document))
-      .catch(() => { /* Likewise for the ILR. */ });
-    fetchTrainingPlanDocument(learnerId)
-      .then((r) => !cancelled && setPlan(r.document))
-      .catch(() => { /* And the Training Plan. */ });
-    fetchWrittenAgreement(learnerId)
-      .then((r) => !cancelled && setWritten(r.document))
-      .catch(() => { /* And the Written Agreement. */ });
+    // Re-fetching (learner switched): drop back to the spinner rather than
+    // showing the previous learner's documents while the new ones load.
+    setLoaded(false);
+    const all = [
+      fetchEnrolmentDocuments(kind, learnerId)
+        .then((r) => !cancelled && setDocs(r))
+        .catch((e: Error) => !cancelled && setErr(e.message)),
+      fetchAgreement(learnerId)
+        .then((r) => !cancelled && setAgreement(r.agreement))
+        .catch(() => { /* No agreement yet is normal, not an error worth showing. */ }),
+      fetchIlrDocument(learnerId)
+        .then((r) => !cancelled && setIlr(r.document))
+        .catch(() => { /* Likewise for the ILR. */ }),
+      fetchTrainingPlanDocument(learnerId)
+        .then((r) => !cancelled && setPlan(r.document))
+        .catch(() => { /* And the Training Plan. */ }),
+      fetchWrittenAgreement(learnerId)
+        .then((r) => !cancelled && setWritten(r.document))
+        .catch(() => { /* And the Written Agreement. */ }),
+    ];
+    // Every fetch settles its own state above; this only flips the gate once
+    // they all have, so the "not issued yet" placeholders never show mid-load.
+    Promise.all(all).then(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
   }, [kind, learnerId]);
 
@@ -675,11 +691,11 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
     <>
       <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">{programme || 'Programme Name'}</p>
       {err && <p className="text-[12px] text-red-600 mb-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
-      {docs === null && !err && <p className="text-[12px] text-foreground-400 py-2"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading documents…</p>}
-      {docs !== null && docs.length === 0 && !agreement && !ilr && !plan && !written && <EmptyState text="No documents" />}
+      {!loaded && !err && <p className="text-[12px] text-foreground-400 py-2"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading documents…</p>}
+      {loaded && docs !== null && docs.length === 0 && !agreement && !ilr && !plan && !written && <EmptyState text="No documents" />}
       {/* Until the agreement is issued neither party can sign it, and it does
           not appear in the employer's portal — so offer it here. */}
-      {agreement === null && (
+      {loaded && agreement === null && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
           <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
             <i className="ri-file-add-line text-foreground-400 shrink-0" />
@@ -722,7 +738,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
       )}
       {/* The Individual Learner Record. Signed by the learner and the provider;
           the employer has no part in it and never sees it. */}
-      {ilr === null && (
+      {loaded && ilr === null && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
           <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
             <i className="ri-file-add-line text-foreground-400 shrink-0" />
@@ -782,7 +798,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
         </div>
       )}
       {/* The tripartite Training Plan: apprentice, employer and provider. */}
-      {plan === null && (
+      {loaded && plan === null && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
           <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
             <i className="ri-file-add-line text-foreground-400 shrink-0" />
@@ -839,7 +855,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
         </div>
       )}
       {/* The Written Agreement: learner, employer and provider all sign. */}
-      {written === null && (
+      {loaded && written === null && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
           <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
             <i className="ri-file-add-line text-foreground-400 shrink-0" />

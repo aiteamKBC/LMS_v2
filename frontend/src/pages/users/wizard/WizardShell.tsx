@@ -47,7 +47,7 @@ export function WizardShell({
   header?: ReactNode;
   sidebar?: ReactNode;
 }) {
-  const { completed, draft, hydrated, ready, saveIlr, ilrSaving } = useWizard();
+  const { draft, hydrated, ready, saveIlr, ilrSaving } = useWizard();
   const { success, error } = useToast();
   // Learners save by moving on — Next writes the step as it advances, so a
   // separate Save progress button would only be a second name for the same
@@ -153,16 +153,20 @@ export function WizardShell({
   // than the step they happen to be looking at, so flicking backwards to re-read
   // the Introduction doesn't appear to undo their progress.
   //
-  // Held behind `ready`, not merely `hydrated`: the draft starts as a blank
-  // seeded form, and the programme's competencies arrive in a second request
-  // after the saved answers. Measuring in between reported the learner's own
-  // finished steps as "Not started", and counted the Skills Radar as complete
-  // (an empty assessments map has nothing unrated in it) until seeding landed —
-  // so the total ticked up twice. Unknown is shown as unknown instead.
-  const statusKnown = mode === 'staff' || ready;
-  const doneCount = mode === 'learner'
-    ? stepComplete.filter(Boolean).length
-    : completed.filter(Boolean).length;
+  // Derived live from the draft in both modes. The staff view once read a
+  // `completed[]` array whose only mutator was never called, so an admin opening
+  // a learner's wizard always saw 0% regardless of what the learner had filled
+  // in; deriving from the loaded answers shows the learner's real progress — the
+  // same measure the learner sees.
+  //
+  // Held behind `ready`, not merely `hydrated`, for both modes: the draft starts
+  // as a blank seeded form, and the programme's competencies arrive in a second
+  // request after the saved answers. Measuring in between reported finished steps
+  // as "Not started", and counted the Skills Radar as complete (an empty
+  // assessments map has nothing unrated in it) until seeding landed — so the
+  // total ticked up twice. Unknown is shown as unknown instead.
+  const statusKnown = ready;
+  const doneCount = stepComplete.filter(Boolean).length;
   const pct = Math.round((doneCount / WIZARD_STEPS.length) * 100);
 
   const scrollTabs = (dir: number) => tabScrollRef.current?.scrollBy({ left: dir * 220, behavior: 'smooth' });
@@ -214,10 +218,9 @@ export function WizardShell({
                 {WIZARD_STEPS.map((step, i) => {
                   const active = i === currentIndex;
                   const isLocked = locked(i);
-                  // On the learner side the tick tracks the answers themselves;
-                  // `completed` is only maintained by the staff wizard. Neither is
-                  // trusted before hydration — see statusKnown.
-                  const done = statusKnown && (mode === 'learner' ? stepComplete[i] : completed[i]);
+                  // The tick tracks the answers themselves in both modes, and is
+                  // not trusted before the draft has hydrated — see statusKnown.
+                  const done = statusKnown && stepComplete[i];
                   return (
                     <button
                       key={step.slug}
@@ -293,7 +296,7 @@ export function WizardShell({
                     {WIZARD_STEPS.map((step, i) => {
                       const active = i === currentIndex;
                       const isLocked = locked(i);
-                      const done = statusKnown && (mode === 'learner' ? stepComplete[i] : completed[i]);
+                      const done = statusKnown && stepComplete[i];
                       return (
                         <button
                           key={step.slug}

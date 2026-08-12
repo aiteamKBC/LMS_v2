@@ -40,7 +40,9 @@ export interface ExtendedIlrResponse {
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });
+    // credentials: 'include' sends the session cookie — the enrolment API now
+    // requires an authenticated user (see enrolment_api/auth.py).
+    res = await fetch(url, { credentials: 'include', headers: { 'Content-Type': 'application/json' }, ...init });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }

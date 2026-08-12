@@ -22,6 +22,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from learner_api.models import CommercialUser, EnrolmentUser
 
+from .auth import enrolment_login_required
 from .models import ExtendedIlr
 from .wizard_steps import project_draft, read_projection
 
@@ -128,6 +129,7 @@ def read_extended_ilr(kind, learner_id, learner_name):
     return payload
 
 
+@enrolment_login_required
 @csrf_exempt
 def extended_ilr(request, kind, learner_id):
     model = KINDS.get(kind)
@@ -160,19 +162,35 @@ def extended_ilr(request, kind, learner_id):
         if not isinstance(body, dict):
             return _error("Request body must be a JSON object.", 400)
 
-        answers = body.get("answers", body)
-        if not isinstance(answers, dict):
+        # `answers` is the ILR step and is optional, mirroring `draft` below: a
+        # client that only wants to save the other steps omits it, and the
+        # stored answers (and the signature/`completed` flags derived from them)
+        # are left untouched rather than wiped. Only a full replacement is ever
+        # applied — the ILR is a signed compliance record, so a *partial*
+        # answers object must never land here and silently drop the rest. We
+        # therefore no longer fall back to treating the whole body as answers:
+        # that fallback meant an ILR-unaware caller sending {draft: ...} had its
+        # entire body (draft and all) written into `answers`, corrupting the
+        # record and clearing the signed flags.
+        answers = body.get("answers")
+        if answers is not None and not isinstance(answers, dict):
             return _error("'answers' must be a JSON object.", 400)
 
-        # The wizard's other steps. Optional: a client that only knows about the
-        # ILR keeps working, and omitting the key leaves any stored draft alone
-        # rather than wiping it.
+        # The wizard's other steps. Optional for the same reason: omitting the
+        # key leaves any stored draft alone rather than wiping it.
         draft = body.get("draft")
         if draft is not None and not isinstance(draft, dict):
             return _error("'draft' must be a JSON object.", 400)
 
-        state = _signature_state(answers)
-        defaults = {"answers": answers, "learner_name": learner_name, **state}
+        if answers is None and draft is None:
+            return _error("Provide 'answers' and/or 'draft' to save.", 400)
+
+        defaults = {"learner_name": learner_name}
+        if answers is not None:
+            # Signature/`completed` flags are derived from the answers, so they
+            # are only recomputed when answers are actually being replaced.
+            defaults["answers"] = answers
+            defaults.update(_signature_state(answers))
         if draft is not None:
             defaults["wizard_draft"] = draft
         try:

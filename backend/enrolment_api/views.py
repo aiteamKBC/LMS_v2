@@ -19,6 +19,8 @@ from django.views.decorators.http import require_GET
 from learner_api.constants import DEFAULT_PROGRAMME_STATUS
 from learner_api.models import CommercialUser
 
+from .auth import enrolment_login_required
+
 
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
@@ -140,6 +142,7 @@ def _parse_body(request):
     return payload
 
 
+@enrolment_login_required
 @csrf_exempt
 def commercial_board(request, pk):
     """GET/PATCH the wizard board for a single commercial learner."""

@@ -51,13 +51,13 @@ async function readJson<T>(res: Response): Promise<T> {
 }
 
 export async function fetchIlrDocument(learnerId: string | number): Promise<IlrResponse> {
-  return readJson(await fetch(`${BASE}/${learnerId}/`));
+  return readJson(await fetch(`${BASE}/${learnerId}/`, { credentials: 'include' }));
 }
 
 /** Issue the ILR, freezing the current details and answers onto a new row. */
 export async function issueIlrDocument(learnerId: string | number): Promise<IlrDocument> {
   const data = await readJson<{ document: IlrDocument }>(
-    await fetch(`${BASE}/${learnerId}/issue/`, { method: 'POST' }),
+    await fetch(`${BASE}/${learnerId}/issue/`, { method: 'POST', credentials: 'include' }),
   );
   return data.document;
 }
@@ -72,6 +72,7 @@ export async function signIlrDocument(
   const data = await readJson<{ document: IlrDocument }>(
     await fetch(`${BASE}/${learnerId}/sign/`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ party, name, signature }),
     }),

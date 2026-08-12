@@ -66,6 +66,9 @@ async function request<T>(url: string, init?: Parameters<typeof fetch>[1]): Prom
   let res: Response;
   try {
     res = await fetch(url, {
+      // Sends the session cookie — the enrolment API now requires an
+      // authenticated user (see enrolment_api/auth.py).
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       ...init,
     });

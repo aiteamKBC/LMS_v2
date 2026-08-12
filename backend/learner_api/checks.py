@@ -1,10 +1,9 @@
 """Startup checks for the two-database assumption (ENROLMENT_GAP_ANALYSIS.md 7.2).
 
 EnrolmentRouter sends every learner_api/enrolment_api model read and write to the
-`enrolment` alias. But four call sites deliberately read through `default`,
+`enrolment` alias. But three call sites deliberately read through `default`,
 because they query schemas the router does not govern:
 
-  * apprenticeship_agreement._group_dates  -> curriculum.groups
   * learning_plan._rows                    -> curriculum.modules, curriculum.groups
   * training_plan_document._module_breakdown -> curriculum.weeks, curriculum.components
   * absence_reports                        -> "Learner".learner_attendance_details
@@ -30,7 +29,6 @@ from django.core.checks import register
 # so the check's message can name them, and so this list is the one place to
 # update if a call site moves.
 CROSS_SCHEMA_READERS = (
-    "apprenticeship_agreement._group_dates (curriculum.groups)",
     "learning_plan._rows (curriculum.modules, curriculum.groups)",
     "training_plan_document._module_breakdown (curriculum.weeks, curriculum.components)",
     'absence_reports (\"Learner\".learner_attendance_details)',

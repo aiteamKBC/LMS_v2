@@ -7,8 +7,8 @@ by those two parties only — the training provider does not sign it (note 6).
 
 Everything on the form is derived from our own records rather than typed twice:
   * apprentice name, employer name and address -> the learner's record
-  * start / end dates                          -> the learner's group delivery
-    window, falling back to the learner's own dates
+  * start / end dates                          -> the learner's own dates (the
+    group delivery window is no longer stored on curriculum.groups)
   * planned off-the-job hours                  -> the learning plan total, the
     sum of total_otjh across the modules on their plan
   * duration of practical period               -> weeks between its start and end
@@ -26,12 +26,15 @@ version on a statutory document is worse than a line an officer completes.
 """
 import json
 import logging
+from datetime import date, datetime
 from decimal import Decimal
 
-from django.db import DatabaseError, connection, transaction
+from django.db import DatabaseError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+
+from enrolment_api.auth import enrolment_login_required
 
 from .learning_plan import _group_module_ids, _programme_modules, _saved_modules
 from .learner_progression import advance_learner
@@ -101,37 +104,50 @@ def _plan_modules(learner):
     return [catalogue[i] for i in module_ids if i in catalogue]
 
 
-def _group_dates(learner):
-    """The group's delivery window; the learner's own dates are the fallback."""
-    programme = _s(learner.programme)
-    group = _s(learner.group)
-    if group:
+def _to_date(value):
+    """A `date` from whatever a date column or the learner's text field holds.
+
+    The group table stores real dates, but the learner's own Start_date/End_date
+    are TextField (strings) — so callers of _group_dates once got a `date` on the
+    group path and a `str` on the fallback, and the string blew up the moment
+    anything subtracted the two or called .isoformat(). Everything is normalised
+    to `date` here so downstream code has one type to reason about. Unparseable
+    or empty -> None, which every consumer already treats as "unknown".
+    """
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    # ISO first (what the DB and most of our writers use), then the UK format an
+    # officer might have typed into the free-text field.
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
         try:
-            # Deliberately the `default` alias, not `enrolment`: curriculum.* is
-            # owned by curriculum_api, whose migrations run on `default` (the
-            # router keeps every non-enrolment app off the enrolment alias).
-            # Repointing this at `enrolment` would break the moment the two
-            # aliases genuinely differ. Same for the other curriculum readers in
-            # learning_plan.py and training_plan_document.py.
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT start_date, end_date FROM curriculum.groups
-                    WHERE group_name = %s AND (programme_name = %s OR programme_id = %s)
-                    LIMIT 1
-                    """,
-                    [group, programme, programme],
-                )
-                row = cursor.fetchone()
-            if row and (row[0] or row[1]):
-                return row[0], row[1], "group"
-        except DatabaseError:
-            logger.exception("_group_dates: lookup failed")
-    return learner.start_date, learner.end_date, "learner"
+            return datetime.strptime(text[:10] if fmt == "%Y-%m-%d" else text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _group_dates(learner):
+    """The group's delivery window; the learner's own dates are the fallback.
+
+    The curriculum.groups table no longer carries a delivery window (the
+    start_date/end_date columns were removed), so the learner's own dates are now
+    the only source. Kept as a function returning (start, end, source) so callers
+    and the snapshot's `datesFrom` field are unchanged, and so a group window can
+    be reinstated here alone if the schema grows one back.
+    """
+    return _to_date(learner.start_date), _to_date(learner.end_date), "learner"
 
 
 def _weeks_between(start, end):
     """Duration of the practical period in weeks, to 1dp. None when unknown."""
+    start, end = _to_date(start), _to_date(end)
     if not start or not end:
         return None
     days = (end - start).days
@@ -224,12 +240,18 @@ def _agreement_json(agreement):
     }
 
 
-def _active_agreement(learner_kind, learner_id):
-    return ApprenticeshipAgreement.objects.filter(
+def _active_agreement(learner_kind, learner_id, lock=False):
+    """The learner's active agreement. `lock=True` takes a row lock for the
+    caller's transaction so a concurrent sign/issue can't read-modify-write over
+    it — only valid inside `transaction.atomic(using="enrolment")`."""
+    qs = ApprenticeshipAgreement.objects.filter(
         learner_kind=learner_kind,
         learner_id=learner_id,
         status=ApprenticeshipAgreement.STATUS_ACTIVE,
-    ).first()
+    )
+    if lock:
+        qs = qs.select_for_update()
+    return qs.first()
 
 
 def _learner_kind(learner):
@@ -243,6 +265,7 @@ def _load_learner(pk):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@enrolment_login_required
 @csrf_exempt
 def apprenticeship_agreement(request, pk):
     """The learner's agreement, plus the particulars a new one would carry.
@@ -294,6 +317,7 @@ def apprenticeship_agreement(request, pk):
     })
 
 
+@enrolment_login_required
 @csrf_exempt
 def issue_agreement(request, pk):
     """Issue the agreement, snapshotting the particulars onto a new row.
@@ -316,8 +340,12 @@ def issue_agreement(request, pk):
         kind = _learner_kind(learner)
         derived = derive_particulars(learner)
 
-        with transaction.atomic():
-            existing = _active_agreement(kind, learner.pk)
+        # `using="enrolment"` is not optional: these models are routed to the
+        # `enrolment` alias, so a bare atomic() would open a transaction on
+        # `default` and give the supersede+create below no rollback protection —
+        # a failed create would leave the learner with zero active agreements.
+        with transaction.atomic(using="enrolment"):
+            existing = _active_agreement(kind, learner.pk, lock=True)
             if existing is not None:
                 existing.status = ApprenticeshipAgreement.STATUS_SUPERSEDED
                 existing.save(update_fields=["status", "updated_at"])
@@ -344,6 +372,7 @@ def issue_agreement(request, pk):
     return JsonResponse({"agreement": _agreement_json(agreement)}, status=201)
 
 
+@enrolment_login_required
 @csrf_exempt
 def sign_agreement(request, pk):
     """Record one party's signature.
@@ -385,22 +414,27 @@ def sign_agreement(request, pk):
         if learner is None:
             return _error("Learner not found.", 404)
 
-        agreement = _active_agreement(_learner_kind(learner), learner.pk)
-        if agreement is None:
-            return _error("No agreement has been issued for this learner yet.", 404)
+        # Lock the row for the whole read-modify-write: the apprentice and the
+        # employer can sign concurrently, and without the lock the second full
+        # save() would clobber the first party's signature columns and
+        # recalculate `fully_signed` from a stale copy.
+        with transaction.atomic(using="enrolment"):
+            agreement = _active_agreement(_learner_kind(learner), learner.pk, lock=True)
+            if agreement is None:
+                return _error("No agreement has been issued for this learner yet.", 404)
 
-        now = timezone.now() if signature else None
-        if party == "apprentice":
-            agreement.apprentice_signature = signature
-            agreement.apprentice_signed_name = name if signature else ""
-            agreement.apprentice_signed_at = now
-        else:
-            agreement.employer_signature = signature
-            agreement.employer_signed_name = name if signature else ""
-            agreement.employer_signed_at = now
+            now = timezone.now() if signature else None
+            if party == "apprentice":
+                agreement.apprentice_signature = signature
+                agreement.apprentice_signed_name = name if signature else ""
+                agreement.apprentice_signed_at = now
+            else:
+                agreement.employer_signature = signature
+                agreement.employer_signed_name = name if signature else ""
+                agreement.employer_signed_at = now
 
-        agreement.recalculate_signed()
-        agreement.save()
+            agreement.recalculate_signed()
+            agreement.save()
         promoted = advance_learner(learner)
     except DatabaseError as exc:
         logger.exception("sign_agreement: failed")

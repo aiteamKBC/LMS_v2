@@ -27,6 +27,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from learner_api.evidence_storage import azure_configured, blob_url, get_download_sas, upload_blob
 
+from .auth import enrolment_login_required
 from .document_tables import ensure_enrolment_documents_table
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,7 @@ def document_types(request):
     })
 
 
+@enrolment_login_required
 @csrf_exempt
 def documents(request, kind, learner_id):
     """POST stores a generated document; GET lists what is stored."""
@@ -200,6 +202,7 @@ def documents(request, kind, learner_id):
     return _error("Method not allowed.", 405)
 
 
+@enrolment_login_required
 def download_document(request, kind, learner_id, doc_id):
     """Short-lived SAS URL for one stored document."""
     if request.method != "GET":
@@ -234,6 +237,7 @@ def download_document(request, kind, learner_id, doc_id):
 MAX_SIGNATURE_CHARS = 400_000
 
 
+@enrolment_login_required
 @csrf_exempt
 def replace_document_file(request, kind, learner_id, doc_id):
     """Swap the stored PDF on an existing document row, keeping its signatures.
@@ -312,6 +316,7 @@ def replace_document_file(request, kind, learner_id, doc_id):
     return JsonResponse(_row_to_json(updated))
 
 
+@enrolment_login_required
 @csrf_exempt
 def sign_document(request, kind, learner_id, doc_id):
     """Record an employer's signature on a generated compliance document.

@@ -27,6 +27,7 @@ from learner_api.learner_progression import advance_learner
 from learner_api.mappers import to_board
 from learner_api.models import CommercialUser, EnrolmentUser
 
+from .auth import enrolment_login_required
 from .extended_ilr import read_extended_ilr
 
 KINDS = {"apprenticeship": EnrolmentUser, "commercial": CommercialUser}
@@ -36,6 +37,7 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
+@enrolment_login_required
 def wizard_bootstrap(request, kind, learner_id):
     if request.method != "GET":
         return _error("Method not allowed.", 405)
