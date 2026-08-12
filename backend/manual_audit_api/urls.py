@@ -22,6 +22,7 @@ from .match_ledger_views import (
 )
 from .plan_pickers import (
     picker_aptem_groups,
+    picker_aptem_learners,
     picker_aptem_programmes,
     picker_assignment_evidence,
     picker_assignments,
@@ -37,7 +38,9 @@ from .plan_views import (
     plan_group_detail,
     plan_group_members,
     plan_group_months,
+    plan_group_training_plan,
     plan_groups,
+    plan_learners,
     plan_matrix,
     plan_progress,
     plan_progress_bulk,
@@ -64,12 +67,14 @@ urlpatterns = [
     path("match-ledger/learner-profile", learner_profile, name="manual-learner-profile"),
     path("match-ledger/learner-profile-dates", learner_profile_dates, name="manual-learner-profile-dates"),
     # Plan builder (groups, months, members, activities, progress).
+    path("plan/learners", plan_learners, name="manual-plan-learners"),
     path("plan/groups", plan_groups, name="manual-plan-groups"),
     path("plan/groups/<int:group_id>", plan_group_detail, name="manual-plan-group"),
     path("plan/groups/<int:group_id>/members", plan_group_members, name="manual-plan-members"),
     path("plan/groups/<int:group_id>/months", plan_group_months, name="manual-plan-months"),
     path("plan/groups/<int:group_id>/suggest-members", plan_suggest_members, name="manual-plan-suggest-members"),
     path("plan/groups/<int:group_id>/matrix", plan_matrix, name="manual-plan-matrix"),
+    path("plan/groups/<int:group_id>/training-plan", plan_group_training_plan, name="manual-plan-group-training-plan"),
     path("plan/activities", plan_activities, name="manual-plan-activities"),
     path("plan/progress", plan_progress, name="manual-plan-progress"),
     path("plan/progress/bulk", plan_progress_bulk, name="manual-plan-progress-bulk"),
@@ -83,6 +88,7 @@ urlpatterns = [
     path("plan/pickers/lms-groups", picker_lms_groups, name="manual-plan-picker-lms-groups"),
     path("plan/pickers/aptem-programmes", picker_aptem_programmes, name="manual-plan-picker-aptem-programmes"),
     path("plan/pickers/aptem-groups", picker_aptem_groups, name="manual-plan-picker-aptem-groups"),
+    path("plan/pickers/aptem-learners", picker_aptem_learners, name="manual-plan-picker-aptem-learners"),
     path("plan/pickers/training-plan", picker_training_plan, name="manual-plan-picker-training-plan"),
     # Monthly journal sign-off.
     path("learners/<str:learner_id>/signoff/", learner_signoff, name="manual-learner-signoff"),

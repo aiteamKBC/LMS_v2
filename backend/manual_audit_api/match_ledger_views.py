@@ -36,7 +36,7 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
-from .common import CONN
+from .common import CONN, db_is_read_only
 from .contract_documents import ensure_contract_archive_table, ensure_contract_uploads_table
 from .evidence_documents import ensure_evidence_override_table
 
@@ -270,6 +270,8 @@ _NO_SIGNATURE_DATES = {"learner_signed_date": None, "fully_signed_date": None}
 
 
 def _ensure_signature_cache_table(cur):
+    if db_is_read_only(cur):
+        return
     cur.execute(
         '''
         create table if not exists "Manual_audit".contract_signature_cache (
@@ -366,18 +368,24 @@ def _contract_signature_dates_many(cursor, items):
             "value": value,
         }
         if persistable:
-            cursor.execute(
-                '''
-                insert into "Manual_audit".contract_signature_cache
-                    (azure_path, learner_signed_date, fully_signed_date, extracted_at)
-                values (%s, %s, %s, now())
-                on conflict (azure_path) do update set
-                    learner_signed_date = excluded.learner_signed_date,
-                    fully_signed_date = excluded.fully_signed_date,
-                    extracted_at = now()
-                ''',
-                [key, value["learner_signed_date"], value["fully_signed_date"]],
-            )
+            # Cache misses must never break the profile read: while Neon has
+            # the endpoint read-only this insert fails, but the value is
+            # already served from the in-process cache above.
+            try:
+                cursor.execute(
+                    '''
+                    insert into "Manual_audit".contract_signature_cache
+                        (azure_path, learner_signed_date, fully_signed_date, extracted_at)
+                    values (%s, %s, %s, now())
+                    on conflict (azure_path) do update set
+                        learner_signed_date = excluded.learner_signed_date,
+                        fully_signed_date = excluded.fully_signed_date,
+                        extracted_at = now()
+                    ''',
+                    [key, value["learner_signed_date"], value["fully_signed_date"]],
+                )
+            except DatabaseError:
+                pass
     return results
 
 
@@ -955,6 +963,8 @@ def _first_employment_details(value):
 # --- manual auditor annotations (KSBs + planned hours) per activity ---------
 
 def _ensure_annotation_table(cur):
+    if db_is_read_only(cur):
+        return
     cur.execute(
         '''
         create table if not exists "Manual_audit".activity_annotations (
@@ -1072,6 +1082,8 @@ _HOURS_PERIOD_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
 def _ensure_learner_hours_table(cur):
+    if db_is_read_only(cur):
+        return
     cur.execute(
         '''
         create table if not exists "Manual_audit".learner_hours_overrides (
@@ -1253,6 +1265,8 @@ _PROFILE_DATE_FIELDS = ("start_date", "first_evidence_date", "planned_end_date")
 
 
 def _ensure_profile_dates_table(cur):
+    if db_is_read_only(cur):
+        return
     cur.execute(
         '''
         create table if not exists "Manual_audit".learner_profile_date_overrides (
@@ -1384,6 +1398,8 @@ _OVERLAY_CATEGORIES = {"attendance", "assignment", "video", "audio", "reading+qu
 
 
 def _ensure_activity_overlay_table(cur):
+    if db_is_read_only(cur):
+        return
     cur.execute(
         '''
         create table if not exists "Manual_audit".activity_overrides (

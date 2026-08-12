@@ -440,9 +440,14 @@ function LearnerProfilePage() {
             <span className="font-serif text-base text-foreground">OTJ&nbsp;Ledger</span>
             <span className="label-caps">Learner profile</span>
           </div>
-          <Link to="/search" className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline">
-            <ArrowLeft className="h-3.5 w-3.5" /> Learner search
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link to="/learners" className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline">
+              <ArrowLeft className="h-3.5 w-3.5" /> Learners
+            </Link>
+            <Link to="/search" className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline">
+              <ArrowLeft className="h-3.5 w-3.5" /> Learner search
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -511,7 +516,7 @@ function LearnerProfilePage() {
                 <span className={`mt-0.5 flex h-10 w-10 items-center justify-center rounded-full ${learner.break_in_learning.has_return_to_learning ? "bg-success/15 text-success" : "bg-warning/20 text-foreground"}`}><CalendarClock className="h-5 w-5" /></span>
                 <div>
                   <h2 className="font-serif text-lg text-foreground">Break in learning</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">Break and return dates from the learner's Aptem record.</p>
+                  <p className="mt-1 text-sm text-muted-foreground">Break and return dates from the learner's record.</p>
                 </div>
               </div>
               <span className={`rounded-full px-3 py-1 text-xs font-semibold ${learner.break_in_learning.has_return_to_learning ? "bg-success/15 text-success" : "bg-warning/20 text-foreground"}`}>

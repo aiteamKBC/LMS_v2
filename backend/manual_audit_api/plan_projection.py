@@ -29,8 +29,11 @@ _TABLES_READY = False
 def _ensure_ready(cursor):
     global _TABLES_READY
     if not _TABLES_READY:
-        ensure_plan_tables(cursor)
-        _TABLES_READY = True
+        # ensure_plan_tables returns False while Neon has the endpoint
+        # read-only (DDL skipped) — don't latch then, or a process that
+        # started during a read-only window would never self-heal the tables.
+        if ensure_plan_tables(cursor) is not False:
+            _TABLES_READY = True
 
 
 def parse_plan_key(raw):
@@ -198,7 +201,7 @@ def _plan_row_payload(row, aptem_id):
         "group_name": group_name,
         "learner_id": int(aptem_id),
         "lms_learner_id": None,
-        "learner_name": learner_name or f"Aptem learner {aptem_id}",
+        "learner_name": learner_name or f"Learner {aptem_id}",
         "date": display_date.isoformat() if display_date else None,
         # Fixed bucketing: the plan month, never the completion month.
         "month": calendar_month,
@@ -564,7 +567,7 @@ def plan_activity_detail(cursor, activity_key):
             display = "input" if has_progress and actual_hours else ""
         participants.append({
             "learner_id": aptem_id,
-            "learner_name": learner_name or f"Aptem learner {aptem_id}",
+            "learner_name": learner_name or f"Learner {aptem_id}",
             "found_as": category,
             "activity": title,
             "completed": completed,

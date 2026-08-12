@@ -334,8 +334,8 @@ function SearchPage() {
             <span className="label-caps">Live learner search</span>
           </div>
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <Link to="/groups" className="font-medium hover:underline">
-              Groups
+            <Link to="/learners" className="font-medium hover:underline">
+              Learners
             </Link>
             <Link to="/activity" search={{ learner: "" }} className="font-medium hover:underline">
               Activity log
@@ -434,7 +434,7 @@ function SearchPage() {
                       <TableCell>
                         <p className="text-sm font-semibold text-foreground">{learner.name}</p>
                         {/* learner.id IS the Aptem ID (the cohort feed keys learners by aptem_id). */}
-                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">Aptem ID: {learner.id}</p>
+                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">ID: {learner.id}</p>
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center gap-1.5">

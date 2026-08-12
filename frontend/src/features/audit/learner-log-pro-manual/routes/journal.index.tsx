@@ -194,7 +194,7 @@ function OtjhCard({ otjh }: { otjh?: any }) {
         <div><p className="text-[10px] uppercase text-muted-foreground">LMS</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.lms_h)}</p></div>
         <div><p className="text-[10px] uppercase text-muted-foreground">Unallocated source</p><p className="mt-0.5 font-mono text-sm text-amber-700">{hour(otjh.unallocated_h)}</p></div>
         <div><p className="text-[10px] uppercase text-muted-foreground">Computed total</p><p className="mt-0.5 font-mono text-sm font-semibold text-[#182d48]">{hour(otjh.computed_total_h)}</p></div>
-        <div><p className="text-[10px] uppercase text-muted-foreground">Aptem actual</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.aptem_actual_h)}</p></div>
+        <div><p className="text-[10px] uppercase text-muted-foreground">Recorded actual</p><p className="mt-0.5 font-mono text-sm text-[#182d48]">{hour(otjh.aptem_actual_h)}</p></div>
       </div>
       {(otjh.n_media != null || otjh.n_bundles != null || otjh.n_reading_items != null) && (
         <p className="mt-3 text-xs text-muted-foreground">
@@ -202,7 +202,7 @@ function OtjhCard({ otjh }: { otjh?: any }) {
         </p>
       )}
       {flagged && (
-        <p className="mt-2 text-xs font-medium text-red-700">Flagged for manual review — best-effort engineered hours may not match the Aptem actual.</p>
+        <p className="mt-2 text-xs font-medium text-red-700">Flagged for manual review — best-effort engineered hours may not match the recorded actual.</p>
       )}
       {otjh.note && (
         <p className="mt-2 border-t border-border/60 pt-2 text-xs italic leading-5 text-muted-foreground">{otjh.note}</p>

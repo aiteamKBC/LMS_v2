@@ -1773,10 +1773,10 @@ export async function updateActivityRow(row: LearnerActivity, activity: Activity
     // to the plan progress endpoint. Structural fields belong to the builder —
     // routing them through the overlay would strip the row's iframe and KSBs.
     if (activity.activity.trim() !== row.activity_unit.trim()) {
-      throw new Error("The activity name is shared by the whole group — edit it in the plan builder (Groups page).");
+      throw new Error("The activity name belongs to the plan — edit it in the plan builder (Learners page).");
     }
     if ((activity.planned ?? 0) !== (row.planned_hours ?? 0)) {
-      throw new Error("Planned hours are shared by the whole group — edit them in the plan builder (Groups page).");
+      throw new Error("Planned hours belong to the plan — edit them in the plan builder (Learners page).");
     }
     const patch: Record<string, unknown> = {
       actual_hours: activity.actual,
@@ -1837,7 +1837,7 @@ export async function deleteActivityRow(row: LearnerActivity, updatedBy?: string
   if (!row.learner_id) throw new Error("The learner ID is missing from this activity.");
   if (row.plan_id.startsWith("plan:")) {
     throw new Error(
-      "This activity comes from a group plan. Remove it in the plan builder (Groups page) so every learner stays consistent.",
+      "This activity comes from the plan. Remove it in the plan builder (Learners page) so the plan stays consistent.",
     );
   }
   return overlayMutation("DELETE", {

@@ -173,6 +173,50 @@ export function listPlanGroups() {
   return request<{ items: PlanGroup[] }>("/groups");
 }
 
+// --- learner-first plans ------------------------------------------------------
+// One plan per learner (an 'individual' plan_groups row under the hood): the
+// months are the learner's own Aptem training plan, labels untouched.
+
+export type LearnerPlan = {
+  id: number;
+  name: string;
+  aptem_id: number;
+  learner_name: string | null;
+  learner_email: string | null;
+  programme_name: string | null;
+  aptem_group: string | null;
+  status: string;
+  created_at: string | null;
+  updated_at: string | null;
+  month_count: number;
+  activity_count: number;
+};
+
+export type AptemLearnerHit = {
+  aptem_id: number;
+  name: string | null;
+  email: string | null;
+  programme_name: string | null;
+  aptem_group: string | null;
+  plan_id: number | null;
+  has_training_plan: boolean;
+};
+
+export function listLearnerPlans() {
+  return request<{ items: LearnerPlan[] }>("/learners");
+}
+
+export function addLearnerPlan(aptemId: number, createdBy?: string) {
+  return mutate<LearnerPlan>("/learners", {
+    method: "POST",
+    body: JSON.stringify({ aptem_id: aptemId, created_by: createdBy }),
+  });
+}
+
+export function searchAptemLearners(query: string) {
+  return request<{ items: AptemLearnerHit[] }>(`/pickers/aptem-learners?q=${encodeURIComponent(query)}`);
+}
+
 export function getPlanGroup(groupId: number) {
   return request<PlanGroupDetail>(`/groups/${groupId}`);
 }
@@ -280,6 +324,41 @@ export type PlanMatrix = {
 
 export function getPlanMatrix(groupId: number, monthIndex: number) {
   return request<PlanMatrix>(`/groups/${groupId}/matrix?month_index=${monthIndex}`);
+}
+
+// The group's Aptem training plan: the general (majority) backbone with each
+// member's own status/date per module. month_index lines up with plan months.
+export type GroupTrainingPlanLearner = {
+  aptem_id: number;
+  name: string | null;
+  status: string;
+  bucket: "completed" | "in_progress" | "not_started" | "other" | "missing";
+  date: string | null;
+};
+
+export type GroupTrainingPlanModule = {
+  name: string;
+  type: string;
+  counts: { completed: number; in_progress: number; not_started: number; other: number; missing: number };
+  learners: GroupTrainingPlanLearner[];
+};
+
+export type GroupTrainingPlan = {
+  group_id: number;
+  members_total: number;
+  members_with_plan: number;
+  majority_count: number;
+  members_without_plan: Array<{ aptem_id: number; name: string | null }>;
+  months: Array<{
+    month_index: number;
+    label: string | null;
+    date: string | null;
+    modules: GroupTrainingPlanModule[];
+  }>;
+};
+
+export function getGroupTrainingPlan(groupId: number) {
+  return request<GroupTrainingPlan>(`/groups/${groupId}/training-plan`);
 }
 
 export function addPlanActivities(payload: {

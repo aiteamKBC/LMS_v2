@@ -23,6 +23,21 @@ from .plan_tables import assignment_name_key, ensure_plan_tables
 # Catalog casing differs from the wire categories ('Reading+Quiz' vs 'reading+quiz').
 _CATALOG_TYPES = {"video": "video", "reading+quiz": "Reading+Quiz", "audio": "audio"}
 
+# Attendance is read LIVE from the KBC project's AiTeamKBC database
+# (public.kbc_attendance) — it runs ahead of the Manual_audit mirror sync.
+# Module strings are identical in both, so the session refs
+# (session:<module_slug>:<date>) keep matching the projection/suggestions,
+# which still join the mirror inside the main database.
+ATTENDANCE_CONN = "kbc_attendance"
+
+
+def _attendance_cursor():
+    if ATTENDANCE_CONN not in connections.databases:
+        raise KeyError(
+            "KBC_ATTENDANCE_DATABASE_URL is not configured — the live attendance source is unavailable."
+        )
+    return connections[ATTENDANCE_CONN].cursor()
+
 
 def _member_ids(cur, group_id):
     cur.execute(
@@ -54,6 +69,7 @@ def picker_attendance_sessions(request: HttpRequest) -> JsonResponse:
         with connections[CONN].cursor() as cur:
             ensure_plan_tables(cur)
             members = _member_ids(cur, group_id)
+        with _attendance_cursor() as cur:
             # Per-learner sums first: a session can hold several lecture rows
             # per learner, and the plan's hours must equal what the mirror
             # dedup later removes (sum, never max). default_hours = the most
@@ -62,14 +78,14 @@ def picker_attendance_sessions(request: HttpRequest) -> JsonResponse:
             cur.execute(
                 '''
                 with per_learner as (
-                    select la.attendance_date::date as session_date,
-                           coalesce(la.module, '') as module_raw,
-                           la.aptem_id,
-                           sum(la.activity_hours) as learner_hours,
-                           max(coalesce(la.attendance_value, 0)) as attended
-                    from "Manual_audit".learner_attendance la
-                    where to_char(la.attendance_date::date, 'YYYY-MM') = %s
-                    group by 1, 2, la.aptem_id
+                    select ka."date"::date as session_date,
+                           coalesce(ka.module, '') as module_raw,
+                           ka."ID" as aptem_id,
+                           sum(coalesce(ka.activity, 0)) as learner_hours,
+                           max(coalesce(ka."Attendance", 0)) as attended
+                    from public.kbc_attendance ka
+                    where to_char(ka."date"::date, 'YYYY-MM') = %s
+                    group by 1, 2, ka."ID"
                 )
                 select session_date, module_raw,
                        count(*) as total_learners,
@@ -122,8 +138,11 @@ def picker_attendance_grid(request: HttpRequest) -> JsonResponse:
     except ValueError:
         return JsonResponse({"error": "group_id is required"}, status=400)
     month = str(request.GET.get("month") or "").strip()
-    if len(month) != 7 or month[4] != "-":
-        return JsonResponse({"error": "month must be YYYY-MM"}, status=400)
+    # month=all -> every recorded session (the member scope keeps it small:
+    # for a learner-plan that means THEIR whole attendance history).
+    every_month = month.lower() in {"", "all"}
+    if not every_month and (len(month) != 7 or month[4] != "-"):
+        return JsonResponse({"error": "month must be YYYY-MM or all"}, status=400)
     include_all = str(request.GET.get("all") or "").strip() in {"1", "true", "yes"}
 
     try:
@@ -140,23 +159,26 @@ def picker_attendance_grid(request: HttpRequest) -> JsonResponse:
             )
             member_rows = cur.fetchall()
             member_ids = {row[0] for row in member_rows}
-            # One row per (learner, session): hours summed, attendance rolled up.
+        with _attendance_cursor() as cur:
+            # One row per (learner, session): hours summed, attendance rolled
+            # up. Names come from the live table itself (max() picks one).
+            month_filter = "" if every_month else '''where to_char(ka."date"::date, 'YYYY-MM') = %s'''
             cur.execute(
-                '''
-                select la.attendance_date::date as session_date,
-                       coalesce(la.module, '') as module_raw,
-                       la.aptem_id,
-                       l.learner_name,
-                       sum(la.activity_hours) as hours,
-                       max(coalesce(la.attendance_value, 0)) as attended,
-                       max(la.attendance_status) as status
-                from "Manual_audit".learner_attendance la
-                left join "Manual_audit".learners l on l.aptem_id = la.aptem_id
-                where to_char(la.attendance_date::date, 'YYYY-MM') = %s
-                group by 1, 2, la.aptem_id, l.learner_name
+                f'''
+                select ka."date"::date as session_date,
+                       coalesce(ka.module, '') as module_raw,
+                       ka."ID" as aptem_id,
+                       max(ka."FullName") as learner_name,
+                       sum(coalesce(ka.activity, 0)) as hours,
+                       max(coalesce(ka."Attendance", 0)) as attended,
+                       max(ka.attendance_status) as status,
+                       string_agg(distinct nullif(btrim(ka.lecture_name), ''), ' · ') as lectures
+                from public.kbc_attendance ka
+                {month_filter}
+                group by 1, 2, ka."ID"
                 order by 1, 2
                 ''',
-                [month],
+                [] if every_month else [month],
             )
             rows = cur.fetchall()
     except (KeyError, DatabaseError) as error:
@@ -165,7 +187,7 @@ def picker_attendance_grid(request: HttpRequest) -> JsonResponse:
     days = {}
     cells = {}
     extra_learners = {}
-    for session_date, module_raw, aptem_id, learner_name, hours, attended, status in rows:
+    for session_date, module_raw, aptem_id, learner_name, hours, attended, status, lectures in rows:
         date_text = session_date.isoformat()
         ref = f"session:{assignment_name_key(module_raw)}:{date_text}"
         day = days.setdefault(ref, {
@@ -176,6 +198,7 @@ def picker_attendance_grid(request: HttpRequest) -> JsonResponse:
             "member_rows": 0,
             "total_learners": 0,
             "hours_values": [],
+            "lecture_set": set(),
         })
         day["total_learners"] += 1
         is_member = aptem_id in member_ids
@@ -185,6 +208,9 @@ def picker_attendance_grid(request: HttpRequest) -> JsonResponse:
                 day["member_attended"] += 1
         if hours is not None:
             day["hours_values"].append(float(hours))
+        for lecture in (lectures or "").split(" · "):
+            if lecture.strip():
+                day["lecture_set"].add(lecture.strip())
         if is_member or include_all:
             cells[f"{aptem_id}:{ref}"] = {
                 "attended": bool(attended),
@@ -204,6 +230,8 @@ def picker_attendance_grid(request: HttpRequest) -> JsonResponse:
         day["default_hours"] = (
             max(set(values), key=values.count) if values else 2.5
         )
+        # What was actually taught that day (kbc_attendance.lecture_name).
+        day["lecture"] = " · ".join(sorted(day.pop("lecture_set"))) or None
     visible_days.sort(key=lambda item: (item["date"], item["module"]))
 
     learners = [
@@ -512,7 +540,7 @@ def picker_aptem_programmes(request: HttpRequest) -> JsonResponse:
         with connections[CONN].cursor() as cur:
             rows = _programme_variant_rows(cur)
     except (KeyError, DatabaseError) as error:
-        return JsonResponse({"error": "Could not load Aptem programmes.", "details": str(error)}, status=503)
+        return JsonResponse({"error": "Could not load the programmes.", "details": str(error)}, status=503)
     items = [
         {"programme": programme, "aptem_learners": aptem_learners, "in_cohort": in_cohort}
         for programme, aptem_learners, in_cohort in rows
@@ -546,13 +574,72 @@ def picker_aptem_groups(request: HttpRequest) -> JsonResponse:
             )
             rows = cur.fetchall()
     except (KeyError, DatabaseError) as error:
-        return JsonResponse({"error": "Could not load Aptem groups.", "details": str(error)}, status=503)
+        return JsonResponse({"error": "Could not load the groups.", "details": str(error)}, status=503)
     return JsonResponse({
         "items": [
             {"group": row[0], "aptem_learners": row[1], "in_cohort": row[2]}
             for row in rows
         ],
         "programme": programme,
+    })
+
+
+@require_GET
+def picker_aptem_learners(request: HttpRequest) -> JsonResponse:
+    """Search Aptem learners by name / email / Aptem ID for the learner-first
+    flow. Each hit carries their Aptem programme + group and, when they
+    already have a learner-plan, its id (so the UI offers Open, not Add)."""
+    query = str(request.GET.get("q") or "").strip()
+    if len(query) < 2:
+        return JsonResponse({"items": [], "query": query})
+    like = f"%{query}%"
+    try:
+        with connections[CONN].cursor() as cur:
+            ensure_plan_tables(cur)
+            cur.execute(
+                '''
+                select l.aptem_id, l.learner_name, l.learner_email,
+                       btrim(au."Program Name"), btrim(au."Group"),
+                       (
+                           select min(g.id) from "Manual_audit".plan_groups g
+                           join "Manual_audit".plan_group_members m
+                             on m.group_id = g.id and m.left_at is null
+                           where g.kind = 'individual' and g.status <> 'archived'
+                             and m.aptem_id = l.aptem_id
+                       ) as plan_id,
+                       (
+                           lm.aptem_training_plan is not null
+                           and jsonb_typeof(lm.aptem_training_plan::jsonb) = 'array'
+                           and jsonb_array_length(lm.aptem_training_plan::jsonb) > 0
+                       ) as has_training_plan
+                from "LMS"."Aptem_users" au
+                join "Manual_audit".learners l on l.aptem_id = au."ID"
+                left join "Audit".learner_match lm on lm.aptem_id = l.aptem_id
+                where l.learner_name ilike %s
+                   or l.learner_email ilike %s
+                   or cast(l.aptem_id as text) like %s
+                order by l.learner_name
+                limit 30
+                ''',
+                [like, like, like],
+            )
+            rows = cur.fetchall()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not search the learners.", "details": str(error)}, status=503)
+    return JsonResponse({
+        "items": [
+            {
+                "aptem_id": row[0],
+                "name": row[1],
+                "email": row[2],
+                "programme_name": row[3] or None,
+                "aptem_group": row[4] or None,
+                "plan_id": row[5],
+                "has_training_plan": bool(row[6]),
+            }
+            for row in rows
+        ],
+        "query": query,
     })
 
 

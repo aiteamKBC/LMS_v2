@@ -17,7 +17,7 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from .common import CONN, _azure_service_client, _error, _has_audit_permission
+from .common import CONN, _azure_service_client, _error, _has_audit_permission, db_is_read_only
 
 
 MAX_EVIDENCE_SIZE = 25 * 1024 * 1024
@@ -28,6 +28,8 @@ ALLOWED_EVIDENCE_EXTENSIONS = {
 
 
 def ensure_evidence_override_table(cursor):
+    if db_is_read_only(cursor):
+        return
     cursor.execute(
         '''
         create table if not exists "Manual_audit".learner_evidence_overrides (
