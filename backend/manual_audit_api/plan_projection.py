@@ -121,7 +121,7 @@ _PLAN_ROWS_SQL = '''
            p.rejected,
            cat.video_iframe_url, cat.reading_iframe_url, cat.reading_type,
            cat.quiz_id as catalog_quiz_id, cat.reading_text_body,
-           l.learner_name
+           l.learner_name, a.created_at
     from "Manual_audit".plan_activities a
     join "Manual_audit".plan_groups g
       on g.id = a.group_id and g.status = 'active'
@@ -156,7 +156,7 @@ def _plan_row_payload(row, aptem_id):
         completion_date, actual_hours, attendance_status, quiz_attempted,
         quiz_passed, reading_viewed, note, timestamp_from, timestamp_to,
         rejected, video_iframe_url, reading_iframe_url, reading_type,
-        catalog_quiz_id, reading_text_body, learner_name,
+        catalog_quiz_id, reading_text_body, learner_name, created_at,
     ) = row
 
     # A rejected suggestion means "treat as nothing happened".
@@ -231,6 +231,7 @@ def _plan_row_payload(row, aptem_id):
         "ksbs": ksbs_payload,
         "iframe_url": iframe_url,
         "reporting_week_label": f"Week {week_slot}",
+        "created_at": created_at.isoformat() if created_at else None,
         "source": "Manual_audit",
         "plan": {
             "activity_key": str(activity_key),
