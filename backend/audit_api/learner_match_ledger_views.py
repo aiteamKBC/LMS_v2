@@ -1375,6 +1375,7 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
     skill_groups = {}
     certifications = []
     employment = None
+    cv_employment_candidates = []
     learning_delivery = {}
     programme_understanding = {
         "understanding_programme": None,
@@ -1507,14 +1508,8 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
             [aptem_id],
         )
         for characteristic, assessed_level in cursor.fetchall():
-            match = re.match(
-                r"Understanding of (.+?) \((Knowledge|Skill|Behaviour)\)",
-                characteristic or "",
-            )
-            domain = match.group(1).strip() if match else (characteristic or "Skill").split(" - ")[0].strip()
+            domain, field = _skill_radar_characteristic(characteristic)
             score = max(0, min(8, int(assessed_level)))
-            score_type = match.group(2).lower() if match else "skill"
-            field = {"knowledge": "knowledge", "skill": "skill_score", "behaviour": "behaviour"}[score_type]
             skill_groups.setdefault(domain, {})[field] = score
 
         cursor.execute(
@@ -1533,11 +1528,6 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                     certification_value = json.loads(certification_value)
                 except ValueError:
                     certification_value = []
-            if isinstance(employment_value, str):
-                try:
-                    employment_value = json.loads(employment_value)
-                except ValueError:
-                    employment_value = []
             if isinstance(certification_value, list):
                 for certification in certification_value:
                     if not isinstance(certification, dict):
@@ -1550,8 +1540,26 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                         continue
                     seen_certifications.add(key)
                     certifications.append(certification)
-            if employment is None:
-                employment = _first_employment_details(employment_value)
+            cv_employment_terms = _cv_employment_terms(employment_value)
+            if cv_employment_terms:
+                cv_employment_candidates.append(cv_employment_terms)
+
+        cursor.execute(
+            '''
+            select learner_employer_details
+            from fetching_evidence.aptem_cv_contracts_probe
+            where learner_id = %s
+              and learner_employer_details is not null
+              and learner_employer_details <> '{}'::jsonb
+            order by fetched_at desc nulls last, id desc
+            limit 1
+            ''',
+            [aptem_id],
+        )
+        employer_row = cursor.fetchone()
+        if employer_row:
+            employment = _employer_details_from_contract_profile(employer_row[0])
+        employment = _merge_matching_cv_employment_terms(employment, cv_employment_candidates)
 
         if learner_email or learner_name:
             learner_email = str(learner_email or "").strip()
@@ -1695,7 +1703,7 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
             "behaviour": scores.get("behaviour"),
             "maximum": 8,
         }
-        for domain, scores in sorted(skill_groups.items())
+        for domain, scores in sorted(skill_groups.items(), key=lambda item: _skill_radar_sort_key(item[0]))
     ]
     return {
         "contracts": contracts,
@@ -1734,19 +1742,168 @@ def _partition_evidence_items(evidence_items):
     return first_date, first_items, archived_items
 
 
-def _first_employment_details(value):
-    if isinstance(value, dict):
-        nested = value.get("employment_details")
-        if isinstance(nested, dict) and nested.get("section_found", True):
-            return nested
-        if value.get("employer_name") and value.get("section_found", True):
-            return value
+def _employer_details_from_contract_profile(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    if not isinstance(value, dict):
+        return None
+
+    employer = value.get("employer")
+    if not isinstance(employer, dict):
+        employer = {}
+    raw = value.get("raw")
+    if not isinstance(raw, dict):
+        raw = {}
+    manager = employer.get("manager")
+    if not isinstance(manager, dict):
+        manager = {}
+    address = employer.get("address")
+    if not isinstance(address, dict):
+        address = {}
+
+    employer_name = employer.get("name") or raw.get("UserEmployer_Organization")
+    job_title = employer.get("job_title") or raw.get("UserILRSummary_JobTitle")
+    workplace_address = address.get("formatted") or raw.get("UserEmployer_Address")
+    manager_name = manager.get("name") or raw.get("UserEmployer_ManagerName")
+    manager_email = manager.get("email") or raw.get("UserEmployer_ManagerEmail")
+    manager_phone = manager.get("phone_number") or raw.get("UserEmployer_ManagerPhone")
+    if not any((employer_name, job_title, workplace_address, manager_name, manager_email, manager_phone)):
+        return None
+    return {
+        "employer_name": employer_name or None,
+        "job_title": job_title or None,
+        "workplace_address": workplace_address or None,
+        "employment_start_date": None,
+        "contracted_hours_per_week": None,
+        "employment_type": None,
+        "working_pattern": None,
+        "line_manager": {
+            "name": manager_name or None,
+            "email": manager_email or None,
+            "phone": manager_phone or None,
+            "job_title": None,
+        },
+    }
+
+
+def _cv_employment_terms(value):
+    """Read the two contract terms that only exist in the extracted CV data."""
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return None
+        if decoded == value:
+            return None
+        return _cv_employment_terms(decoded)
+
     if isinstance(value, list):
         for item in value:
-            details = _first_employment_details(item)
-            if details:
-                return details
+            terms = _cv_employment_terms(item)
+            if terms:
+                return terms
+        return None
+
+    if not isinstance(value, dict):
+        return None
+
+    if value.get("section_found", True):
+        employer_name = _cv_optional_text(value.get("employer_name"))
+        start_date = _cv_optional_text(value.get("employment_start_date"))
+        contracted_hours = _to_float(value.get("contracted_hours_per_week"))
+        if start_date is not None or contracted_hours is not None:
+            return {
+                "employer_name": employer_name,
+                "employment_start_date": start_date,
+                "contracted_hours_per_week": contracted_hours,
+            }
+
+    for nested in value.values():
+        terms = _cv_employment_terms(nested)
+        if terms:
+            return terms
     return None
+
+
+def _cv_optional_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text.lower() in {"", "none", "null", "n/a", "-"}:
+        return None
+    return text
+
+
+def _skill_radar_characteristic(value):
+    text = str(value or "").strip() or "Skill"
+    labelled_match = re.match(
+        r"Understanding of (.+?) \((Knowledge|Skill|Behaviour)\)",
+        text,
+        re.IGNORECASE,
+    )
+    if labelled_match:
+        score_type = labelled_match.group(2).lower()
+        field = {
+            "knowledge": "knowledge",
+            "skill": "skill_score",
+            "behaviour": "behaviour",
+        }[score_type]
+        return labelled_match.group(1).strip(), field
+
+    code_match = re.search(r"(?:^|[\s(:.\-])([KSB])\d+\b", text, re.IGNORECASE)
+    prefix = code_match.group(1).upper() if code_match else "S"
+    field = {
+        "K": "knowledge",
+        "S": "skill_score",
+        "B": "behaviour",
+    }[prefix]
+    return text, field
+
+
+def _skill_radar_sort_key(value):
+    text = str(value or "")
+    code_match = re.search(r"(?:^|[\s(:.\-])([KSB])(\d+)\b", text, re.IGNORECASE)
+    if not code_match:
+        return (3, 0, text.lower())
+    prefix_order = {"K": 0, "S": 1, "B": 2}
+    return (prefix_order[code_match.group(1).upper()], int(code_match.group(2)), text.lower())
+
+
+def _normalise_employer_name(value):
+    text = _cv_optional_text(value)
+    if text is None:
+        return None
+    words = re.findall(r"[a-z0-9]+", text.lower().replace("&", " and "))
+    suffixes = {"limited", "ltd"}
+    while words and words[-1] in suffixes:
+        words.pop()
+    return " ".join(words) or None
+
+
+def _merge_matching_cv_employment_terms(employment, candidates):
+    if not isinstance(employment, dict):
+        return employment
+    employer_name = employment.get("employer_name")
+    matching_terms = next(
+        (
+            candidate
+            for candidate in candidates
+            if _normalise_employer_name(candidate.get("employer_name"))
+            == _normalise_employer_name(employer_name)
+            and _normalise_employer_name(employer_name) is not None
+        ),
+        None,
+    )
+    if matching_terms is None:
+        return employment
+    if employment.get("employment_start_date") is None:
+        employment["employment_start_date"] = matching_terms.get("employment_start_date")
+    if employment.get("contracted_hours_per_week") is None:
+        employment["contracted_hours_per_week"] = matching_terms.get("contracted_hours_per_week")
+    return employment
 
 
 def _period_label(value):
