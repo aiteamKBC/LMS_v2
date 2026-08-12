@@ -112,7 +112,8 @@ _PLAN_ROWS_SQL = '''
     select a.activity_key, a.group_id, g.name as group_name, a.month_index,
            a.week_slot, a.position, a.category, a.title, a.subtitle,
            a.material_ref, a.planned_hours, a.planned_date, a.ksbs,
-           m.calendar_month, m.anchor_date,
+           coalesce(mm.calendar_month, m.calendar_month) as calendar_month,
+           coalesce(mm.anchor_date, m.anchor_date) as anchor_date,
            md.planned_date as member_date,
            p.status as progress_status, p.completion_date, p.actual_hours,
            p.attendance_status, p.quiz_attempted, p.quiz_passed,
@@ -128,6 +129,9 @@ _PLAN_ROWS_SQL = '''
       on pm.group_id = a.group_id and pm.aptem_id = %(aptem_id)s and pm.left_at is null
     join "Manual_audit".plan_months m
       on m.group_id = a.group_id and m.month_index = a.month_index
+    left join "Manual_audit".plan_member_months mm
+      on mm.group_id = a.group_id and mm.aptem_id = %(aptem_id)s
+     and mm.month_index = a.month_index
     left join "Manual_audit".plan_member_dates md
       on md.group_id = a.group_id and md.aptem_id = %(aptem_id)s
      and md.activity_key = a.activity_key
@@ -305,7 +309,8 @@ def suppress_claimed_mirror_rows(items, claims):
 # --- cohort merge -------------------------------------------------------------
 
 _PLAN_AGGREGATE_SQL = '''
-    select pm.aptem_id, m.calendar_month,
+    select pm.aptem_id,
+           coalesce(mm.calendar_month, m.calendar_month) as calendar_month,
            count(*) as activity_count,
            coalesce(sum(a.planned_hours), 0) as planned,
            coalesce(sum(p.actual_hours) filter (
@@ -338,12 +343,15 @@ _PLAN_AGGREGATE_SQL = '''
       on m.group_id = a.group_id and m.month_index = a.month_index
     join "Manual_audit".plan_group_members pm
       on pm.group_id = a.group_id and pm.left_at is null
+    left join "Manual_audit".plan_member_months mm
+      on mm.group_id = a.group_id and mm.aptem_id = pm.aptem_id
+     and mm.month_index = a.month_index
     left join "Manual_audit".plan_activity_exemptions x
       on x.activity_key = a.activity_key and x.aptem_id = pm.aptem_id
     left join "Manual_audit".plan_learner_progress p
       on p.aptem_id = pm.aptem_id and p.activity_key = a.activity_key
     where a.included and x.aptem_id is null
-    group by pm.aptem_id, m.calendar_month
+    group by pm.aptem_id, coalesce(mm.calendar_month, m.calendar_month)
 '''
 
 # Attendance hours already counted in the mirror month buckets for sessions a
@@ -516,31 +524,37 @@ def plan_activity_detail(cursor, activity_key):
         select pm.aptem_id, pm.learner_name,
                p.status, p.completion_date, p.actual_hours, p.attendance_status,
                p.quiz_attempted, p.quiz_passed, p.reading_viewed, p.rejected,
-               md.planned_date as member_date
+               md.planned_date as member_date,
+               mm.calendar_month as member_month,
+               mm.anchor_date as member_anchor
         from "Manual_audit".plan_group_members pm
         left join "Manual_audit".plan_learner_progress p
           on p.aptem_id = pm.aptem_id and p.activity_key = %s and p.archived_at is null
         left join "Manual_audit".plan_member_dates md
           on md.group_id = pm.group_id and md.aptem_id = pm.aptem_id and md.activity_key = %s
+        left join "Manual_audit".plan_member_months mm
+          on mm.group_id = pm.group_id and mm.aptem_id = pm.aptem_id and mm.month_index = %s
         left join "Manual_audit".plan_activity_exemptions x
           on x.activity_key = %s and x.aptem_id = pm.aptem_id
         where pm.group_id = %s and pm.left_at is null and x.aptem_id is null
         order by lower(coalesce(pm.learner_name, '')), pm.aptem_id
         ''',
-        [activity_key, activity_key, activity_key, group_id],
+        [activity_key, activity_key, _month_index, activity_key, group_id],
     )
     participants = []
     completed_count = 0
     for row in cursor.fetchall():
         (aptem_id, learner_name, status, completion_date, actual_hours,
          attendance_status, quiz_attempted, quiz_passed, reading_viewed,
-         rejected, member_date) = row
+         rejected, member_date, member_month, member_anchor) = row
         has_progress = status is not None and not rejected
         completed = has_progress and status == "completed"
         if completed:
             completed_count += 1
+        # Each learner's own training-plan month wins over the group month.
         date = completion_date or _resolve_date(
-            member_date, planned_date, anchor_date, calendar_month, week_slot,
+            member_date, planned_date, member_anchor or anchor_date,
+            member_month or calendar_month, week_slot,
         )
         if category == "attendance":
             display = "" if not has_progress or attendance_status is None else (
@@ -560,7 +574,7 @@ def plan_activity_detail(cursor, activity_key):
             "actual": float(actual_hours) if has_progress and actual_hours is not None else None,
             "planned": float(planned_hours) if planned_hours is not None else None,
             "reporting_method": "Manual plan",
-            "month": calendar_month,
+            "month": member_month or calendar_month,
             "date": date.isoformat() if date else None,
             "timestamp_from": None,
             "timestamp_to": None,
