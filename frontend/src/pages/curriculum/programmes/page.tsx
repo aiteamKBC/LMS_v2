@@ -303,10 +303,10 @@ export default function CurriculumProgrammes() {
           color: programme.color,
           description: programme.description,
           structureType: programme.structureType,
-          ksbProfileSourceId: `profile:${selectedProfileId}`,
+          ksbProfileSourceId: selectedProfileId,
         });
-        setProgrammeSourceOverrides(previous => new Map(previous).set(programmeId, `profile:${selectedProfileId}`));
-        await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, `profile:${selectedProfileId}`);
+        setProgrammeSourceOverrides(previous => new Map(previous).set(programmeId, selectedProfileId));
+        await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, selectedProfileId);
       } else {
         const standard = standards.find(item => item.id === id);
         if (!standard) throw new Error('Selected standard could not be found.');
@@ -2426,9 +2426,9 @@ function GroupEditorRow({ group, tutors, coaches, onRefreshStaffProfiles, onSave
     name: group.name,
     tutor: group.tutor === 'Unassigned' ? '' : group.tutor || '',
     coach: group.coach === 'Unassigned' ? '' : group.coach || '',
-    weekDays: group.schedule || '',
-    startTime: '',
-    endTime: '',
+    weekDays: group.weekDays || group.schedule || '',
+    startTime: group.startTime || '',
+    endTime: group.endTime || '',
   });
   const [saving, setSaving] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);

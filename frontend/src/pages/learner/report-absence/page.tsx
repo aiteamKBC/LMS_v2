@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
@@ -38,6 +39,7 @@ interface EvidencePreview {
 }
 
 export default function ReportAbsencePage() {
+  const navigate = useNavigate();
   const p = LEARNER_PROFILE;
   const myLearner = useMyLearner();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -259,7 +261,7 @@ export default function ReportAbsencePage() {
               <button type="button" onClick={resetForm} className="rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-semibold text-foreground-600 transition hover:bg-background-100">
                 Submit another report
               </button>
-              <a href="/learner/attendance" className="rounded-lg bg-primary-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-primary-600">Back to attendance</a>
+              <button type="button" onClick={() => navigate(-1)} className="rounded-lg bg-primary-500 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-primary-600">Back to attendance</button>
             </div>
           </section>
         ) : (

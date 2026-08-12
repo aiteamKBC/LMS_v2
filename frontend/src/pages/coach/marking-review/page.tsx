@@ -209,7 +209,7 @@ export default function CoachMarkingReviewPage() {
       userRole="Progress Coach"
     >
       <div className="mx-auto w-full max-w-[1680px] p-5 md:p-8 lg:px-12">
-        <button onClick={() => navigate('/coach/marking-queue')} className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-foreground-600 hover:text-primary-700">
+        <button onClick={() => navigate(-1)} className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-foreground-600 hover:text-primary-700">
           <AppIcon className="ri-arrow-left-line" /> Back to marking queue
         </button>
 

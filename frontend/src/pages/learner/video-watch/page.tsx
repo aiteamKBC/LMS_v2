@@ -219,7 +219,7 @@ export default function ComponentViewPage() {
     >
       <div className="p-3 md:p-6 max-w-6xl mx-auto">
         <button
-          onClick={() => navigate(backHref)}
+          onClick={() => navigate(-1)}
           className="mb-4 inline-flex items-center gap-1.5 text-[13px] font-semibold text-foreground-500 hover:text-foreground-800 transition-colors cursor-pointer"
         >
           <AppIcon className="ri-arrow-left-line" /> Back to training plan
@@ -256,12 +256,12 @@ export default function ComponentViewPage() {
               learnerKind={kind as LearnerKind}
               learnerId={id}
               evidenceSectionRef={componentId}
-              onClose={() => navigate(backHref)}
+              onClose={() => navigate(-1)}
             />
           </div>
         ) : phase === 'results' && record ? (
           <div className="w-full max-w-5xl mx-auto">
-            <ResultsScreen record={record} title={pageTitle} noun={noun} onBack={() => navigate(backHref)} />
+            <ResultsScreen record={record} title={pageTitle} noun={noun} onBack={() => navigate(-1)} />
           </div>
         ) : (
           /* ── consume phase: content + details + sidebar ── */
