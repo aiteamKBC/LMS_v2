@@ -169,6 +169,28 @@ function hoursValue(value: number | null | undefined) {
   return value == null ? "—" : `${Number(value).toFixed(2)} h`;
 }
 
+function monthKeysBetween(start: string, end: string) {
+  if (!/^\d{4}-\d{2}$/.test(start) || !/^\d{4}-\d{2}$/.test(end) || start > end) return [];
+  const values: string[] = [];
+  let year = Number(start.slice(0, 4));
+  let month = Number(start.slice(5, 7));
+  const endYear = Number(end.slice(0, 4));
+  const endMonth = Number(end.slice(5, 7));
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    values.push(`${year}-${String(month).padStart(2, "0")}`);
+    month += 1;
+    if (month === 13) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return values;
+}
+
+function reportMonthLabel(month: string) {
+  return new Date(`${month}-02T12:00:00`).toLocaleString("en-GB", { month: "long", year: "numeric" });
+}
+
 function JournalPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -197,6 +219,12 @@ function JournalPage() {
 
   const selectedLearner = learnerChoice;
   const aptemId = Number(selectedLearner) || null;
+  const learnerProfile = useQuery({
+    queryKey: ["learner-profile", selectedLearner],
+    queryFn: () => getLearnerProfile(selectedLearner),
+    enabled: Boolean(selectedLearner),
+    retry: false,
+  });
 
   // Original planned months + employee-arranged sums, straight from the
   // manual ledger. This drives the month selector, so the report and its
@@ -206,7 +234,28 @@ function JournalPage() {
     queryFn: () => getManualSummary(aptemId!),
     enabled: Boolean(aptemId),
   });
-  const summaryMonths = summary.data?.months ?? [];
+  const learnerStartDate = learnerProfile.data?.learning_delivery.start_date
+    ?? learnerProfile.data?.contracts.find((contract) => contract.programme_start_date)?.programme_start_date
+    ?? "";
+  const learnerStartMonth = learnerStartDate.slice(0, 7);
+  const summaryMonths = useMemo(() => {
+    const available = summary.data?.months ?? [];
+    if (!learnerStartMonth || !available.length) return available;
+    const availableByMonth = new Map(available.map((item) => [item.month, item]));
+    const endMonth = available.reduce(
+      (latest, item) => item.month > latest ? item.month : latest,
+      available[0].month,
+    );
+    return monthKeysBetween(learnerStartMonth, endMonth).map((month) => availableByMonth.get(month) ?? {
+      month,
+      label: reportMonthLabel(month),
+      original_planned: null,
+      arranged_planned: 0,
+      arranged_actual: 0,
+      arranged_not_accepted: 0,
+      row_count: 0,
+    });
+  }, [summary.data?.months, learnerStartMonth]);
   const selectedPeriod = summaryMonths.some((item) => item.month === periodChoice) ? periodChoice : "";
 
   useEffect(() => {
@@ -253,12 +302,6 @@ function JournalPage() {
     });
     return confirmation.isConfirmed;
   }
-  const learnerProfile = useQuery({
-    queryKey: ["learner-profile", selectedLearner],
-    queryFn: () => getLearnerProfile(selectedLearner),
-    enabled: Boolean(selectedLearner),
-    retry: false,
-  });
   const savedSignoff = useQuery({
     queryKey: ["journal-signoff", selectedLearner, selectedPeriod],
     queryFn: () => fetchAuditSignoff(selectedLearner, selectedPeriod),
