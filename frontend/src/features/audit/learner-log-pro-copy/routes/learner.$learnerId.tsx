@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, LoaderCircle, Mail, Pencil, Save, Trash2, Upload, UserRound, X } from "lucide-react";
 import {
   PolarAngleAxis,
@@ -19,7 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/features/audit/learner-log-pro-copy/components/ui/table";
-import { deleteArchivedContract, deleteArchivedEvidence, getLearnerProfile, renameContract, setContractArchived, setEvidenceArchived, updateEvidenceDate, uploadContract, uploadEvidence, type LearnerProfile } from "@/features/audit/learner-log-pro-copy/lib/api";
+import { deleteArchivedContract, deleteArchivedEvidence, getLearnerProfile, renameContract, setContractArchived, setEvidenceArchived, updateEvidenceDate, updateLearnerProfileFields, uploadContract, uploadEvidence, type LearnerProfile, type LearnerProfileOverrideFields } from "@/features/audit/learner-log-pro-copy/lib/api";
 
 export const Route = createFileRoute("/learner/$learnerId")({
   component: LearnerProfilePage,
@@ -27,6 +27,10 @@ export const Route = createFileRoute("/learner/$learnerId")({
 
 function dateOnly(value?: string | null) {
   return value ? value.slice(0, 10) : "—";
+}
+
+function dateInputValue(value?: string | null) {
+  return value?.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? "";
 }
 
 function statusClass(status: string) {
@@ -124,6 +128,26 @@ function downloadFilename(disposition: string | null, fallback: string) {
 
 type EvidenceItem = NonNullable<LearnerProfile["learning_delivery"]["first_evidence_items"]>[number];
 
+type EmployerEditForm = {
+  employer_name: string;
+  job_title: string;
+  employment_start_date: string;
+  contracted_hours_per_week: string;
+  line_manager_name: string;
+  workplace_address: string;
+  employer_postcode: string;
+};
+
+const EMPTY_EMPLOYER_FORM: EmployerEditForm = {
+  employer_name: "",
+  job_title: "",
+  employment_start_date: "",
+  contracted_hours_per_week: "",
+  line_manager_name: "",
+  workplace_address: "",
+  employer_postcode: "",
+};
+
 function LearnerProfilePage() {
   const { learnerId } = Route.useParams();
   const queryClient = useQueryClient();
@@ -155,6 +179,15 @@ function LearnerProfilePage() {
   const [savingContractName, setSavingContractName] = useState(false);
   const [contractActionError, setContractActionError] = useState<string | null>(null);
   const [contractActionMessage, setContractActionMessage] = useState<string | null>(null);
+  const [editingEmployer, setEditingEmployer] = useState(false);
+  const [employerForm, setEmployerForm] = useState<EmployerEditForm>(EMPTY_EMPLOYER_FORM);
+  const [savingEmployer, setSavingEmployer] = useState(false);
+  const [employerActionError, setEmployerActionError] = useState<string | null>(null);
+  const [employerActionMessage, setEmployerActionMessage] = useState<string | null>(null);
+  const [editingPlannedEnd, setEditingPlannedEnd] = useState(false);
+  const [plannedEndValue, setPlannedEndValue] = useState("");
+  const [savingPlannedEnd, setSavingPlannedEnd] = useState(false);
+  const [plannedEndError, setPlannedEndError] = useState<string | null>(null);
   const profile = useQuery({
     queryKey: ["learner-profile", learnerId],
     queryFn: () => getLearnerProfile(learnerId),
@@ -392,6 +425,72 @@ function LearnerProfilePage() {
     }
   }
 
+  function beginEmployerEdit() {
+    const current = profile.data;
+    if (!current) return;
+    setEmployerForm({
+      employer_name: current.employment?.employer_name ?? "",
+      job_title: current.employment?.job_title ?? "",
+      employment_start_date: current.employment?.employment_start_date ?? "",
+      contracted_hours_per_week: current.employment?.contracted_hours_per_week?.toString() ?? "",
+      line_manager_name: current.employment?.line_manager?.name ?? "",
+      workplace_address: current.employment?.workplace_address ?? "",
+      employer_postcode: current.learning_delivery.employer_postcode ?? "",
+    });
+    setEmployerActionError(null);
+    setEmployerActionMessage(null);
+    setEditingEmployer(true);
+  }
+
+  async function handleEmployerSave(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!profile.data || savingEmployer) return;
+    const currentValues: EmployerEditForm = {
+      employer_name: profile.data.employment?.employer_name ?? "",
+      job_title: profile.data.employment?.job_title ?? "",
+      employment_start_date: profile.data.employment?.employment_start_date ?? "",
+      contracted_hours_per_week: profile.data.employment?.contracted_hours_per_week?.toString() ?? "",
+      line_manager_name: profile.data.employment?.line_manager?.name ?? "",
+      workplace_address: profile.data.employment?.workplace_address ?? "",
+      employer_postcode: profile.data.learning_delivery.employer_postcode ?? "",
+    };
+    const changedFields = Object.fromEntries(
+      Object.entries(employerForm).filter(([field, value]) => value !== currentValues[field as keyof EmployerEditForm]),
+    ) as LearnerProfileOverrideFields;
+    if (!Object.keys(changedFields).length) {
+      setEditingEmployer(false);
+      return;
+    }
+    setSavingEmployer(true);
+    setEmployerActionError(null);
+    setEmployerActionMessage(null);
+    try {
+      await updateLearnerProfileFields(Number(profile.data.aptem_id), changedFields);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEditingEmployer(false);
+      setEmployerActionMessage("Employer details were updated.");
+    } catch (error) {
+      setEmployerActionError(error instanceof Error ? error.message : "Employer details could not be updated.");
+    } finally {
+      setSavingEmployer(false);
+    }
+  }
+
+  async function handlePlannedEndSave() {
+    if (!profile.data || !plannedEndValue || savingPlannedEnd) return;
+    setSavingPlannedEnd(true);
+    setPlannedEndError(null);
+    try {
+      await updateLearnerProfileFields(Number(profile.data.aptem_id), { planned_end_date: plannedEndValue });
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEditingPlannedEnd(false);
+    } catch (error) {
+      setPlannedEndError(error instanceof Error ? error.message : "Planned end date could not be updated.");
+    } finally {
+      setSavingPlannedEnd(false);
+    }
+  }
+
   if (profile.isLoading) {
     return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">Loading learner profile…</div>;
   }
@@ -500,7 +599,40 @@ function LearnerProfilePage() {
                   )}
                 </dd>
               </div>
-              <div><dt className="label-caps">Planned end</dt><dd className="mt-1 font-mono">{dateOnly(learner.learning_delivery.planned_end_date)}</dd></div>
+              <div>
+                <dt className="label-caps">Planned end</dt>
+                {editingPlannedEnd ? (
+                  <dd className="mt-1 flex flex-wrap items-center gap-2">
+                    <input
+                      type="date"
+                      value={plannedEndValue}
+                      onChange={(event) => setPlannedEndValue(event.target.value)}
+                      className="rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-sm text-foreground"
+                    />
+                    <button type="button" onClick={handlePlannedEndSave} disabled={!plannedEndValue || savingPlannedEnd} className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-semibold text-background disabled:opacity-50">
+                      {savingPlannedEnd ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                    </button>
+                    <button type="button" onClick={() => setEditingPlannedEnd(false)} className="rounded-md border border-border px-2.5 py-1.5 text-xs font-semibold">Cancel</button>
+                    {plannedEndError && <span className="w-full text-xs text-destructive">{plannedEndError}</span>}
+                  </dd>
+                ) : (
+                  <dd className="mt-1 flex items-center gap-2 font-mono">
+                    {dateOnly(learner.learning_delivery.planned_end_date)}
+                    <button
+                      type="button"
+                      aria-label="Edit planned end date"
+                      onClick={() => {
+                        setPlannedEndValue(dateInputValue(learner.learning_delivery.planned_end_date));
+                        setPlannedEndError(null);
+                        setEditingPlannedEnd(true);
+                      }}
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  </dd>
+                )}
+              </div>
             </dl>
           </div>
         </section>
@@ -662,10 +794,60 @@ function LearnerProfilePage() {
 
           <div className="rounded-lg border border-border bg-card shadow-panel">
             <header className="border-b border-border px-7 py-5">
-              <h2 className="font-serif text-lg text-foreground">Employer details</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Extracted from the learner's CV and training plan documents.</p>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-serif text-lg text-foreground">Employer details</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">Source details with saved auditor corrections.</p>
+                </div>
+                {!editingEmployer && (
+                  <button type="button" onClick={beginEmployerEdit} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
+                    <Pencil className="h-3.5 w-3.5" /> Edit
+                  </button>
+                )}
+              </div>
+              {employerActionError && <p className="mt-3 text-sm font-medium text-destructive">{employerActionError}</p>}
+              {employerActionMessage && <p className="mt-3 text-sm font-medium text-success">{employerActionMessage}</p>}
             </header>
-            {employment ? (
+            {editingEmployer ? (
+              <form onSubmit={handleEmployerSave} className="grid gap-4 px-7 py-6 sm:grid-cols-2 xl:grid-cols-1">
+                <label className="space-y-1.5">
+                  <span className="label-caps">Employer</span>
+                  <input value={employerForm.employer_name} onChange={(event) => setEmployerForm((value) => ({ ...value, employer_name: event.target.value }))} maxLength={250} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="label-caps">Job title</span>
+                  <input value={employerForm.job_title} onChange={(event) => setEmployerForm((value) => ({ ...value, job_title: event.target.value }))} maxLength={250} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="label-caps">Employment start date</span>
+                  <input value={employerForm.employment_start_date} onChange={(event) => setEmployerForm((value) => ({ ...value, employment_start_date: event.target.value }))} maxLength={50} placeholder="DD/MM/YYYY" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="label-caps">Contracted hours per week</span>
+                  <input type="number" min="0" max="168" step="0.25" value={employerForm.contracted_hours_per_week} onChange={(event) => setEmployerForm((value) => ({ ...value, contracted_hours_per_week: event.target.value }))} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="label-caps">Line manager</span>
+                  <input value={employerForm.line_manager_name} onChange={(event) => setEmployerForm((value) => ({ ...value, line_manager_name: event.target.value }))} maxLength={250} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="label-caps">Employer postcode</span>
+                  <input value={employerForm.employer_postcode} onChange={(event) => setEmployerForm((value) => ({ ...value, employer_postcode: event.target.value }))} maxLength={30} className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground" />
+                </label>
+                <label className="space-y-1.5 sm:col-span-2 xl:col-span-1">
+                  <span className="label-caps">Workplace address</span>
+                  <textarea value={employerForm.workplace_address} onChange={(event) => setEmployerForm((value) => ({ ...value, workplace_address: event.target.value }))} maxLength={1000} rows={4} className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground" />
+                </label>
+                <div className="flex flex-wrap gap-2 sm:col-span-2 xl:col-span-1">
+                  <button type="submit" disabled={savingEmployer} className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background disabled:opacity-50">
+                    {savingEmployer ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {savingEmployer ? "Saving…" : "Save changes"}
+                  </button>
+                  <button type="button" disabled={savingEmployer} onClick={() => setEditingEmployer(false)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground disabled:opacity-50">
+                    <X className="h-4 w-4" /> Cancel
+                  </button>
+                </div>
+              </form>
+            ) : employment ? (
               <dl className="grid gap-5 px-7 py-6 sm:grid-cols-2 xl:grid-cols-1">
                 <div><dt className="label-caps">Employer</dt><dd className="mt-1.5 flex items-center gap-2 text-sm font-semibold"><BriefcaseBusiness className="h-4 w-4" />{employment.employer_name ?? "—"}</dd></div>
                 <div><dt className="label-caps">Job title</dt><dd className="mt-1.5 text-sm">{employment.job_title ?? "—"}</dd></div>
@@ -675,7 +857,7 @@ function LearnerProfilePage() {
                 <div><dt className="label-caps">Workplace address</dt><dd className="mt-1.5 whitespace-pre-line text-sm leading-6">{employment.workplace_address ?? "—"}</dd></div>
                 <div><dt className="label-caps">Employer postcode</dt><dd className="mt-1.5 font-mono text-sm">{learner.learning_delivery.employer_postcode ?? "—"}</dd></div>
               </dl>
-            ) : <EmptyState>No employer details were found in the CV evidence.</EmptyState>}
+            ) : <EmptyState>No employer details were found. Select Edit to add them.</EmptyState>}
           </div>
         </section>
 

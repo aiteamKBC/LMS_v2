@@ -3,6 +3,7 @@ from django.urls import path
 from .views import audit_blob, contract_file, evidence_file, learner_activity_stats, learner_audit, learner_audit_list, learner_signoff
 from .contract_documents import archive_contract, rename_contract, upload_contract
 from .evidence_documents import archive_evidence, update_evidence_date, upload_evidence
+from .profile_overrides import update_profile_overrides
 from .learner_log_views import health, learner_activities, learner_summaries, mre_list, mre_summary
 from .last_audit_ledger_views import (
     activities as last_audit_activities,
@@ -74,6 +75,7 @@ urlpatterns = [
     path("match-ledger/activity-overrides", match_activity_overrides, name="match-ledger-activity-overrides"),
     path("match-ledger/learners", match_learner_summaries, name="match-ledger-learners"),
     path("match-ledger/learner-profile", match_learner_profile, name="match-ledger-learner-profile"),
+    path("match-ledger/learner-profile/overrides", update_profile_overrides, name="match-ledger-profile-overrides"),
     path("learners/", learner_audit_list, name="audit-learners"),
     path("learners/stats/", learner_activity_stats, name="audit-learner-activity-stats"),
     path("learners/<int:learner_id>/", learner_audit, name="audit-learner"),
