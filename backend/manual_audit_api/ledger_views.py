@@ -379,7 +379,7 @@ def _attendance_payload(row):
         "group_name": row.get("module"),
         "learner_id": int(row["aptem_id"]),
         "lms_learner_id": int(row["learner_id"]) if row.get("learner_id") is not None else None,
-        "learner_name": row.get("learner_name") or f"Aptem learner {row['aptem_id']}",
+        "learner_name": row.get("learner_name") or f"Learner {row['aptem_id']}",
         "date": activity_date.isoformat() if activity_date else None,
         "month": activity_date.strftime("%Y-%m") if activity_date else "",
         "month_label": activity_date.strftime("%B %Y") if activity_date else "Not dated",
@@ -716,7 +716,7 @@ def cohort(request: HttpRequest) -> JsonResponse:
             "lms_id": int(row["verified_lms_id"]) if lms_matched else None,
             "declared_lms_id": int(row["declared_lms_id"]) if row["declared_lms_id"] is not None else None,
             "lms_matched": lms_matched,
-            "learner_name": row["learner_name"] or f"Aptem learner {row['aptem_id']}",
+            "learner_name": row["learner_name"] or f"Learner {row['aptem_id']}",
             "learner_email": row["learner_email"],
             "programme": programmes[0] if programmes else "Unassigned",
             "programmes": programmes,
@@ -781,7 +781,7 @@ def activities(request: HttpRequest) -> JsonResponse:
             )
             learner = cursor.fetchone()
             if not learner:
-                return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+                return JsonResponse({"error": f"no learner {aptem_id}"}, status=404)
             learner_id, learner_name = learner
             if is_excluded_learner(aptem_id, learner_name):
                 return JsonResponse({"error": "Learner not found."}, status=404)

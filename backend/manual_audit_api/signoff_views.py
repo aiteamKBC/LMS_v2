@@ -14,7 +14,7 @@ from django.db import DatabaseError, connections
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 
-from .common import CONN, _error, _has_audit_permission
+from .common import CONN, _error, _has_audit_permission, db_is_read_only
 
 
 PROGRAMME_KEY = "manual"
@@ -22,6 +22,8 @@ AUDIT_VERSION = "manual-audit-v1"
 
 
 def _ensure_signoff_table(cur):
+    if db_is_read_only(cur):
+        return
     cur.execute(
         '''
         create table if not exists "Manual_audit".monthly_audit_signoffs (

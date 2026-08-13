@@ -372,6 +372,13 @@ _audit_database_url = os.environ.get('AUDIT_DATABASE_URL')
 if _audit_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['audit'] = database_from_url(_audit_database_url)
 
+# Live attendance source (the KBC project's AiTeamKBC database,
+# public.kbc_attendance): the manual plan builder's attendance pickers read
+# the live table directly — it runs ahead of the Manual_audit mirror sync.
+_kbc_attendance_database_url = os.environ.get('KBC_ATTENDANCE_DATABASE_URL')
+if _kbc_attendance_database_url and not USE_SQLITE_FOR_TESTS:
+    DATABASES['kbc_attendance'] = database_from_url(_kbc_attendance_database_url)
+
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 
 # CORS/CSRF: the Vite dev server (port 3000) proxies /learner_api to this server, so

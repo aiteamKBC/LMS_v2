@@ -25,6 +25,7 @@ from django.http import JsonResponse
 
 from audit_api.learner_exclusions import is_excluded_learner
 from .common import CONN, _azure_service_client, _error, _has_audit_permission
+from .common import CONN, _azure_service_client, _error, _has_audit_permission, db_is_read_only
 
 
 MAX_CONTRACT_SIZE = 25 * 1024 * 1024
@@ -36,6 +37,8 @@ MANUAL_CONTRACT_PREFIX = "manual-"
 
 
 def ensure_contract_archive_table(cursor):
+    if db_is_read_only(cursor):
+        return
     cursor.execute(
         '''
         create table if not exists "Manual_audit".contract_document_archive (
@@ -58,6 +61,8 @@ def ensure_contract_archive_table(cursor):
 
 
 def ensure_contract_uploads_table(cursor):
+    if db_is_read_only(cursor):
+        return
     cursor.execute(
         '''
         create table if not exists "Manual_audit".contract_uploads (

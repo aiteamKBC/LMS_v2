@@ -1,0 +1,1577 @@
+"""Employee-arranged monthly ledger for the auditor-copy workspace.
+
+The audit-copy journal no longer auto-arranges hours from the ``Last_audit``
+mirror.  Instead employees build each learner's monthly report by hand: they
+pick raw attendance / video / audio / reading+quiz rows (or type an assignment)
+and decide the planned and actual hours themselves.  Original planned hours
+come only from ``Last_audit.learners.planned_hours_monthly``; actual hours have
+no automatic source at all.
+
+Everything the employees arrange is stored in its own schema,
+``structured_manual_activities``, so the ``Last_audit`` mirror stays a pure
+read-only import target.  Both schemas live in the same Neon database (the
+``audit`` connection alias), which keeps the joins to ``Last_audit`` cheap.
+"""
+
+import datetime
+import json
+import re
+
+import psycopg
+from psycopg.rows import dict_row
+
+from django.db import DatabaseError, IntegrityError, connections, transaction
+from django.http import HttpRequest, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET
+
+from learner_api import evidence_storage
+
+from .views import _kbc_attendance_connection_string
+
+from .last_audit_ledger_views import (
+    ACTIVITIES,
+    ACTIVITY_RESULTS,
+    CONNECTION_ALIAS,
+    GROUPS,
+    GROUP_LEARNERS,
+    LEARNERS,
+    LEARNER_ATTENDANCE,
+    _activity_content_url,
+    _as_int,
+    _connection,
+    _dict_rows,
+    _is_completed,
+    _json_list,
+    _session_key,
+)
+
+MANUAL_ROWS = '"structured_manual_activities"."manual_learner_activities"'
+MANUAL_DOCS = '"structured_manual_activities"."manual_activity_documents"'
+READING_QUIZ_PAIRS = '"structured_manual_activities"."reading_quiz_pairs"'
+GROUP_ACTIVITIES = '"Last_audit"."group_activities"'
+
+ASSIGNMENT_CONTAINER = "learner-assignments"
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+# The four retrievable categories map onto Last_audit.activities.activity_type
+# (attendance comes from learner_attendance instead); assignment is typed by
+# hand and has no source table at all.
+SOURCE_CATEGORIES = {"video", "audio", "reading+quiz"}
+CATEGORIES = SOURCE_CATEGORIES | {"attendance", "assignment"}
+MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+
+# The ledger closes at August 2026: every learner's month list runs from their
+# first planned month up to (and including) this month, and no manual rows can
+# be filed after it.
+LEDGER_END_MONTH = "2026-08"
+
+ROW_COLUMNS = (
+    "id, aptem_id, learner_id, month, category, source_ref, group_id, "
+    "activity_id, title, activity_date, planned_hours, actual_hours, "
+    "timestamp_label, completion_note, accepted, created_by, updated_by, "
+    "created_at, updated_at"
+)
+
+
+def _ensure_manual_tables(cursor):
+    cursor.execute('CREATE SCHEMA IF NOT EXISTS "structured_manual_activities"')
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {MANUAL_ROWS} (
+            id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            aptem_id        bigint NOT NULL,
+            learner_id      bigint,
+            month           text   NOT NULL CHECK (month ~ '^\\d{{4}}-\\d{{2}}$'),
+            category        text   NOT NULL CHECK (category IN
+                                ('attendance','video','audio','reading+quiz','assignment')),
+            source_ref      text,
+            group_id        bigint,
+            activity_id     bigint,
+            title           text   NOT NULL,
+            activity_date   date,
+            planned_hours   numeric NOT NULL DEFAULT 0 CHECK (planned_hours BETWEEN 0 AND 50),
+            actual_hours    numeric NOT NULL DEFAULT 0 CHECK (actual_hours BETWEEN 0 AND 50),
+            timestamp_label text   NOT NULL DEFAULT '',
+            completion_note text,
+            accepted        boolean NOT NULL DEFAULT true,
+            created_by      text,
+            updated_by      text,
+            created_at      timestamptz NOT NULL DEFAULT now(),
+            updated_at      timestamptz NOT NULL DEFAULT now(),
+            deleted_at      timestamptz
+        )
+    """)
+    cursor.execute(f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_manual_la_live
+            ON {MANUAL_ROWS} (aptem_id, month, source_ref)
+            WHERE deleted_at IS NULL AND source_ref IS NOT NULL
+    """)
+    cursor.execute(f"""
+        CREATE INDEX IF NOT EXISTS idx_manual_la_aptem_month
+            ON {MANUAL_ROWS} (aptem_id, month)
+    """)
+    cursor.execute(f"""
+        CREATE INDEX IF NOT EXISTS idx_manual_la_activity
+            ON {MANUAL_ROWS} (activity_id) WHERE activity_id IS NOT NULL
+    """)
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {MANUAL_DOCS} (
+            id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            manual_activity_id bigint NOT NULL
+                               REFERENCES {MANUAL_ROWS}(id) ON DELETE CASCADE,
+            aptem_id           bigint NOT NULL,
+            month              text   NOT NULL,
+            container          text   NOT NULL DEFAULT '{ASSIGNMENT_CONTAINER}',
+            blob_name          text   NOT NULL,
+            display_name       text   NOT NULL,
+            content_type       text,
+            size_bytes         bigint,
+            uploaded_by        text,
+            uploaded_at        timestamptz NOT NULL DEFAULT now(),
+            deleted_at         timestamptz
+        )
+    """)
+    cursor.execute(f"""
+        CREATE INDEX IF NOT EXISTS idx_manual_docs_row
+            ON {MANUAL_DOCS} (manual_activity_id)
+    """)
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {READING_QUIZ_PAIRS} (
+            id                  bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            group_id            bigint NOT NULL,
+            reading_activity_id bigint NOT NULL,
+            quiz_activity_id    bigint NOT NULL,
+            created_by          text,
+            created_at          timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (group_id, reading_activity_id, quiz_activity_id),
+            UNIQUE (group_id, reading_activity_id),
+            UNIQUE (group_id, quiz_activity_id),
+            CHECK (reading_activity_id <> quiz_activity_id)
+        )
+    """)
+    cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_rq_pairs_group ON {READING_QUIZ_PAIRS} (group_id)")
+
+
+def _month_label(month):
+    try:
+        return datetime.datetime.strptime(month, "%Y-%m").strftime("%B %Y")
+    except (TypeError, ValueError):
+        return month
+
+
+def _month_range(start, end):
+    """Every "YYYY-MM" from ``start`` to ``end`` inclusive."""
+    year, month = int(start[:4]), int(start[5:7])
+    end_year, end_month = int(end[:4]), int(end[5:7])
+    months = []
+    while (year, month) <= (end_year, end_month):
+        months.append(f"{year:04d}-{month:02d}")
+        month += 1
+        if month == 13:
+            month, year = 1, year + 1
+    return months
+
+
+def _load_learner(cursor, aptem_id):
+    cursor.execute(
+        f"""
+        SELECT aptem_id, learner_id, learner_name, learner_email,
+               programme_name, programme_status, coach_name, coach_email,
+               planned_hours_total, planned_hours_monthly
+        FROM {LEARNERS} WHERE aptem_id = %s
+        """,
+        [aptem_id],
+    )
+    rows = _dict_rows(cursor)
+    return rows[0] if rows else None
+
+
+def _planned_monthly(learner):
+    raw = learner.get("planned_hours_monthly")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            raw = None
+    if not isinstance(raw, dict):
+        return {}
+    monthly = {}
+    for key, value in raw.items():
+        if not MONTH_RE.match(str(key)):
+            continue
+        try:
+            monthly[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return monthly
+
+
+def _num(value):
+    return float(value) if value is not None else None
+
+
+def _row_payload(row, documents=None):
+    activity_date = row.get("activity_date")
+    return {
+        "id": int(row["id"]),
+        "aptem_id": int(row["aptem_id"]),
+        "learner_id": int(row["learner_id"]) if row.get("learner_id") is not None else None,
+        "month": row["month"],
+        "month_label": _month_label(row["month"]),
+        "category": row["category"],
+        "source_ref": row.get("source_ref"),
+        "group_id": int(row["group_id"]) if row.get("group_id") is not None else None,
+        "activity_id": int(row["activity_id"]) if row.get("activity_id") is not None else None,
+        "title": row["title"],
+        "activity_date": activity_date.isoformat() if activity_date else None,
+        "planned_hours": _num(row.get("planned_hours")) or 0.0,
+        "actual_hours": _num(row.get("actual_hours")) or 0.0,
+        "timestamp_label": row.get("timestamp_label") or "",
+        "completion_note": row.get("completion_note"),
+        "accepted": row.get("accepted") is not False,
+        "created_by": row.get("created_by"),
+        "updated_by": row.get("updated_by"),
+        "updated_at": row["updated_at"].isoformat() if row.get("updated_at") else None,
+        "documents": documents or [],
+    }
+
+
+def _doc_payload(row, *, with_sas=True):
+    url = None
+    if with_sas and evidence_storage.azure_configured():
+        try:
+            url = evidence_storage.get_read_sas(row["container"], row["blob_name"])
+        except Exception:
+            url = None
+    return {
+        "id": int(row["id"]),
+        "manual_activity_id": int(row["manual_activity_id"]),
+        "display_name": row["display_name"],
+        "content_type": row.get("content_type"),
+        "size_bytes": int(row["size_bytes"]) if row.get("size_bytes") is not None else None,
+        "uploaded_by": row.get("uploaded_by"),
+        "uploaded_at": row["uploaded_at"].isoformat() if row.get("uploaded_at") else None,
+        "download_url": url,
+    }
+
+
+def _documents_by_row(cursor, row_ids):
+    if not row_ids:
+        return {}
+    cursor.execute(
+        f"""
+        SELECT id, manual_activity_id, aptem_id, month, container, blob_name,
+               display_name, content_type, size_bytes, uploaded_by, uploaded_at
+        FROM {MANUAL_DOCS}
+        WHERE manual_activity_id = ANY(%s) AND deleted_at IS NULL
+        ORDER BY uploaded_at
+        """,
+        [list(row_ids)],
+    )
+    grouped = {}
+    for row in _dict_rows(cursor):
+        grouped.setdefault(int(row["manual_activity_id"]), []).append(_doc_payload(row))
+    return grouped
+
+
+# --- validation ------------------------------------------------------------
+
+def _valid_hours(value, field):
+    if value in (None, ""):
+        return 0.0
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{field} must be a number")
+    if number < 0 or number > 50:
+        raise ValueError(f"{field} must be between 0 and 50 hours")
+    return round(number, 4)
+
+
+def _valid_date(value):
+    if value in (None, ""):
+        return None
+    try:
+        return datetime.date.fromisoformat(str(value))
+    except ValueError:
+        raise ValueError("activity_date must use YYYY-MM-DD format")
+
+
+def _valid_month(value):
+    month = str(value or "").strip()
+    if not MONTH_RE.match(month):
+        raise ValueError("month must use YYYY-MM format")
+    if month > LEDGER_END_MONTH:
+        raise ValueError(f"months after {_month_label(LEDGER_END_MONTH)} are closed for editing")
+    return month
+
+
+def _valid_title(value):
+    title = str(value or "").strip()
+    if not title:
+        raise ValueError("title is required")
+    return title[:500]
+
+
+def _parse_source_ref(category, raw):
+    """Return ``(source_ref, group_id, activity_id)`` for a new manual row."""
+    ref = str(raw or "").strip()
+    if category == "assignment":
+        if ref:
+            raise ValueError("assignment rows are manual and take no source_ref")
+        return None, None, None
+    if category == "attendance":
+        if not ref.startswith("att:") or len(ref) <= 4:
+            raise ValueError("attendance rows need an att:<source_key> reference")
+        return ref, None, None
+    if category == "reading+quiz" and ref.startswith("rq:"):
+        parts = ref.split(":")
+        if len(parts) == 4:
+            try:
+                return ref, int(parts[1]), int(parts[2])
+            except ValueError:
+                pass
+        raise ValueError("reading+quiz bundle reference must look like rq:<group_id>:<reading_id>:<quiz_id>")
+    parts = ref.split(":")
+    if ref.startswith("la:") and len(parts) == 3:
+        try:
+            return ref, int(parts[1]), int(parts[2])
+        except ValueError:
+            raise ValueError("source_ref must look like la:<group_id>:<activity_id>")
+    raise ValueError(f"{category} rows need a la:<group_id>:<activity_id> reference")
+
+
+@csrf_exempt
+def reading_quiz_pairs(request: HttpRequest) -> JsonResponse:
+    """Persist an explicit Reading <-> Quiz relationship for one LMS group."""
+    if request.method not in {"POST", "DELETE"}:
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        body = json.loads(request.body or b"{}")
+        group_id = int(body.get("group_id"))
+        reading_id = int(body.get("reading_activity_id"))
+        quiz_id = int(body.get("quiz_activity_id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "group_id, reading_activity_id and quiz_activity_id are required integers"}, status=400)
+    if reading_id == quiz_id:
+        return JsonResponse({"error": "Choose two different activities."}, status=400)
+    try:
+        with _connection().cursor() as cursor:
+            _ensure_manual_tables(cursor)
+            cursor.execute(
+                f"SELECT activity_id FROM {GROUP_ACTIVITIES} WHERE group_id = %s AND activity_id = ANY(%s)",
+                [group_id, [reading_id, quiz_id]],
+            )
+            if len({int(row[0]) for row in cursor.fetchall()}) != 2:
+                return JsonResponse({"error": "Both activities must belong to the selected group."}, status=400)
+            if request.method == "DELETE":
+                cursor.execute(
+                    f"DELETE FROM {READING_QUIZ_PAIRS} WHERE group_id=%s AND reading_activity_id=%s AND quiz_activity_id=%s",
+                    [group_id, reading_id, quiz_id],
+                )
+                return JsonResponse({"ok": True, "deleted": cursor.rowcount})
+            cursor.execute(
+                f"""
+                INSERT INTO {READING_QUIZ_PAIRS} (group_id, reading_activity_id, quiz_activity_id, created_by)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (group_id, reading_activity_id, quiz_activity_id) DO NOTHING
+                RETURNING id
+                """,
+                [group_id, reading_id, quiz_id, _actor(body.get("created_by"))],
+            )
+            created = cursor.fetchone()
+    except DatabaseError as error:
+        return JsonResponse({"error": "Could not save the Reading + Quiz link.", "details": str(error)}, status=503)
+    return JsonResponse({"ok": True, "created": bool(created), "group_id": group_id,
+                         "reading_activity_id": reading_id, "quiz_activity_id": quiz_id})
+
+
+def _actor(value):
+    return str(value or "").strip()[:200] or None
+
+
+# --- endpoints ---------------------------------------------------------------
+
+@require_GET
+def summary(request: HttpRequest) -> JsonResponse:
+    """Original planned hours vs employee-arranged sums, per month."""
+    try:
+        aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+    if aptem_id is None:
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+    try:
+        with _connection().cursor() as cursor:
+            learner = _load_learner(cursor, aptem_id)
+            if not learner:
+                return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+            _ensure_manual_tables(cursor)
+            cursor.execute(
+                f"""
+                SELECT month,
+                       COALESCE(sum(planned_hours), 0) AS planned,
+                       COALESCE(sum(actual_hours) FILTER (WHERE accepted), 0) AS actual,
+                       COALESCE(sum(actual_hours) FILTER (WHERE NOT accepted), 0) AS not_accepted,
+                       count(*) AS row_count
+                FROM {MANUAL_ROWS}
+                WHERE aptem_id = %s AND deleted_at IS NULL
+                GROUP BY month
+                """,
+                [aptem_id],
+            )
+            arranged = {row["month"]: row for row in _dict_rows(cursor)}
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read the manual ledger.", "details": str(error)},
+            status=503,
+        )
+
+    planned_monthly = _planned_monthly(learner)
+    # Continuous month list: the learner's first known month (the start-date
+    # month, since the plan begins there) through the fixed ledger end. Months
+    # with manual rows outside that window stay visible so no data hides.
+    known = set(planned_monthly) | set(arranged)
+    window_starts = [month for month in known if month <= LEDGER_END_MONTH]
+    month_list = (
+        _month_range(min(window_starts), LEDGER_END_MONTH)
+        if window_starts else [LEDGER_END_MONTH]
+    )
+    month_list += sorted(month for month in arranged if month > LEDGER_END_MONTH)
+    months = []
+    for month in month_list:
+        row = arranged.get(month)
+        months.append({
+            "month": month,
+            "label": _month_label(month),
+            "original_planned": planned_monthly.get(month),
+            "arranged_planned": _num(row["planned"]) if row else 0.0,
+            # Claimed = accepted rows only; rejected hours are reported apart.
+            "arranged_actual": _num(row["actual"]) if row else 0.0,
+            "arranged_not_accepted": _num(row["not_accepted"]) if row else 0.0,
+            "row_count": int(row["row_count"]) if row else 0,
+        })
+    return JsonResponse({
+        "source": "structured_manual_activities",
+        "ledger_end_month": LEDGER_END_MONTH,
+        "aptem_id": aptem_id,
+        "learner_id": int(learner["learner_id"]) if learner.get("learner_id") is not None else None,
+        "learner_name": learner.get("learner_name"),
+        "learner_email": learner.get("learner_email"),
+        "programme_name": learner.get("programme_name"),
+        "programme_status": learner.get("programme_status"),
+        "coach_name": learner.get("coach_name"),
+        "coach_email": learner.get("coach_email"),
+        "planned_hours_total": _num(learner.get("planned_hours_total")),
+        "months": months,
+        "arranged_planned_total": round(sum(m["arranged_planned"] for m in months), 2),
+        "arranged_actual_total": round(sum(m["arranged_actual"] for m in months), 2),
+    })
+
+
+@require_GET
+def groups(request: HttpRequest) -> JsonResponse:
+    """The learner's LMS groups (modules) with per-category activity counts."""
+    try:
+        aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+    if aptem_id is None:
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+    try:
+        with _connection().cursor() as cursor:
+            learner = _load_learner(cursor, aptem_id)
+            if not learner:
+                return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+            if learner.get("learner_id") is None:
+                return JsonResponse({"aptem_id": aptem_id, "lms_matched": False, "groups": []})
+            cursor.execute(
+                f"""
+                SELECT g.group_id, g.group_name,
+                       count(a.activity_id) FILTER (WHERE lower(a.activity_type) = 'video') AS video,
+                       count(a.activity_id) FILTER (WHERE lower(a.activity_type) = 'audio') AS audio,
+                       count(a.activity_id) FILTER (WHERE lower(a.activity_type) = 'reading+quiz') AS reading_quiz
+                FROM {GROUP_LEARNERS} gl
+                JOIN {GROUPS} g ON g.group_id = gl.group_id
+                LEFT JOIN {GROUP_ACTIVITIES} ga ON ga.group_id = g.group_id
+                LEFT JOIN {ACTIVITIES} a ON a.activity_id = ga.activity_id
+                WHERE gl.learner_id = %s
+                GROUP BY g.group_id, g.group_name
+                ORDER BY g.group_name
+                """,
+                [learner["learner_id"]],
+            )
+            rows = _dict_rows(cursor)
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read Last_audit groups.", "details": str(error)},
+            status=503,
+        )
+    return JsonResponse({
+        "aptem_id": aptem_id,
+        "lms_matched": True,
+        "groups": [{
+            "group_id": int(row["group_id"]),
+            "group_name": row["group_name"],
+            "counts": {
+                "video": int(row["video"]),
+                "audio": int(row["audio"]),
+                "reading+quiz": int(row["reading_quiz"]),
+            },
+        } for row in rows],
+    })
+
+
+@require_GET
+def group_activities(request: HttpRequest) -> JsonResponse:
+    """The WHOLE group's activities in one category, with this learner's
+    completion label. Deliberately group-wide: the learner's own
+    activity_results listing is unreliable, so employees pick from the module
+    catalogue instead."""
+    try:
+        aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
+        group_id = _as_int(request.GET.get("group_id"), minimum=1)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "aptem_id and group_id must be integers"}, status=400)
+    category = (request.GET.get("category") or "").strip().lower()
+    if aptem_id is None or group_id is None:
+        return JsonResponse({"error": "aptem_id and group_id are required"}, status=400)
+    if category not in SOURCE_CATEGORIES:
+        return JsonResponse(
+            {"error": f"category must be one of: {', '.join(sorted(SOURCE_CATEGORIES))}"},
+            status=400,
+        )
+    search = (request.GET.get("search") or "").strip()
+    try:
+        with _connection().cursor() as cursor:
+            learner = _load_learner(cursor, aptem_id)
+            if not learner:
+                return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+            # Employees may not know the learner's real modules — never serve a
+            # catalogue for a group this learner is not actually linked to.
+            cursor.execute(
+                f"SELECT 1 FROM {GROUP_LEARNERS} WHERE learner_id = %s AND group_id = %s",
+                [learner.get("learner_id"), group_id],
+            )
+            if not cursor.fetchone():
+                return JsonResponse(
+                    {"error": "This learner is not a member of that group."}, status=404,
+                )
+            conditions = ["ga.group_id = %s", "lower(a.activity_type) = %s"]
+            params = [group_id, category, learner.get("learner_id")]
+            if search:
+                conditions.append("a.title ILIKE %s")
+                params.append(f"%{search}%")
+            # DISTINCT ON collapses duplicate result rows (a learner can hold
+            # results for the same activity under several groups).
+            cursor.execute(
+                f"""
+                SELECT DISTINCT ON (a.activity_id)
+                       a.activity_id, a.title, a.activity_date, a.activity_type,
+                       a.quiz_id, a.quiz_questions, a.reading_type,
+                       a.reading_iframe_url, a.reading_text_body,
+                       a.configured_duration_min,
+                       ga.position,
+                       r.learner_id AS result_learner_id, r.status,
+                       r.video_completed, r.reading_viewed, r.quiz_passed
+                FROM {GROUP_ACTIVITIES} ga
+                JOIN {ACTIVITIES} a ON a.activity_id = ga.activity_id
+                LEFT JOIN {ACTIVITY_RESULTS} r
+                       ON r.activity_id = a.activity_id AND r.learner_id = %s
+                WHERE {' AND '.join(conditions)}
+                ORDER BY a.activity_id, r.learner_id NULLS LAST
+                """,
+                # learner_id placeholder sits inside the JOIN, before WHERE params
+                [params[2], params[0], params[1], *params[3:]],
+            )
+            rows = sorted(
+                _dict_rows(cursor),
+                key=lambda row: (row.get("position") or 0, row["activity_id"]),
+            )
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read Last_audit group activities.", "details": str(error)},
+            status=503,
+        )
+
+    activities = []
+    for row in rows:
+        if row.get("result_learner_id") is None:
+            state = "no_record"
+        else:
+            state = "completed" if _is_completed(row) else "not_completed"
+        activity_date = row.get("activity_date")
+        activities.append({
+            "activity_id": int(row["activity_id"]),
+            "source_ref": f"la:{group_id}:{int(row['activity_id'])}",
+            "title": row.get("title") or f"Activity {row['activity_id']}",
+            "activity_date": activity_date.isoformat() if activity_date else None,
+            # The configured media length — the employee's anchor when deciding
+            # the actual hours to award.
+            "duration_minutes": _num(row.get("configured_duration_min")),
+            "completion": {"state": state},
+        })
+    return JsonResponse({
+        "aptem_id": aptem_id,
+        "group_id": group_id,
+        "category": category,
+        "count": len(activities),
+        "activities": activities,
+    })
+
+
+def _source_attendance_rows(aptem_id):
+    """This learner's register rows straight from the ORIGINAL
+    ``AiTeamKBC public.kbc_attendance`` table — the mirror is not consulted, so
+    the dropdown always shows what the register holds right now."""
+    dsn = _kbc_attendance_connection_string()
+    if not dsn:
+        return None
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT "key" AS source_key, date AS attendance_date,
+                       "Attendance" AS attendance_value, attendance_status,
+                       module, lecture_name, activity AS activity_hours
+                FROM public.kbc_attendance
+                WHERE "ID" = %s AND "key" IS NOT NULL
+                ORDER BY date DESC NULLS LAST, "key"
+                """,
+                [aptem_id],
+            )
+            return cursor.fetchall()
+
+
+@require_GET
+def attendance_options(request: HttpRequest) -> JsonResponse:
+    """Every attendance row for the learner — attended AND absent — so the
+    employee can add either and still see what the register recorded."""
+    try:
+        aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+    if aptem_id is None:
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+
+    rows = None
+    source = "kbc_attendance"
+    try:
+        rows = _source_attendance_rows(aptem_id)
+    except Exception:
+        rows = None  # transient source failure (flaky DNS) — fall back below
+    if rows is None:
+        # Mirror fallback keeps the flow usable when the source is unreachable.
+        source = "Last_audit-mirror"
+        try:
+            with _connection().cursor() as cursor:
+                cursor.execute(
+                    f"""
+                    SELECT source_key, attendance_date, attendance_value,
+                           attendance_status, module, lecture_name, activity_hours
+                    FROM {LEARNER_ATTENDANCE}
+                    WHERE aptem_id = %s
+                    ORDER BY attendance_date DESC NULLS LAST, source_key
+                    """,
+                    [aptem_id],
+                )
+                rows = _dict_rows(cursor)
+        except DatabaseError as error:
+            return JsonResponse(
+                {"error": "Could not read attendance.", "details": str(error)},
+                status=503,
+            )
+    options = []
+    for row in rows:
+        attended = row.get("attendance_value") == 1 or str(
+            row.get("attendance_status") or ""
+        ).lower() in {"present", "attended", "attend"}
+        attendance_date = row.get("attendance_date")
+        options.append({
+            "source_key": row["source_key"],
+            "source_ref": f"att:{row['source_key']}",
+            "attendance_date": attendance_date.isoformat() if attendance_date else None,
+            "lecture_name": row.get("lecture_name"),
+            "module": row.get("module"),
+            "attended": attended,
+            "attendance_status": row.get("attendance_status") or ("Present" if attended else "Absent"),
+            "activity_hours": _num(row.get("activity_hours")),
+        })
+    return JsonResponse({
+        "aptem_id": aptem_id,
+        "source": source,
+        "count": len(options),
+        "options": options,
+    })
+
+
+PATCHABLE_FIELDS = {
+    "title", "activity_date", "month", "planned_hours", "actual_hours",
+    "timestamp_label", "accepted",
+}
+
+
+def _validate_new_row(item):
+    """Validate one create payload; shared by the single POST and the bulk save."""
+    month = _valid_month(item.get("month"))
+    category = str(item.get("category") or "").strip().lower()
+    if category not in CATEGORIES:
+        raise ValueError(f"category must be one of: {', '.join(sorted(CATEGORIES))}")
+    source_ref, group_id, activity_id = _parse_source_ref(category, item.get("source_ref"))
+    return {
+        "month": month,
+        "category": category,
+        "source_ref": source_ref,
+        "group_id": group_id,
+        "activity_id": activity_id,
+        "title": _valid_title(item.get("title")),
+        "activity_date": _valid_date(item.get("activity_date")),
+        "planned_hours": _valid_hours(item.get("planned_hours"), "planned_hours"),
+        "actual_hours": _valid_hours(item.get("actual_hours"), "actual_hours"),
+        "timestamp_label": str(item.get("timestamp_label") or "").strip()[:100],
+        "completion_note": str(item.get("completion_note") or "").strip()[:200] or None,
+        "accepted": item.get("accepted") is not False,
+    }
+
+
+def _validate_patch_values(patch):
+    """Whitelist + validate PATCH fields; shared by PATCH and the bulk save."""
+    if not isinstance(patch, dict) or not patch:
+        raise ValueError("patch (object) is required")
+    unknown = set(patch) - PATCHABLE_FIELDS
+    if unknown:
+        raise ValueError(f"patch cannot change: {', '.join(sorted(unknown))}")
+    values = {}
+    if "title" in patch:
+        values["title"] = _valid_title(patch["title"])
+    if "activity_date" in patch:
+        values["activity_date"] = _valid_date(patch["activity_date"])
+    if "month" in patch:
+        values["month"] = _valid_month(patch["month"])
+    if "planned_hours" in patch:
+        values["planned_hours"] = _valid_hours(patch["planned_hours"], "planned_hours")
+    if "actual_hours" in patch:
+        values["actual_hours"] = _valid_hours(patch["actual_hours"], "actual_hours")
+    if "timestamp_label" in patch:
+        values["timestamp_label"] = str(patch["timestamp_label"] or "").strip()[:100]
+    if "accepted" in patch:
+        values["accepted"] = bool(patch["accepted"])
+    return values
+
+
+INSERT_ROW_SQL = f"""
+    INSERT INTO {MANUAL_ROWS} (
+        aptem_id, learner_id, month, category, source_ref,
+        group_id, activity_id, title, activity_date,
+        planned_hours, actual_hours, timestamp_label,
+        completion_note, accepted, created_by
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
+
+
+def _insert_params(aptem_id, learner_id, values, created_by):
+    return [
+        aptem_id, learner_id, values["month"], values["category"],
+        values["source_ref"], values["group_id"], values["activity_id"],
+        values["title"], values["activity_date"], values["planned_hours"],
+        values["actual_hours"], values["timestamp_label"],
+        values["completion_note"], values["accepted"], created_by,
+    ]
+
+
+@csrf_exempt
+def rows(request: HttpRequest) -> JsonResponse:
+    """List/create/update/soft-delete the employee-arranged activity rows."""
+    if request.method == "GET":
+        try:
+            aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+        if aptem_id is None:
+            return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+        month = (request.GET.get("month") or "").strip()
+        conditions = ["aptem_id = %s", "deleted_at IS NULL"]
+        params = [aptem_id]
+        if month:
+            conditions.append("month = %s")
+            params.append(month)
+        try:
+            with _connection().cursor() as cursor:
+                _ensure_manual_tables(cursor)
+                cursor.execute(
+                    f"""
+                    SELECT {ROW_COLUMNS} FROM {MANUAL_ROWS}
+                    WHERE {' AND '.join(conditions)}
+                    ORDER BY activity_date NULLS LAST, id
+                    """,
+                    params,
+                )
+                row_data = _dict_rows(cursor)
+                documents = _documents_by_row(
+                    cursor, [int(row["id"]) for row in row_data
+                             if row["category"] == "assignment"],
+                )
+        except DatabaseError as error:
+            return JsonResponse(
+                {"error": "Could not read the manual ledger.", "details": str(error)},
+                status=503,
+            )
+        items = [_row_payload(row, documents.get(int(row["id"]))) for row in row_data]
+        return JsonResponse({
+            "aptem_id": aptem_id,
+            "month": month or None,
+            "count": len(items),
+            "planned_sum": round(sum(item["planned_hours"] for item in items), 2),
+            # Claimed hours = accepted rows only, matching the summary tiles.
+            "actual_sum": round(sum(item["actual_hours"] for item in items if item["accepted"]), 2),
+            "not_accepted_sum": round(sum(item["actual_hours"] for item in items if not item["accepted"]), 2),
+            "rows": items,
+        })
+
+    if request.method not in {"POST", "PATCH", "DELETE"}:
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        body = json.loads(request.body or b"{}")
+    except ValueError:
+        return JsonResponse({"error": "Request body must be JSON."}, status=400)
+
+    if request.method == "POST":
+        try:
+            aptem_id = int(body.get("aptem_id"))
+            month = _valid_month(body.get("month"))
+            category = str(body.get("category") or "").strip().lower()
+            if category not in CATEGORIES:
+                raise ValueError(f"category must be one of: {', '.join(sorted(CATEGORIES))}")
+            source_ref, group_id, activity_id = _parse_source_ref(category, body.get("source_ref"))
+            title = _valid_title(body.get("title"))
+            activity_date = _valid_date(body.get("activity_date"))
+            planned = _valid_hours(body.get("planned_hours"), "planned_hours")
+            actual = _valid_hours(body.get("actual_hours"), "actual_hours")
+            timestamp_label = str(body.get("timestamp_label") or "").strip()[:100]
+            completion_note = str(body.get("completion_note") or "").strip()[:200] or None
+            accepted = body.get("accepted") is not False
+        except (TypeError, ValueError) as error:
+            return JsonResponse({"error": str(error) or "Invalid payload."}, status=400)
+        try:
+            with _connection().cursor() as cursor:
+                learner = _load_learner(cursor, aptem_id)
+                if not learner:
+                    return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+                _ensure_manual_tables(cursor)
+                cursor.execute(
+                    f"""
+                    INSERT INTO {MANUAL_ROWS} (
+                        aptem_id, learner_id, month, category, source_ref,
+                        group_id, activity_id, title, activity_date,
+                        planned_hours, actual_hours, timestamp_label,
+                        completion_note, accepted, created_by
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING {ROW_COLUMNS}
+                    """,
+                    [
+                        aptem_id, learner.get("learner_id"), month, category,
+                        source_ref, group_id, activity_id, title, activity_date,
+                        planned, actual, timestamp_label, completion_note,
+                        accepted, _actor(body.get("created_by")),
+                    ],
+                )
+                created = _dict_rows(cursor)[0]
+        except IntegrityError:
+            return JsonResponse(
+                {"error": f"This activity is already on the learner's {_month_label(month)} report."},
+                status=409,
+            )
+        except DatabaseError as error:
+            return JsonResponse(
+                {"error": "Could not save the manual row.", "details": str(error)},
+                status=503,
+            )
+        return JsonResponse(_row_payload(created), status=201)
+
+    try:
+        row_id = int(body.get("id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "id (int) is required"}, status=400)
+
+    if request.method == "DELETE":
+        try:
+            with _connection().cursor() as cursor:
+                _ensure_manual_tables(cursor)
+                cursor.execute(
+                    f"""
+                    UPDATE {MANUAL_ROWS}
+                    SET deleted_at = now(), updated_at = now(), updated_by = %s
+                    WHERE id = %s AND deleted_at IS NULL
+                    """,
+                    [_actor(body.get("updated_by")), row_id],
+                )
+                if cursor.rowcount == 0:
+                    return JsonResponse({"error": "Manual row was not found."}, status=404)
+        except DatabaseError as error:
+            return JsonResponse(
+                {"error": "Could not delete the manual row.", "details": str(error)},
+                status=503,
+            )
+        return JsonResponse({"ok": True, "id": row_id})
+
+    # PATCH
+    patch = body.get("patch")
+    if not isinstance(patch, dict) or not patch:
+        return JsonResponse({"error": "patch (object) is required"}, status=400)
+    unknown = set(patch) - PATCHABLE_FIELDS
+    if unknown:
+        return JsonResponse(
+            {"error": f"patch cannot change: {', '.join(sorted(unknown))}",
+             "editable": sorted(PATCHABLE_FIELDS)},
+            status=400,
+        )
+    try:
+        values = {}
+        if "title" in patch:
+            values["title"] = _valid_title(patch["title"])
+        if "activity_date" in patch:
+            values["activity_date"] = _valid_date(patch["activity_date"])
+        if "month" in patch:
+            values["month"] = _valid_month(patch["month"])
+        if "planned_hours" in patch:
+            values["planned_hours"] = _valid_hours(patch["planned_hours"], "planned_hours")
+        if "actual_hours" in patch:
+            values["actual_hours"] = _valid_hours(patch["actual_hours"], "actual_hours")
+        if "timestamp_label" in patch:
+            values["timestamp_label"] = str(patch["timestamp_label"] or "").strip()[:100]
+        if "accepted" in patch:
+            values["accepted"] = bool(patch["accepted"])
+    except ValueError as error:
+        return JsonResponse({"error": str(error)}, status=400)
+    assignments = ", ".join(f"{field} = %s" for field in values)
+    try:
+        with _connection().cursor() as cursor:
+            _ensure_manual_tables(cursor)
+            cursor.execute(
+                f"""
+                UPDATE {MANUAL_ROWS}
+                SET {assignments}, updated_by = %s, updated_at = now()
+                WHERE id = %s AND deleted_at IS NULL
+                RETURNING {ROW_COLUMNS}
+                """,
+                [*values.values(), _actor(body.get("updated_by")), row_id],
+            )
+            updated = _dict_rows(cursor)
+            if not updated:
+                return JsonResponse({"error": "Manual row was not found."}, status=404)
+            documents = _documents_by_row(cursor, [row_id])
+    except IntegrityError:
+        return JsonResponse(
+            {"error": "The learner already has this activity on that month's report."},
+            status=409,
+        )
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not update the manual row.", "details": str(error)},
+            status=503,
+        )
+    return JsonResponse(_row_payload(updated[0], documents.get(row_id)))
+
+
+def _safe_filename(name):
+    base = str(name or "").strip().replace("\\", "/").split("/")[-1]
+    cleaned = re.sub(r"[^A-Za-z0-9._ -]", "_", base).strip(". ")
+    return cleaned[:150] or "upload.bin"
+
+
+_container_checked = False
+
+
+def _ensure_assignment_container():
+    """Create the container once per process; Azure ignores re-creates."""
+    global _container_checked
+    if _container_checked:
+        return
+    try:
+        evidence_storage._service_client().create_container(ASSIGNMENT_CONTAINER)
+    except Exception:
+        pass  # already exists (or a transient failure the upload will surface)
+    _container_checked = True
+
+
+@csrf_exempt
+def documents(request: HttpRequest) -> JsonResponse:
+    """Uploaded evidence files for manual assignment rows.
+
+    Blobs live in the ``learner-assignments`` container, foldered per learner,
+    month and row: ``{aptem_id}/{YYYY-MM}/{row_id}/{filename}``.
+    """
+    if request.method == "GET":
+        try:
+            row_id = _as_int(request.GET.get("manual_activity_id"), minimum=1)
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "manual_activity_id (int) is required"}, status=400)
+        if row_id is None:
+            return JsonResponse({"error": "manual_activity_id (int) is required"}, status=400)
+        try:
+            with _connection().cursor() as cursor:
+                _ensure_manual_tables(cursor)
+                grouped = _documents_by_row(cursor, [row_id])
+        except DatabaseError as error:
+            return JsonResponse(
+                {"error": "Could not read assignment documents.", "details": str(error)},
+                status=503,
+            )
+        return JsonResponse({"manual_activity_id": row_id, "documents": grouped.get(row_id, [])})
+
+    if request.method == "DELETE":
+        try:
+            body = json.loads(request.body or b"{}")
+            doc_id = int(body.get("id"))
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "id (int) is required"}, status=400)
+        try:
+            with _connection().cursor() as cursor:
+                _ensure_manual_tables(cursor)
+                cursor.execute(
+                    f"UPDATE {MANUAL_DOCS} SET deleted_at = now() "
+                    f"WHERE id = %s AND deleted_at IS NULL",
+                    [doc_id],
+                )
+                if cursor.rowcount == 0:
+                    return JsonResponse({"error": "Document was not found."}, status=404)
+        except DatabaseError as error:
+            return JsonResponse(
+                {"error": "Could not delete the document.", "details": str(error)},
+                status=503,
+            )
+        return JsonResponse({"ok": True, "id": doc_id})
+
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+
+    if not evidence_storage.azure_configured():
+        return JsonResponse({"error": "Azure storage is not configured."}, status=503)
+    try:
+        row_id = int(request.POST.get("manual_activity_id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "manual_activity_id (int) is required"}, status=400)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return JsonResponse({"error": "file is required"}, status=400)
+    if upload.size > MAX_UPLOAD_BYTES:
+        return JsonResponse({"error": "File is larger than 50 MB."}, status=400)
+
+    try:
+        with _connection().cursor() as cursor:
+            _ensure_manual_tables(cursor)
+            cursor.execute(
+                f"""
+                SELECT id, aptem_id, month, category FROM {MANUAL_ROWS}
+                WHERE id = %s AND deleted_at IS NULL
+                """,
+                [row_id],
+            )
+            row = _dict_rows(cursor)
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read the manual row.", "details": str(error)},
+            status=503,
+        )
+    if not row:
+        return JsonResponse({"error": "Manual row was not found."}, status=404)
+    row = row[0]
+    if row["category"] != "assignment":
+        return JsonResponse({"error": "Only assignment rows take uploads."}, status=400)
+
+    display_name = _safe_filename(upload.name)
+    blob_name = f"{row['aptem_id']}/{row['month']}/{row_id}/{display_name}"
+    try:
+        _ensure_assignment_container()
+        evidence_storage.upload_blob(
+            upload, ASSIGNMENT_CONTAINER, blob_name,
+            upload.content_type or "application/octet-stream",
+        )
+    except Exception as error:
+        return JsonResponse(
+            {"error": "Azure upload failed.", "details": str(error)}, status=502,
+        )
+    try:
+        with _connection().cursor() as cursor:
+            cursor.execute(
+                f"""
+                INSERT INTO {MANUAL_DOCS} (
+                    manual_activity_id, aptem_id, month, container, blob_name,
+                    display_name, content_type, size_bytes, uploaded_by
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, manual_activity_id, aptem_id, month, container,
+                          blob_name, display_name, content_type, size_bytes,
+                          uploaded_by, uploaded_at
+                """,
+                [
+                    row_id, row["aptem_id"], row["month"], ASSIGNMENT_CONTAINER,
+                    blob_name, display_name,
+                    upload.content_type or "application/octet-stream",
+                    upload.size, _actor(request.POST.get("uploaded_by")),
+                ],
+            )
+            created = _dict_rows(cursor)[0]
+    except DatabaseError as error:
+        # keep storage tidy if the record could not be written
+        try:
+            evidence_storage.delete_blob(ASSIGNMENT_CONTAINER, blob_name)
+        except Exception:
+            pass
+        return JsonResponse(
+            {"error": "Could not record the uploaded document.", "details": str(error)},
+            status=503,
+        )
+    return JsonResponse(_doc_payload(created), status=201)
+
+
+def _ledger_participants(cursor, condition, params):
+    cursor.execute(
+        f"""
+        SELECT m.id, m.aptem_id, m.learner_id, m.month, m.category,
+               m.source_ref, m.group_id, m.activity_id, m.title,
+               m.activity_date, m.planned_hours, m.actual_hours,
+               m.timestamp_label, m.completion_note, m.accepted,
+               m.created_by, m.updated_by, m.created_at, m.updated_at,
+               l.learner_name
+        FROM {MANUAL_ROWS} m
+        LEFT JOIN {LEARNERS} l ON l.aptem_id = m.aptem_id
+        WHERE m.deleted_at IS NULL AND {condition}
+        ORDER BY lower(COALESCE(l.learner_name, '')), m.aptem_id, m.month
+        """,
+        params,
+    )
+    row_data = _dict_rows(cursor)
+    documents = _documents_by_row(
+        cursor, [int(row["id"]) for row in row_data if row["category"] == "assignment"],
+    )
+    participants = []
+    for row in row_data:
+        payload = _row_payload(row, documents.get(int(row["id"])))
+        payload["learner_name"] = row.get("learner_name") or f"Aptem learner {row['aptem_id']}"
+        participants.append(payload)
+    return participants
+
+
+@require_GET
+def activity_ledger(request: HttpRequest) -> JsonResponse:
+    """One activity's definition plus every employee-arranged row for it.
+
+    ``ref`` is a manual row's ``source_ref`` (``la:…`` / ``att:…``) or
+    ``row:<id>`` for source-less assignment rows.  Matching is deliberately
+    wider than one manual row: content activities match on ``activity_id``
+    across every group, attendance matches on the shared session key (the
+    ``source_key`` minus its leading learner id), and assignments — having no
+    shared source identity — show just their own row.
+    """
+    ref = str(request.GET.get("ref") or "").strip()
+    if not ref:
+        return JsonResponse({"error": "ref is required"}, status=400)
+
+    try:
+        with _connection().cursor() as cursor:
+            _ensure_manual_tables(cursor)
+
+            if ref.startswith("row:"):
+                try:
+                    row_id = int(ref[4:])
+                except ValueError:
+                    return JsonResponse({"error": "ref must look like row:<id>"}, status=400)
+                participants = _ledger_participants(cursor, "m.id = %s", [row_id])
+                if not participants:
+                    return JsonResponse({"error": f"no manual row {row_id}"}, status=404)
+                first = participants[0]
+                return JsonResponse({
+                    "ref": ref,
+                    "category": first["category"],
+                    "activity": {
+                        "title": first["title"],
+                        "activity_date": first["activity_date"],
+                        "activity_type": first["category"],
+                        "content_url": None,
+                        "reading_text_body": None,
+                        "quiz": None,
+                    },
+                    "participants": participants,
+                })
+
+            if ref.startswith("att:"):
+                session_key = _session_key(ref)
+                if not session_key:
+                    return JsonResponse(
+                        {"error": "ref must look like att:<id>_<YYYY-MM-DD>_<lecture>"},
+                        status=400,
+                    )
+                cursor.execute(
+                    f"""
+                    SELECT attendance_date, lecture_name, module
+                    FROM {LEARNER_ATTENDANCE}
+                    WHERE substring(source_key from position('_' in source_key) + 1) = %s
+                    LIMIT 1
+                    """,
+                    [session_key],
+                )
+                session = _dict_rows(cursor)
+                participants = _ledger_participants(
+                    cursor,
+                    "m.category = 'attendance' AND "
+                    "substring(substr(m.source_ref, 5) "
+                    "from position('_' in substr(m.source_ref, 5)) + 1) = %s",
+                    [session_key],
+                )
+                if not session and not participants:
+                    return JsonResponse(
+                        {"error": f"No attendance session for '{session_key}'."}, status=404,
+                    )
+                if session:
+                    session = session[0]
+                    session_date = session.get("attendance_date")
+                    title = session.get("lecture_name") or session.get("module") or "Attendance session"
+                    module = session.get("module")
+                    date_iso = session_date.isoformat() if session_date else None
+                else:
+                    # Options now come from the live register, so a manual row
+                    # can reference a session the mirror has not synced yet.
+                    first = participants[0]
+                    title = first["title"]
+                    module = None
+                    date_iso = first["activity_date"] or (
+                        session_key[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", session_key) else None
+                    )
+                return JsonResponse({
+                    "ref": ref,
+                    "category": "attendance",
+                    "activity": {
+                        "title": title,
+                        "activity_date": date_iso,
+                        "activity_type": "attendance",
+                        "module": module,
+                        "content_url": None,
+                        "reading_text_body": None,
+                        "quiz": None,
+                    },
+                    "participants": participants,
+                })
+
+            # la:<group_id>:<activity_id> or a bare activity id
+            parts = ref.split(":")
+            try:
+                activity_id = int(parts[2]) if ref.startswith("la:") and len(parts) == 3 else int(ref)
+            except ValueError:
+                return JsonResponse({"error": "ref is not a recognised activity reference"}, status=400)
+            cursor.execute(
+                f"""
+                SELECT activity_id, activity_type, title, activity_date,
+                       video_iframe_url, reading_type, reading_iframe_url,
+                       reading_text_body, quiz_id, quiz_body, quiz_questions,
+                       quiz_maximum_score, quiz_passing_score,
+                       configured_duration_min
+                FROM {ACTIVITIES} WHERE activity_id = %s
+                """,
+                [activity_id],
+            )
+            definition = _dict_rows(cursor)
+            if not definition:
+                return JsonResponse({"error": f"no Last_audit activity {activity_id}"}, status=404)
+            definition = definition[0]
+            participants = _ledger_participants(cursor, "m.activity_id = %s", [activity_id])
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read the activity ledger.", "details": str(error)},
+            status=503,
+        )
+
+    questions = _json_list(definition.get("quiz_questions"))
+    has_quiz = definition.get("quiz_id") is not None or bool(questions)
+    activity_date = definition.get("activity_date")
+    return JsonResponse({
+        "ref": ref,
+        "category": str(definition.get("activity_type") or "").lower(),
+        "activity": {
+            "activity_id": int(definition["activity_id"]),
+            "title": definition.get("title") or f"Activity {activity_id}",
+            "activity_date": activity_date.isoformat() if activity_date else None,
+            "activity_type": definition.get("activity_type"),
+            "content_url": _activity_content_url(
+                definition.get("video_iframe_url"),
+                definition.get("reading_iframe_url"),
+                definition.get("reading_type"),
+            ),
+            "reading_text_body": definition.get("reading_text_body"),
+            "configured_duration_minutes": _num(definition.get("configured_duration_min")),
+            "quiz": {
+                "description": definition.get("quiz_body"),
+                "questions": questions,
+                "maximum_score": _num(definition.get("quiz_maximum_score")),
+                "passing_score": _num(definition.get("quiz_passing_score")),
+            } if has_quiz else None,
+        },
+        "participants": participants,
+    })
+
+
+# --- retrieve + bulk save (the journal's draft workflow) ---------------------
+
+@require_GET
+def import_candidates(request: HttpRequest) -> JsonResponse:
+    """Everything retrievable from Last_audit for one learner-month, so the
+    journal can stage it as draft rows.
+
+    Attendance comes from the live register (mirror fallback); content
+    activities come from the learner's own ``activity_results`` joined to the
+    shared definitions, bucketed by ``activities.activity_date``.  Hours are
+    deliberately NOT included — retrieved rows always start at 0/0 and the
+    employee decides the planned and actual hours.  Assignments have no
+    retrievable source and stay manual-entry.
+    """
+    try:
+        aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+    month = str(request.GET.get("month") or "").strip()
+    if aptem_id is None or not MONTH_RE.match(month):
+        return JsonResponse({"error": "aptem_id (int) and month (YYYY-MM) are required"}, status=400)
+
+    attendance_rows = None
+    attendance_source = "kbc_attendance"
+    try:
+        attendance_rows = _source_attendance_rows(aptem_id)
+    except Exception:
+        attendance_rows = None
+    try:
+        with _connection().cursor() as cursor:
+            learner = _load_learner(cursor, aptem_id)
+            if not learner:
+                return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+            if attendance_rows is None:
+                attendance_source = "Last_audit-mirror"
+                cursor.execute(
+                    f"""
+                    SELECT source_key, attendance_date, attendance_value,
+                           attendance_status, module, lecture_name
+                    FROM {LEARNER_ATTENDANCE}
+                    WHERE aptem_id = %s
+                    ORDER BY attendance_date, source_key
+                    """,
+                    [aptem_id],
+                )
+                attendance_rows = _dict_rows(cursor)
+
+            content_rows = []
+            if learner.get("learner_id") is not None:
+                cursor.execute(
+                    f"""
+                    SELECT DISTINCT ON (a.activity_id)
+                           r.group_id, a.activity_id, a.title, a.activity_date,
+                           lower(a.activity_type) AS activity_type,
+                           a.quiz_id, a.quiz_questions, a.reading_type,
+                           a.reading_iframe_url, a.reading_text_body,
+                           a.configured_duration_min,
+                           r.status, r.video_completed, r.reading_viewed,
+                           r.quiz_passed
+                    FROM {ACTIVITY_RESULTS} r
+                    JOIN {ACTIVITIES} a ON a.activity_id = r.activity_id
+                    WHERE r.learner_id = %s
+                      AND to_char(a.activity_date, 'YYYY-MM') = %s
+                    ORDER BY a.activity_id, r.group_id
+                    """,
+                    [learner["learner_id"], month],
+                )
+                content_rows = _dict_rows(cursor)
+
+            _ensure_manual_tables(cursor)
+            group_ids = sorted({int(row["group_id"]) for row in content_rows if row.get("group_id") is not None})
+            pairs = []
+            if group_ids:
+                cursor.execute(
+                    f"SELECT id, group_id, reading_activity_id, quiz_activity_id FROM {READING_QUIZ_PAIRS} WHERE group_id = ANY(%s)",
+                    [group_ids],
+                )
+                pairs = _dict_rows(cursor)
+            cursor.execute(
+                f"""
+                SELECT source_ref FROM {MANUAL_ROWS}
+                WHERE aptem_id = %s AND month = %s
+                  AND deleted_at IS NULL AND source_ref IS NOT NULL
+                """,
+                [aptem_id, month],
+            )
+            already_added = sorted({row[0] for row in cursor.fetchall()})
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read the import candidates.", "details": str(error)},
+            status=503,
+        )
+
+    attendance = []
+    for row in attendance_rows:
+        attendance_date = row.get("attendance_date")
+        date_iso = attendance_date.isoformat() if attendance_date else None
+        if not date_iso or not date_iso.startswith(month):
+            continue
+        attended = row.get("attendance_value") == 1 or str(
+            row.get("attendance_status") or ""
+        ).lower() in {"present", "attended", "attend"}
+        attendance.append({
+            "source_ref": f"att:{row['source_key']}",
+            "category": "attendance",
+            "title": row.get("lecture_name") or row.get("module") or "Attendance session",
+            "activity_date": date_iso,
+            "attended": attended,
+            "timestamp_label": "attended" if attended else "not attended",
+        })
+
+    activities = []
+    for row in content_rows:
+        activity_date = row.get("activity_date")
+        activities.append({
+            "group_id": int(row["group_id"]),
+            "activity_id": int(row["activity_id"]),
+            "source_ref": f"la:{int(row['group_id'])}:{int(row['activity_id'])}",
+            "category": row.get("activity_type") or "activity",
+            "title": row.get("title") or f"Activity {row['activity_id']}",
+            "activity_date": activity_date.isoformat() if activity_date else None,
+            "duration_minutes": _num(row.get("configured_duration_min")),
+            "completion": {"state": "completed" if _is_completed(row) else "not_completed"},
+        })
+
+    # Replace explicitly linked Reading/Quiz rows with one selectable bundle.
+    by_key = {(item["group_id"], item["activity_id"]): item for item in activities}
+    consumed = set()
+    bundles = []
+    for pair in pairs:
+        group_id = int(pair["group_id"])
+        reading_id = int(pair["reading_activity_id"])
+        quiz_id = int(pair["quiz_activity_id"])
+        reading = by_key.get((group_id, reading_id))
+        quiz = by_key.get((group_id, quiz_id))
+        if not reading or not quiz:
+            continue
+        consumed.update({(group_id, reading_id), (group_id, quiz_id)})
+        states = [reading["completion"]["state"], quiz["completion"]["state"]]
+        bundles.append({
+            "source_ref": f"rq:{group_id}:{reading_id}:{quiz_id}",
+            "category": "reading+quiz",
+            "title": f"{reading['title']} + {quiz['title']}",
+            "activity_date": max(filter(None, [reading.get("activity_date"), quiz.get("activity_date")]), default=None),
+            "duration_minutes": None,
+            "completion": {"state": "completed" if all(state == "completed" for state in states) else "not_completed"},
+            "group_id": group_id,
+            "activity_id": reading_id,
+            "pair": {"reading_activity_id": reading_id, "quiz_activity_id": quiz_id,
+                     "reading_title": reading["title"], "quiz_title": quiz["title"]},
+        })
+    activities = [item for item in activities if (item["group_id"], item["activity_id"]) not in consumed] + bundles
+
+    return JsonResponse({
+        "aptem_id": aptem_id,
+        "month": month,
+        "attendance_source": attendance_source,
+        "attendance": attendance,
+        "activities": activities,
+        "already_added": already_added,
+    })
+
+
+@csrf_exempt
+def rows_bulk(request: HttpRequest) -> JsonResponse:
+    """Persist the journal's draft in one transaction: creates (retrieved or
+    typed rows), whitelisted updates and soft deletes together.  Creates that
+    collide with the live unique (aptem_id, month, source_ref) guard are
+    skipped and reported rather than failing the batch."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        body = json.loads(request.body or b"{}")
+        aptem_id = int(body.get("aptem_id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+    actor = _actor(body.get("updated_by") or body.get("created_by"))
+    creates = body.get("creates") or []
+    updates = body.get("updates") or []
+    deletes = body.get("deletes") or []
+    if not isinstance(creates, list) or not isinstance(updates, list) or not isinstance(deletes, list):
+        return JsonResponse({"error": "creates, updates and deletes must be lists"}, status=400)
+
+    validated_creates = []
+    try:
+        for index, item in enumerate(creates):
+            values = _validate_new_row(item)
+            validated_creates.append((str(item.get("key") or f"create-{index}"), values))
+        validated_updates = []
+        for item in updates:
+            row_id = int(item.get("id"))
+            validated_updates.append((row_id, _validate_patch_values(item.get("patch"))))
+        delete_ids = [int(value) for value in deletes]
+    except (TypeError, ValueError) as error:
+        return JsonResponse({"error": str(error) or "Invalid payload."}, status=400)
+
+    alias = CONNECTION_ALIAS if CONNECTION_ALIAS in connections.databases else "default"
+    created, skipped, missing = [], [], []
+    updated_count = deleted_count = 0
+    try:
+        with transaction.atomic(using=alias):
+            with connections[alias].cursor() as cursor:
+                learner = _load_learner(cursor, aptem_id)
+                if not learner:
+                    return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+                _ensure_manual_tables(cursor)
+                for key, values in validated_creates:
+                    cursor.execute(
+                        INSERT_ROW_SQL
+                        + f"""
+                        ON CONFLICT (aptem_id, month, source_ref)
+                            WHERE deleted_at IS NULL AND source_ref IS NOT NULL
+                            DO NOTHING
+                        RETURNING {ROW_COLUMNS}
+                        """,
+                        _insert_params(aptem_id, learner.get("learner_id"), values, actor),
+                    )
+                    inserted = _dict_rows(cursor)
+                    if inserted:
+                        created.append({"key": key, "row": _row_payload(inserted[0])})
+                    else:
+                        skipped.append({"key": key, "source_ref": values["source_ref"]})
+                for row_id, values in validated_updates:
+                    if not values:
+                        continue
+                    assignments = ", ".join(f"{field} = %s" for field in values)
+                    cursor.execute(
+                        f"""
+                        UPDATE {MANUAL_ROWS}
+                        SET {assignments}, updated_by = %s, updated_at = now()
+                        WHERE id = %s AND aptem_id = %s AND deleted_at IS NULL
+                        """,
+                        [*values.values(), actor, row_id, aptem_id],
+                    )
+                    if cursor.rowcount:
+                        updated_count += 1
+                    else:
+                        missing.append(row_id)
+                if delete_ids:
+                    cursor.execute(
+                        f"""
+                        UPDATE {MANUAL_ROWS}
+                        SET deleted_at = now(), updated_at = now(), updated_by = %s
+                        WHERE id = ANY(%s) AND aptem_id = %s AND deleted_at IS NULL
+                        """,
+                        [actor, delete_ids, aptem_id],
+                    )
+                    deleted_count = cursor.rowcount
+    except IntegrityError as error:
+        return JsonResponse(
+            {"error": "A change collided with an existing row.", "details": str(error)},
+            status=409,
+        )
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not save the journal changes.", "details": str(error)},
+            status=503,
+        )
+    return JsonResponse({
+        "ok": True,
+        "created": created,
+        "skipped": skipped,
+        "updated": updated_count,
+        "deleted": deleted_count,
+        "missing": missing,
+    })
