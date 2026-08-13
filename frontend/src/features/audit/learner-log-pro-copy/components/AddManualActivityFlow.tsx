@@ -489,7 +489,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
                 <>
                   <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                     Start
-                    <input type="time" min="09:00" max="17:00" step="900" value={startTime} disabled={needsSelection} onChange={(event) => setStartTime(event.target.value || WORK_DAY_START)} className="h-9 rounded-md border border-border bg-card px-2 font-mono text-sm disabled:opacity-60" />
+                    <input type="time" min="09:00:00" max="17:00:00" step="1" value={startTime} disabled={needsSelection} onChange={(event) => setStartTime(event.target.value || WORK_DAY_START)} className="h-9 rounded-md border border-border bg-card px-2 font-mono text-sm disabled:opacity-60" aria-label="Start time including seconds" />
                   </label>
                   {generatedTime && "label" in generatedTime ? (
                     <span className="rounded-md bg-[#f6f8fb] px-2.5 py-1.5 font-mono text-xs text-[#182d48]">{generatedTime.label}</span>

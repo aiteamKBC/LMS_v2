@@ -53,18 +53,20 @@ export function dateRestriction(dateStr: string, month?: string): string | null 
   return null;
 }
 
-export const WORK_DAY_START = "09:00";
-export const WORK_DAY_END = "17:00";
+export const WORK_DAY_START = "09:00:00";
+export const WORK_DAY_END = "17:00:00";
 
-function toMinutes(hhmm: string): number {
-  const [hours, minutes] = hhmm.split(":").map(Number);
-  return hours * 60 + minutes;
+function toSeconds(time: string): number {
+  const [hours = 0, minutes = 0, seconds = 0] = time.split(":").map(Number);
+  return hours * 3600 + minutes * 60 + seconds;
 }
 
-function toHhmm(totalMinutes: number): string {
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = Math.round(totalMinutes % 60);
-  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+function toHhmmss(totalSeconds: number): string {
+  const rounded = Math.round(totalSeconds);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const seconds = rounded % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
 /**
@@ -72,15 +74,15 @@ function toHhmm(totalMinutes: number): string {
  * (09:00–17:00). Returns "HH:MM–HH:MM", or an error string when the claimed
  * hours cannot fit before 17:00.
  */
-export function workingTimeRange(startHhmm: string, actualHours: number): { label: string } | { error: string } {
+export function workingTimeRange(startTime: string, actualHours: number): { label: string } | { error: string } {
   if (!Number.isFinite(actualHours) || actualHours <= 0) {
     return { error: "Enter the actual (claimed) hours first — the timestamp is generated from them." };
   }
-  const start = toMinutes(startHhmm || WORK_DAY_START);
-  if (start < toMinutes(WORK_DAY_START)) return { error: "The start time cannot be before 09:00." };
-  const end = start + Math.round(actualHours * 60);
-  if (end > toMinutes(WORK_DAY_END)) {
+  const start = toSeconds(startTime || WORK_DAY_START);
+  if (start < toSeconds(WORK_DAY_START)) return { error: "The start time cannot be before 09:00:00." };
+  const end = start + Math.round(actualHours * 3600);
+  if (end > toSeconds(WORK_DAY_END)) {
     return { error: "The end time must not pass 17:00 — reduce the hours or start earlier." };
   }
-  return { label: `${toHhmm(start)}–${toHhmm(end)}` };
+  return { label: `${toHhmmss(start)}–${toHhmmss(end)}` };
 }

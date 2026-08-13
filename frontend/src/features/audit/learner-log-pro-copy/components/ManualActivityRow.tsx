@@ -76,7 +76,7 @@ export function dateFlagBadge(date: string | null) {
   );
 }
 
-const TIME_RANGE_RE = /^(\d{2}:\d{2})[–-]\d{2}:\d{2}$/;
+const TIME_RANGE_RE = /^(\d{2}:\d{2}(?::\d{2})?)[–-]\d{2}:\d{2}(?::\d{2})?$/;
 
 type EditDraft = {
   title: string;
@@ -296,7 +296,7 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
             </select>
             {draft.tsMode === "time" ? (
               <>
-                <RowInput type="time" min="09:00" max="17:00" step="900" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value || WORK_DAY_START })} className="w-full text-center" aria-label="Start time" />
+                <RowInput type="time" min="09:00:00" max="17:00:00" step="1" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value || WORK_DAY_START })} className="w-full text-center" aria-label="Start time including seconds" />
                 {editGeneratedTime && "label" in editGeneratedTime ? (
                   <span className="block font-mono text-[10px] text-[#182d48]">{editGeneratedTime.label}</span>
                 ) : editGeneratedTime ? (
