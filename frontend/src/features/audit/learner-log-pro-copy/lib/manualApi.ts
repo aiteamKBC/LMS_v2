@@ -290,6 +290,7 @@ export type ImportAttendanceCandidate = {
   source_ref: string;
   category: "attendance";
   title: string;
+  group_name: string;
   activity_date: string;
   attended: boolean;
   timestamp_label: string;
@@ -299,6 +300,7 @@ export type ImportActivityCandidate = {
   source_ref: string;
   category: string;
   title: string;
+  group_name: string;
   activity_date: string | null;
   duration_minutes: number | null;
   completion: { state: CompletionState };

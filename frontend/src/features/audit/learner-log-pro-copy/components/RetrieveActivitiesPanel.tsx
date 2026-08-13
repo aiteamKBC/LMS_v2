@@ -25,6 +25,7 @@ import { isUkBankHoliday, isUkWeekend } from "@/features/audit/learner-log-pro-c
 type Candidate = {
   source_ref: string;
   category: string;
+  group_name: string;
   title: string;
   activity_date: string | null;
   duration_minutes: number | null;
@@ -60,6 +61,7 @@ function fromAttendance(item: ImportAttendanceCandidate): Candidate {
   return {
     source_ref: item.source_ref,
     category: "attendance",
+    group_name: item.group_name,
     title: item.title,
     activity_date: item.activity_date,
     duration_minutes: null,
@@ -77,6 +79,7 @@ function fromActivity(item: ImportActivityCandidate): Candidate {
   return {
     source_ref: item.source_ref,
     category: item.category,
+    group_name: item.group_name,
     title: item.title,
     activity_date: item.activity_date,
     duration_minutes: item.duration_minutes,
@@ -213,6 +216,16 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
     });
   };
 
+  const byModule = (candidates: Candidate[]) => {
+    const modules = new Map<string, Candidate[]>();
+    for (const candidate of candidates) {
+      const moduleName = candidate.group_name || "Other activities";
+      if (!modules.has(moduleName)) modules.set(moduleName, []);
+      modules.get(moduleName)!.push(candidate);
+    }
+    return [...modules.entries()].sort(([left], [right]) => left.localeCompare(right));
+  };
+
   function confirm() {
     const all = [...groups.values()].flat();
     const rows: DraftRow[] = all
@@ -286,50 +299,53 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
                       </Button>
                     </div>
                   ) : null}
-                  <ul className="max-h-64 overflow-y-auto">
+                  <div className="max-h-64 overflow-y-auto">
                     {candidates.length === 0 ? (
-                      <li className="px-4 py-3 text-xs text-muted-foreground">Nothing recorded this month.</li>
-                    ) : candidates.map((candidate) => {
-                      const taken = takenRefs.has(candidate.source_ref);
-                      const flag = dateFlag(candidate.activity_date);
+                      <p className="px-4 py-3 text-xs text-muted-foreground">Nothing recorded this month.</p>
+                    ) : byModule(candidates).map(([moduleName, moduleCandidates]) => {
+                      const moduleEligible = moduleCandidates.filter(selectable);
+                      const modulePicked = moduleEligible.length > 0 && moduleEligible.every((candidate) => selected.has(candidate.source_ref));
                       return (
-                        <li key={candidate.source_ref} className={`border-b border-border/60 last:border-b-0 ${taken ? "opacity-45" : ""}`}>
-                          <label className="flex cursor-pointer items-start gap-2.5 px-4 py-2.5 hover:bg-secondary/50">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5"
-                              disabled={taken}
-                              checked={selected.has(candidate.source_ref)}
-                              onChange={() => toggle(candidate.source_ref)}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm text-foreground" title={candidate.title}>{candidate.title}</span>
-                              <span className="mt-1 flex flex-wrap items-center gap-1.5">
-                                {candidate.activity_date ? <span className="font-mono text-[11px] text-muted-foreground">{candidate.activity_date}</span> : null}
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClasses(candidate.badge.tone)}`}>{candidate.badge.text}</span>
-                                {formatDurationMinutes(candidate.duration_minutes) ? (
-                                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">{formatDurationMinutes(candidate.duration_minutes)}</span>
-                                ) : null}
-                                {flag ? (
-                                  <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive">
-                                    <AlertTriangle className="h-2.5 w-2.5" /> {flag}
-                                  </span>
-                                ) : null}
-                                {taken ? <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Already added</span> : null}
-                                {category === "reading+quiz" ? candidate.paired ? (
-                                  <button type="button" onClick={(event) => { event.preventDefault(); void unlinkPair(candidate); }} className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success hover:bg-destructive/15 hover:text-destructive" title="Separate all bundled activities again">Linked bundle · Unlink</button>
-                                ) : (
-                                  <button type="button" onClick={(event) => { event.preventDefault(); togglePair(candidate); }} className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${pairSelection.some((item) => item.source_ref === candidate.source_ref) ? "border-primary bg-primary text-primary-foreground" : "border-border text-primary"}`}>
-                                    Merge
-                                  </button>
-                                ) : null}
-                              </span>
+                        <section key={moduleName} className="border-b border-border/70 last:border-b-0">
+                          <label className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border/60 bg-[#eef2f6] px-4 py-2 text-[11px] font-semibold text-[#182d48]">
+                            <span className="flex min-w-0 items-center gap-2">
+                              <input type="checkbox" checked={modulePicked} disabled={!moduleEligible.length} onChange={() => toggleGroup(moduleCandidates)} />
+                              <span className="truncate" title={moduleName}>{moduleName}</span>
                             </span>
+                            <span className="shrink-0 font-mono font-normal text-muted-foreground">{moduleCandidates.length}</span>
                           </label>
-                        </li>
+                          <ul>
+                            {moduleCandidates.map((candidate) => {
+                              const taken = takenRefs.has(candidate.source_ref);
+                              const flag = dateFlag(candidate.activity_date);
+                              return (
+                                <li key={candidate.source_ref} className={`border-b border-border/60 last:border-b-0 ${taken ? "opacity-45" : ""}`}>
+                                  <label className="flex cursor-pointer items-start gap-2.5 px-4 py-2.5 hover:bg-secondary/50">
+                                    <input type="checkbox" className="mt-0.5" disabled={taken} checked={selected.has(candidate.source_ref)} onChange={() => toggle(candidate.source_ref)} />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-sm text-foreground" title={candidate.title}>{candidate.title}</span>
+                                      <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                                        {candidate.activity_date ? <span className="font-mono text-[11px] text-muted-foreground">{candidate.activity_date}</span> : null}
+                                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClasses(candidate.badge.tone)}`}>{candidate.badge.text}</span>
+                                        {formatDurationMinutes(candidate.duration_minutes) ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">{formatDurationMinutes(candidate.duration_minutes)}</span> : null}
+                                        {flag ? <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive"><AlertTriangle className="h-2.5 w-2.5" /> {flag}</span> : null}
+                                        {taken ? <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Already added</span> : null}
+                                        {category === "reading+quiz" ? candidate.paired ? (
+                                          <button type="button" onClick={(event) => { event.preventDefault(); void unlinkPair(candidate); }} className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success hover:bg-destructive/15 hover:text-destructive" title="Separate all bundled activities again">Linked bundle · Unlink</button>
+                                        ) : (
+                                          <button type="button" onClick={(event) => { event.preventDefault(); togglePair(candidate); }} className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${pairSelection.some((item) => item.source_ref === candidate.source_ref) ? "border-primary bg-primary text-primary-foreground" : "border-border text-primary"}`}>Merge</button>
+                                        ) : null}
+                                      </span>
+                                    </span>
+                                  </label>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </section>
                       );
                     })}
-                  </ul>
+                  </div>
                 </section>
               );
             })}

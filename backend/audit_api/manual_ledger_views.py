@@ -1383,7 +1383,7 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
                 cursor.execute(
                     f"""
                     SELECT DISTINCT ON (a.activity_id)
-                           r.group_id, a.activity_id, a.title, a.activity_date,
+                           r.group_id, g.group_name, a.activity_id, a.title, a.activity_date,
                            lower(a.activity_type) AS activity_type,
                            a.quiz_id, a.quiz_questions, a.reading_type,
                            a.reading_iframe_url, a.reading_text_body,
@@ -1392,6 +1392,7 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
                            r.quiz_passed
                     FROM {ACTIVITY_RESULTS} r
                     JOIN {ACTIVITIES} a ON a.activity_id = r.activity_id
+                    LEFT JOIN {GROUPS} g ON g.group_id = r.group_id
                     WHERE r.learner_id = %s
                       AND to_char(a.activity_date, 'YYYY-MM') = %s
                     ORDER BY a.activity_id, r.group_id
@@ -1437,6 +1438,7 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
             "source_ref": f"att:{row['source_key']}",
             "category": "attendance",
             "title": row.get("lecture_name") or row.get("module") or "Attendance session",
+            "group_name": row.get("module") or "Attendance",
             "activity_date": date_iso,
             "attended": attended,
             "timestamp_label": "attended" if attended else "not attended",
@@ -1447,6 +1449,7 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
         activity_date = row.get("activity_date")
         activities.append({
             "group_id": int(row["group_id"]),
+            "group_name": row.get("group_name") or f"Group {row['group_id']}",
             "activity_id": int(row["activity_id"]),
             "source_ref": f"la:{int(row['group_id'])}:{int(row['activity_id'])}",
             "category": row.get("activity_type") or "activity",
@@ -1482,6 +1485,7 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
             "duration_minutes": None,
             "completion": {"state": "completed" if all(state == "completed" for state in states) else "not_completed"},
             "group_id": group_id,
+            "group_name": members[0].get("group_name") or f"Group {group_id}",
             "activity_id": anchor_id,
             "pair": {"anchor_activity_id": anchor_id, "activity_ids": activity_ids,
                      "titles": [member["title"] for member in members]},
