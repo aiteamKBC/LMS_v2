@@ -41,6 +41,31 @@ export interface UserListRow {
    * must be routed by source, not id alone.
    */
   source?: 'apprenticeship' | 'commercial' | 'staff' | 'employer';
+  /**
+   * Present on create only, and only when the form asked for an invitation.
+   * The record is saved whether or not the email was sent, so the invitation's
+   * outcome is reported separately — see backend/login/services.py.
+   */
+  invitation?: InvitationOutcome;
+}
+
+/** Result of an invitation attempt attached to a just-created record. */
+export interface InvitationOutcome {
+  /** An invitation row was written — the link exists and can be re-sent. */
+  invited: boolean;
+  /** The email reached the mail transport (false when Azure is unconfigured). */
+  emailSent: boolean;
+  accountCreated: boolean;
+  /** Why the invitation did not go out, when it did not. */
+  error: string | null;
+  expiresAt: string | null;
+  /**
+   * The caller was not allowed to issue this invitation — e.g. not signed in,
+   * or a staff member trying to create an administrator. No account was
+   * created. Distinct from a mail failure: the record still saved, but nobody
+   * will ever be able to sign in as them until an authorised user re-invites.
+   */
+  forbidden?: boolean;
 }
 
 export interface UsersFilter {

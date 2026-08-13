@@ -57,14 +57,26 @@ export interface StaffUserRow extends UserListRow {
   caseOwner: string;
   learningProvider: string;
   referenceNumber: string;
+  // `invitation` is inherited from UserListRow — present on create when the
+  // form asked for one.
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
+      // Sends the kbc_session cookie — writes to this endpoint now require an
+      // authenticated staff session (see login.permissions.staff_only).
+      credentials: 'include',
       ...init,
+      // Spread last: with `...init` after it, a caller passing any headers at
+      // all would silently drop these two and the request would fail the
+      // Content-Type parse and the CSRF check.
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(init?.headers || {}),
+      },
     });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');

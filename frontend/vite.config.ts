@@ -125,6 +125,12 @@ export default defineConfig(({ mode }) => ({
         target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      // Authentication. Same-origin through the proxy so the kbc_session
+      // cookie (HttpOnly, SameSite=Lax) is set on and sent back to :3000.
+      "/login_api": {
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
       "/api": {
         target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
         changeOrigin: true,

@@ -1,12 +1,14 @@
 """Database router: send Neon-backed apps' models to the `enrolment` DB.
 
-`learner_api` and `enrolment_api` both map unmanaged tables that live in the Neon
-`enrolment` schema. Everything else (auth, sessions, admin, migrations) stays on
-`default` (SQLite). Those tables are created outside Django — by the app's
+`learner_api`, `enrolment_api` and `login` all map unmanaged tables on Neon:
+the first two in the `enrolment` schema, `login` in the `auth` schema beside it
+(the credentials belong next to the people they identify — see login/models.py).
+Everything else (django.contrib.auth, sessions, admin, migrations) stays on
+`default` (SQLite). Those tables are created outside Django — by the apps'
 `apply_*` management commands — so migrations never touch them.
 """
 
-APP_LABELS = frozenset({"learner_api", "enrolment_api"})
+APP_LABELS = frozenset({"learner_api", "enrolment_api", "login"})
 ENROLMENT_DB = "enrolment"
 
 

@@ -9,8 +9,12 @@ Routes (mounted under /learner_api/ in config/urls.py):
     GET  /learner_api/staff-users/                -> {count, results:[staff rows]}
     POST /learner_api/staff-users/                -> create an admin/staff account
 
-CSRF is exempted: this is an internal same-origin dev API reached through the
-Vite proxy, with no cookie-based auth.
+Authentication: write methods require an authenticated staff or admin session —
+see ``@staff_only(writes_only=True)`` on each view and
+``login.permissions.staff_only`` for why the read paths are not gated yet.
+Django's CSRF middleware is exempted because these are JSON endpoints; the
+cross-site protection is the ``X-Requested-With`` header the login API also
+requires, plus the SameSite=Lax session cookie.
 """
 import json
 
@@ -18,6 +22,8 @@ from django.db import DatabaseError
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+
+from login.permissions import staff_only
 
 from .active_users import cohort_dates, replace_training_plan, sync_active_user
 from .identity import learner_profile_for_source
@@ -61,6 +67,40 @@ def _parse_body(request):
 
 def _error(message, status):
     return JsonResponse({"error": message}, status=status)
+
+
+def _send_platform_invitation(request, subject_type, subject_id, subject=None):
+    """Invite a just-created person to the platform, and describe the outcome.
+
+    Called from the create paths when the form's "Invite to platform" flag is
+    set. Imported lazily so learner_api keeps no import-time dependency on the
+    login app — the two are wired together at the URL layer, and a circular
+    import here would be easy to introduce and annoying to unpick.
+
+    Never raises: see login.services.invite_subject. The returned dict rides
+    along on the 201 so the console can say "created, but the invitation email
+    could not be sent" instead of silently doing nothing.
+
+    Authorisation matters here and is *not* assumed. These creation endpoints
+    carry no auth decorator of their own, so the signed-in account is passed
+    down and ``invite_subject`` refuses an anonymous or under-privileged caller.
+    Without that, an unauthenticated POST naming ``position: "Admin"`` would
+    mint an admin credential and email the set-password link to whatever address
+    the request supplied.
+    """
+    from login.services import invite_subject
+    from login.security import client_ip, user_agent
+
+    inviter = getattr(request, "login_account", None)
+    return invite_subject(
+        subject_type,
+        subject_id,
+        subject=subject,
+        inviter=inviter,
+        invited_by=inviter.email if inviter else None,
+        ip=client_ip(request),
+        user_agent=user_agent(request),
+    )
 
 
 def _check_employer_id(fields):
@@ -243,6 +283,7 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def learner_coach(request, pk):
     """Read/update a learner's coach contact, stored on the "Learner"."Active_users"
     mirror (columns coach_name / coach_email). Set from the Delivery block of the
@@ -299,6 +340,7 @@ def learner_coach(request, pk):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def enrolment_users(request):
     """The single learner collection — both kinds live in one table.
 
@@ -355,7 +397,15 @@ def enrolment_users(request):
             user = EnrolmentUser.all_learners.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse(to_list_row(user), status=201)
+
+        row = to_list_row(user)
+        # "Would you like to invite this user into the platform?" — send the
+        # set-your-password email. Reported alongside the created learner rather
+        # than raising: the learner exists either way, and a mail outage must not
+        # turn a successful enrolment into a 5xx.
+        if fields.get("invite_to_platform"):
+            row["invitation"] = _send_platform_invitation(request, "learner", user.id, subject=user)
+        return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
 
@@ -376,6 +426,7 @@ def enrolment_user_options(request):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def enrolment_user_detail(request, pk):
     try:
         # all_learners, not objects: `objects` is scoped to apprenticeship rows, so
@@ -418,6 +469,7 @@ def enrolment_user_detail(request, pk):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def enrolment_user_finish(request, pk):
     """Check whether an enrolled learner is ready for automatic activation.
 
@@ -469,6 +521,7 @@ def enrolment_user_finish(request, pk):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def commercial_users(request):
     if request.method == "GET":
         try:
@@ -495,6 +548,7 @@ def commercial_users(request):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def staff_users(request):
     """Staff/admin accounts — enrolment."Staff_users".
 
@@ -522,12 +576,17 @@ def staff_users(request):
             user = StaffUser.objects.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse(to_staff_row(user), status=201)
+
+        row = to_staff_row(user)
+        if fields.get("invite_to_platform"):
+            row["invitation"] = _send_platform_invitation(request, "staff", user.id, subject=user)
+        return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def staff_user_detail(request, pk):
     try:
         user = StaffUser.objects.get(pk=pk)
@@ -559,6 +618,7 @@ def staff_user_detail(request, pk):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def commercial_user_detail(request, pk):
     try:
         profile = _learner_profiles_with_plan().filter(pk=pk).first()

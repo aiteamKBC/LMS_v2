@@ -66,11 +66,18 @@ async function request<T>(url: string, init?: Parameters<typeof fetch>[1]): Prom
   let res: Response;
   try {
     res = await fetch(url, {
-      // Sends the session cookie — the enrolment API now requires an
-      // authenticated user (see enrolment_api/auth.py).
+      // Sends the kbc_session cookie — writes require an authenticated staff
+      // session (see login.permissions.staff_only).
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
       ...init,
+      // Spread last: with `...init` after it, a caller passing any headers at
+      // all would silently drop these two, failing the Content-Type parse and
+      // the CSRF check.
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(init?.headers || {}),
+      },
     });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');

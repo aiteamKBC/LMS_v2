@@ -81,7 +81,7 @@ function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: 
 }
 
 export default function Home() {
-  const { login } = useAuth();
+  const { previewAs } = useAuth();
   const navigate = useNavigate();
   const { ref: portalCardsRef, isInView: portalCardsInView } = useInView();
 
@@ -91,7 +91,7 @@ export default function Home() {
 
   // Enter a section directly — sign in as its demo account, then route in.
   const enterWorkspace = (section: WorkspaceSection) => {
-    login(section.email);
+    previewAs(section.email);
     navigate(section.workspacePath);
   };
 
@@ -99,13 +99,13 @@ export default function Home() {
   // demo account (the enrolment section's account) before routing in.
   const chooseApprenticeshipEnrolment = () => {
     setEnrolmentChoiceOpen(false);
-    login('compliance@kbc.test');
+    previewAs('compliance@kbc.test');
     navigate('/users');
   };
 
   const choosedelivery = () => {
     setEnrolmentChoiceOpen(false);
-    login('compliance@kbc.test');
+    previewAs('compliance@kbc.test');
     navigate('/users');
   };
 

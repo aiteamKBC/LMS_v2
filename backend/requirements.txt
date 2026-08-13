@@ -35,6 +35,9 @@ typing_extensions==4.16.0
 tzdata==2026.2
 xlsxwriter==3.2.9
 djangorestframework==3.17.1
+# Password hashing for the `login` app. Optional at import time (settings falls
+# back to PBKDF2 if it is absent), but installed so deployments get Argon2id.
+argon2-cffi==25.1.0
 channels==4.3.2
 channels-redis==4.3.0
 redis==8.0.1

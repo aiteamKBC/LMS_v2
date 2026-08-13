@@ -105,6 +105,9 @@ const FinanceReportsPage = lazy(() => import("../pages/finance/reports/page"));
 const FinanceWorkspace = lazy(() => import("../pages/workspace/finance/page"));
 const FlashCardsPage = lazy(() => import("../pages/engagement/flash-cards/page"));
 const ForgotPasswordPage = lazy(() => import("../pages/forgot-password/page"));
+const LoginPage = lazy(() => import("../pages/login/page"));
+// Serves both emailed-token flows; `mode` picks which.
+const SetPasswordPage = lazy(() => import("../pages/set-password/page"));
 const FundingOverviewPage = lazy(() => import("../pages/finance/funding/page"));
 const GatewayReadinessPage = lazy(() => import("../pages/learner/gateway/page"));
 const GeneralMessagesPage = lazy(() => import("../pages/messages/page"));
@@ -264,13 +267,24 @@ const routes: RouteObject[] = [
     element: <InternalPanelPage />,
   },
   {
-    // Login removed — entry is now the workspace launcher on the home page.
+    // Real sign-in against /login_api/ (the Django `login` app). The home page
+    // remains a public launcher; this is the way in for an actual account.
     path: "/login",
-    element: <Navigate to="/" replace />,
+    element: <LoginPage />,
   },
   {
     path: "/forgot-password",
     element: <ForgotPasswordPage />,
+  },
+  {
+    // Target of the invitation email — set the first password for a new account.
+    path: "/set-password",
+    element: <SetPasswordPage mode="invitation" />,
+  },
+  {
+    // Target of the password-reset email. Same component, different endpoints.
+    path: "/reset-password",
+    element: <SetPasswordPage mode="reset" />,
   },
   {
     // The learner's own enrolment wizard. Onboarding learners are redirected

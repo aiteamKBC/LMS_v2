@@ -9,6 +9,8 @@
 // listOrganisations supports search + paging.
 // ============================================================================
 
+import type { InvitationOutcome } from '@/pages/users/types';
+
 const ORGS = '/learner_api/organisations';
 const EMPLOYERS = '/learner_api/employers';
 
@@ -70,6 +72,12 @@ export interface EmployerRow {
   employerGroupIds: string[];
   /** Their names, denormalised server-side so a row renders without a lookup. */
   employerGroupNames: string[];
+  /**
+   * Present on create only, when the form asked for an invitation. Reports the
+   * invitation's fate separately from the employer's creation, which succeeds
+   * either way — see login/services.py.
+   */
+  invitation?: InvitationOutcome;
 }
 
 /** Option lists for both forms, served from the constants the API validates against. */
@@ -82,14 +90,34 @@ export interface EmployerOptions {
 }
 
 export type OrganisationInput = Partial<Omit<OrganisationRow, 'id'>>;
-export type EmployerInput = Partial<Omit<EmployerRow, 'id' | 'name' | 'employerGroupNames'>>;
+export type EmployerInput = Partial<
+  Omit<EmployerRow, 'id' | 'name' | 'employerGroupNames' | 'invitation'>
+> & {
+  /**
+   * Send the "set your password" email on create. Unlike the learner and staff
+   * forms this is not stored on the employer record — enrolment."Employers" has
+   * no such column, and whether they were invited is answered by
+   * login."Invitations". It is an instruction for this request only.
+   */
+  inviteToPlatform?: boolean;
+};
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
+      // Sends the kbc_session cookie — writes require an authenticated staff
+      // session (see login.permissions.staff_only).
+      credentials: 'include',
       ...init,
+      // Spread last: with `...init` after it, a caller passing any headers at
+      // all would silently drop these two, failing the Content-Type parse and
+      // the CSRF check.
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(init?.headers || {}),
+      },
     });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
