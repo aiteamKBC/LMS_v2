@@ -237,7 +237,7 @@ def _activities_payload(cur, group_id):
         select a.activity_key, a.month_index, a.week_slot, a.position, a.category,
                a.title, a.subtitle, a.material_ref, a.planned_hours, a.planned_date,
                a.included, a.ksbs, a.updated_by, a.updated_at,
-               coalesce(x.exempted, '{}') as exempted
+               coalesce(x.exempted, '{}') as exempted, a.bundle_refs
         from "Manual_audit".plan_activities a
         left join (
             select activity_key, array_agg(aptem_id) as exempted
@@ -267,9 +267,22 @@ def _activities_payload(cur, group_id):
             "updated_by": row[12],
             "updated_at": row[13].isoformat() if row[13] else None,
             "exempted": list(row[14] or []),
+            "bundle_refs": _json_or_none(row[15]),
         }
         for row in cur.fetchall()
     ]
+
+
+def _json_or_none(value):
+    """jsonb may surface as list/dict or str depending on the adapter."""
+    if isinstance(value, (list, dict)):
+        return value
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return None
+    return None
 
 
 # --- training-plan month sync ---------------------------------------------------
@@ -988,6 +1001,22 @@ def _validate_activity_input(item):
     week_slot = _int_or_none(item.get("week_slot")) or 1
     if week_slot < 1 or week_slot > 4:
         raise ValueError("week_slot must be 1..4")
+    # Reading+Quiz of one week plan as ONE row with ONE shared hours figure:
+    # the bundled materials ride along as [{ref: 'lms:<id>', title}].
+    bundle_refs = item.get("bundle_refs")
+    if bundle_refs is not None:
+        if not isinstance(bundle_refs, list) or len(bundle_refs) > 200:
+            raise ValueError("bundle_refs must be a list of at most 200 items")
+        cleaned = []
+        for entry in bundle_refs:
+            if not isinstance(entry, dict):
+                raise ValueError("each bundle item must be an object")
+            ref = str(entry.get("ref") or "").strip()
+            if not re.fullmatch(r"lms:\d+", ref):
+                raise ValueError("bundle item refs must look like lms:<id>")
+            cleaned.append({"ref": ref, "title": str(entry.get("title") or "").strip()[:500]})
+        bundle_refs = cleaned or None
+
     return {
         "category": category,
         "title": title,
@@ -998,6 +1027,7 @@ def _validate_activity_input(item):
         "planned_hours": _hours(item.get("planned_hours"), "planned_hours", default=0.0),
         "planned_date": _date_or_none(item.get("planned_date"), "planned_date"),
         "ksbs": _ksbs_or_none(item.get("ksbs")),
+        "bundle_refs": bundle_refs,
     }
 
 
@@ -1086,14 +1116,14 @@ def plan_activities(request: HttpRequest) -> JsonResponse:
                             insert into "Manual_audit".plan_activities
                                 (group_id, month_index, week_slot, position, category, title,
                                  subtitle, material_ref, planned_hours, planned_date, ksbs,
-                                 created_by, updated_by)
+                                 bundle_refs, created_by, updated_by)
                             values (
                                 %s, %s, %s,
                                 coalesce((
                                     select max(position) + 1 from "Manual_audit".plan_activities
                                     where group_id = %s and month_index = %s and week_slot = %s
                                 ), 0),
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                             )
                             returning activity_key
                             ''',
@@ -1105,6 +1135,7 @@ def plan_activities(request: HttpRequest) -> JsonResponse:
                                 item["planned_hours"],
                                 item["planned_date"],
                                 json.dumps(item["ksbs"]) if item["ksbs"] is not None else None,
+                                json.dumps(item["bundle_refs"]) if item.get("bundle_refs") else None,
                                 actor, actor,
                             ],
                         )

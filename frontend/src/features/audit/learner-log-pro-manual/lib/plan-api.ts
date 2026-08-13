@@ -59,6 +59,7 @@ export type PlanActivity = {
   updated_by: string | null;
   updated_at: string | null;
   exempted: number[];
+  bundle_refs: Array<{ ref: string; title: string }> | null;
 };
 
 export type PlanGroupDetail = PlanGroup & {
@@ -159,6 +160,9 @@ export type NewPlanActivity = {
   planned_hours?: number | null;
   planned_date?: string | null;
   ksbs?: PlanKsbs | null;
+  // Reading+Quiz of one week bundle into ONE row with ONE shared hours
+  // figure — the grouped materials ride along here.
+  bundle_refs?: Array<{ ref: string; title: string }> | null;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -464,6 +468,38 @@ export function pickAttendanceGrid(groupId: number, month: string, all = false) 
   const query = new URLSearchParams({ group_id: String(groupId), month });
   if (all) query.set("all", "1");
   return request<AttendanceGrid>(`/pickers/attendance-grid?${query}`);
+}
+
+// The learner's enrolled LMS courses (like the portal's Enrolled Courses
+// page) and one course's materials with THEIR status on each — the course
+// browser picker lays the materials out week by week.
+export type LmsCourse = { course_id: number; name: string; materials: number };
+
+export type CourseMaterial = {
+  material_ref: string;
+  activity_id: number;
+  title: string;
+  category: "video" | "audio" | "reading+quiz";
+  date: string | null;
+  suggested_hours: number | null;
+  has_iframe: boolean;
+  has_text: boolean;
+  has_quiz: boolean;
+  status: string | null;
+  reading_viewed: boolean | null;
+  quiz_attempted: boolean | null;
+  quiz_passed: boolean | null;
+  video_completed: boolean | null;
+  quiz_score: number | null;
+  quiz_maximum_score: number | null;
+};
+
+export function pickLmsCourses(groupId: number) {
+  return request<{ items: LmsCourse[] }>(`/pickers/lms-courses?group_id=${groupId}`);
+}
+
+export function pickLmsCourseMaterials(groupId: number, courseId: number) {
+  return request<{ items: CourseMaterial[] }>(`/pickers/lms-course-materials?group_id=${groupId}&course_id=${courseId}`);
 }
 
 export function pickMaterials(params: {

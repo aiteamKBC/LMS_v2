@@ -125,6 +125,11 @@ def ensure_plan_tables(cur):
         'create index if not exists plan_activities_group_month_idx '
         'on "Manual_audit".plan_activities (group_id, month_index, week_slot, position)'
     )
+    # Reading+Quiz items of one week are planned as ONE row with ONE shared
+    # hours figure — the bundled materials ([{ref, title}]) live here.
+    cur.execute(
+        'alter table "Manual_audit".plan_activities add column if not exists bundle_refs jsonb'
+    )
     cur.execute(
         '''
         create table if not exists "Manual_audit".plan_group_members (
