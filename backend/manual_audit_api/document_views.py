@@ -9,6 +9,7 @@ from urllib.parse import quote, unquote, urlsplit
 from django.db import DatabaseError, connections
 from django.http import HttpResponse, HttpResponseRedirect, StreamingHttpResponse
 from django.utils.http import content_disposition_header
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 
 from .common import (
     CONN,
@@ -161,6 +162,10 @@ def contract_file(request, contract_id):
     return response
 
 
+# Same-origin framing only: the workspace previews evidence inside its own
+# iframes (assignment picker, docs modal) — the middleware default (DENY)
+# would blank them, while external sites remain blocked.
+@xframe_options_sameorigin
 def evidence_file(request, evidence_id):
     """Open an evidence submission (source manifest or manual upload)."""
     if request.method != "GET":

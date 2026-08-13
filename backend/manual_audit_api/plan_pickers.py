@@ -47,6 +47,20 @@ def _kbc_attendance_dsn():
     return make_conninfo(**conninfo)
 
 
+# The attendance sheet/sessions pickers read the SAME live table through the
+# dedicated pooled Django alias (KBC_ATTENDANCE_DATABASE_URL in settings) —
+# module strings match the Manual_audit mirror, so session refs stay stable.
+ATTENDANCE_CONN = "kbc_attendance"
+
+
+def _attendance_cursor():
+    if ATTENDANCE_CONN not in connections.databases:
+        raise KeyError(
+            "KBC_ATTENDANCE_DATABASE_URL is not configured — the live attendance source is unavailable."
+        )
+    return connections[ATTENDANCE_CONN].cursor()
+
+
 def _date_label(value):
     """ISO-ish display string for a date that may arrive as date or text."""
     if value is None:
@@ -266,6 +280,195 @@ def picker_attendance_grid(request: HttpRequest) -> JsonResponse:
     })
 
 
+def _plan_learner(cur, group_id):
+    """The learner behind a learner-plan: (aptem_id, learner_id) or None."""
+    cur.execute(
+        '''
+        select gm.aptem_id, l.learner_id
+        from "Manual_audit".plan_group_members gm
+        join "Manual_audit".learners l on l.aptem_id = gm.aptem_id
+        where gm.group_id = %s and gm.left_at is null
+        order by gm.joined_at
+        limit 1
+        ''',
+        [group_id],
+    )
+    return cur.fetchone()
+
+
+@require_GET
+def picker_lms_courses(request: HttpRequest) -> JsonResponse:
+    """The learner's enrolled LMS courses (mirror groups), like the portal's
+    Enrolled Courses page — name + how many materials it holds for them."""
+    try:
+        group_id = int(request.GET.get("group_id", ""))
+    except ValueError:
+        return JsonResponse({"error": "group_id is required"}, status=400)
+    try:
+        with connections[CONN].cursor() as cur:
+            ensure_plan_tables(cur)
+            learner = _plan_learner(cur, group_id)
+            if not learner:
+                return JsonResponse({"error": "This plan has no learner."}, status=404)
+            _aptem_id, learner_id = learner
+            # Counts cover the WHOLE course content (any learner's sync), not
+            # just what this learner has result rows for.
+            cur.execute(
+                '''
+                select g.group_id, g.group_name, count(distinct r.activity_id) as materials
+                from "Manual_audit".group_learners gl
+                join "Manual_audit".groups g on g.group_id = gl.group_id
+                left join "Manual_audit".activity_results r
+                  on r.group_id = gl.group_id
+                where gl.learner_id = %s
+                group by g.group_id, g.group_name
+                order by materials desc, g.group_name
+                ''',
+                [learner_id],
+            )
+            rows = cur.fetchall()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not load the courses.", "details": str(error)}, status=503)
+    return JsonResponse({
+        "items": [
+            {"course_id": row[0], "name": row[1], "materials": row[2]}
+            for row in rows
+        ],
+    })
+
+
+@require_GET
+def picker_lms_course_materials(request: HttpRequest) -> JsonResponse:
+    """One course's materials for the plan's learner — every lecture the
+    course holds (attempted or not), with THEIR status on each, dated so the
+    client can lay them out week by week like the course page."""
+    try:
+        group_id = int(request.GET.get("group_id", ""))
+        course_id = int(request.GET.get("course_id", ""))
+    except ValueError:
+        return JsonResponse({"error": "group_id and course_id are required"}, status=400)
+    try:
+        with connections[CONN].cursor() as cur:
+            ensure_plan_tables(cur)
+            learner = _plan_learner(cur, group_id)
+            if not learner:
+                return JsonResponse({"error": "This plan has no learner."}, status=404)
+            _aptem_id, learner_id = learner
+            # The COURSE's full content (every material any enrolled learner
+            # was ever synced with), LEFT-joined with THIS learner's own
+            # result — an untouched material still shows, marked not done.
+            cur.execute(
+                '''
+                select a.activity_id, a.title, a.activity_type, a.activity_date,
+                       a.configured_duration_min,
+                       (a.video_iframe_url is not null and a.video_iframe_url <> '') as has_iframe,
+                       (a.reading_iframe_url is not null and a.reading_iframe_url <> ''
+                        or a.reading_text_body is not null and a.reading_text_body <> '') as has_text,
+                       (a.quiz_id is not null) as has_quiz,
+                       r.status, r.reading_viewed, r.quiz_attempted, r.quiz_passed,
+                       r.video_completed, r.quiz_score, r.quiz_maximum_score
+                from (
+                    select distinct activity_id
+                    from "Manual_audit".activity_results
+                    where group_id = %s
+                ) course
+                join "Manual_audit".activities a on a.activity_id = course.activity_id
+                left join "Manual_audit".activity_results r
+                  on r.activity_id = course.activity_id
+                 and r.group_id = %s and r.learner_id = %s
+                order by a.activity_date nulls last, lower(a.title)
+                ''',
+                [course_id, course_id, learner_id],
+            )
+            rows = cur.fetchall()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not load the course materials.", "details": str(error)}, status=503)
+
+    items = []
+    for (activity_id, title, activity_type, activity_date, duration_min,
+         has_iframe, has_text, has_quiz, status, reading_viewed,
+         quiz_attempted, quiz_passed, video_completed, quiz_score,
+         quiz_maximum_score) in rows:
+        category = {v: k for k, v in _CATALOG_TYPES.items()}.get(activity_type)
+        if category is None:
+            category = str(activity_type or "").strip().lower()
+            if category not in {"video", "audio", "reading+quiz"}:
+                continue
+        items.append({
+            "material_ref": f"lms:{activity_id}",
+            "activity_id": activity_id,
+            "title": title,
+            "category": category,
+            "date": activity_date.isoformat() if activity_date else None,
+            "suggested_hours": round(float(duration_min) / 60.0, 2) if duration_min else None,
+            "has_iframe": bool(has_iframe),
+            "has_text": bool(has_text),
+            "has_quiz": bool(has_quiz),
+            "status": status,
+            "reading_viewed": reading_viewed,
+            "quiz_attempted": quiz_attempted,
+            "quiz_passed": quiz_passed,
+            "video_completed": video_completed,
+            "quiz_score": float(quiz_score) if quiz_score is not None else None,
+            "quiz_maximum_score": float(quiz_maximum_score) if quiz_maximum_score is not None else None,
+        })
+    return JsonResponse({"items": items, "course_id": course_id})
+
+
+@require_GET
+def picker_material_content(request: HttpRequest) -> JsonResponse:
+    """One material's embeddable content + the plan learner's state on it —
+    the bundle expansion renders each grouped reading/quiz through this."""
+    try:
+        group_id = int(request.GET.get("group_id", ""))
+        activity_id = int(request.GET.get("activity_id", ""))
+    except ValueError:
+        return JsonResponse({"error": "group_id and activity_id are required"}, status=400)
+    try:
+        with connections[CONN].cursor() as cur:
+            ensure_plan_tables(cur)
+            learner = _plan_learner(cur, group_id)
+            if not learner:
+                return JsonResponse({"error": "This plan has no learner."}, status=404)
+            _aptem_id, learner_id = learner
+            cur.execute(
+                '''
+                select a.title, a.video_iframe_url, a.reading_iframe_url,
+                       a.reading_type, (a.quiz_id is not null) as has_quiz,
+                       r.status, r.reading_viewed, r.quiz_attempted,
+                       r.quiz_passed, r.quiz_score
+                from "Manual_audit".activities a
+                left join "Manual_audit".activity_results r
+                  on r.activity_id = a.activity_id and r.learner_id = %s
+                where a.activity_id = %s
+                order by r.quiz_passed desc nulls last
+                limit 1
+                ''',
+                [learner_id, activity_id],
+            )
+            row = cur.fetchone()
+    except (KeyError, DatabaseError) as error:
+        return JsonResponse({"error": "Could not load the material.", "details": str(error)}, status=503)
+    if not row:
+        return JsonResponse({"error": "Material not found."}, status=404)
+    (title, video_url, reading_url, reading_type, has_quiz, status,
+     reading_viewed, quiz_attempted, quiz_passed, quiz_score) = row
+
+    from .plan_projection import activity_content_url
+
+    return JsonResponse({
+        "activity_id": activity_id,
+        "title": title,
+        "iframe_url": activity_content_url(video_url, reading_url, reading_type),
+        "has_quiz": bool(has_quiz),
+        "status": status,
+        "reading_viewed": reading_viewed,
+        "quiz_attempted": quiz_attempted,
+        "quiz_passed": quiz_passed,
+        "quiz_score": float(quiz_score) if quiz_score is not None else None,
+    })
+
+
 @require_GET
 def picker_materials(request: HttpRequest) -> JsonResponse:
     """LMS materials, ranked by the group's own engagement.
@@ -463,9 +666,10 @@ def picker_ksbs(request: HttpRequest) -> JsonResponse:
 def picker_assignment_evidence(request: HttpRequest) -> JsonResponse:
     """Per-learner submitted documents for one plan assignment (name-keyed).
 
-    Documents resolve through the per-learner component snapshot in
-    plan_assignment_refs -> fetching_evidence.evidence_items; preview/download
-    reuses the existing /manual_audit_api/evidence/<id>/open streaming endpoint
+    Components resolve LIVE from ``Last_audit.learner_assignments`` by the
+    normalised name (so the files show BEFORE the assignment is even added
+    to the plan) -> fetching_evidence.evidence_items; preview/download reuses
+    the existing /manual_audit_api/evidence/<id>/open streaming endpoint
     (inline PDF + Office viewer), so an assignment doc previews "like any
     document".
     """
@@ -477,33 +681,36 @@ def picker_assignment_evidence(request: HttpRequest) -> JsonResponse:
     if not name_key:
         return JsonResponse({"error": "name_key is required"}, status=400)
 
+    from .plan_projection import _SLUG_SQL
+
+    slug = _SLUG_SQL.format(column="la.component_name")
     try:
         with connections[CONN].cursor() as cur:
             ensure_plan_tables(cur)
             cur.execute(
-                '''
-                select ar.aptem_id, pm.learner_name,
+                f'''
+                select pm.aptem_id, pm.learner_name,
                        ei.evidence_id, ei.evidence_name, ei.evidence_kind,
                        ei.evidence_status, ei.submission_date,
                        (ei.file_blob is not null and ei.file_blob <> '') as has_blob,
                        ei.source_file_url
-                from "Manual_audit".plan_assignment_refs ar
-                join "Manual_audit".plan_group_members pm
-                  on pm.group_id = ar.group_id and pm.aptem_id = ar.aptem_id
-                 and pm.left_at is null
+                from "Manual_audit".plan_group_members pm
+                join "Last_audit".learner_assignments la
+                  on la.aptem_id = pm.aptem_id and {slug} = %s
                 left join fetching_evidence.evidence_items ei
-                  on ei.learner_id = ar.aptem_id and ei.component_id = ar.component_id
-                where ar.group_id = %s and ar.name_key = %s
-                order by lower(coalesce(pm.learner_name, '')), ar.aptem_id,
+                  on ei.learner_id = la.aptem_id and ei.component_id = la.component_id
+                where pm.group_id = %s and pm.left_at is null
+                order by lower(coalesce(pm.learner_name, '')), pm.aptem_id,
                          ei.submission_date desc nulls last
                 ''',
-                [group_id, name_key],
+                [name_key, group_id],
             )
             rows = cur.fetchall()
     except (KeyError, DatabaseError) as error:
         return JsonResponse({"error": "Could not load assignment evidence.", "details": str(error)}, status=503)
 
     learners = {}
+    seen_docs = set()
     for (aptem_id, learner_name, evidence_id, evidence_name, evidence_kind,
          evidence_status, submission_date, has_blob, source_file_url) in rows:
         bucket = learners.setdefault(aptem_id, {
@@ -511,8 +718,9 @@ def picker_assignment_evidence(request: HttpRequest) -> JsonResponse:
             "name": learner_name,
             "documents": [],
         })
-        if evidence_id is None:
+        if evidence_id is None or (aptem_id, evidence_id) in seen_docs:
             continue
+        seen_docs.add((aptem_id, evidence_id))
         bucket["documents"].append({
             "evidence_id": evidence_id,
             "name": evidence_name,
