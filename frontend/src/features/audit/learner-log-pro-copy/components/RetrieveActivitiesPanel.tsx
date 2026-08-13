@@ -115,6 +115,13 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
       if (!grouped.has(candidate.category)) grouped.set(candidate.category, []);
       grouped.get(candidate.category)!.push(candidate);
     }
+    for (const candidates of grouped.values()) {
+      candidates.sort((left, right) => {
+        const leftDate = left.activity_date || "9999-12-31";
+        const rightDate = right.activity_date || "9999-12-31";
+        return leftDate.localeCompare(rightDate) || left.title.localeCompare(right.title);
+      });
+    }
     return grouped;
   }, [candidatesQuery.data]);
 

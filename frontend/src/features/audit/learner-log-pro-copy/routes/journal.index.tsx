@@ -282,7 +282,11 @@ function JournalPage() {
     setDraftRows(manualRows.data.rows.map(draftFromServer));
   }, [manualRows.data, dirty]);
 
-  const visibleRows = visibleDraftRows(draftRows);
+  const visibleRows = visibleDraftRows(draftRows).sort((left, right) => {
+    const leftDate = left.activity_date || "9999-12-31";
+    const rightDate = right.activity_date || "9999-12-31";
+    return leftDate.localeCompare(rightDate) || left.title.localeCompare(right.title);
+  });
   const existingRefs = useMemo(
     () => new Set(visibleRows.map((row) => row.source_ref).filter(Boolean) as string[]),
     [visibleRows],
