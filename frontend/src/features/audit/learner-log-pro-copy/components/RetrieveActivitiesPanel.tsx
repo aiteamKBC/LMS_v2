@@ -2,8 +2,9 @@
 // this learner-month — attendance sessions (live register) plus the learner's
 // own video/audio/reading+quiz results — grouped by category with select-all,
 // attended/absent and completed/not badges. Already-added items are dimmed and
-// pre-excluded. Confirm stages the selection as DRAFT rows (hours always 0/0 —
-// the employee decides them); nothing is saved until "Save all activities".
+// pre-excluded. Confirm stages the selection as DRAFT rows. Attendance uses a
+// fixed 2.5-hour plan and gives attended sessions 2.5 actual hours; other LMS
+// activities start at 0/0. Nothing is saved until "Save all activities".
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, DownloadCloud, LoaderCircle, X } from "lucide-react";
@@ -29,6 +30,7 @@ type Candidate = {
   duration_minutes: number | null;
   timestamp_label: string;
   completion_note: string | null;
+  attended?: boolean;
   badge: { text: string; tone: "success" | "warning" | "muted" };
   group_id?: number;
   activity_id?: number;
@@ -37,6 +39,7 @@ type Candidate = {
 };
 
 const GROUP_ORDER = ["attendance", "video", "audio", "reading+quiz"];
+const ATTENDANCE_SESSION_HOURS = 2.5;
 
 function badgeClasses(tone: "success" | "warning" | "muted") {
   switch (tone) {
@@ -62,6 +65,7 @@ function fromAttendance(item: ImportAttendanceCandidate): Candidate {
     duration_minutes: null,
     timestamp_label: item.timestamp_label,
     completion_note: null,
+    attended: item.attended,
     badge: item.attended
       ? { text: "Attended", tone: "success" }
       : { text: "Absent", tone: "warning" },
@@ -222,9 +226,12 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
         source_ref: candidate.source_ref,
         title: candidate.title,
         activity_date: candidate.activity_date,
-        // Retrieved rows never bring hours — the employee decides them.
-        planned_hours: 0,
-        actual_hours: 0,
+        // Attendance sessions have a fixed duration. An absence keeps the plan
+        // but contributes no actual/claimed time.
+        planned_hours: candidate.category === "attendance" ? ATTENDANCE_SESSION_HOURS : 0,
+        actual_hours: candidate.category === "attendance" && candidate.attended
+          ? ATTENDANCE_SESSION_HOURS
+          : 0,
         timestamp_label: candidate.timestamp_label,
         completion_note: candidate.completion_note,
         accepted: true,
@@ -243,7 +250,7 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
         <div>
           <h3 className="text-sm font-semibold text-[#182d48]">Retrieve LMS activities — {monthLabel}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Tick what belongs on this report. Hours are never retrieved — you set planned and actual yourself. Nothing saves until “Save all activities”.
+            Tick what belongs on this report. Attendance uses 2h 30m planned, and 2h 30m actual only when attended; other activity hours start at zero. Nothing saves until “Save all activities”.
           </p>
         </div>
         <button type="button" onClick={onClose} className="rounded-md border border-border p-1.5 hover:bg-secondary" title="Close" aria-label="Close retrieve panel"><X className="h-4 w-4" /></button>
