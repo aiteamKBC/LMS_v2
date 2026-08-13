@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as JournalRouteImport } from './routes/journal'
+import { Route as LedgerRouteImport } from './routes/ledger'
 import { Route as SearchRouteImport } from './routes/search'
 import { Route as LearnerLearnerIdRouteImport } from './routes/learner.$learnerId'
 import { Route as JournalIndexRouteImport } from './routes/journal.index'
@@ -29,6 +30,11 @@ const ActivityRoute = ActivityRouteImport.update({
 const JournalRoute = JournalRouteImport.update({
   id: '/journal',
   path: '/journal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LedgerRoute = LedgerRouteImport.update({
+  id: '/ledger',
+  path: '/ledger',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SearchRoute = SearchRouteImport.update({
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
   '/journal': typeof JournalRouteWithChildren
+  '/ledger': typeof LedgerRoute
   '/search': typeof SearchRoute
   '/learner/$learnerId': typeof LearnerLearnerIdRoute
   '/journal/': typeof JournalIndexRoute
@@ -58,6 +65,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
+  '/ledger': typeof LedgerRoute
   '/search': typeof SearchRoute
   '/learner/$learnerId': typeof LearnerLearnerIdRoute
   '/journal': typeof JournalIndexRoute
@@ -67,22 +75,24 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
   '/journal': typeof JournalRouteWithChildren
+  '/ledger': typeof LedgerRoute
   '/search': typeof SearchRoute
   '/learner/$learnerId': typeof LearnerLearnerIdRoute
   '/journal/': typeof JournalIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/activity' | '/journal' | '/search' | '/learner/$learnerId' | '/journal/'
+  fullPaths: '/' | '/activity' | '/journal' | '/ledger' | '/search' | '/learner/$learnerId' | '/journal/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/activity' | '/search' | '/learner/$learnerId' | '/journal'
-  id: '__root__' | '/' | '/activity' | '/journal' | '/search' | '/learner/$learnerId' | '/journal/'
+  to: '/' | '/activity' | '/ledger' | '/search' | '/learner/$learnerId' | '/journal'
+  id: '__root__' | '/' | '/activity' | '/journal' | '/ledger' | '/search' | '/learner/$learnerId' | '/journal/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ActivityRoute: typeof ActivityRoute
   JournalRoute: typeof JournalRouteWithChildren
+  LedgerRoute: typeof LedgerRoute
   SearchRoute: typeof SearchRoute
   LearnerLearnerIdRoute: typeof LearnerLearnerIdRoute
 }
@@ -108,6 +118,13 @@ declare module '@tanstack/react-router' {
       path: '/journal'
       fullPath: '/journal'
       preLoaderRoute: typeof JournalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ledger': {
+      id: '/ledger'
+      path: '/ledger'
+      fullPath: '/ledger'
+      preLoaderRoute: typeof LedgerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/search': {
@@ -149,6 +166,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ActivityRoute: ActivityRoute,
   JournalRoute: JournalRouteWithChildren,
+  LedgerRoute: LedgerRoute,
   SearchRoute: SearchRoute,
   LearnerLearnerIdRoute: LearnerLearnerIdRoute,
 }

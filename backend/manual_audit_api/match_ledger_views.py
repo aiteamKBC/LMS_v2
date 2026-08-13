@@ -33,6 +33,8 @@ from urllib.parse import quote, unquote, urlparse
 from django.conf import settings
 from django.db import DatabaseError, connections, transaction
 from django.http import HttpRequest, JsonResponse
+
+from audit_api.learner_exclusions import is_excluded_learner
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
@@ -406,6 +408,8 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
     learner_key = request.GET.get("learner", "").strip().lower()
     if not learner_key or len(learner_key) > 200:
         return JsonResponse({"error": "A valid learner is required."}, status=400)
+    if is_excluded_learner(learner_key, learner_key):
+        return JsonResponse({"error": "Learner not found."}, status=404)
 
     try:
         learner = _load_profile_learner(learner_key)
@@ -496,6 +500,8 @@ def _load_profile_learner(learner_key):
         aptem_id, learner_name, learner_email, programme_name,
         programme_status, coach_name, coach_email, training_plan,
     ) = row
+    if is_excluded_learner(aptem_id, learner_name):
+        return None
     return {
         "aptem_id": aptem_id,
         "name": learner_name,
@@ -1525,6 +1531,8 @@ def _overlay_learner(aptem_id):
         )
         row = cur.fetchone()
     if not row:
+        return None
+    if is_excluded_learner(aptem_id, row[0]):
         return None
     return {"aptem_id": aptem_id, "name": row[0] or f"Learner {aptem_id}"}
 

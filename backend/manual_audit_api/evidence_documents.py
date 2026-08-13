@@ -17,6 +17,8 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from audit_api.learner_exclusions import is_excluded_learner
+from .common import CONN, _azure_service_client, _error, _has_audit_permission
 from .common import CONN, _azure_service_client, _error, _has_audit_permission, db_is_read_only
 
 
@@ -77,10 +79,11 @@ def _evidence_date(value):
 
 def _learner_exists(cursor, learner_id):
     cursor.execute(
-        '''select 1 from "Manual_audit".learners where aptem_id = %s limit 1''',
+        '''select learner_name from "Manual_audit".learners where aptem_id = %s limit 1''',
         [learner_id],
     )
-    return bool(cursor.fetchone())
+    learner = cursor.fetchone()
+    return bool(learner) and not is_excluded_learner(learner_id, learner[0])
 
 
 def uploaded_evidence_location(evidence_id, learner_id=None):

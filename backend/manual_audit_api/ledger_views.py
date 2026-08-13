@@ -17,6 +17,8 @@ from django.db import DatabaseError, connections
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET
 
+from audit_api.learner_exclusions import is_excluded_learner
+
 from .plan_projection import (
     activity_content_url,
     merge_learner_months,
@@ -692,6 +694,10 @@ def cohort(request: HttpRequest) -> JsonResponse:
             status=503,
         )
 
+    rows = [
+        row for row in rows
+        if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+    ]
     all_programmes = sorted({row["programme_name"] for row in rows if row["programme_name"]})
     learners = []
     for row in rows:
@@ -777,6 +783,8 @@ def activities(request: HttpRequest) -> JsonResponse:
             if not learner:
                 return JsonResponse({"error": f"no learner {aptem_id}"}, status=404)
             learner_id, learner_name = learner
+            if is_excluded_learner(aptem_id, learner_name):
+                return JsonResponse({"error": "Learner not found."}, status=404)
 
             lms_rows = []
             if learner_id is not None and category.lower() != "attendance":
@@ -939,6 +947,10 @@ def activity(request: HttpRequest) -> JsonResponse:
                 {"error": "Could not read Manual_audit attendance.", "details": str(error)},
                 status=503,
             )
+        rows = [
+            row for row in rows
+            if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+        ]
         if not rows:
             return JsonResponse({"error": f"no Manual_audit attendance {raw_id}"}, status=404)
         items = [_attendance_payload(row) for row in rows]
@@ -1024,6 +1036,10 @@ def activity(request: HttpRequest) -> JsonResponse:
             {"error": "Could not read Manual_audit activity.", "details": str(error)},
             status=503,
         )
+    rows = [
+        row for row in rows
+        if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+    ]
     if not rows:
         return JsonResponse({"error": f"no Manual_audit activity {raw_id}"}, status=404)
 
@@ -1106,6 +1122,8 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
             {"error": "aptem_id and component_id are required"},
             status=400,
         )
+    if is_excluded_learner(aptem_id):
+        return JsonResponse({"error": "Learner not found."}, status=404)
 
     try:
         with _connection().cursor() as cursor:
@@ -1127,7 +1145,7 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
                 conditions.append("r.group_id = %s")
                 params.append(group_id)
             cursor.execute(f"""
-                SELECT r.group_id, r.activity_id, l.aptem_id,
+                SELECT r.group_id, r.activity_id, l.aptem_id, l.learner_name,
                        a.title, a.quiz_id, a.quiz_body, a.quiz_questions,
                        r.quiz_attempted, r.quiz_passed, r.quiz_score,
                        r.quiz_maximum_score, r.quiz_attempt_number,
@@ -1160,6 +1178,10 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
             {"error": "Could not read Manual_audit quiz attempt.", "details": str(error)},
             status=503,
         )
+    rows = [
+        row for row in rows
+        if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+    ]
     if not rows:
         return JsonResponse(
             {"error": "No matching Manual_audit learner activity."},
@@ -1256,6 +1278,10 @@ def attendance_sheet(request: HttpRequest) -> JsonResponse:
             {"error": "Could not read Manual_audit attendance.", "details": str(error)},
             status=503,
         )
+    rows = [
+        row for row in rows
+        if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+    ]
     if not rows:
         return JsonResponse(
             {"error": f"No attendance session for '{session_key}'."},

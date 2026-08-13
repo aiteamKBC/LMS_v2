@@ -1,3 +1,5 @@
+import { isExcludedLearner } from "@/features/audit/learner-exclusions";
+
 // The auditor-copy workspace now reads normalized learner/activity data from
 // the LMS Django API backed by the `Last_audit` schema. The read endpoints are:
 //
@@ -9,19 +11,11 @@
 // layout and route order stay stable. Last_audit does not yet contain mapped
 // hours or occurrence dates, so unavailable values remain explicit.
 //
-// The two AUDITOR WRITE features the live (read-only) API does not cover — the
-// per-activity annotation (planned-hours override + notes) and the monthly
-// sign-off — stay pointed at the existing Django endpoints, which still own them.
-// Read learner/activity data from the normalized Last_audit mirror through the
-// LMS backend. Writes remain on the legacy service until the Last_audit write
-// workflow is introduced explicitly; read rows are marked read-only below so a
-// user cannot accidentally edit the old Audit source while viewing new data.
-// Reads now come from the fetch-evidence backend (the deployed OTJH/Last_audit
-// API), not the local /audit_api. Same endpoint contract (cohort / activities /
-// activity / attendance-sheet / quiz-attempt), now enriched with per-activity
-// planned + actual hours, reporting method and timestamps.
-const READ_BASE = "https://fetch-evidence.kentbusinesscollege.net/api/last-audit-ledger";
-const LEGACY_WRITE_BASE = "https://fetch-evidence.kentbusinesscollege.net/api/otjh";
+// Every read AND write is same-origin Django now. Auditor edits are stored as
+// reversible overlays (activity-overrides); the employee-arranged journal has
+// its own module in ./manualApi.ts. The legacy external fetch-evidence write
+// service is gone.
+const READ_BASE = "/audit_api/last-audit";
 const LAST_AUDIT_UNDATED_PERIOD = "undated";
 // Engineered OTJH values are permitted only through 2026-08-01 (inclusive). From
 // 2026-09 onward the ledger reports fetched source values only. A post-cutoff
@@ -263,7 +257,9 @@ export type LearnerProfile = {
     employer_postcode?: string | null;
     planned_hours?: number;
     actual_hours?: number | null;
-    start_date?: string;
+    start_date?: string | null;
+    actual_end_date?: string | null;
+    last_learning_evidence_date?: string | null;
     first_evidence_date?: string | null;
     first_evidence_items?: Array<{
       id: string;
@@ -287,7 +283,29 @@ export type LearnerProfile = {
       date: string;
       archived: boolean;
     }>;
-    planned_end_date?: string;
+    last_learning_evidence_items?: Array<{
+      id: string;
+      name: string;
+      component_name: string;
+      kind: string;
+      status: string;
+      file: string | null;
+      content: string | null;
+      date: string;
+      archived: boolean;
+    }>;
+    break_evidence_items?: Array<{
+      id: string;
+      name: string;
+      component_name: string;
+      kind: string;
+      status: string;
+      file: string | null;
+      content: string | null;
+      date: string;
+      archived: boolean;
+    }>;
+    planned_end_date?: string | null;
     completion_status?: number;
   };
   contracts: Array<{
@@ -464,48 +482,11 @@ function normalizeActivityDetail(detail: ActivityDetail): ActivityDetail {
     activity: displayString(detail.activity, "Untitled activity"),
     category: displayString(detail.category, "activity"),
     items: Array.isArray(detail.items) ? detail.items.map(normalizeActivityItem) : [],
-    participants: Array.isArray(detail.participants)
-      ? detail.participants.map((participant) => (
-          isValidActivityDate(participant.date) && isValidMonthKey(participant.month)
-            ? participant
-            : {
-                ...participant,
-                date: null,
-                month: LAST_AUDIT_UNDATED_PERIOD,
-              }
-        ))
-      : [],
   };
 }
 
-// Only the server-whitelisted editable fields. Per-learner fields apply to the
-// row identified by aptem_id; shared fields are activity-level and broadcast to
-// every participant when apply_shared_to_all is true.
-export type EditPatch = Partial<{
-  // per-learner
-  planned_hours: number;
-  actual_hours: number;
-  started_at: string; // ISO
-  completed_at: string; // ISO
-  journal: string;
-  attended: boolean; // attendance only — server auto-sets 2.5/0 + timestamp
-  // shared (activity-level)
-  front_end_name: string;
-  description: string;
-  auditor_notes: string;
-  ksb_notes: string;
-  auditor_ksbs: string[];
-  edited_by: string;
-}>;
-
-export type EditActivityResponse = {
-  ok: boolean;
-  changed: Record<string, unknown>;
-  also_applied_to: number[];
-};
-
 // ---------------------------------------------------------------------------
-// Live API response shapes (what fetch-evidence actually returns).
+// Live API response shapes (what the Django last-audit endpoints return).
 // ---------------------------------------------------------------------------
 
 type LiveCohortMonth = {
@@ -808,7 +789,15 @@ function fetchCohort(): Promise<LiveCohortResponse> {
     cohortPromise = Promise.all([
       getJson<LiveCohortResponse>("/cohort/").then(sanitizeCohortDates),
       fetchOverlays(),
-    ]).then(([cohort, overlays]) => applyCohortOverlay(cohort, overlays))
+    ]).then(([cohort, overlays]) => {
+      const merged = applyCohortOverlay(cohort, overlays);
+      return {
+        ...merged,
+        learners: merged.learners.filter(
+          (learner) => !isExcludedLearner(learner.aptem_id, learner.learner_name),
+        ),
+      };
+    })
       .catch((error) => {
       cohortPromise = null; // let a later call retry after a failure
       throw error;
@@ -1020,7 +1009,9 @@ export function getLearners(params: { period?: string; search?: string; position
     const programme = (params.programme ?? "").trim().toLowerCase();
     const learnerFilter = (params.learner ?? "").trim().replace(/^['"]|['"]$/g, "").toLowerCase();
 
-    let rows = cohort.learners.map((learner) => {
+    let rows = cohort.learners
+      .filter((learner) => !isExcludedLearner(learner.aptem_id, learner.learner_name))
+      .map((learner) => {
       const month = period ? learner.months.find((item) => item.month === period) ?? null : null;
       const planned = period ? month?.planned ?? 0 : learner.planned_total;
       const actual = period ? month?.actual ?? 0 : learner.actual_total;
@@ -1028,7 +1019,7 @@ export function getLearners(params: { period?: string; search?: string; position
         ? month != null && learner.planned_hours_available !== false
         : learner.planned_hours_available !== false;
       return { learner, month, planned, actual, plannedAvailable };
-    });
+      });
     if (search) rows = rows.filter((row) =>
       row.learner.learner_name.toLowerCase().includes(search) ||
       (row.learner.learner_email ?? "").toLowerCase().includes(search),
@@ -1233,7 +1224,9 @@ export function getActivityLearners(params: { component: string; search?: string
     const detail = normalizeActivityDetail(
       await getJson<ActivityDetail>(`/activity/?activity_id=${encodeURIComponent(params.component)}`),
     );
-    let items = detail.participants.map((participant): LearnerActivity => ({
+    let items = detail.participants
+      .filter((participant) => !isExcludedLearner(participant.learner_id, participant.learner_name))
+      .map((participant): LearnerActivity => ({
       id: `${participant.learner_id}:${detail.component_id}`,
       mre_id: String(detail.component_id),
       learner: participant.learner_name,
@@ -1269,7 +1262,7 @@ export function getActivityLearners(params: { component: string; search?: string
       completion_records: [],
       source: detail.source,
       hours_mapped: participant.actual != null,
-    }));
+      }));
     const searchTerm = (params.search ?? "").trim().toLowerCase();
     if (searchTerm) items = items.filter((item) => item.learner.toLowerCase().includes(searchTerm));
 
@@ -1319,6 +1312,9 @@ export function getAttendanceSession(key: string, programme?: string) {
 // backend merges activities.quiz_questions with activity_results.quiz_answers.
 export function getQuizAttempt(params: { aptemId: number; component: string }) {
   return (async (): Promise<QuizAttemptResponse> => {
+    if (isExcludedLearner(params.aptemId, undefined)) {
+      throw new Error("Learner not found.");
+    }
     const query = new URLSearchParams({
       aptem_id: String(params.aptemId),
       component_id: params.component,
@@ -1334,6 +1330,9 @@ export function getQuizAttempt(params: { aptemId: number; component: string }) {
 
 export function getLearnerProfile(learnerId: string) {
   return (async (): Promise<LearnerProfile> => {
+    if (isExcludedLearner(learnerId, learnerId)) {
+      throw new Error("Learner not found.");
+    }
     // The endpoint resolves every learner from the Aptem-first Last_audit cohort
     // and joins the rich profile sources by that learner's Aptem ID.
     const query = new URLSearchParams({ learner: learnerId.replace(/^"|"$/g, "") });
@@ -1344,6 +1343,38 @@ export function getLearnerProfile(learnerId: string) {
     }
     return response.json() as Promise<LearnerProfile>;
   })();
+}
+
+export type LearnerProfileOverrideFields = Partial<{
+  employer_name: string | null;
+  job_title: string | null;
+  employment_start_date: string | null;
+  contracted_hours_per_week: number | string | null;
+  line_manager_name: string | null;
+  workplace_address: string | null;
+  employer_postcode: string | null;
+  start_date: string | null;
+  planned_end_date: string | null;
+  last_learning_date: string | null;
+  expected_return_date: string | null;
+  return_to_learning_date: string | null;
+  revised_learning_planned_end_date: string | null;
+}>;
+
+export async function updateLearnerProfileFields(
+  learnerId: number,
+  fields: LearnerProfileOverrideFields,
+) {
+  const response = await fetch(`${ANNOTATION_BASE}/learner-profile/overrides`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learner_id: learnerId, fields }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not update learner profile (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; learner_id: string; fields: LearnerProfileOverrideFields }>;
 }
 
 export async function uploadContract(learnerId: number, file: File) {
@@ -1401,11 +1432,12 @@ export async function renameContract(contractId: string, documentName: string) {
   return response.json() as Promise<{ ok: boolean; contract_id: string; document_name: string }>;
 }
 
-export async function uploadEvidence(learnerId: number, file: File, evidenceDate: string) {
+export async function uploadEvidence(learnerId: number, file: File, evidenceDate: string, componentName?: string) {
   const body = new FormData();
   body.append("learner_id", String(learnerId));
   body.append("evidence_date", evidenceDate);
   body.append("document_name", file.name);
+  if (componentName) body.append("component_name", componentName);
   body.append("file", file);
   const response = await fetch("/audit_api/evidence/upload", {
     method: "POST",
@@ -1494,9 +1526,8 @@ export async function saveActivityAnnotation(payload: {
 }
 
 // ---------------------------------------------------------------------------
-// Activity Detail — live from the evidence API. GET returns the activity, its
-// sub-activities (bundle items) and every participant; POST edits whitelisted
-// fields. Both are read/write on the live service (CORS + preflight handled).
+// Activity Detail — GET returns the activity, its sub-activities (bundle
+// items) and every participant from the same-origin Django last-audit API.
 // ---------------------------------------------------------------------------
 
 export async function getActivityDetail(componentId: string | number, learnerId?: string): Promise<ActivityDetail> {
@@ -1537,8 +1568,8 @@ export async function getActivityDetail(componentId: string | number, learnerId?
   } catch (error) {
     // The /activity endpoint only resolves component-based items (video, audio,
     // reading+quiz bundles, attendance). Assignments use a separate id namespace
-    // and 404 there — but /edit DOES accept them. Reconstruct a minimal detail
-    // from the flat activities feed so assignment rows still open and stay editable.
+    // and 404 there. Reconstruct a minimal detail from the flat activities feed
+    // so assignment rows still open and stay editable via overlays.
     const learners = await getActivityLearners({ component: String(componentId), programme });
     if (!learners.items.length) throw error; // genuinely unknown id
     const participants: ActivityParticipant[] = learners.items.map((row) => ({
@@ -1569,33 +1600,6 @@ export async function getActivityDetail(componentId: string | number, learnerId?
       participants,
     };
   }
-}
-
-export async function editActivity(payload: {
-  aptem_id: number;
-  component_id: number | string;
-  patch: EditPatch;
-  apply_shared_to_all?: boolean;
-}): Promise<EditActivityResponse> {
-  if (String(payload.component_id).startsWith("la:")) {
-    throw new Error("Last_audit activities are read-only until the hours/edit mapping step is enabled.");
-  }
-  const response = await fetch(`${LEGACY_WRITE_BASE}/edit/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      aptem_id: payload.aptem_id,
-      component_id: payload.component_id,
-      patch: payload.patch,
-      apply_shared_to_all: payload.apply_shared_to_all ?? false,
-    }),
-  });
-  if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { error?: string; editable?: string[] } | null;
-    const allowed = error?.editable ? ` (allowed: ${error.editable.join(", ")})` : "";
-    throw new Error((error?.error ?? `Edit failed (${response.status})`) + allowed);
-  }
-  return response.json() as Promise<EditActivityResponse>;
 }
 
 async function overlayMutation(method: "POST" | "PUT" | "PATCH" | "DELETE", body: Record<string, unknown>) {
@@ -1645,30 +1649,16 @@ export async function updateActivityRow(row: LearnerActivity, activity: Activity
     });
   }
 
-  const current = rowSnapshot(row);
-  // Last_audit is an immutable source mirror.  Every edit is stored as a
-  // reversible replacement overlay, even when the date itself is unchanged.
-  if (row.source === "Last_audit" || row.plan_id.startsWith("la:") || activity.date !== current.date) {
-    return overlayMutation("PUT", {
-      aptem_id: aptemId,
-      activity_id: row.plan_id,
-      activity,
-      snapshot: current,
-      updated_by: updatedBy,
-    });
-  }
-  const patch: EditPatch = {};
-  if (activity.activity !== current.activity) patch.front_end_name = activity.activity;
-  if (activity.planned !== current.planned) patch.planned_hours = activity.planned;
-  if (activity.category === "attendance") {
-    if ((activity.actual > 0) !== Boolean(row.completed)) patch.attended = activity.actual > 0;
-  } else if (activity.actual !== current.actual) patch.actual_hours = activity.actual;
-  if (activity.timestamp_from && activity.timestamp_from !== current.timestamp_from) patch.started_at = activity.timestamp_from;
-  if (activity.timestamp_to && activity.timestamp_to !== current.timestamp_to) patch.completed_at = activity.timestamp_to;
-  if (Object.keys(patch).length === 0) return { ok: true, changed: {}, also_applied_to: [] };
-  const result = await editActivity({ aptem_id: aptemId, component_id: row.plan_id, patch });
-  invalidateOtjhCaches();
-  return result;
+  // Every source row — Last_audit mirror or legacy — is immutable here. All
+  // edits are stored as reversible replacement overlays on our own Django
+  // backend; the external fetch-evidence write service is no longer called.
+  return overlayMutation("PUT", {
+    aptem_id: aptemId,
+    activity_id: row.plan_id,
+    activity,
+    snapshot: rowSnapshot(row),
+    updated_by: updatedBy,
+  });
 }
 
 export async function deleteActivityRow(row: LearnerActivity, updatedBy?: string) {

@@ -6,7 +6,8 @@ from django.test import SimpleTestCase, override_settings
 
 from .contract_documents import _safe_upload_filename
 from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _parse_contract_azure_path, _signoff_row
-from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _cv_employment_terms, _employer_details_from_contract_profile, _fetch_profile_source_row, _merge_matching_cv_employment_terms, _partition_evidence_items, _skill_radar_characteristic, _skill_radar_sort_key, _training_plan_from_audit, _validate_overlay_activity
+from .learner_match_ledger_views import _break_evidence_items, _contract_preview_url, _contract_signature_dates_from_text, _cv_employment_terms, _employer_details_from_contract_profile, _fetch_profile_source_row, _last_learning_evidence_items, _merge_matching_cv_employment_terms, _partition_evidence_items, _skill_radar_characteristic, _skill_radar_sort_key, _training_plan_from_audit, _validate_overlay_activity
+from .profile_overrides import _clean_profile_fields, apply_break_overrides, apply_profile_overrides
 
 
 class ContractAzurePathTests(SimpleTestCase):
@@ -60,6 +61,50 @@ class EvidenceDocumentManagementTests(SimpleTestCase):
         self.assertEqual(first_date, "2026-08-11")
         self.assertEqual([item["id"] for item in first_items], ["replacement"])
         self.assertEqual([item["id"] for item in archived_items], ["first"])
+
+    def test_break_upload_does_not_replace_first_evidence(self):
+        items = [
+            {"id": "first", "date": "2026-05-19", "archived": True, "deleted": False, "uploaded": False},
+            {
+                "id": "break-upload",
+                "date": "2026-06-10",
+                "component_name": "Break in learning evidence",
+                "archived": False,
+                "deleted": False,
+                "uploaded": True,
+            },
+            {
+                "id": "last-learning-upload",
+                "date": "2026-06-10",
+                "component_name": "Last date of learning evidence",
+                "archived": False,
+                "deleted": False,
+                "uploaded": True,
+            },
+        ]
+
+        first_date, first_items, _ = _partition_evidence_items(items)
+
+        self.assertIsNone(first_date)
+        self.assertEqual(first_items, [])
+
+    def test_return_upload_does_not_replace_first_evidence(self):
+        items = [
+            {"id": "first", "date": "2025-01-24", "archived": True, "deleted": False, "uploaded": False},
+            {
+                "id": "return-upload",
+                "date": "2026-03-31",
+                "component_name": "Return to learning evidence",
+                "archived": False,
+                "deleted": False,
+                "uploaded": True,
+            },
+        ]
+
+        first_date, first_items, _ = _partition_evidence_items(items)
+
+        self.assertIsNone(first_date)
+        self.assertEqual(first_items, [])
 
     def test_upload_requires_an_evidence_file(self):
         response = self.client.post(
@@ -185,6 +230,109 @@ class SkillsRadarClassificationTests(SimpleTestCase):
         values = ["S10: Ten", "S2: Two", "S1: One"]
 
         self.assertEqual(sorted(values, key=_skill_radar_sort_key), ["S1: One", "S2: Two", "S10: Ten"])
+
+
+class LearnerProfileOverrideTests(SimpleTestCase):
+    def test_applies_employer_and_planned_end_overrides(self):
+        employment, delivery = apply_profile_overrides(
+            {"employer_name": "Source Ltd", "line_manager": {"name": "Source manager"}},
+            {"employer_postcode": "OLD", "planned_end_date": "2027-01-01"},
+            {
+                "employer_name": "Correct Ltd",
+                "line_manager_name": "Correct manager",
+                "employer_postcode": "M44 5AD",
+                "planned_end_date": "2027-02-14",
+            },
+        )
+
+        self.assertEqual(employment["employer_name"], "Correct Ltd")
+        self.assertEqual(employment["line_manager"]["name"], "Correct manager")
+        self.assertEqual(delivery["employer_postcode"], "M44 5AD")
+        self.assertEqual(delivery["planned_end_date"], "2027-02-14")
+
+    def test_validates_hours_and_planned_end_date(self):
+        fields = _clean_profile_fields({
+            "contracted_hours_per_week": "37.5",
+            "start_date": "2025-10-15",
+            "planned_end_date": "2027-02-14",
+            "last_learning_date": "2026-03-27",
+            "expected_return_date": "2026-04-21",
+            "return_to_learning_date": "",
+            "revised_learning_planned_end_date": "2027-03-10",
+        })
+
+        self.assertEqual(fields["contracted_hours_per_week"], 37.5)
+        self.assertEqual(fields["start_date"], "2025-10-15")
+        self.assertEqual(fields["planned_end_date"], "2027-02-14")
+        self.assertEqual(fields["last_learning_date"], "2026-03-27")
+        self.assertEqual(fields["expected_return_date"], "2026-04-21")
+        self.assertIsNone(fields["return_to_learning_date"])
+        self.assertEqual(fields["revised_learning_planned_end_date"], "2027-03-10")
+
+    def test_applies_break_dates_and_return_status(self):
+        result = apply_break_overrides(
+            {"has_break_in_learning": True, "has_return_to_learning": False},
+            {
+                "last_learning_date": "2026-03-27",
+                "expected_return_date": "2026-04-21",
+                "return_to_learning_date": "2026-04-20",
+                "revised_learning_planned_end_date": "2027-03-10",
+            },
+        )
+
+        self.assertEqual(result["last_learning_date"], "2026-03-27")
+        self.assertEqual(result["expected_return_date"], "2026-04-21")
+        self.assertEqual(result["return_to_learning_date"], "2026-04-20")
+        self.assertEqual(result["revised_learning_planned_end_date"], "2027-03-10")
+        self.assertTrue(result["has_return_to_learning"])
+
+    def test_rejects_unknown_profile_fields(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported profile field"):
+            _clean_profile_fields({"learner_name": "Changed"})
+
+    def test_lists_active_evidence_for_the_first_return_day(self):
+        items = [
+            {"id": "source", "date": datetime.date(2026, 3, 31), "uploaded": False, "archived": False, "deleted": False},
+            {"id": "matching", "date": datetime.date(2026, 1, 15), "uploaded": True, "archived": False, "deleted": False},
+            {"id": "other-day", "date": datetime.date(2026, 1, 14), "uploaded": True, "archived": False, "deleted": False},
+            {"id": "return-upload", "date": datetime.date(2026, 3, 31), "uploaded": True, "archived": False, "deleted": False},
+            {"id": "archived", "date": datetime.date(2026, 3, 31), "uploaded": True, "archived": True, "deleted": False},
+        ]
+
+        result = _break_evidence_items(items, "2026-03-31T00:00:00Z")
+
+        self.assertEqual([item["id"] for item in result], ["source", "return-upload"])
+
+    def test_last_learning_evidence_falls_back_to_latest_earlier_date(self):
+        items = [
+            {"id": "earlier", "date": datetime.date(2026, 2, 11), "archived": False, "deleted": False},
+            {"id": "latest-before", "date": datetime.date(2026, 2, 13), "archived": False, "deleted": False},
+            {"id": "after-withdrawal", "date": datetime.date(2026, 2, 19), "archived": False, "deleted": False},
+        ]
+
+        result = _last_learning_evidence_items(items, "2026-02-15")
+
+        self.assertEqual([item["id"] for item in result], ["latest-before"])
+
+    def test_same_day_last_learning_evidence_takes_priority(self):
+        items = [
+            {"id": "latest-before", "date": datetime.date(2026, 2, 13), "archived": False, "deleted": False},
+            {"id": "same-day-upload", "date": datetime.date(2026, 2, 15), "archived": False, "deleted": False},
+        ]
+
+        result = _last_learning_evidence_items(items, "2026-02-15")
+
+        self.assertEqual([item["id"] for item in result], ["same-day-upload"])
+
+    def test_removed_last_learning_evidence_does_not_promote_an_older_item(self):
+        items = [
+            {"id": "older", "date": datetime.date(2026, 2, 11), "archived": False, "deleted": False},
+            {"id": "removed-latest", "date": datetime.date(2026, 2, 13), "archived": False, "deleted": True},
+        ]
+
+        result = _last_learning_evidence_items(items, "2026-02-15")
+
+        self.assertEqual(result, [])
 
 
 class ContractDocumentManagementTests(SimpleTestCase):
