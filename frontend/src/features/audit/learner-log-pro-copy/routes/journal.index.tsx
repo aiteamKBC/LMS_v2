@@ -6,12 +6,12 @@
 // / add / edit / delete all stage locally and NOTHING persists until the
 // floating "Save all activities" button flushes the draft in one transaction.
 // Actual hours have no automatic source — they are whatever employees enter.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import SignaturePad from "signature_pad";
 import Swal from "sweetalert2";
-import { CheckCircle2, Download, DownloadCloud, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { BookOpenText, CalendarDays, CheckCircle2, ClipboardList, Download, Headphones, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2, Video } from "lucide-react";
 import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/api";
 import { AddManualActivityFlow } from "@/features/audit/learner-log-pro-copy/components/AddManualActivityFlow";
 import { ManualActivityRow, ManualActivityTableHeader } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
@@ -191,6 +191,61 @@ function reportMonthLabel(month: string) {
   return new Date(`${month}-02T12:00:00`).toLocaleString("en-GB", { month: "long", year: "numeric" });
 }
 
+type AddChoice = "attendance" | "video" | "reading+quiz" | "audio" | "assignment" | "manual";
+
+const ADD_CHOICES = [
+  { value: "attendance", label: "Attendance day", icon: CalendarDays },
+  { value: "video", label: "Videos / recordings", icon: Video },
+  { value: "reading+quiz", label: "Reading + Quiz", icon: BookOpenText },
+  { value: "audio", label: "Audio", icon: Headphones },
+  { value: "assignment", label: "Assignment", icon: ClipboardList },
+  { value: "manual", label: "Manual activity", icon: Plus },
+] as const;
+
+function ActivityAddMenu({ disabled, onPick }: { disabled: boolean; onPick: (choice: AddChoice) => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const close = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  return (
+    <span ref={menuRef} className="relative">
+      <Button size="sm" variant="outline" disabled={disabled} onClick={() => setOpen((value) => !value)}><Plus className="h-3.5 w-3.5" /> Add</Button>
+      {open ? (
+        <span className="absolute right-0 top-9 z-30 block w-56 rounded-md border border-border bg-card py-1 shadow-panel">
+          {ADD_CHOICES.map((item) => <button key={item.value} type="button" onClick={() => { setOpen(false); onPick(item.value); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-secondary"><item.icon className="h-4 w-4 text-muted-foreground" />{item.label}</button>)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function ActivityFlowModal({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" onMouseDown={onClose}>
+      <div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-xl border border-border bg-card shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function JournalPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -198,8 +253,7 @@ function JournalPage() {
   const [learnerChoice, setLearnerChoice] = useState(routeSearch.learner);
   const [periodChoice, setPeriodChoice] = useState(routeSearch.period);
   const [hoursTab, setHoursTab] = useState<"original" | "arranged">("original");
-  const [addingActivity, setAddingActivity] = useState(false);
-  const [retrieving, setRetrieving] = useState(false);
+  const [addChoice, setAddChoice] = useState<AddChoice | null>(null);
   const [draftRows, setDraftRows] = useState<DraftRow[]>([]);
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [isPreparingPdf, setIsPreparingPdf] = useState(false);
@@ -617,40 +671,37 @@ function JournalPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono text-xs font-medium text-[#182d48]">{visibleRows.length} activities</span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!aptemId || !selectedPeriod || retrieving}
-                onClick={() => { setRetrieving(true); setAddingActivity(false); }}
-                title={!selectedPeriod ? "Choose a learner and month first" : "Retrieve this learner's recorded LMS activities for this month"}
-              ><DownloadCloud className="h-3.5 w-3.5" /> Retrieve LMS activities</Button>
-              <Button
-                size="sm"
-                disabled={!aptemId || !selectedPeriod || addingActivity}
-                onClick={() => { setAddingActivity(true); setRetrieving(false); }}
-                title={!selectedPeriod ? "Choose a learner and month first" : undefined}
-              ><Plus className="h-3.5 w-3.5" /> Add activity</Button>
+              <ActivityAddMenu disabled={!aptemId || !selectedPeriod} onPick={setAddChoice} />
             </div>
           </header>
-          {retrieving && aptemId && selectedPeriod ? (
-            <RetrieveActivitiesPanel
-              aptemId={aptemId}
-              month={selectedPeriod}
-              monthLabel={monthLabel}
-              existingRefs={existingRefs}
-              onRetrieve={(rows) => setDraftRows((current) => [...current, ...rows])}
-              onClose={() => setRetrieving(false)}
-            />
+          {addChoice && ["attendance", "video", "reading+quiz", "audio"].includes(addChoice) && aptemId && selectedPeriod ? (
+            <ActivityFlowModal onClose={() => setAddChoice(null)}>
+              <RetrieveActivitiesPanel
+                key={addChoice}
+                aptemId={aptemId}
+                month={selectedPeriod}
+                monthLabel={monthLabel}
+                existingRefs={existingRefs}
+                initialCategory={addChoice as "attendance" | "video" | "reading+quiz" | "audio"}
+                onRetrieve={(rows) => setDraftRows((current) => [...current, ...rows])}
+                onClose={() => setAddChoice(null)}
+              />
+            </ActivityFlowModal>
           ) : null}
-          {addingActivity && aptemId && selectedPeriod ? (
-            <AddManualActivityFlow
-              aptemId={aptemId}
-              month={selectedPeriod}
-              monthLabel={monthLabel}
-              existingRefs={existingRefs}
-              onAdd={(row) => setDraftRows((current) => [...current, row])}
-              onClose={() => setAddingActivity(false)}
-            />
+          {(addChoice === "assignment" || addChoice === "manual") && aptemId && selectedPeriod ? (
+            <ActivityFlowModal onClose={() => setAddChoice(null)}>
+              <AddManualActivityFlow
+                key={addChoice}
+                aptemId={aptemId}
+                month={selectedPeriod}
+                monthLabel={monthLabel}
+                existingRefs={existingRefs}
+                initialCategory={addChoice === "assignment" ? "assignment" : "attendance"}
+                manualEntry={addChoice === "manual"}
+                onAdd={(row) => setDraftRows((current) => [...current, row])}
+                onClose={() => setAddChoice(null)}
+              />
+            </ActivityFlowModal>
           ) : null}
           <div className="overflow-x-auto">
             <Table>
@@ -671,7 +722,7 @@ function JournalPage() {
               </TableBody>
             </Table>
             {!visibleRows.length && !manualRows.isLoading ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">No activities on this month yet — use “Retrieve LMS activities” or “Add activity” to arrange the first one.</p>
+              <p className="py-10 text-center text-sm text-muted-foreground">No activities on this month yet — use “Add” to arrange the first one.</p>
             ) : null}
           </div>
           <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-7 py-4">

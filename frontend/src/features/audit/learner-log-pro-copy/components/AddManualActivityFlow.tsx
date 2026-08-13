@@ -194,15 +194,17 @@ const emptyDraft: Draft = {
   accepted: true,
 };
 
-export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs, onAdd, onClose }: {
+export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs, initialCategory = "assignment", manualEntry = false, onAdd, onClose }: {
   aptemId: number;
   month: string;
   monthLabel: string;
   existingRefs: Set<string>;
+  initialCategory?: ManualCategory;
+  manualEntry?: boolean;
   onAdd: (row: DraftRow) => void;
   onClose: () => void;
 }) {
-  const [category, setCategory] = useState<ManualCategory>("attendance");
+  const [category, setCategory] = useState<ManualCategory>(initialCategory);
   const [groupId, setGroupId] = useState<number | null>(null);
   const [sourceRef, setSourceRef] = useState("");
   const [draft, setDraft] = useState<Draft>(emptyDraft);
@@ -213,7 +215,8 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const set = (patch: Partial<Draft>) => setDraft((value) => ({ ...value, ...patch }));
-  const isSourceCategory = category !== "attendance" && category !== "assignment";
+  const isSourceCategory = !manualEntry && category !== "attendance" && category !== "assignment";
+  const isRegisterAttendance = !manualEntry && category === "attendance";
   const bounds = monthBounds(month);
 
   const groups = useQuery({
@@ -224,7 +227,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
   const attendance = useQuery({
     queryKey: ["manual-attendance-options", aptemId],
     queryFn: () => getAttendanceOptions(aptemId),
-    enabled: category === "attendance",
+    enabled: isRegisterAttendance,
   });
   const groupActivities = useQuery({
     queryKey: ["manual-group-activities", aptemId, groupId, category],
@@ -278,7 +281,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
 
   const selectedAttendance = attendance.data?.options.find((item) => item.source_ref === sourceRef);
   const selectedActivity = groupActivities.data?.activities.find((item) => item.source_ref === sourceRef);
-  const needsSelection = category !== "assignment" && !sourceRef;
+  const needsSelection = manualEntry ? false : category !== "assignment" && !sourceRef;
 
   // Live validation: the date must sit inside the report month, on a UK
   // working day; a generated timestamp must fit inside 09:00–17:00.
@@ -287,7 +290,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
     : !draft.activity_date
       ? `Choose a date inside ${monthLabel}.`
       : dateRestriction(draft.activity_date, month);
-  const generatedTime = category !== "attendance" && tsMode === "time"
+  const generatedTime = !isRegisterAttendance && tsMode === "time"
     ? workingTimeRange(startTime, Number(draft.actual_hours || 0))
     : null;
   const timeIssue = generatedTime && "error" in generatedTime ? generatedTime.error : null;
@@ -301,11 +304,11 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
     }
     if (dateIssue) return void Swal.fire({ icon: "error", title: "Check the date", text: dateIssue });
     if (timeIssue) return void Swal.fire({ icon: "error", title: "Check the timestamp", text: timeIssue });
-    const ref = category === "assignment" ? null : sourceRef;
+    const ref = category === "assignment" || manualEntry ? null : sourceRef;
     if (ref && existingRefs.has(ref)) {
       return void Swal.fire({ icon: "warning", title: "Already on this report", text: "This activity is already on the learner's draft for this month." });
     }
-    const timestampLabel = category === "attendance"
+    const timestampLabel = isRegisterAttendance
       ? draft.timestamp_label
       : tsMode === "time" && generatedTime && "label" in generatedTime
         ? generatedTime.label
@@ -341,13 +344,13 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
     <div className="border-b border-border bg-[#fafbfc] px-7 py-5">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-[#182d48]">Add activity to {monthLabel}</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">Pick a category, choose the source item, then confirm the editable details.</p>
+          <h3 className="text-sm font-semibold text-[#182d48]">{manualEntry ? "Manual activity" : category === "assignment" ? "Add assignment" : "Add activity"} to {monthLabel}</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">{manualEntry ? "Enter the activity details manually." : "Confirm the editable details, then add the activity to the draft."}</p>
         </div>
         <button type="button" onClick={onClose} className="rounded-md border border-border p-1.5 hover:bg-secondary" title="Close" aria-label="Close add-activity panel"><X className="h-4 w-4" /></button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      {manualEntry ? <div className="flex flex-wrap gap-2">
         {MANUAL_CATEGORIES.map((item) => (
           <button
             key={item}
@@ -358,10 +361,10 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
             {item}
           </button>
         ))}
-      </div>
+      </div> : null}
 
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
-        {category === "attendance" ? (
+        {isRegisterAttendance ? (
           <label className="block">
             <span className="label-caps">Attendance session</span>
             <div className="mt-1.5">
@@ -443,7 +446,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
           </>
         ) : null}
 
-        {category === "assignment" ? (
+        {!manualEntry && category === "assignment" ? (
           <p className="self-end text-xs text-muted-foreground lg:col-span-2">
             Assignments are entered by hand — type the details below and attach the evidence files before saving.
           </p>
@@ -453,7 +456,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <label className="block lg:col-span-2">
           <span className="label-caps">Activity name</span>
-          <input value={draft.title} disabled={needsSelection} onChange={(event) => set({ title: event.target.value })} maxLength={500} placeholder={category === "assignment" ? "Assignment title" : "Select an item above"} className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm disabled:opacity-60" />
+          <input value={draft.title} disabled={needsSelection} onChange={(event) => set({ title: event.target.value })} maxLength={500} placeholder={manualEntry ? "Activity title" : category === "assignment" ? "Assignment title" : "Select an item above"} className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm disabled:opacity-60" />
         </label>
         <label className="block">
           <span className="label-caps">Date</span>
@@ -469,7 +472,7 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
           <div className="mt-1.5"><DurationInput value={Number(draft.actual_hours || 0)} disabled={needsSelection} onChange={(value) => set({ actual_hours: String(value) })} ariaLabel="Actual duration" /></div>
         </label>
 
-        {category === "attendance" ? (
+        {isRegisterAttendance ? (
           <div className="block">
             <span className="label-caps">Timestamp</span>
             <p className="mt-1.5 flex h-9 items-center rounded-md border border-border bg-[#f6f8fb] px-3 font-mono text-sm text-muted-foreground" title="Fixed from the attendance register">

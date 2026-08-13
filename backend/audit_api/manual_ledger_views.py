@@ -323,10 +323,12 @@ def _valid_title(value):
 def _parse_source_ref(category, raw):
     """Return ``(source_ref, group_id, activity_id)`` for a new manual row."""
     ref = str(raw or "").strip()
-    if category == "assignment":
-        if ref:
-            raise ValueError("assignment rows are manual and take no source_ref")
+    # A deliberately hand-entered row can use any display category without
+    # pretending to point at an LMS/attendance source record.
+    if not ref:
         return None, None, None
+    if category == "assignment":
+        raise ValueError("assignment rows are manual and take no source_ref")
     if category == "attendance":
         if not ref.startswith("att:") or len(ref) <= 4:
             raise ValueError("attendance rows need an att:<source_key> reference")
@@ -1339,11 +1341,11 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
     journal can stage it as draft rows.
 
     Attendance comes from the live register (mirror fallback); content
-    activities come from the learner's own ``activity_results`` joined to the
-    shared definitions, bucketed by ``activities.activity_date``.  Hours are
-    deliberately NOT included — retrieved rows always start at 0/0 and the
-    employee decides the planned and actual hours.  Assignments have no
-    retrievable source and stay manual-entry.
+    activities come from the complete catalogues of the LMS groups in which
+    the learner is enrolled.  The learner's own ``activity_results`` row is
+    left-joined only to supply completion state, so untouched course content
+    remains selectable just like the Manual Audit course picker. Hours are not
+    imported; assignments remain manual-entry.
     """
     try:
         aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
@@ -1382,22 +1384,27 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
             if learner.get("learner_id") is not None:
                 cursor.execute(
                     f"""
-                    SELECT DISTINCT ON (a.activity_id)
-                           r.group_id, g.group_name, a.activity_id, a.title, a.activity_date,
+                    SELECT DISTINCT ON (gl.group_id, a.activity_id)
+                           gl.group_id, g.group_name, a.activity_id, a.title, a.activity_date,
                            lower(a.activity_type) AS activity_type,
                            a.quiz_id, a.quiz_questions, a.reading_type,
                            a.reading_iframe_url, a.reading_text_body,
                            a.configured_duration_min,
                            r.status, r.video_completed, r.reading_viewed,
                            r.quiz_passed
-                    FROM {ACTIVITY_RESULTS} r
-                    JOIN {ACTIVITIES} a ON a.activity_id = r.activity_id
-                    LEFT JOIN {GROUPS} g ON g.group_id = r.group_id
-                    WHERE r.learner_id = %s
-                      AND to_char(a.activity_date, 'YYYY-MM') = %s
-                    ORDER BY a.activity_id, r.group_id
+                    FROM {GROUP_LEARNERS} gl
+                    JOIN {GROUPS} g ON g.group_id = gl.group_id
+                    JOIN {GROUP_ACTIVITIES} ga ON ga.group_id = gl.group_id
+                    JOIN {ACTIVITIES} a ON a.activity_id = ga.activity_id
+                    LEFT JOIN {ACTIVITY_RESULTS} r
+                      ON r.group_id = gl.group_id
+                     AND r.activity_id = a.activity_id
+                     AND r.learner_id = gl.learner_id
+                    WHERE gl.learner_id = %s
+                      AND lower(a.activity_type) IN ('video', 'audio', 'reading+quiz')
+                    ORDER BY gl.group_id, a.activity_id, r.learner_id NULLS LAST
                     """,
-                    [learner["learner_id"], month],
+                    [learner["learner_id"]],
                 )
                 content_rows = _dict_rows(cursor)
 

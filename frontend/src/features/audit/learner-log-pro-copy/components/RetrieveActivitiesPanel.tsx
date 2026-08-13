@@ -7,7 +7,7 @@
 // activities start at 0/0. Nothing is saved until "Save all activities".
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, DownloadCloud, LoaderCircle, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BookOpenText, CalendarDays, DownloadCloud, LoaderCircle, Search, X } from "lucide-react";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import Swal from "sweetalert2";
 import {
@@ -41,6 +41,13 @@ type Candidate = {
 
 const GROUP_ORDER = ["attendance", "video", "audio", "reading+quiz"];
 const ATTENDANCE_SESSION_HOURS = 2.5;
+
+function weekLabelOf(dateIso: string | null) {
+  if (!dateIso) return "Undated";
+  const date = new Date(`${dateIso}T00:00:00`);
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return `Week of ${date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}`;
+}
 
 function badgeClasses(tone: "success" | "warning" | "muted") {
   switch (tone) {
@@ -95,11 +102,12 @@ function fromActivity(item: ImportActivityCandidate): Candidate {
   };
 }
 
-export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRefs, onRetrieve, onClose }: {
+export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRefs, initialCategory = "all", onRetrieve, onClose }: {
   aptemId: number;
   month: string;
   monthLabel: string;
   existingRefs: Set<string>;
+  initialCategory?: "attendance" | "video" | "reading+quiz" | "audio" | "all";
   onRetrieve: (rows: DraftRow[]) => void;
   onClose: () => void;
 }) {
@@ -139,13 +147,49 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
   }, [existingRefs, candidatesQuery.data]);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectedCourse, setSelectedCourse] = useState<number | "attendance" | null>(initialCategory === "attendance" ? "attendance" : null);
+  const [typeFilter, setTypeFilter] = useState(initialCategory === "attendance" ? "all" : initialCategory);
+  const [search, setSearch] = useState("");
   const [pairSelection, setPairSelection] = useState<Candidate[]>([]);
   const [savingPair, setSavingPair] = useState(false);
   // Reset the selection whenever fresh candidates arrive.
   useEffect(() => {
     setSelected(new Set());
     setPairSelection([]);
+    setSelectedCourse(initialCategory === "attendance" ? "attendance" : null);
+    setTypeFilter(initialCategory === "attendance" ? "all" : initialCategory);
+  }, [candidatesQuery.data, initialCategory]);
+
+  const courses = useMemo(() => {
+    const byId = new Map<number, { group_id: number; group_name: string; count: number }>();
+    for (const item of candidatesQuery.data?.activities ?? []) {
+      const current = byId.get(item.group_id);
+      if (current) current.count += 1;
+      else byId.set(item.group_id, { group_id: item.group_id, group_name: item.group_name, count: 1 });
+    }
+    return [...byId.values()].sort((left, right) => right.count - left.count || left.group_name.localeCompare(right.group_name));
   }, [candidatesQuery.data]);
+
+  const courseCandidates = useMemo(() => {
+    if (selectedCourse === "attendance") return candidatesQuery.data?.attendance.map(fromAttendance) ?? [];
+    if (typeof selectedCourse !== "number") return [];
+    const needle = search.trim().toLowerCase();
+    return (candidatesQuery.data?.activities ?? [])
+      .filter((item) => item.group_id === selectedCourse)
+      .map(fromActivity)
+      .filter((item) => (typeFilter === "all" || item.category === typeFilter) && (!needle || item.title.toLowerCase().includes(needle) || (item.activity_date ?? "").includes(needle)))
+      .sort((left, right) => (left.activity_date || "9999-12-31").localeCompare(right.activity_date || "9999-12-31") || left.title.localeCompare(right.title));
+  }, [candidatesQuery.data, search, selectedCourse, typeFilter]);
+
+  const weeks = useMemo(() => {
+    const result = new Map<string, Candidate[]>();
+    for (const candidate of courseCandidates) {
+      const label = weekLabelOf(candidate.activity_date);
+      if (!result.has(label)) result.set(label, []);
+      result.get(label)!.push(candidate);
+    }
+    return [...result.entries()];
+  }, [courseCandidates]);
 
   const togglePair = (candidate: Candidate) => setPairSelection((current) => {
     if (current.some((item) => item.source_ref === candidate.source_ref)) {
@@ -216,16 +260,6 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
     });
   };
 
-  const byModule = (candidates: Candidate[]) => {
-    const modules = new Map<string, Candidate[]>();
-    for (const candidate of candidates) {
-      const moduleName = candidate.group_name || "Other activities";
-      if (!modules.has(moduleName)) modules.set(moduleName, []);
-      modules.get(moduleName)!.push(candidate);
-    }
-    return [...modules.entries()].sort(([left], [right]) => left.localeCompare(right));
-  };
-
   function confirm() {
     const all = [...groups.values()].flat();
     const rows: DraftRow[] = all
@@ -277,79 +311,80 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
         <p className="py-8 text-center text-sm text-destructive">{candidatesQuery.error instanceof Error ? candidatesQuery.error.message : "Could not load the LMS records."}</p>
       ) : (
         <>
-          <div className="grid gap-4 lg:grid-cols-2">
-            {GROUP_ORDER.map((category) => {
-              const candidates = groups.get(category) ?? [];
-              const eligible = candidates.filter(selectable);
-              const allPicked = eligible.length > 0 && eligible.every((candidate) => selected.has(candidate.source_ref));
-              return (
-                <section key={category} className="overflow-hidden rounded-lg border border-border bg-card">
-                  <header className="flex items-center justify-between border-b border-border px-4 py-2.5">
-                    <label className="flex items-center gap-2 text-xs font-semibold capitalize text-[#182d48]">
-                      <input type="checkbox" checked={allPicked} disabled={!eligible.length} onChange={() => toggleGroup(candidates)} />
-                      {category}
-                    </label>
-                    <span className="font-mono text-[11px] text-muted-foreground">{candidates.length} found</span>
-                  </header>
-                  {category === "reading+quiz" && candidates.length ? (
-                    <div className="flex items-center justify-between gap-2 border-b border-border bg-[#f6f8fb] px-4 py-2">
-                      <span className="text-[11px] text-muted-foreground">Select two or more unlinked items using “Merge”, then save them as one activity.</span>
-                      <Button type="button" size="sm" variant="outline" disabled={pairSelection.length < 2 || savingPair} onClick={savePair}>
-                        {savingPair ? "Merging..." : `Merge selected${pairSelection.length ? ` (${pairSelection.length})` : ""}`}
-                      </Button>
+          {selectedCourse == null ? (
+            <section className="overflow-hidden rounded-lg border border-border bg-card">
+              <div className="border-b border-border bg-[#eef3f8] px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-[#182d48]">Enrolled courses</div>
+              <ul className="divide-y divide-border">
+                {(candidatesQuery.data?.attendance.length ?? 0) > 0 ? (
+                  <li><button type="button" onClick={() => { setSelectedCourse("attendance"); setTypeFilter("all"); setSearch(""); }} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-secondary/60">
+                    <CalendarDays className="h-5 w-5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1"><span className="block text-sm font-medium">Attendance register</span><span className="text-xs text-muted-foreground">{candidatesQuery.data?.attendance.length ?? 0} sessions in {monthLabel}</span></span>
+                    <span className="text-xs font-semibold text-muted-foreground">Open →</span>
+                  </button></li>
+                ) : null}
+                {courses.map((course) => (
+                  <li key={course.group_id}><button type="button" onClick={() => { setSelectedCourse(course.group_id); setTypeFilter(initialCategory === "attendance" ? "all" : initialCategory); setSearch(""); }} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-secondary/60">
+                    <BookOpenText className="h-5 w-5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium" title={course.group_name}>{course.group_name}</span><span className="text-xs text-muted-foreground">{course.count} activities</span></span>
+                    <span className="text-xs font-semibold text-muted-foreground">Open →</span>
+                  </button></li>
+                ))}
+                {!courses.length && !(candidatesQuery.data?.attendance.length ?? 0) ? <li className="px-4 py-8 text-center text-sm text-muted-foreground">This learner is not enrolled in any LMS course.</li> : null}
+              </ul>
+            </section>
+          ) : (
+            <section>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => { setSelectedCourse(null); setPairSelection([]); }}><ArrowLeft className="mr-1 h-3.5 w-3.5" /> Courses</Button>
+                {selectedCourse !== "attendance" ? (
+                  <>
+                    <div className="flex rounded-md border border-border">
+                      {[["video", "Videos"], ["reading+quiz", "Reading+Quiz"], ["audio", "Audio"], ["all", "All"]].map(([value, label]) => (
+                        <button key={value} type="button" onClick={() => setTypeFilter(value)} className={`px-3 py-1.5 text-xs font-semibold ${typeFilter === value ? "bg-[#182d48] text-white" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>
+                      ))}
                     </div>
-                  ) : null}
-                  <div className="max-h-64 overflow-y-auto">
-                    {candidates.length === 0 ? (
-                      <p className="px-4 py-3 text-xs text-muted-foreground">Nothing recorded this month.</p>
-                    ) : byModule(candidates).map(([moduleName, moduleCandidates]) => {
-                      const moduleEligible = moduleCandidates.filter(selectable);
-                      const modulePicked = moduleEligible.length > 0 && moduleEligible.every((candidate) => selected.has(candidate.source_ref));
-                      return (
-                        <section key={moduleName} className="border-b border-border/70 last:border-b-0">
-                          <label className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-border/60 bg-[#eef2f6] px-4 py-2 text-[11px] font-semibold text-[#182d48]">
-                            <span className="flex min-w-0 items-center gap-2">
-                              <input type="checkbox" checked={modulePicked} disabled={!moduleEligible.length} onChange={() => toggleGroup(moduleCandidates)} />
-                              <span className="truncate" title={moduleName}>{moduleName}</span>
-                            </span>
-                            <span className="shrink-0 font-mono font-normal text-muted-foreground">{moduleCandidates.length}</span>
-                          </label>
-                          <ul>
-                            {moduleCandidates.map((candidate) => {
-                              const taken = takenRefs.has(candidate.source_ref);
-                              const flag = dateFlag(candidate.activity_date);
-                              return (
-                                <li key={candidate.source_ref} className={`border-b border-border/60 last:border-b-0 ${taken ? "opacity-45" : ""}`}>
-                                  <label className="flex cursor-pointer items-start gap-2.5 px-4 py-2.5 hover:bg-secondary/50">
-                                    <input type="checkbox" className="mt-0.5" disabled={taken} checked={selected.has(candidate.source_ref)} onChange={() => toggle(candidate.source_ref)} />
-                                    <span className="min-w-0 flex-1">
-                                      <span className="block truncate text-sm text-foreground" title={candidate.title}>{candidate.title}</span>
-                                      <span className="mt-1 flex flex-wrap items-center gap-1.5">
-                                        {candidate.activity_date ? <span className="font-mono text-[11px] text-muted-foreground">{candidate.activity_date}</span> : null}
-                                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClasses(candidate.badge.tone)}`}>{candidate.badge.text}</span>
-                                        {formatDurationMinutes(candidate.duration_minutes) ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">{formatDurationMinutes(candidate.duration_minutes)}</span> : null}
-                                        {flag ? <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive"><AlertTriangle className="h-2.5 w-2.5" /> {flag}</span> : null}
-                                        {taken ? <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Already added</span> : null}
-                                        {category === "reading+quiz" ? candidate.paired ? (
-                                          <button type="button" onClick={(event) => { event.preventDefault(); void unlinkPair(candidate); }} className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success hover:bg-destructive/15 hover:text-destructive" title="Separate all bundled activities again">Linked bundle · Unlink</button>
-                                        ) : (
-                                          <button type="button" onClick={(event) => { event.preventDefault(); togglePair(candidate); }} className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${pairSelection.some((item) => item.source_ref === candidate.source_ref) ? "border-primary bg-primary text-primary-foreground" : "border-border text-primary"}`}>Merge</button>
-                                        ) : null}
-                                      </span>
-                                    </span>
-                                  </label>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        </section>
-                      );
-                    })}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
+                    <label className="relative min-w-48 flex-1 max-w-64"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search activity / date…" className="h-8 w-full rounded-md border border-border bg-card pl-8 pr-3 text-xs outline-none focus:border-primary" /></label>
+                    <span className="text-xs font-semibold text-[#182d48]">{courses.find((course) => course.group_id === selectedCourse)?.group_name}</span>
+                  </>
+                ) : <span className="text-xs font-semibold text-[#182d48]">Attendance register — {monthLabel}</span>}
+                <span className="flex-1" />
+                {selectedCourse !== "attendance" && (typeFilter === "reading+quiz" || typeFilter === "all") ? (
+                  <Button type="button" size="sm" variant="outline" disabled={pairSelection.length < 2 || savingPair} onClick={savePair}>{savingPair ? "Merging..." : `Merge selected${pairSelection.length ? ` (${pairSelection.length})` : ""}`}</Button>
+                ) : null}
+              </div>
+              {!courseCandidates.length ? <p className="rounded-lg border border-border bg-card py-8 text-center text-sm text-muted-foreground">Nothing matches this course and filter.</p> : (
+                <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+                  {weeks.map(([weekLabel, weekCandidates]) => {
+                    const eligible = weekCandidates.filter(selectable);
+                    const allPicked = eligible.length > 0 && eligible.every((candidate) => selected.has(candidate.source_ref));
+                    return (
+                      <section key={weekLabel} className="overflow-hidden rounded-lg border border-border bg-card">
+                        <label className="flex items-center gap-2 border-b border-border bg-[#eef3f8] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[#182d48]"><input type="checkbox" checked={allPicked} disabled={!eligible.length} onChange={() => toggleGroup(weekCandidates)} />{weekLabel}<span className="font-normal normal-case text-muted-foreground">({weekCandidates.length})</span></label>
+                        <ul className="divide-y divide-border">
+                          {weekCandidates.map((candidate) => {
+                            const taken = takenRefs.has(candidate.source_ref);
+                            const flag = dateFlag(candidate.activity_date);
+                            return <li key={candidate.source_ref} className={taken ? "opacity-45" : ""}><label className="flex cursor-pointer items-start gap-3 px-4 py-2.5 hover:bg-secondary/50">
+                              <input type="checkbox" className="mt-0.5" disabled={taken} checked={selected.has(candidate.source_ref)} onChange={() => toggle(candidate.source_ref)} />
+                              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium" title={candidate.title}>{candidate.title}</span><span className="mt-1 flex flex-wrap items-center gap-1.5">
+                                {candidate.activity_date ? <span className="font-mono text-[11px] text-muted-foreground">{candidate.activity_date}</span> : null}
+                                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">{candidate.category}</span>
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClasses(candidate.badge.tone)}`}>{candidate.badge.text}</span>
+                                {formatDurationMinutes(candidate.duration_minutes) ? <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{formatDurationMinutes(candidate.duration_minutes)}</span> : null}
+                                {flag ? <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive"><AlertTriangle className="h-2.5 w-2.5" /> {flag}</span> : null}
+                                {taken ? <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Already added</span> : null}
+                                {candidate.category === "reading+quiz" ? candidate.paired ? <button type="button" onClick={(event) => { event.preventDefault(); void unlinkPair(candidate); }} className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success hover:text-destructive">Linked bundle · Unlink</button> : <button type="button" onClick={(event) => { event.preventDefault(); togglePair(candidate); }} className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${pairSelection.some((item) => item.source_ref === candidate.source_ref) ? "border-primary bg-primary text-primary-foreground" : "border-border text-primary"}`}>Merge</button> : null}
+                              </span></span>
+                            </label></li>;
+                          })}
+                        </ul>
+                      </section>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
           <div className="mt-4 flex items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">
               {candidatesQuery.data?.attendance_source === "Last_audit-mirror"
