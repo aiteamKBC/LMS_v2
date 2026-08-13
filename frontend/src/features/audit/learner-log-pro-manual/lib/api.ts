@@ -1,3 +1,5 @@
+import { isExcludedLearner } from "@/features/audit/learner-exclusions";
+
 // The MANUAL audit workspace. Everything here talks to the dedicated
 // `manual_audit_api` Django app, which is backed by the `Manual_audit` schema
 // (a synced mirror of Last_audit plus manual-owned write tables). It shares no
@@ -876,7 +878,15 @@ function fetchCohort(): Promise<LiveCohortResponse> {
     cohortPromise = Promise.all([
       getJson<LiveCohortResponse>("/cohort/").then(sanitizeCohortDates),
       fetchOverlays(),
-    ]).then(([cohort, overlays]) => applyCohortOverlay(cohort, overlays))
+    ]).then(([cohort, overlays]) => {
+      const merged = applyCohortOverlay(cohort, overlays);
+      return {
+        ...merged,
+        learners: merged.learners.filter(
+          (learner) => !isExcludedLearner(learner.aptem_id, learner.learner_name),
+        ),
+      };
+    })
       .catch((error) => {
       cohortPromise = null; // let a later call retry after a failure
       throw error;
@@ -1158,7 +1168,9 @@ export function getLearners(params: { period?: string; search?: string; position
     const programme = (params.programme ?? "").trim().toLowerCase();
     const learnerFilter = (params.learner ?? "").trim().replace(/^['"]|['"]$/g, "").toLowerCase();
 
-    let rows = cohort.learners.map((learner) => {
+    let rows = cohort.learners
+      .filter((learner) => !isExcludedLearner(learner.aptem_id, learner.learner_name))
+      .map((learner) => {
       const month = period ? learner.months.find((item) => item.month === period) ?? null : null;
       // An auditor-entered override for this exact view (one month, or the
       // all-months total when no month is selected) replaces the computed
@@ -1175,7 +1187,7 @@ export function getLearners(params: { period?: string; search?: string; position
           : learner.planned_hours_available !== false;
       const hoursMapped = override?.actual_hours != null ? true : learner.hours_mapped;
       return { learner, month, override, planned, actual, plannedAvailable, hoursMapped };
-    });
+      });
     if (search) rows = rows.filter((row) =>
       row.learner.learner_name.toLowerCase().includes(search) ||
       (row.learner.learner_email ?? "").toLowerCase().includes(search) ||
@@ -1419,7 +1431,9 @@ export function getActivityLearners(params: { component: string; search?: string
     const detail = normalizeActivityDetail(
       await getJson<ActivityDetail>(`/activity/?activity_id=${encodeURIComponent(params.component)}`),
     );
-    let items = detail.participants.map((participant): LearnerActivity => ({
+    let items = detail.participants
+      .filter((participant) => !isExcludedLearner(participant.learner_id, participant.learner_name))
+      .map((participant): LearnerActivity => ({
       id: `${participant.learner_id}:${detail.component_id}`,
       mre_id: String(detail.component_id),
       learner: participant.learner_name,
@@ -1455,7 +1469,7 @@ export function getActivityLearners(params: { component: string; search?: string
       completion_records: [],
       source: detail.source,
       hours_mapped: participant.actual != null,
-    }));
+      }));
     const searchTerm = (params.search ?? "").trim().toLowerCase();
     if (searchTerm) items = items.filter((item) => item.learner.toLowerCase().includes(searchTerm));
 
@@ -1505,6 +1519,9 @@ export function getAttendanceSession(key: string, programme?: string) {
 // backend merges activities.quiz_questions with activity_results.quiz_answers.
 export function getQuizAttempt(params: { aptemId: number; component: string }) {
   return (async (): Promise<QuizAttemptResponse> => {
+    if (isExcludedLearner(params.aptemId, undefined)) {
+      throw new Error("Learner not found.");
+    }
     const query = new URLSearchParams({
       aptem_id: String(params.aptemId),
       component_id: params.component,
@@ -1520,6 +1537,9 @@ export function getQuizAttempt(params: { aptemId: number; component: string }) {
 
 export function getLearnerProfile(learnerId: string) {
   return (async (): Promise<LearnerProfile> => {
+    if (isExcludedLearner(learnerId, learnerId)) {
+      throw new Error("Learner not found.");
+    }
     // The endpoint resolves every learner from the Aptem-first Manual_audit cohort
     // and joins the rich profile sources by that learner's Aptem ID.
     const query = new URLSearchParams({ learner: learnerId.replace(/^"|"$/g, "") });

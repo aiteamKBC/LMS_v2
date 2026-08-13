@@ -73,6 +73,24 @@ describe("Last_audit request scoping", () => {
     });
   });
 
+  it("removes excluded learners returned by the remote cohort service", async () => {
+    const excluded = {
+      ...cohort.learners[0],
+      aptem_id: 9115,
+      learner_name: "Celine Ababio",
+      learner_email: "celine.ababio@newlon.org.uk",
+    };
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL) =>
+      jsonResponse({ ...cohort, learners: [...cohort.learners, excluded] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { getLearners } = await import("./api");
+
+    const result = await getLearners();
+
+    expect(result.learners.map((learner) => learner.name)).toEqual(["Abigail Rooney"]);
+  });
+
   it("normalizes a quoted route learner and requests only that learner", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
