@@ -20,7 +20,20 @@ PROFILE_FIELDS = {
     "line_manager_name",
     "workplace_address",
     "employer_postcode",
+    "start_date",
     "planned_end_date",
+    "last_learning_date",
+    "expected_return_date",
+    "return_to_learning_date",
+    "revised_learning_planned_end_date",
+}
+DATE_FIELDS = {
+    "start_date",
+    "planned_end_date",
+    "last_learning_date",
+    "expected_return_date",
+    "return_to_learning_date",
+    "revised_learning_planned_end_date",
 }
 TEXT_LIMITS = {
     "employer_name": 250,
@@ -81,13 +94,13 @@ def _clean_profile_fields(value):
             cleaned[field] = hours
             continue
 
-        if field == "planned_end_date":
+        if field in DATE_FIELDS:
             text = str(raw or "").strip()
             if text:
                 try:
                     datetime.date.fromisoformat(text)
                 except ValueError as exc:
-                    raise ValueError("planned_end_date must use YYYY-MM-DD.") from exc
+                    raise ValueError(f"{field} must use YYYY-MM-DD.") from exc
             cleaned[field] = text or None
             continue
 
@@ -141,9 +154,28 @@ def apply_profile_overrides(employment, learning_delivery, overrides):
     learning_delivery = dict(learning_delivery or {})
     if "employer_postcode" in overrides:
         learning_delivery["employer_postcode"] = overrides["employer_postcode"]
+    if "start_date" in overrides:
+        learning_delivery["start_date"] = overrides["start_date"]
     if "planned_end_date" in overrides:
         learning_delivery["planned_end_date"] = overrides["planned_end_date"]
     return employment, learning_delivery
+
+
+def apply_break_overrides(break_in_learning, overrides):
+    result = dict(break_in_learning or {})
+    if not isinstance(overrides, dict):
+        return result
+    for field in {
+        "last_learning_date",
+        "expected_return_date",
+        "return_to_learning_date",
+        "revised_learning_planned_end_date",
+    }:
+        if field in overrides:
+            result[field] = overrides[field]
+    if "return_to_learning_date" in overrides:
+        result["has_return_to_learning"] = bool(overrides["return_to_learning_date"])
+    return result
 
 
 @csrf_exempt

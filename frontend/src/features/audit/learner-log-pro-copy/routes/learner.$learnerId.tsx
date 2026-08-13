@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, type FormEvent } from "react";
-import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, LoaderCircle, Mail, Pencil, Save, Trash2, Upload, UserRound, X } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, FileText, LoaderCircle, Mail, Pencil, Save, Trash2, Upload, UserRound, X } from "lucide-react";
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -138,6 +138,13 @@ type EmployerEditForm = {
   employer_postcode: string;
 };
 
+type BreakEditForm = {
+  last_learning_date: string;
+  expected_return_date: string;
+  return_to_learning_date: string;
+  revised_learning_planned_end_date: string;
+};
+
 const EMPTY_EMPLOYER_FORM: EmployerEditForm = {
   employer_name: "",
   job_title: "",
@@ -188,6 +195,30 @@ function LearnerProfilePage() {
   const [plannedEndValue, setPlannedEndValue] = useState("");
   const [savingPlannedEnd, setSavingPlannedEnd] = useState(false);
   const [plannedEndError, setPlannedEndError] = useState<string | null>(null);
+  const [editingStartDate, setEditingStartDate] = useState(false);
+  const [startDateValue, setStartDateValue] = useState("");
+  const [savingStartDate, setSavingStartDate] = useState(false);
+  const [startDateError, setStartDateError] = useState<string | null>(null);
+  const [uploadingLastLearningEvidence, setUploadingLastLearningEvidence] = useState(false);
+  const [lastLearningEvidenceError, setLastLearningEvidenceError] = useState<string | null>(null);
+  const [lastLearningEvidenceMessage, setLastLearningEvidenceMessage] = useState<string | null>(null);
+  const [editingWithdrawalEvidenceDate, setEditingWithdrawalEvidenceDate] = useState(false);
+  const [withdrawalEvidenceDateValue, setWithdrawalEvidenceDateValue] = useState("");
+  const [savingWithdrawalEvidenceDate, setSavingWithdrawalEvidenceDate] = useState(false);
+  const [withdrawalEvidenceDateError, setWithdrawalEvidenceDateError] = useState<string | null>(null);
+  const [uploadingBreakEvidence, setUploadingBreakEvidence] = useState(false);
+  const [breakEvidenceError, setBreakEvidenceError] = useState<string | null>(null);
+  const [breakEvidenceMessage, setBreakEvidenceMessage] = useState<string | null>(null);
+  const [editingBreak, setEditingBreak] = useState(false);
+  const [breakForm, setBreakForm] = useState<BreakEditForm>({
+    last_learning_date: "",
+    expected_return_date: "",
+    return_to_learning_date: "",
+    revised_learning_planned_end_date: "",
+  });
+  const [savingBreak, setSavingBreak] = useState(false);
+  const [breakEditError, setBreakEditError] = useState<string | null>(null);
+  const [breakEditMessage, setBreakEditMessage] = useState<string | null>(null);
   const profile = useQuery({
     queryKey: ["learner-profile", learnerId],
     queryFn: () => getLearnerProfile(learnerId),
@@ -491,6 +522,153 @@ function LearnerProfilePage() {
     }
   }
 
+  async function handleStartDateSave() {
+    if (!profile.data || !startDateValue || savingStartDate) return;
+    setSavingStartDate(true);
+    setStartDateError(null);
+    try {
+      await updateLearnerProfileFields(Number(profile.data.aptem_id), { start_date: startDateValue });
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEditingStartDate(false);
+    } catch (error) {
+      setStartDateError(error instanceof Error ? error.message : "Start date could not be updated.");
+    } finally {
+      setSavingStartDate(false);
+    }
+  }
+
+  async function handleBreakEvidenceUpload(file: File | undefined) {
+    const returnDate = dateInputValue(profile.data?.break_in_learning.return_to_learning_date);
+    if (!file || !profile.data || !returnDate || uploadingBreakEvidence) return;
+    setUploadingBreakEvidence(true);
+    setBreakEvidenceError(null);
+    setBreakEvidenceMessage(null);
+    try {
+      await uploadEvidence(
+        Number(profile.data.aptem_id),
+        file,
+        returnDate,
+        "Return to learning evidence",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setBreakEvidenceMessage(`${file.name} was uploaded for ${returnDate}.`);
+    } catch (error) {
+      setBreakEvidenceError(error instanceof Error ? error.message : "Break evidence could not be uploaded.");
+    } finally {
+      setUploadingBreakEvidence(false);
+    }
+  }
+
+  async function handleLastLearningEvidenceUpload(file: File | undefined) {
+    const lastLearningDate = dateInputValue(
+      profile.data?.learning_delivery.last_learning_evidence_date
+      ?? profile.data?.break_in_learning.last_learning_date,
+    );
+    if (!file || !profile.data || !lastLearningDate || uploadingLastLearningEvidence) return;
+    setUploadingLastLearningEvidence(true);
+    setLastLearningEvidenceError(null);
+    setLastLearningEvidenceMessage(null);
+    try {
+      await uploadEvidence(
+        Number(profile.data.aptem_id),
+        file,
+        lastLearningDate,
+        "Last date of learning evidence",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setLastLearningEvidenceMessage(`${file.name} was uploaded for ${lastLearningDate}.`);
+    } catch (error) {
+      setLastLearningEvidenceError(error instanceof Error ? error.message : "Last date of learning evidence could not be uploaded.");
+    } finally {
+      setUploadingLastLearningEvidence(false);
+    }
+  }
+
+  async function handleWithdrawalEvidenceDateSave() {
+    if (!profile.data || !withdrawalEvidenceDateValue || savingWithdrawalEvidenceDate) return;
+    setSavingWithdrawalEvidenceDate(true);
+    setWithdrawalEvidenceDateError(null);
+    setLastLearningEvidenceMessage(null);
+    try {
+      await updateLearnerProfileFields(Number(profile.data.aptem_id), {
+        last_learning_date: withdrawalEvidenceDateValue,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEditingWithdrawalEvidenceDate(false);
+      setLastLearningEvidenceMessage(`The last date of learning was updated to ${withdrawalEvidenceDateValue}.`);
+    } catch (error) {
+      setWithdrawalEvidenceDateError(error instanceof Error ? error.message : "The last date of learning could not be updated.");
+    } finally {
+      setSavingWithdrawalEvidenceDate(false);
+    }
+  }
+
+  async function handleWithdrawalEvidenceDelete(evidence: EvidenceItem) {
+    if (!profile.data || deletingEvidenceId) return;
+    if (!window.confirm(`Delete "${evidence.name}" from the withdrawal evidence?`)) return;
+    setDeletingEvidenceId(evidence.id);
+    setLastLearningEvidenceError(null);
+    setLastLearningEvidenceMessage(null);
+    try {
+      if (!evidence.archived) {
+        await setEvidenceArchived(evidence.id, Number(profile.data.aptem_id), true);
+      }
+      await deleteArchivedEvidence(evidence.id, Number(profile.data.aptem_id));
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setLastLearningEvidenceMessage(`${evidence.name} was removed. You can upload replacement evidence now.`);
+    } catch (error) {
+      setLastLearningEvidenceError(error instanceof Error ? error.message : "The withdrawal evidence could not be deleted.");
+    } finally {
+      setDeletingEvidenceId(null);
+    }
+  }
+
+  function beginBreakEdit() {
+    const current = profile.data?.break_in_learning;
+    if (!current) return;
+    setBreakForm({
+      last_learning_date: dateInputValue(current.last_learning_date),
+      expected_return_date: dateInputValue(current.expected_return_date),
+      return_to_learning_date: dateInputValue(current.return_to_learning_date),
+      revised_learning_planned_end_date: dateInputValue(current.revised_learning_planned_end_date),
+    });
+    setBreakEditError(null);
+    setBreakEditMessage(null);
+    setEditingBreak(true);
+  }
+
+  async function handleBreakSave(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const current = profile.data?.break_in_learning;
+    if (!profile.data || !current || savingBreak) return;
+    const currentValues: BreakEditForm = {
+      last_learning_date: dateInputValue(current.last_learning_date),
+      expected_return_date: dateInputValue(current.expected_return_date),
+      return_to_learning_date: dateInputValue(current.return_to_learning_date),
+      revised_learning_planned_end_date: dateInputValue(current.revised_learning_planned_end_date),
+    };
+    const changedFields = Object.fromEntries(
+      Object.entries(breakForm).filter(([field, value]) => value !== currentValues[field as keyof BreakEditForm]),
+    ) as LearnerProfileOverrideFields;
+    if (!Object.keys(changedFields).length) {
+      setEditingBreak(false);
+      return;
+    }
+    setSavingBreak(true);
+    setBreakEditError(null);
+    setBreakEditMessage(null);
+    try {
+      await updateLearnerProfileFields(Number(profile.data.aptem_id), changedFields);
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setEditingBreak(false);
+      setBreakEditMessage("Break in learning dates were updated.");
+    } catch (error) {
+      setBreakEditError(error instanceof Error ? error.message : "Break in learning dates could not be updated.");
+    } finally {
+      setSavingBreak(false);
+    }
+  }
+
   if (profile.isLoading) {
     return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">Loading learner profile…</div>;
   }
@@ -518,6 +696,13 @@ function LearnerProfilePage() {
   const archivedContractCount = learner.contracts.filter((contract) => contract.archived).length;
   const activeContractCount = learner.contracts.length - archivedContractCount;
   const employment = learner.employment;
+  const isWithdrawn = learner.programme_status.trim().toLowerCase() === "withdrawn";
+  const hasBreakInLearning = learner.break_in_learning.has_break_in_learning
+    || learner.programme_status.toLowerCase() === "onbreak";
+  const lastLearningEvidenceDate = learner.learning_delivery.last_learning_evidence_date
+    ?? learner.break_in_learning.last_learning_date;
+  const lastLearningEvidenceItems = learner.learning_delivery.last_learning_evidence_items ?? [];
+  const breakEvidenceItems = learner.learning_delivery.break_evidence_items ?? [];
   const planPercent = learner.training_plan.total_modules
     ? Math.round((learner.training_plan.completed_modules / learner.training_plan.total_modules) * 100)
     : 0;
@@ -540,9 +725,18 @@ function LearnerProfilePage() {
             <span className="font-serif text-base text-foreground">OTJ&nbsp;Ledger</span>
             <span className="label-caps">Learner profile</span>
           </div>
-          <Link to="/search" className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline">
-            <ArrowLeft className="h-3.5 w-3.5" /> Learner search
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              to="/journal"
+              search={{ learner: learner.id, period: "" }}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-secondary"
+            >
+              <FileText className="h-3.5 w-3.5" /> Monthly report
+            </Link>
+            <Link to="/search" className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline">
+              <ArrowLeft className="h-3.5 w-3.5" /> Learner search
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -576,7 +770,37 @@ function LearnerProfilePage() {
                 <dd className="mt-1 font-medium">{learner.coach.name ?? "—"}</dd>
                 {learner.coach.email && <dd className="mt-0.5 text-xs text-muted-foreground">{learner.coach.email}</dd>}
               </div>
-              <div><dt className="label-caps">Start date</dt><dd className="mt-1 font-mono">{dateOnly(learner.learning_delivery.start_date)}</dd></div>
+              <div>
+                <dt className="label-caps">Start date</dt>
+                {editingStartDate ? (
+                  <dd className="mt-1 flex flex-wrap items-center gap-2">
+                    <input type="date" value={startDateValue} onChange={(event) => setStartDateValue(event.target.value)} className="rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-sm text-foreground" />
+                    <button type="button" onClick={handleStartDateSave} disabled={!startDateValue || savingStartDate} className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-semibold text-background disabled:opacity-50">
+                      {savingStartDate ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                    </button>
+                    <button type="button" onClick={() => setEditingStartDate(false)} className="rounded-md border border-border px-2.5 py-1.5 text-xs font-semibold">Cancel</button>
+                    {startDateError && <span className="w-full text-xs text-destructive">{startDateError}</span>}
+                  </dd>
+                ) : (
+                  <dd className="mt-1 flex items-center gap-2 font-mono">
+                    {dateOnly(learner.learning_delivery.start_date)}
+                    {hasBreakInLearning && (
+                      <button
+                        type="button"
+                        aria-label="Edit start date"
+                        onClick={() => {
+                          setStartDateValue(dateInputValue(learner.learning_delivery.start_date));
+                          setStartDateError(null);
+                          setEditingStartDate(true);
+                        }}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </dd>
+                )}
+              </div>
               <div>
                 <dt className="label-caps">First evidence</dt>
                 <dd className="mt-1">
@@ -633,11 +857,17 @@ function LearnerProfilePage() {
                   </dd>
                 )}
               </div>
+              {learner.learning_delivery.actual_end_date && (
+                <div>
+                  <dt className="label-caps">Actual end</dt>
+                  <dd className="mt-1 font-mono">{dateOnly(learner.learning_delivery.actual_end_date)}</dd>
+                </div>
+              )}
             </dl>
           </div>
         </section>
 
-        {(learner.break_in_learning.has_break_in_learning || learner.programme_status.toLowerCase() === "onbreak") && (
+        {hasBreakInLearning && (
           <section className={`rounded-lg border px-7 py-6 shadow-panel ${learner.break_in_learning.has_return_to_learning ? "border-success/30 bg-success/5" : "border-warning/40 bg-warning/10"}`}>
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-3">
@@ -647,16 +877,238 @@ function LearnerProfilePage() {
                   <p className="mt-1 text-sm text-muted-foreground">Break and return dates from the learner's Aptem record.</p>
                 </div>
               </div>
-              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${learner.break_in_learning.has_return_to_learning ? "bg-success/15 text-success" : "bg-warning/20 text-foreground"}`}>
-                {learner.break_in_learning.has_return_to_learning ? "Returned to learning" : "Currently on break"}
-              </span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${learner.break_in_learning.has_return_to_learning ? "bg-success/15 text-success" : "bg-warning/20 text-foreground"}`}>
+                  {learner.break_in_learning.has_return_to_learning ? "Returned to learning" : "Currently on break"}
+                </span>
+                {!editingBreak && (
+                  <button type="button" onClick={beginBreakEdit} className="inline-flex items-center gap-1.5 rounded-md border border-current/20 bg-background/70 px-3 py-2 text-xs font-semibold text-foreground hover:bg-background">
+                    <Pencil className="h-3.5 w-3.5" /> Edit dates
+                  </button>
+                )}
+              </div>
             </div>
-            <dl className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-              <div><dt className="label-caps">Break date</dt><dd className="mt-1 font-mono text-sm">{dateOnly(learner.break_in_learning.last_learning_date)}</dd></div>
-              <div><dt className="label-caps">Expected return</dt><dd className="mt-1 font-mono text-sm">{dateOnly(learner.break_in_learning.expected_return_date)}</dd></div>
-              <div><dt className="label-caps">Actual return</dt><dd className="mt-1 font-mono text-sm">{learner.break_in_learning.has_return_to_learning ? dateOnly(learner.break_in_learning.return_to_learning_date) : "Not returned yet"}</dd></div>
-              <div><dt className="label-caps">Revised planned end</dt><dd className="mt-1 font-mono text-sm">{dateOnly(learner.break_in_learning.revised_learning_planned_end_date)}</dd></div>
-            </dl>
+            {breakEditError && <p className="mt-4 text-sm font-medium text-destructive">{breakEditError}</p>}
+            {breakEditMessage && <p className="mt-4 text-sm font-medium text-success">{breakEditMessage}</p>}
+            {editingBreak ? (
+              <form onSubmit={handleBreakSave} className="mt-6 grid gap-4 rounded-md border border-current/15 bg-background/70 p-4 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="space-y-1.5">
+                  <span className="label-caps">Break date</span>
+                  <input type="date" value={breakForm.last_learning_date} onChange={(event) => setBreakForm((value) => ({ ...value, last_learning_date: event.target.value }))} className="w-full rounded-md border border-border bg-card px-3 py-2 font-mono text-sm text-foreground" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="label-caps">Expected return</span>
+                  <input type="date" value={breakForm.expected_return_date} onChange={(event) => setBreakForm((value) => ({ ...value, expected_return_date: event.target.value }))} className="w-full rounded-md border border-border bg-card px-3 py-2 font-mono text-sm text-foreground" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="label-caps">Actual return</span>
+                  <input type="date" value={breakForm.return_to_learning_date} onChange={(event) => setBreakForm((value) => ({ ...value, return_to_learning_date: event.target.value }))} className="w-full rounded-md border border-border bg-card px-3 py-2 font-mono text-sm text-foreground" />
+                  <span className="block text-[11px] text-muted-foreground">Leave blank if the learner has not returned.</span>
+                </label>
+                <label className="space-y-1.5">
+                  <span className="label-caps">Revised planned end</span>
+                  <input type="date" value={breakForm.revised_learning_planned_end_date} onChange={(event) => setBreakForm((value) => ({ ...value, revised_learning_planned_end_date: event.target.value }))} className="w-full rounded-md border border-border bg-card px-3 py-2 font-mono text-sm text-foreground" />
+                </label>
+                <div className="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-4">
+                  <button type="submit" disabled={savingBreak} className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background disabled:opacity-50">
+                    {savingBreak ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {savingBreak ? "Saving…" : "Save dates"}
+                  </button>
+                  <button type="button" disabled={savingBreak} onClick={() => setEditingBreak(false)} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground disabled:opacity-50">
+                    <X className="h-4 w-4" /> Cancel
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <dl className="mt-6 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                <div><dt className="label-caps">Break date</dt><dd className="mt-1 font-mono text-sm">{dateOnly(learner.break_in_learning.last_learning_date)}</dd></div>
+                <div><dt className="label-caps">Expected return</dt><dd className="mt-1 font-mono text-sm">{dateOnly(learner.break_in_learning.expected_return_date)}</dd></div>
+                <div><dt className="label-caps">Actual return</dt><dd className="mt-1 font-mono text-sm">{learner.break_in_learning.has_return_to_learning ? dateOnly(learner.break_in_learning.return_to_learning_date) : "Not returned yet"}</dd></div>
+                <div><dt className="label-caps">Revised planned end</dt><dd className="mt-1 font-mono text-sm">{dateOnly(learner.break_in_learning.revised_learning_planned_end_date)}</dd></div>
+              </dl>
+            )}
+            <div className="mt-6 rounded-md border border-current/15 bg-background/70 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Evidence of last date of learning</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Evidence from the last learning day: {dateOnly(lastLearningEvidenceDate)}.
+                  </p>
+                </div>
+                <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${!lastLearningEvidenceDate || uploadingLastLearningEvidence ? "pointer-events-none opacity-50" : ""}`}>
+                  {uploadingLastLearningEvidence ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadingLastLearningEvidence ? "Uploadingâ€¦" : "Upload evidence"}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    disabled={!lastLearningEvidenceDate || uploadingLastLearningEvidence}
+                    onChange={(event) => {
+                      void handleLastLearningEvidenceUpload(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+              {lastLearningEvidenceError && <p className="mt-3 text-xs font-medium text-destructive">{lastLearningEvidenceError}</p>}
+              {lastLearningEvidenceMessage && <p className="mt-3 text-xs font-medium text-success">{lastLearningEvidenceMessage}</p>}
+              {lastLearningEvidenceItems.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {lastLearningEvidenceItems.map((evidence) => (
+                    <div key={evidence.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground">{evidence.name}</p>
+                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">{dateOnly(evidence.date)}</p>
+                      </div>
+                      {evidence.file && (
+                        <button type="button" onClick={() => setPreviewEvidence(evidence)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
+                          <Eye className="h-3.5 w-3.5" /> Preview
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="mt-4 rounded-md border border-current/15 bg-background/70 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Return to learning evidence</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Evidence from the first return day: {dateOnly(learner.break_in_learning.return_to_learning_date)}.
+                  </p>
+                </div>
+                <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${!learner.break_in_learning.return_to_learning_date || uploadingBreakEvidence ? "pointer-events-none opacity-50" : ""}`}>
+                  {uploadingBreakEvidence ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadingBreakEvidence ? "Uploading…" : "Upload evidence"}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    disabled={!learner.break_in_learning.return_to_learning_date || uploadingBreakEvidence}
+                    onChange={(event) => {
+                      void handleBreakEvidenceUpload(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+              {breakEvidenceError && <p className="mt-3 text-xs font-medium text-destructive">{breakEvidenceError}</p>}
+              {breakEvidenceMessage && <p className="mt-3 text-xs font-medium text-success">{breakEvidenceMessage}</p>}
+              {breakEvidenceItems.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {breakEvidenceItems.map((evidence) => (
+                    <div key={evidence.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground">{evidence.name}</p>
+                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">{dateOnly(evidence.date)}</p>
+                      </div>
+                      {evidence.file && (
+                        <button type="button" onClick={() => setPreviewEvidence(evidence)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
+                          <Eye className="h-3.5 w-3.5" /> Preview
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {isWithdrawn && !hasBreakInLearning && (
+          <section className="rounded-lg border border-destructive/25 bg-destructive/[0.03] p-6 shadow-panel">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                  <CalendarClock className="h-5 w-5" />
+                </span>
+                <div>
+                  <h2 className="font-serif text-lg text-foreground">Withdrawal evidence</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">The selected last date of learning defaults to the ILR actual end date and can be corrected here.</p>
+                </div>
+              </div>
+              <span className="rounded-full bg-destructive/10 px-3 py-1.5 text-xs font-semibold text-destructive">Withdrawn</span>
+            </div>
+
+            <div className="mt-6 rounded-md border border-current/15 bg-background/70 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Evidence of last date of learning</p>
+                  {editingWithdrawalEvidenceDate ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <input
+                        type="date"
+                        value={withdrawalEvidenceDateValue}
+                        onChange={(event) => setWithdrawalEvidenceDateValue(event.target.value)}
+                        className="rounded-md border border-border bg-card px-2.5 py-1.5 font-mono text-xs text-foreground"
+                      />
+                      <button type="button" onClick={() => void handleWithdrawalEvidenceDateSave()} disabled={!withdrawalEvidenceDateValue || savingWithdrawalEvidenceDate} className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-semibold text-background disabled:opacity-50">
+                        {savingWithdrawalEvidenceDate ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                      </button>
+                      <button type="button" onClick={() => setEditingWithdrawalEvidenceDate(false)} disabled={savingWithdrawalEvidenceDate} className="rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-semibold text-foreground disabled:opacity-50">Cancel</button>
+                    </div>
+                  ) : (
+                    <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      Last date of learning: <span className="font-mono">{dateOnly(lastLearningEvidenceDate)}</span>
+                      <button
+                        type="button"
+                        aria-label="Edit withdrawal last date of learning"
+                        onClick={() => {
+                          setWithdrawalEvidenceDateValue(dateInputValue(lastLearningEvidenceDate));
+                          setWithdrawalEvidenceDateError(null);
+                          setEditingWithdrawalEvidenceDate(true);
+                        }}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    </p>
+                  )}
+                  {withdrawalEvidenceDateError && <p className="mt-2 text-xs font-medium text-destructive">{withdrawalEvidenceDateError}</p>}
+                </div>
+                <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${!lastLearningEvidenceDate || uploadingLastLearningEvidence ? "pointer-events-none opacity-50" : ""}`}>
+                  {uploadingLastLearningEvidence ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadingLastLearningEvidence ? "Uploadingâ€¦" : "Upload evidence"}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    disabled={!lastLearningEvidenceDate || uploadingLastLearningEvidence}
+                    onChange={(event) => {
+                      void handleLastLearningEvidenceUpload(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+              {lastLearningEvidenceError && <p className="mt-3 text-xs font-medium text-destructive">{lastLearningEvidenceError}</p>}
+              {lastLearningEvidenceMessage && <p className="mt-3 text-xs font-medium text-success">{lastLearningEvidenceMessage}</p>}
+              {lastLearningEvidenceItems.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {lastLearningEvidenceItems.map((evidence) => (
+                    <div key={evidence.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2.5">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-foreground">{evidence.name}</p>
+                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">{dateOnly(evidence.date)}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {evidence.file && (
+                          <button type="button" onClick={() => setPreviewEvidence(evidence)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
+                            <Eye className="h-3.5 w-3.5" /> Preview
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void handleWithdrawalEvidenceDelete(evidence)}
+                          disabled={deletingEvidenceId !== null}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs font-semibold text-destructive hover:bg-destructive/10 disabled:opacity-60"
+                        >
+                          {deletingEvidenceId === evidence.id ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </section>
         )}
 
