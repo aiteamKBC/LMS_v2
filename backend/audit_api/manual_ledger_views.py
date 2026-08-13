@@ -48,6 +48,7 @@ from .last_audit_ledger_views import (
 
 MANUAL_ROWS = '"structured_manual_activities"."manual_learner_activities"'
 MANUAL_DOCS = '"structured_manual_activities"."manual_activity_documents"'
+READING_QUIZ_PAIRS = '"structured_manual_activities"."reading_quiz_pairs"'
 GROUP_ACTIVITIES = '"Last_audit"."group_activities"'
 
 ASSIGNMENT_CONTAINER = "learner-assignments"
@@ -134,6 +135,21 @@ def _ensure_manual_tables(cursor):
         CREATE INDEX IF NOT EXISTS idx_manual_docs_row
             ON {MANUAL_DOCS} (manual_activity_id)
     """)
+    cursor.execute(f"""
+        CREATE TABLE IF NOT EXISTS {READING_QUIZ_PAIRS} (
+            id                  bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+            group_id            bigint NOT NULL,
+            reading_activity_id bigint NOT NULL,
+            quiz_activity_id    bigint NOT NULL,
+            created_by          text,
+            created_at          timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (group_id, reading_activity_id, quiz_activity_id),
+            UNIQUE (group_id, reading_activity_id),
+            UNIQUE (group_id, quiz_activity_id),
+            CHECK (reading_activity_id <> quiz_activity_id)
+        )
+    """)
+    cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_rq_pairs_group ON {READING_QUIZ_PAIRS} (group_id)")
 
 
 def _month_label(month):
@@ -308,6 +324,14 @@ def _parse_source_ref(category, raw):
         if not ref.startswith("att:") or len(ref) <= 4:
             raise ValueError("attendance rows need an att:<source_key> reference")
         return ref, None, None
+    if category == "reading+quiz" and ref.startswith("rq:"):
+        parts = ref.split(":")
+        if len(parts) == 4:
+            try:
+                return ref, int(parts[1]), int(parts[2])
+            except ValueError:
+                pass
+        raise ValueError("reading+quiz bundle reference must look like rq:<group_id>:<reading_id>:<quiz_id>")
     parts = ref.split(":")
     if ref.startswith("la:") and len(parts) == 3:
         try:
@@ -315,6 +339,51 @@ def _parse_source_ref(category, raw):
         except ValueError:
             raise ValueError("source_ref must look like la:<group_id>:<activity_id>")
     raise ValueError(f"{category} rows need a la:<group_id>:<activity_id> reference")
+
+
+@csrf_exempt
+def reading_quiz_pairs(request: HttpRequest) -> JsonResponse:
+    """Persist an explicit Reading <-> Quiz relationship for one LMS group."""
+    if request.method not in {"POST", "DELETE"}:
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        body = json.loads(request.body or b"{}")
+        group_id = int(body.get("group_id"))
+        reading_id = int(body.get("reading_activity_id"))
+        quiz_id = int(body.get("quiz_activity_id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "group_id, reading_activity_id and quiz_activity_id are required integers"}, status=400)
+    if reading_id == quiz_id:
+        return JsonResponse({"error": "Choose two different activities."}, status=400)
+    try:
+        with _connection().cursor() as cursor:
+            _ensure_manual_tables(cursor)
+            cursor.execute(
+                f"SELECT activity_id FROM {GROUP_ACTIVITIES} WHERE group_id = %s AND activity_id = ANY(%s)",
+                [group_id, [reading_id, quiz_id]],
+            )
+            if len({int(row[0]) for row in cursor.fetchall()}) != 2:
+                return JsonResponse({"error": "Both activities must belong to the selected group."}, status=400)
+            if request.method == "DELETE":
+                cursor.execute(
+                    f"DELETE FROM {READING_QUIZ_PAIRS} WHERE group_id=%s AND reading_activity_id=%s AND quiz_activity_id=%s",
+                    [group_id, reading_id, quiz_id],
+                )
+                return JsonResponse({"ok": True, "deleted": cursor.rowcount})
+            cursor.execute(
+                f"""
+                INSERT INTO {READING_QUIZ_PAIRS} (group_id, reading_activity_id, quiz_activity_id, created_by)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (group_id, reading_activity_id, quiz_activity_id) DO NOTHING
+                RETURNING id
+                """,
+                [group_id, reading_id, quiz_id, _actor(body.get("created_by"))],
+            )
+            created = cursor.fetchone()
+    except DatabaseError as error:
+        return JsonResponse({"error": "Could not save the Reading + Quiz link.", "details": str(error)}, status=503)
+    return JsonResponse({"ok": True, "created": bool(created), "group_id": group_id,
+                         "reading_activity_id": reading_id, "quiz_activity_id": quiz_id})
 
 
 def _actor(value):
@@ -1310,6 +1379,14 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
                 content_rows = _dict_rows(cursor)
 
             _ensure_manual_tables(cursor)
+            group_ids = sorted({int(row["group_id"]) for row in content_rows if row.get("group_id") is not None})
+            pairs = []
+            if group_ids:
+                cursor.execute(
+                    f"SELECT id, group_id, reading_activity_id, quiz_activity_id FROM {READING_QUIZ_PAIRS} WHERE group_id = ANY(%s)",
+                    [group_ids],
+                )
+                pairs = _dict_rows(cursor)
             cursor.execute(
                 f"""
                 SELECT source_ref FROM {MANUAL_ROWS}
@@ -1347,6 +1424,8 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
     for row in content_rows:
         activity_date = row.get("activity_date")
         activities.append({
+            "group_id": int(row["group_id"]),
+            "activity_id": int(row["activity_id"]),
             "source_ref": f"la:{int(row['group_id'])}:{int(row['activity_id'])}",
             "category": row.get("activity_type") or "activity",
             "title": row.get("title") or f"Activity {row['activity_id']}",
@@ -1354,6 +1433,34 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
             "duration_minutes": _num(row.get("configured_duration_min")),
             "completion": {"state": "completed" if _is_completed(row) else "not_completed"},
         })
+
+    # Replace explicitly linked Reading/Quiz rows with one selectable bundle.
+    by_key = {(item["group_id"], item["activity_id"]): item for item in activities}
+    consumed = set()
+    bundles = []
+    for pair in pairs:
+        group_id = int(pair["group_id"])
+        reading_id = int(pair["reading_activity_id"])
+        quiz_id = int(pair["quiz_activity_id"])
+        reading = by_key.get((group_id, reading_id))
+        quiz = by_key.get((group_id, quiz_id))
+        if not reading or not quiz:
+            continue
+        consumed.update({(group_id, reading_id), (group_id, quiz_id)})
+        states = [reading["completion"]["state"], quiz["completion"]["state"]]
+        bundles.append({
+            "source_ref": f"rq:{group_id}:{reading_id}:{quiz_id}",
+            "category": "reading+quiz",
+            "title": f"{reading['title']} + {quiz['title']}",
+            "activity_date": max(filter(None, [reading.get("activity_date"), quiz.get("activity_date")]), default=None),
+            "duration_minutes": None,
+            "completion": {"state": "completed" if all(state == "completed" for state in states) else "not_completed"},
+            "group_id": group_id,
+            "activity_id": reading_id,
+            "pair": {"reading_activity_id": reading_id, "quiz_activity_id": quiz_id,
+                     "reading_title": reading["title"], "quiz_title": quiz["title"]},
+        })
+    activities = [item for item in activities if (item["group_id"], item["activity_id"]) not in consumed] + bundles
 
     return JsonResponse({
         "aptem_id": aptem_id,

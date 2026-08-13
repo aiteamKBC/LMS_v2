@@ -302,6 +302,14 @@ export type ImportActivityCandidate = {
   activity_date: string | null;
   duration_minutes: number | null;
   completion: { state: CompletionState };
+  group_id: number;
+  activity_id: number;
+  pair?: {
+    reading_activity_id: number;
+    quiz_activity_id: number;
+    reading_title: string;
+    quiz_title: string;
+  };
 };
 
 export type ImportCandidatesResponse = {
@@ -316,6 +324,22 @@ export type ImportCandidatesResponse = {
 export function getImportCandidates(aptemId: number | string, month: string): Promise<ImportCandidatesResponse> {
   const query = new URLSearchParams({ aptem_id: String(aptemId), month });
   return request(`/import-candidates?${query}`);
+}
+
+export function createReadingQuizPair(input: {
+  group_id: number;
+  reading_activity_id: number;
+  quiz_activity_id: number;
+}): Promise<{ ok: boolean; created: boolean }> {
+  return request("/reading-quiz-pairs", jsonInit("POST", input));
+}
+
+export function deleteReadingQuizPair(input: {
+  group_id: number;
+  reading_activity_id: number;
+  quiz_activity_id: number;
+}): Promise<{ ok: boolean; deleted: number }> {
+  return request("/reading-quiz-pairs", jsonInit("DELETE", input));
 }
 
 export type BulkCreateInput = Omit<CreateManualRowInput, "aptem_id" | "created_by"> & { key: string };

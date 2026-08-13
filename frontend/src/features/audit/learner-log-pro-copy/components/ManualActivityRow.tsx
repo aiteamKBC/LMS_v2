@@ -46,6 +46,7 @@ function RowInput({ className = "", ...props }: InputHTMLAttributes<HTMLInputEle
 }
 
 export function ledgerRef(row: Pick<DraftRow, "category" | "source_ref" | "serverId">) {
+  if (row.source_ref?.startsWith("rq:")) return null;
   if (row.category === "assignment" || !row.source_ref) {
     return row.serverId != null ? `row:${row.serverId}` : null;
   }

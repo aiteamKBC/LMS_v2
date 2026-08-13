@@ -22,6 +22,7 @@ from .manual_ledger_views import (
     import_candidates as manual_import_candidates,
     rows as manual_rows,
     rows_bulk as manual_rows_bulk,
+    reading_quiz_pairs as manual_reading_quiz_pairs,
     summary as manual_summary,
 )
 from .learner_match_ledger_views import (
@@ -57,6 +58,7 @@ urlpatterns = [
     path("last-audit/manual/rows", manual_rows, name="last-audit-manual-rows"),
     path("last-audit/manual/rows/bulk", manual_rows_bulk, name="last-audit-manual-rows-bulk"),
     path("last-audit/manual/import-candidates", manual_import_candidates, name="last-audit-manual-import-candidates"),
+    path("last-audit/manual/reading-quiz-pairs", manual_reading_quiz_pairs, name="last-audit-manual-reading-quiz-pairs"),
     path("last-audit/manual/documents", manual_documents, name="last-audit-manual-documents"),
     path("last-audit/manual/activity-ledger", manual_activity_ledger, name="last-audit-manual-activity-ledger"),
     path("ledger/health", health, name="learner-log-health"),
