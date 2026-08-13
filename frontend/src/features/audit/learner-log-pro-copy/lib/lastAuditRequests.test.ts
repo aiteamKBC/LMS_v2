@@ -49,8 +49,8 @@ describe("Last_audit request scoping", () => {
     const result = await getLearnerActivities({ search: "", limit: 20, offset: 0 });
 
     expect(result.items).toEqual([]);
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/last-audit-ledger/cohort/"))).toBe(true);
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/last-audit-ledger/activities/"))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/audit_api/last-audit/cohort/"))).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/audit_api/last-audit/activities/"))).toBe(false);
   });
 
   it("keeps Aptem identity and exposes the verified LMS match", async () => {
@@ -114,7 +114,7 @@ describe("Last_audit request scoping", () => {
       offset: 0,
     });
 
-    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/last-audit-ledger/activities/"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter((call) => String(call[0]).includes("/audit_api/last-audit/activities/"))).toHaveLength(1);
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("aptem_id=1930"))).toBe(true);
   });
 
@@ -144,8 +144,8 @@ describe("Last_audit request scoping", () => {
     const result = await getLearners({ period: "2026-08" });
 
     expect(result.learners[0].entries).toBe(1);
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/last-audit-ledger/cohort/"))).toBe(true);
-    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/last-audit-ledger/activities/"))).toBe(false);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/audit_api/last-audit/cohort/"))).toBe(true);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("/audit_api/last-audit/activities/"))).toBe(false);
   });
 
   it("quarantines impossible source years as undated without changing their hours", async () => {
@@ -340,7 +340,7 @@ describe("Last_audit request scoping", () => {
 
     expect(result.total).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0][0])).toContain("/last-audit-ledger/activity/?activity_id=la%3A10%3A20");
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/audit_api/last-audit/activity/?activity_id=la%3A10%3A20");
   });
 
   it("loads the rich learner profile for every programme", async () => {

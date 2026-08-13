@@ -16,7 +16,7 @@ from unittest import mock
 from django.test import RequestFactory, SimpleTestCase
 
 from .ledger_views import _merge_title_key, merge_reading_quiz_rows
-from .match_ledger_views import _validate_overlay_activity, learner_hours
+from .match_ledger_views import _normalise_levy_status, _skill_radar_score_values, _skill_radar_snapshot_entries, _skill_radar_text_category, _validate_overlay_activity, learner_hours
 from .plan_pickers import picker_attendance_modules, picker_group_activities
 from .plan_projection import _resolve_date, suppress_claimed_mirror_rows
 from .plan_tables import assignment_name_key
@@ -28,6 +28,35 @@ from .plan_views import (
     plan_group_months,
     plan_progress,
 )
+
+
+class SkillsRadarScoreTests(SimpleTestCase):
+    def test_uses_each_characteristics_source_maximum(self):
+        self.assertEqual(_skill_radar_score_values(2, "2", "5"), (2, 5))
+        self.assertEqual(_skill_radar_score_values(4, "4", "8"), (4, 8))
+
+    def test_falls_back_for_legacy_score_rows(self):
+        self.assertEqual(_skill_radar_score_values(3, None, None), (3, 8))
+
+    def test_builds_concise_category_from_ksb_text(self):
+        self.assertEqual(
+            _skill_radar_text_category("I can use appropriate technologies to deliver marketing outcomes"),
+            "Marketing technology",
+        )
+
+    def test_normalises_retained_withdrawn_learner_snapshot(self):
+        result = _skill_radar_snapshot_entries([
+            ("Skills", "S3", "Deliver marketing materials", "Consistently – confident"),
+        ])
+
+        self.assertEqual(result[0]["skill_score"], 5)
+        self.assertEqual(result[0]["maximum"], 8)
+
+
+class EmployerLevyStatusTests(SimpleTestCase):
+    def test_normalises_levy_and_non_levy_values(self):
+        self.assertEqual(_normalise_levy_status("Levy"), "Levy")
+        self.assertEqual(_normalise_levy_status("Non-Levy"), "Non-Levy")
 
 
 def _post(view, path, payload, method="post", **kwargs):

@@ -528,7 +528,7 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
     back from the ``Manual_audit`` tables this app owns.
     """
     contracts = []
-    skill_groups = {}
+    skill_entries = []
     certifications = []
     employment = None
     learning_delivery = {}
@@ -708,16 +708,23 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
 
         cursor.execute(
             '''
-            select characteristic_name, assessed_level
+            select characteristic_name, assessed_level,
+                   raw -> 'score' ->> 'achieved',
+                   raw -> 'score' ->> 'maximum'
             from fetching_evidence.aptem_skills_radar_probe
-            where learner_id = %s and assessed_level is not null
+            where learner_id = %s
+              and coalesce(raw -> 'score' ->> 'achieved', assessed_level::text) is not null
             order by characteristic_name
             ''',
             [aptem_id],
         )
-        for characteristic, assessed_level in cursor.fetchall():
+        for characteristic, assessed_level, achieved_value, maximum_value in cursor.fetchall():
             name = (characteristic or "").strip()
-            score = max(0, min(8, int(assessed_level)))
+            score, maximum = _skill_radar_score_values(
+                assessed_level,
+                achieved_value,
+                maximum_value,
+            )
             # Two source formats coexist in aptem_skills_radar_probe:
             #  - Project Controls: "Understanding of X (Knowledge) - K7: ..."
             #  - Marketing:        "K3: I understand ..." / "S1: I can ..." / "B6: Acting ..."
@@ -730,13 +737,34 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                 domain = legacy.group(1).strip()
                 score_type = legacy.group(2).lower()
             elif coded:
-                domain = name.split(" - ")[0].strip()
+                description = re.sub(r"^\s*[KSB]\d+\s*[:.\-]\s*", "", name, flags=re.IGNORECASE).strip()
+                domain = _skill_radar_text_category(description)
                 score_type = {"K": "knowledge", "S": "skill", "B": "behaviour"}[coded.group(1).upper()]
             else:
                 domain = name.split(" - ")[0].strip() or "Skill"
                 score_type = "skill"
             field = {"knowledge": "knowledge", "skill": "skill_score", "behaviour": "behaviour"}[score_type]
-            skill_groups.setdefault(domain, {})[field] = score
+            skill_entries.append({
+                "skill": name or domain,
+                "domain": domain,
+                "ksb_codes": _skill_radar_codes(name),
+                "knowledge": score if field == "knowledge" else None,
+                "skill_score": score if field == "skill_score" else None,
+                "behaviour": score if field == "behaviour" else None,
+                "maximum": maximum,
+            })
+
+        if not skill_entries and str(programme_status).strip().lower() == "withdrawn":
+            cursor.execute(
+                '''
+                select category, code, title, level
+                from fetching_evidence.learner_ksbs
+                where learner_id = %s and level is not null
+                order by category, code
+                ''',
+                [aptem_id],
+            )
+            skill_entries.extend(_skill_radar_snapshot_entries(cursor.fetchall()))
 
         cursor.execute(
             '''
@@ -773,6 +801,21 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                     certifications.append(certification)
             if employment is None:
                 employment = _first_employment_details(employment_value)
+
+        cursor.execute(
+            '''
+            select "Levy or Not"
+            from "LMS"."Aptem_users"
+            where "ID" = %s
+            limit 1
+            ''',
+            [aptem_id],
+        )
+        levy_row = cursor.fetchone()
+        levy_status = _normalise_levy_status(levy_row[0] if levy_row else None)
+        if levy_status:
+            employment = dict(employment or {})
+            employment["levy_status"] = levy_status
 
         if learner_email or learner_name:
             learner_email = str(learner_email or "").strip()
@@ -908,16 +951,9 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                     learning_delivery["first_evidence_date"] = first_date
                     learning_delivery["first_evidence_items"] = first_items
 
-    skills_radar = [
-        {
-            "skill": domain,
-            "knowledge": scores.get("knowledge"),
-            "skill_score": scores.get("skill_score"),
-            "behaviour": scores.get("behaviour"),
-            "maximum": 8,
-        }
-        for domain, scores in sorted(skill_groups.items())
-    ]
+    # Do not merge same-domain/same-dimension rows: K1 and K30 can both belong
+    # to Strategic Project Management and must remain distinct assessments.
+    skills_radar = sorted(skill_entries, key=_skill_radar_entry_sort_key)
     return {
         "contracts": contracts,
         "skills_radar": skills_radar,
@@ -928,6 +964,159 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
         "programme_status": programme_status,
         "break_in_learning": break_in_learning,
     }
+
+
+def _skill_radar_codes(value):
+    """Return each KSB code once, preserving the Aptem source order."""
+    codes = []
+    seen = set()
+    for match in re.finditer(r"\b([KSB]\d+)\b", str(value or ""), re.IGNORECASE):
+        code = match.group(1).upper()
+        if code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
+
+
+_SKILL_RADAR_CATEGORY_RULES = (
+    (r"fundamentals of marketing theory|marketing process", "Marketing fundamentals"),
+    (r"brand positioning|corporate reputation", "Brand management"),
+    (r"customer relationship management|stakeholder management.*customer", "Stakeholder & CRM"),
+    (r"business and sector|vision and value", "Business & sector"),
+    (r"wider business objectives", "Business objectives"),
+    (r"target audience.*decision", "Customer behaviour"),
+    (r"legal.*regulatory|compliance frameworks?|data protection", "Legal & compliance"),
+    (r"principles of effective market research", "Market research"),
+    (r"product development|product/service portfolios?", "Product development"),
+    (r"routes? to market|marketing landscape", "Routes to market"),
+    (r"communications?\s+channels? and media", "Communication channels"),
+    (r"coordinate and maintain.*marketing channels", "Marketing channels"),
+    (r"tactical campaigns?|smart objectives?", "Campaign planning"),
+    (r"production and distribution.*marketing materials?", "Marketing materials"),
+    (r"creative and effective communications?|write and proofread", "Marketing communications"),
+    (r"engage and collaborate.*(?:clients?|stakeholders?)|across departments", "Stakeholder collaboration"),
+    (r"project and time management", "Project & time management"),
+    (r"coordinate several marketing campaigns", "Campaign coordination"),
+    (r"liaise with.*stakeholders?|manage.*stakeholders?.*suppliers?", "Stakeholder management"),
+    (r"project budgets?|budget", "Budget management"),
+    (r"assimilate and analyse data|data and information.*range of sources", "Data analysis"),
+    (r"effectiveness of marketing campaigns", "Campaign evaluation"),
+    (r"data and research.*derive insights|insights.*future campaigns", "Research insights"),
+    (r"business systems? and software", "Business systems"),
+    (r"appropriate technologies|web analytics|social media.*crm", "Marketing technology"),
+    (r"tenacious and driven|projects? through to completion", "Drive & resilience"),
+    (r"self.?starter|adaptable approach|changing work priorities", "Initiative & adaptability"),
+    (r"creative and analytical mind|new ways of doing", "Creative thinking"),
+    (r"ideas and solutions", "Problem solving"),
+    (r"learn from mistakes|improve.*performance", "Continuous improvement"),
+    (r"professionalism|reliability and dependability", "Professionalism"),
+    (r"collaborative approach|showing empathy", "Collaboration & empathy"),
+    (r"ethical behaviour|equality.*diversity", "Ethics & inclusion"),
+)
+
+
+def _skill_radar_text_category(value):
+    """Build a concise chart category when Aptem only supplies full KSB text."""
+    text = " ".join(str(value or "").split()).strip()
+    lowered = text.lower()
+    for pattern, category in _SKILL_RADAR_CATEGORY_RULES:
+        if re.search(pattern, lowered):
+            return category
+
+    concise = re.sub(
+        r"^(?:i\s+)?(?:can|understand|know|am able to|have|work with|demonstrate|come up with)\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    words = concise.rstrip(" .").split()
+    if len(words) > 5:
+        concise = " ".join(words[:5])
+    return concise[:60].strip().capitalize() or "Competency"
+
+
+def _skill_radar_score_values(assessed_level, achieved_value, maximum_value):
+    """Return the Aptem score using the maximum supplied for this characteristic."""
+    try:
+        maximum = float(maximum_value)
+    except (TypeError, ValueError):
+        maximum = 8.0
+    if maximum <= 0:
+        maximum = 8.0
+
+    try:
+        achieved = float(achieved_value)
+    except (TypeError, ValueError):
+        try:
+            achieved = float(assessed_level)
+        except (TypeError, ValueError):
+            achieved = 0.0
+
+    achieved = max(0.0, min(maximum, achieved))
+    return (
+        int(achieved) if achieved.is_integer() else achieved,
+        int(maximum) if maximum.is_integer() else maximum,
+    )
+
+
+def _skill_radar_snapshot_entries(rows):
+    """Normalise the retained KSB snapshot used when a withdrawn Aptem probe is absent."""
+    entries = []
+    for category, code, title, level in rows:
+        score = _skill_radar_level_score(level)
+        if score is None:
+            continue
+        code = str(code or "").strip().upper()
+        category_text = str(category or "").strip().lower()
+        prefix = code[:1]
+        if category_text.startswith("know") or prefix == "K":
+            field = "knowledge"
+        elif category_text.startswith("behav") or prefix == "B":
+            field = "behaviour"
+        else:
+            field = "skill_score"
+        title = str(title or "").strip()
+        entries.append({
+            "skill": f"{code}: {title}" if code and title else title or code,
+            "domain": _skill_radar_text_category(title),
+            "ksb_codes": [code] if re.fullmatch(r"[KSB]0*\d+", code) else [],
+            "knowledge": score if field == "knowledge" else None,
+            "skill_score": score if field == "skill_score" else None,
+            "behaviour": score if field == "behaviour" else None,
+            "maximum": 8,
+        })
+    return entries
+
+
+def _skill_radar_level_score(value):
+    text = str(value or "").strip().lower()
+    for label, score in (
+        ("mastery", 8), ("expert", 7), ("proficient", 6),
+        ("consistently", 5), ("frequently", 4), ("occasionally", 3),
+        ("rarely", 2), ("never", 1),
+    ):
+        if text.startswith(label):
+            return score
+    return None
+
+
+def _skill_radar_entry_sort_key(entry):
+    if entry.get("knowledge") is not None:
+        dimension = 0
+    elif entry.get("skill_score") is not None:
+        dimension = 1
+    elif entry.get("behaviour") is not None:
+        dimension = 2
+    else:
+        dimension = 3
+    first_code = (entry.get("ksb_codes") or [""])[0]
+    code_match = re.fullmatch(r"[KSB](\d+)", first_code)
+    return (
+        dimension,
+        int(code_match.group(1)) if code_match else 10**9,
+        str(entry.get("domain") or "").lower(),
+        str(entry.get("skill") or "").lower(),
+    )
 
 
 def _partition_evidence_items(evidence_items):
@@ -963,6 +1152,15 @@ def _first_employment_details(value):
             details = _first_employment_details(item)
             if details:
                 return details
+    return None
+
+
+def _normalise_levy_status(value):
+    text = re.sub(r"[\s_-]+", "", str(value or "")).lower()
+    if text == "levy":
+        return "Levy"
+    if text in {"nonlevy", "notlevy"}:
+        return "Non-Levy"
     return None
 
 

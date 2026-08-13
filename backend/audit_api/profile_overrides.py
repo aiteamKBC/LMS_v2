@@ -21,6 +21,7 @@ PROFILE_FIELDS = {
     "line_manager_name",
     "workplace_address",
     "employer_postcode",
+    "levy_status",
     "start_date",
     "planned_end_date",
     "last_learning_date",
@@ -43,6 +44,7 @@ TEXT_LIMITS = {
     "line_manager_name": 250,
     "workplace_address": 1000,
     "employer_postcode": 30,
+    "levy_status": 20,
 }
 
 
@@ -82,6 +84,13 @@ def _clean_profile_fields(value):
 
     cleaned = {}
     for field, raw in value.items():
+        if field == "levy_status":
+            text = str(raw or "").strip()
+            if text not in {"", "Levy", "Non-Levy"}:
+                raise ValueError("levy_status must be Levy or Non-Levy.")
+            cleaned[field] = text or None
+            continue
+
         if field == "contracted_hours_per_week":
             if raw in (None, ""):
                 cleaned[field] = None
@@ -140,7 +149,7 @@ def apply_profile_overrides(employment, learning_delivery, overrides):
 
     employer_fields = {
         "employer_name", "job_title", "employment_start_date",
-        "contracted_hours_per_week", "workplace_address",
+        "contracted_hours_per_week", "workplace_address", "levy_status",
     }
     if any(field in overrides for field in employer_fields | {"line_manager_name"}):
         employment = dict(employment or {})
