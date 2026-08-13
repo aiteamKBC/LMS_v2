@@ -11,6 +11,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, FileText, LoaderCircle, Paperclip, Plus, Search, X } from "lucide-react";
 import Swal from "sweetalert2";
+import { DurationInput } from "@/features/audit/learner-log-pro-copy/components/DurationInput";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import {
   durationAsHours,
@@ -460,12 +461,12 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
           {dateIssue && draft.activity_date ? <span className="mt-1 block text-[11px] text-destructive">{dateIssue}</span> : <span className="mt-1 block text-[11px] text-muted-foreground">Working days in {monthLabel} only.</span>}
         </label>
         <label className="block">
-          <span className="label-caps">Planned hours</span>
-          <input type="number" min="0" max="50" step="0.01" value={draft.planned_hours} disabled={needsSelection} onChange={(event) => set({ planned_hours: event.target.value })} placeholder="0" className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-right font-mono text-sm disabled:opacity-60" />
+          <span className="label-caps">Planned duration</span>
+          <div className="mt-1.5"><DurationInput value={Number(draft.planned_hours || 0)} disabled={needsSelection} onChange={(value) => set({ planned_hours: String(value) })} ariaLabel="Planned duration" /></div>
         </label>
         <label className="block">
-          <span className="label-caps">Actual hours</span>
-          <input type="number" min="0" max="50" step="0.01" value={draft.actual_hours} disabled={needsSelection} onChange={(event) => set({ actual_hours: event.target.value })} placeholder="0" className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-right font-mono text-sm disabled:opacity-60" />
+          <span className="label-caps">Actual duration</span>
+          <div className="mt-1.5"><DurationInput value={Number(draft.actual_hours || 0)} disabled={needsSelection} onChange={(value) => set({ actual_hours: String(value) })} ariaLabel="Actual duration" /></div>
         </label>
 
         {category === "attendance" ? (

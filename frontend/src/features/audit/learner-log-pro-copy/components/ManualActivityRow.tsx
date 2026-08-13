@@ -9,6 +9,7 @@ import type { InputHTMLAttributes } from "react";
 import { Link } from "@tanstack/react-router";
 import { AlertTriangle, Check, FileText, Paperclip, Pencil, Trash2, X } from "lucide-react";
 import Swal from "sweetalert2";
+import { DurationInput, formatHoursDuration } from "@/features/audit/learner-log-pro-copy/components/DurationInput";
 import { TableCell, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";
 import { durationAsHours, formatDurationMinutes } from "@/features/audit/learner-log-pro-copy/lib/manualApi";
 import type { DraftPatch, DraftRow } from "@/features/audit/learner-log-pro-copy/lib/journalDraft";
@@ -37,7 +38,7 @@ export function ManualActivityTableHeader({ dark = false }: { dark?: boolean }) 
 }
 
 function hours(value: number | null | undefined) {
-  return value == null ? "—" : String(Math.round(value * 100) / 100);
+  return formatHoursDuration(value);
 }
 
 function RowInput({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
@@ -252,8 +253,8 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
           ) : null}
         </TableCell>
         <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.timestamp_label || "—"}</TableCell>
-        <TableCell className="text-right font-mono text-sm">{hours(row.planned_hours)}</TableCell>
-        <TableCell className="text-right font-mono text-sm text-success">{hours(row.actual_hours)}</TableCell>
+        <TableCell className="whitespace-nowrap text-right font-mono text-sm">{hours(row.planned_hours)}</TableCell>
+        <TableCell className="whitespace-nowrap text-right font-mono text-sm text-success">{hours(row.actual_hours)}</TableCell>
         <TableCell className="pr-7 text-right">
           <div className="flex justify-end gap-1">
             <button type="button" onClick={() => { setDraft(editDraftFromRow(row)); setEditing(true); }} className="rounded-md border border-border p-1.5 hover:bg-secondary" title="Edit in this row" aria-label="Edit activity"><Pencil className="h-3.5 w-3.5" /></button>
@@ -306,9 +307,9 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
           </div>
         )}
       </TableCell>
-      <TableCell><RowInput type="number" min="0" max="50" step="0.01" value={draft.planned_hours} onChange={(e) => set({ planned_hours: Number(e.target.value) })} className="w-20 text-right" /></TableCell>
+      <TableCell><DurationInput compact value={draft.planned_hours} onChange={(planned_hours) => set({ planned_hours })} ariaLabel="Planned duration" /></TableCell>
       <TableCell>
-        <RowInput type="number" min="0" max="50" step="0.01" value={draft.actual_hours} onChange={(e) => set({ actual_hours: Number(e.target.value) })} className="w-20 text-right" />
+        <DurationInput compact value={draft.actual_hours} onChange={(actual_hours) => set({ actual_hours })} ariaLabel="Actual duration" />
         {formatDurationMinutes(row.duration_minutes) ? (
           <button
             type="button"
