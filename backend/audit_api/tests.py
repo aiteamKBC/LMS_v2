@@ -7,6 +7,7 @@ from django.test import SimpleTestCase, override_settings
 from .contract_documents import _safe_upload_filename
 from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _parse_contract_azure_path, _signoff_row
 from .learner_match_ledger_views import _contract_preview_url, _contract_signature_dates_from_text, _cv_employment_terms, _employer_details_from_contract_profile, _fetch_profile_source_row, _merge_matching_cv_employment_terms, _partition_evidence_items, _skill_radar_characteristic, _skill_radar_sort_key, _training_plan_from_audit, _validate_overlay_activity
+from .profile_overrides import _clean_profile_fields, apply_profile_overrides
 
 
 class ContractAzurePathTests(SimpleTestCase):
@@ -185,6 +186,38 @@ class SkillsRadarClassificationTests(SimpleTestCase):
         values = ["S10: Ten", "S2: Two", "S1: One"]
 
         self.assertEqual(sorted(values, key=_skill_radar_sort_key), ["S1: One", "S2: Two", "S10: Ten"])
+
+
+class LearnerProfileOverrideTests(SimpleTestCase):
+    def test_applies_employer_and_planned_end_overrides(self):
+        employment, delivery = apply_profile_overrides(
+            {"employer_name": "Source Ltd", "line_manager": {"name": "Source manager"}},
+            {"employer_postcode": "OLD", "planned_end_date": "2027-01-01"},
+            {
+                "employer_name": "Correct Ltd",
+                "line_manager_name": "Correct manager",
+                "employer_postcode": "M44 5AD",
+                "planned_end_date": "2027-02-14",
+            },
+        )
+
+        self.assertEqual(employment["employer_name"], "Correct Ltd")
+        self.assertEqual(employment["line_manager"]["name"], "Correct manager")
+        self.assertEqual(delivery["employer_postcode"], "M44 5AD")
+        self.assertEqual(delivery["planned_end_date"], "2027-02-14")
+
+    def test_validates_hours_and_planned_end_date(self):
+        fields = _clean_profile_fields({
+            "contracted_hours_per_week": "37.5",
+            "planned_end_date": "2027-02-14",
+        })
+
+        self.assertEqual(fields["contracted_hours_per_week"], 37.5)
+        self.assertEqual(fields["planned_end_date"], "2027-02-14")
+
+    def test_rejects_unknown_profile_fields(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported profile field"):
+            _clean_profile_fields({"learner_name": "Changed"})
 
 
 class ContractDocumentManagementTests(SimpleTestCase):

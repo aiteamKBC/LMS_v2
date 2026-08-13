@@ -287,7 +287,7 @@ export type LearnerProfile = {
       date: string;
       archived: boolean;
     }>;
-    planned_end_date?: string;
+    planned_end_date?: string | null;
     completion_status?: number;
   };
   contracts: Array<{
@@ -1344,6 +1344,33 @@ export function getLearnerProfile(learnerId: string) {
     }
     return response.json() as Promise<LearnerProfile>;
   })();
+}
+
+export type LearnerProfileOverrideFields = Partial<{
+  employer_name: string | null;
+  job_title: string | null;
+  employment_start_date: string | null;
+  contracted_hours_per_week: number | string | null;
+  line_manager_name: string | null;
+  workplace_address: string | null;
+  employer_postcode: string | null;
+  planned_end_date: string | null;
+}>;
+
+export async function updateLearnerProfileFields(
+  learnerId: number,
+  fields: LearnerProfileOverrideFields,
+) {
+  const response = await fetch(`${ANNOTATION_BASE}/learner-profile/overrides`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ learner_id: learnerId, fields }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not update learner profile (${response.status})`);
+  }
+  return response.json() as Promise<{ ok: boolean; learner_id: string; fields: LearnerProfileOverrideFields }>;
 }
 
 export async function uploadContract(learnerId: number, file: File) {

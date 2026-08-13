@@ -54,6 +54,7 @@ from django.views.decorators.http import require_GET
 
 from .contract_documents import ensure_contract_archive_table
 from .evidence_documents import ensure_evidence_override_table
+from .profile_overrides import apply_profile_overrides, get_profile_overrides
 
 try:
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
@@ -1705,6 +1706,11 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
         }
         for domain, scores in sorted(skill_groups.items(), key=lambda item: _skill_radar_sort_key(item[0]))
     ]
+    employment, learning_delivery = apply_profile_overrides(
+        employment,
+        learning_delivery,
+        get_profile_overrides(aptem_id),
+    )
     return {
         "contracts": contracts,
         "skills_radar": skills_radar,
