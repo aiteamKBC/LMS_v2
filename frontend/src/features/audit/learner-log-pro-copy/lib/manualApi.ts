@@ -305,10 +305,9 @@ export type ImportActivityCandidate = {
   group_id: number;
   activity_id: number;
   pair?: {
-    reading_activity_id: number;
-    quiz_activity_id: number;
-    reading_title: string;
-    quiz_title: string;
+    anchor_activity_id: number;
+    activity_ids: number[];
+    titles: string[];
   };
 };
 
@@ -328,16 +327,14 @@ export function getImportCandidates(aptemId: number | string, month: string): Pr
 
 export function createReadingQuizPair(input: {
   group_id: number;
-  reading_activity_id: number;
-  quiz_activity_id: number;
-}): Promise<{ ok: boolean; created: boolean }> {
+  activity_ids: number[];
+}): Promise<{ ok: boolean; created: number }> {
   return request("/reading-quiz-pairs", jsonInit("POST", input));
 }
 
 export function deleteReadingQuizPair(input: {
   group_id: number;
-  reading_activity_id: number;
-  quiz_activity_id: number;
+  activity_ids: number[];
 }): Promise<{ ok: boolean; deleted: number }> {
   return request("/reading-quiz-pairs", jsonInit("DELETE", input));
 }

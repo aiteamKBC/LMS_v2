@@ -139,28 +139,31 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
   const [pairSelection, setPairSelection] = useState<Candidate[]>([]);
   const [savingPair, setSavingPair] = useState(false);
   // Reset the selection whenever fresh candidates arrive.
-  useEffect(() => setSelected(new Set()), [candidatesQuery.data]);
+  useEffect(() => {
+    setSelected(new Set());
+    setPairSelection([]);
+  }, [candidatesQuery.data]);
 
   const togglePair = (candidate: Candidate) => setPairSelection((current) => {
     if (current.some((item) => item.source_ref === candidate.source_ref)) {
       return current.filter((item) => item.source_ref !== candidate.source_ref);
     }
-    if (current.length >= 2) return [current[1], candidate];
     return [...current, candidate];
   });
 
   async function savePair() {
-    if (pairSelection.length !== 2) return;
-    const [reading, quiz] = pairSelection;
-    if (!reading.group_id || reading.group_id !== quiz.group_id || !reading.activity_id || !quiz.activity_id) {
-      return void Swal.fire({ icon: "error", title: "Cannot link these activities", text: "Choose two activities from the same LMS group." });
+    if (pairSelection.length < 2) return;
+    const groupId = pairSelection[0]?.group_id;
+    const activityIds = pairSelection.map((item) => item.activity_id);
+    if (!groupId || activityIds.some((id) => !id) || pairSelection.some((item) => item.group_id !== groupId)) {
+      return void Swal.fire({ icon: "error", title: "Cannot merge these activities", text: "Choose at least two activities from the same LMS group." });
     }
     setSavingPair(true);
     try {
-      await createReadingQuizPair({ group_id: reading.group_id, reading_activity_id: reading.activity_id, quiz_activity_id: quiz.activity_id });
+      await createReadingQuizPair({ group_id: groupId, activity_ids: activityIds as number[] });
       setPairSelection([]);
       await queryClient.invalidateQueries({ queryKey: ["manual-import-candidates", aptemId, month] });
-      await Swal.fire({ toast: true, position: "top-end", icon: "success", title: "Reading and Quiz linked", showConfirmButton: false, timer: 1800 });
+      await Swal.fire({ toast: true, position: "top-end", icon: "success", title: `${activityIds.length} activities merged`, showConfirmButton: false, timer: 1800 });
     } catch (error) {
       await Swal.fire({ icon: "error", title: "Could not save the link", text: error instanceof Error ? error.message : "Could not link these activities." });
     } finally {
@@ -172,8 +175,8 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
     if (!candidate.group_id || !candidate.pair) return;
     const confirmation = await Swal.fire({
       icon: "warning",
-      title: "Unlink Reading and Quiz?",
-      text: "Both activities will appear separately again for every learner in this group.",
+      title: "Unlink this bundle?",
+      text: "All bundled activities will appear separately again for every learner in this group.",
       showCancelButton: true,
       confirmButtonText: "Unlink",
       confirmButtonColor: "#b91c1c",
@@ -182,8 +185,7 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
     try {
       await deleteReadingQuizPair({
         group_id: candidate.group_id,
-        reading_activity_id: candidate.pair.reading_activity_id,
-        quiz_activity_id: candidate.pair.quiz_activity_id,
+        activity_ids: candidate.pair.activity_ids,
       });
       await queryClient.invalidateQueries({ queryKey: ["manual-import-candidates", aptemId, month] });
     } catch (error) {
@@ -278,9 +280,9 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
                   </header>
                   {category === "reading+quiz" && candidates.length ? (
                     <div className="flex items-center justify-between gap-2 border-b border-border bg-[#f6f8fb] px-4 py-2">
-                      <span className="text-[11px] text-muted-foreground">Select exactly two unlinked items using “Pair”, then save the relationship.</span>
-                      <Button type="button" size="sm" variant="outline" disabled={pairSelection.length !== 2 || savingPair} onClick={savePair}>
-                        {savingPair ? "Linking..." : `Link pair${pairSelection.length ? ` (${pairSelection.length}/2)` : ""}`}
+                      <span className="text-[11px] text-muted-foreground">Select two or more unlinked items using “Merge”, then save them as one activity.</span>
+                      <Button type="button" size="sm" variant="outline" disabled={pairSelection.length < 2 || savingPair} onClick={savePair}>
+                        {savingPair ? "Merging..." : `Merge selected${pairSelection.length ? ` (${pairSelection.length})` : ""}`}
                       </Button>
                     </div>
                   ) : null}
@@ -315,10 +317,10 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
                                 ) : null}
                                 {taken ? <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Already added</span> : null}
                                 {category === "reading+quiz" ? candidate.paired ? (
-                                  <button type="button" onClick={(event) => { event.preventDefault(); void unlinkPair(candidate); }} className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success hover:bg-destructive/15 hover:text-destructive" title="Separate the Reading and Quiz again">Linked bundle · Unlink</button>
+                                  <button type="button" onClick={(event) => { event.preventDefault(); void unlinkPair(candidate); }} className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success hover:bg-destructive/15 hover:text-destructive" title="Separate all bundled activities again">Linked bundle · Unlink</button>
                                 ) : (
                                   <button type="button" onClick={(event) => { event.preventDefault(); togglePair(candidate); }} className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${pairSelection.some((item) => item.source_ref === candidate.source_ref) ? "border-primary bg-primary text-primary-foreground" : "border-border text-primary"}`}>
-                                    Pair
+                                    Merge
                                   </button>
                                 ) : null}
                               </span>

@@ -149,6 +149,13 @@ def _ensure_manual_tables(cursor):
             CHECK (reading_activity_id <> quiz_activity_id)
         )
     """)
+    # Older installs allowed only one row per reading_activity_id, which made
+    # every bundle exactly two items.  Keep the existing table/data, but let
+    # one anchor activity own as many additional items as the user selects.
+    cursor.execute(
+        'ALTER TABLE "structured_manual_activities"."reading_quiz_pairs" '
+        'DROP CONSTRAINT IF EXISTS reading_quiz_pairs_group_id_reading_activity_id_key'
+    )
     cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_rq_pairs_group ON {READING_QUIZ_PAIRS} (group_id)")
 
 
@@ -326,12 +333,12 @@ def _parse_source_ref(category, raw):
         return ref, None, None
     if category == "reading+quiz" and ref.startswith("rq:"):
         parts = ref.split(":")
-        if len(parts) == 4:
+        if len(parts) >= 4:
             try:
                 return ref, int(parts[1]), int(parts[2])
             except ValueError:
                 pass
-        raise ValueError("reading+quiz bundle reference must look like rq:<group_id>:<reading_id>:<quiz_id>")
+        raise ValueError("reading+quiz bundle reference must contain a group id and at least two activity ids")
     parts = ref.split(":")
     if ref.startswith("la:") and len(parts) == 3:
         try:
@@ -343,47 +350,62 @@ def _parse_source_ref(category, raw):
 
 @csrf_exempt
 def reading_quiz_pairs(request: HttpRequest) -> JsonResponse:
-    """Persist an explicit Reading <-> Quiz relationship for one LMS group."""
+    """Persist an explicit bundle of two or more activities for one LMS group."""
     if request.method not in {"POST", "DELETE"}:
         return JsonResponse({"error": "Method not allowed."}, status=405)
     try:
         body = json.loads(request.body or b"{}")
         group_id = int(body.get("group_id"))
-        reading_id = int(body.get("reading_activity_id"))
-        quiz_id = int(body.get("quiz_activity_id"))
+        raw_activity_ids = body.get("activity_ids")
+        if raw_activity_ids is None:
+            raw_activity_ids = [body.get("reading_activity_id"), body.get("quiz_activity_id")]
+        activity_ids = list(dict.fromkeys(int(value) for value in raw_activity_ids))
     except (TypeError, ValueError):
-        return JsonResponse({"error": "group_id, reading_activity_id and quiz_activity_id are required integers"}, status=400)
-    if reading_id == quiz_id:
-        return JsonResponse({"error": "Choose two different activities."}, status=400)
+        return JsonResponse({"error": "group_id and activity_ids must be integers"}, status=400)
+    if len(activity_ids) < 2:
+        return JsonResponse({"error": "Choose at least two different activities."}, status=400)
+    anchor_id, member_ids = activity_ids[0], activity_ids[1:]
     try:
         with _connection().cursor() as cursor:
             _ensure_manual_tables(cursor)
             cursor.execute(
                 f"SELECT activity_id FROM {GROUP_ACTIVITIES} WHERE group_id = %s AND activity_id = ANY(%s)",
-                [group_id, [reading_id, quiz_id]],
+                [group_id, activity_ids],
             )
-            if len({int(row[0]) for row in cursor.fetchall()}) != 2:
-                return JsonResponse({"error": "Both activities must belong to the selected group."}, status=400)
+            if len({int(row[0]) for row in cursor.fetchall()}) != len(activity_ids):
+                return JsonResponse({"error": "All activities must belong to the selected group."}, status=400)
             if request.method == "DELETE":
                 cursor.execute(
-                    f"DELETE FROM {READING_QUIZ_PAIRS} WHERE group_id=%s AND reading_activity_id=%s AND quiz_activity_id=%s",
-                    [group_id, reading_id, quiz_id],
+                    f"DELETE FROM {READING_QUIZ_PAIRS} WHERE group_id=%s AND reading_activity_id=%s",
+                    [group_id, anchor_id],
                 )
                 return JsonResponse({"ok": True, "deleted": cursor.rowcount})
             cursor.execute(
                 f"""
-                INSERT INTO {READING_QUIZ_PAIRS} (group_id, reading_activity_id, quiz_activity_id, created_by)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (group_id, reading_activity_id, quiz_activity_id) DO NOTHING
-                RETURNING id
+                SELECT reading_activity_id, quiz_activity_id
+                FROM {READING_QUIZ_PAIRS}
+                WHERE group_id = %s
+                  AND (reading_activity_id = ANY(%s) OR quiz_activity_id = ANY(%s))
                 """,
-                [group_id, reading_id, quiz_id, _actor(body.get("created_by"))],
+                [group_id, activity_ids, activity_ids],
             )
-            created = cursor.fetchone()
+            if cursor.fetchone():
+                return JsonResponse({"error": "One or more selected activities already belong to a bundle."}, status=409)
+            created = 0
+            for member_id in member_ids:
+                cursor.execute(
+                    f"""
+                    INSERT INTO {READING_QUIZ_PAIRS} (group_id, reading_activity_id, quiz_activity_id, created_by)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (group_id, reading_activity_id, quiz_activity_id) DO NOTHING
+                    """,
+                    [group_id, anchor_id, member_id, _actor(body.get("created_by"))],
+                )
+                created += cursor.rowcount
     except DatabaseError as error:
         return JsonResponse({"error": "Could not save the Reading + Quiz link.", "details": str(error)}, status=503)
-    return JsonResponse({"ok": True, "created": bool(created), "group_id": group_id,
-                         "reading_activity_id": reading_id, "quiz_activity_id": quiz_id})
+    return JsonResponse({"ok": True, "created": created, "group_id": group_id,
+                         "activity_ids": activity_ids})
 
 
 def _actor(value):
@@ -1434,31 +1456,35 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
             "completion": {"state": "completed" if _is_completed(row) else "not_completed"},
         })
 
-    # Replace explicitly linked Reading/Quiz rows with one selectable bundle.
+    # Replace explicitly linked rows with one selectable bundle. Multiple rows
+    # sharing reading_activity_id are the members of one multi-item bundle;
+    # legacy two-item pairs naturally remain a bundle with one member.
     by_key = {(item["group_id"], item["activity_id"]): item for item in activities}
     consumed = set()
     bundles = []
+    stored_bundles = {}
     for pair in pairs:
-        group_id = int(pair["group_id"])
-        reading_id = int(pair["reading_activity_id"])
-        quiz_id = int(pair["quiz_activity_id"])
-        reading = by_key.get((group_id, reading_id))
-        quiz = by_key.get((group_id, quiz_id))
-        if not reading or not quiz:
+        key = (int(pair["group_id"]), int(pair["reading_activity_id"]))
+        stored_bundles.setdefault(key, []).append(int(pair["quiz_activity_id"]))
+    for (group_id, anchor_id), member_ids in stored_bundles.items():
+        activity_ids = [anchor_id, *sorted(set(member_ids))]
+        members = [by_key.get((group_id, activity_id)) for activity_id in activity_ids]
+        if any(member is None for member in members):
             continue
-        consumed.update({(group_id, reading_id), (group_id, quiz_id)})
-        states = [reading["completion"]["state"], quiz["completion"]["state"]]
+        members = [member for member in members if member is not None]
+        consumed.update((group_id, activity_id) for activity_id in activity_ids)
+        states = [member["completion"]["state"] for member in members]
         bundles.append({
-            "source_ref": f"rq:{group_id}:{reading_id}:{quiz_id}",
+            "source_ref": f"rq:{group_id}:" + ":".join(str(activity_id) for activity_id in activity_ids),
             "category": "reading+quiz",
-            "title": f"{reading['title']} + {quiz['title']}",
-            "activity_date": max(filter(None, [reading.get("activity_date"), quiz.get("activity_date")]), default=None),
+            "title": " + ".join(member["title"] for member in members),
+            "activity_date": max(filter(None, [member.get("activity_date") for member in members]), default=None),
             "duration_minutes": None,
             "completion": {"state": "completed" if all(state == "completed" for state in states) else "not_completed"},
             "group_id": group_id,
-            "activity_id": reading_id,
-            "pair": {"reading_activity_id": reading_id, "quiz_activity_id": quiz_id,
-                     "reading_title": reading["title"], "quiz_title": quiz["title"]},
+            "activity_id": anchor_id,
+            "pair": {"anchor_activity_id": anchor_id, "activity_ids": activity_ids,
+                     "titles": [member["title"] for member in members]},
         })
     activities = [item for item in activities if (item["group_id"], item["activity_id"]) not in consumed] + bundles
 
