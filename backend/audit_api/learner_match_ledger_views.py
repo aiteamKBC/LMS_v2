@@ -54,6 +54,7 @@ from django.views.decorators.http import require_GET
 
 from .contract_documents import ensure_contract_archive_table
 from .evidence_documents import ensure_evidence_override_table
+from .learner_exclusions import is_excluded_learner
 from .profile_overrides import apply_break_overrides, apply_profile_overrides, get_profile_overrides
 
 try:
@@ -735,6 +736,8 @@ def _fetch_rows():
         programme_name, program_status, break_in_learning, coach_name,
         coach_email,
     ) in rows:
+        if is_excluded_learner(aptem_id, learner_name):
+            continue
         # psycopg may hand json/jsonb back as a decoded dict or as raw text
         # depending on the configured loaders — normalise to a dict either way.
         if isinstance(structure, str):
@@ -823,6 +826,8 @@ def _fetch_profile_row(learner_key):
         programme_name, program_status, break_in_learning, coach_name,
         coach_email,
     ) = row
+    if is_excluded_learner(aptem_id, learner_name):
+        return None
     if isinstance(structure, str):
         try:
             structure = json.loads(structure)
@@ -899,6 +904,8 @@ def _fetch_profile_source_row(learner_key):
         return None
 
     aptem_id, learner_name, learner_email, programme_name, program_status, break_in_learning, coach_name, coach_email = row
+    if is_excluded_learner(aptem_id, learner_name):
+        return None
     if isinstance(break_in_learning, str):
         try:
             break_in_learning = json.loads(break_in_learning)
@@ -1264,6 +1271,8 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
     learner_key = request.GET.get("learner", "").strip().lower()
     if not learner_key or len(learner_key) > 200:
         return JsonResponse({"error": "A valid learner is required."}, status=400)
+    if is_excluded_learner(learner_key, learner_key):
+        return JsonResponse({"error": "Learner not found."}, status=404)
 
     try:
         learner = _load_profile_learner(learner_key)
@@ -1365,6 +1374,8 @@ def _load_profile_learner(learner_key):
         aptem_id, learner_name, learner_email, programme_name,
         programme_status, coach_name, coach_email, training_plan,
     ) = row
+    if is_excluded_learner(aptem_id, learner_name):
+        return None
     return {
         "aptem_id": aptem_id,
         "name": learner_name,

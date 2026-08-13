@@ -8,6 +8,7 @@ from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from .learner_exclusions import is_excluded_learner
 from .views import _has_audit_permission
 
 
@@ -195,10 +196,11 @@ def update_profile_overrides(request):
     try:
         with connections[CONN].cursor() as cursor:
             cursor.execute(
-                '''select 1 from "Last_audit".learners where aptem_id = %s limit 1''',
+                '''select learner_name from "Last_audit".learners where aptem_id = %s limit 1''',
                 [learner_id],
             )
-            if not cursor.fetchone():
+            learner = cursor.fetchone()
+            if not learner or is_excluded_learner(learner_id, learner[0]):
                 return _error("Learner not found.", 404)
             ensure_profile_override_table(cursor)
             cursor.execute(

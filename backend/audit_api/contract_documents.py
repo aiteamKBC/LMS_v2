@@ -10,6 +10,7 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from .learner_exclusions import is_excluded_learner
 from .views import _azure_service_client, _has_audit_permission
 
 
@@ -91,7 +92,7 @@ def _learner_upload_metadata(cursor, learner_id):
         [learner_id],
     )
     learner = cursor.fetchone()
-    if not learner:
+    if not learner or is_excluded_learner(learner_id, learner[0]):
         return None
 
     cursor.execute(
