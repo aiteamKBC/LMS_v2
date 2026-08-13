@@ -857,7 +857,7 @@ function LearnerProfilePage() {
                   </dd>
                 )}
               </div>
-              {learner.learning_delivery.actual_end_date && (
+              {learner.programme_status.trim().toLowerCase() !== "active" && learner.learning_delivery.actual_end_date && (
                 <div>
                   <dt className="label-caps">Actual end</dt>
                   <dd className="mt-1 font-mono">{dateOnly(learner.learning_delivery.actual_end_date)}</dd>
@@ -956,7 +956,22 @@ function LearnerProfilePage() {
                     <div key={evidence.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2.5">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-foreground">{evidence.name}</p>
-                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">{dateOnly(evidence.date)}</p>
+                        {editingEvidenceId === evidence.id ? (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <input type="date" value={editingEvidenceDate} onChange={(event) => setEditingEvidenceDate(event.target.value)} className="rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs text-foreground" />
+                            <button type="button" onClick={() => void handleEvidenceDateSave(evidence)} disabled={!editingEvidenceDate || savingEvidenceDate} className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-semibold text-background disabled:opacity-50">
+                              {savingEvidenceDate ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                            </button>
+                            <button type="button" onClick={() => setEditingEvidenceId(null)} disabled={savingEvidenceDate} className="rounded-md border border-border px-2.5 py-1.5 text-xs font-semibold disabled:opacity-50">Cancel</button>
+                          </div>
+                        ) : (
+                          <p className="mt-0.5 inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+                            {dateOnly(evidence.date)}
+                            <button type="button" aria-label={`Edit date for ${evidence.name}`} onClick={() => { setEditingEvidenceId(evidence.id); setEditingEvidenceDate(dateInputValue(evidence.date)); setEvidenceActionError(null); }} className="hover:text-foreground">
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          </p>
+                        )}
                       </div>
                       {evidence.file && (
                         <button type="button" onClick={() => setPreviewEvidence(evidence)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
@@ -967,6 +982,8 @@ function LearnerProfilePage() {
                   ))}
                 </div>
               )}
+              {evidenceActionError && <p className="mt-3 text-xs font-medium text-destructive">{evidenceActionError}</p>}
+              {evidenceActionMessage && <p className="mt-3 text-xs font-medium text-success">{evidenceActionMessage}</p>}
             </div>
             <div className="mt-4 rounded-md border border-current/15 bg-background/70 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -998,7 +1015,22 @@ function LearnerProfilePage() {
                     <div key={evidence.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2.5">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-foreground">{evidence.name}</p>
-                        <p className="mt-0.5 font-mono text-xs text-muted-foreground">{dateOnly(evidence.date)}</p>
+                        {editingEvidenceId === evidence.id ? (
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            <input type="date" value={editingEvidenceDate} onChange={(event) => setEditingEvidenceDate(event.target.value)} className="rounded-md border border-border bg-background px-2.5 py-1.5 font-mono text-xs text-foreground" />
+                            <button type="button" onClick={() => void handleEvidenceDateSave(evidence)} disabled={!editingEvidenceDate || savingEvidenceDate} className="inline-flex items-center gap-1 rounded-md bg-foreground px-2.5 py-1.5 text-xs font-semibold text-background disabled:opacity-50">
+                              {savingEvidenceDate ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />} Save
+                            </button>
+                            <button type="button" onClick={() => setEditingEvidenceId(null)} disabled={savingEvidenceDate} className="rounded-md border border-border px-2.5 py-1.5 text-xs font-semibold disabled:opacity-50">Cancel</button>
+                          </div>
+                        ) : (
+                          <p className="mt-0.5 inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
+                            {dateOnly(evidence.date)}
+                            <button type="button" aria-label={`Edit date for ${evidence.name}`} onClick={() => { setEditingEvidenceId(evidence.id); setEditingEvidenceDate(dateInputValue(evidence.date)); setEvidenceActionError(null); }} className="hover:text-foreground">
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          </p>
+                        )}
                       </div>
                       {evidence.file && (
                         <button type="button" onClick={() => setPreviewEvidence(evidence)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
@@ -1009,6 +1041,8 @@ function LearnerProfilePage() {
                   ))}
                 </div>
               )}
+              {evidenceActionError && <p className="mt-3 text-xs font-medium text-destructive">{evidenceActionError}</p>}
+              {evidenceActionMessage && <p className="mt-3 text-xs font-medium text-success">{evidenceActionMessage}</p>}
             </div>
           </section>
         )}
