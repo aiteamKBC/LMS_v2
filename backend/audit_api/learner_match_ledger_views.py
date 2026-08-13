@@ -54,7 +54,7 @@ from django.views.decorators.http import require_GET
 
 from .contract_documents import ensure_contract_archive_table
 from .evidence_documents import ensure_evidence_override_table
-from .profile_overrides import apply_profile_overrides, get_profile_overrides
+from .profile_overrides import apply_break_overrides, apply_profile_overrides, get_profile_overrides
 
 try:
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
@@ -1333,12 +1333,22 @@ def _load_profile_learner(learner_key):
         cursor.execute(
             '''
             select l.aptem_id, l.learner_name, l.learner_email,
-                   l.programme_name, l.programme_status,
-                   l.coach_name, l.coach_email,
+                   l.programme_name,
+                   coalesce(
+                       case
+                           when lower(btrim(coalesce(l.programme_status, ''))) in ('', 'unknown') then null
+                           else btrim(l.programme_status)
+                       end,
+                       nullif(btrim(aptem."Program-Status"), '')
+                   ) as programme_status,
+                   coalesce(nullif(btrim(l.coach_name), ''), nullif(btrim(aptem."OwnerName"), '')) as coach_name,
+                   coalesce(nullif(btrim(l.coach_email), ''), nullif(btrim(aptem."OwnerEmail"), '')) as coach_email,
                    lm.aptem_training_plan
             from "Last_audit".learners l
             left join "Audit".learner_match lm
               on lm.aptem_id = l.aptem_id
+            left join "LMS"."Aptem_users" aptem
+              on aptem."ID" = l.aptem_id
             where l.aptem_id::text = %s
                or lower(l.learner_name) = %s
             order by case when l.aptem_id::text = %s then 0 else 1 end
@@ -1372,6 +1382,7 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
     Every query is keyed by this request's learner id/email. The returned data
     is request-local and safe when different learners are viewed concurrently.
     """
+    profile_overrides = get_profile_overrides(aptem_id)
     contracts = []
     skill_groups = {}
     certifications = []
@@ -1472,6 +1483,7 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                 }
             if str(programme_status).strip().lower() == "onbreak":
                 break_in_learning["has_break_in_learning"] = True
+        break_in_learning = apply_break_overrides(break_in_learning, profile_overrides)
 
         cursor.execute(
             '''
@@ -1568,7 +1580,9 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
             cursor.execute(
                 '''
                 select learn_ref_number, planned_hours, otj_actual_hours,
-                       learn_start_date, learn_plan_end_date, completion_status,
+                       min(learn_start_date) over () as original_programme_start_date,
+                       learn_plan_end_date, completion_status,
+                       max(learn_actual_end_date) over () as actual_end_date,
                        nullif(
                            concat_ws(', ',
                                nullif(btrim(address_line_1), ''),
@@ -1607,12 +1621,16 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                     "start_date": delivery[3],
                     "planned_end_date": delivery[4],
                     "completion_status": delivery[5],
-                    "learner_address": delivery[6],
-                    "learner_postcode": delivery[7],
-                    "employer_postcode": delivery[8],
+                    "actual_end_date": delivery[6],
+                    "last_learning_evidence_date": break_in_learning.get("last_learning_date") or delivery[6],
+                    "learner_address": delivery[7],
+                    "learner_postcode": delivery[8],
+                    "employer_postcode": delivery[9],
                     "first_evidence_date": None,
                     "first_evidence_items": [],
                     "archived_evidence_items": [],
+                    "last_learning_evidence_items": [],
+                    "break_evidence_items": [],
                 }
                 ensure_evidence_override_table(cursor)
                 cursor.execute(
@@ -1695,6 +1713,14 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                     learning_delivery["archived_evidence_items"] = archived_items
                     learning_delivery["first_evidence_date"] = first_date
                     learning_delivery["first_evidence_items"] = first_items
+                    learning_delivery["last_learning_evidence_items"] = _last_learning_evidence_items(
+                        evidence_items,
+                        learning_delivery.get("last_learning_evidence_date"),
+                    )
+                    learning_delivery["break_evidence_items"] = _break_evidence_items(
+                        evidence_items,
+                        break_in_learning.get("return_to_learning_date"),
+                    )
 
     skills_radar = [
         {
@@ -1709,7 +1735,7 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
     employment, learning_delivery = apply_profile_overrides(
         employment,
         learning_delivery,
-        get_profile_overrides(aptem_id),
+        profile_overrides,
     )
     return {
         "contracts": contracts,
@@ -1739,13 +1765,57 @@ def _partition_evidence_items(evidence_items):
         if not item["archived"]
         and not item["deleted"]
         and (
-            item["uploaded"]
+            (
+                item["uploaded"]
+                and item.get("component_name") not in {
+                    "Break in learning evidence",
+                    "Last date of learning evidence",
+                    "Return to learning evidence",
+                }
+            )
             or (original_source_date is not None and item["date"] == original_source_date)
         )
     ]
     first_date = min((item["date"] for item in qualifying_items), default=None)
     first_items = [item for item in qualifying_items if item["date"] == first_date]
     return first_date, first_items, archived_items
+
+
+def _break_evidence_items(evidence_items, evidence_date):
+    """Return active evidence recorded on one significant break date."""
+    target_date = _iso_date(evidence_date)
+    if target_date is None:
+        return []
+    return [
+        item for item in evidence_items
+        if not item["archived"]
+        and not item["deleted"]
+        and _iso_date(item["date"]) == target_date
+    ]
+
+
+def _last_learning_evidence_items(evidence_items, last_learning_date):
+    """Use same-day evidence, falling back to the latest earlier learning day."""
+    target_date = _iso_date(last_learning_date)
+    if target_date is None:
+        return []
+    dated_items = [
+        item for item in evidence_items
+        if _iso_date(item["date"]) is not None
+        and _iso_date(item["date"]) <= target_date
+    ]
+    matching_date = max(
+        (_iso_date(item["date"]) for item in dated_items),
+        default=None,
+    )
+    if matching_date is None:
+        return []
+    return [
+        item for item in dated_items
+        if _iso_date(item["date"]) == matching_date
+        and not item["archived"]
+        and not item["deleted"]
+    ]
 
 
 def _employer_details_from_contract_profile(value):

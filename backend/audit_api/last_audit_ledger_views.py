@@ -489,7 +489,15 @@ def cohort(request: HttpRequest) -> JsonResponse:
                      updated_at DESC NULLS LAST, id DESC
         )
         SELECT l.aptem_id, l.learner_name, l.learner_email, l.programme_name,
-               l.programme_status, l.coach_name, l.coach_email,
+               COALESCE(
+                   CASE
+                       WHEN lower(btrim(COALESCE(l.programme_status, ''))) IN ('', 'unknown') THEN NULL
+                       ELSE btrim(l.programme_status)
+                   END,
+                   NULLIF(btrim(aptem."Program-Status"), '')
+               ) AS programme_status,
+               COALESCE(NULLIF(btrim(l.coach_name), ''), NULLIF(btrim(aptem."OwnerName"), '')) AS coach_name,
+               COALESCE(NULLIF(btrim(l.coach_email), ''), NULLIF(btrim(aptem."OwnerEmail"), '')) AS coach_email,
                l.declared_lms_id,
                l.learner_id AS verified_lms_id,
                COALESCE(lg.groups, ARRAY[]::text[]) AS groups,
@@ -509,6 +517,7 @@ def cohort(request: HttpRequest) -> JsonResponse:
         LEFT JOIN attendance_totals at ON at.aptem_id = l.aptem_id
         LEFT JOIN attendance_months am ON am.aptem_id = l.aptem_id
         LEFT JOIN ilr_profiles ilr ON ilr.email_key = lower(l.learner_email)
+        LEFT JOIN "LMS"."Aptem_users" aptem ON aptem."ID" = l.aptem_id
         {where}
         ORDER BY lower(COALESCE(l.learner_name, '')), l.aptem_id
     """

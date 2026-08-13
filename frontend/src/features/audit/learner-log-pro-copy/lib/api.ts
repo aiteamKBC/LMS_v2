@@ -263,7 +263,9 @@ export type LearnerProfile = {
     employer_postcode?: string | null;
     planned_hours?: number;
     actual_hours?: number | null;
-    start_date?: string;
+    start_date?: string | null;
+    actual_end_date?: string | null;
+    last_learning_evidence_date?: string | null;
     first_evidence_date?: string | null;
     first_evidence_items?: Array<{
       id: string;
@@ -277,6 +279,28 @@ export type LearnerProfile = {
       archived: boolean;
     }>;
     archived_evidence_items?: Array<{
+      id: string;
+      name: string;
+      component_name: string;
+      kind: string;
+      status: string;
+      file: string | null;
+      content: string | null;
+      date: string;
+      archived: boolean;
+    }>;
+    last_learning_evidence_items?: Array<{
+      id: string;
+      name: string;
+      component_name: string;
+      kind: string;
+      status: string;
+      file: string | null;
+      content: string | null;
+      date: string;
+      archived: boolean;
+    }>;
+    break_evidence_items?: Array<{
       id: string;
       name: string;
       component_name: string;
@@ -1354,7 +1378,12 @@ export type LearnerProfileOverrideFields = Partial<{
   line_manager_name: string | null;
   workplace_address: string | null;
   employer_postcode: string | null;
+  start_date: string | null;
   planned_end_date: string | null;
+  last_learning_date: string | null;
+  expected_return_date: string | null;
+  return_to_learning_date: string | null;
+  revised_learning_planned_end_date: string | null;
 }>;
 
 export async function updateLearnerProfileFields(
@@ -1428,11 +1457,12 @@ export async function renameContract(contractId: string, documentName: string) {
   return response.json() as Promise<{ ok: boolean; contract_id: string; document_name: string }>;
 }
 
-export async function uploadEvidence(learnerId: number, file: File, evidenceDate: string) {
+export async function uploadEvidence(learnerId: number, file: File, evidenceDate: string, componentName?: string) {
   const body = new FormData();
   body.append("learner_id", String(learnerId));
   body.append("evidence_date", evidenceDate);
   body.append("document_name", file.name);
+  if (componentName) body.append("component_name", componentName);
   body.append("file", file);
   const response = await fetch("/audit_api/evidence/upload", {
     method: "POST",
