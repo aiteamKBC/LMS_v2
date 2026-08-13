@@ -343,10 +343,12 @@ export type LearnerProfile = {
   };
   skills_radar: Array<{
     skill: string;
+    domain?: string;
+    ksb_codes?: string[];
     knowledge: number | null;
     skill_score: number | null;
     behaviour: number | null;
-    maximum: 8;
+    maximum: number;
   }>;
   certifications: Array<{
     name: string;
@@ -364,6 +366,7 @@ export type LearnerProfile = {
     contracted_hours_per_week?: number | null;
     employment_type?: string | null;
     working_pattern?: string | null;
+    levy_status?: string | null;
     line_manager?: { name?: string | null; email?: string | null; phone?: string | null; job_title?: string | null };
   } | null;
   programme_understanding: {
@@ -1353,6 +1356,7 @@ export type LearnerProfileOverrideFields = Partial<{
   line_manager_name: string | null;
   workplace_address: string | null;
   employer_postcode: string | null;
+  levy_status: string | null;
   start_date: string | null;
   planned_end_date: string | null;
   last_learning_date: string | null;

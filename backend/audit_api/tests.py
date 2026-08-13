@@ -6,7 +6,7 @@ from django.test import SimpleTestCase, override_settings
 
 from .contract_documents import _safe_upload_filename
 from .views import _activity_category, _assignment_source_rows, _build_audit_payload, _build_student_source_data, _enrich_assignment_items_with_evidence_details, _group_months, _normalize_assignment_item, _normalize_attendance_item, _parse_contract_azure_path, _signoff_row
-from .learner_match_ledger_views import _break_evidence_items, _contract_preview_url, _contract_signature_dates_from_text, _cv_employment_terms, _employer_details_from_contract_profile, _fetch_profile_source_row, _last_learning_evidence_items, _merge_matching_cv_employment_terms, _partition_evidence_items, _skill_radar_characteristic, _skill_radar_sort_key, _training_plan_from_audit, _validate_overlay_activity
+from .learner_match_ledger_views import _break_evidence_items, _contract_preview_url, _contract_signature_dates_from_text, _cv_employment_terms, _employer_details_from_contract_profile, _fetch_profile_source_row, _last_learning_evidence_items, _merge_matching_cv_employment_terms, _normalise_levy_status, _partition_evidence_items, _skill_radar_characteristic, _skill_radar_codes, _skill_radar_entry_sort_key, _skill_radar_score_values, _skill_radar_snapshot_entries, _skill_radar_sort_key, _skill_radar_text_category, _training_plan_from_audit, _validate_overlay_activity
 from .profile_overrides import _clean_profile_fields, apply_break_overrides, apply_profile_overrides
 
 
@@ -137,6 +137,11 @@ class EvidenceDocumentManagementTests(SimpleTestCase):
 
 
 class EmployerContractProfileTests(SimpleTestCase):
+    def test_normalises_levy_status(self):
+        self.assertEqual(_normalise_levy_status("Levy"), "Levy")
+        self.assertEqual(_normalise_levy_status("Non levy"), "Non-Levy")
+        self.assertIsNone(_normalise_levy_status("Unknown"))
+
     def test_maps_employer_profile_json_to_dashboard_shape(self):
         details = _employer_details_from_contract_profile({
             "employer": {
@@ -226,10 +231,52 @@ class SkillsRadarClassificationTests(SimpleTestCase):
         self.assertEqual(domain, "Communication")
         self.assertEqual(field, "behaviour")
 
+    def test_builds_concise_categories_from_direct_ksb_text(self):
+        self.assertEqual(
+            _skill_radar_characteristic("S2: I can plan and deliver tactical campaigns against SMART objectives")[0],
+            "Campaign planning",
+        )
+        self.assertEqual(
+            _skill_radar_text_category("I can assimilate and analyse data and information from a range of sources"),
+            "Data analysis",
+        )
+
     def test_sorts_numbered_competencies_naturally(self):
         values = ["S10: Ten", "S2: Two", "S1: One"]
 
         self.assertEqual(sorted(values, key=_skill_radar_sort_key), ["S1: One", "S2: Two", "S10: Ten"])
+
+    def test_extracts_all_distinct_ksb_codes_in_source_order(self):
+        value = "Understanding of Integration (Knowledge) - K7: Plans, K8: Baselines and K7: Plans"
+
+        self.assertEqual(_skill_radar_codes(value), ["K7", "K8"])
+
+    def test_same_domain_knowledge_rows_keep_distinct_sort_positions(self):
+        entries = [
+            {"domain": "Strategic Project Management", "skill": "K30: Leadership", "ksb_codes": ["K30"], "knowledge": 5, "skill_score": None, "behaviour": None},
+            {"domain": "Strategic Project Management", "skill": "K1: Strategy", "ksb_codes": ["K1"], "knowledge": 5, "skill_score": None, "behaviour": None},
+        ]
+
+        result = sorted(entries, key=_skill_radar_entry_sort_key)
+
+        self.assertEqual([entry["ksb_codes"][0] for entry in result], ["K1", "K30"])
+
+    def test_uses_each_characteristics_source_maximum(self):
+        self.assertEqual(_skill_radar_score_values(2, "2", "5"), (2, 5))
+        self.assertEqual(_skill_radar_score_values(4, "4", "8"), (4, 8))
+
+    def test_falls_back_for_legacy_score_rows(self):
+        self.assertEqual(_skill_radar_score_values(3, None, None), (3, 8))
+
+    def test_normalises_retained_withdrawn_learner_snapshot(self):
+        result = _skill_radar_snapshot_entries([
+            ("Knowledge", "K01", "Marketing principles", "Proficient – works independently"),
+            ("Behaviours", "B2", "Collaborative approach", "Frequently – routine tasks"),
+        ])
+
+        self.assertEqual(result[0]["knowledge"], 6)
+        self.assertEqual(result[0]["maximum"], 8)
+        self.assertEqual(result[1]["behaviour"], 4)
 
 
 class LearnerProfileOverrideTests(SimpleTestCase):
@@ -241,18 +288,21 @@ class LearnerProfileOverrideTests(SimpleTestCase):
                 "employer_name": "Correct Ltd",
                 "line_manager_name": "Correct manager",
                 "employer_postcode": "M44 5AD",
+                "levy_status": "Non-Levy",
                 "planned_end_date": "2027-02-14",
             },
         )
 
         self.assertEqual(employment["employer_name"], "Correct Ltd")
         self.assertEqual(employment["line_manager"]["name"], "Correct manager")
+        self.assertEqual(employment["levy_status"], "Non-Levy")
         self.assertEqual(delivery["employer_postcode"], "M44 5AD")
         self.assertEqual(delivery["planned_end_date"], "2027-02-14")
 
     def test_validates_hours_and_planned_end_date(self):
         fields = _clean_profile_fields({
             "contracted_hours_per_week": "37.5",
+            "levy_status": "Levy",
             "start_date": "2025-10-15",
             "planned_end_date": "2027-02-14",
             "last_learning_date": "2026-03-27",
@@ -262,6 +312,7 @@ class LearnerProfileOverrideTests(SimpleTestCase):
         })
 
         self.assertEqual(fields["contracted_hours_per_week"], 37.5)
+        self.assertEqual(fields["levy_status"], "Levy")
         self.assertEqual(fields["start_date"], "2025-10-15")
         self.assertEqual(fields["planned_end_date"], "2027-02-14")
         self.assertEqual(fields["last_learning_date"], "2026-03-27")

@@ -56,16 +56,21 @@ type SkillDimension = "knowledge" | "skill_score" | "behaviour";
 
 type SkillRadarEntry = {
   skill: string;
+  domain?: string;
+  ksb_codes?: string[];
   knowledge: number | null;
   skill_score: number | null;
   behaviour: number | null;
-  maximum: 8;
+  maximum: number;
 };
 
 type SkillChartPoint = {
   code: string;
+  domain: string;
   description: string;
   score: number;
+  maximum: number;
+  percentage: number;
 };
 
 const SKILL_DIMENSIONS: Array<{
@@ -88,16 +93,73 @@ function skillDescription(value: string) {
   return value.replace(/^\s*[KSB]\d+\s*[:.\-]\s*/i, "").trim() || value;
 }
 
+function skillDetails(value: string, domain: string) {
+  const legacyDetails = value.match(/\)\s*-\s*(.+)$/)?.[1]?.trim();
+  const details = legacyDetails ?? skillDescription(value);
+  return details.toLocaleLowerCase() === domain.toLocaleLowerCase() ? "" : details;
+}
+
 function skillChartPoints(entries: SkillRadarEntry[], dimension: SkillDimension, prefix: string) {
   return entries.flatMap((entry, index) => {
     const score = entry[dimension];
     if (score == null) return [];
+    const codes = (entry.ksb_codes ?? []).filter((code) =>
+      new RegExp(`^${prefix}\\d+$`, "i").test(code),
+    );
+    const displayCodes = codes.length ? codes : [skillCode(entry.skill, prefix, index)];
+    const domain = entry.domain?.trim() || skillDescription(entry.skill);
+    const maximum = Number.isFinite(entry.maximum) && entry.maximum > 0 ? entry.maximum : 8;
     return [{
-      code: skillCode(entry.skill, prefix, index),
-      description: skillDescription(entry.skill),
+      code: displayCodes.join(", "),
+      domain,
+      description: skillDetails(entry.skill, domain),
       score,
+      maximum,
+      percentage: Math.min(100, Math.max(0, score / maximum * 100)),
     }];
   });
+}
+
+function formatSkillScore(value: number) {
+  return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
+}
+
+function wrapRadarLabel(value: string, maximumLineLength = 22) {
+  return value.split(/\s+/).reduce<string[]>((lines, word) => {
+    const last = lines.at(-1);
+    if (!last || `${last} ${word}`.length > maximumLineLength) lines.push(word);
+    else lines[lines.length - 1] = `${last} ${word}`;
+    return lines;
+  }, []);
+}
+
+function SkillRadarAxisTick({ x = 0, y = 0, cx = 0, cy = 0, textAnchor = "middle", payload }: {
+  x?: number;
+  y?: number;
+  cx?: number;
+  cy?: number;
+  textAnchor?: "start" | "middle" | "end" | "inherit";
+  payload?: { value?: string };
+}) {
+  const lines = wrapRadarLabel(String(payload?.value ?? ""));
+  const deltaX = x - cx;
+  const deltaY = y - cy;
+  const distance = Math.hypot(deltaX, deltaY) || 1;
+  const labelX = x + (deltaX / distance) * 22;
+  const labelY = y + (deltaY / distance) * 22;
+  return (
+    <text x={labelX} y={labelY} textAnchor={textAnchor} fill="#243b4a" fontSize={12} fontWeight={700}>
+      {lines.map((line, index) => (
+        <tspan
+          key={`${line}-${index}`}
+          x={labelX}
+          dy={index === 0 ? `${-(lines.length - 1) * 0.58}em` : "1.16em"}
+        >
+          {line}
+        </tspan>
+      ))}
+    </text>
+  );
 }
 
 function SkillRadarTooltip({ active, payload }: {
@@ -108,8 +170,9 @@ function SkillRadarTooltip({ active, payload }: {
   if (!active || !point) return null;
   return (
     <div className="max-w-xs rounded-md border border-border bg-card px-3 py-2 shadow-lg">
-      <p className="text-xs font-bold text-foreground">{point.code} · {point.score.toFixed(0)} / 8</p>
-      <p className="mt-1 text-xs leading-5 text-muted-foreground">{point.description}</p>
+      <p className="text-xs font-bold text-foreground">{point.code} · {formatSkillScore(point.score)} / {formatSkillScore(point.maximum)}</p>
+      <p className="mt-1 text-xs font-semibold leading-5 text-foreground">{point.domain}</p>
+      {point.description && <p className="mt-1 text-xs leading-5 text-muted-foreground">{point.description}</p>}
     </div>
   );
 }
@@ -136,6 +199,7 @@ type EmployerEditForm = {
   line_manager_name: string;
   workplace_address: string;
   employer_postcode: string;
+  levy_status: string;
 };
 
 type BreakEditForm = {
@@ -153,6 +217,7 @@ const EMPTY_EMPLOYER_FORM: EmployerEditForm = {
   line_manager_name: "",
   workplace_address: "",
   employer_postcode: "",
+  levy_status: "",
 };
 
 function LearnerProfilePage() {
@@ -467,6 +532,7 @@ function LearnerProfilePage() {
       line_manager_name: current.employment?.line_manager?.name ?? "",
       workplace_address: current.employment?.workplace_address ?? "",
       employer_postcode: current.learning_delivery.employer_postcode ?? "",
+      levy_status: current.employment?.levy_status ?? "",
     });
     setEmployerActionError(null);
     setEmployerActionMessage(null);
@@ -484,6 +550,7 @@ function LearnerProfilePage() {
       line_manager_name: profile.data.employment?.line_manager?.name ?? "",
       workplace_address: profile.data.employment?.workplace_address ?? "",
       employer_postcode: profile.data.learning_delivery.employer_postcode ?? "",
+      levy_status: profile.data.employment?.levy_status ?? "",
     };
     const changedFields = Object.fromEntries(
       Object.entries(employerForm).filter(([field, value]) => value !== currentValues[field as keyof EmployerEditForm]),
@@ -713,8 +780,8 @@ function LearnerProfilePage() {
   const activeSkillGroup = skillGroups.find((group) => group.key === skillDimension && group.points.length)
     ?? skillGroups.find((group) => group.points.length)
     ?? skillGroups[0];
-  const activeSkillAverage = activeSkillGroup.points.length
-    ? activeSkillGroup.points.reduce((total, point) => total + point.score, 0) / activeSkillGroup.points.length
+  const activeSkillAveragePercentage = activeSkillGroup.points.length
+    ? activeSkillGroup.points.reduce((total, point) => total + point.percentage, 0) / activeSkillGroup.points.length
     : 0;
 
   return (
@@ -1187,18 +1254,18 @@ function LearnerProfilePage() {
           ) : <EmptyState>No programme understanding responses were found for this learner.</EmptyState>}
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+        <section className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(24rem,0.55fr)]">
           <div className="rounded-lg border border-border bg-card shadow-panel">
             <header className="border-b border-border px-7 py-5">
               <h2 className="font-serif text-lg text-foreground">Skills radar</h2>
-              <p className="mt-1 text-sm text-muted-foreground">Assessed competency scores out of 8. Select a group to explore its competencies.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Each competency uses the maximum score supplied by Aptem. Select a group to explore its competencies.</p>
             </header>
             {learner.skills_radar.length ? (
               <div className="p-5">
                 <div className="grid gap-3 sm:grid-cols-3">
                   {skillGroups.map((group) => {
                     const average = group.points.length
-                      ? group.points.reduce((total, point) => total + point.score, 0) / group.points.length
+                      ? group.points.reduce((total, point) => total + point.percentage, 0) / group.points.length
                       : null;
                     const selected = activeSkillGroup.key === group.key;
                     return (
@@ -1216,7 +1283,7 @@ function LearnerProfilePage() {
                             {group.label}
                           </span>
                           <span className="font-mono text-sm font-bold" style={{ color: group.colour }}>
-                            {average == null ? "—" : average.toFixed(1)}
+                            {average == null ? "—" : `${average.toFixed(0)}%`}
                           </span>
                         </span>
                         <span className="mt-1.5 block text-xs text-muted-foreground">{group.points.length} assessed competenc{group.points.length === 1 ? "y" : "ies"}</span>
@@ -1225,7 +1292,7 @@ function LearnerProfilePage() {
                   })}
                 </div>
 
-                <div className="mt-5 grid gap-5 2xl:grid-cols-[minmax(0,1.15fr)_minmax(19rem,0.85fr)]">
+                <div className="mt-5 grid items-start gap-5 2xl:grid-cols-[minmax(0,1.2fr)_minmax(22rem,0.8fr)]">
                   <div className="rounded-md border border-border bg-background p-3">
                     <div className="flex items-center justify-between gap-3 px-2 pt-1">
                       <div>
@@ -1233,17 +1300,17 @@ function LearnerProfilePage() {
                         <p className="mt-0.5 text-xs text-muted-foreground">Hover an axis to see the full competency.</p>
                       </div>
                       <span className="rounded-full px-3 py-1 font-mono text-xs font-bold" style={{ color: activeSkillGroup.colour, backgroundColor: activeSkillGroup.softColour }}>
-                        Average {activeSkillAverage.toFixed(1)} / 8
+                        Average {activeSkillAveragePercentage.toFixed(0)}%
                       </span>
                     </div>
-                    <div className="h-[29rem] min-h-[24rem] w-full">
+                    <div className="h-[34rem] min-h-[30rem] w-full">
                       <ResponsiveContainer width="100%" height="100%">
-                        <RadarChart data={activeSkillGroup.points} outerRadius="72%" margin={{ top: 24, right: 30, bottom: 24, left: 30 }}>
+                        <RadarChart data={activeSkillGroup.points} outerRadius="84%" margin={{ top: 72, right: 96, bottom: 72, left: 96 }}>
                           <PolarGrid stroke="#d9d6cd" />
-                          <PolarAngleAxis dataKey="code" tick={{ fill: "#334155", fontSize: 11, fontWeight: 700 }} />
-                          <PolarRadiusAxis angle={90} domain={[0, 8]} tickCount={5} tick={{ fill: "#64748b", fontSize: 10 }} />
+                          <PolarAngleAxis dataKey="domain" tick={<SkillRadarAxisTick />} />
+                          <PolarRadiusAxis angle={90} domain={[0, 100]} tickCount={5} tickFormatter={(value) => `${value}%`} tick={{ fill: "#64748b", fontSize: 10 }} />
                           <Tooltip content={<SkillRadarTooltip />} />
-                          <Radar name={activeSkillGroup.label} dataKey="score" stroke={activeSkillGroup.colour} fill={activeSkillGroup.colour} fillOpacity={0.18} strokeWidth={2.5} />
+                          <Radar name={activeSkillGroup.label} dataKey="percentage" stroke={activeSkillGroup.colour} fill={activeSkillGroup.colour} fillOpacity={0.18} strokeWidth={2.5} />
                         </RadarChart>
                       </ResponsiveContainer>
                     </div>
@@ -1254,20 +1321,27 @@ function LearnerProfilePage() {
                       <p className="text-sm font-semibold text-foreground">Competency scores</p>
                       <p className="mt-0.5 text-xs text-muted-foreground">Full descriptions for the selected group.</p>
                     </div>
-                    <div className="max-h-[32.5rem] divide-y divide-border overflow-y-auto">
+                    <div className="max-h-[34rem] divide-y divide-border overflow-y-auto">
                       {activeSkillGroup.points.map((point, index) => (
-                        <article key={`${point.code}-${index}`} className="px-4 py-3">
-                          <div className="flex items-start gap-3">
-                            <span className="mt-0.5 min-w-10 rounded px-2 py-1 text-center font-mono text-xs font-bold" style={{ color: activeSkillGroup.colour, backgroundColor: activeSkillGroup.softColour }}>{point.code}</span>
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-start justify-between gap-3">
-                                <p className="text-xs leading-5 text-foreground">{point.description}</p>
-                                <span className="shrink-0 font-mono text-sm font-bold" style={{ color: activeSkillGroup.colour }}>{point.score.toFixed(0)}<span className="text-xs font-normal text-muted-foreground">/8</span></span>
-                              </div>
-                              <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-                                <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.max(0, point.score / 8 * 100))}%`, backgroundColor: activeSkillGroup.colour }} />
-                              </div>
-                            </div>
+                        <article key={`${point.code}-${index}`} className="px-4 py-3.5 transition-colors hover:bg-secondary/30">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="text-xs font-semibold leading-5 text-foreground">{point.domain}</p>
+                            <span className="shrink-0 font-mono text-sm font-bold" style={{ color: activeSkillGroup.colour }}>{formatSkillScore(point.score)}<span className="text-xs font-normal text-muted-foreground">/{formatSkillScore(point.maximum)}</span></span>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                              {point.code.split(", ").map((code) => (
+                                <span
+                                  key={code}
+                                  className="inline-flex min-w-10 items-center justify-center rounded px-2 py-1 text-center font-mono text-[11px] font-bold"
+                                  style={{ color: activeSkillGroup.colour, backgroundColor: activeSkillGroup.softColour }}
+                                >
+                                  {code}
+                                </span>
+                              ))}
+                          </div>
+                          {point.description && <p className="mt-2 text-xs leading-5 text-muted-foreground">{point.description}</p>}
+                          <div className="mt-2.5 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                            <div className="h-full rounded-full" style={{ width: `${point.percentage}%`, backgroundColor: activeSkillGroup.colour }} />
                           </div>
                         </article>
                       ))}
@@ -1320,6 +1394,14 @@ function LearnerProfilePage() {
                   <span className="label-caps">Employer postcode</span>
                   <input value={employerForm.employer_postcode} onChange={(event) => setEmployerForm((value) => ({ ...value, employer_postcode: event.target.value }))} maxLength={30} className="w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm text-foreground" />
                 </label>
+                <label className="space-y-1.5">
+                  <span className="label-caps">Levy status</span>
+                  <select value={employerForm.levy_status} onChange={(event) => setEmployerForm((value) => ({ ...value, levy_status: event.target.value }))} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground">
+                    <option value="">Not available</option>
+                    <option value="Levy">Levy</option>
+                    <option value="Non-Levy">Non-Levy</option>
+                  </select>
+                </label>
                 <label className="space-y-1.5 sm:col-span-2 xl:col-span-1">
                   <span className="label-caps">Workplace address</span>
                   <textarea value={employerForm.workplace_address} onChange={(event) => setEmployerForm((value) => ({ ...value, workplace_address: event.target.value }))} maxLength={1000} rows={4} className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 text-sm leading-6 text-foreground" />
@@ -1342,6 +1424,7 @@ function LearnerProfilePage() {
                 <div><dt className="label-caps">Line manager</dt><dd className="mt-1.5 text-sm">{employment.line_manager?.name ?? "—"}{employment.line_manager?.job_title ? ` — ${employment.line_manager.job_title}` : ""}</dd></div>
                 <div><dt className="label-caps">Workplace address</dt><dd className="mt-1.5 whitespace-pre-line text-sm leading-6">{employment.workplace_address ?? "—"}</dd></div>
                 <div><dt className="label-caps">Employer postcode</dt><dd className="mt-1.5 font-mono text-sm">{learner.learning_delivery.employer_postcode ?? "—"}</dd></div>
+                <div><dt className="label-caps">Funding type</dt><dd className="mt-1.5 text-sm font-semibold">{employment.levy_status ?? "—"}</dd></div>
               </dl>
             ) : <EmptyState>No employer details were found. Select Edit to add them.</EmptyState>}
           </div>
