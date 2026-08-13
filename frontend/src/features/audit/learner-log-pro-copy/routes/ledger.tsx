@@ -17,6 +17,7 @@ import {
   getActivityLedger,
   patchManualRow,
   type LedgerParticipant,
+  type LedgerSourceParticipant,
 } from "@/features/audit/learner-log-pro-copy/lib/manualApi";
 
 export const Route = createFileRoute("/ledger")({
@@ -74,6 +75,72 @@ function QuizDefinition({ quiz }: { quiz: { description: string | null; question
         <p className="text-sm text-muted-foreground">This quiz has no stored definition body.</p>
       ) : null}
     </div>
+  );
+}
+
+const SOURCE_STATUS_BADGES: Record<LedgerSourceParticipant["status"], { text: string; className: string }> = {
+  attended: { text: "Attended", className: "bg-success/15 text-success" },
+  absent: { text: "Absent", className: "bg-amber-500/15 text-amber-700" },
+  completed: { text: "Completed", className: "bg-success/15 text-success" },
+  not_completed: { text: "Not completed", className: "bg-amber-500/15 text-amber-700" },
+  no_record: { text: "No record", className: "bg-muted text-muted-foreground" },
+};
+
+// Everyone the source says did (or missed) the activity, with a pointer to
+// the monthly reports that already carry it.
+function SourceParticipantsSection({ participants, category }: { participants: LedgerSourceParticipant[]; category: string }) {
+  const isAttendance = (category || "").toLowerCase() === "attendance";
+  const doneCount = participants.filter((item) => item.status === "attended" || item.status === "completed").length;
+  return (
+    <section className="overflow-hidden rounded-xl border border-border bg-card shadow-panel">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-7 py-5">
+        <div>
+          <h2 className="text-lg font-semibold text-[#182d48]">Learners who did this activity</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {isAttendance
+              ? "The whole register session — attended and absent — straight from the source"
+              : "Every learner enrolled on this activity with their own LMS completion"}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono font-medium text-[#182d48]">{participants.length} learners</span>
+          <span className="rounded-full bg-success/10 px-3 py-1.5 font-mono font-medium text-success">{doneCount} {isAttendance ? "attended" : "completed"}</span>
+        </div>
+      </header>
+      <ul className="divide-y divide-border">
+        {participants.map((participant, index) => {
+          const badge = SOURCE_STATUS_BADGES[participant.status] ?? SOURCE_STATUS_BADGES.no_record;
+          return (
+            <li key={`${participant.aptem_id ?? "x"}-${index}`} className="flex flex-wrap items-center gap-3 px-7 py-2.5 odd:bg-[#f7f9fc]">
+              <span className="min-w-48 text-sm font-medium text-foreground">
+                {participant.aptem_id != null ? (
+                  <Link to="/journal" search={{ learner: String(participant.aptem_id), period: participant.report_months[0] ?? "" } as never} className="hover:text-primary hover:underline">
+                    {participant.learner_name}
+                  </Link>
+                ) : participant.learner_name}
+              </span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badge.className}`}>{badge.text}</span>
+              <span className="flex-1" />
+              {participant.on_report ? (
+                <span className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                  On report:
+                  {participant.report_months.map((month) => (
+                    <Link key={month} to="/journal" search={{ learner: String(participant.aptem_id), period: month } as never} className="rounded-full bg-primary/10 px-2 py-0.5 font-semibold text-primary hover:underline">
+                      {month}
+                    </Link>
+                  ))}
+                </span>
+              ) : (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Not on any report</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {!participants.length ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">The source holds no learners for this activity.</p>
+      ) : null}
+    </section>
   );
 }
 
@@ -169,6 +236,7 @@ function LedgerPage() {
 
   const activity = ledger.data?.activity;
   const participants = ledger.data?.participants ?? [];
+  const sourceParticipants = ledger.data?.source_participants ?? [];
   const plannedTotal = participants.reduce((sum, item) => sum + item.planned_hours, 0);
   const actualTotal = participants.reduce((sum, item) => sum + item.actual_hours, 0);
   const isMedia = ["video", "audio"].includes((ledger.data?.category ?? "").toLowerCase());
@@ -247,6 +315,10 @@ function LedgerPage() {
                 </div>
               ) : null}
             </section>
+
+            {sourceParticipants.length ? (
+              <SourceParticipantsSection participants={sourceParticipants} category={ledger.data.category} />
+            ) : null}
 
             <section className="overflow-hidden rounded-xl border border-border bg-card shadow-panel">
               <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-7 py-5">

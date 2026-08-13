@@ -171,13 +171,17 @@ function AssignmentDocuments({ row, onStageFiles, onUnstageFile, onDeleteDocumen
   );
 }
 
-export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, className = "" }: {
+export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, mergeMode = false, mergeEligible = false, mergeSelected = false, onToggleMerge, className = "" }: {
   row: DraftRow;
   onPatch: (patch: DraftPatch) => void;
   onDelete: () => void;
   onStageFiles: (files: File[]) => void;
   onUnstageFile: (index: number) => void;
   onDeleteDocument: (docId: number) => void;
+  mergeMode?: boolean;
+  mergeEligible?: boolean;
+  mergeSelected?: boolean;
+  onToggleMerge?: () => void;
   className?: string;
 }) {
   const [editing, setEditing] = useState(false);
@@ -233,6 +237,12 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
         </TableCell>
         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.category}</TableCell>
         <TableCell className="min-w-64 max-w-[38rem] text-sm">
+          {mergeMode ? (
+            <label className={`mb-2 flex items-center gap-2 text-xs font-semibold ${mergeEligible ? "cursor-pointer text-primary" : "text-muted-foreground"}`}>
+              <input type="checkbox" checked={mergeSelected} disabled={!mergeEligible} onChange={onToggleMerge} className="h-4 w-4 accent-primary" />
+              {mergeEligible ? "Select for Reading + Quiz merge" : "Not eligible for this merge"}
+            </label>
+          ) : null}
           {ref ? (
             <Link to="/ledger" search={{ ref, learner: String(row.aptem_id) } as never} className="font-medium text-foreground hover:text-primary hover:underline">{row.title}</Link>
           ) : (
@@ -257,7 +267,7 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
         <TableCell className="whitespace-nowrap text-right font-mono text-sm">{hours(row.planned_hours)}</TableCell>
         <TableCell className="whitespace-nowrap text-right font-mono text-sm text-success">{hours(row.actual_hours)}</TableCell>
         <TableCell className="pr-7 text-right">
-          <div className="flex justify-end gap-1">
+          <div className={`flex justify-end gap-1 ${mergeMode ? "pointer-events-none opacity-40" : ""}`}>
             <button type="button" onClick={() => { setDraft(editDraftFromRow(row)); setEditing(true); }} className="rounded-md border border-border p-1.5 hover:bg-secondary" title="Edit in this row" aria-label="Edit activity"><Pencil className="h-3.5 w-3.5" /></button>
             <button type="button" onClick={remove} className="rounded-md border border-destructive/30 p-1.5 text-destructive hover:bg-destructive/10" title="Remove activity" aria-label="Remove activity"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>

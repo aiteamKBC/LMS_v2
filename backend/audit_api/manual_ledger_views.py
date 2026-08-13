@@ -27,7 +27,7 @@ from django.views.decorators.http import require_GET
 
 from learner_api import evidence_storage
 
-from .views import _kbc_attendance_connection_string
+from .views import _fetch_assignment_items, _kbc_attendance_connection_string
 
 from .last_audit_ledger_views import (
     ACTIVITIES,
@@ -66,6 +66,10 @@ MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 # be filed after it.
 LEDGER_END_MONTH = "2026-08"
 
+# Every register session counts as one fixed 2.5-hour block; attending awards
+# the same 2.5 hours as actual time, an absence keeps the plan but awards none.
+ATTENDANCE_SESSION_HOURS = 2.5
+
 ROW_COLUMNS = (
     "id, aptem_id, learner_id, month, category, source_ref, group_id, "
     "activity_id, title, activity_date, planned_hours, actual_hours, "
@@ -74,7 +78,15 @@ ROW_COLUMNS = (
 )
 
 
+# The schema DDL is idempotent but costs six server round trips; running it
+# once per process keeps every manual endpoint fast on the remote database.
+_MANUAL_TABLES_READY = False
+
+
 def _ensure_manual_tables(cursor):
+    global _MANUAL_TABLES_READY
+    if _MANUAL_TABLES_READY:
+        return
     cursor.execute('CREATE SCHEMA IF NOT EXISTS "structured_manual_activities"')
     cursor.execute(f"""
         CREATE TABLE IF NOT EXISTS {MANUAL_ROWS} (
@@ -157,6 +169,7 @@ def _ensure_manual_tables(cursor):
         'DROP CONSTRAINT IF EXISTS reading_quiz_pairs_group_id_reading_activity_id_key'
     )
     cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_rq_pairs_group ON {READING_QUIZ_PAIRS} (group_id)")
+    _MANUAL_TABLES_READY = True
 
 
 def _month_label(month):
@@ -328,6 +341,10 @@ def _parse_source_ref(category, raw):
     if not ref:
         return None, None, None
     if category == "assignment":
+        # Auto-imported assignments point back at their Aptem component so the
+        # month sync stays idempotent; hand-typed assignments carry no ref.
+        if ref.startswith("asg:") and len(ref) > 4:
+            return ref, None, None
         raise ValueError("assignment rows are manual and take no source_ref")
     if category == "attendance":
         if not ref.startswith("att:") or len(ref) <= 4:
@@ -783,14 +800,15 @@ def _validate_patch_values(patch):
     return values
 
 
-INSERT_ROW_SQL = f"""
+ROW_VALUES_PLACEHOLDER = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+INSERT_ROW_PREFIX = f"""
     INSERT INTO {MANUAL_ROWS} (
         aptem_id, learner_id, month, category, source_ref,
         group_id, activity_id, title, activity_date,
         planned_hours, actual_hours, timestamp_label,
         completion_note, accepted, created_by
-    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-"""
+    ) VALUES """
+INSERT_ROW_SQL = INSERT_ROW_PREFIX + ROW_VALUES_PLACEHOLDER
 
 
 def _insert_params(aptem_id, learner_id, values, created_by):
@@ -1176,6 +1194,87 @@ def _ledger_participants(cursor, condition, params):
     return participants
 
 
+def _mark_on_report(source_participants, participants):
+    """Stamp each source participant with whether (and in which months) the
+    activity already sits on their employee-arranged report."""
+    months_by_aptem = {}
+    for row in participants:
+        months_by_aptem.setdefault(row["aptem_id"], set()).add(row["month"])
+    for item in source_participants:
+        months = sorted(months_by_aptem.get(item["aptem_id"]) or [])
+        item["on_report"] = bool(months)
+        item["report_months"] = months
+    return source_participants
+
+
+def _attendance_source_participants(cursor, session_key):
+    """Everyone the register recorded for this session — attended AND absent —
+    deduped per learner (duplicate register keys collapse, attended wins)."""
+    cursor.execute(
+        f"""
+        SELECT la.aptem_id, la.attendance_value, la.attendance_status,
+               l.learner_name
+        FROM {LEARNER_ATTENDANCE} la
+        LEFT JOIN {LEARNERS} l ON l.aptem_id = la.aptem_id
+        WHERE substring(la.source_key from position('_' in la.source_key) + 1) = %s
+        ORDER BY lower(COALESCE(l.learner_name, '')), la.aptem_id
+        """,
+        [session_key],
+    )
+    by_aptem = {}
+    for row in _dict_rows(cursor):
+        aptem_id = int(row["aptem_id"]) if row.get("aptem_id") is not None else None
+        attended = row.get("attendance_value") == 1 or str(
+            row.get("attendance_status") or ""
+        ).lower() in {"present", "attended", "attend"}
+        current = by_aptem.get(aptem_id)
+        if current and (current["status"] == "attended" or not attended):
+            continue
+        by_aptem[aptem_id] = {
+            "aptem_id": aptem_id,
+            "learner_name": row.get("learner_name") or f"Aptem learner {aptem_id}",
+            "status": "attended" if attended else "absent",
+        }
+    return list(by_aptem.values())
+
+
+def _activity_source_participants(cursor, activity_id):
+    """Every learner whose LMS group carries this activity, with their own
+    completion state from ``activity_results``."""
+    cursor.execute(
+        f"""
+        SELECT DISTINCT ON (gl.learner_id)
+               gl.learner_id, l.aptem_id, l.learner_name,
+               r.learner_id AS result_learner_id,
+               r.status, r.video_completed, r.reading_viewed, r.quiz_passed
+        FROM {GROUP_ACTIVITIES} ga
+        JOIN {GROUP_LEARNERS} gl ON gl.group_id = ga.group_id
+        LEFT JOIN {LEARNERS} l ON l.learner_id = gl.learner_id
+        LEFT JOIN {ACTIVITY_RESULTS} r
+          ON r.group_id = gl.group_id
+         AND r.activity_id = ga.activity_id
+         AND r.learner_id = gl.learner_id
+        WHERE ga.activity_id = %s
+        ORDER BY gl.learner_id, r.learner_id NULLS LAST
+        """,
+        [activity_id],
+    )
+    participants = []
+    for row in _dict_rows(cursor):
+        if row.get("result_learner_id") is None:
+            status = "no_record"
+        else:
+            status = "completed" if _is_completed(row) else "not_completed"
+        aptem_id = int(row["aptem_id"]) if row.get("aptem_id") is not None else None
+        participants.append({
+            "aptem_id": aptem_id,
+            "learner_name": row.get("learner_name") or f"LMS learner {row['learner_id']}",
+            "status": status,
+        })
+    participants.sort(key=lambda item: item["learner_name"].lower())
+    return participants
+
+
 @require_GET
 def activity_ledger(request: HttpRequest) -> JsonResponse:
     """One activity's definition plus every employee-arranged row for it.
@@ -1186,6 +1285,11 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
     across every group, attendance matches on the shared session key (the
     ``source_key`` minus its leading learner id), and assignments — having no
     shared source identity — show just their own row.
+
+    ``source_participants`` lists everyone who actually did the activity at
+    the source — the whole register session for attendance, every enrolled
+    learner's completion for LMS content — independent of who has it filed on
+    a monthly report.
     """
     ref = str(request.GET.get("ref") or "").strip()
     if not ref:
@@ -1216,6 +1320,7 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
                         "quiz": None,
                     },
                     "participants": participants,
+                    "source_participants": [],
                 })
 
             if ref.startswith("att:"):
@@ -1261,6 +1366,9 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
                     date_iso = first["activity_date"] or (
                         session_key[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", session_key) else None
                     )
+                source_participants = _mark_on_report(
+                    _attendance_source_participants(cursor, session_key), participants,
+                )
                 return JsonResponse({
                     "ref": ref,
                     "category": "attendance",
@@ -1274,6 +1382,7 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
                         "quiz": None,
                     },
                     "participants": participants,
+                    "source_participants": source_participants,
                 })
 
             # la:<group_id>:<activity_id> or a bare activity id
@@ -1298,6 +1407,9 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
                 return JsonResponse({"error": f"no Last_audit activity {activity_id}"}, status=404)
             definition = definition[0]
             participants = _ledger_participants(cursor, "m.activity_id = %s", [activity_id])
+            source_participants = _mark_on_report(
+                _activity_source_participants(cursor, activity_id), participants,
+            )
     except DatabaseError as error:
         return JsonResponse(
             {"error": "Could not read the activity ledger.", "details": str(error)},
@@ -1330,109 +1442,100 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
             } if has_quiz else None,
         },
         "participants": participants,
+        "source_participants": source_participants,
     })
 
 
 # --- retrieve + bulk save (the journal's draft workflow) ---------------------
 
-@require_GET
-def import_candidates(request: HttpRequest) -> JsonResponse:
-    """Everything retrievable from Last_audit for one learner-month, so the
-    journal can stage it as draft rows.
+def _collect_import_candidates(cursor, aptem_id, month, learner):
+    """Gather everything retrievable from Last_audit for one learner-month.
 
-    Attendance comes from the live register (mirror fallback); content
-    activities come from the complete catalogues of the LMS groups in which
-    the learner is enrolled.  The learner's own ``activity_results`` row is
-    left-joined only to supply completion state, so untouched course content
-    remains selectable just like the Manual Audit course picker. Hours are not
-    imported; assignments remain manual-entry.
+    Shared by the retrieve-modal listing (``import_candidates``) and the
+    journal's month auto-import (``rows_auto_import``) so both always agree on
+    what a month contains.  Returns a dict with ``attendance_source``,
+    ``attendance``, ``activities`` and ``already_added``.  DatabaseError is
+    left to the caller.
     """
-    try:
-        aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
-    except (TypeError, ValueError):
-        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
-    month = str(request.GET.get("month") or "").strip()
-    if aptem_id is None or not MONTH_RE.match(month):
-        return JsonResponse({"error": "aptem_id (int) and month (YYYY-MM) are required"}, status=400)
-
     attendance_rows = None
     attendance_source = "kbc_attendance"
     try:
         attendance_rows = _source_attendance_rows(aptem_id)
     except Exception:
         attendance_rows = None
-    try:
-        with _connection().cursor() as cursor:
-            learner = _load_learner(cursor, aptem_id)
-            if not learner:
-                return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
-            if attendance_rows is None:
-                attendance_source = "Last_audit-mirror"
-                cursor.execute(
-                    f"""
-                    SELECT source_key, attendance_date, attendance_value,
-                           attendance_status, module, lecture_name
-                    FROM {LEARNER_ATTENDANCE}
-                    WHERE aptem_id = %s
-                    ORDER BY attendance_date, source_key
-                    """,
-                    [aptem_id],
-                )
-                attendance_rows = _dict_rows(cursor)
-
-            content_rows = []
-            if learner.get("learner_id") is not None:
-                cursor.execute(
-                    f"""
-                    SELECT DISTINCT ON (gl.group_id, a.activity_id)
-                           gl.group_id, g.group_name, a.activity_id, a.title, a.activity_date,
-                           lower(a.activity_type) AS activity_type,
-                           a.quiz_id, a.quiz_questions, a.reading_type,
-                           a.reading_iframe_url, a.reading_text_body,
-                           a.configured_duration_min,
-                           r.status, r.video_completed, r.reading_viewed,
-                           r.quiz_passed
-                    FROM {GROUP_LEARNERS} gl
-                    JOIN {GROUPS} g ON g.group_id = gl.group_id
-                    JOIN {GROUP_ACTIVITIES} ga ON ga.group_id = gl.group_id
-                    JOIN {ACTIVITIES} a ON a.activity_id = ga.activity_id
-                    LEFT JOIN {ACTIVITY_RESULTS} r
-                      ON r.group_id = gl.group_id
-                     AND r.activity_id = a.activity_id
-                     AND r.learner_id = gl.learner_id
-                    WHERE gl.learner_id = %s
-                      AND lower(a.activity_type) IN ('video', 'audio', 'reading+quiz')
-                    ORDER BY gl.group_id, a.activity_id, r.learner_id NULLS LAST
-                    """,
-                    [learner["learner_id"]],
-                )
-                content_rows = _dict_rows(cursor)
-
-            _ensure_manual_tables(cursor)
-            group_ids = sorted({int(row["group_id"]) for row in content_rows if row.get("group_id") is not None})
-            pairs = []
-            if group_ids:
-                cursor.execute(
-                    f"SELECT id, group_id, reading_activity_id, quiz_activity_id FROM {READING_QUIZ_PAIRS} WHERE group_id = ANY(%s)",
-                    [group_ids],
-                )
-                pairs = _dict_rows(cursor)
-            cursor.execute(
-                f"""
-                SELECT source_ref FROM {MANUAL_ROWS}
-                WHERE aptem_id = %s AND month = %s
-                  AND deleted_at IS NULL AND source_ref IS NOT NULL
-                """,
-                [aptem_id, month],
-            )
-            already_added = sorted({row[0] for row in cursor.fetchall()})
-    except DatabaseError as error:
-        return JsonResponse(
-            {"error": "Could not read the import candidates.", "details": str(error)},
-            status=503,
+    if attendance_rows is None:
+        attendance_source = "Last_audit-mirror"
+        cursor.execute(
+            f"""
+            SELECT source_key, attendance_date, attendance_value,
+                   attendance_status, module, lecture_name
+            FROM {LEARNER_ATTENDANCE}
+            WHERE aptem_id = %s
+            ORDER BY attendance_date, source_key
+            """,
+            [aptem_id],
         )
+        attendance_rows = _dict_rows(cursor)
+
+    content_rows = []
+    if learner.get("learner_id") is not None:
+        cursor.execute(
+            f"""
+            SELECT DISTINCT ON (gl.group_id, a.activity_id)
+                   gl.group_id, g.group_name, a.activity_id, a.title, a.activity_date,
+                   lower(a.activity_type) AS activity_type,
+                   a.quiz_id, a.quiz_questions, a.reading_type,
+                   a.reading_iframe_url, a.reading_text_body,
+                   a.configured_duration_min,
+                   r.status, r.video_completed, r.reading_viewed,
+                   r.quiz_passed
+            FROM {GROUP_LEARNERS} gl
+            JOIN {GROUPS} g ON g.group_id = gl.group_id
+            JOIN {GROUP_ACTIVITIES} ga ON ga.group_id = gl.group_id
+            JOIN {ACTIVITIES} a ON a.activity_id = ga.activity_id
+            LEFT JOIN {ACTIVITY_RESULTS} r
+              ON r.group_id = gl.group_id
+             AND r.activity_id = a.activity_id
+             AND r.learner_id = gl.learner_id
+            WHERE gl.learner_id = %s
+              AND lower(a.activity_type) IN ('video', 'audio', 'reading+quiz')
+            ORDER BY gl.group_id, a.activity_id, r.learner_id NULLS LAST
+            """,
+            [learner["learner_id"]],
+        )
+        content_rows = _dict_rows(cursor)
+
+    _ensure_manual_tables(cursor)
+    group_ids = sorted({int(row["group_id"]) for row in content_rows if row.get("group_id") is not None})
+    pairs = []
+    if group_ids:
+        cursor.execute(
+            f"SELECT id, group_id, reading_activity_id, quiz_activity_id FROM {READING_QUIZ_PAIRS} WHERE group_id = ANY(%s)",
+            [group_ids],
+        )
+        pairs = _dict_rows(cursor)
+    cursor.execute(
+        f"""
+        SELECT source_ref FROM {MANUAL_ROWS}
+        WHERE aptem_id = %s AND month = %s
+          AND deleted_at IS NULL AND source_ref IS NOT NULL
+        """,
+        [aptem_id, month],
+    )
+    already_added = sorted({row[0] for row in cursor.fetchall()})
+
+    # The register sometimes records one session twice under different keys;
+    # collapse duplicates (same date + lecture) into one candidate, keeping
+    # the copy already on the report so it cannot be added a second time.
+    already_added_set = set(already_added)
+
+    def _attendance_priority(item):
+        return (
+            2 if item["source_ref"] in already_added_set else 0
+        ) + (1 if item["attended"] else 0)
 
     attendance = []
+    session_index = {}
     for row in attendance_rows:
         attendance_date = row.get("attendance_date")
         date_iso = attendance_date.isoformat() if attendance_date else None
@@ -1441,15 +1544,23 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
         attended = row.get("attendance_value") == 1 or str(
             row.get("attendance_status") or ""
         ).lower() in {"present", "attended", "attend"}
-        attendance.append({
+        title = row.get("lecture_name") or row.get("module") or "Attendance session"
+        candidate = {
             "source_ref": f"att:{row['source_key']}",
             "category": "attendance",
-            "title": row.get("lecture_name") or row.get("module") or "Attendance session",
+            "title": title,
             "group_name": row.get("module") or "Attendance",
             "activity_date": date_iso,
             "attended": attended,
             "timestamp_label": "attended" if attended else "not attended",
-        })
+        }
+        session_key = (date_iso, " ".join(title.lower().split()))
+        existing_at = session_index.get(session_key)
+        if existing_at is None:
+            session_index[session_key] = len(attendance)
+            attendance.append(candidate)
+        elif _attendance_priority(candidate) > _attendance_priority(attendance[existing_at]):
+            attendance[existing_at] = candidate
 
     activities = []
     for row in content_rows:
@@ -1499,13 +1610,253 @@ def import_candidates(request: HttpRequest) -> JsonResponse:
         })
     activities = [item for item in activities if (item["group_id"], item["activity_id"]) not in consumed] + bundles
 
-    return JsonResponse({
-        "aptem_id": aptem_id,
-        "month": month,
+    return {
         "attendance_source": attendance_source,
         "attendance": attendance,
         "activities": activities,
         "already_added": already_added,
+    }
+
+
+@require_GET
+def import_candidates(request: HttpRequest) -> JsonResponse:
+    """Everything retrievable from Last_audit for one learner-month, so the
+    journal can stage it as draft rows.
+
+    Attendance comes from the live register (mirror fallback); content
+    activities come from the complete catalogues of the LMS groups in which
+    the learner is enrolled.  The learner's own ``activity_results`` row is
+    left-joined only to supply completion state, so untouched course content
+    remains selectable just like the Manual Audit course picker. Hours are not
+    imported; assignments remain manual-entry.
+    """
+    try:
+        aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+    month = str(request.GET.get("month") or "").strip()
+    if aptem_id is None or not MONTH_RE.match(month):
+        return JsonResponse({"error": "aptem_id (int) and month (YYYY-MM) are required"}, status=400)
+
+    try:
+        with _connection().cursor() as cursor:
+            learner = _load_learner(cursor, aptem_id)
+            if not learner:
+                return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+            candidates = _collect_import_candidates(cursor, aptem_id, month, learner)
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read the import candidates.", "details": str(error)},
+            status=503,
+        )
+
+    return JsonResponse({"aptem_id": aptem_id, "month": month, **candidates})
+
+
+def _month_is_signed_off(aptem_id, month):
+    """A month is locked once BOTH roles hold a live signature — mirrors the
+    journal's own "signed" state (removal upserts an empty signature, so test
+    emptiness, not row existence). Errors read as "not signed" so a missing
+    table never blocks the journal."""
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT count(DISTINCT signer_role)
+                FROM "Audit"."monthly_audit_signoffs"
+                WHERE learner_id = %s AND report_month = %s
+                  AND coalesce(signature_data, '') <> ''
+                """,
+                [str(aptem_id), month],
+            )
+            row = cursor.fetchone()
+            return bool(row and int(row[0]) >= 2)
+    except Exception:
+        return False
+
+
+def _clamped_hours(value):
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return round(min(50.0, max(0.0, number)), 4)
+
+
+def _assignment_import_values(aptem_id, month):
+    """The learner's completed Aptem assignments dated inside the month, shaped
+    as manual-row create values. Dates follow the audit workspace's
+    ``relevant_date`` (due → submission → completed) so both screens bucket an
+    assignment into the same month; hours come from the source (planned hours
+    and the evidenced OTJH minutes)."""
+    values = []
+    for item in _fetch_assignment_items(aptem_id, include_evidence=False):
+        if str(item.get("status") or "").strip().lower() != "completed":
+            continue
+        date_iso = str(item.get("relevant_date") or "")[:10]
+        if not date_iso.startswith(month):
+            continue
+        source_id = str(item.get("source_id") or "").strip()
+        if not source_id:
+            continue
+        values.append({
+            "month": month,
+            "category": "assignment",
+            "source_ref": f"asg:{source_id}",
+            "group_id": None,
+            "activity_id": None,
+            "title": _valid_title(item.get("activity_name") or "Assignment"),
+            "activity_date": _valid_date(date_iso),
+            "planned_hours": _clamped_hours(item.get("planned_hours")),
+            "actual_hours": _clamped_hours(item.get("actual_hours")),
+            "timestamp_label": "input",
+            "completion_note": "completed",
+            "accepted": True,
+        })
+    return values
+
+
+@csrf_exempt
+def rows_auto_import(request: HttpRequest) -> JsonResponse:
+    """Fill one learner-month with everything the sources already hold, so the
+    journal opens pre-arranged and the employee only adds what is missing.
+
+    Inserted per month: every register attendance session (attended
+    2.5h/2.5h, absent 2.5h/0h), the LMS activities the learner COMPLETED whose
+    date falls inside the month (0h/0h — hours stay the employee's call), and
+    the learner's completed Aptem assignments (hours from the source).
+
+    Idempotent by design: a source_ref ever filed for the month — even one the
+    employee later deleted — is never re-inserted, so deletions stay
+    respected; the live unique index guards races on top. Signed-off months
+    and months past the ledger cap are left untouched.
+    """
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        body = json.loads(request.body or b"{}")
+        aptem_id = int(body.get("aptem_id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "aptem_id (int) is required"}, status=400)
+    try:
+        month = _valid_month(body.get("month"))
+    except ValueError as error:
+        return JsonResponse({"error": str(error)}, status=400)
+    actor = _actor(body.get("created_by")) or "auto-import"
+
+    if _month_is_signed_off(aptem_id, month):
+        return JsonResponse({
+            "ok": True, "aptem_id": aptem_id, "month": month,
+            "attendance_source": None, "created": 0, "skipped_existing": 0,
+            "locked": True,
+        })
+
+    alias = CONNECTION_ALIAS if CONNECTION_ALIAS in connections.databases else "default"
+    created = skipped_existing = 0
+    attendance_source = None
+    try:
+        with transaction.atomic(using=alias):
+            with connections[alias].cursor() as cursor:
+                learner = _load_learner(cursor, aptem_id)
+                if not learner:
+                    return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
+                candidates = _collect_import_candidates(cursor, aptem_id, month, learner)
+                attendance_source = candidates["attendance_source"]
+
+                pending = []
+                for item in candidates["attendance"]:
+                    pending.append({
+                        "month": month,
+                        "category": "attendance",
+                        "source_ref": item["source_ref"],
+                        "group_id": None,
+                        "activity_id": None,
+                        "title": _valid_title(item["title"]),
+                        "activity_date": _valid_date(item["activity_date"]),
+                        "planned_hours": ATTENDANCE_SESSION_HOURS,
+                        "actual_hours": ATTENDANCE_SESSION_HOURS if item["attended"] else 0.0,
+                        "timestamp_label": item["timestamp_label"],
+                        "completion_note": None,
+                        "accepted": True,
+                    })
+                for item in candidates["activities"]:
+                    date_iso = item.get("activity_date") or ""
+                    if not date_iso.startswith(month):
+                        continue
+                    if item["completion"]["state"] != "completed":
+                        continue
+                    pending.append({
+                        "month": month,
+                        "category": item["category"],
+                        "source_ref": item["source_ref"],
+                        "group_id": item.get("group_id"),
+                        "activity_id": item.get("activity_id"),
+                        "title": _valid_title(item["title"]),
+                        "activity_date": _valid_date(date_iso),
+                        "planned_hours": 0.0,
+                        "actual_hours": 0.0,
+                        "timestamp_label": "input",
+                        "completion_note": "completed",
+                        "accepted": True,
+                    })
+                pending.extend(_assignment_import_values(aptem_id, month))
+
+                # Refs ever filed for this month — deleted rows included — stay
+                # out: re-adding what an employee removed would undo their work.
+                cursor.execute(
+                    f"""
+                    SELECT source_ref FROM {MANUAL_ROWS}
+                    WHERE aptem_id = %s AND month = %s AND source_ref IS NOT NULL
+                    """,
+                    [aptem_id, month],
+                )
+                ever_filed = {row[0] for row in cursor.fetchall()}
+
+                seen = set()
+                batch = []
+                for values in pending:
+                    ref = values["source_ref"]
+                    if ref in ever_filed or ref in seen:
+                        skipped_existing += 1
+                        continue
+                    seen.add(ref)
+                    batch.append(values)
+                if batch:
+                    # One multi-VALUES statement: a month is dozens of rows and
+                    # the database is remote, so per-row round trips dominate.
+                    params = []
+                    for values in batch:
+                        params.extend(_insert_params(aptem_id, learner.get("learner_id"), values, actor))
+                    cursor.execute(
+                        INSERT_ROW_PREFIX
+                        + ", ".join([ROW_VALUES_PLACEHOLDER] * len(batch))
+                        + """
+                        ON CONFLICT (aptem_id, month, source_ref)
+                            WHERE deleted_at IS NULL AND source_ref IS NOT NULL
+                            DO NOTHING
+                        """,
+                        params,
+                    )
+                    created = cursor.rowcount
+                    skipped_existing += len(batch) - created
+    except IntegrityError as error:
+        return JsonResponse(
+            {"error": "The auto-import collided with an existing row.", "details": str(error)},
+            status=409,
+        )
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not auto-import the month.", "details": str(error)},
+            status=503,
+        )
+    return JsonResponse({
+        "ok": True,
+        "aptem_id": aptem_id,
+        "month": month,
+        "attendance_source": attendance_source,
+        "created": created,
+        "skipped_existing": skipped_existing,
+        "locked": False,
     })
 
 

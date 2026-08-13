@@ -151,11 +151,22 @@ export type LedgerActivity = {
 
 export type LedgerParticipant = ManualRow & { learner_name: string };
 
+// Everyone who actually did the activity at the source (whole register
+// session / every enrolled learner's LMS result), independent of the report.
+export type LedgerSourceParticipant = {
+  aptem_id: number | null;
+  learner_name: string;
+  status: "attended" | "absent" | "completed" | "not_completed" | "no_record";
+  on_report: boolean;
+  report_months: string[];
+};
+
 export type ActivityLedger = {
   ref: string;
   category: string;
   activity: LedgerActivity;
   participants: LedgerParticipant[];
+  source_participants: LedgerSourceParticipant[];
 };
 
 export class ManualApiError extends Error {
@@ -325,6 +336,28 @@ export type ImportCandidatesResponse = {
 export function getImportCandidates(aptemId: number | string, month: string): Promise<ImportCandidatesResponse> {
   const query = new URLSearchParams({ aptem_id: String(aptemId), month });
   return request(`/import-candidates?${query}`);
+}
+
+export type AutoImportResponse = {
+  ok: boolean;
+  aptem_id: number;
+  month: string;
+  attendance_source: string;
+  created: number;
+  skipped_existing: number;
+  locked: boolean;
+};
+
+// Fills the month with everything the LMS holds for this learner (attendance
+// sessions, completed activities and approved assignments) directly on the
+// server. Idempotent: refs ever filed for the month — even later deleted —
+// are never re-inserted, so employee deletions stay respected.
+export function autoImportManualRows(input: {
+  aptem_id: number;
+  month: string;
+  created_by?: string | null;
+}): Promise<AutoImportResponse> {
+  return request("/rows/auto-import", jsonInit("POST", input));
 }
 
 export function createReadingQuizPair(input: {

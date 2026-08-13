@@ -6,12 +6,12 @@
 // / add / edit / delete all stage locally and NOTHING persists until the
 // floating "Save all activities" button flushes the draft in one transaction.
 // Actual hours have no automatic source — they are whatever employees enter.
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import SignaturePad from "signature_pad";
 import Swal from "sweetalert2";
-import { BookOpenText, CalendarDays, CheckCircle2, ClipboardList, Download, Headphones, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2, Video } from "lucide-react";
+import { BookOpenText, CalendarDays, CheckCircle2, ClipboardList, Download, Headphones, Link2, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2, Video, X } from "lucide-react";
 import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/api";
 import { AddManualActivityFlow } from "@/features/audit/learner-log-pro-copy/components/AddManualActivityFlow";
 import { ManualActivityRow, ManualActivityTableHeader } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
@@ -20,6 +20,7 @@ import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/butt
 import { Table, TableBody, TableHeader } from "@/features/audit/learner-log-pro-copy/components/ui/table";
 import { getLearnerProfile, getLearners } from "@/features/audit/learner-log-pro-copy/lib/api";
 import {
+  autoImportManualRows,
   bulkSaveManualRows,
   deleteAssignmentDocument,
   getManualRows,
@@ -31,6 +32,7 @@ import {
   deleteDraftRow,
   draftFromServer,
   isDraftDirty,
+  nextDraftKey,
   patchDraftRow,
   pendingChangeCount,
   rowPatchOf,
@@ -246,6 +248,38 @@ function ActivityFlowModal({ onClose, children }: { onClose: () => void; childre
   );
 }
 
+function readingQuizSourceParts(sourceRef: string | null): { groupId: number; activityIds: number[] } | null {
+  if (!sourceRef) return null;
+  const parts = sourceRef.split(":");
+  if (parts[0] === "la" && parts.length === 3) {
+    const groupId = Number(parts[1]);
+    const activityId = Number(parts[2]);
+    return Number.isInteger(groupId) && Number.isInteger(activityId) ? { groupId, activityIds: [activityId] } : null;
+  }
+  if (parts[0] === "rq" && parts.length >= 4) {
+    const groupId = Number(parts[1]);
+    const activityIds = parts.slice(2).map(Number);
+    return Number.isInteger(groupId) && activityIds.every(Number.isInteger) ? { groupId, activityIds } : null;
+  }
+  return null;
+}
+
+// The activity log reads top-down like the retrieve modal: attendance first,
+// then the LMS activity cells, then the assignments — each section grouped by
+// week, rows date-ordered inside.
+const ROW_SECTIONS = [
+  { key: "attendance", label: "Attendance", categories: ["attendance"] },
+  { key: "activities", label: "LMS activities", categories: ["video", "audio", "reading+quiz"] },
+  { key: "assignments", label: "Assignments", categories: ["assignment"] },
+] as const;
+
+function weekLabelOf(dateIso: string | null) {
+  if (!dateIso) return "Undated";
+  const date = new Date(`${dateIso}T00:00:00`);
+  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+  return `Week of ${date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}`;
+}
+
 function JournalPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -255,6 +289,8 @@ function JournalPage() {
   const [hoursTab, setHoursTab] = useState<"original" | "arranged">("original");
   const [addChoice, setAddChoice] = useState<AddChoice | null>(null);
   const [draftRows, setDraftRows] = useState<DraftRow[]>([]);
+  const [mergeMode, setMergeMode] = useState(false);
+  const [mergeSelection, setMergeSelection] = useState<Set<string>>(() => new Set());
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [isPreparingPdf, setIsPreparingPdf] = useState(false);
   const [learnerSignature, setLearnerSignature] = useState("");
@@ -322,11 +358,49 @@ function JournalPage() {
     setCoachSignatureSaved(false);
   }, [summary.data, summaryMonths, periodChoice]);
 
+  // Keep the chosen learner/month in the URL, so leaving the page and coming
+  // back (or reloading / sharing the link) restores the same report instead
+  // of falling back to the default month.
+  useEffect(() => {
+    if (!selectedLearner || !selectedPeriod) return;
+    if (routeSearch.learner === selectedLearner && routeSearch.period === selectedPeriod) return;
+    void router.navigate({
+      to: "/journal",
+      search: { learner: selectedLearner, period: selectedPeriod },
+      replace: true,
+    });
+  }, [selectedLearner, selectedPeriod, routeSearch.learner, routeSearch.period, router]);
+
   const manualRows = useQuery({
     queryKey: ["manual-rows", aptemId, selectedPeriod],
     queryFn: () => getManualRows(aptemId!, selectedPeriod),
     enabled: Boolean(aptemId && selectedPeriod),
   });
+
+  // Fill the month straight from the sources the moment it opens: attendance
+  // sessions, the learner's completed LMS activities and completed Aptem
+  // assignments land as saved rows, leaving "Add" for what the sync cannot
+  // know. Server-side it is idempotent — refs ever filed (even later deleted)
+  // are never re-inserted and signed-off months are left alone — so firing
+  // once per learner-month per visit is safe.
+  const autoSyncedMonths = useRef(new Set<string>());
+  useEffect(() => {
+    if (!aptemId || !selectedPeriod) return;
+    const syncKey = `${aptemId}:${selectedPeriod}`;
+    if (autoSyncedMonths.current.has(syncKey)) return;
+    autoSyncedMonths.current.add(syncKey);
+    autoImportManualRows({ aptem_id: aptemId, month: selectedPeriod })
+      .then((result) => {
+        if (!result.created) return;
+        void queryClient.invalidateQueries({ queryKey: ["manual-rows", aptemId, selectedPeriod] });
+        void queryClient.invalidateQueries({ queryKey: ["manual-summary", aptemId] });
+        void Swal.fire({ toast: true, position: "top-end", icon: "success", title: `${result.created} activities added from the LMS`, showConfirmButton: false, timer: 2200 });
+      })
+      .catch(() => {
+        // Best-effort: the retrieve/add flows still cover the month by hand.
+        autoSyncedMonths.current.delete(syncKey);
+      });
+  }, [aptemId, selectedPeriod, queryClient]);
 
   const dirty = isDraftDirty(draftRows);
   // Seed / refresh the draft from the server ONLY while it holds no unsaved
@@ -345,6 +419,110 @@ function JournalPage() {
     () => new Set(visibleRows.map((row) => row.source_ref).filter(Boolean) as string[]),
     [visibleRows],
   );
+
+  // visibleRows is already date-sorted, so consecutive week labels group
+  // correctly and undated rows fall into a trailing "Undated" bucket.
+  const groupedSections = ROW_SECTIONS.map((section) => {
+    const rows = visibleRows.filter((row) => (section.categories as readonly string[]).includes(row.category));
+    const weeks: Array<{ label: string; rows: DraftRow[] }> = [];
+    for (const row of rows) {
+      const label = weekLabelOf(row.activity_date);
+      const last = weeks[weeks.length - 1];
+      if (last && last.label === label) last.rows.push(row);
+      else weeks.push({ label, rows: [row] });
+    }
+    return { ...section, count: rows.length, weeks };
+  }).filter((section) => section.count > 0);
+
+  const mergeEligibleKeys = useMemo(() => new Set(visibleRows
+    .filter((row) => row.category === "reading+quiz" && readingQuizSourceParts(row.source_ref))
+    .map((row) => row.key)), [visibleRows]);
+
+  useEffect(() => {
+    setMergeSelection((current) => {
+      const next = new Set([...current].filter((key) => mergeEligibleKeys.has(key)));
+      return next.size === current.size ? current : next;
+    });
+  }, [mergeEligibleKeys]);
+
+  function closeMergeMode() {
+    setMergeMode(false);
+    setMergeSelection(new Set());
+  }
+
+  function toggleMergeRow(key: string) {
+    setMergeSelection((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function mergeSelectedReadingQuizRows() {
+    const selected = visibleRows.filter((row) => mergeSelection.has(row.key));
+    if (selected.length < 2) {
+      await Swal.fire({ icon: "info", title: "Select activities to merge", text: "Select at least two Reading + Quiz activities." });
+      return;
+    }
+    const sources = selected.map((row) => readingQuizSourceParts(row.source_ref));
+    if (sources.some((source) => !source) || sources.some((source) => source!.groupId !== sources[0]!.groupId)) {
+      await Swal.fire({ icon: "error", title: "These activities cannot be merged", text: "All selected activities must come from the same LMS course." });
+      return;
+    }
+    if (new Set(selected.map((row) => row.accepted)).size > 1) {
+      await Swal.fire({ icon: "error", title: "Acceptance status is different", text: "Set all selected rows to the same Accepted status before merging." });
+      return;
+    }
+    if (selected.some((row) => row.documents.length || row.stagedFiles.length || row.deletedDocIds.length)) {
+      await Swal.fire({ icon: "error", title: "Evidence is attached", text: "Remove or save attached evidence before merging these activities." });
+      return;
+    }
+
+    const activityIds = [...new Set(sources.flatMap((source) => source!.activityIds))];
+    if (activityIds.length < 2) {
+      await Swal.fire({ icon: "error", title: "Nothing new to merge", text: "The selected rows already refer to the same LMS activity." });
+      return;
+    }
+    const sourceRef = `rq:${sources[0]!.groupId}:${activityIds.join(":")}`;
+    if (visibleRows.some((row) => !mergeSelection.has(row.key) && row.source_ref === sourceRef)) {
+      await Swal.fire({ icon: "error", title: "Bundle already exists", text: "This Reading + Quiz bundle is already in the activity log." });
+      return;
+    }
+
+    const dates = selected.map((row) => row.activity_date).filter(Boolean) as string[];
+    const durationValues = selected.map((row) => row.duration_minutes).filter((value): value is number => typeof value === "number");
+    const completionNotes = [...new Set(selected.map((row) => row.completion_note))];
+    const mergedRow: DraftRow = {
+      key: nextDraftKey(),
+      serverId: null,
+      state: "new",
+      retrieved: selected.every((row) => row.retrieved),
+      aptem_id: selected[0].aptem_id,
+      month: selected[0].month,
+      category: "reading+quiz",
+      source_ref: sourceRef,
+      title: selected.map((row) => row.title).join(" + ").slice(0, 500),
+      activity_date: dates.length ? dates.sort().at(-1)! : null,
+      planned_hours: Math.round(selected.reduce((total, row) => total + row.planned_hours, 0) * 10000) / 10000,
+      actual_hours: Math.round(selected.reduce((total, row) => total + row.actual_hours, 0) * 10000) / 10000,
+      timestamp_label: "input",
+      completion_note: completionNotes.length === 1 ? completionNotes[0] : null,
+      accepted: selected[0].accepted,
+      documents: [],
+      stagedFiles: [],
+      deletedDocIds: [],
+      duration_minutes: durationValues.length === selected.length ? durationValues.reduce((total, value) => total + value, 0) : null,
+    };
+
+    setDraftRows((current) => {
+      let next = current;
+      for (const row of selected) next = deleteDraftRow(next, row.key);
+      return [...next, mergedRow];
+    });
+    closeMergeMode();
+    await Swal.fire({ toast: true, position: "top-end", icon: "success", title: `${selected.length} activities merged in the draft`, showConfirmButton: false, timer: 2200 });
+  }
 
   async function confirmDiscardIfDirty(): Promise<boolean> {
     if (!dirty) return true;
@@ -615,8 +793,8 @@ function JournalPage() {
           </div>
 
           <div className="grid gap-4 border-y border-border bg-[#fafbfc] px-7 py-5 sm:grid-cols-2">
-            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={async (event) => { const next = event.target.value; if (!(await confirmDiscardIfDirty())) { event.target.value = selectedLearner; return; } setDraftRows([]); setLearnerChoice(next); setPeriodChoice(""); setAddingActivity(false); setRetrieving(false); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label><span className="label-caps">Report month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60" value={selectedPeriod} disabled={!summaryMonths.length} onChange={async (event) => { const next = event.target.value; if (!(await confirmDiscardIfDirty())) { event.target.value = selectedPeriod; return; } setDraftRows([]); setPeriodChoice(next); setAddingActivity(false); setRetrieving(false); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{summaryMonths.length ? summaryMonths.map((item) => <option key={item.month} value={item.month}>{item.label}</option>) : <option value="">No report months available</option>}</select></label>
+            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={async (event) => { const next = event.target.value; if (!(await confirmDiscardIfDirty())) { event.target.value = selectedLearner; return; } setDraftRows([]); setLearnerChoice(next); setPeriodChoice(""); setAddChoice(null); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label><span className="label-caps">Report month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60" value={selectedPeriod} disabled={!summaryMonths.length} onChange={async (event) => { const next = event.target.value; if (!(await confirmDiscardIfDirty())) { event.target.value = selectedPeriod; return; } setDraftRows([]); setPeriodChoice(next); setAddChoice(null); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{summaryMonths.length ? summaryMonths.map((item) => <option key={item.month} value={item.month}>{item.label}</option>) : <option value="">No report months available</option>}</select></label>
           </div>
 
           {pageError ? (
@@ -671,7 +849,18 @@ function JournalPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono text-xs font-medium text-[#182d48]">{visibleRows.length} activities</span>
-              <ActivityAddMenu disabled={!aptemId || !selectedPeriod} onPick={setAddChoice} />
+              {mergeMode ? (
+                <>
+                  <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary">{mergeSelection.size} selected</span>
+                  <Button type="button" size="sm" variant="outline" onClick={closeMergeMode}><X className="h-3.5 w-3.5" /> Cancel</Button>
+                  <Button type="button" size="sm" disabled={mergeSelection.size < 2} onClick={mergeSelectedReadingQuizRows}><Link2 className="h-3.5 w-3.5" /> Merge selected</Button>
+                </>
+              ) : (
+                <>
+                  <Button type="button" size="sm" variant="outline" disabled={mergeEligibleKeys.size < 2} title={mergeEligibleKeys.size < 2 ? "At least two LMS Reading + Quiz rows are required" : "Merge Reading + Quiz rows"} onClick={() => setMergeMode(true)}><Link2 className="h-3.5 w-3.5" /> Merge</Button>
+                  <ActivityAddMenu disabled={!aptemId || !selectedPeriod} onPick={setAddChoice} />
+                </>
+              )}
             </div>
           </header>
           {addChoice && ["attendance", "video", "reading+quiz", "audio"].includes(addChoice) && aptemId && selectedPeriod ? (
@@ -707,17 +896,39 @@ function JournalPage() {
             <Table>
               <TableHeader><ManualActivityTableHeader dark /></TableHeader>
               <TableBody>
-                {visibleRows.map((row) => (
-                  <ManualActivityRow
-                    key={row.key}
-                    row={row}
-                    className="odd:bg-[#f7f9fc]"
-                    onPatch={(patch) => setDraftRows((current) => patchDraftRow(current, row.key, patch))}
-                    onDelete={() => setDraftRows((current) => deleteDraftRow(current, row.key))}
-                    onStageFiles={(files) => setDraftRows((current) => stageFiles(current, row.key, files))}
-                    onUnstageFile={(index) => setDraftRows((current) => unstageFile(current, row.key, index))}
-                    onDeleteDocument={(docId) => setDraftRows((current) => stageDocumentDelete(current, row.key, docId))}
-                  />
+                {groupedSections.map((section) => (
+                  <Fragment key={section.key}>
+                    <tr className="border-b border-border bg-[#182d48]/[0.06]">
+                      <td colSpan={7} className="px-7 py-2 text-xs font-bold uppercase tracking-wider text-[#182d48]">
+                        {section.label} <span className="font-normal normal-case text-muted-foreground">({section.count})</span>
+                      </td>
+                    </tr>
+                    {section.weeks.map((week) => (
+                      <Fragment key={`${section.key}:${week.label}`}>
+                        <tr className="border-b border-border bg-[#eef3f8]">
+                          <td colSpan={7} className="px-7 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#4a5d78]">
+                            {week.label} <span className="font-normal normal-case text-muted-foreground">({week.rows.length})</span>
+                          </td>
+                        </tr>
+                        {week.rows.map((row) => (
+                          <ManualActivityRow
+                            key={row.key}
+                            row={row}
+                            className="odd:bg-[#f7f9fc]"
+                            mergeMode={mergeMode}
+                            mergeEligible={mergeEligibleKeys.has(row.key)}
+                            mergeSelected={mergeSelection.has(row.key)}
+                            onToggleMerge={() => toggleMergeRow(row.key)}
+                            onPatch={(patch) => setDraftRows((current) => patchDraftRow(current, row.key, patch))}
+                            onDelete={() => setDraftRows((current) => deleteDraftRow(current, row.key))}
+                            onStageFiles={(files) => setDraftRows((current) => stageFiles(current, row.key, files))}
+                            onUnstageFile={(index) => setDraftRows((current) => unstageFile(current, row.key, index))}
+                            onDeleteDocument={(docId) => setDraftRows((current) => stageDocumentDelete(current, row.key, docId))}
+                          />
+                        ))}
+                      </Fragment>
+                    ))}
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>
