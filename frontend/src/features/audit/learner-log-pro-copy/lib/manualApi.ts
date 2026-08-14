@@ -507,6 +507,9 @@ export type BulkSaveResponse = {
   updated: number;
   deleted: number;
   missing: number[];
+  // Row ids whose month move was skipped: the target month already lists the
+  // same source_ref, so applying it would collide with the unique index.
+  conflicts: number[];
 };
 
 export function bulkSaveManualRows(input: {

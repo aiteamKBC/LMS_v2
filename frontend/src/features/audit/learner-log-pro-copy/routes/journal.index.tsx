@@ -29,19 +29,23 @@ import {
   uploadAssignmentDocument,
 } from "@/features/audit/learner-log-pro-copy/lib/manualApi";
 import {
+  clearStoredDraft,
   deleteDraftRow,
   draftFromServer,
   isDraftDirty,
   nextDraftKey,
   patchDraftRow,
   pendingChangeCount,
+  restoreDraftFromStorage,
   rowPatchOf,
+  saveDraftToStorage,
   stageDocumentDelete,
   stageFiles,
   unstageFile,
   visibleDraftRows,
   type DraftRow,
 } from "@/features/audit/learner-log-pro-copy/lib/journalDraft";
+import { monthBounds } from "@/features/audit/learner-log-pro-copy/lib/ukCalendar";
 import { downloadLearnerJournalPdf } from "@/features/audit/learner-log-pro-copy/lib/journal-pdf";
 
 export const Route = createFileRoute("/journal/")({
@@ -354,6 +358,15 @@ function JournalPage() {
     });
   }, [summary.data?.months, learnerStartMonth]);
   const selectedPeriod = summaryMonths.some((item) => item.month === periodChoice) ? periodChoice : "";
+  // Every date the journal accepts, first report month → last: a date edited
+  // outside the current month re-files its row under the month it names.
+  const dateWindow = useMemo(() => {
+    if (!summaryMonths.length) return null;
+    return {
+      min: `${summaryMonths[0].month}-01`,
+      max: monthBounds(summaryMonths[summaryMonths.length - 1].month).max,
+    };
+  }, [summaryMonths]);
 
   useEffect(() => {
     if (!summary.data) return;
@@ -431,11 +444,43 @@ function JournalPage() {
 
   const dirty = isDraftDirty(draftRows);
   // Seed / refresh the draft from the server ONLY while it holds no unsaved
-  // work, so a background refetch never clobbers the employee's edits.
+  // work, so a background refetch never clobbers the employee's edits. A
+  // stored draft (the employee edited, left and came back) is restored over
+  // the fresh server rows instead of the plain seed; save/discard clear the
+  // storage, so a restore can never bring back flushed work.
+  const seededDraftKey = useRef<string | null>(null);
   useEffect(() => {
-    if (!manualRows.data || dirty) return;
+    if (!manualRows.data || dirty || !aptemId || !selectedPeriod) return;
+    const storeKey = `${aptemId}:${selectedPeriod}`;
+    const restored = restoreDraftFromStorage(aptemId, selectedPeriod, manualRows.data.rows);
+    if (restored) {
+      setDraftRows(restored.rows);
+      seededDraftKey.current = storeKey;
+      const savedAtLabel = new Date(restored.savedAt).toLocaleString("en-GB");
+      if (restored.lostFileNames.length) {
+        void Swal.fire({
+          icon: "info",
+          title: "Unsaved draft restored",
+          text: `Your unsaved changes from ${savedAtLabel} are back. Staged uploads cannot survive leaving the page — re-attach: ${restored.lostFileNames.join(", ")}.`,
+        });
+      } else {
+        void Swal.fire({ toast: true, position: "top-end", icon: "info", title: "Unsaved draft restored", showConfirmButton: false, timer: 2600 });
+      }
+      return;
+    }
     setDraftRows(manualRows.data.rows.map(draftFromServer));
-  }, [manualRows.data, dirty]);
+    seededDraftKey.current = storeKey;
+  }, [manualRows.data, dirty, aptemId, selectedPeriod]);
+
+  // Mirror the draft into localStorage on every change (and drop the mirror
+  // once it is clean again). Guarded by seededDraftKey so a month/learner
+  // switch can never save stale rows under — or wipe — the wrong key.
+  useEffect(() => {
+    if (!aptemId || !selectedPeriod) return;
+    if (seededDraftKey.current !== `${aptemId}:${selectedPeriod}`) return;
+    if (isDraftDirty(draftRows)) saveDraftToStorage(aptemId, selectedPeriod, draftRows);
+    else clearStoredDraft(aptemId, selectedPeriod);
+  }, [draftRows, aptemId, selectedPeriod]);
 
   const visibleRows = visibleDraftRows(draftRows).sort((left, right) => {
     const leftDate = left.activity_date || "9999-12-31";
@@ -549,7 +594,7 @@ function JournalPage() {
     const confirmation = await Swal.fire({
       icon: "warning",
       title: "Discard unsaved changes?",
-      text: "This month's draft has unsaved changes. Leaving now throws them away.",
+      text: "This month's draft has unsaved changes. Discarding throws them away.",
       showCancelButton: true,
       confirmButtonText: "Discard changes",
       cancelButtonText: "Keep editing",
@@ -557,6 +602,14 @@ function JournalPage() {
       reverseButtons: true,
     });
     return confirmation.isConfirmed;
+  }
+
+  // Switching learner/month no longer threatens the draft: it is mirrored in
+  // localStorage and restored when the employee returns to this month.
+  function noteDraftKept() {
+    if (!dirty || !aptemId || !selectedPeriod) return;
+    saveDraftToStorage(aptemId, selectedPeriod, draftRows);
+    void Swal.fire({ toast: true, position: "top-end", icon: "info", title: "Draft kept — it restores when you come back", showConfirmButton: false, timer: 2200 });
   }
   const savedSignoff = useQuery({
     queryKey: ["journal-signoff", selectedLearner, selectedPeriod],
@@ -616,7 +669,11 @@ function JournalPage() {
       const deletes = draftRows
         .filter((row) => row.state === "deleted" && row.serverId != null)
         .map((row) => row.serverId!);
+      const movedCount = draftRows.filter((row) => row.state !== "deleted" && row.month !== selectedPeriod).length;
       const result = await bulkSaveManualRows({ aptem_id: aptemId, creates, updates, deletes });
+      // The draft is flushed — its localStorage mirror must go with it, or the
+      // next seed would restore work that is already saved.
+      clearStoredDraft(aptemId, selectedPeriod);
 
       // Flush staged uploads / document removals now that ids exist.
       const createdIdByKey = new Map(result.created.map((item) => [item.key, item.row.id]));
@@ -646,13 +703,18 @@ function JournalPage() {
       await queryClient.invalidateQueries({ queryKey: ["manual-rows"] });
       await queryClient.invalidateQueries({ queryKey: ["manual-summary"] });
 
-      if (result.skipped.length || failedUploads.length) {
+      const conflictTitles = (result.conflicts ?? []).map(
+        (id) => draftRows.find((row) => row.serverId === id)?.title ?? `#${id}`,
+      );
+      if (result.skipped.length || failedUploads.length || conflictTitles.length) {
         const parts = [];
         if (result.skipped.length) parts.push(`${result.skipped.length} duplicate row(s) were already on the report and were skipped.`);
+        if (conflictTitles.length) parts.push(`These rows could not move — the target month already lists the same activity: ${conflictTitles.join(", ")}.`);
         if (failedUploads.length) parts.push(`These uploads failed — retry from the row: ${failedUploads.join(", ")}.`);
         await Swal.fire({ icon: "warning", title: "Saved with warnings", text: parts.join(" ") });
       } else {
-        await Swal.fire({ toast: true, position: "top-end", icon: "success", title: "All activities saved", showConfirmButton: false, timer: 2000 });
+        const movedNote = movedCount ? ` — ${movedCount} re-filed onto ${movedCount === 1 ? "its" : "their"} edited month${movedCount === 1 ? "" : "s"}` : "";
+        await Swal.fire({ toast: true, position: "top-end", icon: "success", title: `All activities saved${movedNote}`, showConfirmButton: false, timer: movedCount ? 3200 : 2000 });
       }
     } catch (error) {
       await Swal.fire({ icon: "error", title: "Could not save the journal", text: error instanceof Error ? error.message : "Could not save the journal changes." });
@@ -663,6 +725,7 @@ function JournalPage() {
 
   async function handleDiscard() {
     if (!(await confirmDiscardIfDirty())) return;
+    if (aptemId && selectedPeriod) clearStoredDraft(aptemId, selectedPeriod);
     setDraftRows(manualRows.data ? manualRows.data.rows.map(draftFromServer) : []);
   }
 
@@ -839,8 +902,8 @@ function JournalPage() {
           </div>
 
           <div className="grid gap-4 border-y border-border bg-[#fafbfc] px-7 py-5 sm:grid-cols-2">
-            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={async (event) => { const next = event.target.value; if (!(await confirmDiscardIfDirty())) { event.target.value = selectedLearner; return; } setDraftRows([]); setLearnerChoice(next); setPeriodChoice(""); setAddChoice(null); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label><span className="label-caps">Report month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60" value={selectedPeriod} disabled={!summaryMonths.length} onChange={async (event) => { const next = event.target.value; if (!(await confirmDiscardIfDirty())) { event.target.value = selectedPeriod; return; } setDraftRows([]); setPeriodChoice(next); setAddChoice(null); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{summaryMonths.length ? summaryMonths.map((item) => <option key={item.month} value={item.month}>{item.label}</option>) : <option value="">No report months available</option>}</select></label>
+            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={(event) => { const next = event.target.value; noteDraftKept(); setDraftRows([]); setLearnerChoice(next); setPeriodChoice(""); setAddChoice(null); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label><span className="label-caps">Report month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60" value={selectedPeriod} disabled={!summaryMonths.length} onChange={(event) => { const next = event.target.value; noteDraftKept(); setDraftRows([]); setPeriodChoice(next); setAddChoice(null); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{summaryMonths.length ? summaryMonths.map((item) => <option key={item.month} value={item.month}>{item.label}</option>) : <option value="">No report months available</option>}</select></label>
           </div>
 
           {pageError ? (
@@ -968,6 +1031,8 @@ function JournalPage() {
                         key={row.key}
                         row={row}
                         className="odd:bg-[#f7f9fc]"
+                        reportMonth={selectedPeriod}
+                        dateWindow={dateWindow ?? undefined}
                         mergeMode={mergeMode}
                         mergeEligible={mergeEligibleKeys.has(row.key)}
                         mergeSelected={mergeSelection.has(row.key)}

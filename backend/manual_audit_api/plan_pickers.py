@@ -26,7 +26,7 @@ from django.db import DatabaseError, connections
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET
 
-from .common import CONN
+from .common import CONN, duration_min_sql
 from .plan_tables import assignment_name_key, ensure_plan_tables
 
 # Catalog casing differs from the wire categories ('Reading+Quiz' vs 'reading+quiz').
@@ -358,9 +358,9 @@ def picker_lms_course_materials(request: HttpRequest) -> JsonResponse:
             # was ever synced with), LEFT-joined with THIS learner's own
             # result — an untouched material still shows, marked not done.
             cur.execute(
-                '''
+                f'''
                 select a.activity_id, a.title, a.activity_type, a.activity_date,
-                       a.configured_duration_min,
+                       {duration_min_sql('a')} as configured_duration_min,
                        (a.video_iframe_url is not null and a.video_iframe_url <> '') as has_iframe,
                        (a.reading_iframe_url is not null and a.reading_iframe_url <> ''
                         or a.reading_text_body is not null and a.reading_text_body <> '') as has_text,
@@ -493,9 +493,9 @@ def picker_materials(request: HttpRequest) -> JsonResponse:
     except ValueError:
         return JsonResponse({"error": "limit/offset must be integers"}, status=400)
 
-    columns = '''
+    columns = f'''
         a.activity_id, a.activity_type, a.title, a.activity_date,
-        a.configured_duration_min,
+        {duration_min_sql('a')} as configured_duration_min,
         (coalesce(a.video_iframe_url, '') <> '' or coalesce(a.reading_iframe_url, '') <> '') as has_iframe,
         coalesce(a.reading_text_body, '') <> '' as has_text,
         a.quiz_id is not null as has_quiz

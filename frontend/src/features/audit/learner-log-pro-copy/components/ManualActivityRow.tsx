@@ -1,9 +1,10 @@
 // Table row for one DRAFT journal activity. Every action here — edits,
 // deletes, staged uploads — mutates the local draft only; the journal's
 // floating "Save all activities" button persists the whole draft at once.
-// Editing mirrors the add flow: month-bound working-day dates and the same
-// timestamp logic (attendance fixed; others "input" or a generated 09:00–17:00
-// range from the claimed actual hours).
+// Dates stay working-day only, but may leave the report month: editing a date
+// onto another month re-files the row under that month on save. Timestamps
+// mirror the add flow (attendance fixed; others "input" or a generated
+// 09:00–17:00 range from the claimed actual hours).
 import { useRef, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import { Link } from "@tanstack/react-router";
@@ -115,13 +116,20 @@ function editDraftFromRow(row: DraftRow): EditDraft {
   };
 }
 
-function validate(draft: EditDraft, month: string) {
+function monthLabelOf(month: string) {
+  return new Date(`${month}-02T12:00:00`).toLocaleString("en-GB", { month: "long", year: "numeric" });
+}
+
+function validate(draft: EditDraft, window: { min: string; max: string }) {
   if (!draft.title.trim()) return "Enter an activity name.";
   for (const [label, value] of [["Planned", draft.planned_hours], ["Actual", draft.actual_hours]] as const) {
     if (!Number.isFinite(value) || value < 0 || value > 50) return `${label} hours must be between 0 and 50.`;
   }
-  if (!draft.activity_date) return "Choose a date inside the report month.";
-  return dateRestriction(draft.activity_date, month);
+  if (!draft.activity_date) return "Choose a working-day date.";
+  if (draft.activity_date < window.min || draft.activity_date > window.max) {
+    return "The date must fall inside the learner's report months.";
+  }
+  return dateRestriction(draft.activity_date);
 }
 
 function StagedFileList({ row, onUnstageFile }: { row: DraftRow; onUnstageFile: (index: number) => void }) {
@@ -197,7 +205,7 @@ function AssignmentDocuments({ row, onStageFiles, onUnstageFile, onDeleteDocumen
   );
 }
 
-export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, mergeMode = false, mergeEligible = false, mergeSelected = false, onToggleMerge, className = "" }: {
+export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, mergeMode = false, mergeEligible = false, mergeSelected = false, onToggleMerge, className = "", reportMonth, dateWindow }: {
   row: DraftRow;
   onPatch: (patch: DraftPatch) => void;
   onDelete: () => void;
@@ -209,6 +217,10 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
   mergeSelected?: boolean;
   onToggleMerge?: () => void;
   className?: string;
+  /** The month the journal is showing — rows re-filed elsewhere get a badge. */
+  reportMonth?: string;
+  /** Date window the whole journal accepts (first report month → ledger end). */
+  dateWindow?: { min: string; max: string };
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => editDraftFromRow(row));
@@ -217,7 +229,7 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
   const ref = ledgerRef(row);
 
   function apply() {
-    const error = validate(draft, row.month);
+    const error = validate(draft, dateWindow ?? monthBounds(row.month));
     if (error) return void Swal.fire({ icon: "error", title: "Check the row", text: error });
     let timestampLabel = row.timestamp_label;
     if (row.category !== "attendance") {
@@ -232,6 +244,9 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
     onPatch({
       title: draft.title.trim(),
       activity_date: draft.activity_date || null,
+      // The row always lives on the month its date belongs to — a date edited
+      // onto another month re-files the row there on save.
+      month: draft.activity_date ? draft.activity_date.slice(0, 7) : row.month,
       planned_hours: draft.planned_hours,
       actual_hours: draft.actual_hours,
       timestamp_label: timestampLabel,
@@ -290,6 +305,11 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
               </span>
             ) : null}
             {row.retrieved ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Retrieved</span> : null}
+            {reportMonth && row.month !== reportMonth ? (
+              <span className="rounded-full bg-[#673ab7]/15 px-2 py-0.5 text-[10px] font-semibold text-[#673ab7]" title="The edited date belongs to another report month — the activity re-files there when you save.">
+                Moves to {monthLabelOf(row.month)} on save
+              </span>
+            ) : null}
             {unsaved ? <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Unsaved</span> : null}
             {!row.accepted ? <span className="rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-semibold text-destructive">Not accepted</span> : null}
           </div>
@@ -310,8 +330,9 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
     );
   }
 
-  const bounds = monthBounds(row.month);
-  const editDateIssue = draft.activity_date ? dateRestriction(draft.activity_date, row.month) : null;
+  const bounds = dateWindow ?? monthBounds(row.month);
+  const editDateIssue = draft.activity_date ? dateRestriction(draft.activity_date) : null;
+  const editTargetMonth = draft.activity_date ? draft.activity_date.slice(0, 7) : null;
   const editGeneratedTime = row.category !== "attendance" && draft.tsMode === "time"
     ? workingTimeRange(draft.startTime, draft.actual_hours)
     : null;
@@ -319,8 +340,11 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
   return (
     <TableRow className="bg-primary/5 hover:bg-primary/5">
       <TableCell className="pl-7">
-        <RowInput type="date" value={draft.activity_date} min={bounds.min} max={bounds.max} onChange={(e) => set({ activity_date: e.target.value })} className={`w-36 ${editDateIssue ? "border-destructive" : ""}`} title={`Working days in ${row.month} only (no UK weekends or bank holidays)`} />
+        <RowInput type="date" value={draft.activity_date} min={bounds.min} max={bounds.max} onChange={(e) => set({ activity_date: e.target.value })} className={`w-36 ${editDateIssue ? "border-destructive" : ""}`} title="UK working days only (no weekends or bank holidays) — a date in another month moves the activity there" />
         {editDateIssue ? <span className="mt-1 block max-w-36 text-[10px] leading-tight text-destructive">{editDateIssue}</span> : null}
+        {!editDateIssue && editTargetMonth && editTargetMonth !== row.month ? (
+          <span className="mt-1 block max-w-36 text-[10px] leading-tight text-[#673ab7]">Moves to {monthLabelOf(editTargetMonth)}</span>
+        ) : null}
       </TableCell>
       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.category}</TableCell>
       <TableCell>

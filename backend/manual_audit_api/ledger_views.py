@@ -19,6 +19,8 @@ from django.views.decorators.http import require_GET
 
 from audit_api.learner_exclusions import is_excluded_learner
 
+from .common import duration_min_sql
+
 from .plan_projection import (
     activity_content_url,
     merge_learner_months,
@@ -811,7 +813,7 @@ def activities(request: HttpRequest) -> JsonResponse:
                            a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                            a.reading_type, a.reading_text_body,
                            a.quiz_id, a.quiz_questions,
-                           a.configured_duration_min, a.first_seen, r.status,
+                           {duration_min_sql('a')} AS configured_duration_min, a.first_seen, r.status,
                            r.video_started, r.video_completed, r.reading_viewed,
                            r.quiz_attempted, r.quiz_passed, r.quiz_score,
                            r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,
@@ -1016,7 +1018,7 @@ def activity(request: HttpRequest) -> JsonResponse:
                a.video_iframe_url, a.reading_iframe_url,
                a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                a.reading_type, a.quiz_id, a.quiz_questions,
-               a.configured_duration_min, r.status,
+               {duration_min_sql('a')} AS configured_duration_min, r.status,
                r.video_started, r.video_completed, r.reading_viewed,
                r.quiz_attempted, r.quiz_passed, r.quiz_score,
                r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,

@@ -41,6 +41,7 @@ from .last_audit_ledger_views import (
     _as_int,
     _connection,
     _dict_rows,
+    _duration_min_sql,
     _is_completed,
     _json_list,
     _session_key,
@@ -674,7 +675,7 @@ def group_activities(request: HttpRequest) -> JsonResponse:
                        a.activity_id, a.title, a.activity_date, a.activity_type,
                        a.quiz_id, a.quiz_questions, a.reading_type,
                        a.reading_iframe_url, a.reading_text_body,
-                       a.configured_duration_min,
+                       {_duration_min_sql('a')} AS configured_duration_min,
                        ga.position,
                        r.learner_id AS result_learner_id, r.status,
                        r.video_completed, r.reading_viewed, r.quiz_passed
@@ -852,6 +853,15 @@ def _validate_patch_values(patch):
         values["activity_date"] = _valid_date(patch["activity_date"])
     if "month" in patch:
         values["month"] = _valid_month(patch["month"])
+    # month and activity_date stay one pair: a dated row always lives on the
+    # month its date belongs to. A date-only patch moves the row there; a
+    # month that contradicts its own date is rejected outright.
+    if values.get("activity_date") is not None:
+        date_month = values["activity_date"].strftime("%Y-%m")
+        if "month" in values and values["month"] != date_month:
+            raise ValueError("activity_date must fall inside the patched month")
+        if "month" not in values:
+            values["month"] = _valid_month(date_month)
     if "planned_hours" in patch:
         values["planned_hours"] = _valid_hours(patch["planned_hours"], "planned_hours")
     if "actual_hours" in patch:
@@ -1501,7 +1511,7 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
                            raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                            reading_text_body, quiz_id, quiz_body, quiz_questions,
                            quiz_maximum_score, quiz_passing_score,
-                           configured_duration_min
+                           {_duration_min_sql()} AS configured_duration_min
                     FROM {ACTIVITIES} WHERE activity_id = ANY(%s)
                     """,
                     [bundle_ids],
@@ -1634,7 +1644,7 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
                        raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                        reading_text_body, quiz_id, quiz_body, quiz_questions,
                        quiz_maximum_score, quiz_passing_score,
-                       configured_duration_min
+                       {_duration_min_sql()} AS configured_duration_min
                 FROM {ACTIVITIES} WHERE activity_id = %s
                 """,
                 [activity_id],
@@ -1753,7 +1763,7 @@ def _collect_import_candidates(cursor, aptem_id, month, learner):
                    lower(a.activity_type) AS activity_type,
                    a.quiz_id, a.quiz_questions, a.reading_type,
                    a.reading_iframe_url, a.reading_text_body,
-                   a.configured_duration_min,
+                   {_duration_min_sql('a')} AS configured_duration_min,
                    r.status, r.video_completed, r.reading_viewed,
                    r.quiz_passed
             FROM {GROUP_LEARNERS} gl
@@ -2209,14 +2219,16 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                     })
                 pending.extend(_assignment_import_values(aptem_id, month))
 
-                # Refs ever filed for this month — deleted rows included — stay
-                # out: re-adding what an employee removed would undo their work.
+                # Refs ever filed for this learner — deleted rows included, ANY
+                # month — stay out: re-adding what an employee removed would
+                # undo their work, and a row moved onto another month must not
+                # reappear in its source-date month as a duplicate.
                 cursor.execute(
                     f"""
                     SELECT source_ref FROM {MANUAL_ROWS}
-                    WHERE aptem_id = %s AND month = %s AND source_ref IS NOT NULL
+                    WHERE aptem_id = %s AND source_ref IS NOT NULL
                     """,
-                    [aptem_id, month],
+                    [aptem_id],
                 )
                 ever_filed = {row[0] for row in cursor.fetchall()}
 
@@ -2305,7 +2317,7 @@ def rows_bulk(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": str(error) or "Invalid payload."}, status=400)
 
     alias = CONNECTION_ALIAS if CONNECTION_ALIAS in connections.databases else "default"
-    created, skipped, missing = [], [], []
+    created, skipped, missing, conflicts = [], [], [], []
     updated_count = deleted_count = 0
     try:
         with transaction.atomic(using=alias):
@@ -2333,6 +2345,26 @@ def rows_bulk(request: HttpRequest) -> JsonResponse:
                 for row_id, values in validated_updates:
                     if not values:
                         continue
+                    if "month" in values:
+                        # Moving a sourced row onto a month that already lists
+                        # the same source_ref would trip the live unique index
+                        # and roll back the whole save — skip it and report it
+                        # instead, so the rest of the draft still lands.
+                        cursor.execute(
+                            f"""
+                            SELECT 1 FROM {MANUAL_ROWS} other
+                            WHERE other.aptem_id = %s AND other.month = %s
+                              AND other.deleted_at IS NULL AND other.id <> %s
+                              AND other.source_ref IS NOT NULL
+                              AND other.source_ref = (
+                                  SELECT source_ref FROM {MANUAL_ROWS} WHERE id = %s
+                              )
+                            """,
+                            [aptem_id, values["month"], row_id, row_id],
+                        )
+                        if cursor.fetchone():
+                            conflicts.append(row_id)
+                            continue
                     assignments = ", ".join(f"{field} = %s" for field in values)
                     cursor.execute(
                         f"""
@@ -2378,4 +2410,5 @@ def rows_bulk(request: HttpRequest) -> JsonResponse:
         "updated": updated_count,
         "deleted": deleted_count,
         "missing": missing,
+        "conflicts": conflicts,
     })
