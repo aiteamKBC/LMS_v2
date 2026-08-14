@@ -35,6 +35,8 @@ from .views import (
 
 from .last_audit_ledger_views import (
     ACTIVITIES,
+    ACTIVITY_ACTUAL_HOURS,
+    ACTIVITY_PLANNED_HOURS,
     ACTIVITY_RESULTS,
     CONNECTION_ALIAS,
     GROUPS,
@@ -2188,12 +2190,159 @@ def _month_is_signed_off(aptem_id, month):
         return False
 
 
+# The OTJH hours the fetch-evidence pipeline mapped per activity, keyed
+# (kind, ref) where ref is the LMS activity_id. "reading+quiz" is spelt
+# reading_quiz in those tables.
+_HOURS_KINDS = {"video": "video", "audio": "audio", "reading+quiz": "reading_quiz"}
+
+
+def _lms_hours_map(cursor, aptem_id):
+    """{(kind, ref): {planned, actual, timestamp_label}} for one learner —
+    fetched once, no month filter, so a row dated into the wrong month still
+    finds its own hours."""
+    hours = {}
+    cursor.execute(
+        f"""
+        SELECT kind, ref::text AS ref, planned_hours
+        FROM {ACTIVITY_PLANNED_HOURS}
+        WHERE aptem_id = %s AND kind = ANY(%s)
+        """,
+        [aptem_id, list(_HOURS_KINDS.values())],
+    )
+    for row in _dict_rows(cursor):
+        entry = hours.setdefault((row["kind"], row["ref"]), {})
+        entry["planned"] = _num(row.get("planned_hours")) or 0.0
+    cursor.execute(
+        f"""
+        SELECT kind, ref::text AS ref, actual_hours, reported_hours, timestamp_label
+        FROM {ACTIVITY_ACTUAL_HOURS}
+        WHERE aptem_id = %s AND kind = ANY(%s)
+        """,
+        [aptem_id, list(_HOURS_KINDS.values())],
+    )
+    for row in _dict_rows(cursor):
+        entry = hours.setdefault((row["kind"], row["ref"]), {})
+        # reported_hours is the figure the pipeline reports for OTJH (an input
+        # may round the measured time); actual_hours is the raw measurement.
+        entry["actual"] = _num(row.get("reported_hours"))
+        if entry["actual"] is None:
+            entry["actual"] = _num(row.get("actual_hours")) or 0.0
+        label = str(row.get("timestamp_label") or "").strip()
+        if label:
+            entry["timestamp_label"] = label
+    return hours
+
+
+def _hours_refs(category, source_ref):
+    """The (kind, ref) keys one journal row covers: a single LMS activity, or
+    every member of a merged Reading + Quiz bundle."""
+    kind = _HOURS_KINDS.get(category)
+    if not kind or not source_ref:
+        return []
+    parts = str(source_ref).split(":")
+    if parts[0] == "la" and len(parts) == 3:
+        return [(kind, parts[2])]
+    if parts[0] == "rq" and len(parts) >= 4:
+        return [(kind, part) for part in parts[2:]]
+    return []
+
+
+def _lms_hours_for_row(hours_map, category, source_ref):
+    """(planned, actual, timestamp_label) mapped for this row — bundles add up
+    their members. Returns (None, None, None) when the pipeline has no figure,
+    so callers can leave the row untouched instead of zeroing it."""
+    keys = _hours_refs(category, source_ref)
+    if not keys:
+        return None, None, None
+    planned = actual = None
+    labels = []
+    for key in keys:
+        entry = hours_map.get(key)
+        if not entry:
+            continue
+        if entry.get("planned") is not None:
+            planned = (planned or 0.0) + entry["planned"]
+        if entry.get("actual") is not None:
+            actual = (actual or 0.0) + entry["actual"]
+        if entry.get("timestamp_label"):
+            labels.append(entry["timestamp_label"])
+    if planned is None and actual is None:
+        return None, None, None
+    # One member's real clock range is a usable stamp; several become "input"
+    # because a bundle spans more than one sitting.
+    label = labels[0] if len(labels) == 1 else None
+    return (
+        _clamped_hours(planned) if planned is not None else None,
+        _clamped_hours(actual) if actual is not None else None,
+        label,
+    )
+
+
 def _clamped_hours(value):
     try:
         number = float(value or 0)
     except (TypeError, ValueError):
         return 0.0
     return round(min(50.0, max(0.0, number)), 4)
+
+
+def _refresh_lms_hours(cursor, aptem_id, month, hours_map, months=None):
+    """Give every UNTOUCHED media row in the month its mapped OTJH hours.
+
+    Untouched means no human ever edited it (``updated_at`` still equals
+    ``created_at``): an employee's own hours are never overwritten, and the
+    refresh leaves ``updated_at`` alone so the row keeps following the source.
+    Rows the pipeline has no figure for are left exactly as they are.
+    """
+    if not hours_map:
+        return 0
+    # Machine-filed rows only. A row an employee added carries their own hours
+    # from the moment it was created (so "untouched" alone would not protect
+    # it) — created_by tells the two apart: the auto-import stamps itself, the
+    # journal's own save leaves it null.
+    conditions = ["aptem_id = %s", "deleted_at IS NULL",
+                  "category = ANY(%s)", "source_ref IS NOT NULL",
+                  "created_by = 'auto-import'"]
+    params = [aptem_id, list(_HOURS_KINDS)]
+    if months:
+        conditions.append("month = ANY(%s)")
+        params.append(list(months))
+    else:
+        conditions.append("month = %s")
+        params.append(month)
+    cursor.execute(
+        f"""
+        SELECT id, month, category, source_ref, planned_hours, actual_hours, timestamp_label
+        FROM {MANUAL_ROWS}
+        WHERE {' AND '.join(conditions)}
+          AND (updated_by IS NULL OR updated_by = 'auto-refresh')
+          AND updated_at = created_at
+        """,
+        params,
+    )
+    updated = 0
+    for row in _dict_rows(cursor):
+        planned, actual, stamp = _lms_hours_for_row(
+            hours_map, row["category"], row["source_ref"])
+        if planned is None and actual is None:
+            continue
+        planned = planned if planned is not None else _num(row.get("planned_hours")) or 0.0
+        actual = actual if actual is not None else _num(row.get("actual_hours")) or 0.0
+        stamp = stamp or row.get("timestamp_label") or "input"
+        cursor.execute(
+            f"""
+            UPDATE {MANUAL_ROWS}
+            SET planned_hours = %s, actual_hours = %s, timestamp_label = %s,
+                updated_by = 'auto-refresh'
+            WHERE id = %s
+              AND (planned_hours IS DISTINCT FROM %s::numeric
+                   OR actual_hours IS DISTINCT FROM %s::numeric
+                   OR timestamp_label IS DISTINCT FROM %s)
+            """,
+            [planned, actual, stamp, row["id"], planned, actual, stamp],
+        )
+        updated += cursor.rowcount
+    return updated
 
 
 def _report_display_name(evidence_label, report_blob):
@@ -2376,6 +2525,10 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                 candidates = _collect_import_candidates(cursor, aptem_id, month, learner)
                 attendance_source = candidates["attendance_source"]
 
+                # OTJH hours the pipeline already mapped per LMS activity, so
+                # media rows arrive with their real duration instead of 0h.
+                lms_hours = _lms_hours_map(cursor, aptem_id)
+
                 pending = []
                 for item in candidates["attendance"]:
                     pending.append({
@@ -2402,6 +2555,8 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                     # so filing them is always the employee's own decision.
                     if item["completion"]["state"] != "completed":
                         continue
+                    planned, actual, stamp = _lms_hours_for_row(
+                        lms_hours, item["category"], item["source_ref"])
                     pending.append({
                         "month": month,
                         "category": item["category"],
@@ -2410,9 +2565,9 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                         "activity_id": item.get("activity_id"),
                         "title": _valid_title(item["title"]),
                         "activity_date": _valid_date(date_iso),
-                        "planned_hours": 0.0,
-                        "actual_hours": 0.0,
-                        "timestamp_label": "input",
+                        "planned_hours": planned if planned is not None else 0.0,
+                        "actual_hours": actual if actual is not None else 0.0,
+                        "timestamp_label": stamp or "input",
                         "completion_note": item["completion"]["state"],
                         "accepted": True,
                     })
@@ -2489,6 +2644,10 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                             values["planned_hours"], values["actual_hours"],
                         ],
                     )
+                # Same contract for LMS media rows: untouched ones take the
+                # pipeline's mapped OTJH hours (and its real clock stamp), which
+                # also heals the rows filed at 0h before those tables existed.
+                _refresh_lms_hours(cursor, aptem_id, month, lms_hours)
                 # Give every assignment row its Azure-mirrored evidence files
                 # as documents (also heals rows filed before this feature).
                 _attach_assignment_evidence_docs(cursor, aptem_id, month)
