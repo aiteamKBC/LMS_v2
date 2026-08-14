@@ -19,8 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/features/audit/learner-log-pro-copy/components/ui/table";
-import { deleteArchivedContract, deleteArchivedEvidence, getLearnerProfile, renameContract, selectActivityEvidence, setContractArchived, setEvidenceArchived, updateEvidenceDate, updateLearnerProfileFields, uploadContract, type LearnerProfile, type LearnerProfileOverrideFields } from "@/features/audit/learner-log-pro-copy/lib/api";
-import { getManualRows, type ManualCategory, type ManualRow } from "@/features/audit/learner-log-pro-copy/lib/manualApi";
+import { deleteArchivedContract, deleteArchivedEvidence, getLearnerProfile, renameContract, setContractArchived, setEvidenceArchived, updateEvidenceDate, updateLearnerProfileFields, uploadContract, uploadEvidence, type LearnerProfile, type LearnerProfileOverrideFields } from "@/features/audit/learner-log-pro-copy/lib/api";
 
 export const Route = createFileRoute("/learner/$learnerId")({
   component: LearnerProfilePage,
@@ -125,23 +124,6 @@ function formatSkillScore(value: number) {
   return Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1);
 }
 
-function skillAverage(points: SkillChartPoint[], key: "score" | "maximum") {
-  return points.length
-    ? points.reduce((total, point) => total + point[key], 0) / points.length
-    : null;
-}
-
-function skillRadarTicks(maximum: number) {
-  const roundedMaximum = Math.max(1, Math.ceil(maximum));
-  const step = roundedMaximum <= 5 ? 1 : Math.ceil(roundedMaximum / 4);
-  const ticks = Array.from(
-    { length: Math.floor(roundedMaximum / step) + 1 },
-    (_, index) => index * step,
-  );
-  if (ticks.at(-1) !== roundedMaximum) ticks.push(roundedMaximum);
-  return ticks;
-}
-
 function wrapRadarLabel(value: string, maximumLineLength = 22) {
   return value.split(/\s+/).reduce<string[]>((lines, word) => {
     const last = lines.at(-1);
@@ -209,27 +191,6 @@ function downloadFilename(disposition: string | null, fallback: string) {
 
 type EvidenceItem = NonNullable<LearnerProfile["learning_delivery"]["first_evidence_items"]>[number];
 
-type EvidenceSelectionTarget = {
-  kind: "first" | "last-learning" | "return-to-learning" | "withdrawal";
-  title: string;
-  evidenceDate: string;
-  componentName: string;
-};
-
-const ACTIVITY_EVIDENCE_GROUPS: Array<{
-  label: string;
-  categories: ManualCategory[];
-}> = [
-  { label: "Attendance", categories: ["attendance"] },
-  { label: "LMS activities", categories: ["video", "audio", "reading+quiz"] },
-  { label: "Assignments", categories: ["assignment"] },
-];
-
-function activityEvidenceOptionLabel(activity: ManualRow) {
-  const activityDate = activity.activity_date ?? "No date";
-  return `${activityDate} · ${activity.title} · ${activity.month_label}`;
-}
-
 type EmployerEditForm = {
   employer_name: string;
   job_title: string;
@@ -268,9 +229,7 @@ function LearnerProfilePage() {
   const [evidencePreviewUrl, setEvidencePreviewUrl] = useState<string | null>(null);
   const [evidencePreviewError, setEvidencePreviewError] = useState<string | null>(null);
   const [evidenceUploadDate, setEvidenceUploadDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [evidenceSelectionTarget, setEvidenceSelectionTarget] = useState<EvidenceSelectionTarget | null>(null);
-  const [selectedActivityId, setSelectedActivityId] = useState("");
-  const [savingSelectedActivity, setSavingSelectedActivity] = useState(false);
+  const [uploadingEvidence, setUploadingEvidence] = useState(false);
   const [editingEvidenceId, setEditingEvidenceId] = useState<string | null>(null);
   const [editingEvidenceDate, setEditingEvidenceDate] = useState("");
   const [savingEvidenceDate, setSavingEvidenceDate] = useState(false);
@@ -306,12 +265,14 @@ function LearnerProfilePage() {
   const [startDateValue, setStartDateValue] = useState("");
   const [savingStartDate, setSavingStartDate] = useState(false);
   const [startDateError, setStartDateError] = useState<string | null>(null);
+  const [uploadingLastLearningEvidence, setUploadingLastLearningEvidence] = useState(false);
   const [lastLearningEvidenceError, setLastLearningEvidenceError] = useState<string | null>(null);
   const [lastLearningEvidenceMessage, setLastLearningEvidenceMessage] = useState<string | null>(null);
   const [editingWithdrawalEvidenceDate, setEditingWithdrawalEvidenceDate] = useState(false);
   const [withdrawalEvidenceDateValue, setWithdrawalEvidenceDateValue] = useState("");
   const [savingWithdrawalEvidenceDate, setSavingWithdrawalEvidenceDate] = useState(false);
   const [withdrawalEvidenceDateError, setWithdrawalEvidenceDateError] = useState<string | null>(null);
+  const [uploadingBreakEvidence, setUploadingBreakEvidence] = useState(false);
   const [breakEvidenceError, setBreakEvidenceError] = useState<string | null>(null);
   const [breakEvidenceMessage, setBreakEvidenceMessage] = useState<string | null>(null);
   const [editingBreak, setEditingBreak] = useState(false);
@@ -328,22 +289,6 @@ function LearnerProfilePage() {
     queryKey: ["learner-profile", learnerId],
     queryFn: () => getLearnerProfile(learnerId),
   });
-  const monthlyReportActivities = useQuery({
-    queryKey: ["monthly-report-evidence-activities", profile.data?.aptem_id],
-    queryFn: () => getManualRows(Number(profile.data?.aptem_id)),
-    enabled: Boolean(evidenceSelectionTarget && profile.data?.aptem_id),
-  });
-  const groupedEvidenceActivities = useMemo(() => {
-    const activities = [...(monthlyReportActivities.data?.rows ?? [])].sort((left, right) => {
-      const leftDate = left.activity_date ?? "9999-12-31";
-      const rightDate = right.activity_date ?? "9999-12-31";
-      return leftDate.localeCompare(rightDate) || left.title.localeCompare(right.title);
-    });
-    return ACTIVITY_EVIDENCE_GROUPS.map((group) => ({
-      ...group,
-      activities: activities.filter((activity) => group.categories.includes(activity.category)),
-    })).filter((group) => group.activities.length);
-  }, [monthlyReportActivities.data?.rows]);
 
   useEffect(() => {
     const source = previewContract?.file;
@@ -511,45 +456,19 @@ function LearnerProfilePage() {
     }
   }
 
-  function openActivityEvidencePicker(target: EvidenceSelectionTarget) {
-    if (!target.evidenceDate) return;
-    setSelectedActivityId("");
-    setEvidenceSelectionTarget(target);
-  }
-
-  async function handleActivityEvidenceSelection() {
-    if (!profile.data || !evidenceSelectionTarget || !selectedActivityId || savingSelectedActivity) return;
-    const selectedActivity = monthlyReportActivities.data?.rows.find(
-      (activity) => activity.id === Number(selectedActivityId),
-    );
-    if (!selectedActivity) return;
-    setSavingSelectedActivity(true);
+  async function handleEvidenceUpload(file: File | undefined) {
+    if (!file || !profile.data || uploadingEvidence || !evidenceUploadDate) return;
+    setUploadingEvidence(true);
     setEvidenceActionError(null);
-    setBreakEvidenceError(null);
-    setLastLearningEvidenceError(null);
+    setEvidenceActionMessage(null);
     try {
-      const result = await selectActivityEvidence({
-        learnerId: Number(profile.data.aptem_id),
-        manualActivityId: selectedActivity.id,
-        evidenceDate: evidenceSelectionTarget.evidenceDate,
-        componentName: evidenceSelectionTarget.componentName,
-      });
+      await uploadEvidence(Number(profile.data.aptem_id), file, evidenceUploadDate);
       await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
-      const message = result.already_selected
-        ? `${selectedActivity.title} is already selected as evidence.`
-        : `${selectedActivity.title} was selected as evidence.`;
-      if (evidenceSelectionTarget.kind === "first") setEvidenceActionMessage(message);
-      else if (evidenceSelectionTarget.kind === "return-to-learning") setBreakEvidenceMessage(message);
-      else setLastLearningEvidenceMessage(message);
-      setEvidenceSelectionTarget(null);
-      setSelectedActivityId("");
+      setEvidenceActionMessage(`${file.name} was uploaded to Azure.`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "The activity could not be selected as evidence.";
-      if (evidenceSelectionTarget.kind === "first") setEvidenceActionError(message);
-      else if (evidenceSelectionTarget.kind === "return-to-learning") setBreakEvidenceError(message);
-      else setLastLearningEvidenceError(message);
+      setEvidenceActionError(error instanceof Error ? error.message : "The evidence could not be uploaded.");
     } finally {
-      setSavingSelectedActivity(false);
+      setUploadingEvidence(false);
     }
   }
 
@@ -686,6 +605,53 @@ function LearnerProfilePage() {
     }
   }
 
+  async function handleBreakEvidenceUpload(file: File | undefined) {
+    const returnDate = dateInputValue(profile.data?.break_in_learning.return_to_learning_date);
+    if (!file || !profile.data || !returnDate || uploadingBreakEvidence) return;
+    setUploadingBreakEvidence(true);
+    setBreakEvidenceError(null);
+    setBreakEvidenceMessage(null);
+    try {
+      await uploadEvidence(
+        Number(profile.data.aptem_id),
+        file,
+        returnDate,
+        "Return to learning evidence",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setBreakEvidenceMessage(`${file.name} was uploaded for ${returnDate}.`);
+    } catch (error) {
+      setBreakEvidenceError(error instanceof Error ? error.message : "Break evidence could not be uploaded.");
+    } finally {
+      setUploadingBreakEvidence(false);
+    }
+  }
+
+  async function handleLastLearningEvidenceUpload(file: File | undefined) {
+    const lastLearningDate = dateInputValue(
+      profile.data?.learning_delivery.last_learning_evidence_date
+      ?? profile.data?.break_in_learning.last_learning_date,
+    );
+    if (!file || !profile.data || !lastLearningDate || uploadingLastLearningEvidence) return;
+    setUploadingLastLearningEvidence(true);
+    setLastLearningEvidenceError(null);
+    setLastLearningEvidenceMessage(null);
+    try {
+      await uploadEvidence(
+        Number(profile.data.aptem_id),
+        file,
+        lastLearningDate,
+        "Last date of learning evidence",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["learner-profile", learnerId] });
+      setLastLearningEvidenceMessage(`${file.name} was uploaded for ${lastLearningDate}.`);
+    } catch (error) {
+      setLastLearningEvidenceError(error instanceof Error ? error.message : "Last date of learning evidence could not be uploaded.");
+    } finally {
+      setUploadingLastLearningEvidence(false);
+    }
+  }
+
   async function handleWithdrawalEvidenceDateSave() {
     if (!profile.data || !withdrawalEvidenceDateValue || savingWithdrawalEvidenceDate) return;
     setSavingWithdrawalEvidenceDate(true);
@@ -815,13 +781,9 @@ function LearnerProfilePage() {
   const activeSkillGroup = skillGroups.find((group) => group.key === skillDimension && group.points.length)
     ?? skillGroups.find((group) => group.points.length)
     ?? skillGroups[0];
-  const activeSkillAverageScore = skillAverage(activeSkillGroup.points, "score") ?? 0;
-  const activeSkillAverageMaximum = skillAverage(activeSkillGroup.points, "maximum") ?? 0;
-  const activeSkillChartMaximum = Math.max(
-    1,
-    ...activeSkillGroup.points.map((point) => point.maximum),
-  );
-  const activeSkillRadarTicks = skillRadarTicks(activeSkillChartMaximum);
+  const activeSkillAveragePercentage = activeSkillGroup.points.length
+    ? activeSkillGroup.points.reduce((total, point) => total + point.percentage, 0) / activeSkillGroup.points.length
+    : 0;
 
   return (
     <div className="min-h-screen bg-background">
@@ -834,7 +796,7 @@ function LearnerProfilePage() {
           <div className="flex items-center gap-3">
             <Link
               to="/journal"
-              search={{ learner: String(learner.aptem_id), period: "" }}
+              search={{ learner: learner.id, period: "" }}
               className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-secondary"
             >
               <FileText className="h-3.5 w-3.5" /> Monthly report
@@ -1051,19 +1013,19 @@ function LearnerProfilePage() {
                     Evidence from the last learning day: {dateOnly(lastLearningEvidenceDate)}.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={!lastLearningEvidenceDate}
-                  onClick={() => openActivityEvidencePicker({
-                    kind: "last-learning",
-                    title: "Evidence of last date of learning",
-                    evidenceDate: dateInputValue(lastLearningEvidenceDate),
-                    componentName: "Last date of learning evidence",
-                  })}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <ListChecks className="h-4 w-4" /> Select evidence
-                </button>
+                <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${!lastLearningEvidenceDate || uploadingLastLearningEvidence ? "pointer-events-none opacity-50" : ""}`}>
+                  {uploadingLastLearningEvidence ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadingLastLearningEvidence ? "Uploadingâ€¦" : "Upload evidence"}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    disabled={!lastLearningEvidenceDate || uploadingLastLearningEvidence}
+                    onChange={(event) => {
+                      void handleLastLearningEvidenceUpload(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
               </div>
               {lastLearningEvidenceError && <p className="mt-3 text-xs font-medium text-destructive">{lastLearningEvidenceError}</p>}
               {lastLearningEvidenceMessage && <p className="mt-3 text-xs font-medium text-success">{lastLearningEvidenceMessage}</p>}
@@ -1095,11 +1057,6 @@ function LearnerProfilePage() {
                           <Eye className="h-3.5 w-3.5" /> Preview
                         </button>
                       )}
-                      {evidence.source_activity_month && (
-                        <Link to="/journal" search={{ learner: String(learner.aptem_id), period: evidence.source_activity_month }} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
-                          <ExternalLink className="h-3.5 w-3.5" /> Monthly report
-                        </Link>
-                      )}
                     </div>
                   ))}
                 </div>
@@ -1115,19 +1072,19 @@ function LearnerProfilePage() {
                     Evidence from the first return day: {dateOnly(learner.break_in_learning.return_to_learning_date)}.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  disabled={!learner.break_in_learning.return_to_learning_date}
-                  onClick={() => openActivityEvidencePicker({
-                    kind: "return-to-learning",
-                    title: "Return to learning evidence",
-                    evidenceDate: dateInputValue(learner.break_in_learning.return_to_learning_date),
-                    componentName: "Return to learning evidence",
-                  })}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <ListChecks className="h-4 w-4" /> Select evidence
-                </button>
+                <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${!learner.break_in_learning.return_to_learning_date || uploadingBreakEvidence ? "pointer-events-none opacity-50" : ""}`}>
+                  {uploadingBreakEvidence ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadingBreakEvidence ? "Uploading…" : "Upload evidence"}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    disabled={!learner.break_in_learning.return_to_learning_date || uploadingBreakEvidence}
+                    onChange={(event) => {
+                      void handleBreakEvidenceUpload(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
               </div>
               {breakEvidenceError && <p className="mt-3 text-xs font-medium text-destructive">{breakEvidenceError}</p>}
               {breakEvidenceMessage && <p className="mt-3 text-xs font-medium text-success">{breakEvidenceMessage}</p>}
@@ -1159,11 +1116,6 @@ function LearnerProfilePage() {
                           <Eye className="h-3.5 w-3.5" /> Preview
                         </button>
                       )}
-                      {evidence.source_activity_month && (
-                        <Link to="/journal" search={{ learner: String(learner.aptem_id), period: evidence.source_activity_month }} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
-                          <ExternalLink className="h-3.5 w-3.5" /> Monthly report
-                        </Link>
-                      )}
                     </div>
                   ))}
                 </div>
@@ -1174,7 +1126,7 @@ function LearnerProfilePage() {
           </section>
         )}
 
-        {isWithdrawn && (
+        {isWithdrawn && !hasBreakInLearning && (
           <section className="rounded-lg border border-destructive/25 bg-destructive/[0.03] p-6 shadow-panel">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-3">
@@ -1225,19 +1177,19 @@ function LearnerProfilePage() {
                   )}
                   {withdrawalEvidenceDateError && <p className="mt-2 text-xs font-medium text-destructive">{withdrawalEvidenceDateError}</p>}
                 </div>
-                <button
-                  type="button"
-                  disabled={!lastLearningEvidenceDate}
-                  onClick={() => openActivityEvidencePicker({
-                    kind: "withdrawal",
-                    title: "Withdrawal evidence",
-                    evidenceDate: dateInputValue(lastLearningEvidenceDate),
-                    componentName: "Last date of learning evidence",
-                  })}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <ListChecks className="h-4 w-4" /> Select evidence
-                </button>
+                <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${!lastLearningEvidenceDate || uploadingLastLearningEvidence ? "pointer-events-none opacity-50" : ""}`}>
+                  {uploadingLastLearningEvidence ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                  {uploadingLastLearningEvidence ? "Uploadingâ€¦" : "Upload evidence"}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    disabled={!lastLearningEvidenceDate || uploadingLastLearningEvidence}
+                    onChange={(event) => {
+                      void handleLastLearningEvidenceUpload(event.target.files?.[0]);
+                      event.target.value = "";
+                    }}
+                  />
+                </label>
               </div>
               {lastLearningEvidenceError && <p className="mt-3 text-xs font-medium text-destructive">{lastLearningEvidenceError}</p>}
               {lastLearningEvidenceMessage && <p className="mt-3 text-xs font-medium text-success">{lastLearningEvidenceMessage}</p>}
@@ -1254,11 +1206,6 @@ function LearnerProfilePage() {
                           <button type="button" onClick={() => setPreviewEvidence(evidence)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
                             <Eye className="h-3.5 w-3.5" /> Preview
                           </button>
-                        )}
-                        {evidence.source_activity_month && (
-                          <Link to="/journal" search={{ learner: String(learner.aptem_id), period: evidence.source_activity_month }} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
-                            <ExternalLink className="h-3.5 w-3.5" /> Monthly report
-                          </Link>
                         )}
                         <button
                           type="button"
@@ -1329,8 +1276,9 @@ function LearnerProfilePage() {
               <div className="p-5">
                 <div className="grid gap-3 sm:grid-cols-3">
                   {skillGroups.map((group) => {
-                    const averageScore = skillAverage(group.points, "score");
-                    const averageMaximum = skillAverage(group.points, "maximum");
+                    const average = group.points.length
+                      ? group.points.reduce((total, point) => total + point.percentage, 0) / group.points.length
+                      : null;
                     const selected = activeSkillGroup.key === group.key;
                     return (
                       <button
@@ -1347,9 +1295,7 @@ function LearnerProfilePage() {
                             {group.label}
                           </span>
                           <span className="font-mono text-sm font-bold" style={{ color: group.colour }}>
-                            {averageScore == null || averageMaximum == null
-                              ? "—"
-                              : `${formatSkillScore(averageScore)} / ${formatSkillScore(averageMaximum)}`}
+                            {average == null ? "—" : `${average.toFixed(0)}%`}
                           </span>
                         </span>
                         <span className="mt-1.5 block text-xs text-muted-foreground">{group.points.length} assessed competenc{group.points.length === 1 ? "y" : "ies"}</span>
@@ -1366,7 +1312,7 @@ function LearnerProfilePage() {
                         <p className="mt-0.5 text-xs text-muted-foreground">Hover an axis to see the full competency.</p>
                       </div>
                       <span className="rounded-full px-3 py-1 font-mono text-xs font-bold" style={{ color: activeSkillGroup.colour, backgroundColor: activeSkillGroup.softColour }}>
-                        Average {formatSkillScore(activeSkillAverageScore)} / {formatSkillScore(activeSkillAverageMaximum)}
+                        Average {activeSkillAveragePercentage.toFixed(0)}%
                       </span>
                     </div>
                     <div className="h-[34rem] min-h-[30rem] w-full">
@@ -1374,9 +1320,9 @@ function LearnerProfilePage() {
                         <RadarChart data={activeSkillGroup.points} outerRadius="84%" margin={{ top: 72, right: 96, bottom: 72, left: 96 }}>
                           <PolarGrid stroke="#d9d6cd" />
                           <PolarAngleAxis dataKey="domain" tick={<SkillRadarAxisTick />} />
-                          <PolarRadiusAxis angle={90} domain={[0, activeSkillChartMaximum]} ticks={activeSkillRadarTicks} tick={{ fill: "#64748b", fontSize: 10 }} />
+                          <PolarRadiusAxis angle={90} domain={[0, 100]} tickCount={5} tickFormatter={(value) => `${value}%`} tick={{ fill: "#64748b", fontSize: 10 }} />
                           <Tooltip content={<SkillRadarTooltip />} />
-                          <Radar name={activeSkillGroup.label} dataKey="score" stroke={activeSkillGroup.colour} fill={activeSkillGroup.colour} fillOpacity={0.18} strokeWidth={2.5} />
+                          <Radar name={activeSkillGroup.label} dataKey="percentage" stroke={activeSkillGroup.colour} fill={activeSkillGroup.colour} fillOpacity={0.18} strokeWidth={2.5} />
                         </RadarChart>
                       </ResponsiveContainer>
                     </div>
@@ -1834,19 +1780,23 @@ function LearnerProfilePage() {
                       {showArchivedEvidence ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
                       {showArchivedEvidence ? "Back to current" : `Show archived (${archivedEvidenceItems.length})`}
                     </button>
-                    <button
-                      type="button"
-                      disabled={!evidenceUploadDate}
-                      onClick={() => openActivityEvidencePicker({
-                        kind: "first",
-                        title: "First qualifying evidence",
-                        evidenceDate: evidenceUploadDate,
-                        componentName: "Selected monthly report activity",
-                      })}
-                      className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <ListChecks className="h-4 w-4" /> Select evidence
-                    </button>
+                    <label className={`inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-foreground px-3 py-2 text-xs font-semibold text-background hover:opacity-90 ${uploadingEvidence ? "pointer-events-none opacity-60" : ""}`}>
+                      {uploadingEvidence
+                        ? <LoaderCircle className="h-4 w-4 animate-spin" />
+                        : <Upload className="h-4 w-4" />}
+                      {uploadingEvidence ? "Uploading…" : "Upload evidence"}
+                      <input
+                        type="file"
+                        className="sr-only"
+                        disabled={uploadingEvidence || !evidenceUploadDate}
+                        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.png,.jpg,.jpeg"
+                        onChange={(event) => {
+                          const file = event.currentTarget.files?.[0];
+                          event.currentTarget.value = "";
+                          void handleEvidenceUpload(file);
+                        }}
+                      />
+                    </label>
                   </div>
                 </div>
                 {evidenceActionError && <p className="mt-3 text-xs font-medium text-destructive">{evidenceActionError}</p>}
@@ -1917,15 +1867,6 @@ function LearnerProfilePage() {
                         <Eye className="h-3.5 w-3.5" /> Preview evidence
                       </button>
                     )}
-                    {evidence.source_activity_month && (
-                      <Link
-                        to="/journal"
-                        search={{ learner: String(learner.aptem_id), period: evidence.source_activity_month }}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" /> Monthly report
-                      </Link>
-                    )}
                     <button
                       type="button"
                       onClick={() => void handleEvidenceArchive(evidence)}
@@ -1956,115 +1897,6 @@ function LearnerProfilePage() {
                 </article>
               ))}
               {!evidenceItems.length && <EmptyState>{showArchivedEvidence ? "No archived evidence documents." : "No qualifying evidence document is available yet."}</EmptyState>}
-            </div>
-          </section>
-        </div>
-      )}
-
-      {evidenceSelectionTarget && (
-        <div
-          className="fixed inset-0 z-[1350] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget && !savingSelectedActivity) {
-              setEvidenceSelectionTarget(null);
-            }
-          }}
-        >
-          <section
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="activity-evidence-picker-title"
-            className="w-full max-w-2xl overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
-          >
-            <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
-              <div>
-                <p className="label-caps">Select from monthly report</p>
-                <h2 id="activity-evidence-picker-title" className="mt-1 font-serif text-xl text-foreground">
-                  {evidenceSelectionTarget.title}
-                </h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Choose an existing activity for {evidenceSelectionTarget.evidenceDate}.
-                </p>
-              </div>
-              <button
-                type="button"
-                aria-label="Close activity evidence selector"
-                disabled={savingSelectedActivity}
-                onClick={() => setEvidenceSelectionTarget(null)}
-                className="rounded-md border border-border p-2 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </header>
-            <div className="space-y-4 p-6">
-              {monthlyReportActivities.isLoading ? (
-                <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-background px-4 py-10 text-sm text-muted-foreground">
-                  <LoaderCircle className="h-5 w-5 animate-spin" /> Loading monthly report activities…
-                </div>
-              ) : monthlyReportActivities.error ? (
-                <p className="rounded-md border border-destructive/25 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                  {monthlyReportActivities.error instanceof Error
-                    ? monthlyReportActivities.error.message
-                    : "The monthly report activities could not be loaded."}
-                </p>
-              ) : groupedEvidenceActivities.length ? (
-                <label className="block text-sm font-semibold text-foreground">
-                  Activity
-                  <select
-                    value={selectedActivityId}
-                    onChange={(event) => setSelectedActivityId(event.target.value)}
-                    className="mt-2 w-full rounded-md border border-border bg-background px-3 py-3 text-sm text-foreground outline-none focus:border-primary"
-                  >
-                    <option value="">Select an activity…</option>
-                    {groupedEvidenceActivities.map((group) => (
-                      <optgroup key={group.label} label={`${group.label} (${group.activities.length})`}>
-                        {group.activities.map((activity) => (
-                          <option key={activity.id} value={activity.id}>
-                            {activityEvidenceOptionLabel(activity)}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <div className="rounded-md border border-border bg-background px-4 py-8 text-center">
-                  <p className="text-sm font-semibold text-foreground">No saved monthly report activities</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Add and save an activity on the monthly report first.</p>
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-                <Link
-                  to="/journal"
-                  search={{ learner: String(profile.data?.aptem_id ?? ""), period: evidenceSelectionTarget.evidenceDate.slice(0, 7) }}
-                  className="text-xs font-semibold text-foreground hover:underline"
-                >
-                  Open monthly report
-                </Link>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={savingSelectedActivity}
-                    onClick={() => setEvidenceSelectionTarget(null)}
-                    className="rounded-md border border-border px-4 py-2 text-xs font-semibold text-foreground hover:bg-secondary disabled:opacity-50"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!selectedActivityId || savingSelectedActivity}
-                    onClick={() => void handleActivityEvidenceSelection()}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-foreground px-4 py-2 text-xs font-semibold text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {savingSelectedActivity
-                      ? <LoaderCircle className="h-4 w-4 animate-spin" />
-                      : <ListChecks className="h-4 w-4" />}
-                    {savingSelectedActivity ? "Saving…" : "Use as evidence"}
-                  </button>
-                </div>
-              </div>
             </div>
           </section>
         </div>
