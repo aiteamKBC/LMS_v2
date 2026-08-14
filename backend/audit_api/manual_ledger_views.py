@@ -27,7 +27,11 @@ from django.views.decorators.http import require_GET
 
 from learner_api import evidence_storage
 
-from .views import _fetch_assignment_items, _kbc_attendance_connection_string
+from .views import (
+    _fetch_assignment_items,
+    _fetch_monthly_hours,
+    _kbc_attendance_connection_string,
+)
 
 from .last_audit_ledger_views import (
     ACTIVITIES,
@@ -537,6 +541,13 @@ def summary(request: HttpRequest) -> JsonResponse:
         )
 
     planned_monthly = _planned_monthly(learner)
+    # The actual hours the learner's own programme record already holds for each
+    # month. Reference only — it is never written into the report; employees use
+    # it to see how their arranged claim compares with what the source recorded.
+    try:
+        recorded_monthly = _fetch_monthly_hours(aptem_id).get("completed") or {}
+    except Exception:
+        recorded_monthly = {}
     # Continuous month list: the learner's first known month (the start-date
     # month, since the plan begins there) through the fixed ledger end. Months
     # with manual rows outside that window stay visible so no data hides.
@@ -548,12 +559,25 @@ def summary(request: HttpRequest) -> JsonResponse:
     )
     month_list += sorted(month for month in arranged if month > LEDGER_END_MONTH)
     months = []
+    # Running totals across the month list: each month carries itself plus every
+    # month before it, so an employee can read progress-to-date at a glance.
+    recorded_running = 0.0
+    arranged_running = 0.0
     for month in month_list:
         row = arranged.get(month)
+        recorded_month = recorded_monthly.get(month)
+        if recorded_month is not None:
+            recorded_running = round(recorded_running + float(recorded_month), 2)
+        arranged_running = round(arranged_running + (_num(row["actual"]) if row else 0.0), 2)
         months.append({
             "month": month,
             "label": _month_label(month),
             "original_planned": planned_monthly.get(month),
+            # What the source recorded as actual for this month (display only).
+            "recorded_actual": recorded_month,
+            # …and the same figure accumulated from the first month to this one.
+            "recorded_actual_cumulative": recorded_running,
+            "arranged_actual_cumulative": arranged_running,
             "arranged_planned": _num(row["planned"]) if row else 0.0,
             # Claimed = accepted rows only; rejected hours are reported apart.
             "arranged_actual": _num(row["actual"]) if row else 0.0,
@@ -575,6 +599,68 @@ def summary(request: HttpRequest) -> JsonResponse:
         "months": months,
         "arranged_planned_total": round(sum(m["arranged_planned"] for m in months), 2),
         "arranged_actual_total": round(sum(m["arranged_actual"] for m in months), 2),
+        # Whole-programme total of the source's own recorded actual hours.
+        "recorded_actual_total": round(sum(
+            float(m["recorded_actual"]) for m in months if m["recorded_actual"] is not None
+        ), 2),
+    })
+
+
+@require_GET
+def cohort_totals(request: HttpRequest) -> JsonResponse:
+    """Every learner's arranged ledger totals — the SAME accepted-actual sum
+    each learner's monthly report shows — so the cohort table and the journal
+    can never disagree. Whole cohort in one grouped query, with the per-month
+    breakdown the search page's month filter needs.
+
+    Deliberately uncached: employees edit these rows all day, and a stale
+    Actual column is worse than a slower one (the query is ~100ms)."""
+    try:
+        with _connection().cursor() as cursor:
+            _ensure_manual_tables(cursor)
+            cursor.execute(
+                f"""
+                SELECT aptem_id, month,
+                       COALESCE(sum(planned_hours), 0) AS planned,
+                       COALESCE(sum(actual_hours) FILTER (WHERE accepted), 0) AS actual,
+                       COALESCE(sum(actual_hours) FILTER (WHERE NOT accepted), 0) AS not_accepted,
+                       count(*) AS row_count
+                FROM {MANUAL_ROWS}
+                WHERE deleted_at IS NULL
+                GROUP BY aptem_id, month
+                """
+            )
+            rows = _dict_rows(cursor)
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read the arranged ledger totals.", "details": str(error)},
+            status=503,
+        )
+
+    by_learner = {}
+    for row in rows:
+        aptem_id = int(row["aptem_id"])
+        entry = by_learner.setdefault(aptem_id, {
+            "aptem_id": aptem_id,
+            "planned": 0.0, "actual": 0.0, "not_accepted": 0.0, "row_count": 0,
+            "months": {},
+        })
+        month_totals = {
+            "planned": _num(row["planned"]),
+            "actual": _num(row["actual"]),
+            "not_accepted": _num(row["not_accepted"]),
+            "row_count": int(row["row_count"]),
+        }
+        entry["months"][row["month"]] = month_totals
+        for field in ("planned", "actual", "not_accepted", "row_count"):
+            entry[field] += month_totals[field]
+    for entry in by_learner.values():
+        for field in ("planned", "actual", "not_accepted"):
+            entry[field] = round(entry[field], 2)
+    return JsonResponse({
+        "source": "structured_manual_activities",
+        "count": len(by_learner),
+        "items": list(by_learner.values()),
     })
 
 
@@ -819,6 +905,42 @@ PATCHABLE_FIELDS = {
     "timestamp_label", "accepted",
 }
 
+# Awarding actual hours to an LMS activity the learner never finished marks it
+# complete: the audit team evidenced the learning even though the LMS flag
+# never flipped.  Clearing those hours puts the row back.  The swap is scoped
+# to this ONE pair of notes, so a genuine LMS "completed", an Aptem
+# assignment's own status word and attendance rows (NULL) are never rewritten.
+LMS_INCOMPLETE_NOTE = "not_completed"
+HOURS_COMPLETION_NOTE = "completed_by_hours"
+
+
+def _completion_note_for_hours(note, actual_hours):
+    """The completion note a row should carry for the hours it now claims."""
+    if actual_hours and actual_hours > 0:
+        return HOURS_COMPLETION_NOTE if note == LMS_INCOMPLETE_NOTE else note
+    return LMS_INCOMPLETE_NOTE if note == HOURS_COMPLETION_NOTE else note
+
+
+def _hours_completion_assignment(values):
+    """SET fragment + params keeping ``completion_note`` in step with the hours.
+
+    Returns ``("", [])`` when the patch does not touch ``actual_hours``.  The
+    new hours must be passed again as parameters: inside an UPDATE, reading the
+    column would still yield the OLD value.
+    """
+    if "actual_hours" not in values:
+        return "", []
+    hours = values["actual_hours"]
+    fragment = (
+        ", completion_note = CASE"
+        f" WHEN %s > 0 AND completion_note = '{LMS_INCOMPLETE_NOTE}'"
+        f" THEN '{HOURS_COMPLETION_NOTE}'"
+        f" WHEN %s <= 0 AND completion_note = '{HOURS_COMPLETION_NOTE}'"
+        f" THEN '{LMS_INCOMPLETE_NOTE}'"
+        " ELSE completion_note END"
+    )
+    return fragment, [hours, hours]
+
 
 def _validate_new_row(item):
     """Validate one create payload; shared by the single POST and the bulk save."""
@@ -827,6 +949,7 @@ def _validate_new_row(item):
     if category not in CATEGORIES:
         raise ValueError(f"category must be one of: {', '.join(sorted(CATEGORIES))}")
     source_ref, group_id, activity_id = _parse_source_ref(category, item.get("source_ref"))
+    actual_hours = _valid_hours(item.get("actual_hours"), "actual_hours")
     return {
         "month": month,
         "category": category,
@@ -836,9 +959,13 @@ def _validate_new_row(item):
         "title": _valid_title(item.get("title")),
         "activity_date": _valid_date(item.get("activity_date")),
         "planned_hours": _valid_hours(item.get("planned_hours"), "planned_hours"),
-        "actual_hours": _valid_hours(item.get("actual_hours"), "actual_hours"),
+        "actual_hours": actual_hours,
         "timestamp_label": str(item.get("timestamp_label") or "").strip()[:100],
-        "completion_note": str(item.get("completion_note") or "").strip()[:200] or None,
+        # A row added straight from the picker with hours already on it counts
+        # as evidenced too — same rule as editing hours onto a saved row.
+        "completion_note": _completion_note_for_hours(
+            str(item.get("completion_note") or "").strip()[:200] or None, actual_hours,
+        ),
         "accepted": item.get("accepted") is not False,
     }
 
@@ -1077,17 +1204,18 @@ def rows(request: HttpRequest) -> JsonResponse:
     except ValueError as error:
         return JsonResponse({"error": str(error)}, status=400)
     assignments = ", ".join(f"{field} = %s" for field in values)
+    note_sql, note_params = _hours_completion_assignment(values)
     try:
         with _connection().cursor() as cursor:
             _ensure_manual_tables(cursor)
             cursor.execute(
                 f"""
                 UPDATE {MANUAL_ROWS}
-                SET {assignments}, updated_by = %s, updated_at = now()
+                SET {assignments}{note_sql}, updated_by = %s, updated_at = now()
                 WHERE id = %s AND deleted_at IS NULL
                 RETURNING {ROW_COLUMNS}
                 """,
-                [*values.values(), _actor(body.get("updated_by")), row_id],
+                [*values.values(), *note_params, _actor(body.get("updated_by")), row_id],
             )
             updated = _dict_rows(cursor)
             if not updated:
@@ -2236,11 +2364,12 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                     date_iso = item.get("activity_date") or ""
                     if not date_iso.startswith(month):
                         continue
-                    # Every month-dated LMS activity is filed — completed or
-                    # not — so the report opens with the month's whole
-                    # curriculum. Learners rarely trip the LMS completion
-                    # flags, and the employee decides the hours either way;
-                    # the completion note keeps the real state visible.
+                    # Only what the learner actually COMPLETED is filed
+                    # automatically. Activities the LMS shows as unfinished stay
+                    # out of the report and remain offered in "Add" → Retrieve,
+                    # so filing them is always the employee's own decision.
+                    if item["completion"]["state"] != "completed":
+                        continue
                     pending.append({
                         "month": month,
                         "category": item["category"],
@@ -2435,13 +2564,14 @@ def rows_bulk(request: HttpRequest) -> JsonResponse:
                             conflicts.append(row_id)
                             continue
                     assignments = ", ".join(f"{field} = %s" for field in values)
+                    note_sql, note_params = _hours_completion_assignment(values)
                     cursor.execute(
                         f"""
                         UPDATE {MANUAL_ROWS}
-                        SET {assignments}, updated_by = %s, updated_at = now()
+                        SET {assignments}{note_sql}, updated_by = %s, updated_at = now()
                         WHERE id = %s AND aptem_id = %s AND deleted_at IS NULL
                         """,
-                        [*values.values(), actor, row_id, aptem_id],
+                        [*values.values(), *note_params, actor, row_id, aptem_id],
                     )
                     if cursor.rowcount:
                         updated_count += 1

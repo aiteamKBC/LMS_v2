@@ -11,6 +11,7 @@ deriving or inventing them from activity status or video duration.
 """
 
 import json
+import re
 import time
 from urllib.parse import parse_qs, urlparse
 
@@ -78,6 +79,30 @@ def _json_list(value):
             return []
         return parsed if isinstance(parsed, list) else []
     return []
+
+
+_MONTH_KEY_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _month_number_map(value):
+    """A {"YYYY-MM": hours} JSON map as plain floats. Aptem's monthly plan
+    arrives as jsonb (Decimals) or as a JSON string depending on the driver."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for month, hours in value.items():
+        if not _MONTH_KEY_RE.match(str(month)):
+            continue
+        try:
+            result[str(month)] = round(float(hours), 2)
+        except (TypeError, ValueError):
+            continue
+    return result
 
 
 def _as_int(value, *, default=None, minimum=None, maximum=None):
@@ -543,6 +568,11 @@ def cohort(request: HttpRequest) -> JsonResponse:
                COALESCE(rt.mapped_seconds, 0) AS lms_mapped_seconds,
                COALESCE(at.mapped_seconds, 0) AS attendance_seconds,
                ilr.planned_hours AS ilr_planned_hours,
+               -- Aptem's OWN plan (mirror of LMS."Aptem_users"."Planned" and
+               -- its monthly split) — what the learner's journal reports as the
+               -- programme/monthly plan, so both screens quote one number.
+               l.planned_hours_total AS aptem_planned_total,
+               l.planned_hours_monthly AS aptem_planned_monthly,
                COALESCE(am.months, '[]'::jsonb) AS months
         FROM {LEARNERS} l
         LEFT JOIN learner_groups lg ON lg.learner_id = l.learner_id
@@ -599,6 +629,11 @@ def cohort(request: HttpRequest) -> JsonResponse:
             # A missing ILR row is unavailable data, not a real zero.
             "planned_total": float(row["ilr_planned_hours"]) if row["ilr_planned_hours"] is not None else 0.0,
             "planned_hours_available": row["ilr_planned_hours"] is not None,
+            # Aptem's own plan, kept beside the ILR figure rather than replacing
+            # it: the cohort table quotes Aptem (matching each learner's
+            # journal), while the ILR total stays available for funding views.
+            "aptem_planned_total": float(row["aptem_planned_total"]) if row["aptem_planned_total"] is not None else None,
+            "aptem_planned_monthly": _month_number_map(row["aptem_planned_monthly"]),
             # Attendance source hours are not the learner's approved OTJ actual
             # total. Keep Actual unavailable until every LMS activity has an
             # explicit mapped duration; do not surface the attendance sum as a

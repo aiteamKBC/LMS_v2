@@ -24,6 +24,7 @@ from .evidence_explorer_views import (
 from .manual_ledger_views import (
     activity_ledger as manual_activity_ledger,
     attendance_options as manual_attendance_options,
+    cohort_totals as manual_cohort_totals,
     document_url as manual_document_url,
     documents as manual_documents,
     group_activities as manual_group_activities,
@@ -62,6 +63,7 @@ urlpatterns = [
     # Employee-arranged monthly ledger (structured_manual_activities schema).
     # Additive: nothing above changes, the sibling learner-log-pro keeps working.
     path("last-audit/manual/summary", manual_summary, name="last-audit-manual-summary"),
+    path("last-audit/manual/cohort-totals", manual_cohort_totals, name="last-audit-manual-cohort-totals"),
     path("last-audit/manual/groups", manual_groups, name="last-audit-manual-groups"),
     path("last-audit/manual/group-activities", manual_group_activities, name="last-audit-manual-group-activities"),
     path("last-audit/manual/attendance-options", manual_attendance_options, name="last-audit-manual-attendance-options"),

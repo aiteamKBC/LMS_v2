@@ -55,6 +55,17 @@ export function ledgerRef(row: Pick<DraftRow, "category" | "source_ref" | "serve
   return row.source_ref;
 }
 
+// Awarding actual hours to an activity the learner never finished marks it
+// complete, and clearing them puts it back — mirrored here so the badge moves
+// with the draft; the backend applies the same rule when the draft is saved.
+const LMS_INCOMPLETE = "not_completed";
+const COMPLETED_BY_HOURS = "completed_by_hours";
+
+export function completionNoteForHours(note: string | null, actualHours: number): string | null {
+  if (actualHours > 0) return note === LMS_INCOMPLETE ? COMPLETED_BY_HOURS : note;
+  return note === COMPLETED_BY_HOURS ? LMS_INCOMPLETE : note;
+}
+
 // LMS group/module names arrive HTML-encoded from the WordPress sync
 // ("Impact &amp;Planning") — decode the common entities for display.
 export function decodeEntities(value: string): string {
@@ -71,7 +82,15 @@ export function completionBadge(note: string | null) {
   switch ((note || "").toLowerCase()) {
     case "completed":
       return <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success">Completed by learner</span>;
-    case "not_completed":
+    case COMPLETED_BY_HOURS:
+      // The LMS flag never flipped, but the audit team awarded hours for it —
+      // it counts as complete without claiming the learner ticked it off.
+      return (
+        <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success" title="Marked complete by the audit team: actual hours were awarded for this activity, even though the LMS never recorded it as finished.">
+          Completed — hours awarded
+        </span>
+      );
+    case LMS_INCOMPLETE:
       return <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Not completed by learner</span>;
     case "no_record":
       return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">No learner record</span>;
@@ -271,6 +290,11 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
       month: draft.activity_date ? draft.activity_date.slice(0, 7) : row.month,
       planned_hours: draft.planned_hours,
       actual_hours: draft.actual_hours,
+      // Assignments keep Aptem's own status word; only LMS activities follow
+      // the hours (the backend re-applies this rule on save).
+      completion_note: row.category === "assignment"
+        ? row.completion_note
+        : completionNoteForHours(row.completion_note, draft.actual_hours),
       timestamp_label: timestampLabel,
       accepted: draft.accepted,
     });

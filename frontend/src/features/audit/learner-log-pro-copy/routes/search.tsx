@@ -233,6 +233,9 @@ function SearchPage() {
     .sort()
     .map((programme) => ({ value: programme, label: programme }));
   const summaryLearners = summaries.data?.learners ?? [];
+  // "Still coming" covers the gap where summaries is disabled behind
+  // filterOptions — without it an in-flight cohort looks like an empty one.
+  const learnersPending = !summaries.data && !summaries.isError && !filterOptions.isError;
   const learnerTotalPages = Math.max(1, Math.ceil(summaryLearners.length / learnerPageSize));
   const pagedLearners = summaryLearners.slice(
     learnerPage * learnerPageSize,
@@ -338,9 +341,11 @@ function SearchPage() {
             </Filter>
           </div>
 
-          {summaries.isError ? (
+          {summaries.isError || filterOptions.isError ? (
             <p className="px-7 py-10 text-center text-sm text-destructive">
-              {summaries.error instanceof Error ? summaries.error.message : "Could not load learner data."}
+              {(summaries.error ?? filterOptions.error) instanceof Error
+                ? ((summaries.error ?? filterOptions.error) as Error).message
+                : "Could not load learner data."}
             </p>
           ) : (
             <div className="overflow-x-auto">
@@ -355,14 +360,20 @@ function SearchPage() {
                     <TableHead className="label-caps text-right">Planned hours</TableHead>
                     <TableHead className="label-caps text-right">Actual hours</TableHead>
                     <TableHead className="label-caps text-right">Actual vs plan</TableHead>
-                    <TableHead className="label-caps">Last activity</TableHead>
                     <TableHead className="label-caps text-right">Learner profile</TableHead>
                     <TableHead className="label-caps pr-7 text-right">Details</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {summaries.isLoading && (
-                    <TableRow><TableCell colSpan={11} className="py-10 text-center text-sm text-muted-foreground">Loading learners…</TableCell></TableRow>
+                  {/* The learner query WAITS for the filter query, so while that
+                      first cohort fetch is in flight `summaries` is disabled —
+                      isLoading is false and the table used to render as an empty
+                      "0 learners" cohort, which reads as broken rather than slow. */}
+                  {learnersPending && (
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">Loading learners…</TableCell></TableRow>
+                  )}
+                  {!learnersPending && !pagedLearners.length && (
+                    <TableRow><TableCell colSpan={10} className="py-10 text-center text-sm text-muted-foreground">No learner matches these filters.</TableCell></TableRow>
                   )}
                   {pagedLearners.map((learner, index) => (
                     <TableRow key={learner.id} className={learner.has_break_in_learning ? "bg-warning/5 hover:bg-warning/10" : undefined}>
@@ -392,12 +403,18 @@ function SearchPage() {
                         {learner.coach.email && <p className="mt-0.5 text-xs text-muted-foreground">{learner.coach.email}</p>}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm">{learner.entries}</TableCell>
-                      <TableCell className="text-right font-mono text-sm">{learner.planned_hours_available === false ? "—" : formatHours(learner.planned_hours)}</TableCell>
-                      <TableCell className="text-right font-mono text-sm text-success">{learner.hours_mapped === false ? "—" : formatHours(learner.actual_hours)}</TableCell>
-                      <TableCell className={`text-right font-mono text-sm ${learner.gap_hours < 0 ? "text-warning" : "text-success"}`}>
-                        {learner.hours_mapped === false || learner.planned_hours_available === false ? "—" : <>{learner.gap_hours > 0 ? "+" : ""}{formatHours(learner.gap_hours)}</>}
+                      {/* Planned = Aptem's own plan; Actual = the claimed total
+                          this learner's monthly report adds up, so the two
+                          screens can never disagree. */}
+                      <TableCell className="text-right font-mono text-sm" title={learner.planned_hours_available === false ? "Aptem holds no plan for this learner yet" : "Planned hours from Aptem"}>
+                        {learner.planned_hours_available === false ? "—" : formatHours(learner.planned_hours)}
                       </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{learner.last_activity_date ?? "—"}</TableCell>
+                      <TableCell className="text-right font-mono text-sm text-success" title="Claimed hours arranged on the monthly report">
+                        {formatHours(learner.actual_hours)}
+                      </TableCell>
+                      <TableCell className={`text-right font-mono text-sm ${learner.gap_hours < 0 ? "text-warning" : "text-success"}`}>
+                        {learner.planned_hours_available === false ? "—" : <>{learner.gap_hours > 0 ? "+" : ""}{formatHours(learner.gap_hours)}</>}
+                      </TableCell>
                       <TableCell className="text-right">
                         <Link
                           to="/learner/$learnerId"
@@ -424,9 +441,11 @@ function SearchPage() {
           )}
           <footer className="flex items-center justify-between border-t border-border px-7 py-4 text-xs text-muted-foreground">
             <span>
-              {summaryLearners.length === 0
-                ? "0 learners"
-                : `${learnerPage * learnerPageSize + 1}–${Math.min((learnerPage + 1) * learnerPageSize, summaryLearners.length)} of ${summaryLearners.length} learners`}
+              {learnersPending
+                ? "Loading learners…"
+                : summaryLearners.length === 0
+                  ? "0 learners"
+                  : `${learnerPage * learnerPageSize + 1}–${Math.min((learnerPage + 1) * learnerPageSize, summaryLearners.length)} of ${summaryLearners.length} learners`}
             </span>
             <div className="flex items-center gap-3">
               <span>Page {learnerPage + 1} of {learnerTotalPages}</span>

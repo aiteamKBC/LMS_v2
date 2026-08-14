@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, FileText, LoaderCircle, Paperclip, Plus, Search, X } from "lucide-react";
 import Swal from "sweetalert2";
 import { DurationInput } from "@/features/audit/learner-log-pro-copy/components/DurationInput";
+import { completionNoteForHours } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import {
   durationAsHours,
@@ -328,7 +329,11 @@ export function AddManualActivityFlow({ aptemId, month, monthLabel, existingRefs
       planned_hours: planned,
       actual_hours: actual,
       timestamp_label: timestampLabel,
-      completion_note: draft.completion_note,
+      // Adding it with hours already on it counts as evidenced — same rule the
+      // row editor and the server apply (assignments keep Aptem's own status).
+      completion_note: category === "assignment"
+        ? draft.completion_note
+        : completionNoteForHours(draft.completion_note, actual),
       accepted: draft.accepted,
       documents: [],
       stagedFiles: files,

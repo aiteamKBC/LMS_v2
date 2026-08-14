@@ -69,8 +69,11 @@ export function draftFromServer(row: ManualRow): DraftRow {
   };
 }
 
+// completion_note rides along for the badge only — the server derives the
+// stored value from the hours, so rowPatchOf() never sends it.
 export type DraftPatch = Partial<Pick<DraftRow,
-  "title" | "activity_date" | "month" | "planned_hours" | "actual_hours" | "timestamp_label" | "accepted"
+  "title" | "activity_date" | "month" | "planned_hours" | "actual_hours"
+  | "timestamp_label" | "accepted" | "completion_note"
 >>;
 
 export function patchDraftRow(rows: DraftRow[], key: string, patch: DraftPatch): DraftRow[] {

@@ -68,6 +68,12 @@ export type ManualMonth = {
   month: string;
   label: string;
   original_planned: number | null;
+  // Actual hours the learner's own programme record already holds for the
+  // month — reference only, never written into the report.
+  recorded_actual: number | null;
+  // The same figures accumulated from the first month up to this one.
+  recorded_actual_cumulative: number;
+  arranged_actual_cumulative: number;
   arranged_planned: number;
   arranged_actual: number; // accepted rows only ("claimed")
   arranged_not_accepted: number;
@@ -87,6 +93,7 @@ export type ManualSummary = {
   months: ManualMonth[];
   arranged_planned_total: number;
   arranged_actual_total: number;
+  recorded_actual_total: number;
 };
 
 export type ManualGroup = {

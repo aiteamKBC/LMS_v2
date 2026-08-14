@@ -17,6 +17,11 @@ import { isExcludedLearner } from "@/features/audit/learner-exclusions";
 // service is gone.
 const READ_BASE = "/audit_api/last-audit";
 const LAST_AUDIT_UNDATED_PERIOD = "undated";
+
+/** "June 2026" for a "YYYY-MM" key — matches the cohort feed's own labels. */
+function monthPeriodLabel(month: string): string {
+  return new Date(`${month}-02T12:00:00`).toLocaleString("en-GB", { month: "long", year: "numeric" });
+}
 // Engineered OTJH values are permitted only through 2026-08-01 (inclusive). From
 // 2026-09 onward the ledger reports fetched source values only. A post-cutoff
 // month that carries ONLY preserved Aptem planned hours (no actual, no
@@ -205,7 +210,6 @@ export type LearnerSummary = {
   planned_hours_available?: boolean;
   actual_hours: number;
   gap_hours: number;
-  last_activity_date: string | null;
   program_status: string;
   has_break_in_learning: boolean;
   coach: {
@@ -522,6 +526,11 @@ type LiveCohortLearner = {
   programme_status?: string;
   planned_total: number;
   planned_hours_available?: boolean;
+  // Aptem's own plan: the programme total and its per-month split, the same
+  // figures each learner's journal quotes. null total = Aptem holds no plan
+  // yet (onboarding/withdrawn learners), which is not a real zero.
+  aptem_planned_total?: number | null;
+  aptem_planned_monthly?: Record<string, number>;
   actual_total: number;
   not_accepted_total: number;
   flags: string[];
@@ -809,6 +818,43 @@ function fetchCohort(): Promise<LiveCohortResponse> {
   return cohortPromise;
 }
 
+// Arranged ledger totals for the whole cohort — the accepted-actual sums the
+// monthly reports show. Short-lived memo only: employees edit these rows all
+// day, so the cohort table must not serve a stale Actual column, but the two
+// getLearners calls of a single page render should share one request.
+export type LedgerTotals = {
+  planned: number;
+  actual: number;
+  not_accepted: number;
+  row_count: number;
+  months: Record<string, { planned: number; actual: number; not_accepted: number; row_count: number }>;
+};
+
+const LEDGER_TOTALS_TTL_MS = 15_000;
+let ledgerTotalsPromise: Promise<Map<number, LedgerTotals>> | null = null;
+let ledgerTotalsFetchedAt = 0;
+
+function fetchLedgerTotals(): Promise<Map<number, LedgerTotals>> {
+  if (ledgerTotalsPromise && Date.now() - ledgerTotalsFetchedAt < LEDGER_TOTALS_TTL_MS) {
+    return ledgerTotalsPromise;
+  }
+  ledgerTotalsFetchedAt = Date.now();
+  ledgerTotalsPromise = fetch("/audit_api/last-audit/manual/cohort-totals")
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`Ledger totals request failed (${response.status})`);
+      const payload = (await response.json()) as { items?: Array<LedgerTotals & { aptem_id: number }> };
+      return new Map((payload.items ?? []).map((item) => [item.aptem_id, item]));
+    })
+    .catch(() => {
+      // The cohort table still renders — Actual falls back to 0 for everyone
+      // rather than the whole page failing on a ledger hiccup.
+      ledgerTotalsPromise = null;
+      ledgerTotalsFetchedAt = 0;
+      return new Map<number, LedgerTotals>();
+    });
+  return ledgerTotalsPromise;
+}
+
 const activityCache = new Map<string, Promise<LiveActivitiesResponse>>();
 function fetchActivitiesRaw(aptemId: number, month?: string): Promise<LiveActivitiesResponse> {
   const key = `${aptemId}|${month ?? "all"}`;
@@ -1005,7 +1051,7 @@ function buildPeriods(cohort: LiveCohortResponse): Array<{ value: string; label:
 
 export function getLearners(params: { period?: string; search?: string; position?: string; programme?: string; learner?: string } = {}) {
   return (async (): Promise<LearnersResponse> => {
-    const cohort = await fetchCohort();
+    const [cohort, ledgerTotals] = await Promise.all([fetchCohort(), fetchLedgerTotals()]);
     const period = params.period;
     const search = (params.search ?? "").trim().toLowerCase();
     const position = params.position;
@@ -1016,12 +1062,22 @@ export function getLearners(params: { period?: string; search?: string; position
       .filter((learner) => !isExcludedLearner(learner.aptem_id, learner.learner_name))
       .map((learner) => {
       const month = period ? learner.months.find((item) => item.month === period) ?? null : null;
-      const planned = period ? month?.planned ?? 0 : learner.planned_total;
-      const actual = period ? month?.actual ?? 0 : learner.actual_total;
+      // Planned comes from APTEM's own plan (programme total, or that month's
+      // share) — the same figure the learner's journal reports.
+      const aptemMonthly = learner.aptem_planned_monthly ?? {};
+      const aptemPlanned = learner.aptem_planned_total;
       const plannedAvailable = period
-        ? month != null && learner.planned_hours_available !== false
-        : learner.planned_hours_available !== false;
-      return { learner, month, planned, actual, plannedAvailable };
+        ? aptemMonthly[period] != null
+        : aptemPlanned != null;
+      const planned = period ? aptemMonthly[period] ?? 0 : aptemPlanned ?? 0;
+      // Actual is the arranged ledger's claimed total — the very sum the
+      // monthly report page adds up, so the two screens always agree.
+      const ledger = ledgerTotals.get(learner.aptem_id) ?? null;
+      const actual = period ? ledger?.months?.[period]?.actual ?? 0 : ledger?.actual ?? 0;
+      const notAccepted = period
+        ? ledger?.months?.[period]?.not_accepted ?? 0
+        : ledger?.not_accepted ?? 0;
+      return { learner, month, planned, actual, plannedAvailable, ledger, notAccepted };
       });
     if (search) rows = rows.filter((row) =>
       row.learner.learner_name.toLowerCase().includes(search) ||
@@ -1034,26 +1090,40 @@ export function getLearners(params: { period?: string; search?: string; position
       (row.learner.programmes?.length ? row.learner.programmes : [row.learner.programme])
         .some((name) => name.toLowerCase() === programme),
     );
+    // Actual now comes from the arranged ledger, which every learner has, so
+    // the old "are LMS durations mapped?" gate no longer decides comparability.
     if (position === "behind") rows = rows.filter(
-      (row) => row.plannedAvailable && row.learner.hours_mapped !== false && row.actual - row.planned < 0,
+      (row) => row.plannedAvailable && row.actual - row.planned < 0,
     );
     if (position === "ahead") rows = rows.filter(
-      (row) => row.plannedAvailable && row.learner.hours_mapped !== false && row.actual - row.planned >= 0,
+      (row) => row.plannedAvailable && row.actual - row.planned >= 0,
     );
 
-    const learners: LearnerSummary[] = rows.map(({ learner, month, planned, actual, plannedAvailable }) => {
-      const periods = learner.months
-        .filter((item) => {
-          const hasClaimed =
-            Math.abs(Number(item.actual ?? 0)) > 0 ||
-            Math.abs(Number(item.not_accepted ?? 0)) > 0;
-          // After the cutoff, a planned-only month is a preserved future Aptem
-          // plan with no journal activity — hide it. Before the cutoff, keep the
-          // month if it has planned OR claimed hours (unchanged behaviour).
-          if (isPostCutoffMonth(item.month)) return hasClaimed;
-          return hasClaimed || Math.abs(Number(item.planned ?? 0)) > 0;
-        })
-        .map((item) => ({ value: item.month, label: item.label }))
+    const learners: LearnerSummary[] = rows.map(({ learner, month, planned, actual, plannedAvailable, ledger, notAccepted }) => {
+      const periodLabels = new Map<string, string>();
+      for (const item of learner.months) {
+        const hasClaimed =
+          Math.abs(Number(item.actual ?? 0)) > 0 ||
+          Math.abs(Number(item.not_accepted ?? 0)) > 0;
+        // After the cutoff, a planned-only month is a preserved future Aptem
+        // plan with no journal activity — hide it. Before the cutoff, keep the
+        // month if it has planned OR claimed hours (unchanged behaviour).
+        const keep = isPostCutoffMonth(item.month)
+          ? hasClaimed
+          : hasClaimed || Math.abs(Number(item.planned ?? 0)) > 0;
+        if (keep) periodLabels.set(item.month, item.label);
+      }
+      // Planned and Actual are sourced per month now, so a month that only
+      // Aptem's plan or the ledger knows about must still be selectable —
+      // otherwise its hours would be unreachable from this page.
+      for (const [month, hours] of Object.entries(learner.aptem_planned_monthly ?? {})) {
+        if (hours > 0 && !isPostCutoffMonth(month)) periodLabels.set(month, monthPeriodLabel(month));
+      }
+      for (const [month, totals] of Object.entries(ledger?.months ?? {})) {
+        if (totals.row_count > 0) periodLabels.set(month, monthPeriodLabel(month));
+      }
+      const periods = [...periodLabels.entries()]
+        .map(([value, label]) => ({ value, label }))
         .sort((left, right) => left.value.localeCompare(right.value));
       if (
         !periods.some((item) => item.value === LAST_AUDIT_UNDATED_PERIOD) &&
@@ -1077,18 +1147,14 @@ export function getLearners(params: { period?: string; search?: string; position
         planned_hours_available: plannedAvailable,
         actual_hours: round2(actual),
         gap_hours: round2(actual - planned),
-        last_activity_date: null, // the cohort feed carries no last-activity date
         program_status: learner.programme_status ?? (learner.withdrawn ? "Withdrawn" : "Active"),
         has_break_in_learning: false,
         coach: {
           name: learner.coach_name ?? null,
           email: learner.coach_email ?? null,
         },
-        not_accepted_hours: round2(
-          period && period !== LAST_AUDIT_UNDATED_PERIOD
-            ? month?.not_accepted ?? 0
-            : learner.not_accepted_total ?? 0,
-        ),
+        // Rejected ledger hours, reported apart from the claimed Actual.
+        not_accepted_hours: round2(notAccepted),
         flags: learner.flags ?? [],
         hours_mapped: learner.hours_mapped,
         activity_count: learner.activity_count,

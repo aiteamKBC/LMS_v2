@@ -142,18 +142,27 @@ function SignatureCapture({ label, signer, value, onChange, onRemove, canRemove,
   );
 }
 
-function Stat({ label, value, tone = "navy" }: { label: string; value: string; tone?: "navy" | "purple" | "success" | "warning" }) {
+function Stat({ label, value, tone = "navy", hint, title }: {
+  label: string;
+  value: string;
+  tone?: "navy" | "purple" | "success" | "warning" | "muted";
+  /** Small line under the figure — used for reference-only comparisons. */
+  hint?: string | null;
+  title?: string;
+}) {
   const accent = {
     navy: "bg-[#182d48]",
     purple: "bg-[#673ab7]",
     success: "bg-emerald-600",
     warning: "bg-red-600",
+    muted: "bg-muted-foreground/50",
   }[tone];
   return (
-    <div className="relative overflow-hidden rounded-lg bg-[#f6f8fb] px-5 py-4">
+    <div className="relative overflow-hidden rounded-lg bg-[#f6f8fb] px-5 py-4" title={title}>
       <span className={`absolute inset-y-0 left-0 w-1.5 ${accent}`} />
       <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
       <p className="mt-2 font-mono text-xl font-semibold text-[#182d48]">{value}</p>
+      {hint ? <p className="mt-1 text-[10px] leading-3.5 text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
@@ -349,14 +358,30 @@ function JournalPage() {
       (latest, item) => item.month > latest ? item.month : latest,
       available[0].month,
     );
-    return monthKeysBetween(learnerStartMonth, endMonth).map((month) => availableByMonth.get(month) ?? {
-      month,
-      label: reportMonthLabel(month),
-      original_planned: null,
-      arranged_planned: 0,
-      arranged_actual: 0,
-      arranged_not_accepted: 0,
-      row_count: 0,
+    // Months the plan never mentioned (the learner started before it) are shown
+    // empty, but the running totals carry the previous month forward so the
+    // cumulative figures never dip back to zero mid-programme.
+    let carriedRecorded = 0;
+    let carriedClaimed = 0;
+    return monthKeysBetween(learnerStartMonth, endMonth).map((month) => {
+      const known = availableByMonth.get(month);
+      if (known) {
+        carriedRecorded = known.recorded_actual_cumulative ?? carriedRecorded;
+        carriedClaimed = known.arranged_actual_cumulative ?? carriedClaimed;
+        return known;
+      }
+      return {
+        month,
+        label: reportMonthLabel(month),
+        original_planned: null,
+        recorded_actual: null,
+        recorded_actual_cumulative: carriedRecorded,
+        arranged_actual_cumulative: carriedClaimed,
+        arranged_planned: 0,
+        arranged_actual: 0,
+        arranged_not_accepted: 0,
+        row_count: 0,
+      };
     });
   }, [summary.data?.months, learnerStartMonth]);
   const selectedPeriod = summaryMonths.some((item) => item.month === periodChoice) ? periodChoice : "";
@@ -646,6 +671,28 @@ function JournalPage() {
   const arrangedActual = acceptedActual;
   const originalPlanned = selectedMonth?.original_planned ?? null;
   const plannedVariance = originalPlanned == null ? null : round2(arrangedPlanned - originalPlanned);
+  // Reference figure: the actual hours the learner's own programme record
+  // already holds for this month. Never written into the report — it only lets
+  // the employee see how their arranged claim differs from what was recorded.
+  const recordedActual = selectedMonth?.recorded_actual ?? null;
+  const recordedGap = recordedActual == null ? null : round2(acceptedActual - recordedActual);
+  const recordedHint = recordedGap == null
+    ? null
+    : recordedGap === 0
+      ? "Same as claimed here"
+      : `${recordedGap > 0 ? "+" : ""}${recordedGap.toFixed(2)} h vs claimed here`;
+  const RECORDED_TITLE = "Actual hours already recorded on the learner's programme record for this month. Shown for comparison only — it is not part of this report and nothing is copied from it.";
+  // Running totals to the selected month: this month plus every month before
+  // it, on both sides, so progress-to-date is readable without adding up.
+  const recordedToDate = selectedMonth?.recorded_actual_cumulative ?? null;
+  const claimedToDate = selectedMonth?.arranged_actual_cumulative ?? null;
+  const toDateGap = recordedToDate == null || claimedToDate == null
+    ? null
+    : round2(claimedToDate - recordedToDate);
+  const toDateHint = toDateGap == null
+    ? null
+    : `on the report: ${claimedToDate!.toFixed(2)} h (${toDateGap > 0 ? "+" : ""}${toDateGap.toFixed(2)} h)`;
+  const TO_DATE_TITLE = "Recorded actual hours added up from the learner's first month through the month shown, next to the same running total of what this report claims. Comparison only.";
 
   async function handleSaveAll() {
     if (!aptemId || !dirty || isSavingAll) return;
@@ -931,7 +978,7 @@ function JournalPage() {
               </div>
 
               {hoursTab === "original" ? (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                   <Stat label="Original monthly plan" value={hoursValue(originalPlanned)} />
                   <Stat label="Programme planned total" value={hoursValue(summary.data.planned_hours_total)} />
                   <Stat label="Arranged this month" value={hoursValue(arrangedPlanned)} tone="purple" />
@@ -940,11 +987,15 @@ function JournalPage() {
                     value={plannedVariance == null ? "—" : `${plannedVariance > 0 ? "+" : ""}${plannedVariance.toFixed(2)} h`}
                     tone={plannedVariance != null && plannedVariance < 0 ? "warning" : "success"}
                   />
+                  <Stat label="Recorded actual" value={hoursValue(recordedActual)} tone="muted" hint={recordedHint} title={RECORDED_TITLE} />
+                  <Stat label="Recorded to date" value={hoursValue(recordedToDate)} tone="muted" hint={toDateHint} title={TO_DATE_TITLE} />
                 </div>
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                   <Stat label="Accumulative planned" value={hoursValue(arrangedPlanned)} tone="purple" />
                   <Stat label="Actual (claimed)" value={hoursValue(arrangedActual)} tone="success" />
+                  <Stat label="Recorded actual" value={hoursValue(recordedActual)} tone="muted" hint={recordedHint} title={RECORDED_TITLE} />
+                  <Stat label="Recorded to date" value={hoursValue(recordedToDate)} tone="muted" hint={toDateHint} title={TO_DATE_TITLE} />
                   <Stat label="Not accepted" value={hoursValue(notAcceptedActual)} tone="warning" />
                   <Stat label="Activities this month" value={String(visibleRows.length)} />
                 </div>
