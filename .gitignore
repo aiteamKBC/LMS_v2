@@ -92,6 +92,20 @@ desktop.ini
 # ---------------------------------------------------------------------------
 # Local-only project files
 # ---------------------------------------------------------------------------
+# Working notes & session reports (local only, not for the repo)
+/SESSION_MEMORY.md
+/progress.md
+/ENROLMENT_GAP_ANALYSIS.md
+/EVIDENCE_CLOUD.md
+/FINAL_IMPLEMENTATION_REPORT.md
+/IMPLEMENTATION_VERDICT.md
+
+# Programme documents (PDFs) at repo root
+/*.pdf
+
+# Stray root lockfile — the real one lives in /frontend
+/package-lock.json
+
 /backend/engagement_api/sql/
 /backend/curriculum_api/sql/
 /backend/curriculum_component_uploads/
