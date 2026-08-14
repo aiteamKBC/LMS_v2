@@ -21,6 +21,8 @@ export type DraftRow = {
   source_course?: string | null;
   module?: string | null;
   activity_date: string | null;
+  // The date this activity's own title names, when it contradicts activity_date.
+  title_date?: string | null;
   // Assignments only: the submission clock time Aptem recorded (HH:MM).
   activity_time?: string | null;
   planned_hours: number;
@@ -56,6 +58,7 @@ export function draftFromServer(row: ManualRow): DraftRow {
     source_course: row.source_course ?? null,
     module: row.module ?? null,
     activity_date: row.activity_date,
+    title_date: row.title_date ?? null,
     activity_time: row.activity_time ?? null,
     planned_hours: row.planned_hours,
     actual_hours: row.actual_hours,

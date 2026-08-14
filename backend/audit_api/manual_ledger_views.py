@@ -263,8 +263,38 @@ def _attendance_modules(cursor, source_refs):
     return {item["source_key"]: item.get("module") for item in _dict_rows(cursor)}
 
 
+# Tutors write the lecture's real date into the activity title ("P1 -Marketing
+# Definitions 2-5-2025"), while the LMS stores its own activity_date — often the
+# day the content was uploaded, sometimes a whole year out. UK order (day first).
+_TITLE_DATE_RE = re.compile(r"(?<!\d)(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})(?!\d)")
+
+
+def _title_date(title, category):
+    """The date written inside an LMS activity's own title, when it is a real
+    date and disagrees with nothing else. Returns None for anything doubtful —
+    typos like 2/5/5025 or 31/11 simply do not parse. Attendance keeps the
+    register's date and assignments keep Aptem's, so both are left alone."""
+    if category not in SOURCE_CATEGORIES:
+        return None
+    match = _TITLE_DATE_RE.search(str(title or ""))
+    if not match:
+        return None
+    day, month, year = (int(part) for part in match.groups())
+    if not 2020 <= year <= 2035:
+        return None
+    try:
+        return datetime.date(year, month, day)
+    except ValueError:
+        return None
+
+
 def _row_payload(row, documents=None, *, source_course=None, module=None):
     activity_date = row.get("activity_date")
+    # Surfaced only when it contradicts the stored date: the journal then offers
+    # a one-click correction and the employee decides row by row.
+    title_date = _title_date(row.get("title"), row.get("category"))
+    if title_date == activity_date:
+        title_date = None
     return {
         # Where the activity came from: the LMS group ("course") for content
         # rows, the register module for attendance rows. Listing-only fields —
@@ -282,6 +312,8 @@ def _row_payload(row, documents=None, *, source_course=None, module=None):
         "activity_id": int(row["activity_id"]) if row.get("activity_id") is not None else None,
         "title": row["title"],
         "activity_date": activity_date.isoformat() if activity_date else None,
+        # The lecture date the title itself names, when it differs from above.
+        "title_date": title_date.isoformat() if title_date else None,
         "activity_time": row["activity_time"].strftime("%H:%M") if row.get("activity_time") else None,
         "planned_hours": _num(row.get("planned_hours")) or 0.0,
         "actual_hours": _num(row.get("actual_hours")) or 0.0,

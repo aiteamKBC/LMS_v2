@@ -268,6 +268,37 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
   const set = (patch: Partial<EditDraft>) => setDraft((value) => ({ ...value, ...patch }));
   const unsaved = row.state !== "clean" || row.stagedFiles.length > 0 || row.deletedDocIds.length > 0;
   const ref = ledgerRef(row);
+  // The LMS sometimes dates an activity by the day it was uploaded, while the
+  // tutor wrote the real lecture date into the title. Nothing moves on its own:
+  // the row shows both and this button applies the title's date on request.
+  const titleDate = row.title_date && row.title_date !== row.activity_date ? row.title_date : null;
+
+  async function useTitleDate() {
+    if (!titleDate) return;
+    const bounds = dateWindow ?? monthBounds(row.month);
+    if (titleDate < bounds.min || titleDate > bounds.max) {
+      return void Swal.fire({
+        icon: "error",
+        title: "That date is outside the report months",
+        text: `The title names ${titleDate}, which falls outside ${bounds.min} → ${bounds.max}.`,
+      });
+    }
+    const restriction = dateRestriction(titleDate);
+    const movesMonth = titleDate.slice(0, 7) !== row.month;
+    const confirmation = await Swal.fire({
+      icon: restriction ? "warning" : "question",
+      title: `Use ${titleDate}?`,
+      html: [
+        `<p>The activity is dated <b>${row.activity_date ?? "—"}</b> but its title says <b>${titleDate}</b>.</p>`,
+        restriction ? `<p style="color:#b45309">${restriction} It is applied only if you confirm.</p>` : "",
+        movesMonth ? `<p>This moves the activity to <b>${monthLabelOf(titleDate.slice(0, 7))}</b> when you save.</p>` : "",
+      ].join(""),
+      showCancelButton: true,
+      confirmButtonText: "Use the title's date",
+    });
+    if (!confirmation.isConfirmed) return;
+    onPatch({ activity_date: titleDate, month: titleDate.slice(0, 7) });
+  }
 
   function apply() {
     const error = validate(draft, dateWindow ?? monthBounds(row.month));
@@ -357,6 +388,17 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
             {reportMonth && row.month !== reportMonth ? (
               <span className="rounded-full bg-[#673ab7]/15 px-2 py-0.5 text-[10px] font-semibold text-[#673ab7]" title="The edited date belongs to another report month — the activity re-files there when you save.">
                 Moves to {monthLabelOf(row.month)} on save
+              </span>
+            ) : null}
+            {titleDate ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                <AlertTriangle className="h-2.5 w-2.5" />
+                <span title="The LMS dates this activity by the day it was published; the tutor wrote the lecture date into the title.">
+                  Title says {titleDate}
+                </span>
+                <button type="button" onClick={useTitleDate} className="ml-0.5 rounded-full bg-amber-600/90 px-1.5 py-px text-[9px] font-bold text-white hover:bg-amber-700" title={`Move this activity to ${titleDate}`}>
+                  Use it
+                </button>
               </span>
             ) : null}
             {unsaved ? <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Unsaved</span> : null}

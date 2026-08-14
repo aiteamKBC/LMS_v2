@@ -50,6 +50,9 @@ export type ManualRow = {
   source_course?: string | null;
   module?: string | null;
   activity_date: string | null;
+  // Set only when an LMS activity's own title names a different date than the
+  // one stored against it — the journal offers a one-click correction.
+  title_date?: string | null;
   // Assignments carry the source submission clock time (HH:MM) when Aptem
   // recorded one; every other category leaves it null.
   activity_time?: string | null;
