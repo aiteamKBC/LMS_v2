@@ -97,10 +97,14 @@ def _string_list(value):
     return [str(value)]
 
 
-def _activity_content_url(video_url, reading_url, reading_type=None):
-    """Return browser-renderable content, unwrapping PDF-only Office URLs."""
+def _activity_content_url(video_url, reading_url, reading_type=None, audio_url=None):
+    """Return browser-renderable content, unwrapping PDF-only Office URLs.
+    Audio activities carry their player URL only inside raw->audio->iframe_url
+    — callers pass it as ``audio_url`` (all 702 audio rows have NO other URL)."""
     if video_url:
         return video_url
+    if audio_url and not reading_url:
+        return audio_url
     if not reading_url or str(reading_type or "").strip().lower() != "pdf":
         return reading_url
     try:
@@ -383,6 +387,7 @@ def _activity_payload(row):
             row.get("video_iframe_url"),
             row.get("reading_iframe_url"),
             row.get("reading_type"),
+            row.get("audio_iframe_url"),
         ),
         "source": "Last_audit",
     }
@@ -639,6 +644,7 @@ def activities(request: HttpRequest) -> JsonResponse:
                            COALESCE(a.activity_type, r.activity_type) AS activity_type,
                            a.title, a.activity_date,
                            a.video_iframe_url, a.reading_iframe_url,
+                           a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                            a.reading_type, a.quiz_id, a.quiz_questions,
                            a.configured_duration_min, r.status,
                            r.video_started, r.video_completed, r.reading_viewed,
@@ -812,6 +818,7 @@ def activity(request: HttpRequest) -> JsonResponse:
                COALESCE(a.activity_type, r.activity_type) AS activity_type,
                a.title, a.activity_date,
                a.video_iframe_url, a.reading_iframe_url,
+               a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                a.reading_type, a.quiz_id, a.quiz_questions,
                a.configured_duration_min, r.status,
                r.video_started, r.video_completed, r.reading_viewed,

@@ -16,6 +16,10 @@ export type DraftRow = {
   category: ManualCategory;
   source_ref: string | null;
   title: string;
+  // Display-only: the LMS course (group) / register module the row came from,
+  // so overlapping-course rows are recognisable and deletable at a glance.
+  source_course?: string | null;
+  module?: string | null;
   activity_date: string | null;
   planned_hours: number;
   actual_hours: number;
@@ -47,6 +51,8 @@ export function draftFromServer(row: ManualRow): DraftRow {
     category: row.category,
     source_ref: row.source_ref,
     title: row.title,
+    source_course: row.source_course ?? null,
+    module: row.module ?? null,
     activity_date: row.activity_date,
     planned_hours: row.planned_hours,
     actual_hours: row.actual_hours,

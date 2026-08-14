@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ActivityRouteImport } from './routes/activity'
+import { Route as DocRouteImport } from './routes/doc'
+import { Route as EvidenceRouteImport } from './routes/evidence'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as LedgerRouteImport } from './routes/ledger'
 import { Route as SearchRouteImport } from './routes/search'
@@ -25,6 +27,16 @@ const IndexRoute = IndexRouteImport.update({
 const ActivityRoute = ActivityRouteImport.update({
   id: '/activity',
   path: '/activity',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocRoute = DocRouteImport.update({
+  id: '/doc',
+  path: '/doc',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EvidenceRoute = EvidenceRouteImport.update({
+  id: '/evidence',
+  path: '/evidence',
   getParentRoute: () => rootRouteImport,
 } as any)
 const JournalRoute = JournalRouteImport.update({
@@ -56,6 +68,8 @@ const JournalIndexRoute = JournalIndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
+  '/doc': typeof DocRoute
+  '/evidence': typeof EvidenceRoute
   '/journal': typeof JournalRouteWithChildren
   '/ledger': typeof LedgerRoute
   '/search': typeof SearchRoute
@@ -65,6 +79,8 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
+  '/doc': typeof DocRoute
+  '/evidence': typeof EvidenceRoute
   '/ledger': typeof LedgerRoute
   '/search': typeof SearchRoute
   '/learner/$learnerId': typeof LearnerLearnerIdRoute
@@ -74,6 +90,8 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/activity': typeof ActivityRoute
+  '/doc': typeof DocRoute
+  '/evidence': typeof EvidenceRoute
   '/journal': typeof JournalRouteWithChildren
   '/ledger': typeof LedgerRoute
   '/search': typeof SearchRoute
@@ -82,15 +100,17 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/activity' | '/journal' | '/ledger' | '/search' | '/learner/$learnerId' | '/journal/'
+  fullPaths: '/' | '/activity' | '/doc' | '/evidence' | '/journal' | '/ledger' | '/search' | '/learner/$learnerId' | '/journal/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/activity' | '/ledger' | '/search' | '/learner/$learnerId' | '/journal'
-  id: '__root__' | '/' | '/activity' | '/journal' | '/ledger' | '/search' | '/learner/$learnerId' | '/journal/'
+  to: '/' | '/activity' | '/doc' | '/evidence' | '/ledger' | '/search' | '/learner/$learnerId' | '/journal'
+  id: '__root__' | '/' | '/activity' | '/doc' | '/evidence' | '/journal' | '/ledger' | '/search' | '/learner/$learnerId' | '/journal/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ActivityRoute: typeof ActivityRoute
+  DocRoute: typeof DocRoute
+  EvidenceRoute: typeof EvidenceRoute
   JournalRoute: typeof JournalRouteWithChildren
   LedgerRoute: typeof LedgerRoute
   SearchRoute: typeof SearchRoute
@@ -111,6 +131,20 @@ declare module '@tanstack/react-router' {
       path: '/activity'
       fullPath: '/activity'
       preLoaderRoute: typeof ActivityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/doc': {
+      id: '/doc'
+      path: '/doc'
+      fullPath: '/doc'
+      preLoaderRoute: typeof DocRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/evidence': {
+      id: '/evidence'
+      path: '/evidence'
+      fullPath: '/evidence'
+      preLoaderRoute: typeof EvidenceRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/journal': {
@@ -165,6 +199,8 @@ const JournalRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ActivityRoute: ActivityRoute,
+  DocRoute: DocRoute,
+  EvidenceRoute: EvidenceRoute,
   JournalRoute: JournalRouteWithChildren,
   LedgerRoute: LedgerRoute,
   SearchRoute: SearchRoute,

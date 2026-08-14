@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import Swal from "sweetalert2";
 import { MreTable } from "@/features/audit/learner-log-pro-manual/components/MreTable";
+import { toGoogleEmbedUrl } from "@/features/audit/learner-log-pro-manual/lib/googleEmbed";
 import {
   Table,
   TableBody,
@@ -21,9 +22,10 @@ import {
 } from "@/features/audit/learner-log-pro-manual/lib/api";
 
 export const Route = createFileRoute("/activity")({
+  // Numeric-looking values in hand-typed URLs arrive as numbers — accept both.
   validateSearch: (search: Record<string, unknown>) => ({
-    learner: typeof search.learner === "string" ? search.learner : "",
-    activity: typeof search.activity === "string" ? search.activity : "",
+    learner: typeof search.learner === "string" ? search.learner : typeof search.learner === "number" ? String(search.learner) : "",
+    activity: typeof search.activity === "string" ? search.activity : typeof search.activity === "number" ? String(search.activity) : "",
   }),
   component: ActivityLogPage,
 });
@@ -568,7 +570,7 @@ function ActivityLogPage() {
                   </header>
                   <div className="p-5">
                     <div className="aspect-video w-full overflow-hidden rounded-md border border-border bg-black/5">
-                      <iframe src={activityRow.source_url} title={data.activity} className="h-full w-full" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
+                      <iframe src={toGoogleEmbedUrl(activityRow.source_url)} title={data.activity} className="h-full w-full" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen />
                     </div>
                   </div>
                 </section>

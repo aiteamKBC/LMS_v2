@@ -47,14 +47,18 @@ def parse_plan_key(raw):
         return None
 
 
-def activity_content_url(video_url, reading_url, reading_type=None):
+def activity_content_url(video_url, reading_url, reading_type=None, audio_url=None):
     """Browser-renderable content URL, unwrapping PDF-only Office viewers.
 
     Shared by mirror rows (ledger_views) and plan rows so an identical
-    catalogue material renders identically from both sources.
+    catalogue material renders identically from both sources. Audio
+    activities carry their player URL only in raw->audio->iframe_url —
+    callers pass it as ``audio_url``.
     """
     if video_url:
         return video_url
+    if audio_url and not reading_url:
+        return audio_url
     if not reading_url or str(reading_type or "").strip().lower() != "pdf":
         return reading_url
     try:

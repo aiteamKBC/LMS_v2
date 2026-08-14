@@ -11,10 +11,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import SignaturePad from "signature_pad";
 import Swal from "sweetalert2";
-import { BookOpenText, CalendarDays, CheckCircle2, ClipboardList, Download, Headphones, Link2, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2, Video, X } from "lucide-react";
+import { BookOpenText, CalendarDays, CheckCircle2, ClipboardList, Download, FolderSearch, Headphones, Link2, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2, Video, X } from "lucide-react";
 import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/api";
 import { AddManualActivityFlow } from "@/features/audit/learner-log-pro-copy/components/AddManualActivityFlow";
-import { ManualActivityRow, ManualActivityTableHeader } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
+import { ledgerRef, ManualActivityRow, ManualActivityTableHeader } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
 import { RetrieveActivitiesPanel } from "@/features/audit/learner-log-pro-copy/components/RetrieveActivitiesPanel";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import { Table, TableBody, TableHeader } from "@/features/audit/learner-log-pro-copy/components/ui/table";
@@ -45,8 +45,10 @@ import {
 import { downloadLearnerJournalPdf } from "@/features/audit/learner-log-pro-copy/lib/journal-pdf";
 
 export const Route = createFileRoute("/journal/")({
+  // Numeric-looking params (learner=6441) arrive as NUMBERS from hand-typed /
+  // shared URLs (TanStack JSON-parses each value) — accept both forms.
   validateSearch: (search: Record<string, unknown>) => ({
-    learner: typeof search.learner === "string" ? search.learner : "",
+    learner: typeof search.learner === "string" ? search.learner : typeof search.learner === "number" ? String(search.learner) : "",
     period: typeof search.period === "string" ? search.period : "",
   }),
   component: JournalPage,
@@ -193,14 +195,15 @@ function reportMonthLabel(month: string) {
   return new Date(`${month}-02T12:00:00`).toLocaleString("en-GB", { month: "long", year: "numeric" });
 }
 
-type AddChoice = "attendance" | "video" | "reading+quiz" | "audio" | "assignment" | "manual";
+type AddChoice = "attendance" | "video" | "reading+quiz" | "audio" | "assignment-retrieve" | "assignment" | "manual";
 
 const ADD_CHOICES = [
   { value: "attendance", label: "Attendance day", icon: CalendarDays },
   { value: "video", label: "Videos / recordings", icon: Video },
   { value: "reading+quiz", label: "Reading + Quiz", icon: BookOpenText },
   { value: "audio", label: "Audio", icon: Headphones },
-  { value: "assignment", label: "Assignment", icon: ClipboardList },
+  { value: "assignment-retrieve", label: "Aptem assignments", icon: ClipboardList },
+  { value: "assignment", label: "Assignment (typed)", icon: ClipboardList },
   { value: "manual", label: "Manual activity", icon: Plus },
 ] as const;
 
@@ -264,21 +267,14 @@ function readingQuizSourceParts(sourceRef: string | null): { groupId: number; ac
   return null;
 }
 
-// The activity log reads top-down like the retrieve modal: attendance first,
-// then the LMS activity cells, then the assignments — each section grouped by
-// week, rows date-ordered inside.
+// The activity log reads top-down in three flat sections — attendance first,
+// then the LMS activity cells, then the assignments — each one date-ordered
+// across the whole month (no week sub-headers).
 const ROW_SECTIONS = [
   { key: "attendance", label: "Attendance", categories: ["attendance"] },
   { key: "activities", label: "LMS activities", categories: ["video", "audio", "reading+quiz"] },
   { key: "assignments", label: "Assignments", categories: ["assignment"] },
 ] as const;
-
-function weekLabelOf(dateIso: string | null) {
-  if (!dateIso) return "Undated";
-  const date = new Date(`${dateIso}T00:00:00`);
-  date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
-  return `Week of ${date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}`;
-}
 
 function JournalPage() {
   const router = useRouter();
@@ -301,7 +297,13 @@ function JournalPage() {
   const [signatureError, setSignatureError] = useState("");
   const signaturesSaved = learnerSignatureSaved && coachSignatureSaved;
 
-  const metadata = useQuery({ queryKey: ["journal-metadata"], queryFn: () => getLearners() });
+  const metadata = useQuery({
+    queryKey: ["journal-metadata"],
+    queryFn: () => getLearners(),
+    // The cohort list only changes on a mirror re-sync — don't re-download
+    // 1.3MB on every journal visit.
+    staleTime: 5 * 60_000,
+  });
   useEffect(() => {
     if (!metadata.data || learnerChoice) return;
     if (metadata.data.learners[0]) setLearnerChoice(metadata.data.learners[0].id);
@@ -309,11 +311,15 @@ function JournalPage() {
 
   const selectedLearner = learnerChoice;
   const aptemId = Number(selectedLearner) || null;
+  // The rich profile is SLOW (~13s: evidence + contract sources). Nothing on
+  // this page blocks on it — the month list comes from the summary endpoint —
+  // it only widens the month window when it lands, so cache it hard.
   const learnerProfile = useQuery({
     queryKey: ["learner-profile", selectedLearner],
     queryFn: () => getLearnerProfile(selectedLearner),
     enabled: Boolean(selectedLearner),
     retry: false,
+    staleTime: 10 * 60_000,
   });
 
   // Original planned months + employee-arranged sums, straight from the
@@ -323,6 +329,7 @@ function JournalPage() {
     queryKey: ["manual-summary", aptemId],
     queryFn: () => getManualSummary(aptemId!),
     enabled: Boolean(aptemId),
+    staleTime: 60_000,
   });
   const learnerStartDate = learnerProfile.data?.learning_delivery.start_date
     ?? learnerProfile.data?.contracts.find((contract) => contract.programme_start_date)?.programme_start_date
@@ -351,7 +358,10 @@ function JournalPage() {
   useEffect(() => {
     if (!summary.data) return;
     if (summaryMonths.some((item) => item.month === periodChoice)) return;
-    setPeriodChoice(summaryMonths[summaryMonths.length - 1]?.month ?? "");
+    // Default month = the learner's first programme month. The summary's month
+    // list is already anchored at the first planned month server-side, so this
+    // never waits on the slow learner-profile request.
+    setPeriodChoice(summaryMonths[0]?.month ?? "");
     setLearnerSignature("");
     setCoachSignature("");
     setLearnerSignatureSaved(false);
@@ -375,7 +385,24 @@ function JournalPage() {
     queryKey: ["manual-rows", aptemId, selectedPeriod],
     queryFn: () => getManualRows(aptemId!, selectedPeriod),
     enabled: Boolean(aptemId && selectedPeriod),
+    // Months already visited render instantly from cache; saves/auto-imports
+    // invalidate this key explicitly, so a short staleTime is safe.
+    staleTime: 60_000,
   });
+
+  // Warm the neighbouring months in the background so switching is instant.
+  useEffect(() => {
+    if (!aptemId || !selectedPeriod || !summaryMonths.length) return;
+    const index = summaryMonths.findIndex((item) => item.month === selectedPeriod);
+    for (const neighbour of [summaryMonths[index + 1], summaryMonths[index - 1]]) {
+      if (!neighbour) continue;
+      void queryClient.prefetchQuery({
+        queryKey: ["manual-rows", aptemId, neighbour.month],
+        queryFn: () => getManualRows(aptemId, neighbour.month),
+        staleTime: 60_000,
+      });
+    }
+  }, [aptemId, selectedPeriod, summaryMonths, queryClient]);
 
   // Fill the month straight from the sources the moment it opens: attendance
   // sessions, the learner's completed LMS activities and completed Aptem
@@ -420,18 +447,11 @@ function JournalPage() {
     [visibleRows],
   );
 
-  // visibleRows is already date-sorted, so consecutive week labels group
-  // correctly and undated rows fall into a trailing "Undated" bucket.
+  // visibleRows is already date-sorted, so each section's rows come out in
+  // date order with undated rows trailing at the end.
   const groupedSections = ROW_SECTIONS.map((section) => {
     const rows = visibleRows.filter((row) => (section.categories as readonly string[]).includes(row.category));
-    const weeks: Array<{ label: string; rows: DraftRow[] }> = [];
-    for (const row of rows) {
-      const label = weekLabelOf(row.activity_date);
-      const last = weeks[weeks.length - 1];
-      if (last && last.label === label) last.rows.push(row);
-      else weeks.push({ label, rows: [row] });
-    }
-    return { ...section, count: rows.length, weeks };
+    return { ...section, count: rows.length, rows };
   }).filter((section) => section.count > 0);
 
   const mergeEligibleKeys = useMemo(() => new Set(visibleRows
@@ -647,10 +667,24 @@ function JournalPage() {
   }
 
   async function handleDownloadPdf() {
-    if (!learnerProfile.data || !selectedLearner || !selectedPeriod || !manualRows.data) return;
+    // The slow learner-profile must never block the download — the PDF falls
+    // back to "-" for any profile field that has not arrived yet.
+    if (!selectedLearner || !selectedPeriod || !manualRows.data) return;
     setIsPreparingPdf(true);
     try {
-      const pdfRows = (manualRows.data.rows ?? []).map(manualRowToJournalActivity);
+      const systemBase = `${window.location.origin}${window.location.pathname}`;
+      const pdfRows = (manualRows.data.rows ?? []).map((row) => {
+        const ref = ledgerRef({ category: row.category, source_ref: row.source_ref, serverId: row.id });
+        return {
+          ...manualRowToJournalActivity(row),
+          // Every PDF row links back to the activity's own page INSIDE the
+          // system (participants + in-system document previews) — never the
+          // raw external file.
+          link: ref
+            ? `${systemBase}#/ledger?ref=${encodeURIComponent(ref)}&learner=${encodeURIComponent(String(row.aptem_id))}`
+            : null,
+        };
+      });
       const pdfSummary = {
         name: learnerName,
         planned_hours: originalPlanned ?? 0,
@@ -738,12 +772,13 @@ function JournalPage() {
     }
   }
 
+  // The slow learner-profile request must NEVER gate the page: the journal
+  // renders from summary+rows and the profile fields fill in when they land.
   const isLoading =
     metadata.isLoading ||
     (Boolean(aptemId) && summary.isLoading) ||
     (Boolean(aptemId && selectedPeriod) && manualRows.isLoading) ||
-    (Boolean(selectedLearner) && learnerProfile.isLoading) ||
-    (Boolean(learnerProfile.data?.aptem_id && selectedPeriod) && savedSignoff.isLoading);
+    (Boolean(selectedLearner && selectedPeriod) && savedSignoff.isLoading);
   // Rich profile/sign-off data is optional for newly added programmes. Core
   // summary/row failures still block the journal; optional 404s do not.
   const pageError = metadata.error || summary.error || manualRows.error;
@@ -781,9 +816,20 @@ function JournalPage() {
                 <p className="mt-1 text-sm font-semibold text-[#182d48]">{metadata.isLoading || summary.isLoading ? "Loading…" : monthLabel}</p>
               </div>
               <Button
+                asChild
+                variant="outline"
+                className="gap-2 border-amber-300 bg-amber-50 font-semibold text-[#182d48] shadow-sm hover:bg-amber-100 hover:text-[#182d48]"
+                title="Everything the learner uploaded to Aptem — classified from content, misfiled items flagged"
+              >
+                <Link to="/evidence" search={{ learner: selectedLearner, period: selectedPeriod } as never}>
+                  <FolderSearch className="h-4 w-4 text-amber-600" />
+                  Evidence
+                </Link>
+              </Button>
+              <Button
                 className="gap-2 bg-[#182d48] hover:bg-[#243f61]"
-                disabled={!manualRows.data || !learnerProfile.data || !signaturesSaved || isPreparingPdf || dirty}
-                title={dirty ? "Save all activities first — the PDF only includes saved rows" : undefined}
+                disabled={!manualRows.data || isPreparingPdf || dirty}
+                title={dirty ? "Save all activities first — the PDF only includes saved rows" : !signaturesSaved ? "Signatures are not saved yet — the PDF will show empty sign-off boxes" : undefined}
                 onClick={handleDownloadPdf}
               >
                 {isPreparingPdf ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -808,9 +854,9 @@ function JournalPage() {
           ) : summary.data ? (
             <div className="space-y-5 px-7 py-6">
               <div className="grid rounded-lg bg-[#f6f8fb] px-5 lg:grid-cols-3">
-                <ProfileGroup label="Learner" value={learnerName} secondaryLabel="Start date" secondaryValue={learnerProfile.data?.learning_delivery.start_date ?? "—"} />
-                <ProfileGroup label="Programme" value={summary.data.programme_name ?? learnerProfile.data?.programme ?? "—"} secondaryLabel="First evidence" secondaryValue={learnerProfile.data?.learning_delivery.first_evidence_date ?? "—"} />
-                <ProfileGroup label="Coach" value={summary.data.coach_name ?? learnerProfile.data?.coach.name ?? "—"} secondaryLabel="Planned end" secondaryValue={learnerProfile.data?.learning_delivery.planned_end_date ?? "—"} />
+                <ProfileGroup label="Learner" value={learnerName} secondaryLabel="Start date" secondaryValue={learnerProfile.data?.learning_delivery.start_date ?? (learnerProfile.isLoading ? "Loading…" : "—")} />
+                <ProfileGroup label="Programme" value={summary.data.programme_name ?? learnerProfile.data?.programme ?? "—"} secondaryLabel="First evidence" secondaryValue={learnerProfile.data?.learning_delivery.first_evidence_date ?? (learnerProfile.isLoading ? "Loading…" : "—")} />
+                <ProfileGroup label="Coach" value={summary.data.coach_name ?? learnerProfile.data?.coach.name ?? "—"} secondaryLabel="Planned end" secondaryValue={learnerProfile.data?.learning_delivery.planned_end_date ?? (learnerProfile.isLoading ? "Loading…" : "—")} />
               </div>
 
               <div className="flex items-center gap-1 rounded-lg bg-[#f6f8fb] p-1 text-xs font-semibold sm:w-fit">
@@ -848,6 +894,11 @@ function JournalPage() {
               <p className="mt-1 text-sm text-muted-foreground">Activities the audit team arranged onto this month's report</p>
             </div>
             <div className="flex items-center gap-2">
+              {manualRows.isFetching ? (
+                <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-primary" /> Updating…
+                </span>
+              ) : null}
               <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono text-xs font-medium text-[#182d48]">{visibleRows.length} activities</span>
               {mergeMode ? (
                 <>
@@ -863,7 +914,7 @@ function JournalPage() {
               )}
             </div>
           </header>
-          {addChoice && ["attendance", "video", "reading+quiz", "audio"].includes(addChoice) && aptemId && selectedPeriod ? (
+          {addChoice && ["attendance", "video", "reading+quiz", "audio", "assignment-retrieve"].includes(addChoice) && aptemId && selectedPeriod ? (
             <ActivityFlowModal onClose={() => setAddChoice(null)}>
               <RetrieveActivitiesPanel
                 key={addChoice}
@@ -871,7 +922,7 @@ function JournalPage() {
                 month={selectedPeriod}
                 monthLabel={monthLabel}
                 existingRefs={existingRefs}
-                initialCategory={addChoice as "attendance" | "video" | "reading+quiz" | "audio"}
+                initialCategory={addChoice === "assignment-retrieve" ? "assignment" : (addChoice as "attendance" | "video" | "reading+quiz" | "audio")}
                 onRetrieve={(rows) => setDraftRows((current) => [...current, ...rows])}
                 onClose={() => setAddChoice(null)}
               />
@@ -896,6 +947,15 @@ function JournalPage() {
             <Table>
               <TableHeader><ManualActivityTableHeader dark /></TableHeader>
               <TableBody>
+                {manualRows.isLoading && !visibleRows.length ? (
+                  Array.from({ length: 4 }, (_, index) => (
+                    <tr key={`skeleton-${index}`} className="border-b border-border">
+                      <td colSpan={7} className="px-7 py-4">
+                        <div className="h-4 w-full max-w-xl animate-pulse rounded bg-muted" />
+                      </td>
+                    </tr>
+                  ))
+                ) : null}
                 {groupedSections.map((section) => (
                   <Fragment key={section.key}>
                     <tr className="border-b border-border bg-[#182d48]/[0.06]">
@@ -903,30 +963,21 @@ function JournalPage() {
                         {section.label} <span className="font-normal normal-case text-muted-foreground">({section.count})</span>
                       </td>
                     </tr>
-                    {section.weeks.map((week) => (
-                      <Fragment key={`${section.key}:${week.label}`}>
-                        <tr className="border-b border-border bg-[#eef3f8]">
-                          <td colSpan={7} className="px-7 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#4a5d78]">
-                            {week.label} <span className="font-normal normal-case text-muted-foreground">({week.rows.length})</span>
-                          </td>
-                        </tr>
-                        {week.rows.map((row) => (
-                          <ManualActivityRow
-                            key={row.key}
-                            row={row}
-                            className="odd:bg-[#f7f9fc]"
-                            mergeMode={mergeMode}
-                            mergeEligible={mergeEligibleKeys.has(row.key)}
-                            mergeSelected={mergeSelection.has(row.key)}
-                            onToggleMerge={() => toggleMergeRow(row.key)}
-                            onPatch={(patch) => setDraftRows((current) => patchDraftRow(current, row.key, patch))}
-                            onDelete={() => setDraftRows((current) => deleteDraftRow(current, row.key))}
-                            onStageFiles={(files) => setDraftRows((current) => stageFiles(current, row.key, files))}
-                            onUnstageFile={(index) => setDraftRows((current) => unstageFile(current, row.key, index))}
-                            onDeleteDocument={(docId) => setDraftRows((current) => stageDocumentDelete(current, row.key, docId))}
-                          />
-                        ))}
-                      </Fragment>
+                    {section.rows.map((row) => (
+                      <ManualActivityRow
+                        key={row.key}
+                        row={row}
+                        className="odd:bg-[#f7f9fc]"
+                        mergeMode={mergeMode}
+                        mergeEligible={mergeEligibleKeys.has(row.key)}
+                        mergeSelected={mergeSelection.has(row.key)}
+                        onToggleMerge={() => toggleMergeRow(row.key)}
+                        onPatch={(patch) => setDraftRows((current) => patchDraftRow(current, row.key, patch))}
+                        onDelete={() => setDraftRows((current) => deleteDraftRow(current, row.key))}
+                        onStageFiles={(files) => setDraftRows((current) => stageFiles(current, row.key, files))}
+                        onUnstageFile={(index) => setDraftRows((current) => unstageFile(current, row.key, index))}
+                        onDeleteDocument={(docId) => setDraftRows((current) => stageDocumentDelete(current, row.key, docId))}
+                      />
                     ))}
                   </Fragment>
                 ))}

@@ -7,7 +7,7 @@
 import { useRef, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, Check, FileText, Paperclip, Pencil, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ClipboardCheck, CornerDownRight, FileText, Paperclip, Pencil, Trash2, X } from "lucide-react";
 import Swal from "sweetalert2";
 import { DurationInput, formatHoursDuration } from "@/features/audit/learner-log-pro-copy/components/DurationInput";
 import { TableCell, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";
@@ -46,11 +46,24 @@ function RowInput({ className = "", ...props }: InputHTMLAttributes<HTMLInputEle
 }
 
 export function ledgerRef(row: Pick<DraftRow, "category" | "source_ref" | "serverId">) {
-  if (row.source_ref?.startsWith("rq:")) return null;
+  // rq: bundles now have a full ledger view (one content block per part).
+  if (row.source_ref?.startsWith("rq:")) return row.source_ref;
   if (row.category === "assignment" || !row.source_ref) {
     return row.serverId != null ? `row:${row.serverId}` : null;
   }
   return row.source_ref;
+}
+
+// LMS group/module names arrive HTML-encoded from the WordPress sync
+// ("Impact &amp;Planning") — decode the common entities for display.
+export function decodeEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&nbsp;/g, " ");
 }
 
 export function completionBadge(note: string | null) {
@@ -138,16 +151,29 @@ function AssignmentDocuments({ row, onStageFiles, onUnstageFile, onDeleteDocumen
   const fileRef = useRef<HTMLInputElement | null>(null);
   return (
     <div className="mt-1.5 space-y-1">
-      {row.documents.map((doc) => {
+      {row.documents.map((doc, index) => {
         const pendingDelete = row.deletedDocIds.includes(doc.id);
+        // The API lists each evidence file immediately before its marking
+        // report (same evidence_group) — nest the report under its evidence.
+        const isMarking = doc.doc_kind === "report";
+        const previous = index > 0 ? row.documents[index - 1] : null;
+        const nested = isMarking && previous?.doc_kind === "evidence" && previous.evidence_group === doc.evidence_group;
         return (
-          <div key={doc.id} className={`flex items-center gap-1.5 text-xs ${pendingDelete ? "line-through opacity-50" : ""}`}>
-            <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-            {doc.download_url && !pendingDelete ? (
-              <a href={doc.download_url} target="_blank" rel="noreferrer" className="truncate text-primary hover:underline" title={doc.display_name}>{doc.display_name}</a>
+          <div key={doc.id} className={`flex items-center gap-1.5 text-xs ${nested ? "pl-4" : ""} ${pendingDelete ? "line-through opacity-50" : ""}`}>
+            {nested ? <CornerDownRight className="h-3 w-3 shrink-0 text-muted-foreground/60" /> : null}
+            {isMarking ? (
+              <ClipboardCheck className="h-3 w-3 shrink-0 text-primary" />
+            ) : (
+              <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+            )}
+            {!pendingDelete ? (
+              <Link to="/doc" search={{ id: doc.id } as never} className="truncate text-primary hover:underline" title={`Preview ${doc.display_name} in the system`}>{doc.display_name}</Link>
             ) : (
               <span className="truncate text-muted-foreground" title={doc.display_name}>{doc.display_name}</span>
             )}
+            {isMarking && !pendingDelete ? (
+              <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold text-primary" title={nested ? "Assessor marking for the evidence above" : "Assessor marking report"}>Marking</span>
+            ) : null}
             {pendingDelete ? (
               <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[9px] font-semibold text-destructive">removes on save</span>
             ) : (
@@ -244,10 +270,18 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
             </label>
           ) : null}
           {ref ? (
-            <Link to="/ledger" search={{ ref, learner: String(row.aptem_id) } as never} className="font-medium text-foreground hover:text-primary hover:underline">{row.title}</Link>
+            <Link to="/ledger" search={{ ref, learner: String(row.aptem_id) } as never} className="font-medium text-foreground hover:text-primary hover:underline">{decodeEntities(row.title)}</Link>
           ) : (
-            <span className="font-medium text-foreground">{row.title}</span>
+            <span className="font-medium text-foreground">{decodeEntities(row.title)}</span>
           )}
+          {(row.category === "attendance" ? row.module : row.source_course) ? (
+            <p
+              className="mt-0.5 text-[11px] leading-4 text-muted-foreground"
+              title={row.category === "attendance" ? "Module from the attendance register" : "LMS course this activity came from"}
+            >
+              {decodeEntities((row.category === "attendance" ? row.module : row.source_course) as string)}
+            </p>
+          ) : null}
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {completionBadge(row.completion_note)}
             {formatDurationMinutes(row.duration_minutes) ? (

@@ -13,8 +13,10 @@ import { getLearnerActivities, getLearnerProfile, getLearners, nextActivitySort,
 import { downloadLearnerJournalPdf } from "@/features/audit/learner-log-pro-manual/lib/journal-pdf";
 
 export const Route = createFileRoute("/journal/")({
+  // Numeric-looking params (learner=6441) arrive as NUMBERS from hand-typed /
+  // shared URLs (TanStack JSON-parses each value) — accept both forms.
   validateSearch: (search: Record<string, unknown>) => ({
-    learner: typeof search.learner === "string" ? search.learner : "",
+    learner: typeof search.learner === "string" ? search.learner : typeof search.learner === "number" ? String(search.learner) : "",
     period: typeof search.period === "string" ? search.period : "",
   }),
   component: JournalPage,
@@ -318,18 +320,36 @@ function JournalPage() {
   useEffect(() => {
     if (!cumulativeLearner) return;
     if (learnerPeriods.some((item) => item.value === periodChoice)) return;
-    // Default month = August 2026 (the range end) when available, otherwise
-    // the latest month the learner has.
-    const fallback = learnerPeriods.some((item) => item.value === JOURNAL_RANGE_END)
-      ? JOURNAL_RANGE_END
-      : learnerPeriods[learnerPeriods.length - 1]?.value ?? "";
+    // Wait for the profile before defaulting: it supplies start_date, which
+    // expands learnerPeriods to the full programme window — deciding earlier
+    // would lock in a month picked from the activity list alone.
+    if (profile.isLoading) return;
+    // Default month = the learner's first programme month (skipping stray
+    // activity months dated before the programme start).
+    const startKey = delivery?.start_date ? String(delivery.start_date).slice(0, 7) : "";
+    const fallback = (startKey ? learnerPeriods.find((item) => item.value >= startKey)?.value : undefined)
+      ?? learnerPeriods[0]?.value
+      ?? "";
     setPeriodChoice(fallback);
     setActivityPage(0);
     setLearnerSignature("");
     setCoachSignature("");
     setLearnerSignatureSaved(false);
     setCoachSignatureSaved(false);
-  }, [cumulativeLearner, learnerPeriods, periodChoice]);
+  }, [cumulativeLearner, learnerPeriods, periodChoice, profile.isLoading, delivery?.start_date]);
+
+  // Keep the chosen learner/month in the URL, so leaving the page and coming
+  // back (or reloading / sharing the link) restores the same report instead
+  // of falling back to the default month.
+  useEffect(() => {
+    if (!selectedLearner || !selectedPeriod) return;
+    if (routeSearch.learner === selectedLearner && routeSearch.period === selectedPeriod) return;
+    void router.navigate({
+      to: "/journal",
+      search: { learner: selectedLearner, period: selectedPeriod },
+      replace: true,
+    });
+  }, [selectedLearner, selectedPeriod, routeSearch.learner, routeSearch.period, router]);
 
   const monthSummaries = useQuery({
     queryKey: ["journal-summary", selectedLearner, selectedPeriod],
