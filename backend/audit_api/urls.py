@@ -2,7 +2,7 @@ from django.urls import path
 
 from .views import audit_blob, contract_file, evidence_file, learner_activity_stats, learner_audit, learner_audit_list, learner_signoff
 from .contract_documents import archive_contract, rename_contract, upload_contract
-from .evidence_documents import archive_evidence, update_evidence_date, upload_evidence
+from .evidence_documents import archive_evidence, select_activity_evidence, update_evidence_date, upload_evidence
 from .profile_overrides import update_profile_overrides
 from .learner_log_views import health, learner_activities, learner_summaries, mre_list, mre_summary
 from .last_audit_ledger_views import (
@@ -107,6 +107,7 @@ urlpatterns = [
     path("evidence/<str:evidence_id>/date", update_evidence_date, name="audit-evidence-date"),
     path("evidence/<str:evidence_id>/archive", archive_evidence, name="audit-evidence-archive"),
     path("evidence/upload", upload_evidence, name="audit-evidence-upload"),
+    path("evidence/select-activity", select_activity_evidence, name="audit-evidence-select-activity"),
     path("contracts/<int:contract_id>/archive", archive_contract, name="audit-contract-archive"),
     path("contracts/<int:contract_id>/name", rename_contract, name="audit-contract-name"),
     path("contracts/upload", upload_contract, name="audit-contract-upload"),
