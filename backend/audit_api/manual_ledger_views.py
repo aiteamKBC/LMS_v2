@@ -77,9 +77,9 @@ ATTENDANCE_SESSION_HOURS = 2.5
 
 ROW_COLUMNS = (
     "id, aptem_id, learner_id, month, category, source_ref, group_id, "
-    "activity_id, title, activity_date, planned_hours, actual_hours, "
-    "timestamp_label, completion_note, accepted, created_by, updated_by, "
-    "created_at, updated_at"
+    "activity_id, title, activity_date, activity_time, planned_hours, "
+    "actual_hours, timestamp_label, completion_note, accepted, created_by, "
+    "updated_by, created_at, updated_at"
 )
 
 
@@ -174,6 +174,9 @@ def _ensure_manual_tables(cursor):
         'DROP CONSTRAINT IF EXISTS reading_quiz_pairs_group_id_reading_activity_id_key'
     )
     cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_rq_pairs_group ON {READING_QUIZ_PAIRS} (group_id)")
+    # Assignments carry the source submission time so the journal can show
+    # date AND time per row (older installs get the column on the fly).
+    cursor.execute(f"ALTER TABLE {MANUAL_ROWS} ADD COLUMN IF NOT EXISTS activity_time time")
     _MANUAL_TABLES_READY = True
 
 
@@ -275,6 +278,7 @@ def _row_payload(row, documents=None, *, source_course=None, module=None):
         "activity_id": int(row["activity_id"]) if row.get("activity_id") is not None else None,
         "title": row["title"],
         "activity_date": activity_date.isoformat() if activity_date else None,
+        "activity_time": row["activity_time"].strftime("%H:%M") if row.get("activity_time") else None,
         "planned_hours": _num(row.get("planned_hours")) or 0.0,
         "actual_hours": _num(row.get("actual_hours")) or 0.0,
         "timestamp_label": row.get("timestamp_label") or "",
@@ -873,11 +877,11 @@ def _validate_patch_values(patch):
     return values
 
 
-ROW_VALUES_PLACEHOLDER = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+ROW_VALUES_PLACEHOLDER = "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
 INSERT_ROW_PREFIX = f"""
     INSERT INTO {MANUAL_ROWS} (
         aptem_id, learner_id, month, category, source_ref,
-        group_id, activity_id, title, activity_date,
+        group_id, activity_id, title, activity_date, activity_time,
         planned_hours, actual_hours, timestamp_label,
         completion_note, accepted, created_by
     ) VALUES """
@@ -888,9 +892,10 @@ def _insert_params(aptem_id, learner_id, values, created_by):
     return [
         aptem_id, learner_id, values["month"], values["category"],
         values["source_ref"], values["group_id"], values["activity_id"],
-        values["title"], values["activity_date"], values["planned_hours"],
-        values["actual_hours"], values["timestamp_label"],
-        values["completion_note"], values["accepted"], created_by,
+        values["title"], values["activity_date"], values.get("activity_time"),
+        values["planned_hours"], values["actual_hours"],
+        values["timestamp_label"], values["completion_note"],
+        values["accepted"], created_by,
     ]
 
 
@@ -2101,22 +2106,50 @@ def _attach_assignment_evidence_docs(cursor, aptem_id, month):
     return inserted
 
 
+_SOURCE_TIME_RE = re.compile(r"[T ](\d{2}):(\d{2}):(\d{2})")
+
+
+def _readable_status(status):
+    """Aptem ships CamelCase status words ("NotStarted", "EvidenceRequired");
+    store them as human words so the journal chip reads naturally."""
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(status or "").strip())
+    return " ".join(text.split()).lower() or "unknown"
+
+
+def _submission_time(item):
+    """The genuine submission clock time (HH:MM) when the source recorded one.
+    Due/completed dates arrive as midnight stamps, so only a non-midnight
+    timestamp counts as a real time; date-only sources return None."""
+    raw = item.get("raw") if isinstance(item.get("raw"), dict) else {}
+    inner = raw.get("raw") if isinstance(raw.get("raw"), dict) else {}
+    for value in (
+        raw.get("last_submission_date"), inner.get("LastSubmissionDate"),
+        raw.get("completed_date"), inner.get("CompletedDate"),
+        raw.get("due_date"), inner.get("DueDate"),
+    ):
+        match = _SOURCE_TIME_RE.search(str(value or ""))
+        if match and (match.group(1), match.group(2), match.group(3)) != ("00", "00", "00"):
+            return f"{match.group(1)}:{match.group(2)}"
+    return None
+
+
 def _assignment_import_values(aptem_id, month):
-    """The learner's completed Aptem assignments dated inside the month, shaped
-    as manual-row create values. Dates follow the audit workspace's
+    """EVERY Aptem assignment dated inside the month — whatever its status —
+    shaped as manual-row create values. Dates follow the audit workspace's
     ``relevant_date`` (due → submission → completed) so both screens bucket an
     assignment into the same month; hours come from the source (planned hours
-    and the evidenced OTJH minutes)."""
+    and the evidenced OTJH minutes), the source status lands in
+    ``completion_note`` and the real submission clock time in
+    ``activity_time``."""
     values = []
     for item in _fetch_assignment_items(aptem_id, include_evidence=False):
-        if str(item.get("status") or "").strip().lower() != "completed":
-            continue
         date_iso = str(item.get("relevant_date") or "")[:10]
         if not date_iso.startswith(month):
             continue
         source_id = str(item.get("source_id") or "").strip()
         if not source_id:
             continue
+        status = _readable_status(item.get("status"))
         values.append({
             "month": month,
             "category": "assignment",
@@ -2125,10 +2158,11 @@ def _assignment_import_values(aptem_id, month):
             "activity_id": None,
             "title": _valid_title(item.get("activity_name") or "Assignment"),
             "activity_date": _valid_date(date_iso),
+            "activity_time": _submission_time(item),
             "planned_hours": _clamped_hours(item.get("planned_hours")),
             "actual_hours": _clamped_hours(item.get("actual_hours")),
             "timestamp_label": "input",
-            "completion_note": "completed",
+            "completion_note": status,
             "accepted": True,
         })
     return values
@@ -2140,9 +2174,10 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
     journal opens pre-arranged and the employee only adds what is missing.
 
     Inserted per month: every register attendance session (attended
-    2.5h/2.5h, absent 2.5h/0h), the LMS activities the learner COMPLETED whose
-    date falls inside the month (0h/0h — hours stay the employee's call), and
-    the learner's completed Aptem assignments (hours from the source).
+    2.5h/2.5h, absent 2.5h/0h), EVERY LMS activity dated inside the month —
+    completed or not, the row's completion note carries the learner's real
+    state (0h/0h — hours stay the employee's call) — and the learner's
+    completed Aptem assignments (hours from the source).
 
     Idempotent by design: a source_ref ever filed for the month — even one the
     employee later deleted — is never re-inserted, so deletions stay
@@ -2201,8 +2236,11 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                     date_iso = item.get("activity_date") or ""
                     if not date_iso.startswith(month):
                         continue
-                    if item["completion"]["state"] != "completed":
-                        continue
+                    # Every month-dated LMS activity is filed — completed or
+                    # not — so the report opens with the month's whole
+                    # curriculum. Learners rarely trip the LMS completion
+                    # flags, and the employee decides the hours either way;
+                    # the completion note keeps the real state visible.
                     pending.append({
                         "month": month,
                         "category": item["category"],
@@ -2214,7 +2252,7 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                         "planned_hours": 0.0,
                         "actual_hours": 0.0,
                         "timestamp_label": "input",
-                        "completion_note": "completed",
+                        "completion_note": item["completion"]["state"],
                         "accepted": True,
                     })
                 pending.extend(_assignment_import_values(aptem_id, month))
@@ -2259,6 +2297,37 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                     )
                     created = cursor.rowcount
                     skipped_existing += len(batch) - created
+                # Keep UNTOUCHED assignment rows in step with the source:
+                # status, submission time and hours refresh on every open.
+                # "Untouched" = never edited by a human (updated_at still equals
+                # created_at); the refresh deliberately leaves updated_at alone
+                # so the row stays refreshable, and any employee edit freezes it.
+                for values in pending:
+                    if values["category"] != "assignment":
+                        continue
+                    cursor.execute(
+                        f"""
+                        UPDATE {MANUAL_ROWS}
+                        SET completion_note = %s, activity_time = %s,
+                            planned_hours = %s, actual_hours = %s,
+                            updated_by = 'auto-refresh'
+                        WHERE aptem_id = %s AND month = %s AND source_ref = %s
+                          AND deleted_at IS NULL
+                          AND (updated_by IS NULL OR updated_by = 'auto-refresh')
+                          AND updated_at = created_at
+                          AND (completion_note IS DISTINCT FROM %s
+                               OR activity_time IS DISTINCT FROM %s::time
+                               OR planned_hours IS DISTINCT FROM %s::numeric
+                               OR actual_hours IS DISTINCT FROM %s::numeric)
+                        """,
+                        [
+                            values["completion_note"], values.get("activity_time"),
+                            values["planned_hours"], values["actual_hours"],
+                            aptem_id, month, values["source_ref"],
+                            values["completion_note"], values.get("activity_time"),
+                            values["planned_hours"], values["actual_hours"],
+                        ],
+                    )
                 # Give every assignment row its Azure-mirrored evidence files
                 # as documents (also heals rows filed before this feature).
                 _attach_assignment_evidence_docs(cursor, aptem_id, month)

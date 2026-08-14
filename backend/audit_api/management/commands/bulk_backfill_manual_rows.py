@@ -240,17 +240,18 @@ def _month_attendance(attendance_rows, month, already_added_set):
 
 
 def _month_assignment_values(assignment_items, month):
-    """Verbatim ``_assignment_import_values`` against prefetched items."""
+    """Verbatim ``_assignment_import_values`` against prefetched items:
+    EVERY assignment in the month whatever its status, with the source status
+    in ``completion_note`` and the submission clock time in ``activity_time``."""
     values = []
     for item in assignment_items:
-        if str(item.get("status") or "").strip().lower() != "completed":
-            continue
         date_iso = str(item.get("relevant_date") or "")[:10]
         if not date_iso.startswith(month):
             continue
         source_id = str(item.get("source_id") or "").strip()
         if not source_id:
             continue
+        status = mlv._readable_status(item.get("status"))
         values.append({
             "month": month,
             "category": "assignment",
@@ -259,10 +260,11 @@ def _month_assignment_values(assignment_items, month):
             "activity_id": None,
             "title": mlv._valid_title(item.get("activity_name") or "Assignment"),
             "activity_date": mlv._valid_date(date_iso),
+            "activity_time": mlv._submission_time(item),
             "planned_hours": mlv._clamped_hours(item.get("planned_hours")),
             "actual_hours": mlv._clamped_hours(item.get("actual_hours")),
             "timestamp_label": "input",
-            "completion_note": "completed",
+            "completion_note": status,
             "accepted": True,
         })
     return values
@@ -354,6 +356,7 @@ class Command(BaseCommand):
                     assignment_items = []
 
                 batch = []
+                refresh = []
                 asg_target_months = set(asg_live_months)
                 for month in months:
                     if (str(aptem_id), month) in signed_off:
@@ -395,7 +398,9 @@ class Command(BaseCommand):
                             "completion_note": "completed",
                             "accepted": True,
                         })
-                    pending.extend(_month_assignment_values(assignment_items, month))
+                    asg_values = _month_assignment_values(assignment_items, month)
+                    pending.extend(asg_values)
+                    refresh.extend(asg_values)
 
                     ever_filed = ever.get(month, set())
                     seen = set()
@@ -429,11 +434,38 @@ class Command(BaseCommand):
                                     params,
                                 )
                                 written += cursor.rowcount
+                            # Same untouched-row refresh as rows_auto_import:
+                            # status/time/hours follow the source until a human
+                            # edits the row (updated_at deliberately untouched).
+                            for values in refresh:
+                                cursor.execute(
+                                    f"""
+                                    UPDATE {mlv.MANUAL_ROWS}
+                                    SET completion_note = %s, activity_time = %s,
+                                        planned_hours = %s, actual_hours = %s,
+                                        updated_by = 'auto-refresh'
+                                    WHERE aptem_id = %s AND month = %s AND source_ref = %s
+                                      AND deleted_at IS NULL
+                                      AND (updated_by IS NULL OR updated_by = 'auto-refresh')
+                                      AND updated_at = created_at
+                                      AND (completion_note IS DISTINCT FROM %s
+                                           OR activity_time IS DISTINCT FROM %s::time
+                                           OR planned_hours IS DISTINCT FROM %s::numeric
+                                           OR actual_hours IS DISTINCT FROM %s::numeric)
+                                    """,
+                                    [
+                                        values["completion_note"], values.get("activity_time"),
+                                        values["planned_hours"], values["actual_hours"],
+                                        aptem_id, values["month"], values["source_ref"],
+                                        values["completion_note"], values.get("activity_time"),
+                                        values["planned_hours"], values["actual_hours"],
+                                    ],
+                                )
                             for month in sorted(asg_target_months):
                                 mlv._attach_assignment_evidence_docs(cursor, aptem_id, month)
                     return written
 
-                if batch or asg_target_months:
+                if batch or refresh or asg_target_months:
                     created = _retrying(write)
                 return aptem_id, name, months, created, locked, None
             except Exception as error:  # keep the sweep going, report at the end

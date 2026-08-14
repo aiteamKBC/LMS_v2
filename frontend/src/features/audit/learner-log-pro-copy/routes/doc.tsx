@@ -15,7 +15,7 @@ export const Route = createFileRoute("/doc")({
   validateSearch: (search: Record<string, unknown>) => ({
     id: typeof search.id === "number" ? search.id : typeof search.id === "string" ? Number(search.id) || 0 : 0,
     evidence: typeof search.evidence === "number" ? search.evidence : typeof search.evidence === "string" ? Number(search.evidence) || 0 : 0,
-    part: search.part === "report" ? "report" : "file",
+    part: search.part === "report" ? "report" : search.part === "original" ? "original" : "file",
   }),
   component: DocumentPreviewPage,
 });

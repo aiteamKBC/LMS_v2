@@ -50,6 +50,9 @@ export type ManualRow = {
   source_course?: string | null;
   module?: string | null;
   activity_date: string | null;
+  // Assignments carry the source submission clock time (HH:MM) when Aptem
+  // recorded one; every other category leaves it null.
+  activity_time?: string | null;
   planned_hours: number;
   actual_hours: number;
   timestamp_label: string;
@@ -334,6 +337,12 @@ export type EvidenceCategory =
 export type EvidenceItem = {
   evidence_id: number;
   name: string;
+  // Auditor overrides: `edited` marks a changed name/category/date; `replaced`
+  // means an uploaded file supersedes the Aptem original (kept as part=original).
+  edited: boolean;
+  replaced: boolean;
+  replacement_name: string | null;
+  original_has_file: boolean;
   kind: string;
   status: string;
   category: EvidenceCategory;
@@ -381,8 +390,33 @@ export function getEvidenceList(aptemId: number | string, month?: string): Promi
   return evidenceRequest(`/list?${query}`);
 }
 
-export function getEvidenceUrl(evidenceId: number, part: "file" | "report" = "file"): Promise<{ id: number; name: string; content_type: string | null; url: string }> {
+export function getEvidenceUrl(evidenceId: number, part: "file" | "report" | "original" = "file"): Promise<{ id: number; name: string; content_type: string | null; url: string }> {
   return evidenceRequest(`/open?id=${encodeURIComponent(String(evidenceId))}&part=${part}`);
+}
+
+// Auditor edit of an evidence row's display fields; empty string clears the
+// override so the source value shows again.
+export function editEvidence(
+  evidenceId: number,
+  patch: { display_name?: string; category?: EvidenceCategory | ""; evidence_date?: string },
+): Promise<{ ok: boolean; evidence_id: number }> {
+  return evidenceRequest("/edit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ evidence_id: evidenceId, ...patch }),
+  });
+}
+
+// Upload a file that supersedes the shown evidence file (the Aptem original
+// stays archived and viewable via part=original).
+export function replaceEvidenceFile(
+  evidenceId: number,
+  file: File,
+): Promise<{ ok: boolean; evidence_id: number; replacement_name: string }> {
+  const form = new FormData();
+  form.set("evidence_id", String(evidenceId));
+  form.set("file", file);
+  return evidenceRequest("/replace", { method: "POST", body: form });
 }
 
 // The auditor's verdict on a classification: confirm it, or reject it so the

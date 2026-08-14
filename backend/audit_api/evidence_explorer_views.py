@@ -17,6 +17,7 @@ Classification is deliberately tiered and deterministic:
            service's tables — classification happens per request.
 """
 
+import datetime
 import json
 import re
 
@@ -39,6 +40,63 @@ from .manual_ledger_views import (
 )
 
 EVIDENCE_ITEMS = '"fetching_evidence"."evidence_items"'
+
+# Auditor edits live in OUR schema — the fetch-service mirror stays read-only.
+# An override row changes what the explorer (and transfers) DISPLAY; a
+# replacement row supersedes the shown file while the Aptem original stays
+# archived and viewable (part=original).
+EVIDENCE_OVERRIDES = '"structured_manual_activities"."evidence_overrides"'
+EVIDENCE_REPLACEMENTS = '"structured_manual_activities"."evidence_replacements"'
+REPLACEMENT_CONTAINER = "evidence-replacements"
+
+_OVERRIDE_TABLES_READY = False
+
+
+def ensure_override_tables(cursor):
+    global _OVERRIDE_TABLES_READY
+    if _OVERRIDE_TABLES_READY:
+        return
+    cursor.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {EVIDENCE_OVERRIDES} (
+            evidence_id   bigint PRIMARY KEY,
+            aptem_id      bigint NOT NULL,
+            display_name  text,
+            category      text,
+            evidence_date date,
+            updated_by    text,
+            updated_at    timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS {EVIDENCE_REPLACEMENTS} (
+            id            bigserial PRIMARY KEY,
+            evidence_id   bigint NOT NULL,
+            aptem_id      bigint NOT NULL,
+            container     text   NOT NULL,
+            blob_name     text   NOT NULL,
+            display_name  text   NOT NULL,
+            content_type  text,
+            size_bytes    bigint,
+            uploaded_by   text,
+            uploaded_at   timestamptz NOT NULL DEFAULT now(),
+            archived_at   timestamptz
+        );
+        CREATE INDEX IF NOT EXISTS evidence_replacements_active_idx
+            ON {EVIDENCE_REPLACEMENTS} (evidence_id) WHERE archived_at IS NULL;
+        """
+    )
+    _OVERRIDE_TABLES_READY = True
+
+
+# The LATERAL join both list and transfer use: the newest non-archived upload.
+_ACTIVE_REPLACEMENT_JOIN = f"""
+    LEFT JOIN LATERAL (
+        SELECT rp.id, rp.container, rp.blob_name, rp.display_name, rp.uploaded_at
+        FROM {EVIDENCE_REPLACEMENTS} rp
+        WHERE rp.evidence_id = e.evidence_id AND rp.archived_at IS NULL
+        ORDER BY rp.uploaded_at DESC, rp.id DESC
+        LIMIT 1
+    ) r ON true
+"""
 
 # Display order also encodes precedence for reporting.
 CATEGORIES = (
@@ -70,24 +128,29 @@ def evidence_list(request: HttpRequest) -> JsonResponse:
     conditions = ["learner_id = %s"]
     params = [aptem_id]
     if month:
+        # The auditor's edited date wins the month bucketing too.
         conditions.append(
-            "to_char(coalesce(completed_date, submission_date, created_date), 'YYYY-MM') = %s"
+            "to_char(coalesce(o.evidence_date, e.completed_date, e.submission_date, e.created_date), 'YYYY-MM') = %s"
         )
         params.append(month)
     try:
         with _connection().cursor() as cursor:
             ensure_classification_table(cursor)
+            ensure_override_tables(cursor)
             cursor.execute(
                 f"""
                 SELECT e.evidence_id, e.evidence_name, e.evidence_kind, e.evidence_status,
                        e.hours_type, e.spent_time, e.component_id, e.component_name,
-                       coalesce(e.completed_date, e.submission_date, e.created_date) AS evidence_date,
+                       coalesce(o.evidence_date, e.completed_date, e.submission_date, e.created_date) AS evidence_date,
                        e.file_blob, e.report_blob,
                        left(coalesce(e.note_content, ''), 240) AS note_preview,
                        e.evidence_type, e.needs_manual_review,
                        c.category AS content_category, c.confidence AS content_confidence,
                        c.mismatch AS content_mismatch, c.reason AS content_reason,
                        c.review_status,
+                       o.display_name AS override_name, o.category AS override_category,
+                       o.evidence_date AS override_date,
+                       r.display_name AS replacement_name, r.uploaded_at AS replacement_uploaded_at,
                        (SELECT m.month FROM {MANUAL_ROWS} m
                          WHERE m.aptem_id = e.learner_id AND m.deleted_at IS NULL
                            AND (m.source_ref = 'ev:' || e.evidence_id
@@ -95,8 +158,10 @@ def evidence_list(request: HttpRequest) -> JsonResponse:
                          LIMIT 1) AS report_month
                 FROM {EVIDENCE_ITEMS} e
                 LEFT JOIN {CLASSIFICATIONS} c ON c.evidence_id = e.evidence_id
+                LEFT JOIN {EVIDENCE_OVERRIDES} o ON o.evidence_id = e.evidence_id
+                {_ACTIVE_REPLACEMENT_JOIN}
                 WHERE {' AND '.join(conditions)}
-                ORDER BY coalesce(e.completed_date, e.submission_date, e.created_date) DESC NULLS LAST,
+                ORDER BY coalesce(o.evidence_date, e.completed_date, e.submission_date, e.created_date) DESC NULLS LAST,
                          e.evidence_id DESC
                 """,
                 params,
@@ -124,7 +189,12 @@ def evidence_list(request: HttpRequest) -> JsonResponse:
         review_status = str(row.get("review_status") or "") or None
         content_category = str(row.get("content_category") or "").strip().lower()
         ai_type = str(row.get("evidence_type") or "").strip().lower()
-        if review_status == "rejected" and content_category:
+        override_category = str(row.get("override_category") or "").strip().lower()
+        if override_category in CATEGORIES:
+            # The auditor's explicit edit outranks every classifier tier.
+            category, source, needs_review = override_category, "edited", False
+            content_classified += 1
+        elif review_status == "rejected" and content_category:
             # The auditor overruled the model — the slot's own category stands.
             category, source, needs_review = slot_category, "reviewed-reverted", False
             content_classified += 1
@@ -148,9 +218,15 @@ def evidence_list(request: HttpRequest) -> JsonResponse:
         counts[category] += 1
         evidence_date = row.get("evidence_date")
         minutes = _minutes(row.get("spent_time"))
+        replaced = bool(row.get("replacement_name"))
+        edited = any(row.get(key) is not None for key in ("override_name", "override_category", "override_date"))
         items.append({
             "evidence_id": int(row["evidence_id"]),
-            "name": row.get("evidence_name") or f"Evidence {row['evidence_id']}",
+            "name": row.get("override_name") or row.get("evidence_name") or f"Evidence {row['evidence_id']}",
+            "edited": edited,
+            "replaced": replaced,
+            "replacement_name": row.get("replacement_name"),
+            "original_has_file": bool(row.get("file_blob")),
             "kind": row.get("evidence_kind") or "File",
             "status": row.get("evidence_status") or "",
             "category": category,
@@ -166,7 +242,7 @@ def evidence_list(request: HttpRequest) -> JsonResponse:
             "component_name": row.get("component_name") or "",
             "date": evidence_date.isoformat()[:10] if evidence_date else None,
             "otjh_hours": round(minutes / 60, 2) if minutes else 0.0,
-            "has_file": bool(row.get("file_blob")),
+            "has_file": bool(row.get("file_blob")) or replaced,
             "has_report": bool(row.get("report_blob")),
             "note_preview": (row.get("note_preview") or "").strip() or None,
         })
@@ -191,14 +267,22 @@ def evidence_open(request: HttpRequest) -> JsonResponse:
     except (TypeError, ValueError):
         return JsonResponse({"error": "id (int) is required"}, status=400)
     part = str(request.GET.get("part") or "file").strip().lower()
-    if part not in {"file", "report"}:
-        return JsonResponse({"error": "part must be 'file' or 'report'"}, status=400)
+    if part not in {"file", "report", "original"}:
+        return JsonResponse({"error": "part must be 'file', 'report' or 'original'"}, status=400)
     try:
         with _connection().cursor() as cursor:
+            ensure_override_tables(cursor)
             cursor.execute(
                 f"""
-                SELECT evidence_id, evidence_name, file_blob, report_blob
-                FROM {EVIDENCE_ITEMS} WHERE evidence_id = %s
+                SELECT e.evidence_id, e.evidence_name, e.file_blob, e.report_blob,
+                       o.display_name AS override_name,
+                       r.container AS replacement_container,
+                       r.blob_name AS replacement_blob,
+                       r.display_name AS replacement_name
+                FROM {EVIDENCE_ITEMS} e
+                LEFT JOIN {EVIDENCE_OVERRIDES} o ON o.evidence_id = e.evidence_id
+                {_ACTIVE_REPLACEMENT_JOIN}
+                WHERE e.evidence_id = %s
                 LIMIT 1
                 """,
                 [evidence_id],
@@ -212,18 +296,28 @@ def evidence_open(request: HttpRequest) -> JsonResponse:
     if not found:
         return JsonResponse({"error": f"no evidence {evidence_id}"}, status=404)
     row = found[0]
-    blob = row.get("report_blob") if part == "report" else row.get("file_blob")
+    name = row.get("override_name") or row.get("evidence_name") or f"Evidence {evidence_id}"
+    # part=file serves the auditor's replacement when one is active; the Aptem
+    # original stays reachable as part=original.
+    container = "fetch-aptem-evidences"
+    if part == "report":
+        blob = row.get("report_blob")
+    elif part == "file" and row.get("replacement_blob"):
+        container = row.get("replacement_container") or REPLACEMENT_CONTAINER
+        blob = row.get("replacement_blob")
+        name = row.get("replacement_name") or name
+    else:
+        blob = row.get("file_blob")
     if not blob:
         return JsonResponse({"error": f"This evidence has no {part}."}, status=404)
     url = None
     if evidence_storage.azure_configured():
         try:
-            url = evidence_storage.get_read_sas("fetch-aptem-evidences", blob)
+            url = evidence_storage.get_read_sas(container, blob)
         except Exception:
             url = None
     if not url:
         return JsonResponse({"error": "The document store is not reachable."}, status=503)
-    name = row.get("evidence_name") or f"Evidence {evidence_id}"
     if part == "report":
         name = _report_display_name(name, blob)
     return JsonResponse({"id": evidence_id, "name": name, "content_type": None, "url": url})
@@ -267,6 +361,163 @@ def evidence_review(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "evidence_id": evidence_id, "review_status": "confirmed" if action == "confirm" else "rejected"})
 
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+@csrf_exempt
+def evidence_edit(request: HttpRequest) -> JsonResponse:
+    """Auditor edit of one evidence row's display name, category or date.
+    Stored as an override in OUR schema; sending an empty value clears that
+    field's override so the source value shows again."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        body = json.loads(request.body or b"{}")
+        evidence_id = int(body.get("evidence_id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "evidence_id (int) is required"}, status=400)
+
+    updates = {}
+    if "display_name" in body:
+        updates["display_name"] = str(body.get("display_name") or "").strip()[:500] or None
+    if "category" in body:
+        category = str(body.get("category") or "").strip().lower()
+        if category and category not in CATEGORIES:
+            return JsonResponse({"error": f"category must be one of {', '.join(CATEGORIES)}"}, status=400)
+        updates["category"] = category or None
+    if "evidence_date" in body:
+        date_value = str(body.get("evidence_date") or "").strip()
+        if date_value and not _DATE_RE.match(date_value):
+            return JsonResponse({"error": "evidence_date must be YYYY-MM-DD"}, status=400)
+        updates["evidence_date"] = date_value or None
+    if not updates:
+        return JsonResponse({"error": "Nothing to update — send display_name, category or evidence_date."}, status=400)
+    actor = str(body.get("updated_by") or "").strip()[:100] or "evidence-edit"
+
+    try:
+        with _connection().cursor() as cursor:
+            ensure_override_tables(cursor)
+            cursor.execute(
+                f"SELECT learner_id FROM {EVIDENCE_ITEMS} WHERE evidence_id = %s LIMIT 1",
+                [evidence_id],
+            )
+            found = cursor.fetchall()
+            if not found:
+                return JsonResponse({"error": f"no evidence {evidence_id}"}, status=404)
+            aptem_id = int(found[0][0])
+            assignments = ", ".join(f"{field} = %s" for field in updates)
+            cursor.execute(
+                f"""
+                INSERT INTO {EVIDENCE_OVERRIDES} (evidence_id, aptem_id, {', '.join(updates)}, updated_by)
+                VALUES (%s, %s, {', '.join(['%s'] * len(updates))}, %s)
+                ON CONFLICT (evidence_id)
+                DO UPDATE SET {assignments}, updated_by = %s, updated_at = now()
+                """,
+                [evidence_id, aptem_id, *updates.values(), actor, *updates.values(), actor],
+            )
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not save the edit.", "details": str(error)},
+            status=503,
+        )
+    return JsonResponse({"ok": True, "evidence_id": evidence_id, **updates})
+
+
+def _safe_filename(name):
+    cleaned = re.sub(r"[^A-Za-z0-9._()\- ]+", "_", str(name or "upload")).strip() or "upload"
+    return cleaned[:150]
+
+
+@csrf_exempt
+def evidence_replace(request: HttpRequest) -> JsonResponse:
+    """Upload a file that supersedes the shown evidence file. The Aptem
+    original in Azure is never touched — it stays viewable as part=original —
+    and earlier replacements are archived, so every version is kept."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Method not allowed."}, status=405)
+    try:
+        evidence_id = int(request.POST.get("evidence_id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "evidence_id (int) is required"}, status=400)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return JsonResponse({"error": "file is required"}, status=400)
+    if not evidence_storage.azure_configured():
+        return JsonResponse({"error": "The document store is not configured."}, status=503)
+    actor = str(request.POST.get("uploaded_by") or "").strip()[:100] or "evidence-replace"
+
+    try:
+        with _connection().cursor() as cursor:
+            ensure_override_tables(cursor)
+            cursor.execute(
+                f"SELECT learner_id FROM {EVIDENCE_ITEMS} WHERE evidence_id = %s LIMIT 1",
+                [evidence_id],
+            )
+            found = cursor.fetchall()
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read the evidence item.", "details": str(error)},
+            status=503,
+        )
+    if not found:
+        return JsonResponse({"error": f"no evidence {evidence_id}"}, status=404)
+    aptem_id = int(found[0][0])
+
+    display_name = _safe_filename(upload.name)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
+    blob_name = f"{aptem_id}/{evidence_id}/{stamp}-{display_name}"
+    try:
+        try:
+            evidence_storage._service_client().create_container(REPLACEMENT_CONTAINER)
+        except Exception:
+            pass  # already exists
+        evidence_storage.upload_blob(
+            upload, REPLACEMENT_CONTAINER, blob_name,
+            upload.content_type or "application/octet-stream",
+        )
+    except Exception as error:
+        return JsonResponse({"error": "Azure upload failed.", "details": str(error)}, status=502)
+
+    try:
+        with _connection().cursor() as cursor:
+            cursor.execute(
+                f"UPDATE {EVIDENCE_REPLACEMENTS} SET archived_at = now() "
+                f"WHERE evidence_id = %s AND archived_at IS NULL",
+                [evidence_id],
+            )
+            cursor.execute(
+                f"""
+                INSERT INTO {EVIDENCE_REPLACEMENTS} (
+                    evidence_id, aptem_id, container, blob_name,
+                    display_name, content_type, size_bytes, uploaded_by
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, uploaded_at
+                """,
+                [
+                    evidence_id, aptem_id, REPLACEMENT_CONTAINER, blob_name,
+                    display_name, upload.content_type or "application/octet-stream",
+                    upload.size, actor,
+                ],
+            )
+            created = cursor.fetchall()
+    except DatabaseError as error:
+        try:  # keep storage tidy if the record could not be written
+            evidence_storage.delete_blob(REPLACEMENT_CONTAINER, blob_name)
+        except Exception:
+            pass
+        return JsonResponse(
+            {"error": "Could not record the replacement.", "details": str(error)},
+            status=503,
+        )
+    return JsonResponse({
+        "ok": True,
+        "evidence_id": evidence_id,
+        "replacement_id": int(created[0][0]),
+        "replacement_name": display_name,
+        "uploaded_at": created[0][1].isoformat(),
+    }, status=201)
+
+
 @csrf_exempt
 def evidence_transfer(request: HttpRequest) -> JsonResponse:
     """File one evidence item onto the learner's monthly report as a
@@ -285,12 +536,20 @@ def evidence_transfer(request: HttpRequest) -> JsonResponse:
         with _connection().cursor() as cursor:
             ensure_classification_table(cursor)
             _ensure_manual_tables(cursor)
+            ensure_override_tables(cursor)
             cursor.execute(
                 f"""
                 SELECT e.evidence_id, e.learner_id, e.evidence_name, e.evidence_status,
                        e.spent_time, e.file_blob, e.report_blob,
-                       coalesce(e.completed_date, e.submission_date, e.created_date) AS evidence_date
-                FROM {EVIDENCE_ITEMS} e WHERE e.evidence_id = %s
+                       coalesce(o.evidence_date, e.completed_date, e.submission_date, e.created_date) AS evidence_date,
+                       o.display_name AS override_name,
+                       r.container AS replacement_container,
+                       r.blob_name AS replacement_blob,
+                       r.display_name AS replacement_name
+                FROM {EVIDENCE_ITEMS} e
+                LEFT JOIN {EVIDENCE_OVERRIDES} o ON o.evidence_id = e.evidence_id
+                {_ACTIVE_REPLACEMENT_JOIN}
+                WHERE e.evidence_id = %s
                 """,
                 [evidence_id],
             )
@@ -308,7 +567,7 @@ def evidence_transfer(request: HttpRequest) -> JsonResponse:
             learner = _load_learner(cursor, aptem_id)
             minutes = float(item.get("spent_time") or 0)
             actual_hours = round(min(50.0, max(0.0, minutes / 60)), 2)
-            name = (item.get("evidence_name") or f"Evidence {evidence_id}")[:500]
+            name = (item.get("override_name") or item.get("evidence_name") or f"Evidence {evidence_id}")[:500]
             accepted_status = str(item.get("evidence_status") or "").lower() == "accepted"
             cursor.execute(
                 f"""
@@ -334,9 +593,19 @@ def evidence_transfer(request: HttpRequest) -> JsonResponse:
                 return JsonResponse({"ok": True, "already": True, "month": month})
             row_id = int(inserted[0][0])
             # Attach the evidence file + assessor report so the row previews.
-            for blob, label in (
-                (item.get("file_blob"), name),
-                (item.get("report_blob"), _report_display_name(name, item.get("report_blob"))),
+            # An active replacement supersedes the original submission file.
+            if item.get("replacement_blob"):
+                file_doc = (
+                    item.get("replacement_container") or REPLACEMENT_CONTAINER,
+                    item.get("replacement_blob"),
+                    item.get("replacement_name") or name,
+                )
+            else:
+                file_doc = ("fetch-aptem-evidences", item.get("file_blob"), name)
+            for container, blob, label in (
+                file_doc,
+                ("fetch-aptem-evidences", item.get("report_blob"),
+                 _report_display_name(name, item.get("report_blob"))),
             ):
                 if not blob:
                     continue
@@ -346,13 +615,13 @@ def evidence_transfer(request: HttpRequest) -> JsonResponse:
                         manual_activity_id, aptem_id, month, container,
                         blob_name, display_name, uploaded_by
                     )
-                    SELECT %s, %s, %s, 'fetch-aptem-evidences', %s, %s, %s
+                    SELECT %s, %s, %s, %s, %s, %s, %s
                     WHERE NOT EXISTS (
                         SELECT 1 FROM {MANUAL_DOCS}
                         WHERE manual_activity_id = %s AND blob_name = %s AND deleted_at IS NULL
                     )
                     """,
-                    [row_id, aptem_id, month, blob, label[:200], actor, row_id, blob],
+                    [row_id, aptem_id, month, container, blob, label[:200], actor, row_id, blob],
                 )
     except DatabaseError as error:
         return JsonResponse(

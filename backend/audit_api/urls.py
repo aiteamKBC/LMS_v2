@@ -13,7 +13,14 @@ from .last_audit_ledger_views import (
     health as last_audit_health,
     quiz_attempt as last_audit_quiz_attempt,
 )
-from .evidence_explorer_views import evidence_list, evidence_open, evidence_review, evidence_transfer
+from .evidence_explorer_views import (
+    evidence_edit,
+    evidence_list,
+    evidence_open,
+    evidence_replace,
+    evidence_review,
+    evidence_transfer,
+)
 from .manual_ledger_views import (
     activity_ledger as manual_activity_ledger,
     attendance_options as manual_attendance_options,
@@ -68,6 +75,8 @@ urlpatterns = [
     path("last-audit/evidence/list", evidence_list, name="last-audit-evidence-list"),
     path("last-audit/evidence/open", evidence_open, name="last-audit-evidence-open"),
     path("last-audit/evidence/review", evidence_review, name="last-audit-evidence-review"),
+    path("last-audit/evidence/edit", evidence_edit, name="last-audit-evidence-edit"),
+    path("last-audit/evidence/replace", evidence_replace, name="last-audit-evidence-replace"),
     path("last-audit/evidence/transfer", evidence_transfer, name="last-audit-evidence-transfer"),
     path("last-audit/manual/activity-ledger", manual_activity_ledger, name="last-audit-manual-activity-ledger"),
     path("ledger/health", health, name="learner-log-health"),

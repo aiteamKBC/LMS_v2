@@ -275,9 +275,11 @@ function readingQuizSourceParts(sourceRef: string | null): { groupId: number; ac
 // then the LMS activity cells, then the assignments — each one date-ordered
 // across the whole month (no week sub-headers).
 const ROW_SECTIONS = [
-  { key: "attendance", label: "Attendance", categories: ["attendance"] },
-  { key: "activities", label: "LMS activities", categories: ["video", "audio", "reading+quiz"] },
-  { key: "assignments", label: "Assignments", categories: ["assignment"] },
+  { key: "attendance", label: "Attendance", categories: ["attendance"], hint: null },
+  { key: "activities", label: "LMS activities", categories: ["video", "audio", "reading+quiz"], hint: null },
+  // Assignments get their own banded block: one row per Aptem assignment with
+  // its own date, submission time, status and hours — never a single lump.
+  { key: "assignments", label: "Assignments", categories: ["assignment"], hint: "One row per Aptem assignment — date, submission time, status and hours" },
 ] as const;
 
 function JournalPage() {
@@ -418,9 +420,10 @@ function JournalPage() {
   }, [aptemId, selectedPeriod, summaryMonths, queryClient]);
 
   // Fill the month straight from the sources the moment it opens: attendance
-  // sessions, the learner's completed LMS activities and completed Aptem
-  // assignments land as saved rows, leaving "Add" for what the sync cannot
-  // know. Server-side it is idempotent — refs ever filed (even later deleted)
+  // sessions, EVERY LMS activity dated in the month (completed or not — the
+  // badge carries the learner's real state) and completed Aptem assignments
+  // land as saved rows, leaving "Add" for what the sync cannot know.
+  // Server-side it is idempotent — refs ever filed (even later deleted)
   // are never re-inserted and signed-off months are left alone — so firing
   // once per learner-month per visit is safe.
   const autoSyncedMonths = useRef(new Set<string>());
@@ -1021,16 +1024,19 @@ function JournalPage() {
                 ) : null}
                 {groupedSections.map((section) => (
                   <Fragment key={section.key}>
-                    <tr className="border-b border-border bg-[#182d48]/[0.06]">
+                    <tr className={`border-b border-border ${section.key === "assignments" ? "border-l-4 border-l-[#182d48] bg-[#182d48]/[0.11]" : "bg-[#182d48]/[0.06]"}`}>
                       <td colSpan={7} className="px-7 py-2 text-xs font-bold uppercase tracking-wider text-[#182d48]">
                         {section.label} <span className="font-normal normal-case text-muted-foreground">({section.count})</span>
+                        {section.hint ? (
+                          <span className="ml-2 font-normal normal-case tracking-normal text-muted-foreground">· {section.hint}</span>
+                        ) : null}
                       </td>
                     </tr>
                     {section.rows.map((row) => (
                       <ManualActivityRow
                         key={row.key}
                         row={row}
-                        className="odd:bg-[#f7f9fc]"
+                        className={section.key === "assignments" ? "border-l-4 border-l-[#182d48]/30 odd:bg-[#f4f7fc]" : "odd:bg-[#f7f9fc]"}
                         reportMonth={selectedPeriod}
                         dateWindow={dateWindow ?? undefined}
                         mergeMode={mergeMode}

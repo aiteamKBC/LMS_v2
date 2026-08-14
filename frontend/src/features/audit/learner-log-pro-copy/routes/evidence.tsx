@@ -5,13 +5,15 @@
 // learners upload into the wrong slot often enough that the slot name is only
 // a provisional hint until the content classifier's verdict lands. Misfiled
 // uploads (content contradicts the slot) are flagged loudly.
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import Swal from "sweetalert2";
-import { AlertTriangle, Check, FileText, LoaderCircle, StickyNote, Undo2 } from "lucide-react";
+import { AlertTriangle, Check, FileText, LoaderCircle, Pencil, StickyNote, Undo2, Upload, X } from "lucide-react";
 import {
+  editEvidence,
   getEvidenceList,
+  replaceEvidenceFile,
   reviewEvidence,
   transferEvidence,
   type EvidenceCategory,
@@ -57,6 +59,65 @@ function EvidenceExplorerPage() {
   const [categoryFilter, setCategoryFilter] = useState<EvidenceCategory | "all">("all");
   const [misfiledOnly, setMisfiledOnly] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editDraft, setEditDraft] = useState({ display_name: "", category: "" as EvidenceCategory, evidence_date: "" });
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
+  const replaceTargetRef = useRef<EvidenceItem | null>(null);
+
+  function startEdit(item: EvidenceItem) {
+    setEditingId(item.evidence_id);
+    setEditDraft({ display_name: item.name, category: item.category, evidence_date: item.date ?? "" });
+  }
+
+  async function saveEdit() {
+    if (editingId == null) return;
+    if (!editDraft.display_name.trim()) {
+      return void Swal.fire({ icon: "error", title: "Check the edit", text: "The name cannot be empty." });
+    }
+    setBusyId(editingId);
+    try {
+      await editEvidence(editingId, {
+        display_name: editDraft.display_name.trim(),
+        category: editDraft.category,
+        evidence_date: editDraft.evidence_date,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["evidence-list"] });
+      setEditingId(null);
+    } catch (error) {
+      await Swal.fire({ icon: "error", title: "Could not save the edit", text: error instanceof Error ? error.message : "" });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function pickReplacement(item: EvidenceItem) {
+    replaceTargetRef.current = item;
+    replaceInputRef.current?.click();
+  }
+
+  async function handleReplacePicked(file: File | undefined) {
+    const target = replaceTargetRef.current;
+    replaceTargetRef.current = null;
+    if (!file || !target) return;
+    const confirmation = await Swal.fire({
+      icon: "question",
+      title: "Replace this evidence file?",
+      html: `<span style="font-size:13px">"<b>${file.name}</b>" will be shown (and used on reports) instead of the current file.<br/>The original stays archived and viewable.</span>`,
+      showCancelButton: true,
+      confirmButtonText: "Replace file",
+    });
+    if (!confirmation.isConfirmed) return;
+    setBusyId(target.evidence_id);
+    try {
+      await replaceEvidenceFile(target.evidence_id, file);
+      await queryClient.invalidateQueries({ queryKey: ["evidence-list"] });
+      void Swal.fire({ toast: true, position: "top-end", icon: "success", showConfirmButton: false, timer: 2200, title: "File replaced" });
+    } catch (error) {
+      await Swal.fire({ icon: "error", title: "Could not replace the file", text: error instanceof Error ? error.message : "" });
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function handleReview(item: EvidenceItem, action: "confirm" | "reject") {
     setBusyId(item.evidence_id);
@@ -124,6 +185,16 @@ function EvidenceExplorerPage() {
       </header>
 
       <main className="mx-auto w-full max-w-[1500px] space-y-5 px-6 py-8">
+        <input
+          ref={replaceInputRef}
+          type="file"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            event.target.value = "";
+            void handleReplacePicked(file);
+          }}
+        />
         <section className="overflow-hidden rounded-xl border border-border bg-card shadow-panel">
           <div className="h-1 bg-[#182d48]" />
           <div className="flex flex-wrap items-start justify-between gap-4 px-7 py-6">
@@ -202,10 +273,36 @@ function EvidenceExplorerPage() {
                         <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Reverted to slot</span>
                       ) : null}
                       {item.status ? <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{item.status}</span> : null}
+                      {item.edited ? (
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground" title="Name, category or date edited by the audit team">Edited</span>
+                      ) : null}
+                      {item.replaced ? (
+                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700" title={item.replacement_name ? `Current file: ${item.replacement_name}` : "File replaced by the audit team"}>Replaced</span>
+                      ) : null}
+                      {item.replaced && item.original_has_file ? (
+                        <Link to="/doc" search={{ evidence: item.evidence_id, part: "original" } as never} className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold text-muted-foreground hover:underline" title="Preview the original Aptem file (kept archived)">View original</Link>
+                      ) : null}
                       {item.has_report ? (
                         <Link to="/doc" search={{ evidence: item.evidence_id, part: "report" } as never} className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary hover:underline">Assessor report</Link>
                       ) : null}
                     </div>
+                    {editingId === item.evidence_id ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-2">
+                        <input value={editDraft.display_name} maxLength={500} onChange={(event) => setEditDraft((draft) => ({ ...draft, display_name: event.target.value }))} className="h-8 min-w-56 flex-1 rounded-md border border-border bg-card px-2 text-xs outline-none focus:border-primary" aria-label="Evidence name" />
+                        <select value={editDraft.category} onChange={(event) => setEditDraft((draft) => ({ ...draft, category: event.target.value as EvidenceCategory }))} className="h-8 rounded-md border border-border bg-card px-2 text-xs" aria-label="Evidence category">
+                          {(Object.keys(CATEGORY_LABELS) as EvidenceCategory[]).map((category) => (
+                            <option key={category} value={category}>{CATEGORY_LABELS[category]}</option>
+                          ))}
+                        </select>
+                        <input type="date" value={editDraft.evidence_date} onChange={(event) => setEditDraft((draft) => ({ ...draft, evidence_date: event.target.value }))} className="h-8 rounded-md border border-border bg-card px-2 text-xs" aria-label="Evidence date" />
+                        <button type="button" disabled={busyId === item.evidence_id} onClick={() => void saveEdit()} className="flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50">
+                          <Check className="h-3 w-3" /> Save
+                        </button>
+                        <button type="button" onClick={() => setEditingId(null)} className="flex items-center gap-1 rounded-md border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-foreground hover:bg-secondary">
+                          <X className="h-3 w-3" /> Cancel
+                        </button>
+                      </div>
+                    ) : null}
                     {item.mismatch && !item.review_status ? (
                       <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-destructive/25 bg-destructive/5 px-2.5 py-1.5">
                         <span className="text-[11px] font-medium text-foreground">
@@ -235,6 +332,14 @@ function EvidenceExplorerPage() {
                   <div className="shrink-0 text-right">
                     <p className="font-mono text-xs text-muted-foreground">{item.date ?? "—"}</p>
                     <p className="mt-1 font-mono text-sm font-semibold text-[#182d48]" title="Evidenced OTJH time">{hoursLabel(item.otjh_hours)}</p>
+                    <div className="mt-2 flex justify-end gap-1">
+                      <button type="button" disabled={busyId === item.evidence_id} onClick={() => startEdit(item)} className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50" title="Edit name, category or date" aria-label={`Edit ${item.name}`}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button type="button" disabled={busyId === item.evidence_id} onClick={() => pickReplacement(item)} className="rounded-md border border-border p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50" title="Upload a file that replaces the current one (the original stays archived)" aria-label={`Replace file of ${item.name}`}>
+                        <Upload className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                   </div>
                 </li>
               ))}
