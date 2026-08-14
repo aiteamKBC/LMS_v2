@@ -37,7 +37,8 @@ def ensure_evidence_override_table(cursor):
         "evidence_id", "learner_id", "source_evidence_id", "is_uploaded",
         "document_name", "component_name", "evidence_kind", "evidence_status",
         "evidence_date", "azure_container", "azure_blob_name", "archived_at",
-        "deleted_at", "archived_by", "uploaded_by", "created_at", "updated_at",
+        "deleted_at", "archived_by", "uploaded_by", "source_activity_id",
+        "source_activity_month", "source_activity_category", "created_at", "updated_at",
     }
     if required_columns.issubset(existing_columns):
         return
@@ -55,6 +56,9 @@ def ensure_evidence_override_table(cursor):
             evidence_date date not null,
             azure_container text,
             azure_blob_name text,
+            source_activity_id bigint,
+            source_activity_month text,
+            source_activity_category text,
             archived_at timestamptz,
             deleted_at timestamptz,
             archived_by text,
@@ -72,6 +76,15 @@ def ensure_evidence_override_table(cursor):
     )
     cursor.execute(
         '''alter table "Audit".learner_evidence_overrides add column if not exists archived_by text'''
+    )
+    cursor.execute(
+        '''alter table "Audit".learner_evidence_overrides add column if not exists source_activity_id bigint'''
+    )
+    cursor.execute(
+        '''alter table "Audit".learner_evidence_overrides add column if not exists source_activity_month text'''
+    )
+    cursor.execute(
+        '''alter table "Audit".learner_evidence_overrides add column if not exists source_activity_category text'''
     )
     cursor.execute(
         '''
@@ -121,6 +134,7 @@ def uploaded_evidence_location(evidence_id, learner_id=None):
             select azure_container, azure_blob_name, document_name
             from "Audit".learner_evidence_overrides
             where {' and '.join(conditions)} and deleted_at is null
+              and azure_container is not null and azure_blob_name is not null
             limit 1
             ''',
             params,
@@ -206,6 +220,110 @@ def upload_evidence(request):
         "evidence_id": evidence_id,
         "document_name": document_name,
         "evidence_date": evidence_date.isoformat(),
+    }, status=201)
+
+
+@csrf_exempt
+def select_activity_evidence(request):
+    """Attach an activity already arranged on the monthly report as evidence."""
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    if not _has_audit_permission(request, write=True):
+        return _error("Authentication or audit permission is required.", 403)
+    try:
+        body = json.loads(request.body or b"{}")
+        learner_id = int(body.get("learner_id"))
+        manual_activity_id = int(body.get("manual_activity_id"))
+        evidence_date = _evidence_date(body.get("evidence_date"))
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        return _error(str(error), 400)
+    if learner_id <= 0 or manual_activity_id <= 0:
+        return _error("learner_id and manual_activity_id must be positive integers.", 400)
+
+    component_name = str(
+        body.get("component_name") or "Selected monthly report activity"
+    ).strip()[:250] or "Selected monthly report activity"
+    selected_by = str(body.get("selected_by") or "").strip()[:200] or None
+
+    activity_connection = "audit" if "audit" in connections.databases else CONN
+    try:
+        with connections[activity_connection].cursor() as cursor:
+            cursor.execute(
+                '''
+                select title, activity_date, month, category
+                from "structured_manual_activities"."manual_learner_activities"
+                where id = %s and aptem_id = %s and deleted_at is null
+                limit 1
+                ''',
+                [manual_activity_id, learner_id],
+            )
+            activity = cursor.fetchone()
+    except (KeyError, DatabaseError):
+        return _error("Could not read the selected monthly report activity.", 503)
+    if not activity:
+        return _error("The selected activity was not found for this learner.", 404)
+
+    try:
+        with connections[CONN].cursor() as cursor:
+            if not _learner_exists(cursor, learner_id):
+                return _error("Learner not found.", 404)
+    except (KeyError, DatabaseError):
+        return _error("Could not validate the learner.", 503)
+
+    evidence_id = f"audit-activity-{uuid.uuid4()}"
+    document_name = str(activity[0] or "Monthly report activity").strip()[:180]
+    try:
+        with transaction.atomic(using=CONN):
+            with connections[CONN].cursor() as cursor:
+                ensure_evidence_override_table(cursor)
+                cursor.execute(
+                    '''
+                    select evidence_id
+                    from "Audit".learner_evidence_overrides
+                    where learner_id = %s and source_activity_id = %s
+                      and component_name = %s and evidence_date = %s
+                      and deleted_at is null
+                    limit 1
+                    ''',
+                    [learner_id, manual_activity_id, component_name, evidence_date],
+                )
+                existing = cursor.fetchone()
+                if existing:
+                    return JsonResponse({
+                        "ok": True,
+                        "evidence_id": existing[0],
+                        "document_name": document_name,
+                        "evidence_date": evidence_date.isoformat(),
+                        "already_selected": True,
+                    })
+                cursor.execute(
+                    '''
+                    insert into "Audit".learner_evidence_overrides (
+                        evidence_id, learner_id, is_uploaded, document_name,
+                        component_name, evidence_kind, evidence_status, evidence_date,
+                        source_activity_id, source_activity_month,
+                        source_activity_category, uploaded_by
+                    ) values (%s, %s, true, %s, %s, 'Activity', 'Selected', %s,
+                              %s, %s, %s, %s)
+                    ''',
+                    [
+                        evidence_id, learner_id, document_name, component_name,
+                        evidence_date, manual_activity_id, activity[2], activity[3],
+                        selected_by,
+                    ],
+                )
+    except (KeyError, DatabaseError):
+        return _error("Could not save the selected activity as evidence.", 503)
+
+    return JsonResponse({
+        "ok": True,
+        "evidence_id": evidence_id,
+        "document_name": document_name,
+        "evidence_date": evidence_date.isoformat(),
+        "activity_date": activity[1].isoformat() if activity[1] else None,
+        "activity_month": activity[2],
+        "activity_category": activity[3],
+        "already_selected": False,
     }, status=201)
 
 

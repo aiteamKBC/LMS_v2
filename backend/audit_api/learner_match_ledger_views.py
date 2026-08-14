@@ -1726,7 +1726,10 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                            coalesce(overrides.evidence_date, candidates.evidence_date) as evidence_date,
                            overrides.archived_at is not null as archived,
                            overrides.deleted_at is not null as deleted,
-                           false as uploaded
+                           false as uploaded,
+                           null::bigint as source_activity_id,
+                           null::text as source_activity_month,
+                           null::text as source_activity_category
                     from candidates
                     left join "Audit".learner_evidence_overrides overrides
                       on overrides.learner_id = %s
@@ -1738,7 +1741,10 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                            uploads.evidence_status, null, null, uploads.evidence_date,
                            uploads.archived_at is not null as archived,
                            uploads.deleted_at is not null as deleted,
-                           true as uploaded
+                           true as uploaded,
+                           uploads.source_activity_id,
+                           uploads.source_activity_month,
+                           uploads.source_activity_category
                     from "Audit".learner_evidence_overrides uploads
                     where uploads.learner_id = %s and uploads.is_uploaded = true
                     order by evidence_date, evidence_id
@@ -1754,12 +1760,15 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
                             "component_name": row[2] or "",
                             "kind": row[3] or "",
                             "status": row[4] or "",
-                            "file": f"/audit_api/evidence/{quote(str(row[0]), safe='')}/open?learner_id={aptem_id}" if row[0] else None,
+                            "file": f"/audit_api/evidence/{quote(str(row[0]), safe='')}/open?learner_id={aptem_id}" if row[0] and row[11] is None else None,
                             "content": row[6],
                             "date": row[7],
                             "archived": bool(row[8]),
                             "deleted": bool(row[9]),
                             "uploaded": bool(row[10]),
+                            "source_activity_id": row[11],
+                            "source_activity_month": row[12],
+                            "source_activity_category": row[13],
                         }
                         for row in evidence_rows
                     ]

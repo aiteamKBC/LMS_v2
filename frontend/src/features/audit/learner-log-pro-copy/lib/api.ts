@@ -271,6 +271,9 @@ export type LearnerProfile = {
       content: string | null;
       date: string;
       archived: boolean;
+      source_activity_id?: number | null;
+      source_activity_month?: string | null;
+      source_activity_category?: string | null;
     }>;
     archived_evidence_items?: Array<{
       id: string;
@@ -282,6 +285,9 @@ export type LearnerProfile = {
       content: string | null;
       date: string;
       archived: boolean;
+      source_activity_id?: number | null;
+      source_activity_month?: string | null;
+      source_activity_category?: string | null;
     }>;
     last_learning_evidence_items?: Array<{
       id: string;
@@ -293,6 +299,9 @@ export type LearnerProfile = {
       content: string | null;
       date: string;
       archived: boolean;
+      source_activity_id?: number | null;
+      source_activity_month?: string | null;
+      source_activity_category?: string | null;
     }>;
     break_evidence_items?: Array<{
       id: string;
@@ -304,6 +313,9 @@ export type LearnerProfile = {
       content: string | null;
       date: string;
       archived: boolean;
+      source_activity_id?: number | null;
+      source_activity_month?: string | null;
+      source_activity_category?: string | null;
     }>;
     planned_end_date?: string | null;
     completion_status?: number;
@@ -1452,6 +1464,35 @@ export async function uploadEvidence(learnerId: number, file: File, evidenceDate
     throw new Error(payload?.error ?? `Could not upload evidence (${response.status})`);
   }
   return response.json() as Promise<{ ok: boolean; evidence_id: string; evidence_date: string }>;
+}
+
+export async function selectActivityEvidence(input: {
+  learnerId: number;
+  manualActivityId: number;
+  evidenceDate: string;
+  componentName: string;
+}) {
+  const response = await fetch("/audit_api/evidence/select-activity", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      learner_id: input.learnerId,
+      manual_activity_id: input.manualActivityId,
+      evidence_date: input.evidenceDate,
+      component_name: input.componentName,
+    }),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(payload?.error ?? `Could not select activity evidence (${response.status})`);
+  }
+  return response.json() as Promise<{
+    ok: boolean;
+    evidence_id: string;
+    document_name: string;
+    evidence_date: string;
+    already_selected: boolean;
+  }>;
 }
 
 export async function updateEvidenceDate(evidenceId: string, learnerId: number, evidenceDate: string) {
