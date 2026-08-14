@@ -31,6 +31,11 @@ CONNECTION_ALIAS = "audit"
 _COHORT_CACHE_TTL_SECONDS = 300
 _cohort_cache = {"expires_at": 0.0, "body": None}
 
+_PRESENTATION_TITLE_RE = re.compile(
+    r"(?<![a-z0-9])(?:ppt|power\s*point|powerpoint)(?![a-z0-9])",
+    re.IGNORECASE,
+)
+
 # Keep every mixed-case schema reference in one place.  The mirror is created
 # outside this Django project, so these are intentionally unmanaged SQL tables.
 LEARNERS = '"Last_audit"."learners"'
@@ -263,6 +268,14 @@ def _category(activity_type):
     return "reading+quiz" if value.lower() == "reading+quiz" else value.lower()
 
 
+def _category_for_title(activity_type, title=None):
+    """Correct legacy video rows whose catalogue title marks a presentation."""
+    category = _category(activity_type)
+    if category == "video" and _PRESENTATION_TITLE_RE.search(str(title or "")):
+        return "reading+quiz"
+    return category
+
+
 def _has_quiz(row):
     return row.get("quiz_id") is not None or bool(_json_list(row.get("quiz_questions")))
 
@@ -276,7 +289,7 @@ def _has_reading(row):
 
 
 def _activity_category(row):
-    category = _category(row.get("activity_type"))
+    category = _category_for_title(row.get("activity_type"), row.get("title"))
     if category != "reading+quiz":
         return category
     has_reading = _has_reading(row)

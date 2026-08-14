@@ -26,7 +26,7 @@ from django.db import DatabaseError, connections
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET
 
-from .common import CONN, duration_min_sql
+from .common import CONN, duration_min_sql, normalize_lms_category
 from .plan_tables import assignment_name_key, ensure_plan_tables
 
 # Catalog casing differs from the wire categories ('Reading+Quiz' vs 'reading+quiz').
@@ -389,11 +389,9 @@ def picker_lms_course_materials(request: HttpRequest) -> JsonResponse:
          has_iframe, has_text, has_quiz, status, reading_viewed,
          quiz_attempted, quiz_passed, video_completed, quiz_score,
          quiz_maximum_score) in rows:
-        category = {v: k for k, v in _CATALOG_TYPES.items()}.get(activity_type)
-        if category is None:
-            category = str(activity_type or "").strip().lower()
-            if category not in {"video", "audio", "reading+quiz"}:
-                continue
+        category = normalize_lms_category(activity_type, title)
+        if category not in {"video", "audio", "reading+quiz"}:
+            continue
         items.append({
             "material_ref": f"lms:{activity_id}",
             "activity_id": activity_id,

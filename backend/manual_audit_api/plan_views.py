@@ -24,7 +24,7 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
-from .common import CONN
+from .common import CONN, normalize_lms_category
 from .plan_projection import _ksbs_dict
 from .plan_tables import (
     PLAN_CATEGORIES,
@@ -254,7 +254,10 @@ def _activities_payload(cur, group_id):
             "month_index": row[1],
             "week_slot": row[2],
             "position": row[3],
-            "category": row[4],
+            "category": (
+                normalize_lms_category(row[4], row[5])
+                if str(row[7] or "").startswith("lms:") else row[4]
+            ),
             "title": row[5],
             "subtitle": row[6],
             "material_ref": row[7],
@@ -988,13 +991,16 @@ def _validate_activity_input(item):
     if not isinstance(item, dict):
         raise ValueError("each activity must be an object")
     category = str(item.get("category") or "").strip().lower()
-    if category not in PLAN_CATEGORIES:
-        raise ValueError(f"category must be one of: {', '.join(PLAN_CATEGORIES)}")
     title = str(item.get("title") or "").strip()
     if not title:
         raise ValueError("title is required")
     if len(title) > 500:
         raise ValueError("title must be at most 500 characters")
+    material_ref = str(item.get("material_ref") or "").strip()[:500] or None
+    if material_ref and material_ref.startswith("lms:"):
+        category = normalize_lms_category(category, title)
+    if category not in PLAN_CATEGORIES:
+        raise ValueError(f"category must be one of: {', '.join(PLAN_CATEGORIES)}")
     month_index = _int_or_none(item.get("month_index"))
     if not month_index or month_index < 1 or month_index > 60:
         raise ValueError("month_index must be 1..60")
@@ -1023,7 +1029,7 @@ def _validate_activity_input(item):
         "subtitle": str(item.get("subtitle") or "").strip()[:2000] or None,
         "month_index": month_index,
         "week_slot": week_slot,
-        "material_ref": str(item.get("material_ref") or "").strip()[:500] or None,
+        "material_ref": material_ref,
         "planned_hours": _hours(item.get("planned_hours"), "planned_hours", default=0.0),
         "planned_date": _date_or_none(item.get("planned_date"), "planned_date"),
         "ksbs": _ksbs_or_none(item.get("ksbs")),
@@ -1572,7 +1578,10 @@ def plan_matrix(request: HttpRequest, group_id: int) -> JsonResponse:
                     "activity_key": str(row[0]),
                     "week_slot": row[1],
                     "position": row[2],
-                    "category": row[3],
+                    "category": (
+                        normalize_lms_category(row[3], row[4])
+                        if str(row[5] or "").startswith("lms:") else row[3]
+                    ),
                     "title": row[4],
                     "material_ref": row[5],
                     "planned_hours": float(row[6]) if row[6] is not None else 0.0,

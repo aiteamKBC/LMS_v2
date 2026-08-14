@@ -15,6 +15,7 @@ from unittest import mock
 
 from django.test import RequestFactory, SimpleTestCase
 
+from .common import normalize_lms_category
 from .ledger_views import _merge_title_key, merge_reading_quiz_rows
 from .match_ledger_views import _normalise_levy_status, _skill_radar_score_values, _skill_radar_snapshot_entries, _skill_radar_text_category, _validate_overlay_activity, learner_hours
 from .plan_pickers import picker_attendance_modules, picker_group_activities
@@ -113,6 +114,30 @@ class AssignmentNameKeyTests(SimpleTestCase):
         self.assertEqual(assignment_name_key("  ***  "), "unnamed")
 
 
+class LmsCategoryTests(SimpleTestCase):
+    def test_ppt_mislabeled_as_video_uses_learning_material_category(self):
+        self.assertEqual(
+            normalize_lms_category(
+                "video",
+                "P2-PPT-Using Personas and Insight Gap Analysis to Identify Pain Points.",
+            ),
+            "reading+quiz",
+        )
+        self.assertEqual(
+            normalize_lms_category("video", "PowerPoint - Root Cause Analysis"),
+            "reading+quiz",
+        )
+
+    def test_real_video_stays_video(self):
+        self.assertEqual(
+            normalize_lms_category("video", "VID 2-Using Personas and Insight Gap Analysis"),
+            "video",
+        )
+
+    def test_ppt_letters_inside_another_word_do_not_trigger(self):
+        self.assertEqual(normalize_lms_category("video", "AppTools walkthrough"), "video")
+
+
 class ValidatorTests(SimpleTestCase):
     def test_hours_rejects_nan_and_range(self):
         with self.assertRaises(ValueError):
@@ -132,6 +157,23 @@ class ValidatorTests(SimpleTestCase):
         self.assertEqual(parsed["title"], "T")
         self.assertEqual(parsed["week_slot"], 4)
         self.assertEqual(parsed["planned_hours"], 1.5)
+
+    def test_lms_ppt_cannot_be_saved_as_video(self):
+        parsed = _validate_activity_input({
+            "category": "video",
+            "title": "P3-PPT-Root Cause Analysis",
+            "material_ref": "lms:119858",
+            "month_index": 2,
+        })
+        self.assertEqual(parsed["category"], "reading+quiz")
+
+    def test_manual_video_with_ppt_in_title_keeps_the_chosen_category(self):
+        parsed = _validate_activity_input({
+            "category": "video",
+            "title": "How to present a PPT",
+            "month_index": 2,
+        })
+        self.assertEqual(parsed["category"], "video")
 
     def test_progress_patch_validation(self):
         with self.assertRaises(ValueError):

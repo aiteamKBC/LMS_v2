@@ -13,6 +13,7 @@ import {
   type LedgerSourceParticipant,
 } from "@/features/audit/learner-log-pro-copy/lib/manualApi";
 import { toGoogleEmbedUrl } from "@/features/audit/learner-log-pro-copy/lib/googleEmbed";
+import { sanitizeReadingHtml } from "@/features/audit/learner-log-pro-copy/lib/readingHtml";
 
 export const Route = createFileRoute("/ledger")({
   // learner=6441 in a hand-typed URL arrives as a number — accept both forms.
@@ -41,6 +42,15 @@ function QuizResultBlock({ aptemId, learnerName, component }: { aptemId: number 
     return <p className="px-7 pb-4 text-sm text-muted-foreground">Open this ledger from a learner's journal row to see their graded attempt.</p>;
   }
   return <div className="px-2 pb-3"><QuizBody aptemId={aptemId} learnerName={learnerName} component={String(component)} /></div>;
+}
+
+function ReadingBody({ html }: { html: string }) {
+  return (
+    <div
+      className="max-h-[420px] overflow-auto break-words px-7 pb-6 text-sm leading-6 text-foreground [&_a]:text-primary [&_a]:underline [&_blockquote]:border-l-4 [&_blockquote]:border-border [&_blockquote]:pl-4 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-semibold [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-semibold [&_li]:mb-1 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:mb-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-left [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:p-2 [&_th]:font-semibold [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-6"
+      dangerouslySetInnerHTML={{ __html: sanitizeReadingHtml(html) }}
+    />
+  );
 }
 
 // Everyone who completed (or attended) the same activity at the source —
@@ -135,7 +145,7 @@ function LedgerPage() {
                       </div>
                     ) : null}
                     {part.reading_text_body ? (
-                      <div className="max-h-[420px] overflow-y-auto whitespace-pre-wrap px-7 pb-6 text-sm leading-6 text-foreground">{part.reading_text_body}</div>
+                      <ReadingBody html={part.reading_text_body} />
                     ) : null}
                     {part.quiz ? (
                       <div>
@@ -166,7 +176,7 @@ function LedgerPage() {
                   {activity.reading_text_body ? (
                     <div className="border-t border-border">
                       <p className="label-caps px-7 py-3">Reading body</p>
-                      <div className="max-h-[420px] overflow-y-auto whitespace-pre-wrap px-7 pb-6 text-sm leading-6 text-foreground">{activity.reading_text_body}</div>
+                      <ReadingBody html={activity.reading_text_body} />
                     </div>
                   ) : null}
                 </>

@@ -7,6 +7,7 @@ audit workspace). It owns the ``Manual_audit`` schema and never imports from
 
 import datetime
 import os
+import re
 import time
 
 from django.http import JsonResponse
@@ -23,6 +24,27 @@ except ImportError:  # pragma: no cover - handled at runtime when Azure is not i
 # schema and the "Manual_audit" schema this app owns.
 CONN = "enrolment"
 SCHEMA = "Manual_audit"
+
+
+# Some LMS presentation components were historically mirrored as ``video``
+# even though their catalogue title explicitly identifies them as a PPT.  The
+# plan builder only has one non-media learning bucket (reading+quiz), so keep
+# those presentation rows out of the video bucket at every API boundary.  The
+# token boundaries avoid matching unrelated words that happen to contain
+# "ppt".
+_PRESENTATION_TITLE_RE = re.compile(
+    r"(?<![a-z0-9])(?:ppt|power\s*point|powerpoint)(?![a-z0-9])",
+    re.IGNORECASE,
+)
+
+
+def normalize_lms_category(activity_type, title=None):
+    """Return the ledger category, correcting mislabeled LMS presentations."""
+    value = str(activity_type or "activity").strip().lower()
+    category = "reading+quiz" if value == "reading+quiz" else value
+    if category == "video" and _PRESENTATION_TITLE_RE.search(str(title or "")):
+        return "reading+quiz"
+    return category
 
 
 def _error(message, status):

@@ -43,6 +43,7 @@ from .last_audit_ledger_views import (
     LEARNER_ATTENDANCE,
     _activity_content_url,
     _as_int,
+    _activity_category,
     _connection,
     _dict_rows,
     _duration_min_sql,
@@ -290,9 +291,15 @@ def _title_date(title, category):
 
 def _row_payload(row, documents=None, *, source_course=None, module=None):
     activity_date = row.get("activity_date")
+    category = row["category"]
+    if str(row.get("source_ref") or "").startswith("la:"):
+        category = _activity_category({
+            "activity_type": category,
+            "title": row.get("title"),
+        })
     # Surfaced only when it contradicts the stored date: the journal then offers
     # a one-click correction and the employee decides row by row.
-    title_date = _title_date(row.get("title"), row.get("category"))
+    title_date = _title_date(row.get("title"), category)
     if title_date == activity_date:
         title_date = None
     return {
@@ -306,7 +313,7 @@ def _row_payload(row, documents=None, *, source_course=None, module=None):
         "learner_id": int(row["learner_id"]) if row.get("learner_id") is not None else None,
         "month": row["month"],
         "month_label": _month_label(row["month"]),
-        "category": row["category"],
+        "category": category,
         "source_ref": row.get("source_ref"),
         "group_id": int(row["group_id"]) if row.get("group_id") is not None else None,
         "activity_id": int(row["activity_id"]) if row.get("activity_id") is not None else None,
@@ -715,9 +722,16 @@ def groups(request: HttpRequest) -> JsonResponse:
             cursor.execute(
                 f"""
                 SELECT g.group_id, g.group_name,
-                       count(a.activity_id) FILTER (WHERE lower(a.activity_type) = 'video') AS video,
+                       count(a.activity_id) FILTER (
+                           WHERE lower(a.activity_type) = 'video'
+                             AND COALESCE(a.title, '') !~* '(^|[^a-z0-9])(ppt|power[[:space:]]*point)([^a-z0-9]|$)'
+                       ) AS video,
                        count(a.activity_id) FILTER (WHERE lower(a.activity_type) = 'audio') AS audio,
-                       count(a.activity_id) FILTER (WHERE lower(a.activity_type) = 'reading+quiz') AS reading_quiz
+                       count(a.activity_id) FILTER (
+                           WHERE lower(a.activity_type) = 'reading+quiz'
+                              OR (lower(a.activity_type) = 'video'
+                                  AND COALESCE(a.title, '') ~* '(^|[^a-z0-9])(ppt|power[[:space:]]*point)([^a-z0-9]|$)')
+                       ) AS reading_quiz
                 FROM {GROUP_LEARNERS} gl
                 JOIN {GROUPS} g ON g.group_id = gl.group_id
                 LEFT JOIN {GROUP_ACTIVITIES} ga ON ga.group_id = g.group_id
@@ -784,8 +798,11 @@ def group_activities(request: HttpRequest) -> JsonResponse:
                 return JsonResponse(
                     {"error": "This learner is not a member of that group."}, status=404,
                 )
-            conditions = ["ga.group_id = %s", "lower(a.activity_type) = %s"]
-            params = [group_id, category, learner.get("learner_id")]
+            conditions = [
+                "ga.group_id = %s",
+                "lower(a.activity_type) IN ('video', 'audio', 'reading+quiz')",
+            ]
+            params = [group_id, learner.get("learner_id")]
             if search:
                 conditions.append("a.title ILIKE %s")
                 params.append(f"%{search}%")
@@ -809,10 +826,13 @@ def group_activities(request: HttpRequest) -> JsonResponse:
                 ORDER BY a.activity_id, r.learner_id NULLS LAST
                 """,
                 # learner_id placeholder sits inside the JOIN, before WHERE params
-                [params[2], params[0], params[1], *params[3:]],
+                [params[1], params[0], *params[2:]],
             )
             rows = sorted(
-                _dict_rows(cursor),
+                (
+                    row for row in _dict_rows(cursor)
+                    if _activity_category(row) == category
+                ),
                 key=lambda row: (row.get("position") or 0, row["activity_id"]),
             )
     except DatabaseError as error:
@@ -978,6 +998,9 @@ def _validate_new_row(item):
     """Validate one create payload; shared by the single POST and the bulk save."""
     month = _valid_month(item.get("month"))
     category = str(item.get("category") or "").strip().lower()
+    title = _valid_title(item.get("title"))
+    if str(item.get("source_ref") or "").strip().startswith("la:"):
+        category = _activity_category({"activity_type": category, "title": title})
     if category not in CATEGORIES:
         raise ValueError(f"category must be one of: {', '.join(sorted(CATEGORIES))}")
     source_ref, group_id, activity_id = _parse_source_ref(category, item.get("source_ref"))
@@ -988,7 +1011,7 @@ def _validate_new_row(item):
         "source_ref": source_ref,
         "group_id": group_id,
         "activity_id": activity_id,
-        "title": _valid_title(item.get("title")),
+        "title": title,
         "activity_date": _valid_date(item.get("activity_date")),
         "planned_hours": _valid_hours(item.get("planned_hours"), "planned_hours"),
         "actual_hours": actual_hours,
@@ -1881,7 +1904,7 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
         }]
     return JsonResponse({
         "ref": ref,
-        "category": str(definition.get("activity_type") or "").lower(),
+        "category": _activity_category(definition),
         "activity": activity_payload,
         "participants": participants,
         "source_participants": source_participants,
@@ -2012,7 +2035,7 @@ def _collect_import_candidates(cursor, aptem_id, month, learner):
             "group_name": row.get("group_name") or f"Group {row['group_id']}",
             "activity_id": int(row["activity_id"]),
             "source_ref": f"la:{int(row['group_id'])}:{int(row['activity_id'])}",
-            "category": row.get("activity_type") or "activity",
+            "category": _activity_category(row),
             "title": row.get("title") or f"Activity {row['activity_id']}",
             "activity_date": activity_date.isoformat() if activity_date else None,
             "duration_minutes": _num(row.get("configured_duration_min")),

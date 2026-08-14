@@ -18,6 +18,7 @@ import json
 import uuid
 from urllib.parse import parse_qs, urlparse
 
+from .common import normalize_lms_category
 from .plan_tables import assignment_name_key, ensure_plan_tables
 
 # Plan tables are created lazily once per process so a fresh mirror-only
@@ -173,6 +174,12 @@ def _plan_row_payload(row, aptem_id):
             bundle_refs = None
     if not isinstance(bundle_refs, list):
         bundle_refs = None
+
+    # Old plans may retain the category supplied by a stale mirror.  Correct
+    # only catalogue-backed rows; a manually authored video is left exactly as
+    # the auditor entered it.
+    if material_ref and material_ref.startswith("lms:"):
+        category = normalize_lms_category(category, title)
 
     # A rejected suggestion means "treat as nothing happened".
     has_progress = progress_status is not None and not rejected

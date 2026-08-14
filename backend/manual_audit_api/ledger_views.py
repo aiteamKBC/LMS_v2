@@ -19,7 +19,7 @@ from django.views.decorators.http import require_GET
 
 from audit_api.learner_exclusions import is_excluded_learner
 
-from .common import duration_min_sql
+from .common import duration_min_sql, normalize_lms_category
 
 from .plan_projection import (
     activity_content_url,
@@ -224,7 +224,7 @@ def _has_reading(row):
 
 
 def _activity_category(row):
-    category = _category(row.get("activity_type"))
+    category = normalize_lms_category(row.get("activity_type"), row.get("title"))
     if category != "reading+quiz":
         return category
     has_reading = _has_reading(row)

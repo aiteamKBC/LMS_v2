@@ -4,6 +4,7 @@ from datetime import date
 from django.test import SimpleTestCase
 
 from .last_audit_ledger_views import (
+    _activity_category,
     _activity_content_url,
     _activity_payload,
     _attendance_payload,
@@ -13,9 +14,56 @@ from .last_audit_ledger_views import (
     _quiz_attempt_payload,
     _session_key,
 )
+from .manual_ledger_views import _row_payload, _validate_new_row
 
 
 class LastAuditLedgerMappingTests(SimpleTestCase):
+    def test_ppt_mislabeled_as_video_is_not_returned_as_video(self):
+        self.assertEqual(_activity_category({
+            "activity_type": "video",
+            "title": "P3-PPT-Root Cause Analysis and the 5 Whys",
+        }), "reading+quiz")
+
+    def test_regular_video_category_is_unchanged(self):
+        self.assertEqual(_activity_category({
+            "activity_type": "video",
+            "title": "VID 3-Root Cause Analysis and the 5 Whys",
+        }), "video")
+
+    def test_existing_manual_lms_row_uses_corrected_ppt_category(self):
+        payload = _row_payload({
+            "id": 1,
+            "aptem_id": 2,
+            "learner_id": 3,
+            "month": "2026-04",
+            "category": "video",
+            "source_ref": "la:118072:119856",
+            "group_id": 118072,
+            "activity_id": 119856,
+            "title": "P2-PPT-Using Personas and Insight Gap Analysis",
+            "activity_date": date(2026, 4, 22),
+            "activity_time": None,
+            "planned_hours": 0,
+            "actual_hours": 0,
+            "timestamp_label": "",
+            "completion_note": None,
+            "accepted": True,
+            "created_by": None,
+            "updated_by": None,
+            "updated_at": None,
+        })
+        self.assertEqual(payload["category"], "reading+quiz")
+
+    def test_new_manual_lms_ppt_row_cannot_be_saved_as_video(self):
+        row = _validate_new_row({
+            "month": "2026-04",
+            "category": "video",
+            "source_ref": "la:118072:119856",
+            "title": "P2-PPT-Using Personas and Insight Gap Analysis",
+            "actual_hours": 0,
+        })
+        self.assertEqual(row["category"], "reading+quiz")
+
     def test_json_months_are_normalized_from_database_text(self):
         self.assertEqual(_json_list('[{"month":"2026-08"}]'), [{"month": "2026-08"}])
 
