@@ -25,6 +25,7 @@
 
 ## Contents
 
+- [Project at a Glance](#project-at-a-glance)
 - [Overview](#overview)
 - [Why LearningOS?](#why-learningos)
 - [Platform Capabilities](#platform-capabilities)
@@ -176,7 +177,9 @@ LMS/
 │   ├── config/                 Django project configuration
 │   ├── curriculum_api/         Programmes, modules, sessions, and KSBs
 │   ├── engagement_api/         Engagement monitoring and rewards
+│   ├── enrolment_api/          Enrolment, onboarding, and agreements
 │   ├── learner_api/            Learner data, evidence, and attendance
+│   ├── manual_audit_api/       Manual audit rows and classification
 │   └── quiz_api/               Quiz delivery and configuration
 ├── frontend/                   React and TypeScript client
 │   └── src/
@@ -186,7 +189,6 @@ LMS/
 │       ├── mocks/              Demonstration datasets
 │       ├── pages/              Feature and role workspaces
 │       └── router/             Route definitions
-├── docs/                       Technical and operational documentation
 └── reports/                    Data reconciliation and audit outputs
 ```
 
@@ -376,8 +378,12 @@ unless they send pagination parameters.
 | `/curriculum_api/` | Programmes, modules, sessions, staff, and KSB mappings |
 | `/quiz_api/` | Quiz settings, content, and course links |
 | `/engagement_api/` | Engagement monitoring and reward data |
+| `/enrolment_api/` | Enrolment, onboarding, and agreement workflows |
 | `/audit_api/` | Audit evidence and reporting |
+| `/manual_audit_api/` | Manual audit rows and evidence classification |
 | `/api/chat/` | Conversations and persisted messages |
+| `/api/calendar/` | Learner personal-calendar integration |
+| `/api/batch/` | Batched GET requests for reduced round-trips |
 | `/ws/chat/<conversation_id>/` | Real-time conversation channel |
 | `/admin/` | Django administration |
 
@@ -393,8 +399,6 @@ unless they send pagination parameters.
 ## Documentation
 
 - [`frontend/project_plan.md`](frontend/project_plan.md) — product vision, workspaces, and feature roadmap
-- [`EVIDENCE_CLOUD.md`](EVIDENCE_CLOUD.md) — secure learner evidence architecture
-- [`docs/`](docs/) — supporting technical and operational documentation
 
 ## Ownership
 
