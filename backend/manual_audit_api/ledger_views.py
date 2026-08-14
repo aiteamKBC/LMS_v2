@@ -19,6 +19,8 @@ from django.views.decorators.http import require_GET
 
 from audit_api.learner_exclusions import is_excluded_learner
 
+from .common import duration_min_sql
+
 from .plan_projection import (
     activity_content_url,
     merge_learner_months,
@@ -493,6 +495,7 @@ def _activity_payload(row):
             row.get("video_iframe_url"),
             row.get("reading_iframe_url"),
             row.get("reading_type"),
+            row.get("audio_iframe_url"),
         ),
         # When the catalogue row was first synced into the mirror — the closest
         # thing an LMS import has to "when was this activity added".
@@ -807,9 +810,10 @@ def activities(request: HttpRequest) -> JsonResponse:
                            COALESCE(a.activity_type, r.activity_type) AS activity_type,
                            a.title, a.activity_date,
                            a.video_iframe_url, a.reading_iframe_url,
+                           a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                            a.reading_type, a.reading_text_body,
                            a.quiz_id, a.quiz_questions,
-                           a.configured_duration_min, a.first_seen, r.status,
+                           {duration_min_sql('a')} AS configured_duration_min, a.first_seen, r.status,
                            r.video_started, r.video_completed, r.reading_viewed,
                            r.quiz_attempted, r.quiz_passed, r.quiz_score,
                            r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,
@@ -1012,8 +1016,9 @@ def activity(request: HttpRequest) -> JsonResponse:
                COALESCE(a.activity_type, r.activity_type) AS activity_type,
                a.title, a.activity_date,
                a.video_iframe_url, a.reading_iframe_url,
+               a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                a.reading_type, a.quiz_id, a.quiz_questions,
-               a.configured_duration_min, r.status,
+               {duration_min_sql('a')} AS configured_duration_min, r.status,
                r.video_started, r.video_completed, r.reading_viewed,
                r.quiz_attempted, r.quiz_passed, r.quiz_score,
                r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,
@@ -1098,11 +1103,18 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
     """Return one Manual_audit learner's normalized quiz definition and answers."""
     raw_id = request.GET.get("component_id") or request.GET.get("component")
     plan_ref = str(raw_id or "").startswith("plan:")
+    lms_ref = str(raw_id or "").startswith("lms:")
     try:
         aptem_id = _as_int(request.GET.get("aptem_id"), minimum=1)
         if plan_ref:
             group_id = None
             activity_id = None  # resolved from the plan's material_ref below
+        elif lms_ref:
+            # Bundle pieces reference the catalogue directly (lms:<id>).
+            group_id = None
+            activity_id = _as_int(str(raw_id)[4:], minimum=1)
+            if activity_id is None:
+                raise ValueError("invalid lms ref")
         else:
             group_id, activity_id = _parse_activity_ref(raw_id)
     except (TypeError, ValueError):
@@ -1152,7 +1164,7 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
                 LIMIT 1
             """, params)
             rows = _dict_rows(cursor)
-            if not rows and plan_ref:
+            if not rows and (plan_ref or lms_ref):
                 # A plan member who never had the activity in the LMS still
                 # deserves the quiz definition (state: not_attempted) instead
                 # of a 404 — the builder's main use case.

@@ -28,6 +28,10 @@ export type ManualDocument = {
   uploaded_by: string | null;
   uploaded_at: string | null;
   download_url: string | null;
+  // Azure-mirrored Aptem docs: the submission and its assessor marking report
+  // share one evidence_group; doc_kind tells them apart. Hand uploads: "upload".
+  evidence_group?: string | null;
+  doc_kind?: "evidence" | "report" | "upload";
 };
 
 export type ManualRow = {
@@ -41,7 +45,17 @@ export type ManualRow = {
   group_id: number | null;
   activity_id: number | null;
   title: string;
+  // Where the activity came from: LMS group ("course") for content rows,
+  // register module for attendance rows. Present on the listing only.
+  source_course?: string | null;
+  module?: string | null;
   activity_date: string | null;
+  // Set only when an LMS activity's own title names a different date than the
+  // one stored against it — the journal offers a one-click correction.
+  title_date?: string | null;
+  // Assignments carry the source submission clock time (HH:MM) when Aptem
+  // recorded one; every other category leaves it null.
+  activity_time?: string | null;
   planned_hours: number;
   actual_hours: number;
   timestamp_label: string;
@@ -57,6 +71,12 @@ export type ManualMonth = {
   month: string;
   label: string;
   original_planned: number | null;
+  // Actual hours the learner's own programme record already holds for the
+  // month — reference only, never written into the report.
+  recorded_actual: number | null;
+  // The same figures accumulated from the first month up to this one.
+  recorded_actual_cumulative: number;
+  arranged_actual_cumulative: number;
   arranged_planned: number;
   arranged_actual: number; // accepted rows only ("claimed")
   arranged_not_accepted: number;
@@ -76,6 +96,7 @@ export type ManualSummary = {
   months: ManualMonth[];
   arranged_planned_total: number;
   arranged_actual_total: number;
+  recorded_actual_total: number;
 };
 
 export type ManualGroup = {
@@ -132,6 +153,22 @@ export type ManualRowsResponse = {
   rows: ManualRow[];
 };
 
+export type LedgerQuiz = {
+  description: string | null;
+  questions: unknown[];
+  maximum_score: number | null;
+  passing_score: number | null;
+};
+
+// One activity of a merged Reading+Quiz bundle (rq: refs).
+export type LedgerActivityPart = {
+  activity_id: number;
+  title: string;
+  content_url: string | null;
+  reading_text_body: string | null;
+  quiz: LedgerQuiz | null;
+};
+
 export type LedgerActivity = {
   activity_id?: number;
   title: string;
@@ -141,21 +178,28 @@ export type LedgerActivity = {
   content_url: string | null;
   reading_text_body: string | null;
   configured_duration_minutes?: number | null;
-  quiz: {
-    description: string | null;
-    questions: unknown[];
-    maximum_score: number | null;
-    passing_score: number | null;
-  } | null;
+  quiz: LedgerQuiz | null;
+  parts?: LedgerActivityPart[];
 };
 
 export type LedgerParticipant = ManualRow & { learner_name: string };
+
+// Everyone who actually did the activity at the source (whole register
+// session / every enrolled learner's LMS result), independent of the report.
+export type LedgerSourceParticipant = {
+  aptem_id: number | null;
+  learner_name: string;
+  status: "attended" | "absent" | "completed" | "not_completed" | "no_record";
+  on_report: boolean;
+  report_months: string[];
+};
 
 export type ActivityLedger = {
   ref: string;
   category: string;
   activity: LedgerActivity;
   participants: LedgerParticipant[];
+  source_participants: LedgerSourceParticipant[];
 };
 
 export class ManualApiError extends Error {
@@ -284,12 +328,133 @@ export function getActivityLedger(ref: string): Promise<ActivityLedger> {
   return request(`/activity-ledger?ref=${encodeURIComponent(ref)}`);
 }
 
+// A short-lived read URL for one document, for the in-system /doc preview page.
+export function getDocumentUrl(id: number): Promise<{ id: number; name: string; content_type: string | null; url: string }> {
+  return request(`/document-url?id=${encodeURIComponent(String(id))}`);
+}
+
+// --- Evidence explorer: everything the learner uploaded to Aptem ------------
+
+export type EvidenceCategory =
+  | "assignment"
+  | "attendance_reflection"
+  | "lms_activity"
+  | "review"
+  | "work_product"
+  | "administrative"
+  | "other";
+
+export type EvidenceItem = {
+  evidence_id: number;
+  name: string;
+  // Auditor overrides: `edited` marks a changed name/category/date; `replaced`
+  // means an uploaded file supersedes the Aptem original (kept as part=original).
+  edited: boolean;
+  replaced: boolean;
+  replacement_name: string | null;
+  original_has_file: boolean;
+  kind: string;
+  status: string;
+  category: EvidenceCategory;
+  category_source: string; // "content" | "ai" | "hint-…" | "unresolved" | "reviewed-reverted"
+  confidence: number | null;
+  mismatch: boolean;
+  mismatch_reason: string | null;
+  needs_review: boolean;
+  slot_category: EvidenceCategory; // what the upload slot says it is
+  review_status: "confirmed" | "rejected" | null;
+  report_month: string | null; // set when the item is already on a monthly report
+  component_id: number | null;
+  component_name: string;
+  date: string | null;
+  otjh_hours: number;
+  has_file: boolean;
+  has_report: boolean;
+  note_preview: string | null;
+};
+
+export type EvidenceListResponse = {
+  aptem_id: number;
+  month: string | null;
+  total: number;
+  counts: Record<EvidenceCategory, number>;
+  content_classified: number;
+  misfiled: number;
+  items: EvidenceItem[];
+};
+
+const EVIDENCE_BASE = "/audit_api/last-audit/evidence";
+
+async function evidenceRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${EVIDENCE_BASE}${path}`, init);
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new ManualApiError(payload?.error ?? `Request failed (${response.status})`, response.status);
+  }
+  return response.json() as Promise<T>;
+}
+
+export function getEvidenceList(aptemId: number | string, month?: string): Promise<EvidenceListResponse> {
+  const query = new URLSearchParams({ aptem_id: String(aptemId) });
+  if (month) query.set("month", month);
+  return evidenceRequest(`/list?${query}`);
+}
+
+export function getEvidenceUrl(evidenceId: number, part: "file" | "report" | "original" = "file"): Promise<{ id: number; name: string; content_type: string | null; url: string }> {
+  return evidenceRequest(`/open?id=${encodeURIComponent(String(evidenceId))}&part=${part}`);
+}
+
+// Auditor edit of an evidence row's display fields; empty string clears the
+// override so the source value shows again.
+export function editEvidence(
+  evidenceId: number,
+  patch: { display_name?: string; category?: EvidenceCategory | ""; evidence_date?: string },
+): Promise<{ ok: boolean; evidence_id: number }> {
+  return evidenceRequest("/edit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ evidence_id: evidenceId, ...patch }),
+  });
+}
+
+// Upload a file that supersedes the shown evidence file (the Aptem original
+// stays archived and viewable via part=original).
+export function replaceEvidenceFile(
+  evidenceId: number,
+  file: File,
+): Promise<{ ok: boolean; evidence_id: number; replacement_name: string }> {
+  const form = new FormData();
+  form.set("evidence_id", String(evidenceId));
+  form.set("file", file);
+  return evidenceRequest("/replace", { method: "POST", body: form });
+}
+
+// The auditor's verdict on a classification: confirm it, or reject it so the
+// slot's own category stands again.
+export function reviewEvidence(evidenceId: number, action: "confirm" | "reject"): Promise<{ ok: boolean; review_status: string }> {
+  return evidenceRequest("/review", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ evidence_id: evidenceId, action }),
+  });
+}
+
+// File the evidence onto the learner's monthly report (document-backed row).
+export function transferEvidence(evidenceId: number): Promise<{ ok: boolean; already: boolean; month: string }> {
+  return evidenceRequest("/transfer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ evidence_id: evidenceId }),
+  });
+}
+
 // --- retrieve + bulk save (the journal's draft workflow) --------------------
 
 export type ImportAttendanceCandidate = {
   source_ref: string;
   category: "attendance";
   title: string;
+  group_name: string;
   activity_date: string;
   attended: boolean;
   timestamp_label: string;
@@ -299,17 +464,31 @@ export type ImportActivityCandidate = {
   source_ref: string;
   category: string;
   title: string;
+  group_name: string;
   activity_date: string | null;
   duration_minutes: number | null;
   completion: { state: CompletionState };
   group_id: number;
   activity_id: number;
   pair?: {
-    reading_activity_id: number;
-    quiz_activity_id: number;
-    reading_title: string;
-    quiz_title: string;
+    anchor_activity_id: number;
+    activity_ids: number[];
+    titles: string[];
   };
+};
+
+// Every Aptem assignment dated in the month — whatever its status — with the
+// source's own planned hours and evidenced OTJH time.
+export type ImportAssignmentCandidate = {
+  source_ref: string;
+  category: "assignment";
+  title: string;
+  group_name: string;
+  activity_date: string | null;
+  planned_hours: number;
+  actual_hours: number;
+  status: string;
+  completion: { state: "completed" | "not_completed" };
 };
 
 export type ImportCandidatesResponse = {
@@ -318,6 +497,7 @@ export type ImportCandidatesResponse = {
   attendance_source: string;
   attendance: ImportAttendanceCandidate[];
   activities: ImportActivityCandidate[];
+  assignments?: ImportAssignmentCandidate[];
   already_added: string[];
 };
 
@@ -326,18 +506,38 @@ export function getImportCandidates(aptemId: number | string, month: string): Pr
   return request(`/import-candidates?${query}`);
 }
 
+export type AutoImportResponse = {
+  ok: boolean;
+  aptem_id: number;
+  month: string;
+  attendance_source: string;
+  created: number;
+  skipped_existing: number;
+  locked: boolean;
+};
+
+// Fills the month with everything the LMS holds for this learner (attendance
+// sessions, completed activities and approved assignments) directly on the
+// server. Idempotent: refs ever filed for the month — even later deleted —
+// are never re-inserted, so employee deletions stay respected.
+export function autoImportManualRows(input: {
+  aptem_id: number;
+  month: string;
+  created_by?: string | null;
+}): Promise<AutoImportResponse> {
+  return request("/rows/auto-import", jsonInit("POST", input));
+}
+
 export function createReadingQuizPair(input: {
   group_id: number;
-  reading_activity_id: number;
-  quiz_activity_id: number;
-}): Promise<{ ok: boolean; created: boolean }> {
+  activity_ids: number[];
+}): Promise<{ ok: boolean; created: number }> {
   return request("/reading-quiz-pairs", jsonInit("POST", input));
 }
 
 export function deleteReadingQuizPair(input: {
   group_id: number;
-  reading_activity_id: number;
-  quiz_activity_id: number;
+  activity_ids: number[];
 }): Promise<{ ok: boolean; deleted: number }> {
   return request("/reading-quiz-pairs", jsonInit("DELETE", input));
 }
@@ -351,6 +551,9 @@ export type BulkSaveResponse = {
   updated: number;
   deleted: number;
   missing: number[];
+  // Row ids whose month move was skipped: the target month already lists the
+  // same source_ref, so applying it would collide with the unique index.
+  conflicts: number[];
 };
 
 export function bulkSaveManualRows(input: {

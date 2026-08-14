@@ -1,13 +1,14 @@
 // Table row for one DRAFT journal activity. Every action here — edits,
 // deletes, staged uploads — mutates the local draft only; the journal's
 // floating "Save all activities" button persists the whole draft at once.
-// Editing mirrors the add flow: month-bound working-day dates and the same
-// timestamp logic (attendance fixed; others "input" or a generated 09:00–17:00
-// range from the claimed actual hours).
+// Dates stay working-day only, but may leave the report month: editing a date
+// onto another month re-files the row under that month on save. Timestamps
+// mirror the add flow (attendance fixed; others "input" or a generated
+// 09:00–17:00 range from the claimed actual hours).
 import { useRef, useState } from "react";
 import type { InputHTMLAttributes } from "react";
 import { Link } from "@tanstack/react-router";
-import { AlertTriangle, Check, FileText, Paperclip, Pencil, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ClipboardCheck, CornerDownRight, FileText, Paperclip, Pencil, Trash2, X } from "lucide-react";
 import Swal from "sweetalert2";
 import { DurationInput, formatHoursDuration } from "@/features/audit/learner-log-pro-copy/components/DurationInput";
 import { TableCell, TableRow } from "@/features/audit/learner-log-pro-copy/components/ui/table";
@@ -46,24 +47,78 @@ function RowInput({ className = "", ...props }: InputHTMLAttributes<HTMLInputEle
 }
 
 export function ledgerRef(row: Pick<DraftRow, "category" | "source_ref" | "serverId">) {
-  if (row.source_ref?.startsWith("rq:")) return null;
+  // rq: bundles now have a full ledger view (one content block per part).
+  if (row.source_ref?.startsWith("rq:")) return row.source_ref;
   if (row.category === "assignment" || !row.source_ref) {
     return row.serverId != null ? `row:${row.serverId}` : null;
   }
   return row.source_ref;
 }
 
+// Awarding actual hours to an activity the learner never finished marks it
+// complete, and clearing them puts it back — mirrored here so the badge moves
+// with the draft; the backend applies the same rule when the draft is saved.
+const LMS_INCOMPLETE = "not_completed";
+const COMPLETED_BY_HOURS = "completed_by_hours";
+
+export function completionNoteForHours(note: string | null, actualHours: number): string | null {
+  if (actualHours > 0) return note === LMS_INCOMPLETE ? COMPLETED_BY_HOURS : note;
+  return note === COMPLETED_BY_HOURS ? LMS_INCOMPLETE : note;
+}
+
+// LMS group/module names arrive HTML-encoded from the WordPress sync
+// ("Impact &amp;Planning") — decode the common entities for display.
+export function decodeEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&nbsp;/g, " ");
+}
+
 export function completionBadge(note: string | null) {
   switch ((note || "").toLowerCase()) {
     case "completed":
       return <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success">Completed by learner</span>;
-    case "not_completed":
+    case COMPLETED_BY_HOURS:
+      // The LMS flag never flipped, but the audit team awarded hours for it —
+      // it counts as complete without claiming the learner ticked it off.
+      return (
+        <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success" title="Marked complete by the audit team: actual hours were awarded for this activity, even though the LMS never recorded it as finished.">
+          Completed — hours awarded
+        </span>
+      );
+    case LMS_INCOMPLETE:
       return <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Not completed by learner</span>;
     case "no_record":
       return <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">No learner record</span>;
     default:
       return null;
   }
+}
+
+// Assignment rows carry Aptem's OWN status word (every assignment is imported
+// now, not just the completed ones), so the chip colours by meaning and shows
+// the source wording rather than a fixed vocabulary.
+export function assignmentStatusBadge(status: string | null) {
+  const text = (status || "").trim();
+  if (!text) return null;
+  const key = text.toLowerCase();
+  const tone = key.includes("complet") || key.includes("approv") || key.includes("pass")
+    ? "bg-success/15 text-success"
+    : key.includes("submit") || key.includes("progress") || key.includes("pending") || key.includes("review")
+      ? "bg-primary/10 text-primary"
+      : key.includes("reject") || key.includes("fail") || key.includes("overdue")
+        ? "bg-destructive/15 text-destructive"
+        : "bg-amber-500/15 text-amber-700";
+  const label = text.charAt(0).toUpperCase() + text.slice(1);
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${tone}`} title="Status of this assignment on Aptem">
+      {label}
+    </span>
+  );
 }
 
 export function dateFlagBadge(date: string | null) {
@@ -102,13 +157,20 @@ function editDraftFromRow(row: DraftRow): EditDraft {
   };
 }
 
-function validate(draft: EditDraft, month: string) {
+function monthLabelOf(month: string) {
+  return new Date(`${month}-02T12:00:00`).toLocaleString("en-GB", { month: "long", year: "numeric" });
+}
+
+function validate(draft: EditDraft, window: { min: string; max: string }) {
   if (!draft.title.trim()) return "Enter an activity name.";
   for (const [label, value] of [["Planned", draft.planned_hours], ["Actual", draft.actual_hours]] as const) {
     if (!Number.isFinite(value) || value < 0 || value > 50) return `${label} hours must be between 0 and 50.`;
   }
-  if (!draft.activity_date) return "Choose a date inside the report month.";
-  return dateRestriction(draft.activity_date, month);
+  if (!draft.activity_date) return "Choose a working-day date.";
+  if (draft.activity_date < window.min || draft.activity_date > window.max) {
+    return "The date must fall inside the learner's report months.";
+  }
+  return dateRestriction(draft.activity_date);
 }
 
 function StagedFileList({ row, onUnstageFile }: { row: DraftRow; onUnstageFile: (index: number) => void }) {
@@ -138,16 +200,29 @@ function AssignmentDocuments({ row, onStageFiles, onUnstageFile, onDeleteDocumen
   const fileRef = useRef<HTMLInputElement | null>(null);
   return (
     <div className="mt-1.5 space-y-1">
-      {row.documents.map((doc) => {
+      {row.documents.map((doc, index) => {
         const pendingDelete = row.deletedDocIds.includes(doc.id);
+        // The API lists each evidence file immediately before its marking
+        // report (same evidence_group) — nest the report under its evidence.
+        const isMarking = doc.doc_kind === "report";
+        const previous = index > 0 ? row.documents[index - 1] : null;
+        const nested = isMarking && previous?.doc_kind === "evidence" && previous.evidence_group === doc.evidence_group;
         return (
-          <div key={doc.id} className={`flex items-center gap-1.5 text-xs ${pendingDelete ? "line-through opacity-50" : ""}`}>
-            <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
-            {doc.download_url && !pendingDelete ? (
-              <a href={doc.download_url} target="_blank" rel="noreferrer" className="truncate text-primary hover:underline" title={doc.display_name}>{doc.display_name}</a>
+          <div key={doc.id} className={`flex items-center gap-1.5 text-xs ${nested ? "pl-4" : ""} ${pendingDelete ? "line-through opacity-50" : ""}`}>
+            {nested ? <CornerDownRight className="h-3 w-3 shrink-0 text-muted-foreground/60" /> : null}
+            {isMarking ? (
+              <ClipboardCheck className="h-3 w-3 shrink-0 text-primary" />
+            ) : (
+              <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+            )}
+            {!pendingDelete ? (
+              <Link to="/doc" search={{ id: doc.id } as never} className="truncate text-primary hover:underline" title={`Preview ${doc.display_name} in the system`}>{doc.display_name}</Link>
             ) : (
               <span className="truncate text-muted-foreground" title={doc.display_name}>{doc.display_name}</span>
             )}
+            {isMarking && !pendingDelete ? (
+              <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold text-primary" title={nested ? "Assessor marking for the evidence above" : "Assessor marking report"}>Marking</span>
+            ) : null}
             {pendingDelete ? (
               <span className="rounded-full bg-destructive/10 px-1.5 py-0.5 text-[9px] font-semibold text-destructive">removes on save</span>
             ) : (
@@ -171,23 +246,62 @@ function AssignmentDocuments({ row, onStageFiles, onUnstageFile, onDeleteDocumen
   );
 }
 
-export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, className = "" }: {
+export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, mergeMode = false, mergeEligible = false, mergeSelected = false, onToggleMerge, className = "", reportMonth, dateWindow }: {
   row: DraftRow;
   onPatch: (patch: DraftPatch) => void;
   onDelete: () => void;
   onStageFiles: (files: File[]) => void;
   onUnstageFile: (index: number) => void;
   onDeleteDocument: (docId: number) => void;
+  mergeMode?: boolean;
+  mergeEligible?: boolean;
+  mergeSelected?: boolean;
+  onToggleMerge?: () => void;
   className?: string;
+  /** The month the journal is showing — rows re-filed elsewhere get a badge. */
+  reportMonth?: string;
+  /** Date window the whole journal accepts (first report month → ledger end). */
+  dateWindow?: { min: string; max: string };
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => editDraftFromRow(row));
   const set = (patch: Partial<EditDraft>) => setDraft((value) => ({ ...value, ...patch }));
   const unsaved = row.state !== "clean" || row.stagedFiles.length > 0 || row.deletedDocIds.length > 0;
   const ref = ledgerRef(row);
+  // The LMS sometimes dates an activity by the day it was uploaded, while the
+  // tutor wrote the real lecture date into the title. Nothing moves on its own:
+  // the row shows both and this button applies the title's date on request.
+  const titleDate = row.title_date && row.title_date !== row.activity_date ? row.title_date : null;
+
+  async function useTitleDate() {
+    if (!titleDate) return;
+    const bounds = dateWindow ?? monthBounds(row.month);
+    if (titleDate < bounds.min || titleDate > bounds.max) {
+      return void Swal.fire({
+        icon: "error",
+        title: "That date is outside the report months",
+        text: `The title names ${titleDate}, which falls outside ${bounds.min} → ${bounds.max}.`,
+      });
+    }
+    const restriction = dateRestriction(titleDate);
+    const movesMonth = titleDate.slice(0, 7) !== row.month;
+    const confirmation = await Swal.fire({
+      icon: restriction ? "warning" : "question",
+      title: `Use ${titleDate}?`,
+      html: [
+        `<p>The activity is dated <b>${row.activity_date ?? "—"}</b> but its title says <b>${titleDate}</b>.</p>`,
+        restriction ? `<p style="color:#b45309">${restriction} It is applied only if you confirm.</p>` : "",
+        movesMonth ? `<p>This moves the activity to <b>${monthLabelOf(titleDate.slice(0, 7))}</b> when you save.</p>` : "",
+      ].join(""),
+      showCancelButton: true,
+      confirmButtonText: "Use the title's date",
+    });
+    if (!confirmation.isConfirmed) return;
+    onPatch({ activity_date: titleDate, month: titleDate.slice(0, 7) });
+  }
 
   function apply() {
-    const error = validate(draft, row.month);
+    const error = validate(draft, dateWindow ?? monthBounds(row.month));
     if (error) return void Swal.fire({ icon: "error", title: "Check the row", text: error });
     let timestampLabel = row.timestamp_label;
     if (row.category !== "attendance") {
@@ -202,8 +316,16 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
     onPatch({
       title: draft.title.trim(),
       activity_date: draft.activity_date || null,
+      // The row always lives on the month its date belongs to — a date edited
+      // onto another month re-files the row there on save.
+      month: draft.activity_date ? draft.activity_date.slice(0, 7) : row.month,
       planned_hours: draft.planned_hours,
       actual_hours: draft.actual_hours,
+      // Assignments keep Aptem's own status word; only LMS activities follow
+      // the hours (the backend re-applies this rule on save).
+      completion_note: row.category === "assignment"
+        ? row.completion_note
+        : completionNoteForHours(row.completion_note, draft.actual_hours),
       timestamp_label: timestampLabel,
       accepted: draft.accepted,
     });
@@ -229,23 +351,56 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
       <TableRow className={className}>
         <TableCell className="whitespace-nowrap pl-7 font-mono text-xs text-muted-foreground">
           {row.activity_date ?? "—"}
+          {row.activity_time ? (
+            <div className="text-[11px] text-foreground/70" title="Submission time recorded on Aptem">{row.activity_time}</div>
+          ) : null}
           <div>{dateFlagBadge(row.activity_date)}</div>
         </TableCell>
         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.category}</TableCell>
         <TableCell className="min-w-64 max-w-[38rem] text-sm">
+          {mergeMode ? (
+            <label className={`mb-2 flex items-center gap-2 text-xs font-semibold ${mergeEligible ? "cursor-pointer text-primary" : "text-muted-foreground"}`}>
+              <input type="checkbox" checked={mergeSelected} disabled={!mergeEligible} onChange={onToggleMerge} className="h-4 w-4 accent-primary" />
+              {mergeEligible ? "Select for Reading + Quiz merge" : "Not eligible for this merge"}
+            </label>
+          ) : null}
           {ref ? (
-            <Link to="/ledger" search={{ ref, learner: String(row.aptem_id) } as never} className="font-medium text-foreground hover:text-primary hover:underline">{row.title}</Link>
+            <Link to="/ledger" search={{ ref, learner: String(row.aptem_id) } as never} className="font-medium text-foreground hover:text-primary hover:underline">{decodeEntities(row.title)}</Link>
           ) : (
-            <span className="font-medium text-foreground">{row.title}</span>
+            <span className="font-medium text-foreground">{decodeEntities(row.title)}</span>
           )}
+          {(row.category === "attendance" ? row.module : row.source_course) ? (
+            <p
+              className="mt-0.5 text-[11px] leading-4 text-muted-foreground"
+              title={row.category === "attendance" ? "Module from the attendance register" : "LMS course this activity came from"}
+            >
+              {decodeEntities((row.category === "attendance" ? row.module : row.source_course) as string)}
+            </p>
+          ) : null}
           <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {completionBadge(row.completion_note)}
+            {row.category === "assignment" ? assignmentStatusBadge(row.completion_note) : completionBadge(row.completion_note)}
             {formatDurationMinutes(row.duration_minutes) ? (
               <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary" title="Source media duration — a guide for the actual hours">
                 Duration {formatDurationMinutes(row.duration_minutes)}
               </span>
             ) : null}
             {row.retrieved ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Retrieved</span> : null}
+            {reportMonth && row.month !== reportMonth ? (
+              <span className="rounded-full bg-[#673ab7]/15 px-2 py-0.5 text-[10px] font-semibold text-[#673ab7]" title="The edited date belongs to another report month — the activity re-files there when you save.">
+                Moves to {monthLabelOf(row.month)} on save
+              </span>
+            ) : null}
+            {titleDate ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                <AlertTriangle className="h-2.5 w-2.5" />
+                <span title="The LMS dates this activity by the day it was published; the tutor wrote the lecture date into the title.">
+                  Title says {titleDate}
+                </span>
+                <button type="button" onClick={useTitleDate} className="ml-0.5 rounded-full bg-amber-600/90 px-1.5 py-px text-[9px] font-bold text-white hover:bg-amber-700" title={`Move this activity to ${titleDate}`}>
+                  Use it
+                </button>
+              </span>
+            ) : null}
             {unsaved ? <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Unsaved</span> : null}
             {!row.accepted ? <span className="rounded-full bg-destructive/15 px-2 py-0.5 text-[10px] font-semibold text-destructive">Not accepted</span> : null}
           </div>
@@ -257,7 +412,7 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
         <TableCell className="whitespace-nowrap text-right font-mono text-sm">{hours(row.planned_hours)}</TableCell>
         <TableCell className="whitespace-nowrap text-right font-mono text-sm text-success">{hours(row.actual_hours)}</TableCell>
         <TableCell className="pr-7 text-right">
-          <div className="flex justify-end gap-1">
+          <div className={`flex justify-end gap-1 ${mergeMode ? "pointer-events-none opacity-40" : ""}`}>
             <button type="button" onClick={() => { setDraft(editDraftFromRow(row)); setEditing(true); }} className="rounded-md border border-border p-1.5 hover:bg-secondary" title="Edit in this row" aria-label="Edit activity"><Pencil className="h-3.5 w-3.5" /></button>
             <button type="button" onClick={remove} className="rounded-md border border-destructive/30 p-1.5 text-destructive hover:bg-destructive/10" title="Remove activity" aria-label="Remove activity"><Trash2 className="h-3.5 w-3.5" /></button>
           </div>
@@ -266,8 +421,9 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
     );
   }
 
-  const bounds = monthBounds(row.month);
-  const editDateIssue = draft.activity_date ? dateRestriction(draft.activity_date, row.month) : null;
+  const bounds = dateWindow ?? monthBounds(row.month);
+  const editDateIssue = draft.activity_date ? dateRestriction(draft.activity_date) : null;
+  const editTargetMonth = draft.activity_date ? draft.activity_date.slice(0, 7) : null;
   const editGeneratedTime = row.category !== "attendance" && draft.tsMode === "time"
     ? workingTimeRange(draft.startTime, draft.actual_hours)
     : null;
@@ -275,8 +431,11 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
   return (
     <TableRow className="bg-primary/5 hover:bg-primary/5">
       <TableCell className="pl-7">
-        <RowInput type="date" value={draft.activity_date} min={bounds.min} max={bounds.max} onChange={(e) => set({ activity_date: e.target.value })} className={`w-36 ${editDateIssue ? "border-destructive" : ""}`} title={`Working days in ${row.month} only (no UK weekends or bank holidays)`} />
+        <RowInput type="date" value={draft.activity_date} min={bounds.min} max={bounds.max} onChange={(e) => set({ activity_date: e.target.value })} className={`w-36 ${editDateIssue ? "border-destructive" : ""}`} title="UK working days only (no weekends or bank holidays) — a date in another month moves the activity there" />
         {editDateIssue ? <span className="mt-1 block max-w-36 text-[10px] leading-tight text-destructive">{editDateIssue}</span> : null}
+        {!editDateIssue && editTargetMonth && editTargetMonth !== row.month ? (
+          <span className="mt-1 block max-w-36 text-[10px] leading-tight text-[#673ab7]">Moves to {monthLabelOf(editTargetMonth)}</span>
+        ) : null}
       </TableCell>
       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.category}</TableCell>
       <TableCell>

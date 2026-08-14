@@ -16,6 +16,9 @@ type JournalActivity = {
   time_to: string | null;
   actual_lms_hours: number | null;
   not_accepted?: boolean; // progress-review row → "Accepted: No"
+  // In-system page for this activity (ledger with participants + document
+  // previews). Rendered as the row's clickable link — never a raw file URL.
+  link?: string | null;
 };
 
 type JournalSummary = {
@@ -274,6 +277,17 @@ export async function downloadLearnerJournalPdf(
         data.cell.styles.textColor = data.cell.raw === "No" ? red : green;
         data.cell.styles.fontStyle = "bold";
       }
+      // Linked Activity IDs render like links (the actual hotspot is added in
+      // didDrawCell) and always open the activity INSIDE the system.
+      if (data.section === "body" && data.column.index === 1 && rows[data.row.index]?.link) {
+        data.cell.styles.textColor = [29, 78, 166];
+      }
+    },
+    didDrawCell: (data) => {
+      if (data.section !== "body" || data.column.index !== 1) return;
+      const link = rows[data.row.index]?.link;
+      if (!link) return;
+      doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url: link });
     },
     didDrawPage: (data) => {
       if (data.pageNumber > 1) {

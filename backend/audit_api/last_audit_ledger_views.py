@@ -11,16 +11,25 @@ deriving or inventing them from activity status or video duration.
 """
 
 import json
+import re
+import time
 from urllib.parse import parse_qs, urlparse
 
 from django.db import DatabaseError, connections
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_GET
 
 from .learner_exclusions import is_excluded_learner
 
 
 CONNECTION_ALIAS = "audit"
+
+# The unfiltered cohort answer changes only when the mirror re-syncs, yet the
+# journal/search pages request it on every visit and Neon takes seconds to
+# aggregate it (~300k activity rows -> 1.3MB). Serve repeats from memory,
+# pre-serialized so the 1.3MB is not re-encoded on every hit.
+_COHORT_CACHE_TTL_SECONDS = 300
+_cohort_cache = {"expires_at": 0.0, "body": None}
 
 # Keep every mixed-case schema reference in one place.  The mirror is created
 # outside this Django project, so these are intentionally unmanaged SQL tables.
@@ -72,6 +81,30 @@ def _json_list(value):
     return []
 
 
+_MONTH_KEY_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _month_number_map(value):
+    """A {"YYYY-MM": hours} JSON map as plain floats. Aptem's monthly plan
+    arrives as jsonb (Decimals) or as a JSON string depending on the driver."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for month, hours in value.items():
+        if not _MONTH_KEY_RE.match(str(month)):
+            continue
+        try:
+            result[str(month)] = round(float(hours), 2)
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
 def _as_int(value, *, default=None, minimum=None, maximum=None):
     if value in (None, ""):
         return default
@@ -97,10 +130,14 @@ def _string_list(value):
     return [str(value)]
 
 
-def _activity_content_url(video_url, reading_url, reading_type=None):
-    """Return browser-renderable content, unwrapping PDF-only Office URLs."""
+def _activity_content_url(video_url, reading_url, reading_type=None, audio_url=None):
+    """Return browser-renderable content, unwrapping PDF-only Office URLs.
+    Audio activities carry their player URL only inside raw->audio->iframe_url
+    — callers pass it as ``audio_url`` (all 702 audio rows have NO other URL)."""
     if video_url:
         return video_url
+    if audio_url and not reading_url:
+        return audio_url
     if not reading_url or str(reading_type or "").strip().lower() != "pdf":
         return reading_url
     try:
@@ -113,6 +150,19 @@ def _activity_content_url(video_url, reading_url, reading_type=None):
     except (TypeError, ValueError):
         pass
     return reading_url
+
+
+def _duration_min_sql(alias=""):
+    """SQL for configured_duration_min with the audio fallback.  The ingestion
+    pipeline stores audio durations only inside raw->audio, never on the
+    column, so the column alone is NULL for every audio activity.  The regex
+    guard keeps a malformed raw value from failing the whole query."""
+    prefix = f"{alias}." if alias else ""
+    json_path = f"{prefix}raw #>> '{{audio,configured_duration_min}}'"
+    return (
+        f"COALESCE({prefix}configured_duration_min, "
+        f"(CASE WHEN {json_path} ~ '^[0-9]+(\\.[0-9]+)?$' THEN {json_path} END)::numeric)"
+    )
 
 
 def _quiz_attempt_payload(row, component_id):
@@ -383,6 +433,7 @@ def _activity_payload(row):
             row.get("video_iframe_url"),
             row.get("reading_iframe_url"),
             row.get("reading_type"),
+            row.get("audio_iframe_url"),
         ),
         "source": "Last_audit",
     }
@@ -415,6 +466,11 @@ def cohort(request: HttpRequest) -> JsonResponse:
     """Return Aptem learners, enriched only by their verified LMS match."""
     search = (request.GET.get("search") or "").strip()
     programme = (request.GET.get("programme") or "").strip()
+    # Only the unfiltered call is cached: it is the hot path (every journal /
+    # search page load) and the only expensive one; filtered calls stay live.
+    cacheable = not search and not programme
+    if cacheable and _cohort_cache["body"] is not None and _cohort_cache["expires_at"] > time.monotonic():
+        return HttpResponse(_cohort_cache["body"], content_type="application/json")
     conditions = ["l.aptem_id IS NOT NULL"]
     params = []
     if search:
@@ -512,6 +568,11 @@ def cohort(request: HttpRequest) -> JsonResponse:
                COALESCE(rt.mapped_seconds, 0) AS lms_mapped_seconds,
                COALESCE(at.mapped_seconds, 0) AS attendance_seconds,
                ilr.planned_hours AS ilr_planned_hours,
+               -- Aptem's OWN plan (mirror of LMS."Aptem_users"."Planned" and
+               -- its monthly split) — what the learner's journal reports as the
+               -- programme/monthly plan, so both screens quote one number.
+               l.planned_hours_total AS aptem_planned_total,
+               l.planned_hours_monthly AS aptem_planned_monthly,
                COALESCE(am.months, '[]'::jsonb) AS months
         FROM {LEARNERS} l
         LEFT JOIN learner_groups lg ON lg.learner_id = l.learner_id
@@ -568,6 +629,11 @@ def cohort(request: HttpRequest) -> JsonResponse:
             # A missing ILR row is unavailable data, not a real zero.
             "planned_total": float(row["ilr_planned_hours"]) if row["ilr_planned_hours"] is not None else 0.0,
             "planned_hours_available": row["ilr_planned_hours"] is not None,
+            # Aptem's own plan, kept beside the ILR figure rather than replacing
+            # it: the cohort table quotes Aptem (matching each learner's
+            # journal), while the ILR total stays available for funding views.
+            "aptem_planned_total": float(row["aptem_planned_total"]) if row["aptem_planned_total"] is not None else None,
+            "aptem_planned_monthly": _month_number_map(row["aptem_planned_monthly"]),
             # Attendance source hours are not the learner's approved OTJ actual
             # total. Keep Actual unavailable until every LMS activity has an
             # explicit mapped duration; do not surface the attendance sum as a
@@ -583,11 +649,15 @@ def cohort(request: HttpRequest) -> JsonResponse:
             "flags": flags,
             "months": _json_list(row["months"]),
         })
-    return JsonResponse({
+    response = JsonResponse({
         "source": "Last_audit",
         "programmes": all_programmes,
         "learners": learners,
     })
+    if cacheable:
+        _cohort_cache["body"] = response.content
+        _cohort_cache["expires_at"] = time.monotonic() + _COHORT_CACHE_TTL_SECONDS
+    return response
 
 
 @require_GET
@@ -639,8 +709,9 @@ def activities(request: HttpRequest) -> JsonResponse:
                            COALESCE(a.activity_type, r.activity_type) AS activity_type,
                            a.title, a.activity_date,
                            a.video_iframe_url, a.reading_iframe_url,
+                           a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                            a.reading_type, a.quiz_id, a.quiz_questions,
-                           a.configured_duration_min, r.status,
+                           {_duration_min_sql('a')} AS configured_duration_min, r.status,
                            r.video_started, r.video_completed, r.reading_viewed,
                            r.quiz_attempted, r.quiz_passed, r.quiz_score,
                            r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,
@@ -812,8 +883,9 @@ def activity(request: HttpRequest) -> JsonResponse:
                COALESCE(a.activity_type, r.activity_type) AS activity_type,
                a.title, a.activity_date,
                a.video_iframe_url, a.reading_iframe_url,
+               a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                a.reading_type, a.quiz_id, a.quiz_questions,
-               a.configured_duration_min, r.status,
+               {_duration_min_sql('a')} AS configured_duration_min, r.status,
                r.video_started, r.video_completed, r.reading_viewed,
                r.quiz_attempted, r.quiz_passed, r.quiz_score,
                r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,

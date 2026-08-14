@@ -681,12 +681,15 @@ def _fetch_kbc_attendance_items_for_ids(aptem_ids):
         return {}
 
 
-def _fetch_assignment_items(learner_id):
+def _fetch_assignment_items(learner_id, include_evidence=True):
+    """One learner's normalized assignment items. ``include_evidence=False``
+    skips the evidence-detail enrichment query for callers that only need
+    titles/dates/status/hours (e.g. the journal month auto-import)."""
     if learner_id in (None, ""):
         return []
     connection_string = _assignment_connection_string()
     if not connection_string:
-        return _fetch_assignment_items_for_ids([learner_id]).get(_text(learner_id), [])
+        return _fetch_assignment_items_for_ids([learner_id], include_evidence=include_evidence).get(_text(learner_id), [])
     try:
         with psycopg.connect(connection_string, row_factory=dict_row) as conn:
             with conn.cursor() as cur:
@@ -716,17 +719,19 @@ def _fetch_assignment_items(learner_id):
                     [str(learner_id)],
                 )
                 items = _assignment_item_rows_from_assignment_rows(cur.fetchall())
+                if not include_evidence:
+                    return items
                 return _enrich_assignment_items_with_evidence_details(learner_id, items)
     except Exception:
         return []
 
 
-def _fetch_assignment_items_for_ids(learner_ids):
+def _fetch_assignment_items_for_ids(learner_ids, include_evidence=True):
     ids = sorted({str(learner_id) for learner_id in learner_ids if learner_id not in (None, "")})
     if not ids:
         return {}
     connection_string = _assignment_connection_string()
-    details_by_learner = _fetch_evidence_details_for_ids(ids)
+    details_by_learner = _fetch_evidence_details_for_ids(ids) if include_evidence else {}
     if not connection_string:
         try:
             with connections["enrolment"].cursor() as cur:
@@ -743,8 +748,9 @@ def _fetch_assignment_items_for_ids(learner_ids):
                 for row in _rows_from_cursor(cur):
                     learner_key = _text(row.get("learner_id"))
                     grouped[learner_key].extend(_assignment_item_rows_from_assignment_rows([row]))
-                for learner_key, items in list(grouped.items()):
-                    grouped[learner_key] = _enrich_assignment_items_with_evidence_details(learner_key, items, details_by_learner)
+                if include_evidence:
+                    for learner_key, items in list(grouped.items()):
+                        grouped[learner_key] = _enrich_assignment_items_with_evidence_details(learner_key, items, details_by_learner)
                 return grouped
         except Exception:
             return {}
@@ -780,8 +786,9 @@ def _fetch_assignment_items_for_ids(learner_ids):
                     learner_key = _text(safe_row.get(learner_column))
                     if learner_key:
                         grouped[learner_key].extend(_assignment_item_rows_from_assignment_rows([safe_row]))
-                for learner_key, items in list(grouped.items()):
-                    grouped[learner_key] = _enrich_assignment_items_with_evidence_details(learner_key, items, details_by_learner)
+                if include_evidence:
+                    for learner_key, items in list(grouped.items()):
+                        grouped[learner_key] = _enrich_assignment_items_with_evidence_details(learner_key, items, details_by_learner)
                 return grouped
     except Exception:
         return {}

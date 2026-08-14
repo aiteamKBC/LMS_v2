@@ -47,14 +47,18 @@ def parse_plan_key(raw):
         return None
 
 
-def activity_content_url(video_url, reading_url, reading_type=None):
+def activity_content_url(video_url, reading_url, reading_type=None, audio_url=None):
     """Browser-renderable content URL, unwrapping PDF-only Office viewers.
 
     Shared by mirror rows (ledger_views) and plan rows so an identical
-    catalogue material renders identically from both sources.
+    catalogue material renders identically from both sources. Audio
+    activities carry their player URL only in raw->audio->iframe_url —
+    callers pass it as ``audio_url``.
     """
     if video_url:
         return video_url
+    if audio_url and not reading_url:
+        return audio_url
     if not reading_url or str(reading_type or "").strip().lower() != "pdf":
         return reading_url
     try:
@@ -124,7 +128,7 @@ _PLAN_ROWS_SQL = '''
            p.rejected,
            cat.video_iframe_url, cat.reading_iframe_url, cat.reading_type,
            cat.quiz_id as catalog_quiz_id, cat.reading_text_body,
-           l.learner_name, a.created_at
+           l.learner_name, a.created_at, a.bundle_refs
     from "Manual_audit".plan_activities a
     join "Manual_audit".plan_groups g
       on g.id = a.group_id and g.status = 'active'
@@ -160,7 +164,15 @@ def _plan_row_payload(row, aptem_id):
         quiz_passed, reading_viewed, note, timestamp_from, timestamp_to,
         rejected, video_iframe_url, reading_iframe_url, reading_type,
         catalog_quiz_id, reading_text_body, learner_name, created_at,
+        bundle_refs,
     ) = row
+    if isinstance(bundle_refs, str):
+        try:
+            bundle_refs = json.loads(bundle_refs)
+        except ValueError:
+            bundle_refs = None
+    if not isinstance(bundle_refs, list):
+        bundle_refs = None
 
     # A rejected suggestion means "treat as nothing happened".
     has_progress = progress_status is not None and not rejected
@@ -241,6 +253,9 @@ def _plan_row_payload(row, aptem_id):
             "group_id": group_id,
             "group_name": group_name,
             "material_ref": material_ref,
+            # Reading+Quiz bundles: the week's materials grouped in this one
+            # row (one shared hours figure) — [{ref: 'lms:<id>', title}].
+            "bundle": bundle_refs,
         },
     }
 
@@ -272,6 +287,15 @@ def plan_rows_for_learner(cursor, aptem_id, *, month="", category="", search="")
             parts = ref.split(":")
             if len(parts) == 3:
                 claims["sessions"].add((parts[1], parts[2]))
+        # A bundle claims every material it groups — their mirror rows are
+        # superseded by this one shared-hours row.
+        for entry in payload["plan"].get("bundle") or []:
+            bundle_ref = str((entry or {}).get("ref") or "")
+            if bundle_ref.startswith("lms:"):
+                try:
+                    claims["lms_ids"].add(int(bundle_ref[4:]))
+                except ValueError:
+                    pass
         if month and payload["month"] != month:
             continue
         if category and payload["category"].lower() != category.lower():
@@ -400,6 +424,20 @@ _CLAIMED_LMS_COUNT_SQL = '''
         left join "Manual_audit".plan_activity_exemptions x
           on x.activity_key = a.activity_key and x.aptem_id = pm.aptem_id
         where a.included and a.material_ref ~ '^lms:[0-9]+$'
+          and x.aptem_id is null
+        union
+        -- Bundled reading+quiz materials claim their mirror rows too.
+        select distinct pm.aptem_id,
+               cast(substring(b.entry ->> 'ref' from 5) as bigint) as lms_id
+        from "Manual_audit".plan_activities a
+        join "Manual_audit".plan_groups g on g.id = a.group_id and g.status = 'active'
+        join "Manual_audit".plan_group_members pm
+          on pm.group_id = a.group_id and pm.left_at is null
+        cross join lateral jsonb_array_elements(a.bundle_refs) as b(entry)
+        left join "Manual_audit".plan_activity_exemptions x
+          on x.activity_key = a.activity_key and x.aptem_id = pm.aptem_id
+        where a.included and a.bundle_refs is not null
+          and (b.entry ->> 'ref') ~ '^lms:[0-9]+$'
           and x.aptem_id is null
     )
     select c.aptem_id, count(*)

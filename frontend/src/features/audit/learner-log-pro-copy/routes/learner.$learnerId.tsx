@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, FileText, ListChecks, LoaderCircle, Mail, Pencil, Save, Trash2, Upload, UserRound, X } from "lucide-react";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { useEffect, useState, type FormEvent } from "react";
+import { Archive, ArchiveRestore, ArrowLeft, Award, BriefcaseBusiness, CalendarClock, Download, ExternalLink, Eye, FileCheck2, FileText, LoaderCircle, Mail, Pencil, Save, Trash2, Upload, UserRound, X } from "lucide-react";
 import {
   PolarAngleAxis,
   PolarGrid,
@@ -261,6 +261,7 @@ const EMPTY_EMPLOYER_FORM: EmployerEditForm = {
 
 function LearnerProfilePage() {
   const { learnerId } = Route.useParams();
+  const router = useRouter();
   const queryClient = useQueryClient();
   const [showFirstEvidence, setShowFirstEvidence] = useState(false);
   const [previewEvidence, setPreviewEvidence] = useState<EvidenceItem | null>(null);
@@ -838,8 +839,19 @@ function LearnerProfilePage() {
             >
               <FileText className="h-3.5 w-3.5" /> Monthly report
             </Link>
+            <button
+              type="button"
+              onClick={() => {
+                // Deep links have no in-tab history to return to.
+                if (window.history.length > 1) router.history.back();
+                else void router.navigate({ to: "/search" });
+              }}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" /> Back
+            </button>
             <Link to="/search" className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline">
-              <ArrowLeft className="h-3.5 w-3.5" /> Learner search
+              Learner search
             </Link>
           </div>
         </div>

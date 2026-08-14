@@ -6,20 +6,21 @@
 // / add / edit / delete all stage locally and NOTHING persists until the
 // floating "Save all activities" button flushes the draft in one transaction.
 // Actual hours have no automatic source — they are whatever employees enter.
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import SignaturePad from "signature_pad";
 import Swal from "sweetalert2";
-import { CheckCircle2, Download, DownloadCloud, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { BookOpenText, CalendarDays, CheckCircle2, ClipboardList, Download, FolderSearch, Headphones, Link2, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2, Video, X } from "lucide-react";
 import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/api";
 import { AddManualActivityFlow } from "@/features/audit/learner-log-pro-copy/components/AddManualActivityFlow";
-import { ManualActivityRow, ManualActivityTableHeader } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
+import { ledgerRef, ManualActivityRow, ManualActivityTableHeader } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
 import { RetrieveActivitiesPanel } from "@/features/audit/learner-log-pro-copy/components/RetrieveActivitiesPanel";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import { Table, TableBody, TableHeader } from "@/features/audit/learner-log-pro-copy/components/ui/table";
 import { getLearnerProfile, getLearners } from "@/features/audit/learner-log-pro-copy/lib/api";
 import {
+  autoImportManualRows,
   bulkSaveManualRows,
   deleteAssignmentDocument,
   getManualRows,
@@ -28,23 +29,30 @@ import {
   uploadAssignmentDocument,
 } from "@/features/audit/learner-log-pro-copy/lib/manualApi";
 import {
+  clearStoredDraft,
   deleteDraftRow,
   draftFromServer,
   isDraftDirty,
+  nextDraftKey,
   patchDraftRow,
   pendingChangeCount,
+  restoreDraftFromStorage,
   rowPatchOf,
+  saveDraftToStorage,
   stageDocumentDelete,
   stageFiles,
   unstageFile,
   visibleDraftRows,
   type DraftRow,
 } from "@/features/audit/learner-log-pro-copy/lib/journalDraft";
+import { monthBounds } from "@/features/audit/learner-log-pro-copy/lib/ukCalendar";
 import { downloadLearnerJournalPdf } from "@/features/audit/learner-log-pro-copy/lib/journal-pdf";
 
 export const Route = createFileRoute("/journal/")({
+  // Numeric-looking params (learner=6441) arrive as NUMBERS from hand-typed /
+  // shared URLs (TanStack JSON-parses each value) — accept both forms.
   validateSearch: (search: Record<string, unknown>) => ({
-    learner: typeof search.learner === "string" ? search.learner : "",
+    learner: typeof search.learner === "string" ? search.learner : typeof search.learner === "number" ? String(search.learner) : "",
     period: typeof search.period === "string" ? search.period : "",
   }),
   component: JournalPage,
@@ -134,18 +142,27 @@ function SignatureCapture({ label, signer, value, onChange, onRemove, canRemove,
   );
 }
 
-function Stat({ label, value, tone = "navy" }: { label: string; value: string; tone?: "navy" | "purple" | "success" | "warning" }) {
+function Stat({ label, value, tone = "navy", hint, title }: {
+  label: string;
+  value: string;
+  tone?: "navy" | "purple" | "success" | "warning" | "muted";
+  /** Small line under the figure — used for reference-only comparisons. */
+  hint?: string | null;
+  title?: string;
+}) {
   const accent = {
     navy: "bg-[#182d48]",
     purple: "bg-[#673ab7]",
     success: "bg-emerald-600",
     warning: "bg-red-600",
+    muted: "bg-muted-foreground/50",
   }[tone];
   return (
-    <div className="relative overflow-hidden rounded-lg bg-[#f6f8fb] px-5 py-4">
+    <div className="relative overflow-hidden rounded-lg bg-[#f6f8fb] px-5 py-4" title={title}>
       <span className={`absolute inset-y-0 left-0 w-1.5 ${accent}`} />
       <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
       <p className="mt-2 font-mono text-xl font-semibold text-[#182d48]">{value}</p>
+      {hint ? <p className="mt-1 text-[10px] leading-3.5 text-muted-foreground">{hint}</p> : null}
     </div>
   );
 }
@@ -191,6 +208,89 @@ function reportMonthLabel(month: string) {
   return new Date(`${month}-02T12:00:00`).toLocaleString("en-GB", { month: "long", year: "numeric" });
 }
 
+type AddChoice = "attendance" | "video" | "reading+quiz" | "audio" | "assignment-retrieve" | "assignment" | "manual";
+
+const ADD_CHOICES = [
+  { value: "attendance", label: "Attendance day", icon: CalendarDays },
+  { value: "video", label: "Videos / recordings", icon: Video },
+  { value: "reading+quiz", label: "Reading + Quiz", icon: BookOpenText },
+  { value: "audio", label: "Audio", icon: Headphones },
+  { value: "assignment-retrieve", label: "Aptem assignments", icon: ClipboardList },
+  { value: "assignment", label: "Assignment (typed)", icon: ClipboardList },
+  { value: "manual", label: "Manual activity", icon: Plus },
+] as const;
+
+function ActivityAddMenu({ disabled, onPick }: { disabled: boolean; onPick: (choice: AddChoice) => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const close = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+  return (
+    <span ref={menuRef} className="relative">
+      <Button size="sm" variant="outline" disabled={disabled} onClick={() => setOpen((value) => !value)}><Plus className="h-3.5 w-3.5" /> Add</Button>
+      {open ? (
+        <span className="absolute right-0 top-9 z-30 block w-56 rounded-md border border-border bg-card py-1 shadow-panel">
+          {ADD_CHOICES.map((item) => <button key={item.value} type="button" onClick={() => { setOpen(false); onPick(item.value); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-foreground hover:bg-secondary"><item.icon className="h-4 w-4 text-muted-foreground" />{item.label}</button>)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function ActivityFlowModal({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" onMouseDown={onClose}>
+      <div className="max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-xl border border-border bg-card shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function readingQuizSourceParts(sourceRef: string | null): { groupId: number; activityIds: number[] } | null {
+  if (!sourceRef) return null;
+  const parts = sourceRef.split(":");
+  if (parts[0] === "la" && parts.length === 3) {
+    const groupId = Number(parts[1]);
+    const activityId = Number(parts[2]);
+    return Number.isInteger(groupId) && Number.isInteger(activityId) ? { groupId, activityIds: [activityId] } : null;
+  }
+  if (parts[0] === "rq" && parts.length >= 4) {
+    const groupId = Number(parts[1]);
+    const activityIds = parts.slice(2).map(Number);
+    return Number.isInteger(groupId) && activityIds.every(Number.isInteger) ? { groupId, activityIds } : null;
+  }
+  return null;
+}
+
+// The activity log reads top-down in three flat sections — attendance first,
+// then the LMS activity cells, then the assignments — each one date-ordered
+// across the whole month (no week sub-headers).
+const ROW_SECTIONS = [
+  { key: "attendance", label: "Attendance", categories: ["attendance"], hint: null },
+  { key: "activities", label: "LMS activities", categories: ["video", "audio", "reading+quiz"], hint: null },
+  // Assignments get their own banded block: one row per Aptem assignment with
+  // its own date, submission time, status and hours — never a single lump.
+  { key: "assignments", label: "Assignments", categories: ["assignment"], hint: "One row per Aptem assignment — date, submission time, status and hours" },
+] as const;
+
 function JournalPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -198,9 +298,10 @@ function JournalPage() {
   const [learnerChoice, setLearnerChoice] = useState(routeSearch.learner);
   const [periodChoice, setPeriodChoice] = useState(routeSearch.period);
   const [hoursTab, setHoursTab] = useState<"original" | "arranged">("original");
-  const [addingActivity, setAddingActivity] = useState(false);
-  const [retrieving, setRetrieving] = useState(false);
+  const [addChoice, setAddChoice] = useState<AddChoice | null>(null);
   const [draftRows, setDraftRows] = useState<DraftRow[]>([]);
+  const [mergeMode, setMergeMode] = useState(false);
+  const [mergeSelection, setMergeSelection] = useState<Set<string>>(() => new Set());
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [isPreparingPdf, setIsPreparingPdf] = useState(false);
   const [learnerSignature, setLearnerSignature] = useState("");
@@ -211,7 +312,13 @@ function JournalPage() {
   const [signatureError, setSignatureError] = useState("");
   const signaturesSaved = learnerSignatureSaved && coachSignatureSaved;
 
-  const metadata = useQuery({ queryKey: ["journal-metadata"], queryFn: () => getLearners() });
+  const metadata = useQuery({
+    queryKey: ["journal-metadata"],
+    queryFn: () => getLearners(),
+    // The cohort list only changes on a mirror re-sync — don't re-download
+    // 1.3MB on every journal visit.
+    staleTime: 5 * 60_000,
+  });
   useEffect(() => {
     if (!metadata.data || learnerChoice) return;
     if (metadata.data.learners[0]) setLearnerChoice(metadata.data.learners[0].id);
@@ -219,11 +326,15 @@ function JournalPage() {
 
   const selectedLearner = learnerChoice;
   const aptemId = Number(selectedLearner) || null;
+  // The rich profile is SLOW (~13s: evidence + contract sources). Nothing on
+  // this page blocks on it — the month list comes from the summary endpoint —
+  // it only widens the month window when it lands, so cache it hard.
   const learnerProfile = useQuery({
     queryKey: ["learner-profile", selectedLearner],
     queryFn: () => getLearnerProfile(selectedLearner),
     enabled: Boolean(selectedLearner),
     retry: false,
+    staleTime: 10 * 60_000,
   });
 
   // Original planned months + employee-arranged sums, straight from the
@@ -233,6 +344,7 @@ function JournalPage() {
     queryKey: ["manual-summary", aptemId],
     queryFn: () => getManualSummary(aptemId!),
     enabled: Boolean(aptemId),
+    staleTime: 60_000,
   });
   const learnerStartDate = learnerProfile.data?.learning_delivery.start_date
     ?? learnerProfile.data?.contracts.find((contract) => contract.programme_start_date)?.programme_start_date
@@ -246,41 +358,157 @@ function JournalPage() {
       (latest, item) => item.month > latest ? item.month : latest,
       available[0].month,
     );
-    return monthKeysBetween(learnerStartMonth, endMonth).map((month) => availableByMonth.get(month) ?? {
-      month,
-      label: reportMonthLabel(month),
-      original_planned: null,
-      arranged_planned: 0,
-      arranged_actual: 0,
-      arranged_not_accepted: 0,
-      row_count: 0,
+    // Months the plan never mentioned (the learner started before it) are shown
+    // empty, but the running totals carry the previous month forward so the
+    // cumulative figures never dip back to zero mid-programme.
+    let carriedRecorded = 0;
+    let carriedClaimed = 0;
+    return monthKeysBetween(learnerStartMonth, endMonth).map((month) => {
+      const known = availableByMonth.get(month);
+      if (known) {
+        carriedRecorded = known.recorded_actual_cumulative ?? carriedRecorded;
+        carriedClaimed = known.arranged_actual_cumulative ?? carriedClaimed;
+        return known;
+      }
+      return {
+        month,
+        label: reportMonthLabel(month),
+        original_planned: null,
+        recorded_actual: null,
+        recorded_actual_cumulative: carriedRecorded,
+        arranged_actual_cumulative: carriedClaimed,
+        arranged_planned: 0,
+        arranged_actual: 0,
+        arranged_not_accepted: 0,
+        row_count: 0,
+      };
     });
   }, [summary.data?.months, learnerStartMonth]);
   const selectedPeriod = summaryMonths.some((item) => item.month === periodChoice) ? periodChoice : "";
+  // Every date the journal accepts, first report month → last: a date edited
+  // outside the current month re-files its row under the month it names.
+  const dateWindow = useMemo(() => {
+    if (!summaryMonths.length) return null;
+    return {
+      min: `${summaryMonths[0].month}-01`,
+      max: monthBounds(summaryMonths[summaryMonths.length - 1].month).max,
+    };
+  }, [summaryMonths]);
 
   useEffect(() => {
     if (!summary.data) return;
     if (summaryMonths.some((item) => item.month === periodChoice)) return;
-    setPeriodChoice(summaryMonths[summaryMonths.length - 1]?.month ?? "");
+    // Default month = the learner's first programme month. The summary's month
+    // list is already anchored at the first planned month server-side, so this
+    // never waits on the slow learner-profile request.
+    setPeriodChoice(summaryMonths[0]?.month ?? "");
     setLearnerSignature("");
     setCoachSignature("");
     setLearnerSignatureSaved(false);
     setCoachSignatureSaved(false);
   }, [summary.data, summaryMonths, periodChoice]);
 
+  // Keep the chosen learner/month in the URL, so leaving the page and coming
+  // back (or reloading / sharing the link) restores the same report instead
+  // of falling back to the default month.
+  useEffect(() => {
+    if (!selectedLearner || !selectedPeriod) return;
+    if (routeSearch.learner === selectedLearner && routeSearch.period === selectedPeriod) return;
+    void router.navigate({
+      to: "/journal",
+      search: { learner: selectedLearner, period: selectedPeriod },
+      replace: true,
+    });
+  }, [selectedLearner, selectedPeriod, routeSearch.learner, routeSearch.period, router]);
+
   const manualRows = useQuery({
     queryKey: ["manual-rows", aptemId, selectedPeriod],
     queryFn: () => getManualRows(aptemId!, selectedPeriod),
     enabled: Boolean(aptemId && selectedPeriod),
+    // Months already visited render instantly from cache; saves/auto-imports
+    // invalidate this key explicitly, so a short staleTime is safe.
+    staleTime: 60_000,
   });
+
+  // Warm the neighbouring months in the background so switching is instant.
+  useEffect(() => {
+    if (!aptemId || !selectedPeriod || !summaryMonths.length) return;
+    const index = summaryMonths.findIndex((item) => item.month === selectedPeriod);
+    for (const neighbour of [summaryMonths[index + 1], summaryMonths[index - 1]]) {
+      if (!neighbour) continue;
+      void queryClient.prefetchQuery({
+        queryKey: ["manual-rows", aptemId, neighbour.month],
+        queryFn: () => getManualRows(aptemId, neighbour.month),
+        staleTime: 60_000,
+      });
+    }
+  }, [aptemId, selectedPeriod, summaryMonths, queryClient]);
+
+  // Fill the month straight from the sources the moment it opens: attendance
+  // sessions, EVERY LMS activity dated in the month (completed or not — the
+  // badge carries the learner's real state) and completed Aptem assignments
+  // land as saved rows, leaving "Add" for what the sync cannot know.
+  // Server-side it is idempotent — refs ever filed (even later deleted)
+  // are never re-inserted and signed-off months are left alone — so firing
+  // once per learner-month per visit is safe.
+  const autoSyncedMonths = useRef(new Set<string>());
+  useEffect(() => {
+    if (!aptemId || !selectedPeriod) return;
+    const syncKey = `${aptemId}:${selectedPeriod}`;
+    if (autoSyncedMonths.current.has(syncKey)) return;
+    autoSyncedMonths.current.add(syncKey);
+    autoImportManualRows({ aptem_id: aptemId, month: selectedPeriod })
+      .then((result) => {
+        if (!result.created) return;
+        void queryClient.invalidateQueries({ queryKey: ["manual-rows", aptemId, selectedPeriod] });
+        void queryClient.invalidateQueries({ queryKey: ["manual-summary", aptemId] });
+        void Swal.fire({ toast: true, position: "top-end", icon: "success", title: `${result.created} activities added from the LMS`, showConfirmButton: false, timer: 2200 });
+      })
+      .catch(() => {
+        // Best-effort: the retrieve/add flows still cover the month by hand.
+        autoSyncedMonths.current.delete(syncKey);
+      });
+  }, [aptemId, selectedPeriod, queryClient]);
 
   const dirty = isDraftDirty(draftRows);
   // Seed / refresh the draft from the server ONLY while it holds no unsaved
-  // work, so a background refetch never clobbers the employee's edits.
+  // work, so a background refetch never clobbers the employee's edits. A
+  // stored draft (the employee edited, left and came back) is restored over
+  // the fresh server rows instead of the plain seed; save/discard clear the
+  // storage, so a restore can never bring back flushed work.
+  const seededDraftKey = useRef<string | null>(null);
   useEffect(() => {
-    if (!manualRows.data || dirty) return;
+    if (!manualRows.data || dirty || !aptemId || !selectedPeriod) return;
+    const storeKey = `${aptemId}:${selectedPeriod}`;
+    const restored = restoreDraftFromStorage(aptemId, selectedPeriod, manualRows.data.rows);
+    if (restored) {
+      setDraftRows(restored.rows);
+      seededDraftKey.current = storeKey;
+      const savedAtLabel = new Date(restored.savedAt).toLocaleString("en-GB");
+      if (restored.lostFileNames.length) {
+        void Swal.fire({
+          icon: "info",
+          title: "Unsaved draft restored",
+          text: `Your unsaved changes from ${savedAtLabel} are back. Staged uploads cannot survive leaving the page — re-attach: ${restored.lostFileNames.join(", ")}.`,
+        });
+      } else {
+        void Swal.fire({ toast: true, position: "top-end", icon: "info", title: "Unsaved draft restored", showConfirmButton: false, timer: 2600 });
+      }
+      return;
+    }
     setDraftRows(manualRows.data.rows.map(draftFromServer));
-  }, [manualRows.data, dirty]);
+    seededDraftKey.current = storeKey;
+  }, [manualRows.data, dirty, aptemId, selectedPeriod]);
+
+  // Mirror the draft into localStorage on every change (and drop the mirror
+  // once it is clean again). Guarded by seededDraftKey so a month/learner
+  // switch can never save stale rows under — or wipe — the wrong key.
+  useEffect(() => {
+    if (!aptemId || !selectedPeriod) return;
+    if (seededDraftKey.current !== `${aptemId}:${selectedPeriod}`) return;
+    if (isDraftDirty(draftRows)) saveDraftToStorage(aptemId, selectedPeriod, draftRows);
+    else clearStoredDraft(aptemId, selectedPeriod);
+  }, [draftRows, aptemId, selectedPeriod]);
 
   const visibleRows = visibleDraftRows(draftRows).sort((left, right) => {
     const leftDate = left.activity_date || "9999-12-31";
@@ -292,12 +520,109 @@ function JournalPage() {
     [visibleRows],
   );
 
+  // visibleRows is already date-sorted, so each section's rows come out in
+  // date order with undated rows trailing at the end.
+  const groupedSections = ROW_SECTIONS.map((section) => {
+    const rows = visibleRows.filter((row) => (section.categories as readonly string[]).includes(row.category));
+    return { ...section, count: rows.length, rows };
+  }).filter((section) => section.count > 0);
+
+  const mergeEligibleKeys = useMemo(() => new Set(visibleRows
+    .filter((row) => row.category === "reading+quiz" && readingQuizSourceParts(row.source_ref))
+    .map((row) => row.key)), [visibleRows]);
+
+  useEffect(() => {
+    setMergeSelection((current) => {
+      const next = new Set([...current].filter((key) => mergeEligibleKeys.has(key)));
+      return next.size === current.size ? current : next;
+    });
+  }, [mergeEligibleKeys]);
+
+  function closeMergeMode() {
+    setMergeMode(false);
+    setMergeSelection(new Set());
+  }
+
+  function toggleMergeRow(key: string) {
+    setMergeSelection((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  async function mergeSelectedReadingQuizRows() {
+    const selected = visibleRows.filter((row) => mergeSelection.has(row.key));
+    if (selected.length < 2) {
+      await Swal.fire({ icon: "info", title: "Select activities to merge", text: "Select at least two Reading + Quiz activities." });
+      return;
+    }
+    const sources = selected.map((row) => readingQuizSourceParts(row.source_ref));
+    if (sources.some((source) => !source) || sources.some((source) => source!.groupId !== sources[0]!.groupId)) {
+      await Swal.fire({ icon: "error", title: "These activities cannot be merged", text: "All selected activities must come from the same LMS course." });
+      return;
+    }
+    if (new Set(selected.map((row) => row.accepted)).size > 1) {
+      await Swal.fire({ icon: "error", title: "Acceptance status is different", text: "Set all selected rows to the same Accepted status before merging." });
+      return;
+    }
+    if (selected.some((row) => row.documents.length || row.stagedFiles.length || row.deletedDocIds.length)) {
+      await Swal.fire({ icon: "error", title: "Evidence is attached", text: "Remove or save attached evidence before merging these activities." });
+      return;
+    }
+
+    const activityIds = [...new Set(sources.flatMap((source) => source!.activityIds))];
+    if (activityIds.length < 2) {
+      await Swal.fire({ icon: "error", title: "Nothing new to merge", text: "The selected rows already refer to the same LMS activity." });
+      return;
+    }
+    const sourceRef = `rq:${sources[0]!.groupId}:${activityIds.join(":")}`;
+    if (visibleRows.some((row) => !mergeSelection.has(row.key) && row.source_ref === sourceRef)) {
+      await Swal.fire({ icon: "error", title: "Bundle already exists", text: "This Reading + Quiz bundle is already in the activity log." });
+      return;
+    }
+
+    const dates = selected.map((row) => row.activity_date).filter(Boolean) as string[];
+    const durationValues = selected.map((row) => row.duration_minutes).filter((value): value is number => typeof value === "number");
+    const completionNotes = [...new Set(selected.map((row) => row.completion_note))];
+    const mergedRow: DraftRow = {
+      key: nextDraftKey(),
+      serverId: null,
+      state: "new",
+      retrieved: selected.every((row) => row.retrieved),
+      aptem_id: selected[0].aptem_id,
+      month: selected[0].month,
+      category: "reading+quiz",
+      source_ref: sourceRef,
+      title: selected.map((row) => row.title).join(" + ").slice(0, 500),
+      activity_date: dates.length ? dates.sort().at(-1)! : null,
+      planned_hours: Math.round(selected.reduce((total, row) => total + row.planned_hours, 0) * 10000) / 10000,
+      actual_hours: Math.round(selected.reduce((total, row) => total + row.actual_hours, 0) * 10000) / 10000,
+      timestamp_label: "input",
+      completion_note: completionNotes.length === 1 ? completionNotes[0] : null,
+      accepted: selected[0].accepted,
+      documents: [],
+      stagedFiles: [],
+      deletedDocIds: [],
+      duration_minutes: durationValues.length === selected.length ? durationValues.reduce((total, value) => total + value, 0) : null,
+    };
+
+    setDraftRows((current) => {
+      let next = current;
+      for (const row of selected) next = deleteDraftRow(next, row.key);
+      return [...next, mergedRow];
+    });
+    closeMergeMode();
+    await Swal.fire({ toast: true, position: "top-end", icon: "success", title: `${selected.length} activities merged in the draft`, showConfirmButton: false, timer: 2200 });
+  }
+
   async function confirmDiscardIfDirty(): Promise<boolean> {
     if (!dirty) return true;
     const confirmation = await Swal.fire({
       icon: "warning",
       title: "Discard unsaved changes?",
-      text: "This month's draft has unsaved changes. Leaving now throws them away.",
+      text: "This month's draft has unsaved changes. Discarding throws them away.",
       showCancelButton: true,
       confirmButtonText: "Discard changes",
       cancelButtonText: "Keep editing",
@@ -305,6 +630,14 @@ function JournalPage() {
       reverseButtons: true,
     });
     return confirmation.isConfirmed;
+  }
+
+  // Switching learner/month no longer threatens the draft: it is mirrored in
+  // localStorage and restored when the employee returns to this month.
+  function noteDraftKept() {
+    if (!dirty || !aptemId || !selectedPeriod) return;
+    saveDraftToStorage(aptemId, selectedPeriod, draftRows);
+    void Swal.fire({ toast: true, position: "top-end", icon: "info", title: "Draft kept — it restores when you come back", showConfirmButton: false, timer: 2200 });
   }
   const savedSignoff = useQuery({
     queryKey: ["journal-signoff", selectedLearner, selectedPeriod],
@@ -338,6 +671,28 @@ function JournalPage() {
   const arrangedActual = acceptedActual;
   const originalPlanned = selectedMonth?.original_planned ?? null;
   const plannedVariance = originalPlanned == null ? null : round2(arrangedPlanned - originalPlanned);
+  // Reference figure: the actual hours the learner's own programme record
+  // already holds for this month. Never written into the report — it only lets
+  // the employee see how their arranged claim differs from what was recorded.
+  const recordedActual = selectedMonth?.recorded_actual ?? null;
+  const recordedGap = recordedActual == null ? null : round2(acceptedActual - recordedActual);
+  const recordedHint = recordedGap == null
+    ? null
+    : recordedGap === 0
+      ? "Same as claimed here"
+      : `${recordedGap > 0 ? "+" : ""}${recordedGap.toFixed(2)} h vs claimed here`;
+  const RECORDED_TITLE = "Actual hours already recorded on the learner's programme record for this month. Shown for comparison only — it is not part of this report and nothing is copied from it.";
+  // Running totals to the selected month: this month plus every month before
+  // it, on both sides, so progress-to-date is readable without adding up.
+  const recordedToDate = selectedMonth?.recorded_actual_cumulative ?? null;
+  const claimedToDate = selectedMonth?.arranged_actual_cumulative ?? null;
+  const toDateGap = recordedToDate == null || claimedToDate == null
+    ? null
+    : round2(claimedToDate - recordedToDate);
+  const toDateHint = toDateGap == null
+    ? null
+    : `on the report: ${claimedToDate!.toFixed(2)} h (${toDateGap > 0 ? "+" : ""}${toDateGap.toFixed(2)} h)`;
+  const TO_DATE_TITLE = "Recorded actual hours added up from the learner's first month through the month shown, next to the same running total of what this report claims. Comparison only.";
 
   async function handleSaveAll() {
     if (!aptemId || !dirty || isSavingAll) return;
@@ -364,7 +719,11 @@ function JournalPage() {
       const deletes = draftRows
         .filter((row) => row.state === "deleted" && row.serverId != null)
         .map((row) => row.serverId!);
+      const movedCount = draftRows.filter((row) => row.state !== "deleted" && row.month !== selectedPeriod).length;
       const result = await bulkSaveManualRows({ aptem_id: aptemId, creates, updates, deletes });
+      // The draft is flushed — its localStorage mirror must go with it, or the
+      // next seed would restore work that is already saved.
+      clearStoredDraft(aptemId, selectedPeriod);
 
       // Flush staged uploads / document removals now that ids exist.
       const createdIdByKey = new Map(result.created.map((item) => [item.key, item.row.id]));
@@ -394,13 +753,18 @@ function JournalPage() {
       await queryClient.invalidateQueries({ queryKey: ["manual-rows"] });
       await queryClient.invalidateQueries({ queryKey: ["manual-summary"] });
 
-      if (result.skipped.length || failedUploads.length) {
+      const conflictTitles = (result.conflicts ?? []).map(
+        (id) => draftRows.find((row) => row.serverId === id)?.title ?? `#${id}`,
+      );
+      if (result.skipped.length || failedUploads.length || conflictTitles.length) {
         const parts = [];
         if (result.skipped.length) parts.push(`${result.skipped.length} duplicate row(s) were already on the report and were skipped.`);
+        if (conflictTitles.length) parts.push(`These rows could not move — the target month already lists the same activity: ${conflictTitles.join(", ")}.`);
         if (failedUploads.length) parts.push(`These uploads failed — retry from the row: ${failedUploads.join(", ")}.`);
         await Swal.fire({ icon: "warning", title: "Saved with warnings", text: parts.join(" ") });
       } else {
-        await Swal.fire({ toast: true, position: "top-end", icon: "success", title: "All activities saved", showConfirmButton: false, timer: 2000 });
+        const movedNote = movedCount ? ` — ${movedCount} re-filed onto ${movedCount === 1 ? "its" : "their"} edited month${movedCount === 1 ? "" : "s"}` : "";
+        await Swal.fire({ toast: true, position: "top-end", icon: "success", title: `All activities saved${movedNote}`, showConfirmButton: false, timer: movedCount ? 3200 : 2000 });
       }
     } catch (error) {
       await Swal.fire({ icon: "error", title: "Could not save the journal", text: error instanceof Error ? error.message : "Could not save the journal changes." });
@@ -411,14 +775,29 @@ function JournalPage() {
 
   async function handleDiscard() {
     if (!(await confirmDiscardIfDirty())) return;
+    if (aptemId && selectedPeriod) clearStoredDraft(aptemId, selectedPeriod);
     setDraftRows(manualRows.data ? manualRows.data.rows.map(draftFromServer) : []);
   }
 
   async function handleDownloadPdf() {
-    if (!learnerProfile.data || !selectedLearner || !selectedPeriod || !manualRows.data) return;
+    // The slow learner-profile must never block the download — the PDF falls
+    // back to "-" for any profile field that has not arrived yet.
+    if (!selectedLearner || !selectedPeriod || !manualRows.data) return;
     setIsPreparingPdf(true);
     try {
-      const pdfRows = (manualRows.data.rows ?? []).map(manualRowToJournalActivity);
+      const systemBase = `${window.location.origin}${window.location.pathname}`;
+      const pdfRows = (manualRows.data.rows ?? []).map((row) => {
+        const ref = ledgerRef({ category: row.category, source_ref: row.source_ref, serverId: row.id });
+        return {
+          ...manualRowToJournalActivity(row),
+          // Every PDF row links back to the activity's own page INSIDE the
+          // system (participants + in-system document previews) — never the
+          // raw external file.
+          link: ref
+            ? `${systemBase}#/ledger?ref=${encodeURIComponent(ref)}&learner=${encodeURIComponent(String(row.aptem_id))}`
+            : null,
+        };
+      });
       const pdfSummary = {
         name: learnerName,
         planned_hours: originalPlanned ?? 0,
@@ -506,12 +885,13 @@ function JournalPage() {
     }
   }
 
+  // The slow learner-profile request must NEVER gate the page: the journal
+  // renders from summary+rows and the profile fields fill in when they land.
   const isLoading =
     metadata.isLoading ||
     (Boolean(aptemId) && summary.isLoading) ||
     (Boolean(aptemId && selectedPeriod) && manualRows.isLoading) ||
-    (Boolean(selectedLearner) && learnerProfile.isLoading) ||
-    (Boolean(learnerProfile.data?.aptem_id && selectedPeriod) && savedSignoff.isLoading);
+    (Boolean(selectedLearner && selectedPeriod) && savedSignoff.isLoading);
   // Rich profile/sign-off data is optional for newly added programmes. Core
   // summary/row failures still block the journal; optional 404s do not.
   const pageError = metadata.error || summary.error || manualRows.error;
@@ -549,9 +929,20 @@ function JournalPage() {
                 <p className="mt-1 text-sm font-semibold text-[#182d48]">{metadata.isLoading || summary.isLoading ? "Loading…" : monthLabel}</p>
               </div>
               <Button
+                asChild
+                variant="outline"
+                className="gap-2 border-amber-300 bg-amber-50 font-semibold text-[#182d48] shadow-sm hover:bg-amber-100 hover:text-[#182d48]"
+                title="Everything the learner uploaded to Aptem — classified from content, misfiled items flagged"
+              >
+                <Link to="/evidence" search={{ learner: selectedLearner, period: selectedPeriod } as never}>
+                  <FolderSearch className="h-4 w-4 text-amber-600" />
+                  Evidence
+                </Link>
+              </Button>
+              <Button
                 className="gap-2 bg-[#182d48] hover:bg-[#243f61]"
-                disabled={!manualRows.data || !learnerProfile.data || !signaturesSaved || isPreparingPdf || dirty}
-                title={dirty ? "Save all activities first — the PDF only includes saved rows" : undefined}
+                disabled={!manualRows.data || isPreparingPdf || dirty}
+                title={dirty ? "Save all activities first — the PDF only includes saved rows" : !signaturesSaved ? "Signatures are not saved yet — the PDF will show empty sign-off boxes" : undefined}
                 onClick={handleDownloadPdf}
               >
                 {isPreparingPdf ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -561,8 +952,8 @@ function JournalPage() {
           </div>
 
           <div className="grid gap-4 border-y border-border bg-[#fafbfc] px-7 py-5 sm:grid-cols-2">
-            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={async (event) => { const next = event.target.value; if (!(await confirmDiscardIfDirty())) { event.target.value = selectedLearner; return; } setDraftRows([]); setLearnerChoice(next); setPeriodChoice(""); setAddingActivity(false); setRetrieving(false); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-            <label><span className="label-caps">Report month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60" value={selectedPeriod} disabled={!summaryMonths.length} onChange={async (event) => { const next = event.target.value; if (!(await confirmDiscardIfDirty())) { event.target.value = selectedPeriod; return; } setDraftRows([]); setPeriodChoice(next); setAddingActivity(false); setRetrieving(false); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{summaryMonths.length ? summaryMonths.map((item) => <option key={item.month} value={item.month}>{item.label}</option>) : <option value="">No report months available</option>}</select></label>
+            <label><span className="label-caps">Learner</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm" value={selectedLearner} onChange={(event) => { const next = event.target.value; noteDraftKept(); setDraftRows([]); setLearnerChoice(next); setPeriodChoice(""); setAddChoice(null); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{metadata.data?.learners.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+            <label><span className="label-caps">Report month</span><select className="mt-1.5 h-9 w-full rounded-md border border-border bg-card px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60" value={selectedPeriod} disabled={!summaryMonths.length} onChange={(event) => { const next = event.target.value; noteDraftKept(); setDraftRows([]); setPeriodChoice(next); setAddChoice(null); setLearnerSignature(""); setCoachSignature(""); setLearnerSignatureSaved(false); setCoachSignatureSaved(false); }}>{summaryMonths.length ? summaryMonths.map((item) => <option key={item.month} value={item.month}>{item.label}</option>) : <option value="">No report months available</option>}</select></label>
           </div>
 
           {pageError ? (
@@ -576,9 +967,9 @@ function JournalPage() {
           ) : summary.data ? (
             <div className="space-y-5 px-7 py-6">
               <div className="grid rounded-lg bg-[#f6f8fb] px-5 lg:grid-cols-3">
-                <ProfileGroup label="Learner" value={learnerName} secondaryLabel="Start date" secondaryValue={learnerProfile.data?.learning_delivery.start_date ?? "—"} />
-                <ProfileGroup label="Programme" value={summary.data.programme_name ?? learnerProfile.data?.programme ?? "—"} secondaryLabel="First evidence" secondaryValue={learnerProfile.data?.learning_delivery.first_evidence_date ?? "—"} />
-                <ProfileGroup label="Coach" value={summary.data.coach_name ?? learnerProfile.data?.coach.name ?? "—"} secondaryLabel="Planned end" secondaryValue={learnerProfile.data?.learning_delivery.planned_end_date ?? "—"} />
+                <ProfileGroup label="Learner" value={learnerName} secondaryLabel="Start date" secondaryValue={learnerProfile.data?.learning_delivery.start_date ?? (learnerProfile.isLoading ? "Loading…" : "—")} />
+                <ProfileGroup label="Programme" value={summary.data.programme_name ?? learnerProfile.data?.programme ?? "—"} secondaryLabel="First evidence" secondaryValue={learnerProfile.data?.learning_delivery.first_evidence_date ?? (learnerProfile.isLoading ? "Loading…" : "—")} />
+                <ProfileGroup label="Coach" value={summary.data.coach_name ?? learnerProfile.data?.coach.name ?? "—"} secondaryLabel="Planned end" secondaryValue={learnerProfile.data?.learning_delivery.planned_end_date ?? (learnerProfile.isLoading ? "Loading…" : "—")} />
               </div>
 
               <div className="flex items-center gap-1 rounded-lg bg-[#f6f8fb] p-1 text-xs font-semibold sm:w-fit">
@@ -587,7 +978,7 @@ function JournalPage() {
               </div>
 
               {hoursTab === "original" ? (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                   <Stat label="Original monthly plan" value={hoursValue(originalPlanned)} />
                   <Stat label="Programme planned total" value={hoursValue(summary.data.planned_hours_total)} />
                   <Stat label="Arranged this month" value={hoursValue(arrangedPlanned)} tone="purple" />
@@ -596,11 +987,15 @@ function JournalPage() {
                     value={plannedVariance == null ? "—" : `${plannedVariance > 0 ? "+" : ""}${plannedVariance.toFixed(2)} h`}
                     tone={plannedVariance != null && plannedVariance < 0 ? "warning" : "success"}
                   />
+                  <Stat label="Recorded actual" value={hoursValue(recordedActual)} tone="muted" hint={recordedHint} title={RECORDED_TITLE} />
+                  <Stat label="Recorded to date" value={hoursValue(recordedToDate)} tone="muted" hint={toDateHint} title={TO_DATE_TITLE} />
                 </div>
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                   <Stat label="Accumulative planned" value={hoursValue(arrangedPlanned)} tone="purple" />
                   <Stat label="Actual (claimed)" value={hoursValue(arrangedActual)} tone="success" />
+                  <Stat label="Recorded actual" value={hoursValue(recordedActual)} tone="muted" hint={recordedHint} title={RECORDED_TITLE} />
+                  <Stat label="Recorded to date" value={hoursValue(recordedToDate)} tone="muted" hint={toDateHint} title={TO_DATE_TITLE} />
                   <Stat label="Not accepted" value={hoursValue(notAcceptedActual)} tone="warning" />
                   <Stat label="Activities this month" value={String(visibleRows.length)} />
                 </div>
@@ -616,62 +1011,102 @@ function JournalPage() {
               <p className="mt-1 text-sm text-muted-foreground">Activities the audit team arranged onto this month's report</p>
             </div>
             <div className="flex items-center gap-2">
+              {manualRows.isFetching ? (
+                <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary">
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-primary" /> Updating…
+                </span>
+              ) : null}
               <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono text-xs font-medium text-[#182d48]">{visibleRows.length} activities</span>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!aptemId || !selectedPeriod || retrieving}
-                onClick={() => { setRetrieving(true); setAddingActivity(false); }}
-                title={!selectedPeriod ? "Choose a learner and month first" : "Retrieve this learner's recorded LMS activities for this month"}
-              ><DownloadCloud className="h-3.5 w-3.5" /> Retrieve LMS activities</Button>
-              <Button
-                size="sm"
-                disabled={!aptemId || !selectedPeriod || addingActivity}
-                onClick={() => { setAddingActivity(true); setRetrieving(false); }}
-                title={!selectedPeriod ? "Choose a learner and month first" : undefined}
-              ><Plus className="h-3.5 w-3.5" /> Add activity</Button>
+              {mergeMode ? (
+                <>
+                  <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary">{mergeSelection.size} selected</span>
+                  <Button type="button" size="sm" variant="outline" onClick={closeMergeMode}><X className="h-3.5 w-3.5" /> Cancel</Button>
+                  <Button type="button" size="sm" disabled={mergeSelection.size < 2} onClick={mergeSelectedReadingQuizRows}><Link2 className="h-3.5 w-3.5" /> Merge selected</Button>
+                </>
+              ) : (
+                <>
+                  <Button type="button" size="sm" variant="outline" disabled={mergeEligibleKeys.size < 2} title={mergeEligibleKeys.size < 2 ? "At least two LMS Reading + Quiz rows are required" : "Merge Reading + Quiz rows"} onClick={() => setMergeMode(true)}><Link2 className="h-3.5 w-3.5" /> Merge</Button>
+                  <ActivityAddMenu disabled={!aptemId || !selectedPeriod} onPick={setAddChoice} />
+                </>
+              )}
             </div>
           </header>
-          {retrieving && aptemId && selectedPeriod ? (
-            <RetrieveActivitiesPanel
-              aptemId={aptemId}
-              month={selectedPeriod}
-              monthLabel={monthLabel}
-              existingRefs={existingRefs}
-              onRetrieve={(rows) => setDraftRows((current) => [...current, ...rows])}
-              onClose={() => setRetrieving(false)}
-            />
+          {addChoice && ["attendance", "video", "reading+quiz", "audio", "assignment-retrieve"].includes(addChoice) && aptemId && selectedPeriod ? (
+            <ActivityFlowModal onClose={() => setAddChoice(null)}>
+              <RetrieveActivitiesPanel
+                key={addChoice}
+                aptemId={aptemId}
+                month={selectedPeriod}
+                monthLabel={monthLabel}
+                existingRefs={existingRefs}
+                initialCategory={addChoice === "assignment-retrieve" ? "assignment" : (addChoice as "attendance" | "video" | "reading+quiz" | "audio")}
+                onRetrieve={(rows) => setDraftRows((current) => [...current, ...rows])}
+                onClose={() => setAddChoice(null)}
+              />
+            </ActivityFlowModal>
           ) : null}
-          {addingActivity && aptemId && selectedPeriod ? (
-            <AddManualActivityFlow
-              aptemId={aptemId}
-              month={selectedPeriod}
-              monthLabel={monthLabel}
-              existingRefs={existingRefs}
-              onAdd={(row) => setDraftRows((current) => [...current, row])}
-              onClose={() => setAddingActivity(false)}
-            />
+          {(addChoice === "assignment" || addChoice === "manual") && aptemId && selectedPeriod ? (
+            <ActivityFlowModal onClose={() => setAddChoice(null)}>
+              <AddManualActivityFlow
+                key={addChoice}
+                aptemId={aptemId}
+                month={selectedPeriod}
+                monthLabel={monthLabel}
+                existingRefs={existingRefs}
+                initialCategory={addChoice === "assignment" ? "assignment" : "attendance"}
+                manualEntry={addChoice === "manual"}
+                onAdd={(row) => setDraftRows((current) => [...current, row])}
+                onClose={() => setAddChoice(null)}
+              />
+            </ActivityFlowModal>
           ) : null}
           <div className="overflow-x-auto">
             <Table>
               <TableHeader><ManualActivityTableHeader dark /></TableHeader>
               <TableBody>
-                {visibleRows.map((row) => (
-                  <ManualActivityRow
-                    key={row.key}
-                    row={row}
-                    className="odd:bg-[#f7f9fc]"
-                    onPatch={(patch) => setDraftRows((current) => patchDraftRow(current, row.key, patch))}
-                    onDelete={() => setDraftRows((current) => deleteDraftRow(current, row.key))}
-                    onStageFiles={(files) => setDraftRows((current) => stageFiles(current, row.key, files))}
-                    onUnstageFile={(index) => setDraftRows((current) => unstageFile(current, row.key, index))}
-                    onDeleteDocument={(docId) => setDraftRows((current) => stageDocumentDelete(current, row.key, docId))}
-                  />
+                {manualRows.isLoading && !visibleRows.length ? (
+                  Array.from({ length: 4 }, (_, index) => (
+                    <tr key={`skeleton-${index}`} className="border-b border-border">
+                      <td colSpan={7} className="px-7 py-4">
+                        <div className="h-4 w-full max-w-xl animate-pulse rounded bg-muted" />
+                      </td>
+                    </tr>
+                  ))
+                ) : null}
+                {groupedSections.map((section) => (
+                  <Fragment key={section.key}>
+                    <tr className={`border-b border-border ${section.key === "assignments" ? "border-l-4 border-l-[#182d48] bg-[#182d48]/[0.11]" : "bg-[#182d48]/[0.06]"}`}>
+                      <td colSpan={7} className="px-7 py-2 text-xs font-bold uppercase tracking-wider text-[#182d48]">
+                        {section.label} <span className="font-normal normal-case text-muted-foreground">({section.count})</span>
+                        {section.hint ? (
+                          <span className="ml-2 font-normal normal-case tracking-normal text-muted-foreground">· {section.hint}</span>
+                        ) : null}
+                      </td>
+                    </tr>
+                    {section.rows.map((row) => (
+                      <ManualActivityRow
+                        key={row.key}
+                        row={row}
+                        className={section.key === "assignments" ? "border-l-4 border-l-[#182d48]/30 odd:bg-[#f4f7fc]" : "odd:bg-[#f7f9fc]"}
+                        reportMonth={selectedPeriod}
+                        dateWindow={dateWindow ?? undefined}
+                        mergeMode={mergeMode}
+                        mergeEligible={mergeEligibleKeys.has(row.key)}
+                        mergeSelected={mergeSelection.has(row.key)}
+                        onToggleMerge={() => toggleMergeRow(row.key)}
+                        onPatch={(patch) => setDraftRows((current) => patchDraftRow(current, row.key, patch))}
+                        onDelete={() => setDraftRows((current) => deleteDraftRow(current, row.key))}
+                        onStageFiles={(files) => setDraftRows((current) => stageFiles(current, row.key, files))}
+                        onUnstageFile={(index) => setDraftRows((current) => unstageFile(current, row.key, index))}
+                        onDeleteDocument={(docId) => setDraftRows((current) => stageDocumentDelete(current, row.key, docId))}
+                      />
+                    ))}
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>
             {!visibleRows.length && !manualRows.isLoading ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">No activities on this month yet — use “Retrieve LMS activities” or “Add activity” to arrange the first one.</p>
+              <p className="py-10 text-center text-sm text-muted-foreground">No activities on this month yet — use “Add” to arrange the first one.</p>
             ) : null}
           </div>
           <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-7 py-4">

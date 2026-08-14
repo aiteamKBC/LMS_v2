@@ -29,6 +29,19 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
+def duration_min_sql(alias=""):
+    """SQL for configured_duration_min with the audio fallback.  The ingestion
+    pipeline stores audio durations only inside raw->audio, never on the
+    column, so the column alone is NULL for every audio activity.  The regex
+    guard keeps a malformed raw value from failing the whole query."""
+    prefix = f"{alias}." if alias else ""
+    json_path = f"{prefix}raw #>> '{{audio,configured_duration_min}}'"
+    return (
+        f"COALESCE({prefix}configured_duration_min, "
+        f"(CASE WHEN {json_path} ~ '^[0-9]+(\\.[0-9]+)?$' THEN {json_path} END)::numeric)"
+    )
+
+
 # The read-only state is server-wide, so one cached answer serves every
 # connection — without the cache each ensure-table call would add a round
 # trip to Neon on every request. Read-only expires fast (recovery should be

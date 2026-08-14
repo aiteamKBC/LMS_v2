@@ -5,25 +5,25 @@
 // activities via pickers. Everything authored here is projected into the
 // Learner Journal / Activity Log through the ledger feed — this page is the
 // ONLY place structural plan edits happen.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
-  ArrowLeft, BookOpenText, CalendarDays, ClipboardList, FileText,
-  Headphones, ListChecks, Pencil, Plus, Tags, Trash2, UserRound, Video, X,
+  ArrowLeft, BookOpenText, CalendarDays, Check, ClipboardList, FileText,
+  Headphones, ListChecks, LoaderCircle, Pencil, Plus, Tags, Trash2, UserRound, Video, X,
 } from "lucide-react";
 import Swal from "sweetalert2";
-import { ActivityTableHeader } from "@/features/audit/learner-log-pro-manual/components/InlineActivityRow";
 import { Button } from "@/features/audit/learner-log-pro-manual/components/ui/button";
+import { toGoogleEmbedUrl } from "@/features/audit/learner-log-pro-manual/lib/googleEmbed";
 import {
   Table, TableBody, TableCell, TableHeader, TableRow,
 } from "@/features/audit/learner-log-pro-manual/components/ui/table";
 import {
   addPlanActivities, archivePlanGroup, excludePlanActivity,
   getPlanGroup, getPlanMatrix, patchPlanActivity, pickAssignmentEvidence,
-  pickAssignments, pickAttendanceGrid, pickKsbs, pickMaterials,
-  savePlanProgress, updatePlanMonths,
-  type AssignmentOption, type MaterialOption,
+  pickAssignments, pickAttendanceGrid, pickKsbs, pickLmsCourseMaterials,
+  pickLmsCourses, savePlanProgress, updatePlanMonths,
+  type AssignmentOption, type CourseMaterial, type LmsCourse,
   type PlanActivity, type PlanGroupDetail, type PlanKsbs,
 } from "@/features/audit/learner-log-pro-manual/lib/plan-api";
 
@@ -226,7 +226,35 @@ function PlanBody({ data, member, activeMonth, onMonth, refresh }: {
             },
       });
       warnSigned(result.signed_warnings);
-      await refreshMatrix();
+      // The write is durable at this point — paint the cell instantly and
+      // let the full matrix refetch true things up in the background, so a
+      // run of quick done-clicks never queues behind Neon round trips.
+      const optimistic = done
+        ? {
+            status: "completed",
+            actual_hours: suggestion?.actual_hours ?? activity.planned_hours,
+            attendance_status: activity.category === "attendance" ? "attended" : null,
+            completion_date: suggestion?.date ?? activity.planned_date,
+            rejected: false,
+            suggestion_accepted: Boolean(suggestion),
+          }
+        : {
+            status: "not_started",
+            actual_hours: 0,
+            attendance_status: activity.category === "attendance" ? "absent" : null,
+            completion_date: null,
+            rejected: false,
+            suggestion_accepted: false,
+          };
+      queryClient.setQueryData(["plan-matrix", data.id, activeMonth], (current) => {
+        if (!current) return current;
+        const key = `${member.aptem_id}:${activity.activity_key}`;
+        return {
+          ...current,
+          cells: { ...current.cells, [key]: { ...(current.cells?.[key] ?? {}), progress: optimistic } },
+        };
+      });
+      void refreshMatrix();
     } catch (cause) {
       fail("Could not save", cause);
     }
@@ -313,68 +341,6 @@ function PlanBody({ data, member, activeMonth, onMonth, refresh }: {
     }
   }
 
-  async function editActivity(activity: PlanActivity) {
-    const cell = matrixCells[`${member.aptem_id}:${activity.activity_key}`];
-    const progress = cell?.progress && !cell.progress.rejected ? cell.progress : null;
-    const currentActual = progress?.actual_hours != null ? String(Number(progress.actual_hours)) : "";
-    const { value: formValues } = await Swal.fire({
-      title: "Edit activity",
-      html:
-        `<input id="plan-edit-title" class="swal2-input" style="width:85%" value="${esc(activity.title)}" placeholder="Title (the lecture)">` +
-        `<input id="plan-edit-subtitle" class="swal2-input" style="width:85%" value="${esc(activity.subtitle ?? "")}" placeholder="Subtitle (the module)">` +
-        `<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">` +
-        `<label style="font-size:11px;color:#64748b;text-transform:uppercase">Planned h<input id="plan-edit-hours" type="number" min="0" max="50" step="0.25" class="swal2-input" style="width:110px;margin:4px 0 0" value="${esc(activity.planned_hours)}"></label>` +
-        `<label style="font-size:11px;color:#64748b;text-transform:uppercase">Actual h (yours)<input id="plan-edit-actual" type="number" min="0" max="50" step="0.25" class="swal2-input" style="width:110px;margin:4px 0 0" value="${esc(currentActual)}" placeholder="—"></label>` +
-        `<label style="font-size:11px;color:#64748b;text-transform:uppercase">Date<input id="plan-edit-date" type="date" class="swal2-input" style="width:150px;margin:4px 0 0" value="${esc(activity.planned_date ?? "")}"></label>` +
-        `</div>`,
-      focusConfirm: false, showCancelButton: true, confirmButtonText: "Save",
-      preConfirm: () => ({
-        title: (document.getElementById("plan-edit-title") as HTMLInputElement).value,
-        subtitle: (document.getElementById("plan-edit-subtitle") as HTMLInputElement).value || null,
-        planned_hours: Number((document.getElementById("plan-edit-hours") as HTMLInputElement).value),
-        planned_date: (document.getElementById("plan-edit-date") as HTMLInputElement).value || null,
-        actual_raw: (document.getElementById("plan-edit-actual") as HTMLInputElement).value.trim(),
-      }),
-    });
-    if (!formValues) return;
-    const { actual_raw: actualRaw, ...structural } = formValues;
-    try {
-      const result = await patchPlanActivity(activity.activity_key, structural);
-      warnSigned(result.signed_warnings);
-      // The learner's OWN hours: empty leaves the progress untouched, a
-      // number confirms completion with those hours (0 = back to not done).
-      if (actualRaw !== "" && actualRaw !== currentActual) {
-        const actualNumber = Number(actualRaw);
-        if (Number.isFinite(actualNumber) && actualNumber >= 0 && actualNumber <= 50) {
-          const progressResult = await savePlanProgress({
-            aptem_id: member.aptem_id,
-            activity_key: activity.activity_key,
-            patch: actualNumber > 0
-              ? {
-                  status: "completed",
-                  actual_hours: actualNumber,
-                  completion_date: progress?.completion_date ?? structural.planned_date ?? activity.planned_date,
-                  ...(activity.category === "attendance" ? { attendance_status: "attended" as const } : {}),
-                }
-              : {
-                  status: "not_started",
-                  actual_hours: 0,
-                  ...(activity.category === "attendance" ? { attendance_status: "absent" as const } : {}),
-                },
-          });
-          warnSigned(progressResult.signed_warnings);
-        } else {
-          void Swal.fire({ icon: "error", title: "Check the actual hours", text: "Actual hours must be between 0 and 50 — the other changes were saved." });
-        }
-      }
-      await refresh();
-      await refreshMatrix();
-      toast("Activity updated");
-    } catch (cause) {
-      fail("Could not update the activity", cause);
-    }
-  }
-
   return (
     <div className="space-y-5 px-7 py-6">
       <div className="flex flex-wrap items-center gap-2">
@@ -409,90 +375,25 @@ function PlanBody({ data, member, activeMonth, onMonth, refresh }: {
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
-                    <ActivityTableHeader dark />
+                    <PlanTableHeader />
                   </TableHeader>
                   <TableBody>
-                    {weekActivities.map((activity) => {
-                      const cell = matrixCells[`${member.aptem_id}:${activity.activity_key}`];
-                      const progress = cell?.progress && !cell.progress.rejected ? cell.progress : null;
-                      const suggestion = cell?.suggestion;
-                      const done = progress?.status === "completed";
-                      const notAccepted = progress?.status === "not_accepted";
-                      const absent = activity.category === "attendance" && progress?.attendance_status === "absent";
-                      const suggestedDone = !progress && suggestion && (suggestion.completed || suggestion.attended);
-                      // Same display contract as the classic activity table:
-                      // attendance shows attended/not attended, everything else
-                      // "input" once actual hours exist. Ghost = suggestion.
-                      const actual = progress?.actual_hours != null
-                        ? Number(progress.actual_hours)
-                        : suggestedDone && suggestion?.actual_hours != null ? Number(suggestion.actual_hours) : 0;
-                      const timestampDisplay = activity.category === "attendance"
-                        ? (progress
-                          ? (progress.attendance_status === "absent" ? "not attended" : "attended")
-                          : suggestedDone ? "attended" : "—")
-                        : actual > 0 ? "input" : "—";
-                      const ghost = !progress && Boolean(suggestedDone);
-                      const ksbCount = (activity.ksbs?.K?.length ?? 0) + (activity.ksbs?.S?.length ?? 0) + (activity.ksbs?.B?.length ?? 0);
-                      return (
-                        <TableRow key={activity.activity_key}>
-                          <TableCell className="max-w-44 truncate pl-7 font-mono text-xs" title={`plan:${activity.activity_key}`}>
-                            plan:{activity.activity_key.slice(0, 8)}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
-                            {(done || notAccepted ? progress?.completion_date : null) ?? activity.planned_date ?? "—"}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-sm font-medium">{member.name ?? member.aptem_id}</TableCell>
-                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{month.label}</TableCell>
-                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{activity.category}</TableCell>
-                          <TableCell className="min-w-64 max-w-[38rem] text-sm">
-                            <p className="font-medium text-foreground">{activity.title}</p>
-                            {activity.subtitle ? <p className="mt-1 text-xs text-muted-foreground">{activity.subtitle}</p> : null}
-                            {(done || suggestedDone || notAccepted || absent) && (
-                              <div className="mt-1.5 flex flex-wrap gap-1.5">
-                                {done ? <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success">Activity complete</span> : null}
-                                {suggestedDone ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Suggested from data — confirm it</span> : null}
-                                {notAccepted ? <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive">Not accepted</span> : null}
-                                {absent ? <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive">Absent</span> : null}
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell className="whitespace-nowrap text-center font-mono text-xs">
-                            <button
-                              type="button"
-                              onClick={() => void editStatus(activity)}
-                              title="Change the status (attended / makeup / not accepted / clear)"
-                              className={`rounded px-1.5 py-0.5 transition-colors hover:bg-secondary ${ghost ? "text-amber-600" : "text-muted-foreground"}`}
-                            >
-                              {timestampDisplay}
-                            </button>
-                          </TableCell>
-                          <TableCell className="text-right font-mono text-sm">{activity.planned_hours}</TableCell>
-                          <TableCell className={`text-right font-mono text-sm ${actual > 0 ? (ghost ? "text-amber-600" : "text-success") : "text-muted-foreground"}`}>
-                            {actual > 0 ? actual : "—"}
-                          </TableCell>
-                          <TableCell className="pr-7 text-right">
-                            <div className="flex justify-end gap-1">
-                              {done || notAccepted || absent ? (
-                                <button type="button" onClick={() => void quickSet(activity, false)} className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-secondary" title="Back to not done">undo</button>
-                              ) : (
-                                <button type="button" onClick={() => void quickSet(activity, true)} className="rounded-md border border-success/40 bg-success/10 px-2 py-1 text-[11px] font-semibold text-success hover:bg-success/20" title={suggestedDone ? "Confirm the suggested completion" : "Mark as done"}>
-                                  {suggestedDone ? "confirm" : "done"}
-                                </button>
-                              )}
-                              {(activity.material_ref ?? "").startsWith("asg:") && (
-                                <button type="button" title="Submitted documents" onClick={() => setEvidenceFor(activity)} className="rounded-md border border-border p-1.5 hover:bg-secondary"><FileText className="h-3.5 w-3.5" /></button>
-                              )}
-                              <button type="button" title="KSBs" onClick={() => setKsbFor(activity)} className="rounded-md border border-border p-1.5 hover:bg-secondary">
-                                <Tags className="h-3.5 w-3.5" />
-                                {ksbCount > 0 && <span className="ml-0.5 align-middle text-[10px] font-semibold">{ksbCount}</span>}
-                              </button>
-                              <button type="button" title="Edit" onClick={() => void editActivity(activity)} className="rounded-md border border-border p-1.5 hover:bg-secondary" aria-label="Edit activity"><Pencil className="h-3.5 w-3.5" /></button>
-                              <button type="button" title="Remove" onClick={() => void exclude(activity)} className="rounded-md border border-destructive/30 p-1.5 text-destructive hover:bg-destructive/10" aria-label="Remove activity"><Trash2 className="h-3.5 w-3.5" /></button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
+                    {weekActivities.map((activity) => (
+                      <PlanActivityRow
+                        key={activity.activity_key}
+                        activity={activity}
+                        member={member}
+                        monthLabel={month.label}
+                        planId={data.id}
+                        cell={matrixCells[`${member.aptem_id}:${activity.activity_key}`]}
+                        onQuickDone={() => quickSet(activity, true)}
+                        onEditStatus={() => editStatus(activity)}
+                        onKsb={() => setKsbFor(activity)}
+                        onDocs={() => setEvidenceFor(activity)}
+                        onRemove={() => exclude(activity)}
+                        refreshAll={async () => { await Promise.all([refresh(), refreshMatrix()]); }}
+                      />
+                    ))}
                   </TableBody>
                 </Table>
               </div>
@@ -520,6 +421,488 @@ function PlanBody({ data, member, activeMonth, onMonth, refresh }: {
       )}
       {evidenceFor && <AssignmentEvidenceModal data={data} activity={evidenceFor} onClose={() => setEvidenceFor(null)} />}
     </div>
+  );
+}
+
+// The classic activity-table header plus a dedicated Status column — the
+// chips live there so they never stretch the Activity cell's height.
+function PlanTableHeader() {
+  const th = "h-12 px-4 text-left align-middle label-caps text-white";
+  return (
+    <TableRow className="border-0 bg-[#182d48] hover:bg-[#182d48]">
+      <th className={`${th} pl-7`}>Activity ID</th>
+      <th className={th}>Date</th>
+      <th className={th}>Learner</th>
+      <th className={th}>Month</th>
+      <th className={th}>Category</th>
+      <th className={th}>Activity</th>
+      <th className={th}>Status</th>
+      <th className="h-12 px-4 text-center align-middle label-caps text-white">Timestamp</th>
+      <th className="h-12 px-4 text-right align-middle label-caps text-white">Planned</th>
+      <th className="h-12 px-4 text-right align-middle label-caps text-white">Actual</th>
+      <th className="h-12 px-4 pr-7 text-right align-middle label-caps text-white">Actions</th>
+    </TableRow>
+  );
+}
+
+// The learner's quiz attempt, rendered inline (score + every question with
+// their answer marked right/wrong).
+function QuizAttemptView({ attempt, state, loading }) {
+  if (loading) return <p className="py-3 text-center text-xs text-muted-foreground">Loading the quiz…</p>;
+  if (!attempt) {
+    return <p className="py-3 text-center text-xs text-muted-foreground">{state === "not_attempted" ? "Not attempted yet — the learner has not taken this quiz." : "No quiz data."}</p>;
+  }
+  const questions = attempt.quiz_body?.questions ?? [];
+  return (
+    <>
+      <p className="mb-2 text-sm font-semibold text-foreground">
+        Score {attempt.score != null ? Math.round(attempt.score) : "—"}{attempt.maximum_score ? ` / ${Math.round(attempt.maximum_score)}` : ""}
+        <span className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${attempt.status === "passed" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}>{attempt.status}</span>
+        {attempt.attempt_number ? <span className="ml-2 text-xs font-normal text-muted-foreground">attempt {attempt.attempt_number}</span> : null}
+      </p>
+      <ol className="space-y-2">
+        {questions.map((question) => (
+          <li key={question.question_id ?? question.question_order} className="border-t border-border pt-2 text-sm">
+            <p className="font-medium text-foreground">
+              <span className={`mr-1 font-bold ${question.is_correct ? "text-success" : "text-destructive"}`}>{question.is_correct ? "✓" : "✗"}</span>
+              {question.question_order}. {question.question_text}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Answer: {(question.learner_selected_answers ?? []).join(", ") || "—"}
+            </p>
+            {!question.is_correct && (question.correct_answers ?? []).length > 0 && (
+              <p className="mt-0.5 text-xs text-success">Correct: {question.correct_answers.join(", ")}</p>
+            )}
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
+// One bundled material: its own header (title + the learner's state), and on
+// open its reading iframe / quiz attempt — each piece shows ITS content.
+function BundlePiece({ planId, member, item }: {
+  planId: number; member: { aptem_id: number }; item: { ref: string; title: string };
+}) {
+  const [open, setOpen] = useState(false);
+  const [piece, setPiece] = useState<"content" | "quiz" | null | undefined>(undefined);
+  const activityId = Number(item.ref.slice(4));
+  const content = useQuery({
+    queryKey: ["plan-material-content", planId, activityId],
+    queryFn: async () => {
+      const response = await fetch(`/manual_audit_api/plan/pickers/material-content?group_id=${planId}&activity_id=${activityId}`);
+      if (!response.ok) throw new Error("Could not load the material.");
+      return response.json();
+    },
+    enabled: open,
+  });
+  const quiz = useQuery({
+    queryKey: ["plan-material-quiz", member.aptem_id, activityId],
+    queryFn: async () => {
+      const response = await fetch(`/manual_audit_api/ledger/quiz-attempt/?aptem_id=${member.aptem_id}&component_id=lms:${activityId}`);
+      if (!response.ok) throw new Error("Could not load the quiz.");
+      return response.json();
+    },
+    enabled: open && Boolean(content.data?.has_quiz),
+  });
+  useEffect(() => {
+    if (open && piece === undefined && content.data) {
+      setPiece(content.data.iframe_url ? "content" : content.data.has_quiz ? "quiz" : null);
+    }
+  }, [open, content.data, piece]);
+  const state = content.data;
+  return (
+    <div className="rounded-md border border-border bg-card">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-foreground hover:bg-secondary/60"
+        aria-expanded={open}
+      >
+        <BookOpenText className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate" title={item.title}>{item.title}</span>
+        {state?.status === "completed" ? <span className="rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-semibold text-success">Completed</span>
+          : state?.reading_viewed || state?.status === "reading_viewed" ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Viewed</span>
+          : null}
+        {state?.has_quiz && (
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${state.quiz_passed ? "bg-success/10 text-success" : state.quiz_attempted ? "bg-amber-100 text-amber-700" : "bg-[#fbf0df] text-[#8a5a10]"}`}>
+            quiz{state.quiz_score != null ? ` ${Math.round(state.quiz_score)}%` : ""}{state.quiz_passed ? " ✓" : ""}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-border p-3">
+          {content.isLoading && <p className="py-2 text-center text-xs text-muted-foreground">Loading…</p>}
+          {content.data?.iframe_url && (
+            <button
+              type="button"
+              onClick={() => setPiece(piece === "content" ? null : "content")}
+              className={`flex w-full items-center gap-2 rounded-md border px-3 py-1.5 text-left text-xs font-semibold transition-colors ${piece === "content" ? "border-[#182d48] bg-[#eef3f8] text-[#182d48]" : "border-border bg-card text-foreground hover:bg-secondary"}`}
+            >
+              Reading <span className="ml-auto font-normal text-muted-foreground">{piece === "content" ? "▲" : "▼"}</span>
+            </button>
+          )}
+          {piece === "content" && content.data?.iframe_url && (
+            <iframe src={toGoogleEmbedUrl(content.data.iframe_url)} title={item.title} className="h-[70vh] w-full rounded-md border border-border bg-card" allowFullScreen />
+          )}
+          {content.data?.has_quiz && (
+            <button
+              type="button"
+              onClick={() => setPiece(piece === "quiz" ? null : "quiz")}
+              className={`flex w-full items-center gap-2 rounded-md border px-3 py-1.5 text-left text-xs font-semibold transition-colors ${piece === "quiz" ? "border-[#8a5a10] bg-[#fbf0df] text-[#8a5a10]" : "border-border bg-card text-foreground hover:bg-secondary"}`}
+            >
+              Quiz <span className="ml-auto font-normal text-muted-foreground">{piece === "quiz" ? "▲" : "▼"}</span>
+            </button>
+          )}
+          {piece === "quiz" && content.data?.has_quiz && (
+            <div className="rounded-md border border-border bg-card px-4 py-3">
+              <QuizAttemptView attempt={quiz.data?.attempt ?? null} state={quiz.data?.state} loading={quiz.isLoading} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The row's inline detail. Bundles unfold to their grouped materials stacked
+// in one cell; single LMS rows unfold to Reading + Quiz directly.
+function PlanRowExpansion({ activity, member, planId }: {
+  activity: PlanActivity; member: { aptem_id: number }; planId: number;
+}) {
+  const isBundle = (activity.bundle_refs?.length ?? 0) > 0;
+  // undefined = not initialised yet (auto-open runs once); null = the user
+  // closed everything on purpose — the auto-open must NOT fight that.
+  const [piece, setPiece] = useState<"content" | "quiz" | null | undefined>(undefined);
+  const detail = useQuery({
+    queryKey: ["plan-activity-detail", activity.activity_key, member.aptem_id],
+    queryFn: async () => {
+      const response = await fetch(`/manual_audit_api/ledger/activity/?activity_id=plan:${activity.activity_key}&aptem_id=${member.aptem_id}`);
+      if (!response.ok) throw new Error("Could not load the activity content.");
+      return response.json();
+    },
+    enabled: !isBundle,
+  });
+  const quiz = useQuery({
+    queryKey: ["plan-activity-quiz", activity.activity_key, member.aptem_id],
+    queryFn: async () => {
+      const response = await fetch(`/manual_audit_api/ledger/quiz-attempt/?aptem_id=${member.aptem_id}&component_id=plan:${activity.activity_key}`);
+      if (!response.ok) throw new Error("Could not load the quiz.");
+      return response.json();
+    },
+    enabled: !isBundle && Boolean(detail.data?.has_quiz),
+  });
+  // Open the first available piece once, when the detail first arrives.
+  useEffect(() => {
+    if (!isBundle && piece === undefined && detail.data) {
+      setPiece(detail.data.iframe_url ? "content" : detail.data.has_quiz ? "quiz" : null);
+    }
+  }, [detail.data, piece, isBundle]);
+
+  if (isBundle) {
+    return (
+      <div className="space-y-2 rounded-lg border border-border bg-[#f7f9fc] p-4">
+        {(activity.bundle_refs ?? []).map((item) => (
+          <BundlePiece key={item.ref} planId={planId} member={member} item={item} />
+        ))}
+      </div>
+    );
+  }
+
+  const contentLabel = activity.category === "video" ? "Video" : activity.category === "audio" ? "Audio" : "Reading";
+  const attempt = quiz.data?.attempt ?? null;
+
+  return (
+    <div className="rounded-lg border border-border bg-[#f7f9fc] p-4">
+      {detail.isLoading && <p className="py-4 text-center text-xs text-muted-foreground">Loading the content…</p>}
+      {detail.isError && <p className="py-4 text-center text-xs text-destructive">{detail.error instanceof Error ? detail.error.message : "Could not load."}</p>}
+      {detail.data && (
+        <div className="space-y-2">
+          {detail.data.iframe_url && (
+            <button
+              type="button"
+              onClick={() => setPiece(piece === "content" ? null : "content")}
+              className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm font-semibold transition-colors ${piece === "content" ? "border-[#182d48] bg-[#eef3f8] text-[#182d48]" : "border-border bg-card text-foreground hover:bg-secondary"}`}
+            >
+              <BookOpenText className="h-4 w-4" /> {contentLabel}
+              <span className="ml-auto text-xs font-normal text-muted-foreground">{piece === "content" ? "▲" : "▼"}</span>
+            </button>
+          )}
+          {piece === "content" && detail.data.iframe_url && (
+            <iframe src={toGoogleEmbedUrl(detail.data.iframe_url)} title={activity.title} className="h-[70vh] w-full rounded-md border border-border bg-card" allowFullScreen />
+          )}
+
+          {detail.data.has_quiz && (
+            <button
+              type="button"
+              onClick={() => setPiece(piece === "quiz" ? null : "quiz")}
+              className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm font-semibold transition-colors ${piece === "quiz" ? "border-[#8a5a10] bg-[#fbf0df] text-[#8a5a10]" : "border-border bg-card text-foreground hover:bg-secondary"}`}
+            >
+              <ListChecks className="h-4 w-4" /> Quiz
+              {attempt ? (
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${attempt.status === "passed" ? "bg-success/10 text-success" : "bg-amber-100 text-amber-700"}`}>
+                  {attempt.score != null ? `${Math.round(attempt.score)}%` : attempt.status}{attempt.status === "passed" ? " ✓" : ""}
+                </span>
+              ) : quiz.data?.state === "not_attempted" ? (
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">not attempted</span>
+              ) : null}
+              <span className="ml-auto text-xs font-normal text-muted-foreground">{piece === "quiz" ? "▲" : "▼"}</span>
+            </button>
+          )}
+          {piece === "quiz" && detail.data.has_quiz && (
+            <div className="rounded-md border border-border bg-card px-4 py-3">
+              <QuizAttemptView attempt={attempt} state={quiz.data?.state} loading={quiz.isLoading} />
+            </div>
+          )}
+
+          {!detail.data.iframe_url && !detail.data.has_quiz && (
+            <p className="py-3 text-center text-xs text-muted-foreground">No embeddable content on this row.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One plan activity as a classic activity-log table row. The pencil flips
+// the WHOLE row into inputs (date / title / subtitle / planned / actual) —
+// the single edit surface. Once a row is done there is no quick undo action;
+// status changes go through the Timestamp menu or the actual-hours field.
+function PlanActivityRow({ activity, member, monthLabel, cell, planId, onQuickDone, onEditStatus, onKsb, onDocs, onRemove, refreshAll }: {
+  activity: PlanActivity;
+  member: { aptem_id: number; name: string | null };
+  monthLabel: string;
+  planId: number;
+  cell: { progress?: Record<string, unknown>; suggestion?: Record<string, unknown> } | undefined;
+  onQuickDone: () => void;
+  onEditStatus: () => void;
+  onKsb: () => void;
+  onDocs: () => void;
+  onRemove: () => void;
+  refreshAll: () => Promise<void>;
+}) {
+  const progress = cell?.progress && !cell.progress.rejected ? cell.progress : null;
+  const suggestion = cell?.suggestion;
+  const done = progress?.status === "completed";
+  const notAccepted = progress?.status === "not_accepted";
+  const absent = activity.category === "attendance" && progress?.attendance_status === "absent";
+  const suggestedDone = !progress && suggestion && (suggestion.completed || suggestion.attended);
+  // Same display contract as the classic activity table.
+  const actual = progress?.actual_hours != null
+    ? Number(progress.actual_hours)
+    : suggestedDone && suggestion?.actual_hours != null ? Number(suggestion.actual_hours) : 0;
+  const timestampDisplay = activity.category === "attendance"
+    ? (progress
+      ? (progress.attendance_status === "absent" ? "not attended" : "attended")
+      : suggestedDone ? "attended" : "—")
+    : actual > 0 ? "input" : "—";
+  const ghost = !progress && Boolean(suggestedDone);
+  const currentActual = progress?.actual_hours != null ? String(Number(progress.actual_hours)) : "";
+  const ksbCount = (activity.ksbs?.K?.length ?? 0) + (activity.ksbs?.S?.length ?? 0) + (activity.ksbs?.B?.length ?? 0);
+
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // Clicking the title unfolds the row: reading + quiz stacked in one cell.
+  const [expanded, setExpanded] = useState(false);
+  // Saving feedback for the one-click confirm: the button spins until the
+  // progress write lands, so the auditor SEES it saving.
+  const [confirming, setConfirming] = useState(false);
+  const [draft, setDraft] = useState(() => ({
+    title: activity.title,
+    subtitle: activity.subtitle ?? "",
+    date: activity.planned_date ?? "",
+    planned: String(activity.planned_hours),
+    actual: currentActual,
+  }));
+
+  async function handleQuickDone() {
+    setConfirming(true);
+    try {
+      await onQuickDone();
+    } finally {
+      setConfirming(false);
+    }
+  }
+  const rowInput = "h-8 rounded-md border border-border bg-card px-2 text-xs outline-none focus:border-primary";
+
+  function startEditing() {
+    setDraft({
+      title: activity.title,
+      subtitle: activity.subtitle ?? "",
+      date: activity.planned_date ?? "",
+      planned: String(activity.planned_hours),
+      actual: currentActual,
+    });
+    setEditing(true);
+  }
+
+  async function save() {
+    if (!draft.title.trim()) {
+      return void Swal.fire({ icon: "error", title: "Check the row", text: "Enter an activity name." });
+    }
+    const plannedNumber = Number(draft.planned);
+    if (!Number.isFinite(plannedNumber) || plannedNumber < 0 || plannedNumber > 50) {
+      return void Swal.fire({ icon: "error", title: "Check the row", text: "Planned hours must be between 0 and 50." });
+    }
+    const actualRaw = draft.actual.trim();
+    const actualNumber = Number(actualRaw);
+    if (actualRaw !== "" && (!Number.isFinite(actualNumber) || actualNumber < 0 || actualNumber > 50)) {
+      return void Swal.fire({ icon: "error", title: "Check the row", text: "Actual hours must be between 0 and 50." });
+    }
+    setBusy(true);
+    try {
+      const result = await patchPlanActivity(activity.activity_key, {
+        title: draft.title.trim(),
+        subtitle: draft.subtitle.trim() || null,
+        planned_hours: plannedNumber,
+        planned_date: draft.date || null,
+      });
+      warnSigned(result.signed_warnings);
+      // The learner's OWN hours: empty leaves the progress untouched, a
+      // number confirms completion with those hours (0 = deliberately not done).
+      if (actualRaw !== "" && actualRaw !== currentActual) {
+        const progressResult = await savePlanProgress({
+          aptem_id: member.aptem_id,
+          activity_key: activity.activity_key,
+          patch: actualNumber > 0
+            ? {
+                status: "completed",
+                actual_hours: actualNumber,
+                completion_date: progress?.completion_date ?? draft.date ?? activity.planned_date,
+                ...(activity.category === "attendance" ? { attendance_status: "attended" as const } : {}),
+              }
+            : {
+                status: "not_started",
+                actual_hours: 0,
+                ...(activity.category === "attendance" ? { attendance_status: "absent" as const } : {}),
+              },
+        });
+        warnSigned(progressResult.signed_warnings);
+      }
+      await refreshAll();
+      setEditing(false);
+      toast("Activity updated");
+    } catch (cause) {
+      fail("Could not update the activity", cause);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <TableRow className="bg-primary/5 hover:bg-primary/5">
+        <TableCell className="max-w-44 truncate pl-7 font-mono text-xs" title={`plan:${activity.activity_key}`}>
+          plan:{activity.activity_key.slice(0, 8)}
+        </TableCell>
+        <TableCell><input type="date" value={draft.date} onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))} className={`${rowInput} w-36`} /></TableCell>
+        <TableCell className="whitespace-nowrap text-sm font-medium">{member.name ?? member.aptem_id}</TableCell>
+        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{monthLabel}</TableCell>
+        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{activity.category}</TableCell>
+        <TableCell className="min-w-64 space-y-1">
+          <input value={draft.title} onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))} placeholder="Title (the lecture)" maxLength={500} className={`${rowInput} w-full min-w-56`} />
+          <input value={draft.subtitle} onChange={(e) => setDraft((d) => ({ ...d, subtitle: e.target.value }))} placeholder="Subtitle (the module)" maxLength={500} className={`${rowInput} w-full min-w-56`} />
+        </TableCell>
+        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">—</TableCell>
+        <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{timestampDisplay}</TableCell>
+        <TableCell><input type="number" min="0" max="50" step="0.25" value={draft.planned} onChange={(e) => setDraft((d) => ({ ...d, planned: e.target.value }))} className={`${rowInput} w-20 text-right`} title="Planned hours" /></TableCell>
+        <TableCell><input type="number" min="0" max="50" step="0.25" value={draft.actual} onChange={(e) => setDraft((d) => ({ ...d, actual: e.target.value }))} placeholder="—" className={`${rowInput} w-20 text-right`} title="Actual hours (yours) — empty leaves the status untouched" /></TableCell>
+        <TableCell className="pr-7 text-right">
+          <div className="flex justify-end gap-1">
+            <button type="button" onClick={() => void save()} disabled={busy} className="rounded-md bg-primary p-1.5 text-primary-foreground disabled:opacity-50" title="Save row" aria-label="Save activity"><Check className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={() => setEditing(false)} disabled={busy} className="rounded-md border border-border p-1.5 hover:bg-secondary disabled:opacity-50" title="Cancel" aria-label="Cancel editing"><X className="h-3.5 w-3.5" /></button>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
+
+  return (
+    <>
+    <TableRow>
+      <TableCell className="max-w-44 truncate pl-7 font-mono text-xs" title={`plan:${activity.activity_key}`}>
+        plan:{activity.activity_key.slice(0, 8)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
+        {(done || notAccepted ? progress?.completion_date : null) ?? activity.planned_date ?? "—"}
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-sm font-medium">{member.name ?? member.aptem_id}</TableCell>
+      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{monthLabel}</TableCell>
+      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{activity.category}</TableCell>
+      <TableCell className="min-w-64 max-w-[38rem] text-sm">
+        {/* The title unfolds the row in place: reading + quiz grouped in one
+            cell beneath it, each piece rendering its own iframe/content. */}
+        {((activity.material_ref ?? "").startsWith("lms:") || (activity.bundle_refs?.length ?? 0) > 0) ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="text-left font-medium text-foreground hover:text-primary hover:underline"
+            aria-expanded={expanded}
+          >
+            {activity.title} <span className="text-xs text-muted-foreground">{expanded ? "▲" : "▼"}</span>
+          </button>
+        ) : (
+          <p className="font-medium text-foreground">{activity.title}</p>
+        )}
+        {activity.subtitle ? <p className="mt-1 text-xs text-muted-foreground">{activity.subtitle}</p> : null}
+      </TableCell>
+      <TableCell className="whitespace-nowrap">
+        {done ? <span className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success">Complete</span>
+        : suggestedDone ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700" title="Suggested from data — confirm it">Suggested ✓?</span>
+        : notAccepted ? <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive">Not accepted</span>
+        : absent ? <span className="rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive">Absent</span>
+        : <span className="text-xs text-muted-foreground">—</span>}
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-center font-mono text-xs">
+        <button
+          type="button"
+          onClick={onEditStatus}
+          title="Change the status (attended / makeup / not accepted / clear)"
+          className={`rounded px-1.5 py-0.5 transition-colors hover:bg-secondary ${ghost ? "text-amber-600" : "text-muted-foreground"}`}
+        >
+          {timestampDisplay}
+        </button>
+      </TableCell>
+      <TableCell className="text-right font-mono text-sm">{activity.planned_hours}</TableCell>
+      <TableCell className={`text-right font-mono text-sm ${actual > 0 ? (ghost ? "text-amber-600" : "text-success") : "text-muted-foreground"}`}>
+        {actual > 0 ? actual : "—"}
+      </TableCell>
+      <TableCell className="pr-7 text-right">
+        <div className="flex justify-end gap-1">
+          {!progress && (
+            <button
+              type="button"
+              onClick={() => void handleQuickDone()}
+              disabled={confirming}
+              className="inline-flex items-center gap-1 rounded-md border border-success/40 bg-success/10 px-2 py-1 text-[11px] font-semibold text-success hover:bg-success/20 disabled:opacity-70"
+              title={suggestedDone ? "Confirm the suggested completion" : "Mark as done"}
+            >
+              {confirming && <LoaderCircle className="h-3 w-3 animate-spin" />}
+              {confirming ? "saving…" : suggestedDone ? "confirm" : "done"}
+            </button>
+          )}
+          {(activity.material_ref ?? "").startsWith("asg:") && (
+            <button type="button" title="Submitted documents" onClick={onDocs} className="rounded-md border border-border p-1.5 hover:bg-secondary"><FileText className="h-3.5 w-3.5" /></button>
+          )}
+          <button type="button" title="KSBs" onClick={onKsb} className="rounded-md border border-border p-1.5 hover:bg-secondary">
+            <Tags className="h-3.5 w-3.5" />
+            {ksbCount > 0 && <span className="ml-0.5 align-middle text-[10px] font-semibold">{ksbCount}</span>}
+          </button>
+          <button type="button" title="Edit the whole row" onClick={startEditing} className="rounded-md border border-border p-1.5 hover:bg-secondary" aria-label="Edit activity"><Pencil className="h-3.5 w-3.5" /></button>
+          <button type="button" title="Remove" onClick={onRemove} className="rounded-md border border-destructive/30 p-1.5 text-destructive hover:bg-destructive/10" aria-label="Remove activity"><Trash2 className="h-3.5 w-3.5" /></button>
+        </div>
+      </TableCell>
+    </TableRow>
+    {expanded && (
+      <TableRow className="hover:bg-transparent">
+        <TableCell colSpan={11} className="bg-[#fbfcfe] px-7 py-3">
+          <PlanRowExpansion activity={activity} member={member} planId={planId} />
+        </TableCell>
+      </TableRow>
+    )}
+    </>
   );
 }
 
@@ -606,7 +989,7 @@ function PickerModal({ data, month, weekSlot, kind, onClose, onDone, refresh }: 
     );
   }
   if (kind === "video" || kind === "reading+quiz" || kind === "audio") {
-    return <MaterialsPicker data={data} month={month} weekSlot={weekSlot} type={kind} saving={saving} onAdd={add} onClose={onClose} />;
+    return <CourseMaterialsPicker data={data} month={month} weekSlot={weekSlot} type={kind} saving={saving} onAdd={add} onClose={onClose} />;
   }
   if (kind === "assignment") {
     return <AssignmentPicker data={data} month={month} weekSlot={weekSlot} saving={saving} onAdd={add} onClose={onClose} />;
@@ -876,67 +1259,258 @@ function AttendancePicker({ data, month, weekSlot, saving, onAdd, refresh, onClo
   );
 }
 
-function MaterialsPicker({ data, month, weekSlot, type, saving, onAdd, onClose }) {
-  const [scope, setScope] = useState<"group" | "all">("group");
+// Enrolled courses -> pick a course -> its lectures laid out week by week
+// (the mirror has no section names, so weeks come from each material's date).
+// Selecting lectures adds them to the plan week the picker was opened from.
+function weekLabelOf(dateIso: string | null) {
+  if (!dateIso) return "Undated";
+  const d = new Date(`${dateIso}T00:00:00`);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back to Monday
+  return `Week of ${d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}`;
+}
+
+function materialStatusChip(item: CourseMaterial) {
+  if (item.status === "completed") return { label: "Completed", cls: "bg-success/10 text-success" };
+  if (item.quiz_passed) return { label: "Quiz passed", cls: "bg-success/10 text-success" };
+  if (item.quiz_attempted) return { label: "Quiz attempted", cls: "bg-amber-100 text-amber-700" };
+  if (item.reading_viewed || item.status === "reading_viewed") return { label: "Viewed", cls: "bg-amber-100 text-amber-700" };
+  if (item.video_completed) return { label: "Video completed", cls: "bg-success/10 text-success" };
+  return { label: "Not started", cls: "bg-muted text-muted-foreground" };
+}
+
+function CourseMaterialsPicker({ data, month, weekSlot, type, saving, onAdd, onClose }) {
+  const [course, setCourse] = useState<LmsCourse | null>(null);
+  const [typeFilter, setTypeFilter] = useState<string>(type);
   const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState<Record<string, MaterialOption>>({});
-  const materials = useQuery({
-    queryKey: ["plan-materials", data.id, type, scope, search],
-    queryFn: () => pickMaterials({ groupId: data.id, type, scope, search: search || undefined, limit: 60 }),
+  const [selected, setSelected] = useState<Record<string, CourseMaterial>>({});
+  const courses = useQuery({
+    queryKey: ["plan-lms-courses", data.id],
+    queryFn: () => pickLmsCourses(data.id),
   });
-  const items = materials.data?.items ?? [];
+  const materials = useQuery({
+    queryKey: ["plan-course-materials", data.id, course?.course_id],
+    queryFn: () => pickLmsCourseMaterials(data.id, course!.course_id),
+    enabled: course != null,
+  });
+
+  const needle = search.trim().toLowerCase();
+  const items = (materials.data?.items ?? []).filter(
+    (item) =>
+      (typeFilter === "all" || item.category === typeFilter)
+      && (!needle || item.title.toLowerCase().includes(needle) || (item.date ?? "").includes(needle)),
+  );
+  // Week sections in date order, exactly how the course page reads.
+  const weeks: Array<{ label: string; items: CourseMaterial[] }> = [];
+  for (const item of items) {
+    const label = weekLabelOf(item.date);
+    const last = weeks[weeks.length - 1];
+    if (last && last.label === label) last.items.push(item);
+    else weeks.push({ label, items: [item] });
+  }
   const chosen = Object.values(selected);
 
   return (
-    <Modal title={`${type === "video" ? "Videos / recordings" : type === "audio" ? "Audio" : "Reading + Quiz"} — Week ${weekSlot}`} onClose={onClose} wide>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="flex rounded-md border border-border">
-          {(["group", "all"] as const).map((value) => (
-            <button key={value} type="button" onClick={() => setScope(value)}
-              className={`px-3 py-1.5 text-xs font-semibold ${scope === value ? "bg-[#182d48] text-white" : "text-muted-foreground"}`}>
-              {value === "group" ? "This learner's materials" : "Full catalogue"}
-            </button>
-          ))}
-        </div>
-        <input className={`${field} max-w-xs`} placeholder="Search title…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <span className="flex-1" />
-        <Button size="sm" disabled={saving || chosen.length === 0} onClick={() => void onAdd(chosen.map((item) => ({
-          category: type,
-          title: item.title,
-          month_index: month.month_index,
-          week_slot: weekSlot,
-          material_ref: item.material_ref,
-          planned_hours: item.suggested_hours ?? 0,
-        })))}>Add {chosen.length || ""} selected</Button>
-      </div>
-      {materials.isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading materials…</p>}
-      <ul className="divide-y divide-border">
-        {items.map((item) => (
-          <li key={item.material_ref} className="flex items-center gap-3 py-2.5">
-            <input type="checkbox" checked={!!selected[item.material_ref]} onChange={(e) => setSelected((s) => {
-              const next = { ...s };
-              if (e.target.checked) next[item.material_ref] = item; else delete next[item.material_ref];
-              return next;
-            })} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-foreground">{item.title}</p>
-              <p className="font-mono text-xs text-muted-foreground">
-                lms:{item.activity_id}{item.suggested_hours ? ` · ~${item.suggested_hours} h` : ""}{scope === "group" ? (item.engaged_members > 0 ? " · seen by this learner" : " · not seen yet") : ""}
-              </p>
+    <Modal title={course ? `${course.name} — pick for Week ${weekSlot}` : `Enrolled courses — Week ${weekSlot}, ${month.label}`} onClose={onClose} wide>
+      {!course && (
+        <>
+          {courses.isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading the courses…</p>}
+          {!courses.isLoading && (courses.data?.items ?? []).length === 0 && (
+            <p className="py-8 text-center text-sm text-muted-foreground">This learner is not enrolled in any course.</p>
+          )}
+          <ul className="divide-y divide-border">
+            {(courses.data?.items ?? []).map((item) => (
+              <li key={item.course_id}>
+                <button
+                  type="button"
+                  onClick={() => { setCourse(item); setSelected({}); }}
+                  className="flex w-full items-center gap-3 px-2 py-3 text-left transition-colors hover:bg-secondary/60"
+                >
+                  <BookOpenText className="h-5 w-5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium text-foreground">{item.name}</span>
+                    <span className="text-xs text-muted-foreground">{item.materials} lectures</span>
+                  </span>
+                  <span className="text-xs font-semibold text-muted-foreground">Open →</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {course && (
+        <>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => { setCourse(null); setSelected({}); }}>
+              <ArrowLeft className="mr-1 h-3.5 w-3.5" /> Courses
+            </Button>
+            <div className="flex rounded-md border border-border">
+              {([["video", "Videos"], ["reading+quiz", "Reading+Quiz"], ["audio", "Audio"], ["all", "All"]] as const).map(([value, label]) => (
+                <button key={value} type="button" onClick={() => setTypeFilter(value)}
+                  className={`px-3 py-1.5 text-xs font-semibold transition-colors ${typeFilter === value ? "bg-[#182d48] text-white" : "text-muted-foreground hover:text-foreground"}`}>
+                  {label}
+                </button>
+              ))}
             </div>
-            <span className="flex gap-1">
-              {item.has_iframe && <span className="rounded bg-[#e5f3ef] px-1.5 py-0.5 text-[10px] font-semibold text-[#16856b]">iframe</span>}
-              {item.has_text && <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">text</span>}
-              {item.has_quiz && <span className="rounded bg-[#fbf0df] px-1.5 py-0.5 text-[10px] font-semibold text-[#8a5a10]">quiz</span>}
-            </span>
-          </li>
-        ))}
-      </ul>
+            <input className={`${field} max-w-56`} placeholder="Search lecture / date…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <span className="flex-1" />
+            <Button size="sm" disabled={saving || chosen.length === 0} onClick={() => {
+              // Reading+Quiz picks bundle into ONE row with ONE shared hours
+              // figure; videos/audio stay one row each.
+              const readingQuiz = chosen.filter((item) => item.category === "reading+quiz");
+              const rest = chosen.filter((item) => item.category !== "reading+quiz");
+              const activities = rest.map((item) => ({
+                category: item.category,
+                title: item.title,
+                month_index: month.month_index,
+                week_slot: weekSlot,
+                material_ref: item.material_ref,
+                planned_hours: item.suggested_hours ?? 0,
+              }));
+              if (readingQuiz.length === 1) {
+                const item = readingQuiz[0];
+                activities.push({
+                  category: "reading+quiz",
+                  title: item.title,
+                  month_index: month.month_index,
+                  week_slot: weekSlot,
+                  material_ref: item.material_ref,
+                  planned_hours: item.suggested_hours ?? 0,
+                });
+              } else if (readingQuiz.length > 1) {
+                activities.push({
+                  category: "reading+quiz",
+                  title: `Reading + Quiz (${readingQuiz.length})`,
+                  subtitle: course?.name ?? null,
+                  month_index: month.month_index,
+                  week_slot: weekSlot,
+                  material_ref: null,
+                  planned_hours: Math.round(readingQuiz.reduce((sum, item) => sum + (item.suggested_hours ?? 0), 0) * 100) / 100,
+                  bundle_refs: readingQuiz.map((item) => ({ ref: item.material_ref, title: item.title })),
+                });
+              }
+              void onAdd(activities);
+            }}>Add {chosen.length || ""} selected to Week {weekSlot}</Button>
+          </div>
+          {materials.isLoading && <p className="py-8 text-center text-sm text-muted-foreground">Loading the course…</p>}
+          {!materials.isLoading && items.length === 0 && (
+            <p className="py-8 text-center text-sm text-muted-foreground">Nothing here{typeFilter !== "all" ? " of this type — try the All filter" : ""}{needle ? " matching the search" : ""}.</p>
+          )}
+          <div className="max-h-[60vh] space-y-4 overflow-auto">
+            {weeks.map((week) => {
+              const weekAllSelected = week.items.every((item) => selected[item.material_ref]);
+              return (
+              <div key={week.label} className="rounded-lg border border-border">
+                <label className="flex cursor-pointer items-center gap-2 border-b border-border bg-[#eef3f8] px-4 py-2 text-xs font-semibold uppercase tracking-wider text-[#182d48]">
+                  {/* One tick takes the whole week's lectures. */}
+                  <input
+                    type="checkbox"
+                    checked={weekAllSelected}
+                    onChange={(e) => setSelected((current) => {
+                      const next = { ...current };
+                      for (const item of week.items) {
+                        if (e.target.checked) next[item.material_ref] = item;
+                        else delete next[item.material_ref];
+                      }
+                      return next;
+                    })}
+                  />
+                  {week.label}
+                  <span className="font-normal normal-case text-muted-foreground">({week.items.length})</span>
+                </label>
+                <ul className="divide-y divide-border">
+                  {week.items.map((item) => {
+                    const chip = materialStatusChip(item);
+                    return (
+                      <li key={item.material_ref} className="flex items-center gap-3 px-4 py-2.5">
+                        <input type="checkbox" checked={!!selected[item.material_ref]} onChange={(e) => setSelected((current) => {
+                          const next = { ...current };
+                          if (e.target.checked) next[item.material_ref] = item; else delete next[item.material_ref];
+                          return next;
+                        })} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-foreground" title={item.title}>{item.title}</p>
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {item.date ?? ""}{item.suggested_hours ? ` · ~${item.suggested_hours} h` : ""}
+                          </p>
+                        </div>
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${categoryChip(item.category)}`}>{item.category}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${chip.cls}`}>{chip.label}</span>
+                        <span className="flex gap-1">
+                          {item.has_iframe && <span className="rounded bg-[#e5f3ef] px-1.5 py-0.5 text-[10px] font-semibold text-[#16856b]">iframe</span>}
+                          {item.has_text && <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">text</span>}
+                          {/* The LMS quiz is merged into its reading row — the
+                              badge carries the learner's own result. */}
+                          {item.has_quiz && (
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+                              item.quiz_passed ? "bg-success/10 text-success"
+                              : item.quiz_attempted ? "bg-amber-100 text-amber-700"
+                              : "bg-[#fbf0df] text-[#8a5a10]"
+                            }`}>
+                              quiz{item.quiz_score != null ? ` ${Math.round(item.quiz_score)}%` : ""}{item.quiz_passed ? " ✓" : item.quiz_attempted ? "" : " —"}
+                            </span>
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            Tick the lectures (or a whole week), then Add — each becomes one row in Week {weekSlot}; clicking a row's name afterwards opens its iframe page like the automatic system.
+          </p>
+        </>
+      )}
     </Modal>
   );
 }
 
+// The learner's Azure files for one assignment, previewable inline (same
+// document endpoint the automatic system previews through).
+function AssignmentFiles({ data, nameKey }: { data: PlanGroupDetail; nameKey: string }) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const evidence = useQuery({
+    queryKey: ["plan-asg-evidence", data.id, nameKey],
+    queryFn: () => pickAssignmentEvidence(data.id, nameKey),
+    enabled: Boolean(nameKey),
+  });
+  const docs = (evidence.data?.items ?? []).flatMap((learner) => learner.documents);
+  return (
+    <div className="mt-2 rounded-lg border border-border bg-[#f7f9fc] p-3">
+      {evidence.isLoading && <p className="py-2 text-center text-xs text-muted-foreground">Loading the files…</p>}
+      {!evidence.isLoading && docs.length === 0 && <p className="py-2 text-center text-xs text-muted-foreground">No submitted document fetched yet.</p>}
+      <ul className="space-y-1">
+        {docs.map((doc) => (
+          <li key={doc.evidence_id} className="flex flex-wrap items-center gap-2 text-xs">
+            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate text-foreground">{doc.name ?? `Evidence ${doc.evidence_id}`}</span>
+            <span className="text-muted-foreground">{doc.status ?? ""} {doc.submission_date ? `· ${doc.submission_date}` : ""}</span>
+            {doc.open_url ? (
+              <button
+                type="button"
+                onClick={() => setPreviewUrl(previewUrl === doc.open_url ? null : doc.open_url)}
+                className={`rounded-md border px-2 py-0.5 font-semibold ${previewUrl === doc.open_url ? "border-[#182d48] bg-[#182d48] text-white" : "border-border text-foreground hover:bg-secondary"}`}
+              >
+                {previewUrl === doc.open_url ? "Hide preview" : "Preview"}
+              </button>
+            ) : doc.aptem_url ? (
+              <a href={doc.aptem_url} target="_blank" rel="noreferrer" className="rounded-md border border-border px-2 py-0.5 text-muted-foreground hover:bg-secondary">Open externally</a>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {previewUrl && (
+        <iframe src={previewUrl} title="Assignment document preview" className="mt-3 h-96 w-full rounded-md border border-border bg-card" />
+      )}
+    </div>
+  );
+}
+
 function AssignmentPicker({ data, month, weekSlot, saving, onAdd, onClose }) {
+  const [filesFor, setFilesFor] = useState<string | null>(null);
   const assignments = useQuery({ queryKey: ["plan-assignments", data.id], queryFn: () => pickAssignments(data.id) });
   const items = assignments.data?.items ?? [];
   const monthAssignments = data.activities.filter((a) => a.included && a.category === "assignment" && a.month_index === month.month_index);
@@ -975,17 +1549,23 @@ function AssignmentPicker({ data, month, weekSlot, saving, onAdd, onClose }) {
       {!assignments.isLoading && items.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No assignments found for this learner.</p>}
       <ul className="divide-y divide-border">
         {items.map((item) => (
-          <li key={item.name_key} className="flex items-center gap-3 py-2.5">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
-              <p className="text-xs text-muted-foreground">
-                {Object.entries(item.month_counts).slice(0, 4).map(([m, c]) => `due ${m}`).join(" · ") || "no due month"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {Object.entries(item.status_counts).map(([status, count]) => `${status}${count > 1 ? `: ${count}` : ""}`).join(" · ")}
-              </p>
+          <li key={item.name_key} className="py-2.5">
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-foreground">{item.name}</p>
+                <p className="text-xs text-muted-foreground">
+                  {Object.entries(item.month_counts).slice(0, 4).map(([m, c]) => `due ${m}`).join(" · ") || "no due month"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {Object.entries(item.status_counts).map(([status, count]) => `${status}${count > 1 ? `: ${count}` : ""}`).join(" · ")}
+                </p>
+              </div>
+              <Button size="sm" variant="outline" onClick={() => setFilesFor(filesFor === item.name_key ? null : item.name_key)}>
+                <FileText className="mr-1 h-3.5 w-3.5" /> {filesFor === item.name_key ? "Hide files" : "Files"}
+              </Button>
+              <Button size="sm" variant="outline" disabled={saving} onClick={() => void pick(item)}>Add</Button>
             </div>
-            <Button size="sm" variant="outline" disabled={saving} onClick={() => void pick(item)}>Add</Button>
+            {filesFor === item.name_key && <AssignmentFiles data={data} nameKey={item.name_key} />}
           </li>
         ))}
       </ul>
