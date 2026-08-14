@@ -16,6 +16,7 @@ import {
   formatDurationMinutes,
   getImportCandidates,
   type ImportActivityCandidate,
+  type ImportAssignmentCandidate,
   type ImportAttendanceCandidate,
   type ManualCategory,
 } from "@/features/audit/learner-log-pro-copy/lib/manualApi";
@@ -37,9 +38,12 @@ type Candidate = {
   activity_id?: number;
   paired?: boolean;
   pair?: ImportActivityCandidate["pair"];
+  // Aptem assignments carry the source's own hours into the staged row.
+  planned_hours?: number;
+  actual_hours?: number;
 };
 
-const GROUP_ORDER = ["attendance", "video", "audio", "reading+quiz"];
+const GROUP_ORDER = ["attendance", "video", "audio", "reading+quiz", "assignment"];
 const ATTENDANCE_SESSION_HOURS = 2.5;
 
 function weekLabelOf(dateIso: string | null) {
@@ -81,6 +85,25 @@ function fromAttendance(item: ImportAttendanceCandidate): Candidate {
   };
 }
 
+function fromAssignment(item: ImportAssignmentCandidate): Candidate {
+  const completed = item.completion.state === "completed";
+  return {
+    source_ref: item.source_ref,
+    category: "assignment",
+    group_name: item.group_name || "Assignments",
+    title: item.title,
+    activity_date: item.activity_date,
+    duration_minutes: null,
+    timestamp_label: "input",
+    completion_note: item.completion.state,
+    planned_hours: item.planned_hours,
+    actual_hours: item.actual_hours,
+    badge: completed
+      ? { text: "Completed", tone: "success" }
+      : { text: item.status || "Not completed", tone: "warning" },
+  };
+}
+
 function fromActivity(item: ImportActivityCandidate): Candidate {
   const completed = item.completion.state === "completed";
   return {
@@ -107,7 +130,7 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
   month: string;
   monthLabel: string;
   existingRefs: Set<string>;
-  initialCategory?: "attendance" | "video" | "reading+quiz" | "audio" | "all";
+  initialCategory?: "attendance" | "video" | "reading+quiz" | "audio" | "assignment" | "all";
   onRetrieve: (rows: DraftRow[]) => void;
   onClose: () => void;
 }) {
@@ -123,6 +146,7 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
     const all = [
       ...data.attendance.map(fromAttendance),
       ...data.activities.map(fromActivity),
+      ...(data.assignments ?? []).map(fromAssignment),
     ];
     const grouped = new Map<string, Candidate[]>();
     for (const category of GROUP_ORDER) grouped.set(category, []);
@@ -147,8 +171,10 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
   }, [existingRefs, candidatesQuery.data]);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [selectedCourse, setSelectedCourse] = useState<number | "attendance" | null>(initialCategory === "attendance" ? "attendance" : null);
-  const [typeFilter, setTypeFilter] = useState(initialCategory === "attendance" ? "all" : initialCategory);
+  const [selectedCourse, setSelectedCourse] = useState<number | "attendance" | "assignments" | null>(
+    initialCategory === "attendance" ? "attendance" : initialCategory === "assignment" ? "assignments" : null,
+  );
+  const [typeFilter, setTypeFilter] = useState(initialCategory === "attendance" || initialCategory === "assignment" ? "all" : initialCategory);
   const [search, setSearch] = useState("");
   const [pairSelection, setPairSelection] = useState<Candidate[]>([]);
   const [savingPair, setSavingPair] = useState(false);
@@ -156,8 +182,8 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
   useEffect(() => {
     setSelected(new Set());
     setPairSelection([]);
-    setSelectedCourse(initialCategory === "attendance" ? "attendance" : null);
-    setTypeFilter(initialCategory === "attendance" ? "all" : initialCategory);
+    setSelectedCourse(initialCategory === "attendance" ? "attendance" : initialCategory === "assignment" ? "assignments" : null);
+    setTypeFilter(initialCategory === "attendance" || initialCategory === "assignment" ? "all" : initialCategory);
   }, [candidatesQuery.data, initialCategory]);
 
   const courses = useMemo(() => {
@@ -172,6 +198,13 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
 
   const courseCandidates = useMemo(() => {
     if (selectedCourse === "attendance") return candidatesQuery.data?.attendance.map(fromAttendance) ?? [];
+    if (selectedCourse === "assignments") {
+      const needle = search.trim().toLowerCase();
+      return (candidatesQuery.data?.assignments ?? [])
+        .map(fromAssignment)
+        .filter((item) => !needle || item.title.toLowerCase().includes(needle) || (item.activity_date ?? "").includes(needle))
+        .sort((left, right) => (left.activity_date || "9999-12-31").localeCompare(right.activity_date || "9999-12-31") || left.title.localeCompare(right.title));
+    }
     if (typeof selectedCourse !== "number") return [];
     const needle = search.trim().toLowerCase();
     return (candidatesQuery.data?.activities ?? [])
@@ -275,12 +308,15 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
         source_ref: candidate.source_ref,
         title: candidate.title,
         activity_date: candidate.activity_date,
-        // Attendance sessions have a fixed duration. An absence keeps the plan
-        // but contributes no actual/claimed time.
-        planned_hours: candidate.category === "attendance" ? ATTENDANCE_SESSION_HOURS : 0,
-        actual_hours: candidate.category === "attendance" && candidate.attended
+        // Attendance sessions have a fixed duration (an absence keeps the plan
+        // but contributes no actual time); Aptem assignments arrive with the
+        // source's own planned hours and evidenced OTJH time.
+        planned_hours: candidate.category === "attendance"
           ? ATTENDANCE_SESSION_HOURS
-          : 0,
+          : candidate.planned_hours ?? 0,
+        actual_hours: candidate.category === "attendance"
+          ? (candidate.attended ? ATTENDANCE_SESSION_HOURS : 0)
+          : candidate.actual_hours ?? 0,
         timestamp_label: candidate.timestamp_label,
         completion_note: candidate.completion_note,
         accepted: true,
@@ -322,8 +358,15 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
                     <span className="text-xs font-semibold text-muted-foreground">Open →</span>
                   </button></li>
                 ) : null}
+                {(candidatesQuery.data?.assignments?.length ?? 0) > 0 ? (
+                  <li><button type="button" onClick={() => { setSelectedCourse("assignments"); setTypeFilter("all"); setSearch(""); }} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-secondary/60">
+                    <DownloadCloud className="h-5 w-5 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1"><span className="block text-sm font-medium">Aptem assignments</span><span className="text-xs text-muted-foreground">{candidatesQuery.data?.assignments?.length ?? 0} assignments in {monthLabel} — with their planned and evidenced hours</span></span>
+                    <span className="text-xs font-semibold text-muted-foreground">Open →</span>
+                  </button></li>
+                ) : null}
                 {courses.map((course) => (
-                  <li key={course.group_id}><button type="button" onClick={() => { setSelectedCourse(course.group_id); setTypeFilter(initialCategory === "attendance" ? "all" : initialCategory); setSearch(""); }} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-secondary/60">
+                  <li key={course.group_id}><button type="button" onClick={() => { setSelectedCourse(course.group_id); setTypeFilter(initialCategory === "attendance" || initialCategory === "assignment" ? "all" : initialCategory); setSearch(""); }} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-secondary/60">
                     <BookOpenText className="h-5 w-5 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium" title={course.group_name}>{course.group_name}</span><span className="text-xs text-muted-foreground">{course.count} activities</span></span>
                     <span className="text-xs font-semibold text-muted-foreground">Open →</span>
@@ -336,7 +379,12 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
             <section>
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <Button size="sm" variant="outline" onClick={() => { setSelectedCourse(null); setPairSelection([]); }}><ArrowLeft className="mr-1 h-3.5 w-3.5" /> Courses</Button>
-                {selectedCourse !== "attendance" ? (
+                {selectedCourse === "assignments" ? (
+                  <>
+                    <label className="relative min-w-48 flex-1 max-w-64"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search assignment / date…" className="h-8 w-full rounded-md border border-border bg-card pl-8 pr-3 text-xs outline-none focus:border-primary" /></label>
+                    <span className="text-xs font-semibold text-[#182d48]">Aptem assignments — {monthLabel}</span>
+                  </>
+                ) : selectedCourse !== "attendance" ? (
                   <>
                     <div className="flex rounded-md border border-border">
                       {[["video", "Videos"], ["reading+quiz", "Reading+Quiz"], ["audio", "Audio"], ["all", "All"]].map(([value, label]) => (
@@ -348,7 +396,7 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
                   </>
                 ) : <span className="text-xs font-semibold text-[#182d48]">Attendance register — {monthLabel}</span>}
                 <span className="flex-1" />
-                {selectedCourse !== "attendance" && (typeFilter === "reading+quiz" || typeFilter === "all") ? (
+                {typeof selectedCourse === "number" && (typeFilter === "reading+quiz" || typeFilter === "all") ? (
                   <Button type="button" size="sm" variant="outline" disabled={pairSelection.length < 2 || savingPair} onClick={savePair}>{savingPair ? "Merging..." : `Merge selected${pairSelection.length ? ` (${pairSelection.length})` : ""}`}</Button>
                 ) : null}
               </div>
@@ -371,6 +419,7 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
                                 <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">{candidate.category}</span>
                                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClasses(candidate.badge.tone)}`}>{candidate.badge.text}</span>
                                 {formatDurationMinutes(candidate.duration_minutes) ? <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">{formatDurationMinutes(candidate.duration_minutes)}</span> : null}
+                                {candidate.category === "assignment" ? <span className="rounded-full bg-[#182d48]/10 px-2 py-0.5 font-mono text-[10px] font-semibold text-[#182d48]">plan {candidate.planned_hours ?? 0}h · actual {candidate.actual_hours ?? 0}h</span> : null}
                                 {flag ? <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold text-destructive"><AlertTriangle className="h-2.5 w-2.5" /> {flag}</span> : null}
                                 {taken ? <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">Already added</span> : null}
                                 {candidate.category === "reading+quiz" ? candidate.paired ? <button type="button" onClick={(event) => { event.preventDefault(); void unlinkPair(candidate); }} className="rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-semibold text-success hover:text-destructive">Linked bundle · Unlink</button> : <button type="button" onClick={(event) => { event.preventDefault(); togglePair(candidate); }} className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold ${pairSelection.some((item) => item.source_ref === candidate.source_ref) ? "border-primary bg-primary text-primary-foreground" : "border-border text-primary"}`}>Merge</button> : null}

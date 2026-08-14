@@ -13,9 +13,11 @@ from .last_audit_ledger_views import (
     health as last_audit_health,
     quiz_attempt as last_audit_quiz_attempt,
 )
+from .evidence_explorer_views import evidence_list, evidence_open, evidence_review, evidence_transfer
 from .manual_ledger_views import (
     activity_ledger as manual_activity_ledger,
     attendance_options as manual_attendance_options,
+    document_url as manual_document_url,
     documents as manual_documents,
     group_activities as manual_group_activities,
     groups as manual_groups,
@@ -62,6 +64,11 @@ urlpatterns = [
     path("last-audit/manual/import-candidates", manual_import_candidates, name="last-audit-manual-import-candidates"),
     path("last-audit/manual/reading-quiz-pairs", manual_reading_quiz_pairs, name="last-audit-manual-reading-quiz-pairs"),
     path("last-audit/manual/documents", manual_documents, name="last-audit-manual-documents"),
+    path("last-audit/manual/document-url", manual_document_url, name="last-audit-manual-document-url"),
+    path("last-audit/evidence/list", evidence_list, name="last-audit-evidence-list"),
+    path("last-audit/evidence/open", evidence_open, name="last-audit-evidence-open"),
+    path("last-audit/evidence/review", evidence_review, name="last-audit-evidence-review"),
+    path("last-audit/evidence/transfer", evidence_transfer, name="last-audit-evidence-transfer"),
     path("last-audit/manual/activity-ledger", manual_activity_ledger, name="last-audit-manual-activity-ledger"),
     path("ledger/health", health, name="learner-log-health"),
     path("ledger/mre", mre_list, name="learner-log-mre"),

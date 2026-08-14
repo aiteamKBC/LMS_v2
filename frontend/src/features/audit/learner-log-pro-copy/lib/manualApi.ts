@@ -28,6 +28,10 @@ export type ManualDocument = {
   uploaded_by: string | null;
   uploaded_at: string | null;
   download_url: string | null;
+  // Azure-mirrored Aptem docs: the submission and its assessor marking report
+  // share one evidence_group; doc_kind tells them apart. Hand uploads: "upload".
+  evidence_group?: string | null;
+  doc_kind?: "evidence" | "report" | "upload";
 };
 
 export type ManualRow = {
@@ -41,6 +45,10 @@ export type ManualRow = {
   group_id: number | null;
   activity_id: number | null;
   title: string;
+  // Where the activity came from: LMS group ("course") for content rows,
+  // register module for attendance rows. Present on the listing only.
+  source_course?: string | null;
+  module?: string | null;
   activity_date: string | null;
   planned_hours: number;
   actual_hours: number;
@@ -132,6 +140,22 @@ export type ManualRowsResponse = {
   rows: ManualRow[];
 };
 
+export type LedgerQuiz = {
+  description: string | null;
+  questions: unknown[];
+  maximum_score: number | null;
+  passing_score: number | null;
+};
+
+// One activity of a merged Reading+Quiz bundle (rq: refs).
+export type LedgerActivityPart = {
+  activity_id: number;
+  title: string;
+  content_url: string | null;
+  reading_text_body: string | null;
+  quiz: LedgerQuiz | null;
+};
+
 export type LedgerActivity = {
   activity_id?: number;
   title: string;
@@ -141,12 +165,8 @@ export type LedgerActivity = {
   content_url: string | null;
   reading_text_body: string | null;
   configured_duration_minutes?: number | null;
-  quiz: {
-    description: string | null;
-    questions: unknown[];
-    maximum_score: number | null;
-    passing_score: number | null;
-  } | null;
+  quiz: LedgerQuiz | null;
+  parts?: LedgerActivityPart[];
 };
 
 export type LedgerParticipant = ManualRow & { learner_name: string };
@@ -295,6 +315,95 @@ export function getActivityLedger(ref: string): Promise<ActivityLedger> {
   return request(`/activity-ledger?ref=${encodeURIComponent(ref)}`);
 }
 
+// A short-lived read URL for one document, for the in-system /doc preview page.
+export function getDocumentUrl(id: number): Promise<{ id: number; name: string; content_type: string | null; url: string }> {
+  return request(`/document-url?id=${encodeURIComponent(String(id))}`);
+}
+
+// --- Evidence explorer: everything the learner uploaded to Aptem ------------
+
+export type EvidenceCategory =
+  | "assignment"
+  | "attendance_reflection"
+  | "lms_activity"
+  | "review"
+  | "work_product"
+  | "administrative"
+  | "other";
+
+export type EvidenceItem = {
+  evidence_id: number;
+  name: string;
+  kind: string;
+  status: string;
+  category: EvidenceCategory;
+  category_source: string; // "content" | "ai" | "hint-…" | "unresolved" | "reviewed-reverted"
+  confidence: number | null;
+  mismatch: boolean;
+  mismatch_reason: string | null;
+  needs_review: boolean;
+  slot_category: EvidenceCategory; // what the upload slot says it is
+  review_status: "confirmed" | "rejected" | null;
+  report_month: string | null; // set when the item is already on a monthly report
+  component_id: number | null;
+  component_name: string;
+  date: string | null;
+  otjh_hours: number;
+  has_file: boolean;
+  has_report: boolean;
+  note_preview: string | null;
+};
+
+export type EvidenceListResponse = {
+  aptem_id: number;
+  month: string | null;
+  total: number;
+  counts: Record<EvidenceCategory, number>;
+  content_classified: number;
+  misfiled: number;
+  items: EvidenceItem[];
+};
+
+const EVIDENCE_BASE = "/audit_api/last-audit/evidence";
+
+async function evidenceRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${EVIDENCE_BASE}${path}`, init);
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new ManualApiError(payload?.error ?? `Request failed (${response.status})`, response.status);
+  }
+  return response.json() as Promise<T>;
+}
+
+export function getEvidenceList(aptemId: number | string, month?: string): Promise<EvidenceListResponse> {
+  const query = new URLSearchParams({ aptem_id: String(aptemId) });
+  if (month) query.set("month", month);
+  return evidenceRequest(`/list?${query}`);
+}
+
+export function getEvidenceUrl(evidenceId: number, part: "file" | "report" = "file"): Promise<{ id: number; name: string; content_type: string | null; url: string }> {
+  return evidenceRequest(`/open?id=${encodeURIComponent(String(evidenceId))}&part=${part}`);
+}
+
+// The auditor's verdict on a classification: confirm it, or reject it so the
+// slot's own category stands again.
+export function reviewEvidence(evidenceId: number, action: "confirm" | "reject"): Promise<{ ok: boolean; review_status: string }> {
+  return evidenceRequest("/review", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ evidence_id: evidenceId, action }),
+  });
+}
+
+// File the evidence onto the learner's monthly report (document-backed row).
+export function transferEvidence(evidenceId: number): Promise<{ ok: boolean; already: boolean; month: string }> {
+  return evidenceRequest("/transfer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ evidence_id: evidenceId }),
+  });
+}
+
 // --- retrieve + bulk save (the journal's draft workflow) --------------------
 
 export type ImportAttendanceCandidate = {
@@ -324,12 +433,27 @@ export type ImportActivityCandidate = {
   };
 };
 
+// Every Aptem assignment dated in the month — whatever its status — with the
+// source's own planned hours and evidenced OTJH time.
+export type ImportAssignmentCandidate = {
+  source_ref: string;
+  category: "assignment";
+  title: string;
+  group_name: string;
+  activity_date: string | null;
+  planned_hours: number;
+  actual_hours: number;
+  status: string;
+  completion: { state: "completed" | "not_completed" };
+};
+
 export type ImportCandidatesResponse = {
   aptem_id: number;
   month: string;
   attendance_source: string;
   attendance: ImportAttendanceCandidate[];
   activities: ImportActivityCandidate[];
+  assignments?: ImportAssignmentCandidate[];
   already_added: string[];
 };
 

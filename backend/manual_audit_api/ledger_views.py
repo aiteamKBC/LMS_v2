@@ -493,6 +493,7 @@ def _activity_payload(row):
             row.get("video_iframe_url"),
             row.get("reading_iframe_url"),
             row.get("reading_type"),
+            row.get("audio_iframe_url"),
         ),
         # When the catalogue row was first synced into the mirror — the closest
         # thing an LMS import has to "when was this activity added".
@@ -807,6 +808,7 @@ def activities(request: HttpRequest) -> JsonResponse:
                            COALESCE(a.activity_type, r.activity_type) AS activity_type,
                            a.title, a.activity_date,
                            a.video_iframe_url, a.reading_iframe_url,
+                           a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                            a.reading_type, a.reading_text_body,
                            a.quiz_id, a.quiz_questions,
                            a.configured_duration_min, a.first_seen, r.status,
@@ -1012,6 +1014,7 @@ def activity(request: HttpRequest) -> JsonResponse:
                COALESCE(a.activity_type, r.activity_type) AS activity_type,
                a.title, a.activity_date,
                a.video_iframe_url, a.reading_iframe_url,
+               a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                a.reading_type, a.quiz_id, a.quiz_questions,
                a.configured_duration_min, r.status,
                r.video_started, r.video_completed, r.reading_viewed,

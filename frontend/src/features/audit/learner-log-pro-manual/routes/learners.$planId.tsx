@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { Button } from "@/features/audit/learner-log-pro-manual/components/ui/button";
+import { toGoogleEmbedUrl } from "@/features/audit/learner-log-pro-manual/lib/googleEmbed";
 import {
   Table, TableBody, TableCell, TableHeader, TableRow,
 } from "@/features/audit/learner-log-pro-manual/components/ui/table";
@@ -544,7 +545,7 @@ function BundlePiece({ planId, member, item }: {
             </button>
           )}
           {piece === "content" && content.data?.iframe_url && (
-            <iframe src={content.data.iframe_url} title={item.title} className="h-[70vh] w-full rounded-md border border-border bg-card" allowFullScreen />
+            <iframe src={toGoogleEmbedUrl(content.data.iframe_url)} title={item.title} className="h-[70vh] w-full rounded-md border border-border bg-card" allowFullScreen />
           )}
           {content.data?.has_quiz && (
             <button
@@ -630,7 +631,7 @@ function PlanRowExpansion({ activity, member, planId }: {
             </button>
           )}
           {piece === "content" && detail.data.iframe_url && (
-            <iframe src={detail.data.iframe_url} title={activity.title} className="h-[70vh] w-full rounded-md border border-border bg-card" allowFullScreen />
+            <iframe src={toGoogleEmbedUrl(detail.data.iframe_url)} title={activity.title} className="h-[70vh] w-full rounded-md border border-border bg-card" allowFullScreen />
           )}
 
           {detail.data.has_quiz && (

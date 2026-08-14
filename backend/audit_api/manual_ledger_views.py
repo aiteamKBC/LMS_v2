@@ -50,6 +50,10 @@ MANUAL_ROWS = '"structured_manual_activities"."manual_learner_activities"'
 MANUAL_DOCS = '"structured_manual_activities"."manual_activity_documents"'
 READING_QUIZ_PAIRS = '"structured_manual_activities"."reading_quiz_pairs"'
 GROUP_ACTIVITIES = '"Last_audit"."group_activities"'
+# Aptem evidence files, already mirrored to Azure by the fetch service — the
+# source that lets ANY assignment row carry an in-system preview.
+EVIDENCE_ITEMS = '"fetching_evidence"."evidence_items"'
+EVIDENCE_CONTAINER = "fetch-aptem-evidences"
 
 ASSIGNMENT_CONTAINER = "learner-assignments"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -230,9 +234,35 @@ def _num(value):
     return float(value) if value is not None else None
 
 
-def _row_payload(row, documents=None):
+def _group_names(cursor, group_ids):
+    """Course (LMS group) names for the rows, one round trip."""
+    ids = sorted({int(value) for value in group_ids if value is not None})
+    if not ids:
+        return {}
+    cursor.execute(f"SELECT group_id, group_name FROM {GROUPS} WHERE group_id = ANY(%s)", [ids])
+    return {int(item["group_id"]): item["group_name"] for item in _dict_rows(cursor)}
+
+
+def _attendance_modules(cursor, source_refs):
+    """Register module per attendance row, keyed by the att: source key."""
+    keys = sorted({ref[4:] for ref in source_refs if ref and ref.startswith("att:")})
+    if not keys:
+        return {}
+    cursor.execute(
+        f"SELECT source_key, module FROM {LEARNER_ATTENDANCE} WHERE source_key = ANY(%s)",
+        [keys],
+    )
+    return {item["source_key"]: item.get("module") for item in _dict_rows(cursor)}
+
+
+def _row_payload(row, documents=None, *, source_course=None, module=None):
     activity_date = row.get("activity_date")
     return {
+        # Where the activity came from: the LMS group ("course") for content
+        # rows, the register module for attendance rows. Listing-only fields —
+        # write endpoints return them as null.
+        "source_course": source_course,
+        "module": module,
         "id": int(row["id"]),
         "aptem_id": int(row["aptem_id"]),
         "learner_id": int(row["learner_id"]) if row.get("learner_id") is not None else None,
@@ -256,6 +286,23 @@ def _row_payload(row, documents=None):
     }
 
 
+# Azure-mirrored Aptem docs carry the evidence id as a filename prefix
+# ("<folder>/<evidence_id>-<filename>"); hand uploads follow no such scheme.
+_EVIDENCE_BLOB_RE = re.compile(r"(?:^|/)(\d+)-([^/]+)$")
+
+
+def _evidence_doc_identity(row):
+    """(evidence_group, doc_kind) pairing a mirrored Aptem submission with its
+    assessor marking report; hand-uploaded files are (None, "upload")."""
+    if row.get("uploaded_by") != "aptem-evidence" or row.get("container") != EVIDENCE_CONTAINER:
+        return None, "upload"
+    match = _EVIDENCE_BLOB_RE.search(str(row.get("blob_name") or ""))
+    if not match:
+        return None, "upload"
+    kind = "report" if match.group(2).lower().startswith("assessmentreport") else "evidence"
+    return match.group(1), kind
+
+
 def _doc_payload(row, *, with_sas=True):
     url = None
     if with_sas and evidence_storage.azure_configured():
@@ -263,6 +310,7 @@ def _doc_payload(row, *, with_sas=True):
             url = evidence_storage.get_read_sas(row["container"], row["blob_name"])
         except Exception:
             url = None
+    evidence_group, doc_kind = _evidence_doc_identity(row)
     return {
         "id": int(row["id"]),
         "manual_activity_id": int(row["manual_activity_id"]),
@@ -272,7 +320,22 @@ def _doc_payload(row, *, with_sas=True):
         "uploaded_by": row.get("uploaded_by"),
         "uploaded_at": row["uploaded_at"].isoformat() if row.get("uploaded_at") else None,
         "download_url": url,
+        "evidence_group": evidence_group,
+        "doc_kind": doc_kind,
     }
+
+
+_DOC_KIND_RANK = {"evidence": 0, "report": 1}
+
+
+def _paired_docs(docs):
+    """Each Aptem evidence file immediately followed by its marking report.
+    The sync inserts everything in one transaction, so uploaded_at ties and
+    the stored order is arbitrary; hand uploads keep upload order at the end."""
+    mirrored = [doc for doc in docs if doc["evidence_group"] is not None]
+    uploads = [doc for doc in docs if doc["evidence_group"] is None]
+    mirrored.sort(key=lambda doc: (int(doc["evidence_group"]), _DOC_KIND_RANK.get(doc["doc_kind"], 2), doc["id"]))
+    return mirrored + uploads
 
 
 def _documents_by_row(cursor, row_ids):
@@ -284,14 +347,14 @@ def _documents_by_row(cursor, row_ids):
                display_name, content_type, size_bytes, uploaded_by, uploaded_at
         FROM {MANUAL_DOCS}
         WHERE manual_activity_id = ANY(%s) AND deleted_at IS NULL
-        ORDER BY uploaded_at
+        ORDER BY uploaded_at, id
         """,
         [list(row_ids)],
     )
     grouped = {}
     for row in _dict_rows(cursor):
         grouped.setdefault(int(row["manual_activity_id"]), []).append(_doc_payload(row))
-    return grouped
+    return {row_id: _paired_docs(docs) for row_id, docs in grouped.items()}
 
 
 # --- validation ------------------------------------------------------------
@@ -853,12 +916,25 @@ def rows(request: HttpRequest) -> JsonResponse:
                     cursor, [int(row["id"]) for row in row_data
                              if row["category"] == "assignment"],
                 )
+                group_names = _group_names(cursor, [row.get("group_id") for row in row_data])
+                attendance_modules = _attendance_modules(
+                    cursor, [row.get("source_ref") for row in row_data
+                             if row["category"] == "attendance"],
+                )
         except DatabaseError as error:
             return JsonResponse(
                 {"error": "Could not read the manual ledger.", "details": str(error)},
                 status=503,
             )
-        items = [_row_payload(row, documents.get(int(row["id"]))) for row in row_data]
+        items = [
+            _row_payload(
+                row,
+                documents.get(int(row["id"])),
+                source_course=group_names.get(row.get("group_id")),
+                module=attendance_modules.get((row.get("source_ref") or "")[4:]),
+            )
+            for row in row_data
+        ]
         return JsonResponse({
             "aptem_id": aptem_id,
             "month": month or None,
@@ -1275,6 +1351,88 @@ def _activity_source_participants(cursor, activity_id):
     return participants
 
 
+def _companion_reading_part(cursor, group_id, activity_id, quiz_title):
+    """The ONE reading sibling for a quiz-only activity: "P1 Q1: …" carries
+    just the quiz (raw->reading is null at the source) — the lesson's P1 PDF
+    lives in the P1-PPT / P1-TB activity right above it in the same group.
+    Walk backwards from the quiz's position, stop at the previous lesson
+    (another quiz or a different P-number), and return the best match:
+    PPT slides first, textbook otherwise."""
+    match = re.search(r"\bQ\s*-?\s*(\d+)", str(quiz_title or ""), re.I)
+    if not match:
+        return None
+    number = int(match.group(1))
+    if group_id is None:
+        cursor.execute(
+            f"SELECT group_id FROM {GROUP_ACTIVITIES} WHERE activity_id = %s ORDER BY group_id LIMIT 1",
+            [activity_id],
+        )
+        found = cursor.fetchone()
+        if not found:
+            return None
+        group_id = int(found[0])
+    # Only the curriculum window right above the quiz — a lesson holds ~6-8
+    # materials. A full-group scan (265 rows WITH their text bodies) took
+    # ~5s per page load; this window runs in ~0.2s.
+    cursor.execute(
+        f"""
+        WITH me AS (
+            SELECT position FROM {GROUP_ACTIVITIES}
+            WHERE group_id = %s AND activity_id = %s
+        )
+        SELECT a.activity_id, a.title, a.video_iframe_url, a.reading_type,
+               a.reading_iframe_url,
+               (a.reading_text_body IS NOT NULL AND length(a.reading_text_body) > 0) AS has_text
+        FROM {GROUP_ACTIVITIES} ga
+        JOIN {ACTIVITIES} a ON a.activity_id = ga.activity_id, me
+        WHERE ga.group_id = %s
+          AND ga.position < me.position AND ga.position >= me.position - 12
+        ORDER BY ga.position DESC, a.activity_id
+        """,
+        [group_id, activity_id, group_id],
+    )
+    rows = _dict_rows(cursor)  # nearest sibling first
+    # "P1-PPT-…", "TB-P1-…" and "P 1 …" all count as lesson-1 readings.
+    same_number = re.compile(rf"^\s*(?:[A-Za-z]{{1,4}}-)?P\s*-?\s*{number}\b", re.I)
+    any_p = re.compile(r"^\s*(?:[A-Za-z]{1,4}-)?P\s*-?\s*(\d+)\b", re.I)
+    any_q = re.compile(r"^\s*(?:[A-Za-z]{1,4}-)?Q\s*-?\s*\d", re.I)
+    candidates = []
+    for row in rows:
+        title = str(row.get("title") or "")
+        p_match = any_p.match(title)
+        if any_q.match(title) or (p_match and int(p_match.group(1)) != number):
+            break  # crossed into the previous lesson
+        if not same_number.match(title):
+            continue
+        if not row.get("reading_iframe_url") and not row.get("has_text"):
+            continue  # video/audio siblings keep their own ledger rows
+        candidates.append(row)
+    if not candidates:
+        return None
+    best = next((row for row in candidates if "ppt" in str(row.get("title") or "").lower()), candidates[0])
+    content_url = _activity_content_url(
+        best.get("video_iframe_url"),
+        best.get("reading_iframe_url"),
+        best.get("reading_type"),
+    )
+    text_body = None
+    if not content_url and best.get("has_text"):
+        # Text bodies are heavy — fetch only the one that will render.
+        cursor.execute(
+            f"SELECT reading_text_body FROM {ACTIVITIES} WHERE activity_id = %s",
+            [int(best["activity_id"])],
+        )
+        fetched = cursor.fetchone()
+        text_body = fetched[0] if fetched else None
+    return {
+        "activity_id": int(best["activity_id"]),
+        "title": str(best.get("title") or ""),
+        "content_url": content_url,
+        "reading_text_body": text_body,
+        "quiz": None,
+    }
+
+
 @require_GET
 def activity_ledger(request: HttpRequest) -> JsonResponse:
     """One activity's definition plus every employee-arranged row for it.
@@ -1321,6 +1479,84 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
                     },
                     "participants": participants,
                     "source_participants": [],
+                })
+
+            if ref.startswith("rq:"):
+                # rq:<group_id>:<activity_id>:<activity_id>… — a Reading+Quiz
+                # bundle merged in the journal. Serve EVERY part's definition
+                # (title + content + quiz) so the ledger shows all merged
+                # content instead of nothing.
+                try:
+                    bundle_ids = [int(part) for part in ref.split(":")[2:]]
+                    if not bundle_ids:
+                        raise ValueError
+                except ValueError:
+                    return JsonResponse(
+                        {"error": "ref must look like rq:<group>:<id>:<id>…"}, status=400,
+                    )
+                cursor.execute(
+                    f"""
+                    SELECT activity_id, activity_type, title, activity_date,
+                           video_iframe_url, reading_type, reading_iframe_url,
+                           raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
+                           reading_text_body, quiz_id, quiz_body, quiz_questions,
+                           quiz_maximum_score, quiz_passing_score,
+                           configured_duration_min
+                    FROM {ACTIVITIES} WHERE activity_id = ANY(%s)
+                    """,
+                    [bundle_ids],
+                )
+                found = {int(row["activity_id"]): row for row in _dict_rows(cursor)}
+                bundle = [found[i] for i in bundle_ids if i in found]
+                if not bundle:
+                    return JsonResponse(
+                        {"error": f"no Last_audit activities for {ref}"}, status=404,
+                    )
+                participants = _ledger_participants(cursor, "m.source_ref = %s", [ref])
+                source_participants = _mark_on_report(
+                    _activity_source_participants(cursor, bundle_ids[0]), participants,
+                )
+                parts_payload = []
+                for row in bundle:
+                    questions = _json_list(row.get("quiz_questions"))
+                    row_has_quiz = row.get("quiz_id") is not None or bool(questions)
+                    parts_payload.append({
+                        "activity_id": int(row["activity_id"]),
+                        "title": row.get("title") or f"Activity {row['activity_id']}",
+                        "content_url": _activity_content_url(
+                            row.get("video_iframe_url"),
+                            row.get("reading_iframe_url"),
+                            row.get("reading_type"),
+                            row.get("audio_iframe_url"),
+                        ),
+                        "reading_text_body": row.get("reading_text_body"),
+                        "quiz": {
+                            "description": row.get("quiz_body"),
+                            "questions": questions,
+                            "maximum_score": _num(row.get("quiz_maximum_score")),
+                            "passing_score": _num(row.get("quiz_passing_score")),
+                        } if row_has_quiz else None,
+                    })
+                first = bundle[0]
+                first_date = first.get("activity_date")
+                return JsonResponse({
+                    "ref": ref,
+                    "category": "reading+quiz",
+                    "activity": {
+                        "activity_id": int(first["activity_id"]),
+                        "title": " + ".join(part["title"] for part in parts_payload),
+                        "activity_date": first_date.isoformat() if first_date else None,
+                        "activity_type": "reading+quiz",
+                        "content_url": next(
+                            (part["content_url"] for part in parts_payload if part["content_url"]), None,
+                        ),
+                        "reading_text_body": first.get("reading_text_body"),
+                        "configured_duration_minutes": _num(first.get("configured_duration_min")),
+                        "quiz": next((part["quiz"] for part in parts_payload if part["quiz"]), None),
+                        "parts": parts_payload,
+                    },
+                    "participants": participants,
+                    "source_participants": source_participants,
                 })
 
             if ref.startswith("att:"):
@@ -1395,6 +1631,7 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
                 f"""
                 SELECT activity_id, activity_type, title, activity_date,
                        video_iframe_url, reading_type, reading_iframe_url,
+                       raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                        reading_text_body, quiz_id, quiz_body, quiz_questions,
                        quiz_maximum_score, quiz_passing_score,
                        configured_duration_min
@@ -1410,6 +1647,24 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
             source_participants = _mark_on_report(
                 _activity_source_participants(cursor, activity_id), participants,
             )
+            # A quiz-only activity ("P1 Q1: …") also shows its lesson's PDF:
+            # the single best reading sibling renders above the quiz.
+            companion = None
+            has_own_content = bool(
+                definition.get("video_iframe_url")
+                or definition.get("reading_iframe_url")
+                or definition.get("reading_text_body")
+                or definition.get("audio_iframe_url")
+            )
+            has_own_quiz = (
+                definition.get("quiz_id") is not None
+                or bool(_json_list(definition.get("quiz_questions")))
+            )
+            if has_own_quiz and not has_own_content:
+                ref_group_id = int(parts[1]) if ref.startswith("la:") and len(parts) == 3 else None
+                companion = _companion_reading_part(
+                    cursor, ref_group_id, activity_id, definition.get("title"),
+                )
     except DatabaseError as error:
         return JsonResponse(
             {"error": "Could not read the activity ledger.", "details": str(error)},
@@ -1419,28 +1674,40 @@ def activity_ledger(request: HttpRequest) -> JsonResponse:
     questions = _json_list(definition.get("quiz_questions"))
     has_quiz = definition.get("quiz_id") is not None or bool(questions)
     activity_date = definition.get("activity_date")
+    quiz_payload = {
+        "description": definition.get("quiz_body"),
+        "questions": questions,
+        "maximum_score": _num(definition.get("quiz_maximum_score")),
+        "passing_score": _num(definition.get("quiz_passing_score")),
+    } if has_quiz else None
+    activity_payload = {
+        "activity_id": int(definition["activity_id"]),
+        "title": definition.get("title") or f"Activity {activity_id}",
+        "activity_date": activity_date.isoformat() if activity_date else None,
+        "activity_type": definition.get("activity_type"),
+        "content_url": _activity_content_url(
+            definition.get("video_iframe_url"),
+            definition.get("reading_iframe_url"),
+            definition.get("reading_type"),
+            definition.get("audio_iframe_url"),
+        ),
+        "reading_text_body": definition.get("reading_text_body"),
+        "configured_duration_minutes": _num(definition.get("configured_duration_min")),
+        "quiz": quiz_payload,
+    }
+    if companion:
+        # The lesson's PDF renders above the quiz via the ledger's parts UI.
+        activity_payload["parts"] = [companion, {
+            "activity_id": int(definition["activity_id"]),
+            "title": definition.get("title") or f"Activity {activity_id}",
+            "content_url": None,
+            "reading_text_body": None,
+            "quiz": quiz_payload,
+        }]
     return JsonResponse({
         "ref": ref,
         "category": str(definition.get("activity_type") or "").lower(),
-        "activity": {
-            "activity_id": int(definition["activity_id"]),
-            "title": definition.get("title") or f"Activity {activity_id}",
-            "activity_date": activity_date.isoformat() if activity_date else None,
-            "activity_type": definition.get("activity_type"),
-            "content_url": _activity_content_url(
-                definition.get("video_iframe_url"),
-                definition.get("reading_iframe_url"),
-                definition.get("reading_type"),
-            ),
-            "reading_text_body": definition.get("reading_text_body"),
-            "configured_duration_minutes": _num(definition.get("configured_duration_min")),
-            "quiz": {
-                "description": definition.get("quiz_body"),
-                "questions": questions,
-                "maximum_score": _num(definition.get("quiz_maximum_score")),
-                "passing_score": _num(definition.get("quiz_passing_score")),
-            } if has_quiz else None,
-        },
+        "activity": activity_payload,
         "participants": participants,
         "source_participants": source_participants,
     })
@@ -1610,12 +1877,83 @@ def _collect_import_candidates(cursor, aptem_id, month, learner):
         })
     activities = [item for item in activities if (item["group_id"], item["activity_id"]) not in consumed] + bundles
 
+    # EVERY Aptem assignment dated in the month — whatever its status — with
+    # the source's own planned hours and evidenced OTJH time, so the employee
+    # can retrieve any of them (auto-import still files only completed ones).
+    assignments = []
+    try:
+        for item in _fetch_assignment_items(aptem_id, include_evidence=False):
+            date_iso = str(item.get("relevant_date") or "")[:10]
+            if not date_iso.startswith(month):
+                continue
+            source_id = str(item.get("source_id") or "").strip()
+            if not source_id:
+                continue
+            status = str(item.get("status") or "").strip() or "Unknown"
+            assignments.append({
+                "source_ref": f"asg:{source_id}",
+                "category": "assignment",
+                "title": str(item.get("activity_name") or "Assignment")[:500],
+                "group_name": str(item.get("type") or "Assignment"),
+                "activity_date": date_iso or None,
+                "planned_hours": _clamped_hours(item.get("planned_hours")),
+                "actual_hours": _clamped_hours(item.get("actual_hours")),
+                "status": status,
+                "completion": {"state": "completed" if status.lower() == "completed" else "not_completed"},
+            })
+    except Exception:
+        assignments = []
+
     return {
         "attendance_source": attendance_source,
         "attendance": attendance,
         "activities": activities,
+        "assignments": assignments,
         "already_added": already_added,
     }
+
+
+@require_GET
+def document_url(request: HttpRequest) -> JsonResponse:
+    """A short-lived read URL for one manual/evidence document, so the /doc
+    preview page inside the system can embed it (PDF links land there too)."""
+    try:
+        doc_id = int(request.GET.get("id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "id (int) is required"}, status=400)
+    try:
+        with _connection().cursor() as cursor:
+            _ensure_manual_tables(cursor)
+            cursor.execute(
+                f"""
+                SELECT id, container, blob_name, display_name, content_type
+                FROM {MANUAL_DOCS} WHERE id = %s AND deleted_at IS NULL
+                """,
+                [doc_id],
+            )
+            found = _dict_rows(cursor)
+    except DatabaseError as error:
+        return JsonResponse(
+            {"error": "Could not read the document.", "details": str(error)},
+            status=503,
+        )
+    if not found:
+        return JsonResponse({"error": f"no document {doc_id}"}, status=404)
+    doc = found[0]
+    url = None
+    if evidence_storage.azure_configured():
+        try:
+            url = evidence_storage.get_read_sas(doc["container"], doc["blob_name"])
+        except Exception:
+            url = None
+    if not url:
+        return JsonResponse({"error": "The document store is not reachable."}, status=503)
+    return JsonResponse({
+        "id": int(doc["id"]),
+        "name": doc["display_name"],
+        "content_type": doc.get("content_type"),
+        "url": url,
+    })
 
 
 @require_GET
@@ -1681,6 +2019,76 @@ def _clamped_hours(value):
     except (TypeError, ValueError):
         return 0.0
     return round(min(50.0, max(0.0, number)), 4)
+
+
+def _report_display_name(evidence_label, report_blob):
+    """Assessment-report label carrying the REPORT's own file extension.
+    Reusing the learner file's extension mislabels the (PDF) report as .docx,
+    which routes the /doc preview to the Office viewer and breaks it."""
+    stem = re.sub(r"\.[A-Za-z0-9]{1,6}$", "", str(evidence_label or "")).strip()
+    match = re.search(r"\.[A-Za-z0-9]{1,6}$", str(report_blob or ""))
+    return f"Assessment report - {stem}{match.group(0) if match else ''}"
+
+
+def _attach_assignment_evidence_docs(cursor, aptem_id, month):
+    """File the Azure-mirrored Aptem evidence files (submission + assessor
+    report) as documents on the month's assignment rows, keyed by the
+    ``asg:<component_id>`` source ref. Idempotent — existing documents are
+    never duplicated — and it also heals rows added before this feature."""
+    cursor.execute(
+        f"""
+        SELECT id, source_ref FROM {MANUAL_ROWS}
+        WHERE aptem_id = %s AND month = %s AND deleted_at IS NULL
+          AND category = 'assignment' AND source_ref LIKE 'asg:%%'
+        """,
+        [aptem_id, month],
+    )
+    rows_by_component = {}
+    for row_id, source_ref in cursor.fetchall():
+        try:
+            rows_by_component[int(str(source_ref).split(":", 1)[1])] = int(row_id)
+        except (IndexError, ValueError):
+            continue
+    if not rows_by_component:
+        return 0
+    cursor.execute(
+        f"""
+        SELECT component_id, evidence_id, evidence_name, file_blob, report_blob
+        FROM {EVIDENCE_ITEMS}
+        WHERE learner_id = %s AND component_id = ANY(%s)
+          AND (file_blob IS NOT NULL OR report_blob IS NOT NULL)
+        ORDER BY evidence_id
+        """,
+        [aptem_id, list(rows_by_component)],
+    )
+    inserted = 0
+    for item in _dict_rows(cursor):
+        row_id = rows_by_component.get(int(item["component_id"]) if item.get("component_id") is not None else -1)
+        if row_id is None:
+            continue
+        evidence_label = str(item.get("evidence_name") or f"Evidence {item.get('evidence_id')}")
+        for blob, label in (
+            (item.get("file_blob"), evidence_label),
+            (item.get("report_blob"), _report_display_name(evidence_label, item.get("report_blob"))),
+        ):
+            if not blob:
+                continue
+            cursor.execute(
+                f"""
+                INSERT INTO {MANUAL_DOCS} (
+                    manual_activity_id, aptem_id, month, container,
+                    blob_name, display_name, uploaded_by
+                )
+                SELECT %s, %s, %s, %s, %s, %s, 'aptem-evidence'
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM {MANUAL_DOCS}
+                    WHERE manual_activity_id = %s AND blob_name = %s AND deleted_at IS NULL
+                )
+                """,
+                [row_id, aptem_id, month, EVIDENCE_CONTAINER, blob, label[:200], row_id, blob],
+            )
+            inserted += cursor.rowcount
+    return inserted
 
 
 def _assignment_import_values(aptem_id, month):
@@ -1839,6 +2247,9 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
                     )
                     created = cursor.rowcount
                     skipped_existing += len(batch) - created
+                # Give every assignment row its Azure-mirrored evidence files
+                # as documents (also heals rows filed before this feature).
+                _attach_assignment_evidence_docs(cursor, aptem_id, month)
     except IntegrityError as error:
         return JsonResponse(
             {"error": "The auto-import collided with an existing row.", "details": str(error)},
@@ -1945,6 +2356,11 @@ def rows_bulk(request: HttpRequest) -> JsonResponse:
                         [actor, delete_ids, aptem_id],
                     )
                     deleted_count = cursor.rowcount
+                # Attach Azure evidence documents to any newly saved Aptem
+                # assignment rows, month by month (refs look like asg:<id>).
+                for month in sorted({values["month"] for _, values in validated_creates
+                                     if str(values.get("source_ref") or "").startswith("asg:")}):
+                    _attach_assignment_evidence_docs(cursor, aptem_id, month)
     except IntegrityError as error:
         return JsonResponse(
             {"error": "A change collided with an existing row.", "details": str(error)},

@@ -109,16 +109,19 @@ export default defineConfig(({ mode }) => ({
         target: process.env.VITE_API_PROXY || "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      // 127.0.0.1, NOT localhost: on Windows, Node resolves localhost to ::1
+      // first and Django listens on IPv4 only — the failed IPv6 attempt costs
+      // ~2.3s on EVERY proxied request.
       "/learner_api": {
-        target: process.env.VITE_API_TARGET || "http://localhost:8000",
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
         changeOrigin: true,
       },
       "/audit_api": {
-        target: process.env.VITE_API_TARGET || "http://localhost:8000",
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
         changeOrigin: true,
       },
       "/manual_audit_api": {
-        target: process.env.VITE_API_TARGET || "http://localhost:8000",
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
         changeOrigin: true,
       },
       "/engagement_api": {
