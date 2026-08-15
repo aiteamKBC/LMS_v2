@@ -11,10 +11,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import SignaturePad from "signature_pad";
 import Swal from "sweetalert2";
-import { BookOpenText, CalendarDays, CheckCircle2, ClipboardList, Download, FolderSearch, Headphones, Link2, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2, Video, X } from "lucide-react";
+import { BookOpenText, CalendarDays, CheckCircle2, ClipboardList, Clock3, Download, FolderSearch, Headphones, Link2, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2, Video, X } from "lucide-react";
 import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/api";
 import { AddManualActivityFlow } from "@/features/audit/learner-log-pro-copy/components/AddManualActivityFlow";
-import { ledgerRef, ManualActivityRow, ManualActivityTableHeader } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
+import { completionNoteForHours, ledgerRef, ManualActivityRow, ManualActivityTableHeader } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
 import { RetrieveActivitiesPanel } from "@/features/audit/learner-log-pro-copy/components/RetrieveActivitiesPanel";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
 import { Table, TableBody, TableHeader } from "@/features/audit/learner-log-pro-copy/components/ui/table";
@@ -23,6 +23,7 @@ import {
   autoImportManualRows,
   bulkSaveManualRows,
   deleteAssignmentDocument,
+  durationAsHours,
   getManualRows,
   getManualSummary,
   manualRowToJournalActivity,
@@ -531,6 +532,48 @@ function JournalPage() {
     .filter((row) => row.category === "reading+quiz" && readingQuizSourceParts(row.source_ref))
     .map((row) => row.key)), [visibleRows]);
 
+  const mediaRowCount = visibleRows.filter((row) => row.category === "video" || row.category === "audio").length;
+
+  async function fillMediaDurations() {
+    const mediaRows = visibleRows.filter((row) => row.category === "video" || row.category === "audio");
+    let filled = 0;
+    let kept = 0;
+    let unavailable = 0;
+    let next = draftRows;
+
+    for (const row of mediaRows) {
+      if (row.actual_hours > 0) {
+        kept += 1;
+        continue;
+      }
+      const actualHours = durationAsHours(row.duration_minutes);
+      if (actualHours == null) {
+        unavailable += 1;
+        continue;
+      }
+      next = patchDraftRow(next, row.key, {
+        actual_hours: actualHours,
+        completion_note: completionNoteForHours(row.completion_note, actualHours),
+      });
+      filled += 1;
+    }
+
+    if (filled > 0) setDraftRows(next);
+    await Swal.fire({
+      toast: filled > 0,
+      position: filled > 0 ? "top-end" : "center",
+      icon: filled > 0 ? "success" : "info",
+      title: filled > 0 ? `${filled} media durations added to the draft` : "No media durations to add",
+      text: [
+        kept ? `${kept} existing actual value${kept === 1 ? " was" : "s were"} kept.` : "",
+        unavailable ? `${unavailable} media item${unavailable === 1 ? " has" : "s have"} no configured duration in the LMS.` : "",
+        filled > 0 ? "Use Save all activities to keep the changes." : "",
+      ].filter(Boolean).join(" "),
+      showConfirmButton: filled === 0,
+      timer: filled > 0 ? 3200 : undefined,
+    });
+  }
+
   useEffect(() => {
     setMergeSelection((current) => {
       const next = new Set([...current].filter((key) => mergeEligibleKeys.has(key)));
@@ -1025,6 +1068,7 @@ function JournalPage() {
                 </>
               ) : (
                 <>
+                  <Button type="button" size="sm" variant="outline" disabled={mediaRowCount === 0} title={mediaRowCount ? "Use each LMS video/audio duration as Actual when Actual is still zero" : "No video or audio activities in this month"} onClick={fillMediaDurations}><Clock3 className="h-3.5 w-3.5" /> Use media durations</Button>
                   <Button type="button" size="sm" variant="outline" disabled={mergeEligibleKeys.size < 2} title={mergeEligibleKeys.size < 2 ? "At least two LMS Reading + Quiz rows are required" : "Merge Reading + Quiz rows"} onClick={() => setMergeMode(true)}><Link2 className="h-3.5 w-3.5" /> Merge</Button>
                   <ActivityAddMenu disabled={!aptemId || !selectedPeriod} onPick={setAddChoice} />
                 </>

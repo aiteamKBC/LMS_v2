@@ -68,7 +68,7 @@ export function draftFromServer(row: ManualRow): DraftRow {
     documents: row.documents ?? [],
     stagedFiles: [],
     deletedDocIds: [],
-    duration_minutes: null,
+    duration_minutes: row.duration_minutes ?? null,
   };
 }
 

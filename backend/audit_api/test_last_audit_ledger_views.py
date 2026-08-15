@@ -54,6 +54,30 @@ class LastAuditLedgerMappingTests(SimpleTestCase):
         })
         self.assertEqual(payload["category"], "reading+quiz")
 
+    def test_saved_manual_row_surfaces_its_configured_media_duration(self):
+        payload = _row_payload({
+            "id": 1,
+            "aptem_id": 2,
+            "learner_id": 3,
+            "month": "2026-04",
+            "category": "audio",
+            "source_ref": "la:118072:119856",
+            "group_id": 118072,
+            "activity_id": 119856,
+            "title": "Podcast lesson",
+            "activity_date": date(2026, 4, 22),
+            "activity_time": None,
+            "planned_hours": 0,
+            "actual_hours": 0,
+            "timestamp_label": "",
+            "completion_note": None,
+            "accepted": True,
+            "created_by": None,
+            "updated_by": None,
+            "updated_at": None,
+        }, duration_minutes=Decimal("25.5"))
+        self.assertEqual(payload["duration_minutes"], 25.5)
+
     def test_new_manual_lms_ppt_row_cannot_be_saved_as_video(self):
         row = _validate_new_row({
             "month": "2026-04",
