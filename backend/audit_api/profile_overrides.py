@@ -8,6 +8,7 @@ from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from .db_source import resolve
 from .learner_exclusions import is_excluded_learner
 from .views import _has_audit_permission
 
@@ -122,7 +123,7 @@ def _clean_profile_fields(value):
 
 
 def get_profile_overrides(learner_id):
-    with connections[CONN].cursor() as cursor:
+    with connections[resolve(CONN)].cursor() as cursor:
         ensure_profile_override_table(cursor)
         cursor.execute(
             '''
@@ -203,7 +204,7 @@ def update_profile_overrides(request):
     updated_by = str(body.get("updated_by") or "").strip()[:200] or None
 
     try:
-        with connections[CONN].cursor() as cursor:
+        with connections[resolve(CONN)].cursor() as cursor:
             cursor.execute(
                 '''select learner_name from "Last_audit".learners where aptem_id = %s limit 1''',
                 [learner_id],

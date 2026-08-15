@@ -372,6 +372,28 @@ _audit_database_url = os.environ.get('AUDIT_DATABASE_URL')
 if _audit_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['audit'] = database_from_url(_audit_database_url)
 
+
+def _dsn_from_shell_snippet(value):
+    """Accept a DSN pasted the way Neon offers it — ``psql 'postgresql://…'``
+    — as well as a bare URL. Returns '' when nothing usable is configured."""
+    value = (value or '').strip()
+    if value.lower().startswith('psql '):
+        value = value[5:].strip()
+    return value.strip('"').strip("'").strip()
+
+
+# HOURS-TEST workspace: a full clone of the audit Neon branch. Both the 'audit'
+# and 'enrolment' aliases point at the same physical database, and the clone
+# carries every one of their schemas, so the clone workspace remaps BOTH aliases
+# onto this one connection (see audit_api/db_source.py). Nothing written from
+# HOURS-TEST can reach the live audit data.
+_audit_clone_database_url = _dsn_from_shell_snippet(
+    os.environ.get('AUDIT_CLONE_DATABASE_URL')
+    or os.environ.get('LASR-ADUTIOD-CLNE')
+)
+if _audit_clone_database_url and not USE_SQLITE_FOR_TESTS:
+    DATABASES['audit_clone'] = database_from_url(_audit_clone_database_url)
+
 # Live attendance source (the KBC project's AiTeamKBC database,
 # public.kbc_attendance): the manual plan builder's attendance pickers read
 # the live table directly — it runs ahead of the Manual_audit mirror sync.

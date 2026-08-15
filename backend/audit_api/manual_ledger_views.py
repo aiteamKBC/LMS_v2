@@ -27,6 +27,8 @@ from django.views.decorators.http import require_GET
 
 from learner_api import evidence_storage
 
+from .db_source import resolve
+
 from .views import (
     _fetch_assignment_items,
     _fetch_monthly_hours,
@@ -2227,7 +2229,7 @@ def _month_is_signed_off(aptem_id, month):
     emptiness, not row existence). Errors read as "not signed" so a missing
     table never blocks the journal."""
     try:
-        with connections["enrolment"].cursor() as cursor:
+        with connections[resolve("enrolment")].cursor() as cursor:
             cursor.execute(
                 """
                 SELECT count(DISTINCT signer_role)
@@ -2419,7 +2421,7 @@ def rows_auto_import(request: HttpRequest) -> JsonResponse:
             "locked": True,
         })
 
-    alias = CONNECTION_ALIAS if CONNECTION_ALIAS in connections.databases else "default"
+    alias = resolve(CONNECTION_ALIAS)
     created = skipped_existing = 0
     attendance_source = None
     try:
@@ -2601,7 +2603,7 @@ def rows_bulk(request: HttpRequest) -> JsonResponse:
     except (TypeError, ValueError) as error:
         return JsonResponse({"error": str(error) or "Invalid payload."}, status=400)
 
-    alias = CONNECTION_ALIAS if CONNECTION_ALIAS in connections.databases else "default"
+    alias = resolve(CONNECTION_ALIAS)
     created, skipped, missing, conflicts = [], [], [], []
     updated_count = deleted_count = 0
     try:

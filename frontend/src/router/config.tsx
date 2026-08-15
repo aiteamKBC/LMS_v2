@@ -33,6 +33,7 @@ const AttendanceRiskPage = lazy(() => import("../pages/engagement/attendance-ris
 const AuditorWorkspace = lazy(() => import("../pages/workspace/auditor/page"));
 const AuditorCopyWorkspace = lazy(() => import("../pages/workspace/auditor-copy/page"));
 const AuditorManualWorkspace = lazy(() => import("../pages/workspace/auditor-manual/page"));
+const AuditorHoursTestWorkspace = lazy(() => import("../pages/workspace/auditor-hours-test/page"));
 const AuditSelectPage = lazy(() => import("../pages/workspace/audit-select/page"));
 const BadgeDetailPage = lazy(() => import("../pages/learner/rewards/badge-detail/page"));
 const BoardPage = lazy(() => import("../pages/users/BoardPage"));
@@ -840,13 +841,18 @@ const routes: RouteObject[] = [
     element: <AuditorCopyWorkspace />,
   },
   {
-    // AUDIT chooser: Automatic (auditor-copy) vs Manual (auditor-manual).
+    // AUDIT chooser: Automatic (auditor-copy), Manual (auditor-manual) and
+    // HOURS-TEST (auditor-hours-test, the Automatic UI over the cloned data).
     path: "/workspace/audit",
     element: <AuditSelectPage />,
   },
   {
     path: "/workspace/auditor-manual",
     element: <AuditorManualWorkspace />,
+  },
+  {
+    path: "/workspace/auditor-hours-test",
+    element: <AuditorHoursTestWorkspace />,
   },
   {
     path: "/workspace/auditor/learner/:auditLearnerId",

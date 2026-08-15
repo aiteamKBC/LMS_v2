@@ -18,6 +18,8 @@ import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
+from .db_source import resolve
+
 try:
     from azure.storage.blob import BlobSasPermissions, BlobServiceClient, generate_blob_sas
 except ImportError:  # pragma: no cover - handled at runtime when Azure is not installed.
@@ -468,7 +470,7 @@ def _fetch_evidence_details_for_ids(learner_ids):
     if not ids:
         return {}
     try:
-        with connections["enrolment"].cursor() as cur:
+        with connections[resolve("enrolment")].cursor() as cur:
             cur.execute(
                 """
                 select learner_id::text,
@@ -734,7 +736,7 @@ def _fetch_assignment_items_for_ids(learner_ids, include_evidence=True):
     details_by_learner = _fetch_evidence_details_for_ids(ids) if include_evidence else {}
     if not connection_string:
         try:
-            with connections["enrolment"].cursor() as cur:
+            with connections[resolve("enrolment")].cursor() as cur:
                 cur.execute(
                     """
                     select learner_id::text as learner_id, assignments
@@ -819,7 +821,7 @@ def _fetch_monthly_hours_for_ids(learner_ids):
     if not ids:
         return {}
     try:
-        with connections["enrolment"].cursor() as cur:
+        with connections[resolve("enrolment")].cursor() as cur:
             cur.execute(
                 """
                 select column_name
@@ -1480,7 +1482,7 @@ def learner_activity_stats(request):
     stats = _empty_activity_stats()
 
     try:
-        with connections["enrolment"].cursor() as cur:
+        with connections[resolve("enrolment")].cursor() as cur:
             _require_learner_match(cur)
             source_sql = f'from "{AUDIT_SCHEMA}".learner_match'
             learner_id_sql = "aptem_id::text"
@@ -2042,7 +2044,7 @@ def learner_audit(request, learner_id):
         return _error("Authentication or audit permission is required.", 403)
 
     try:
-        with connections["enrolment"].cursor() as cur:
+        with connections[resolve("enrolment")].cursor() as cur:
             _require_learner_match(cur)
             cur.execute(
                 f"""
@@ -2244,7 +2246,7 @@ def learner_audit_list(request):
     offset = (page - 1) * page_size if page_size else 0
     total_count = None
     try:
-        with connections["enrolment"].cursor() as cur:
+        with connections[resolve("enrolment")].cursor() as cur:
             _require_learner_match(cur)
             list_columns_sql = _learner_match_select_sql(include_structure=include_audit or include_activities)
             source_sql = f'from "{AUDIT_SCHEMA}".learner_match'
@@ -2417,7 +2419,7 @@ def contract_file(request, contract_id):
         return _error("Authentication or audit permission is required.", 403)
 
     try:
-        with connections["enrolment"].cursor() as cursor:
+        with connections[resolve("enrolment")].cursor() as cursor:
             from .contract_documents import ensure_contract_archive_table
 
             ensure_contract_archive_table(cursor)
@@ -2533,7 +2535,7 @@ def evidence_file(request, evidence_id):
             if learner_id is not None:
                 conditions.append("evidence.learner_id = %s")
                 params.append(learner_id)
-            with connections["enrolment"].cursor() as cursor:
+            with connections[resolve("enrolment")].cursor() as cursor:
                 cursor.execute(
                     f'''
                     select evidence.azure_manifest ->> 'container',
@@ -2743,7 +2745,7 @@ def learner_signoff(request, learner_id):
 
     month_key = (request.GET.get("month") or "").strip() or "all"
     try:
-        with connections["enrolment"].cursor() as cur:
+        with connections[resolve("enrolment")].cursor() as cur:
             _require_learner_match(cur)
             cur.execute(
                 f"""

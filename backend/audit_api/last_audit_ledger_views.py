@@ -19,6 +19,7 @@ from django.db import DatabaseError, connections
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_GET
 
+from .db_source import cache_scope, resolve
 from .learner_exclusions import is_excluded_learner
 
 
@@ -28,8 +29,10 @@ CONNECTION_ALIAS = "audit"
 # journal/search pages request it on every visit and Neon takes seconds to
 # aggregate it (~300k activity rows -> 1.3MB). Serve repeats from memory,
 # pre-serialized so the 1.3MB is not re-encoded on every hit.
+# Keyed by database source so the live workspace and the HOURS-TEST clone
+# never serve each other's cohort.
 _COHORT_CACHE_TTL_SECONDS = 300
-_cohort_cache = {"expires_at": 0.0, "body": None}
+_cohort_cache = {}
 
 # Keep every mixed-case schema reference in one place.  The mirror is created
 # outside this Django project, so these are intentionally unmanaged SQL tables.
@@ -59,9 +62,9 @@ _OTJH_COLS = ("ph.planned_hours AS otjh_planned, ah.actual_hours AS otjh_actual,
 
 
 def _connection():
-    """Use the dedicated audit alias, falling back for minimal test setups."""
-    alias = CONNECTION_ALIAS if CONNECTION_ALIAS in connections.databases else "default"
-    return connections[alias]
+    """The audit connection for this request — the live branch, or the clone
+    when the request came in under the HOURS-TEST mount."""
+    return connections[resolve(CONNECTION_ALIAS)]
 
 
 def _dict_rows(cursor):
@@ -473,8 +476,9 @@ def cohort(request: HttpRequest) -> JsonResponse:
     # Only the unfiltered call is cached: it is the hot path (every journal /
     # search page load) and the only expensive one; filtered calls stay live.
     cacheable = not search and not programme
-    if cacheable and _cohort_cache["body"] is not None and _cohort_cache["expires_at"] > time.monotonic():
-        return HttpResponse(_cohort_cache["body"], content_type="application/json")
+    cached = _cohort_cache.get(cache_scope())
+    if cacheable and cached and cached["expires_at"] > time.monotonic():
+        return HttpResponse(cached["body"], content_type="application/json")
     conditions = ["l.aptem_id IS NOT NULL"]
     params = []
     if search:
@@ -659,8 +663,10 @@ def cohort(request: HttpRequest) -> JsonResponse:
         "learners": learners,
     })
     if cacheable:
-        _cohort_cache["body"] = response.content
-        _cohort_cache["expires_at"] = time.monotonic() + _COHORT_CACHE_TTL_SECONDS
+        _cohort_cache[cache_scope()] = {
+            "body": response.content,
+            "expires_at": time.monotonic() + _COHORT_CACHE_TTL_SECONDS,
+        }
     return response
 
 

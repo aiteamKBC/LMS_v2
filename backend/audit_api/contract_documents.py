@@ -10,6 +10,7 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from .db_source import resolve
 from .learner_exclusions import is_excluded_learner
 from .views import _azure_service_client, _has_audit_permission
 
@@ -143,7 +144,7 @@ def upload_contract(request):
     document_name = (request.POST.get("document_name") or filename).strip()[:180] or filename
 
     try:
-        with connections[CONN].cursor() as cursor:
+        with connections[resolve(CONN)].cursor() as cursor:
             learner = _learner_upload_metadata(cursor, learner_id)
     except (KeyError, DatabaseError):
         return _error("Could not validate the learner.", 503)
@@ -174,7 +175,7 @@ def upload_contract(request):
     }
     try:
         with transaction.atomic(using=CONN):
-            with connections[CONN].cursor() as cursor:
+            with connections[resolve(CONN)].cursor() as cursor:
                 cursor.execute(
                     '''
                     insert into fetching_evidence.aptem_cv_contracts_probe (
@@ -232,7 +233,7 @@ def archive_contract(request, contract_id):
             return _error("archived must be true or false.", 400)
 
     try:
-        with connections[CONN].cursor() as cursor:
+        with connections[resolve(CONN)].cursor() as cursor:
             cursor.execute(
                 '''select learner_id from fetching_evidence.aptem_cv_contracts_probe where id = %s limit 1''',
                 [contract_id],
@@ -304,7 +305,7 @@ def rename_contract(request, contract_id):
         return _error("document_name must be 180 characters or fewer.", 400)
 
     try:
-        with connections[CONN].cursor() as cursor:
+        with connections[resolve(CONN)].cursor() as cursor:
             cursor.execute(
                 '''select learner_id from fetching_evidence.aptem_cv_contracts_probe where id = %s limit 1''',
                 [contract_id],

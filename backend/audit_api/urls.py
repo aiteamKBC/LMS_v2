@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import audit_blob, contract_file, evidence_file, learner_activity_stats, learner_audit, learner_audit_list, learner_signoff
+from .actual_hours import views as journal_hours_views
 from .contract_documents import archive_contract, rename_contract, upload_contract
 from .evidence_documents import archive_evidence, select_activity_evidence, update_evidence_date, upload_evidence
 from .profile_overrides import update_profile_overrides
@@ -81,6 +82,18 @@ urlpatterns = [
     path("last-audit/evidence/replace", evidence_replace, name="last-audit-evidence-replace"),
     path("last-audit/evidence/transfer", evidence_transfer, name="last-audit-evidence-transfer"),
     path("last-audit/manual/activity-ledger", manual_activity_ledger, name="last-audit-manual-activity-ledger"),
+    # Learner Journal Activity-log hours: calculate actual/planned as pending
+    # proposals, then apply them on approval. Same views as the HOURS-TEST
+    # mount; the alias they read and write is decided by the mount itself
+    # (audit_api -> the live audit branch, hours_test_api -> the clone).
+    path("last-audit/journal-hours/summary", journal_hours_views.journal_summary,
+         name="journal-hours-summary"),
+    path("last-audit/journal-hours/calculate", journal_hours_views.journal_calculate,
+         name="journal-hours-calculate"),
+    path("last-audit/journal-hours/approve", journal_hours_views.journal_approve,
+         name="journal-hours-approve"),
+    path("last-audit/journal-hours/reject", journal_hours_views.journal_reject,
+         name="journal-hours-reject"),
     path("ledger/health", health, name="learner-log-health"),
     path("ledger/mre", mre_list, name="learner-log-mre"),
     path("ledger/mre/summary", mre_summary, name="learner-log-mre-summary"),

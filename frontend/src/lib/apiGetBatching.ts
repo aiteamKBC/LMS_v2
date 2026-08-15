@@ -4,6 +4,7 @@ const API_PREFIXES = [
   '/quiz_api/',
   '/learner_api/',
   '/audit_api/',
+  '/hours_test_api/',
   '/engagement_api/',
   '/enrolment_api/',
   '/api/chat/',

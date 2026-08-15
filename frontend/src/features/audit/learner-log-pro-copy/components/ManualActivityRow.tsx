@@ -246,7 +246,7 @@ function AssignmentDocuments({ row, onStageFiles, onUnstageFile, onDeleteDocumen
   );
 }
 
-export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, mergeMode = false, mergeEligible = false, mergeSelected = false, onToggleMerge, nestedUnderLecture = false, linkedComponentCount = 0, className = "", reportMonth, dateWindow }: {
+export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, mergeMode = false, mergeEligible = false, mergeSelected = false, onToggleMerge, nestedUnderLecture = false, linkedComponentCount = 0, className = "", reportMonth, dateWindow,calculatedHours }: {
   row: DraftRow;
   onPatch: (patch: DraftPatch) => void;
   onDelete: () => void;
@@ -266,6 +266,10 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
   reportMonth?: string;
   /** Date window the whole journal accepts (first report month → ledger end). */
   dateWindow?: { min: string; max: string };
+  /** Calculated hours awaiting approval — actual for every LMS row, planned as
+   *  well for reading-only rows. Shown beneath the active values and visually
+   *  distinct: these are NOT the row's hours until they are approved. */
+  calculatedHours?: { proposed: string; basis: string; plannedProposed?: string | null } | null;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => editDraftFromRow(row));
@@ -415,8 +419,28 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
           ) : null}
         </TableCell>
         <TableCell className="whitespace-nowrap text-center font-mono text-xs text-muted-foreground">{row.timestamp_label || "—"}</TableCell>
-        <TableCell className="whitespace-nowrap text-right font-mono text-sm">{hours(row.planned_hours)}</TableCell>
-        <TableCell className="whitespace-nowrap text-right font-mono text-sm text-success">{hours(row.actual_hours)}</TableCell>
+        <TableCell className="whitespace-nowrap text-right font-mono text-sm">
+          {hours(row.planned_hours)}
+          {calculatedHours?.plannedProposed ? (
+            <span
+              className="mt-0.5 block rounded-sm border border-dashed border-sky-300 bg-sky-50 px-1 text-[11px] font-semibold text-sky-800"
+              title="This month's Aptem LMS planned hours, shared across its reading-only activities — pending approval"
+            >
+              → {calculatedHours.plannedProposed}
+            </span>
+          ) : null}
+        </TableCell>
+        <TableCell className="whitespace-nowrap text-right font-mono text-sm text-success">
+          {hours(row.actual_hours)}
+          {calculatedHours ? (
+            <span
+              className="mt-0.5 block rounded-sm border border-dashed border-sky-300 bg-sky-50 px-1 text-[11px] font-semibold text-sky-800"
+              title={`Calculated from the ${calculatedHours.basis} — pending approval`}
+            >
+              → {calculatedHours.proposed}
+            </span>
+          ) : null}
+        </TableCell>
         <TableCell className="pr-7 text-right">
           <div className={`flex justify-end gap-1 ${mergeMode ? "pointer-events-none opacity-40" : ""}`}>
             <button type="button" onClick={() => { setDraft(editDraftFromRow(row)); setEditing(true); }} className="rounded-md border border-border p-1.5 hover:bg-secondary" title="Edit in this row" aria-label="Edit activity"><Pencil className="h-3.5 w-3.5" /></button>
@@ -468,7 +492,7 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
                 <RowInput type="time" min="09:00:00" max="17:00:00" step="1" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value || WORK_DAY_START })} className="w-full text-center" aria-label="Start time including seconds" />
                 {editGeneratedTime && "label" in editGeneratedTime ? (
                   <span className="block font-mono text-[10px] text-[#182d48]">{editGeneratedTime.label}</span>
-                ) : editGeneratedTime ? (
+                ) : editGeneratedTime && "error" in editGeneratedTime ? (
                   <span className="block max-w-36 text-[10px] leading-tight text-destructive">{editGeneratedTime.error}</span>
                 ) : null}
               </>
