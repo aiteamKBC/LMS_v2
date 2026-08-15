@@ -755,13 +755,10 @@ def groups(request: HttpRequest) -> JsonResponse:
                 SELECT g.group_id, g.group_name,
                        count(a.activity_id) FILTER (
                            WHERE lower(a.activity_type) = 'video'
-                             AND COALESCE(a.title, '') !~* '(^|[^a-z0-9])(ppt|power[[:space:]]*point)([^a-z0-9]|$)'
                        ) AS video,
                        count(a.activity_id) FILTER (WHERE lower(a.activity_type) = 'audio') AS audio,
                        count(a.activity_id) FILTER (
                            WHERE lower(a.activity_type) = 'reading+quiz'
-                              OR (lower(a.activity_type) = 'video'
-                                  AND COALESCE(a.title, '') ~* '(^|[^a-z0-9])(ppt|power[[:space:]]*point)([^a-z0-9]|$)')
                        ) AS reading_quiz
                 FROM {GROUP_LEARNERS} gl
                 JOIN {GROUPS} g ON g.group_id = gl.group_id
