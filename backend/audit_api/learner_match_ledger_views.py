@@ -1371,6 +1371,51 @@ def _load_profile_learner(learner_key):
         row = cursor.fetchone()
 
     if row is None:
+        # Some valid Aptem learners (for example a withdrawn learner imported
+        # only through the ILR feed) have not yet reached
+        # ``Last_audit.learners``.  Keep the Aptem ID as the canonical identity
+        # and expose the learner only when an ILR delivery proves that the
+        # record belongs to the audit cohort.
+        with connections[CONN].cursor() as cursor:
+            cursor.execute(
+                '''
+                select aptem."ID", aptem."FullName", aptem."Email",
+                       coalesce(
+                           nullif(btrim(aptem."Program Name"), ''),
+                           nullif(btrim(aptem."Group"), '')
+                       ) as programme_name,
+                       nullif(btrim(aptem."Program-Status"), '') as programme_status,
+                       nullif(btrim(aptem."OwnerName"), '') as coach_name,
+                       nullif(btrim(aptem."OwnerEmail"), '') as coach_email,
+                       lm.aptem_training_plan
+                from "LMS"."Aptem_users" aptem
+                left join "Audit".learner_match lm
+                  on lm.aptem_id = aptem."ID"
+                where (
+                        aptem."ID"::text = %s
+                        or lower(btrim(aptem."FullName")) = %s
+                        or lower(btrim(aptem."Email")) = %s
+                      )
+                  and exists (
+                        select 1
+                        from "Audit".ilr_learning_deliveries ilr
+                        where (
+                            nullif(btrim(aptem."Email"), '') is not null
+                            and lower(btrim(ilr.email)) = lower(btrim(aptem."Email"))
+                        ) or (
+                            nullif(btrim(aptem."FullName"), '') is not null
+                            and lower(btrim(concat_ws(' ', ilr.given_names, ilr.family_name))) =
+                                lower(btrim(aptem."FullName"))
+                        )
+                  )
+                order by case when aptem."ID"::text = %s then 0 else 1 end
+                limit 1
+                ''',
+                [learner_key, learner_key, learner_key, learner_key],
+            )
+            row = cursor.fetchone()
+
+    if row is None:
         return None
 
     (
@@ -1527,17 +1572,24 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
 
         cursor.execute(
             '''
-            select characteristic_name, assessed_level,
+            select distinct on (lower(btrim(characteristic_name)))
+                   characteristic_name, assessed_level,
                    raw -> 'score' ->> 'achieved',
                    raw -> 'score' ->> 'maximum'
             from fetching_evidence.aptem_skills_radar_probe
             where learner_id = %s
               and coalesce(raw -> 'score' ->> 'achieved', assessed_level::text) is not null
-            order by characteristic_name
+            order by lower(btrim(characteristic_name)), fetched_at desc, id desc
             ''',
             [aptem_id],
         )
         for characteristic, assessed_level, achieved_value, maximum_value in cursor.fetchall():
+            # Aptem can return programme Duties in the same payload as the
+            # actual K/S/B characteristics. Duties have no KSB code and were
+            # previously inflating Skills (for example 11 skills became 33)
+            # and filling the radar with paragraph-length axis labels.
+            if re.match(r"^\s*duty\s+\d+\b", str(characteristic or ""), re.IGNORECASE):
+                continue
             domain, field = _skill_radar_characteristic(characteristic)
             score, maximum = _skill_radar_score_values(
                 assessed_level,
@@ -1997,11 +2049,33 @@ def _skill_radar_characteristic(value):
         "S": "skill_score",
         "B": "behaviour",
     }[prefix]
-    direct_code = re.match(r"\s*[KSB]\d+\s*[:.\-]\s*(.+)", text, re.IGNORECASE)
+    # A number of Aptem standards use ``K01 Description`` rather than
+    # ``K01: Description``. Treat both forms identically so the full KSB text
+    # never becomes the chart's category label.
+    direct_code = re.match(
+        r"\s*[KSB]0*\d+\s*(?::|[.\-])?\s+(.+)",
+        text,
+        re.IGNORECASE,
+    )
     return (_skill_radar_text_category(direct_code.group(1)) if direct_code else text), field
 
 
 _SKILL_RADAR_CATEGORY_RULES = (
+    (r"works flexibly|adapts? to circumstances", "Adaptability"),
+    (r"works collaboratively|builds strong relationships", "Collaboration"),
+    (r"accountability and ownership|ownership of (?:their|the) tasks", "Accountability"),
+    (r"operates professionally|integrity and confidentiality", "Professionalism"),
+    (r"learning opportunities|continuous professional development", "Continuous development"),
+    (r"differences between projects and business as usual|alignment between the project and organisational objectives|interdependencies between project, programme|project context|project governance structure|functional, matrix and project structures|roles and responsibilities within a project|life cycle approaches|business case|project management plan", "Project context & governance"),
+    (r"define,? record,? integrate,? deliver,? and manage scope|configuration management and change control|change control processes?|management of project scope", "Scope & change"),
+    (r"stakeholders?|communication techniques|managing conflict|working collaboratively|influence and negotiate|resolve conflict|adapt communications?|project vision", "Stakeholders & communication"),
+    (r"information management|technology and software|digital tools?|presentation tools", "Information & technology"),
+    (r"estimating methods?|earned value|project scheduling|schedule activities|integrated schedules|allocation and management of resources|project budgets?|resource management|manages resources|resources through the project|critical path|approved project budget", "Planning, cost & resources"),
+    (r"project risk and issue|risk management plan|project risks? and issues?|mitigate risks?", "Risk & issues"),
+    (r"procurement strategies|quality requirements|quality management plan|quality control", "Procurement & quality"),
+    (r"evaluating project success|lessons learned|continual improvement", "Evaluation & improvement"),
+    (r"regulations? and legislation|relevant legislation|sustainability|net carbon|ethical and inclusive|codes? of practice|ethical guidance", "Compliance & sustainability"),
+    (r"monitoring and reporting|track,? interpret and report|collate and analyse information|use data to inform|underpinning data", "Monitoring & reporting"),
     (r"fundamentals of marketing theory|marketing process", "Marketing fundamentals"),
     (r"brand positioning|corporate reputation", "Brand management"),
     (r"customer relationship management|stakeholder management.*customer", "Stakeholder & CRM"),

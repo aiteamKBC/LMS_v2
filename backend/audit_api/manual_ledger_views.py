@@ -218,6 +218,54 @@ def _load_learner(cursor, aptem_id):
         [aptem_id],
     )
     rows = _dict_rows(cursor)
+    if rows:
+        return rows[0]
+
+    # An ILR-backed Aptem learner can legitimately precede the normalized
+    # Last_audit roster.  The manual report is keyed by Aptem ID, so retaining
+    # that real identity lets the learner use the report immediately without
+    # inventing an LMS match.
+    cursor.execute(
+        """
+        SELECT aptem."ID" AS aptem_id,
+               NULL::bigint AS learner_id,
+               aptem."FullName" AS learner_name,
+               aptem."Email" AS learner_email,
+               COALESCE(
+                   NULLIF(btrim(aptem."Program Name"), ''),
+                   NULLIF(btrim(aptem."Group"), '')
+               ) AS programme_name,
+               NULLIF(btrim(aptem."Program-Status"), '') AS programme_status,
+               NULLIF(btrim(aptem."OwnerName"), '') AS coach_name,
+               NULLIF(btrim(aptem."OwnerEmail"), '') AS coach_email,
+               ilr.planned_hours AS planned_hours_total,
+               COALESCE(monthly.planned_hours_monthly, '{}'::jsonb) AS planned_hours_monthly,
+               ilr.learn_start_date AS programme_start_date
+        FROM "LMS"."Aptem_users" aptem
+        JOIN LATERAL (
+            SELECT delivery.planned_hours, delivery.learn_start_date
+            FROM "Audit".ilr_learning_deliveries delivery
+            WHERE (
+                NULLIF(btrim(aptem."Email"), '') IS NOT NULL
+                AND lower(btrim(delivery.email)) = lower(btrim(aptem."Email"))
+            ) OR (
+                NULLIF(btrim(aptem."FullName"), '') IS NOT NULL
+                AND lower(btrim(concat_ws(' ', delivery.given_names, delivery.family_name))) =
+                    lower(btrim(aptem."FullName"))
+            )
+            ORDER BY delivery.aim_seq_number,
+                     delivery.updated_at DESC NULLS LAST,
+                     delivery.id DESC
+            LIMIT 1
+        ) ilr ON TRUE
+        LEFT JOIN fetching_evidence.learner_hours_monthly monthly
+          ON monthly.learner_id = aptem."ID"
+        WHERE aptem."ID" = %s
+        LIMIT 1
+        """,
+        [aptem_id],
+    )
+    rows = _dict_rows(cursor)
     return rows[0] if rows else None
 
 
@@ -624,6 +672,9 @@ def summary(request: HttpRequest) -> JsonResponse:
     # month, since the plan begins there) through the fixed ledger end. Months
     # with manual rows outside that window stay visible so no data hides.
     known = set(planned_monthly) | set(arranged)
+    programme_start_date = learner.get("programme_start_date")
+    if programme_start_date:
+        known.add(str(programme_start_date)[:7])
     window_starts = [month for month in known if month <= LEDGER_END_MONTH]
     month_list = (
         _month_range(min(window_starts), LEDGER_END_MONTH)

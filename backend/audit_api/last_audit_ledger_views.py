@@ -491,7 +491,46 @@ def cohort(request: HttpRequest) -> JsonResponse:
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     sql = f"""
-        WITH learner_groups AS (
+        WITH learner_roster AS (
+            SELECT l.aptem_id, l.learner_name, l.learner_email,
+                   l.programme_name, l.programme_status,
+                   l.coach_name, l.coach_email,
+                   l.declared_lms_id, l.learner_id
+            FROM {LEARNERS} l
+
+            UNION ALL
+
+            SELECT aptem."ID" AS aptem_id,
+                   aptem."FullName" AS learner_name,
+                   aptem."Email" AS learner_email,
+                   COALESCE(
+                       NULLIF(btrim(aptem."Program Name"), ''),
+                       NULLIF(btrim(aptem."Group"), '')
+                   ) AS programme_name,
+                   NULLIF(btrim(aptem."Program-Status"), '') AS programme_status,
+                   NULLIF(btrim(aptem."OwnerName"), '') AS coach_name,
+                   NULLIF(btrim(aptem."OwnerEmail"), '') AS coach_email,
+                   NULL::bigint AS declared_lms_id,
+                   NULL::bigint AS learner_id
+            FROM "LMS"."Aptem_users" aptem
+            WHERE aptem."ID" IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM {LEARNERS} existing
+                  WHERE existing.aptem_id = aptem."ID"
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM "Audit".ilr_learning_deliveries ilr_delivery
+                  WHERE (
+                      NULLIF(btrim(aptem."Email"), '') IS NOT NULL
+                      AND lower(btrim(ilr_delivery.email)) = lower(btrim(aptem."Email"))
+                  ) OR (
+                      NULLIF(btrim(aptem."FullName"), '') IS NOT NULL
+                      AND lower(btrim(concat_ws(' ', ilr_delivery.given_names, ilr_delivery.family_name))) =
+                          lower(btrim(aptem."FullName"))
+                  )
+              )
+        ), learner_groups AS (
             SELECT gl.learner_id,
                    array_agg(DISTINCT g.group_name ORDER BY g.group_name)
                        FILTER (WHERE g.group_name IS NOT NULL) AS groups,
@@ -582,7 +621,7 @@ def cohort(request: HttpRequest) -> JsonResponse:
                l.planned_hours_total AS aptem_planned_total,
                l.planned_hours_monthly AS aptem_planned_monthly,
                COALESCE(am.months, '[]'::jsonb) AS months
-        FROM {LEARNERS} l
+        FROM learner_roster l
         LEFT JOIN learner_groups lg ON lg.learner_id = l.learner_id
         LEFT JOIN result_totals rt ON rt.learner_id = l.learner_id
         LEFT JOIN attendance_totals at ON at.aptem_id = l.aptem_id

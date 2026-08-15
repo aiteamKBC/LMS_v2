@@ -72,6 +72,7 @@ type SkillChartPoint = {
   score: number;
   maximum: number;
   percentage: number;
+  entryCount: number;
 };
 
 const SKILL_DIMENSIONS: Array<{
@@ -91,7 +92,7 @@ function skillCode(value: string, prefix: string, index: number) {
 }
 
 function skillDescription(value: string) {
-  return value.replace(/^\s*[KSB]\d+\s*[:.\-]\s*/i, "").trim() || value;
+  return value.replace(/^\s*[KSB]0*\d+\s*(?::|[.\-])?\s*/i, "").trim() || value;
 }
 
 function skillDetails(value: string, domain: string) {
@@ -101,24 +102,60 @@ function skillDetails(value: string, domain: string) {
 }
 
 function skillChartPoints(entries: SkillRadarEntry[], dimension: SkillDimension, prefix: string) {
-  return entries.flatMap((entry, index) => {
+  const grouped = new Map<string, {
+    domain: string;
+    codes: string[];
+    descriptions: string[];
+    scores: number[];
+    maximums: number[];
+    percentages: number[];
+  }>();
+
+  entries.forEach((entry, index) => {
     const score = entry[dimension];
-    if (score == null) return [];
+    if (score == null) return;
     const codes = (entry.ksb_codes ?? []).filter((code) =>
       new RegExp(`^${prefix}\\d+$`, "i").test(code),
     );
     const displayCodes = codes.length ? codes : [skillCode(entry.skill, prefix, index)];
     const domain = entry.domain?.trim() || skillDescription(entry.skill);
     const maximum = Number.isFinite(entry.maximum) && entry.maximum > 0 ? entry.maximum : 8;
-    return [{
-      code: displayCodes.join(", "),
+    const description = skillDetails(entry.skill, domain);
+    const groupKey = domain.toLocaleLowerCase();
+    const group = grouped.get(groupKey) ?? {
       domain,
-      description: skillDetails(entry.skill, domain),
-      score,
-      maximum,
-      percentage: Math.min(100, Math.max(0, score / maximum * 100)),
-    }];
+      codes: [],
+      descriptions: [],
+      scores: [],
+      maximums: [],
+      percentages: [],
+    };
+    for (const code of displayCodes) {
+      if (!group.codes.includes(code)) group.codes.push(code);
+    }
+    if (description && !group.descriptions.includes(description)) group.descriptions.push(description);
+    group.scores.push(score);
+    group.maximums.push(maximum);
+    group.percentages.push(Math.min(100, Math.max(0, score / maximum * 100)));
+    grouped.set(groupKey, group);
   });
+
+  return [...grouped.values()].map((group) => ({
+    code: group.codes.join(", "),
+    domain: group.domain,
+    description: group.descriptions.join(" • "),
+    score: group.scores.reduce((total, value) => total + value, 0) / group.scores.length,
+    maximum: group.maximums.reduce((total, value) => total + value, 0) / group.maximums.length,
+    percentage: group.percentages.reduce((total, value) => total + value, 0) / group.percentages.length,
+    entryCount: group.scores.length,
+  }));
+}
+
+function skillCompetencyCount(points: SkillChartPoint[]) {
+  const codes = new Set(
+    points.flatMap((point) => point.code.split(", ").filter(Boolean)),
+  );
+  return codes.size || points.length;
 }
 
 function formatSkillScore(value: number) {
@@ -126,8 +163,9 @@ function formatSkillScore(value: number) {
 }
 
 function skillAverage(points: SkillChartPoint[], key: "score" | "maximum") {
-  return points.length
-    ? points.reduce((total, point) => total + point[key], 0) / points.length
+  const entryCount = points.reduce((total, point) => total + point.entryCount, 0);
+  return entryCount
+    ? points.reduce((total, point) => total + point[key] * point.entryCount, 0) / entryCount
     : null;
 }
 
@@ -1319,6 +1357,7 @@ function LearnerProfilePage() {
                   {skillGroups.map((group) => {
                     const averageScore = skillAverage(group.points, "score");
                     const averageMaximum = skillAverage(group.points, "maximum");
+                    const competencyCount = skillCompetencyCount(group.points);
                     const selected = activeSkillGroup.key === group.key;
                     return (
                       <button
@@ -1340,7 +1379,7 @@ function LearnerProfilePage() {
                               : `${formatSkillScore(averageScore)} / ${formatSkillScore(averageMaximum)}`}
                           </span>
                         </span>
-                        <span className="mt-1.5 block text-xs text-muted-foreground">{group.points.length} assessed competenc{group.points.length === 1 ? "y" : "ies"}</span>
+                        <span className="mt-1.5 block text-xs text-muted-foreground">{competencyCount} assessed KSB{competencyCount === 1 ? "" : "s"}</span>
                       </button>
                     );
                   })}
