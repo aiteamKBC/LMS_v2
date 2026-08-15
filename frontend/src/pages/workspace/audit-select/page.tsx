@@ -6,18 +6,19 @@ import { BrandLockup } from '@/components/BrandLockup';
 // which of the two independent audit systems to open.
 //  - Automatic:  the existing workspace (audit_api + Last_audit source).
 //  - Manual:     the new workspace (manual_audit_api + Manual_audit schema).
-//  - HOURS-TEST: the Automatic UI over a CLONE of the audit database
-//                (hours_test_api -> the 'audit_clone' connection), so hours can
-//                be reworked without any of it reaching the live audit data.
-// The three share nothing but the synced learner data, so work in one never
-// affects the others.
+// The two share nothing but the synced learner data, so work in one never
+// affects the other.
+//
+// HOURS-TEST (the same workspace over the 'audit_clone' branch) is no longer
+// offered here. Its route, code and API mount are untouched and it is still
+// reachable at /workspace/auditor-hours-test — only the card is gone.
 interface AuditSystemCard {
   slug: string;
   label: string;
   description: string;
   icon: string;
   path: string;
-  accent: 'primary' | 'emerald' | 'amber';
+  accent: 'primary' | 'emerald';
 }
 
 const AUDIT_SYSTEMS: AuditSystemCard[] = [
@@ -37,17 +38,9 @@ const AUDIT_SYSTEMS: AuditSystemCard[] = [
     path: '/workspace/auditor-manual',
     accent: 'emerald',
   },
-  {
-    slug: 'hours-test',
-    label: 'HOURS-TEST',
-    description: 'The same workspace as Automatic, running on a clone of the audit database — a safe place to rework hours.',
-    icon: 'ri-timer-flash-line',
-    path: '/workspace/auditor-hours-test',
-    accent: 'amber',
-  },
 ];
 
-// One place per accent so a third card does not turn every class name into a
+// One place per accent, so adding a card never turns every class name into a
 // nested ternary.
 const ACCENT_STYLES: Record<AuditSystemCard['accent'], { card: string; badge: string; icon: string; cta: string }> = {
   primary: {
@@ -61,12 +54,6 @@ const ACCENT_STYLES: Record<AuditSystemCard['accent'], { card: string; badge: st
     badge: 'bg-emerald-50 border-emerald-200/60 group-hover:bg-emerald-100',
     icon: 'text-emerald-600',
     cta: 'text-emerald-700',
-  },
-  amber: {
-    card: 'bg-amber-50/50 border-amber-200/70 hover:border-amber-300 hover:shadow-xl hover:shadow-amber-500/10',
-    badge: 'bg-amber-50 border-amber-200/60 group-hover:bg-amber-100',
-    icon: 'text-amber-600',
-    cta: 'text-amber-700',
   },
 };
 
@@ -99,11 +86,11 @@ export default function AuditSelectPage() {
               Choose your audit system
             </h1>
             <p className="text-[14px] text-foreground-400 max-w-md mx-auto leading-relaxed">
-              Three independent systems over the same learner data — pick the one you want to work in.
+              Two independent systems over the same learner data — pick the one you want to work in.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             {AUDIT_SYSTEMS.map((system) => {
               const accent = ACCENT_STYLES[system.accent];
               return (
