@@ -88,6 +88,26 @@ export function patchDraftRow(rows: DraftRow[], key: string, patch: DraftPatch):
   });
 }
 
+/** Apply a parent lecture edit and keep all of its displayed components on the
+ * same date/month. Other fields in the patch belong only to the parent. */
+export function patchDraftRowWithLinkedDates(
+  rows: DraftRow[],
+  key: string,
+  patch: DraftPatch,
+  linkedKeys: readonly string[],
+): DraftRow[] {
+  let next = patchDraftRow(rows, key, patch);
+  if (!Object.prototype.hasOwnProperty.call(patch, "activity_date")) return next;
+  const parent = rows.find((row) => row.key === key);
+  if (!parent) return next;
+  const activityDate = patch.activity_date ?? null;
+  const month = activityDate ? activityDate.slice(0, 7) : (patch.month ?? parent.month);
+  for (const linkedKey of linkedKeys) {
+    next = patchDraftRow(next, linkedKey, { activity_date: activityDate, month });
+  }
+  return next;
+}
+
 export function deleteDraftRow(rows: DraftRow[], key: string): DraftRow[] {
   return rows.flatMap((row) => {
     if (row.key !== key) return [row];

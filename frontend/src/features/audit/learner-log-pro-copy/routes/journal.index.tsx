@@ -36,6 +36,7 @@ import {
   isDraftDirty,
   nextDraftKey,
   patchDraftRow,
+  patchDraftRowWithLinkedDates,
   pendingChangeCount,
   restoreDraftFromStorage,
   rowPatchOf,
@@ -46,6 +47,7 @@ import {
   visibleDraftRows,
   type DraftRow,
 } from "@/features/audit/learner-log-pro-copy/lib/journalDraft";
+import { arrangeLmsLectureRows } from "@/features/audit/learner-log-pro-copy/lib/lectureOrdering";
 import { monthBounds } from "@/features/audit/learner-log-pro-copy/lib/ukCalendar";
 import { downloadLearnerJournalPdf } from "@/features/audit/learner-log-pro-copy/lib/journal-pdf";
 
@@ -521,11 +523,20 @@ function JournalPage() {
     [visibleRows],
   );
 
-  // visibleRows is already date-sorted, so each section's rows come out in
-  // date order with undated rows trailing at the end.
+  // LMS rows read as lecture bundles: the media row first, then that lecture's
+  // Reading + Quiz components, while dates/courses remain separate.
   const groupedSections = ROW_SECTIONS.map((section) => {
-    const rows = visibleRows.filter((row) => (section.categories as readonly string[]).includes(row.category));
-    return { ...section, count: rows.length, rows };
+    const sectionRows = visibleRows.filter((row) => (section.categories as readonly string[]).includes(row.category));
+    const arrangement = section.key === "activities"
+      ? arrangeLmsLectureRows(sectionRows)
+      : { rows: sectionRows, nestedRowKeys: new Set<string>(), bundleRowKeysByPrimary: new Map<string, string[]>() };
+    return {
+      ...section,
+      count: arrangement.rows.length,
+      rows: arrangement.rows,
+      nestedRowKeys: arrangement.nestedRowKeys,
+      bundleRowKeysByPrimary: arrangement.bundleRowKeysByPrimary,
+    };
   }).filter((section) => section.count > 0);
 
   const mergeEligibleKeys = useMemo(() => new Set(visibleRows
@@ -1137,8 +1148,15 @@ function JournalPage() {
                         mergeMode={mergeMode}
                         mergeEligible={mergeEligibleKeys.has(row.key)}
                         mergeSelected={mergeSelection.has(row.key)}
+                        nestedUnderLecture={section.nestedRowKeys.has(row.key)}
+                        linkedComponentCount={section.bundleRowKeysByPrimary.get(row.key)?.length ?? 0}
                         onToggleMerge={() => toggleMergeRow(row.key)}
-                        onPatch={(patch) => setDraftRows((current) => patchDraftRow(current, row.key, patch))}
+                        onPatch={(patch) => setDraftRows((current) => patchDraftRowWithLinkedDates(
+                          current,
+                          row.key,
+                          patch,
+                          section.bundleRowKeysByPrimary.get(row.key) ?? [],
+                        ))}
                         onDelete={() => setDraftRows((current) => deleteDraftRow(current, row.key))}
                         onStageFiles={(files) => setDraftRows((current) => stageFiles(current, row.key, files))}
                         onUnstageFile={(index) => setDraftRows((current) => unstageFile(current, row.key, index))}

@@ -246,7 +246,7 @@ function AssignmentDocuments({ row, onStageFiles, onUnstageFile, onDeleteDocumen
   );
 }
 
-export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, mergeMode = false, mergeEligible = false, mergeSelected = false, onToggleMerge, className = "", reportMonth, dateWindow }: {
+export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnstageFile, onDeleteDocument, mergeMode = false, mergeEligible = false, mergeSelected = false, onToggleMerge, nestedUnderLecture = false, linkedComponentCount = 0, className = "", reportMonth, dateWindow }: {
   row: DraftRow;
   onPatch: (patch: DraftPatch) => void;
   onDelete: () => void;
@@ -257,6 +257,10 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
   mergeEligible?: boolean;
   mergeSelected?: boolean;
   onToggleMerge?: () => void;
+  /** Visually marks an Audio / Reading / Quiz component matched to the lecture above. */
+  nestedUnderLecture?: boolean;
+  /** Components whose date/month follow this parent lecture in the draft. */
+  linkedComponentCount?: number;
   className?: string;
   /** The month the journal is showing — rows re-filed elsewhere get a badge. */
   reportMonth?: string;
@@ -289,6 +293,7 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
       icon: restriction ? "warning" : "question",
       title: `Use ${titleDate}?`,
       html: [
+        linkedComponentCount ? `<p>This also updates <b>${linkedComponentCount}</b> linked Audio / Reading / Quiz component${linkedComponentCount === 1 ? "" : "s"}.</p>` : "",
         `<p>The activity is dated <b>${row.activity_date ?? "—"}</b> but its title says <b>${titleDate}</b>.</p>`,
         restriction ? `<p style="color:#b45309">${restriction} It is applied only if you confirm.</p>` : "",
         movesMonth ? `<p>This moves the activity to <b>${monthLabelOf(titleDate.slice(0, 7))}</b> when you save.</p>` : "",
@@ -348,7 +353,7 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
 
   if (!editing) {
     return (
-      <TableRow className={className}>
+      <TableRow className={`${className} ${nestedUnderLecture ? "border-l-4 border-l-primary/35 bg-primary/[0.025]" : ""}`}>
         <TableCell className="whitespace-nowrap pl-7 font-mono text-xs text-muted-foreground">
           {row.activity_date ?? "—"}
           {row.activity_time ? (
@@ -357,13 +362,14 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
           <div>{dateFlagBadge(row.activity_date)}</div>
         </TableCell>
         <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.category}</TableCell>
-        <TableCell className="min-w-64 max-w-[38rem] text-sm">
+        <TableCell className={`min-w-64 max-w-[38rem] text-sm ${nestedUnderLecture ? "pl-5" : ""}`}>
           {mergeMode ? (
             <label className={`mb-2 flex items-center gap-2 text-xs font-semibold ${mergeEligible ? "cursor-pointer text-primary" : "text-muted-foreground"}`}>
               <input type="checkbox" checked={mergeSelected} disabled={!mergeEligible} onChange={onToggleMerge} className="h-4 w-4 accent-primary" />
               {mergeEligible ? "Select for Reading + Quiz merge" : "Not eligible for this merge"}
             </label>
           ) : null}
+          {nestedUnderLecture ? <span className="mr-2 font-mono text-sm font-bold text-primary" title="Component of the lecture above">{"\u21B3"}</span> : null}
           {ref ? (
             <Link to="/ledger" search={{ ref, learner: String(row.aptem_id) } as never} className="font-medium text-foreground hover:text-primary hover:underline">{decodeEntities(row.title)}</Link>
           ) : (
@@ -435,6 +441,9 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
         {editDateIssue ? <span className="mt-1 block max-w-36 text-[10px] leading-tight text-destructive">{editDateIssue}</span> : null}
         {!editDateIssue && editTargetMonth && editTargetMonth !== row.month ? (
           <span className="mt-1 block max-w-36 text-[10px] leading-tight text-[#673ab7]">Moves to {monthLabelOf(editTargetMonth)}</span>
+        ) : null}
+        {linkedComponentCount ? (
+          <span className="mt-1 block max-w-40 text-[10px] leading-tight text-primary">Also updates {linkedComponentCount} linked component{linkedComponentCount === 1 ? "" : "s"}</span>
         ) : null}
       </TableCell>
       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{row.category}</TableCell>
