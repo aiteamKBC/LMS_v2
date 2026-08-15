@@ -44,6 +44,7 @@ export type ManualRow = {
   source_ref: string | null;
   group_id: number | null;
   activity_id: number | null;
+  duration_minutes: number | null;
   title: string;
   // Where the activity came from: LMS group ("course") for content rows,
   // register module for attendance rows. Present on the listing only.

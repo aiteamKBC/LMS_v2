@@ -266,6 +266,29 @@ def _attendance_modules(cursor, source_refs):
     return {item["source_key"]: item.get("module") for item in _dict_rows(cursor)}
 
 
+def _activity_durations(cursor, activity_ids):
+    """Configured LMS media durations keyed by activity id, one round trip.
+
+    Audio durations historically live only in ``raw.audio``; using the shared
+    SQL expression keeps saved journal rows consistent with the retrieve flow.
+    """
+    ids = sorted({int(value) for value in activity_ids if value is not None})
+    if not ids:
+        return {}
+    cursor.execute(
+        f"""
+        SELECT activity_id, {_duration_min_sql()} AS configured_duration_min
+        FROM {ACTIVITIES}
+        WHERE activity_id = ANY(%s)
+        """,
+        [ids],
+    )
+    return {
+        int(item["activity_id"]): _num(item.get("configured_duration_min"))
+        for item in _dict_rows(cursor)
+    }
+
+
 # Tutors write the lecture's real date into the activity title ("P1 -Marketing
 # Definitions 2-5-2025"), while the LMS stores its own activity_date — often the
 # day the content was uploaded, sometimes a whole year out. UK order (day first).
@@ -291,7 +314,10 @@ def _title_date(title, category):
         return None
 
 
-def _row_payload(row, documents=None, *, source_course=None, module=None):
+def _row_payload(
+    row, documents=None, *, source_course=None, module=None,
+    duration_minutes=None,
+):
     activity_date = row.get("activity_date")
     category = row["category"]
     if str(row.get("source_ref") or "").startswith("la:"):
@@ -319,6 +345,11 @@ def _row_payload(row, documents=None, *, source_course=None, module=None):
         "source_ref": row.get("source_ref"),
         "group_id": int(row["group_id"]) if row.get("group_id") is not None else None,
         "activity_id": int(row["activity_id"]) if row.get("activity_id") is not None else None,
+        "duration_minutes": _num(
+            duration_minutes
+            if duration_minutes is not None
+            else row.get("configured_duration_min")
+        ),
         "title": row["title"],
         "activity_date": activity_date.isoformat() if activity_date else None,
         # The lecture date the title itself names, when it differs from above.
@@ -726,13 +757,10 @@ def groups(request: HttpRequest) -> JsonResponse:
                 SELECT g.group_id, g.group_name,
                        count(a.activity_id) FILTER (
                            WHERE lower(a.activity_type) = 'video'
-                             AND COALESCE(a.title, '') !~* '(^|[^a-z0-9])(ppt|power[[:space:]]*point)([^a-z0-9]|$)'
                        ) AS video,
                        count(a.activity_id) FILTER (WHERE lower(a.activity_type) = 'audio') AS audio,
                        count(a.activity_id) FILTER (
                            WHERE lower(a.activity_type) = 'reading+quiz'
-                              OR (lower(a.activity_type) = 'video'
-                                  AND COALESCE(a.title, '') ~* '(^|[^a-z0-9])(ppt|power[[:space:]]*point)([^a-z0-9]|$)')
                        ) AS reading_quiz
                 FROM {GROUP_LEARNERS} gl
                 JOIN {GROUPS} g ON g.group_id = gl.group_id
@@ -1120,6 +1148,9 @@ def rows(request: HttpRequest) -> JsonResponse:
                     cursor, [row.get("source_ref") for row in row_data
                              if row["category"] == "attendance"],
                 )
+                activity_durations = _activity_durations(
+                    cursor, [row.get("activity_id") for row in row_data],
+                )
         except DatabaseError as error:
             return JsonResponse(
                 {"error": "Could not read the manual ledger.", "details": str(error)},
@@ -1131,6 +1162,7 @@ def rows(request: HttpRequest) -> JsonResponse:
                 documents.get(int(row["id"])),
                 source_course=group_names.get(row.get("group_id")),
                 module=attendance_modules.get((row.get("source_ref") or "")[4:]),
+                duration_minutes=activity_durations.get(row.get("activity_id")),
             )
             for row in row_data
         ]
