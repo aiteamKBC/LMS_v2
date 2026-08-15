@@ -4,17 +4,20 @@ import { BrandLockup } from '@/components/BrandLockup';
 
 // AUDIT entry point: the portal's AUDIT card lands here so the user picks
 // which of the two independent audit systems to open.
-//  - Automatic: the existing workspace (audit_api + Last_audit source).
-//  - Manual:    the new workspace (manual_audit_api + Manual_audit schema).
-// The two share nothing but the synced learner data, so work in one never
-// affects the other.
+//  - Automatic:  the existing workspace (audit_api + Last_audit source).
+//  - Manual:     the new workspace (manual_audit_api + Manual_audit schema).
+//  - HOURS-TEST: the Automatic UI over a CLONE of the audit database
+//                (hours_test_api -> the 'audit_clone' connection), so hours can
+//                be reworked without any of it reaching the live audit data.
+// The three share nothing but the synced learner data, so work in one never
+// affects the others.
 interface AuditSystemCard {
   slug: string;
   label: string;
   description: string;
   icon: string;
   path: string;
-  accent: 'primary' | 'emerald';
+  accent: 'primary' | 'emerald' | 'amber';
 }
 
 const AUDIT_SYSTEMS: AuditSystemCard[] = [
@@ -34,7 +37,38 @@ const AUDIT_SYSTEMS: AuditSystemCard[] = [
     path: '/workspace/auditor-manual',
     accent: 'emerald',
   },
+  {
+    slug: 'hours-test',
+    label: 'HOURS-TEST',
+    description: 'The same workspace as Automatic, running on a clone of the audit database — a safe place to rework hours.',
+    icon: 'ri-timer-flash-line',
+    path: '/workspace/auditor-hours-test',
+    accent: 'amber',
+  },
 ];
+
+// One place per accent so a third card does not turn every class name into a
+// nested ternary.
+const ACCENT_STYLES: Record<AuditSystemCard['accent'], { card: string; badge: string; icon: string; cta: string }> = {
+  primary: {
+    card: 'bg-primary-50/60 border-primary-300/70 ring-1 ring-primary-300/40 hover:border-primary-400 hover:shadow-xl hover:shadow-primary-500/15',
+    badge: 'bg-primary-100 border-primary-300/50 group-hover:bg-primary-200',
+    icon: 'text-primary-700',
+    cta: 'text-primary-700',
+  },
+  emerald: {
+    card: 'bg-emerald-50/40 border-emerald-200/70 hover:border-emerald-300 hover:shadow-xl hover:shadow-emerald-500/10',
+    badge: 'bg-emerald-50 border-emerald-200/60 group-hover:bg-emerald-100',
+    icon: 'text-emerald-600',
+    cta: 'text-emerald-700',
+  },
+  amber: {
+    card: 'bg-amber-50/50 border-amber-200/70 hover:border-amber-300 hover:shadow-xl hover:shadow-amber-500/10',
+    badge: 'bg-amber-50 border-amber-200/60 group-hover:bg-amber-100',
+    icon: 'text-amber-600',
+    cta: 'text-amber-700',
+  },
+};
 
 export default function AuditSelectPage() {
   const navigate = useNavigate();
@@ -65,45 +99,34 @@ export default function AuditSelectPage() {
               Choose your audit system
             </h1>
             <p className="text-[14px] text-foreground-400 max-w-md mx-auto leading-relaxed">
-              Two independent systems over the same learner data — pick the one you want to work in.
+              Three independent systems over the same learner data — pick the one you want to work in.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-            {AUDIT_SYSTEMS.map((system) => (
-              <button
-                key={system.slug}
-                onClick={() => navigate(system.path)}
-                aria-label={`Open the ${system.label} audit system`}
-                className={`group relative flex flex-col items-start text-left gap-4 rounded-2xl border p-6 transition-all duration-300 ease-out hover:-translate-y-1.5 hover:scale-[1.02] cursor-pointer card-premium ${
-                  system.accent === 'emerald'
-                    ? 'bg-emerald-50/40 border-emerald-200/70 hover:border-emerald-300 hover:shadow-xl hover:shadow-emerald-500/10'
-                    : 'bg-primary-50/60 border-primary-300/70 ring-1 ring-primary-300/40 hover:border-primary-400 hover:shadow-xl hover:shadow-primary-500/15'
-                }`}
-              >
-                <span
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-colors duration-300 ${
-                    system.accent === 'emerald'
-                      ? 'bg-emerald-50 border-emerald-200/60 group-hover:bg-emerald-100'
-                      : 'bg-primary-100 border-primary-300/50 group-hover:bg-primary-200'
-                  }`}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {AUDIT_SYSTEMS.map((system) => {
+              const accent = ACCENT_STYLES[system.accent];
+              return (
+                <button
+                  key={system.slug}
+                  onClick={() => navigate(system.path)}
+                  aria-label={`Open the ${system.label} audit system`}
+                  className={`group relative flex flex-col items-start text-left gap-4 rounded-2xl border p-6 transition-all duration-300 ease-out hover:-translate-y-1.5 hover:scale-[1.02] cursor-pointer card-premium ${accent.card}`}
                 >
-                  <AppIcon
-                    className={`${system.icon} text-[20px] ${system.accent === 'emerald' ? 'text-emerald-600' : 'text-primary-700'}`}
-                  />
-                </span>
-                <span className="text-[16px] font-heading font-semibold text-foreground-900">{system.label}</span>
-                <span className="text-[12.5px] text-foreground-400 leading-relaxed">{system.description}</span>
-                <span
-                  className={`mt-auto inline-flex items-center gap-1.5 text-[12px] font-semibold ${
-                    system.accent === 'emerald' ? 'text-emerald-700' : 'text-primary-700'
-                  }`}
-                >
-                  Open workspace
-                  <AppIcon className="ri-arrow-right-line text-[13px] transition-transform duration-300 group-hover:translate-x-0.5" />
-                </span>
-              </button>
-            ))}
+                  <span
+                    className={`w-12 h-12 rounded-xl flex items-center justify-center border transition-colors duration-300 ${accent.badge}`}
+                  >
+                    <AppIcon className={`${system.icon} text-[20px] ${accent.icon}`} />
+                  </span>
+                  <span className="text-[16px] font-heading font-semibold text-foreground-900">{system.label}</span>
+                  <span className="text-[12.5px] text-foreground-400 leading-relaxed">{system.description}</span>
+                  <span className={`mt-auto inline-flex items-center gap-1.5 text-[12px] font-semibold ${accent.cta}`}>
+                    Open workspace
+                    <AppIcon className="ri-arrow-right-line text-[13px] transition-transform duration-300 group-hover:translate-x-0.5" />
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </main>

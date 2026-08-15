@@ -12,6 +12,7 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from .db_source import resolve
 from .learner_exclusions import is_excluded_learner
 from .views import _azure_service_client, _has_audit_permission
 
@@ -127,7 +128,7 @@ def uploaded_evidence_location(evidence_id, learner_id=None):
     if learner_id is not None:
         conditions.append("learner_id = %s")
         params.append(learner_id)
-    with connections[CONN].cursor() as cursor:
+    with connections[resolve(CONN)].cursor() as cursor:
         ensure_evidence_override_table(cursor)
         cursor.execute(
             f'''
@@ -170,7 +171,7 @@ def upload_evidence(request):
         return _error("This evidence file type is not supported.", 400)
 
     try:
-        with connections[CONN].cursor() as cursor:
+        with connections[resolve(CONN)].cursor() as cursor:
             if not _learner_exists(cursor, learner_id):
                 return _error("Learner not found.", 404)
     except (KeyError, DatabaseError):
@@ -193,7 +194,7 @@ def upload_evidence(request):
     uploaded_by = (request.POST.get("uploaded_by") or "").strip()[:200] or None
     try:
         with transaction.atomic(using=CONN):
-            with connections[CONN].cursor() as cursor:
+            with connections[resolve(CONN)].cursor() as cursor:
                 ensure_evidence_override_table(cursor)
                 cursor.execute(
                     '''
@@ -245,7 +246,7 @@ def select_activity_evidence(request):
     ).strip()[:250] or "Selected monthly report activity"
     selected_by = str(body.get("selected_by") or "").strip()[:200] or None
 
-    activity_connection = "audit" if "audit" in connections.databases else CONN
+    activity_connection = resolve("audit") if "audit" in connections.databases else resolve(CONN)
     try:
         with connections[activity_connection].cursor() as cursor:
             cursor.execute(
@@ -264,7 +265,7 @@ def select_activity_evidence(request):
         return _error("The selected activity was not found for this learner.", 404)
 
     try:
-        with connections[CONN].cursor() as cursor:
+        with connections[resolve(CONN)].cursor() as cursor:
             if not _learner_exists(cursor, learner_id):
                 return _error("Learner not found.", 404)
     except (KeyError, DatabaseError):
@@ -274,7 +275,7 @@ def select_activity_evidence(request):
     document_name = str(activity[0] or "Monthly report activity").strip()[:180]
     try:
         with transaction.atomic(using=CONN):
-            with connections[CONN].cursor() as cursor:
+            with connections[resolve(CONN)].cursor() as cursor:
                 ensure_evidence_override_table(cursor)
                 cursor.execute(
                     '''
@@ -341,7 +342,7 @@ def update_evidence_date(request, evidence_id):
         return _error(str(error), 400)
 
     try:
-        with connections[CONN].cursor() as cursor:
+        with connections[resolve(CONN)].cursor() as cursor:
             ensure_evidence_override_table(cursor)
             if str(evidence_id).startswith("audit-"):
                 cursor.execute(
@@ -416,7 +417,7 @@ def archive_evidence(request, evidence_id):
             return _error("archived must be true or false.", 400)
 
     try:
-        with connections[CONN].cursor() as cursor:
+        with connections[resolve(CONN)].cursor() as cursor:
             ensure_evidence_override_table(cursor)
             evidence_key = str(evidence_id)
             if evidence_key.startswith("audit-"):

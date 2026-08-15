@@ -1,9 +1,9 @@
-from django.conf import settings
 from django.db import DatabaseError, connections
 from django.db.models import Count, Q, Sum
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET
 
+from .db_source import resolve
 from .learner_log_models import MreActivity
 
 LEARNER_FIELDS = {
@@ -59,7 +59,7 @@ def _month_numbers_for_period(period: str) -> list[int]:
 
 @require_GET
 def health(_request: HttpRequest) -> JsonResponse:
-    alias = "audit" if "audit" in settings.DATABASES else "default"
+    alias = resolve("audit")
     with connections[alias].cursor() as cursor:
         cursor.execute("SELECT current_database(), now()")
         database, timestamp = cursor.fetchone()

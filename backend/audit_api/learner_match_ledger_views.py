@@ -52,6 +52,7 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
+from .db_source import cache_scope, resolve
 from .contract_documents import ensure_contract_archive_table
 from .evidence_documents import ensure_evidence_override_table
 from .learner_exclusions import is_excluded_learner
@@ -681,16 +682,18 @@ def _otjh_for_row(structure):
 # the UI fires several calls per page. Cache the flattened result briefly so the
 # repeated fetch+parse+flatten cost is paid once, not on every request.
 _CACHE_TTL_SECONDS = 20
-_cache = {"expires_at": 0.0, "rows": None}
+# Keyed by database source: the live workspace and the HOURS-TEST clone read
+# different rows, so they must never serve each other's cached copy.
+_cache = {}
 
 
 def _load_rows():
     now = time.monotonic()
-    if _cache["rows"] is not None and now < _cache["expires_at"]:
-        return _cache["rows"]
+    entry = _cache.get(cache_scope())
+    if entry and entry["rows"] is not None and now < entry["expires_at"]:
+        return entry["rows"]
     rows = _fetch_rows()
-    _cache["rows"] = rows
-    _cache["expires_at"] = now + _CACHE_TTL_SECONDS
+    _cache[cache_scope()] = {"rows": rows, "expires_at": now + _CACHE_TTL_SECONDS}
     return rows
 
 
@@ -698,7 +701,7 @@ def _fetch_rows():
     """Fetch the 6 exact-programme learners from Audit.learner_match and return
     one dict per learner: aptem_id, name, flattened activities, and the curated
     per-period hour totals."""
-    with connections[CONN].cursor() as cur:
+    with connections[resolve(CONN)].cursor() as cur:
         # The column is `json` (not jsonb). Using `->>` directly (no ::jsonb
         # cast) avoids converting every row's multi-MB blob to jsonb just to
         # read the programme name — roughly halves the query time.
@@ -788,7 +791,7 @@ def _fetch_profile_row(learner_key):
     cohort. Profile links now come from the live all-programme cohort feed, so a
     learner outside that subset still needs the same rich profile payload.
     """
-    with connections[CONN].cursor() as cur:
+    with connections[resolve(CONN)].cursor() as cur:
         cur.execute(
             '''
             select lm.aptem_id, lm.learner_name, lm.learner_email,
@@ -877,7 +880,7 @@ def _fetch_profile_source_row(learner_key):
     rich sections that are already keyed by aptem_id are still loaded below by
     _load_profile_sources.
     """
-    with connections[CONN].cursor() as cur:
+    with connections[resolve(CONN)].cursor() as cur:
         cur.execute(
             '''
             select contracts.learner_id, contracts.full_name, contracts.email,
@@ -1150,7 +1153,7 @@ def _contract_signature_dates(azure_path, document_name):
 
 @require_GET
 def health(_request: HttpRequest) -> JsonResponse:
-    alias = CONN if CONN in connections.databases else "default"
+    alias = resolve(CONN)
     with connections[alias].cursor() as cursor:
         cursor.execute("SELECT current_database(), now()")
         database, timestamp = cursor.fetchone()
@@ -1338,7 +1341,7 @@ def _load_profile_learner(learner_key):
     follows the deployed profile and is joined from
     ``Audit.learner_match.aptem_training_plan`` by Aptem ID.
     """
-    with connections[CONN].cursor() as cursor:
+    with connections[resolve(CONN)].cursor() as cursor:
         cursor.execute(
             '''
             select l.aptem_id, l.learner_name, l.learner_email,
@@ -1414,7 +1417,7 @@ def _load_profile_sources(aptem_id, learner_email, learner_name=None):
         "revised_learning_planned_end_date": None,
     }
 
-    with connections[CONN].cursor() as cursor:
+    with connections[resolve(CONN)].cursor() as cursor:
         ensure_contract_archive_table(cursor)
         cursor.execute(
             '''
@@ -2437,7 +2440,7 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
     if not learner or not component:
         return JsonResponse({"error": "learner and component are required"}, status=400)
     try:
-        with connections[CONN].cursor() as cur:
+        with connections[resolve(CONN)].cursor() as cur:
             cur.execute(
                 '''
                 select quiz_attempts -> %s
@@ -2503,7 +2506,7 @@ def activity_annotation(request: HttpRequest) -> JsonResponse:
     if not component:
         return JsonResponse({"error": "component is required"}, status=400)
     try:
-        with connections[CONN].cursor() as cur:
+        with connections[resolve(CONN)].cursor() as cur:
             _ensure_annotation_table(cur)
             cur.execute(
                 '''
@@ -2551,7 +2554,7 @@ def save_activity_annotation(request: HttpRequest) -> JsonResponse:
     updated_by = str(body.get("updated_by") or "").strip()[:200] or None
 
     try:
-        with connections[CONN].cursor() as cur:
+        with connections[resolve(CONN)].cursor() as cur:
             _ensure_annotation_table(cur)
             cur.execute(
                 '''
@@ -2713,7 +2716,7 @@ def _overlay_learner(aptem_id):
     report endpoints unchanged while allowing create/date-replace/delete for
     every learner that the expanded audit workspace can surface.
     """
-    with connections[CONN].cursor() as cur:
+    with connections[resolve(CONN)].cursor() as cur:
         cur.execute(
             '''
             select learner_name
@@ -2739,7 +2742,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
         except ValueError:
             return JsonResponse({"error": "aptem_id must be an integer"}, status=400)
         try:
-            with connections[CONN].cursor() as cur:
+            with connections[resolve(CONN)].cursor() as cur:
                 _ensure_activity_overlay_table(cur)
                 if aptem_id is None:
                     cur.execute('''select aptem_id, activity_id, operation, payload, source_payload, updated_by, updated_at from "Audit".activity_overrides order by updated_at''')
@@ -2781,7 +2784,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
         elif request.method == "PUT":
             if not activity_id:
                 raise ValueError("activity_id is required")
-            with connections[CONN].cursor() as cur:
+            with connections[resolve(CONN)].cursor() as cur:
                 _ensure_activity_overlay_table(cur)
                 cur.execute('''select source_payload from "Audit".activity_overrides where aptem_id = %s and activity_id = %s and operation = 'replaced' ''', [aptem_id, activity_id])
                 existing = cur.fetchone()
@@ -2801,7 +2804,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
         elif request.method == "PATCH":
             if not activity_id.startswith("audit:"):
                 return JsonResponse({"error": "Only audit-created activities can be patched here."}, status=400)
-            with connections[CONN].cursor() as cur:
+            with connections[resolve(CONN)].cursor() as cur:
                 _ensure_activity_overlay_table(cur)
                 cur.execute('''select payload from "Audit".activity_overrides where aptem_id = %s and activity_id = %s and operation = 'created' ''', [aptem_id, activity_id])
                 existing = cur.fetchone()
@@ -2817,7 +2820,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
             if not activity_id:
                 raise ValueError("activity_id is required")
             raw_snapshot = body.get("snapshot")
-            with connections[CONN].cursor() as cur:
+            with connections[resolve(CONN)].cursor() as cur:
                 _ensure_activity_overlay_table(cur)
                 cur.execute('''select source_payload from "Audit".activity_overrides where aptem_id = %s and activity_id = %s and operation = 'replaced' ''', [aptem_id, activity_id])
                 existing = cur.fetchone()
@@ -2834,7 +2837,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": str(error)}, status=400)
 
     try:
-        with connections[CONN].cursor() as cur:
+        with connections[resolve(CONN)].cursor() as cur:
             _ensure_activity_overlay_table(cur)
             cur.execute(
                 '''

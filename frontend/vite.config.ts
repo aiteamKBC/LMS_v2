@@ -120,6 +120,11 @@ export default defineConfig(({ mode }) => ({
         target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
         changeOrigin: true,
       },
+      // HOURS-TEST workspace: same Django audit views, cloned database.
+      "/hours_test_api": {
+        target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
+        changeOrigin: true,
+      },
       "/manual_audit_api": {
         target: process.env.VITE_API_TARGET || "http://127.0.0.1:8000",
         changeOrigin: true,

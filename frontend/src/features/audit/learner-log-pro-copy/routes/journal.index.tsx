@@ -14,6 +14,8 @@ import Swal from "sweetalert2";
 import { BookOpenText, CalendarDays, CheckCircle2, ClipboardList, Download, FolderSearch, Headphones, Link2, LoaderCircle, PenLine, Plus, RotateCcw, Save, Trash2, Video, X } from "lucide-react";
 import { fetchAuditSignoff, saveAuditSignoff } from "@/features/audit/api";
 import { AddManualActivityFlow } from "@/features/audit/learner-log-pro-copy/components/AddManualActivityFlow";
+import { JournalHoursControls } from "@/features/audit/learner-log-pro-copy/components/JournalHoursControls";
+import { useJournalHours } from "@/features/audit/learner-log-pro-copy/lib/useJournalHours";
 import { ledgerRef, ManualActivityRow, ManualActivityTableHeader } from "@/features/audit/learner-log-pro-copy/components/ManualActivityRow";
 import { RetrieveActivitiesPanel } from "@/features/audit/learner-log-pro-copy/components/RetrieveActivitiesPanel";
 import { Button } from "@/features/audit/learner-log-pro-copy/components/ui/button";
@@ -385,6 +387,9 @@ function JournalPage() {
     });
   }, [summary.data?.months, learnerStartMonth]);
   const selectedPeriod = summaryMonths.some((item) => item.month === periodChoice) ? periodChoice : "";
+  // Calculated actual/planned hours awaiting approval for the open learner and
+  // month. The journal rows themselves are untouched until an auditor approves.
+  const journalHours = useJournalHours(aptemId, selectedPeriod);
   // Every date the journal accepts, first report month → last: a date edited
   // outside the current month re-files its row under the month it names.
   const dateWindow = useMemo(() => {
@@ -1017,6 +1022,7 @@ function JournalPage() {
                 </span>
               ) : null}
               <span className="rounded-full bg-[#f6f8fb] px-3 py-1.5 font-mono text-xs font-medium text-[#182d48]">{visibleRows.length} activities</span>
+              <JournalHoursControls state={journalHours} aptemId={aptemId} month={selectedPeriod} />
               {mergeMode ? (
                 <>
                   <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary">{mergeSelection.size} selected</span>
@@ -1090,6 +1096,7 @@ function JournalPage() {
                         className={section.key === "assignments" ? "border-l-4 border-l-[#182d48]/30 odd:bg-[#f4f7fc]" : "odd:bg-[#f7f9fc]"}
                         reportMonth={selectedPeriod}
                         dateWindow={dateWindow ?? undefined}
+                        calculatedHours={journalHours.proposalFor(row.serverId)}
                         mergeMode={mergeMode}
                         mergeEligible={mergeEligibleKeys.has(row.key)}
                         mergeSelected={mergeSelection.has(row.key)}

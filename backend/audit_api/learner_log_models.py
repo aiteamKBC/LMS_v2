@@ -1,10 +1,11 @@
 from django.db import models
-from django.conf import settings
+
+from .db_source import resolve
 
 
 class AuditDatabaseManager(models.Manager):
     def get_queryset(self):
-        alias = "audit" if "audit" in settings.DATABASES else "default"
+        alias = resolve("audit")
         return super().get_queryset().using(alias)
 
 
