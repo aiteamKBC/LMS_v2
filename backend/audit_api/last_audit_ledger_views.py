@@ -495,7 +495,8 @@ def cohort(request: HttpRequest) -> JsonResponse:
             SELECT l.aptem_id, l.learner_name, l.learner_email,
                    l.programme_name, l.programme_status,
                    l.coach_name, l.coach_email,
-                   l.declared_lms_id, l.learner_id
+                   l.declared_lms_id, l.learner_id,
+                   l.planned_hours_total, l.planned_hours_monthly
             FROM {LEARNERS} l
 
             UNION ALL
@@ -511,7 +512,9 @@ def cohort(request: HttpRequest) -> JsonResponse:
                    NULLIF(btrim(aptem."OwnerName"), '') AS coach_name,
                    NULLIF(btrim(aptem."OwnerEmail"), '') AS coach_email,
                    NULL::bigint AS declared_lms_id,
-                   NULL::bigint AS learner_id
+                   NULL::bigint AS learner_id,
+                   NULL::numeric AS planned_hours_total,
+                   '{{}}'::jsonb AS planned_hours_monthly
             FROM "LMS"."Aptem_users" aptem
             WHERE aptem."ID" IS NOT NULL
               AND NOT EXISTS (
