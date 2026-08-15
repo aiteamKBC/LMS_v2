@@ -241,6 +241,24 @@ class SkillsRadarClassificationTests(SimpleTestCase):
             "Data analysis",
         )
 
+    def test_classifies_zero_padded_codes_without_punctuation(self):
+        domain, field = _skill_radar_characteristic(
+            "K01 The differences between projects and business as usual."
+        )
+
+        self.assertEqual(domain, "Project context & governance")
+        self.assertEqual(field, "knowledge")
+
+    def test_groups_project_standard_text_into_readable_chart_categories(self):
+        self.assertEqual(
+            _skill_radar_characteristic("S26 Manages resources through the project lifecycle.")[0],
+            "Planning, cost & resources",
+        )
+        self.assertEqual(
+            _skill_radar_characteristic("B5 Seeks learning opportunities and continuous professional development")[0],
+            "Continuous development",
+        )
+
     def test_sorts_numbered_competencies_naturally(self):
         values = ["S10: Ten", "S2: Two", "S1: One"]
 
