@@ -28,7 +28,7 @@ from django.views.decorators.csrf import csrf_exempt
 from login.permissions import staff_only
 from login.models import Invitation, LoginAccount, LoginSession, PasswordReset
 
-from .active_users import cohort_dates, replace_training_plan, sync_active_user
+from .active_users import cohort_delivery_window, replace_training_plan, sync_active_user
 from .identity import learner_profile_for_source
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from .constants import (
@@ -415,12 +415,23 @@ def enrolment_users(request):
         stamp = timezone.now().strftime("%d/%m/%Y %H:%M:%S")
         fields.setdefault("enrolled_time_and_user", f"{stamp} by Enrolment Officer")
 
-        # Stamp the cohort's delivery window from the authored cohort table.
-        start, end = cohort_dates(fields.get("programme"), fields.get("cohort"))
+        # Stamp the cohort's delivery window from the authored cohort table. The
+        # cohort carries two end dates: end_date/practical_period_end_date close
+        # the practical period, and apprenticeship_end_date adds the cohort's EPA
+        # period on top. These columns are text on this table, so the dates are
+        # written as ISO strings.
+        start, practical_end, apprenticeship_end = cohort_delivery_window(
+            fields.get("programme"), fields.get("cohort")
+        )
         if start is not None:
             fields["start_date"] = start
-        if end is not None:
-            fields["end_date"] = end
+        if practical_end is not None:
+            fields["end_date"] = practical_end
+            fields.setdefault("practical_period_end_date", practical_end.isoformat())
+        if apprenticeship_end is not None:
+            # setdefault, not assignment: this column doubles as a per-learner
+            # override (see mappers.py), so an explicitly supplied one wins.
+            fields.setdefault("apprenticeship_end_date", apprenticeship_end.isoformat())
 
         try:
             # all_learners: the default manager is scoped to apprenticeship, so

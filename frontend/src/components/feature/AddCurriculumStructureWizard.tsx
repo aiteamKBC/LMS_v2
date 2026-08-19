@@ -59,6 +59,8 @@ import {
   teamsMeetingArtifactPreviewUrl,
   teamsMeetingRecordingEventsUrl,
   updateTeamsMeetingSchedule,
+  describeSessionTime,
+  zonedNaiveToUtcIso,
   type ModuleCatalogueItem,
   type ModuleComponent,
   type ModuleComponentType,
@@ -219,7 +221,16 @@ interface CohortDraft {
   name: string;
   startDate: string;
   durationMonths: string;
+  /** End of the practical period. The apprenticeship end date is derived from it plus epaMonths. */
   endDate: string;
+  /** End Point Assessment window in whole months, as typed. Blank means none recorded. */
+  epaMonths: string;
+  /**
+   * Manually authored apprenticeship end date. Blank means none, and the date is
+   * calculated from endDate plus epaMonths instead. Read it through
+   * resolveApprenticeshipEndDate rather than directly.
+   */
+  apprenticeshipEndDate: string;
   color: string;
   holidayIds: string[];
   groups: GroupDraft[];
@@ -305,6 +316,19 @@ function draftIdentity(...values: Array<string | undefined>) {
   return values.map(value => String(value || '').trim()).find(Boolean) || '';
 }
 
+function sentenceCase(text: string) {
+  return text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : '';
+}
+
+// An apprenticeship that ends before its practical period has to be a typo, and
+// it would corrupt every learner date inherited from the cohort, so it blocks the
+// save rather than only flagging the field.
+function apprenticeshipEndDateIssue(cohort: Pick<CohortDraft, 'endDate' | 'epaMonths' | 'apprenticeshipEndDate'>) {
+  const resolved = resolveApprenticeshipEndDate(cohort);
+  if (!resolved || !cohort.endDate || compareDateInputs(resolved, cohort.endDate) >= 0) return '';
+  return `apprenticeship end date cannot be before the practical end date (${formatDateValue(cohort.endDate)}).`;
+}
+
 function cohortMetaFingerprint(cohort: CohortDraft) {
   const { groups: _groups, ...meta } = cohort;
   return stableDraftFingerprint(meta);
@@ -349,6 +373,12 @@ const steps: Array<{ key: WizardStep; label: string; icon: string }> = [
   { key: 'weeks', label: 'Components', icon: 'ri-layout-row-line' },
   { key: 'review', label: 'Review', icon: 'ri-checkbox-circle-line' },
 ];
+
+// Delivery window a group starts on before anyone edits it: 09:00, running two
+// hours to 11:00. Named rather than repeated as a literal because the same value
+// is also the fallback everywhere a session has to be planned without knowing its
+// group's time — a group and the sessions derived from it must not disagree.
+const DEFAULT_GROUP_START_TIME = '09:00';
 
 const weekDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const weekdayIndexes: Record<string, number> = {
@@ -458,6 +488,18 @@ function isCanonicalCurriculumId(value: unknown, prefix: 'COHORT' | 'GROUP') {
   return typeof value === 'string' && new RegExp(`^${prefix}-[A-Z0-9]`, 'i').test(value.trim());
 }
 
+/** Blank means "no target set", which the review reports differently from zero. */
+function parseRequiredOtjhInput(value: string) {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const hours = Number(text);
+  return Number.isFinite(hours) && hours >= 0 ? hours : null;
+}
+
+function requiredOtjhInputValue(value: number | null | undefined) {
+  return value === null || value === undefined ? '' : String(value);
+}
+
 function parseDateParts(dateValue: string) {
   const [year, month, day] = String(dateValue || '').split('-').map(Number);
   if (!year || !month || !day) return null;
@@ -499,6 +541,45 @@ function calculateCohortEndDate(startDate: string, durationMonths: number | stri
   const end = new Date(targetYear, targetMonth, targetDay);
   end.setDate(end.getDate() - 1);
   return toDateInput(end);
+}
+
+// The EPA window is counted forward from a date that has already passed, so it
+// keeps the same day of the month — no minus-one-day step, unlike the practical
+// end date above. A practical period ending 2027-03-04 with a 5 month EPA period
+// ends 2027-08-04. Mirrors calculate_apprenticeship_end_date in the backend.
+function calculateApprenticeshipEndDate(practicalEndDate: string, epaMonths: number | string) {
+  const parts = parseDateParts(practicalEndDate);
+  const months = Math.round(Number(epaMonths) || 0);
+  if (!parts || months <= 0) return '';
+
+  const targetMonthIndex = parts.month - 1 + months;
+  const targetYear = parts.year + Math.floor(targetMonthIndex / 12);
+  const targetMonth = ((targetMonthIndex % 12) + 12) % 12;
+  const targetDay = Math.min(parts.day, daysInMonth(targetYear, targetMonth));
+  return toDateInput(new Date(targetYear, targetMonth, targetDay));
+}
+
+// An authored apprenticeship end date wins outright: a cohort that has to move
+// it — a break in learning, a resit window, an EPAO with no capacity — rarely
+// has a whole number of EPA months that lands on the date the delivery team was
+// given. Blank hands the date back to the calculation, so it follows the
+// practical end date again.
+function resolveApprenticeshipEndDate(cohort: Pick<CohortDraft, 'endDate' | 'epaMonths' | 'apprenticeshipEndDate'>) {
+  return cohort.apprenticeshipEndDate || calculateApprenticeshipEndDate(cohort.endDate, cohort.epaMonths);
+}
+
+// Blank stays blank so "no EPA period recorded" survives a round trip instead of
+// being saved as zero months.
+function epaMonthsInputValue(value: number | string | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
+  const months = Math.round(Number(value));
+  return Number.isFinite(months) && months >= 0 ? String(months) : '';
+}
+
+function parseEpaMonthsInput(value: string): number | null {
+  if (!String(value ?? '').trim()) return null;
+  const months = Math.round(Number(value));
+  return Number.isFinite(months) && months >= 0 ? months : null;
 }
 
 function addDaysToInput(dateValue: string, days: number) {
@@ -1207,7 +1288,7 @@ function toTimeInput(value: unknown) {
 function scheduleTimes(value: unknown) {
   const text = String(value || '');
   const range = text.match(/(\d{1,2}:?\d{2}\s*(?:AM|PM)?)\s*[-–]\s*(\d{1,2}:?\d{2}\s*(?:AM|PM)?)/i);
-  const startTime = toTimeInput(range?.[1] || text) || '09:30';
+  const startTime = toTimeInput(range?.[1] || text) || DEFAULT_GROUP_START_TIME;
   const endTime = toTimeInput(range?.[2]) || addHoursToTime(startTime, 2);
   return { startTime, endTime };
 }
@@ -1325,9 +1406,28 @@ function programmeKeys(programme: CurriculumProgramme) {
   return candidateKeys([programme.id, programme.sourceId, programme.name, programme.standard]);
 }
 
-function cohortBelongsToProgramme(cohort: CurriculumCohort, programme: CurriculumProgramme) {
+function cohortBelongsToProgramme(
+  cohort: CurriculumCohort,
+  programme: CurriculumProgramme,
+  otherProgrammeKeys: Set<string> = new Set(),
+) {
   const keys = programmeKeys(programme);
-  return valueMatchesCandidate(cohort.programmeId, keys) || valueMatchesCandidate(cohort.programme, keys);
+  if (valueMatchesCandidate(cohort.programmeId, keys)) return true;
+  // A cohort that already points at another programme is never claimed by name.
+  if (valueMatchesCandidate(cohort.programmeId, otherProgrammeKeys)) return false;
+  return valueMatchesCandidate(cohort.programme, keys);
+}
+
+/** Identity keys of every programme except the one being edited. */
+function otherProgrammeIdentityKeys(programmes: CurriculumProgramme[], programme: CurriculumProgramme) {
+  const own = programmeKeys(programme);
+  const keys = new Set<string>();
+  programmes.forEach(item => {
+    candidateKeys([item.id, item.sourceId]).forEach(key => {
+      if (!own.has(key)) keys.add(key);
+    });
+  });
+  return keys;
 }
 
 function groupBelongsToCohort(group: CurriculumGroup, cohort: CurriculumCohort) {
@@ -1852,8 +1952,9 @@ function buildExistingProgrammeDrafts(
   initialCohortId?: string,
   initialGroupId?: string,
   components: CurriculumComponent[] = [],
+  otherProgrammeKeys: Set<string> = new Set(),
 ) {
-  const programmeCohorts = cohorts.filter(cohort => cohortBelongsToProgramme(cohort, programme));
+  const programmeCohorts = cohorts.filter(cohort => cohortBelongsToProgramme(cohort, programme, otherProgrammeKeys));
 
   return programmeCohorts.map(cohort => {
     const holidayIds = (cohort.holidayIds || []).map(String);
@@ -1868,6 +1969,10 @@ function buildExistingProgrammeDrafts(
         cohort.startDate || todayIso(),
         Number(cohort.durationMonths) || Number(inclusiveMonthSpan(cohort.startDate, cohort.endDate)) || 12,
       ),
+      epaMonths: epaMonthsInputValue(cohort.epaMonths),
+      // Only the authored date is loaded; a calculated one is recomputed here so
+      // it keeps tracking the practical end date.
+      apprenticeshipEndDate: cohort.apprenticeshipEndOverride || '',
       color: cohort.color || '#0f766e',
       holidayIds,
       groups: [],
@@ -1919,7 +2024,7 @@ function defaultModuleStartDate(cohortStartDate?: string) {
   return compareDateInputs(today, cohortStart) < 0 ? cohortStart : today;
 }
 
-function emptyModuleDraft(groupDay = '', groupTime = '09:30', activeHolidays: CurriculumHoliday[] = [], startDate = todayIso()): ModuleDraft {
+function emptyModuleDraft(groupDay = '', groupTime = DEFAULT_GROUP_START_TIME, activeHolidays: CurriculumHoliday[] = [], startDate = todayIso()): ModuleDraft {
   const localId = `module-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const plan = buildHolidayAdjustedSessionPlan(startDate, 0, groupDay, groupTime, activeHolidays);
   return {
@@ -2003,8 +2108,8 @@ function emptyGroupDraft(): GroupDraft {
     name: '',
     coach: '',
     deliveryDays: ['Wednesday'],
-    startTime: '09:30',
-    endTime: addHoursToTime('09:30', 2),
+    startTime: DEFAULT_GROUP_START_TIME,
+    endTime: addHoursToTime(DEFAULT_GROUP_START_TIME, 2),
     color: '#334155',
     modules: [],
   };
@@ -2018,6 +2123,8 @@ function emptyCohortDraft(): CohortDraft {
     startDate: todayIso(),
     durationMonths: '12',
     endDate: calculateCohortEndDate(todayIso(), 12),
+    epaMonths: '',
+    apprenticeshipEndDate: '',
     color: '#0f766e',
     holidayIds: [],
     groups: [],
@@ -2070,8 +2177,8 @@ function normaliseFreeProgrammeDrafts(drafts: CohortDraft[], programmeName: stri
     name: freeGroupName(programmeName),
     coach: '',
     deliveryDays: existingGroup?.deliveryDays?.length ? existingGroup.deliveryDays : ['Monday'],
-    startTime: existingGroup?.startTime || '09:30',
-    endTime: existingGroup?.endTime || addHoursToTime(existingGroup?.startTime || '09:30', 2),
+    startTime: existingGroup?.startTime || DEFAULT_GROUP_START_TIME,
+    endTime: existingGroup?.endTime || addHoursToTime(existingGroup?.startTime || DEFAULT_GROUP_START_TIME, 2),
     color: existingGroup?.color || '#334155',
     modules,
   };
@@ -2113,6 +2220,21 @@ function formatSessionCount(count: number) {
   return `${count} session${count === 1 ? '' : 's'}`;
 }
 
+function formatComponentCount(count: number) {
+  return `${count} component${count === 1 ? '' : 's'}`;
+}
+
+// Collapsed weeks still need to say what is inside them, so each type present is
+// summarised as one icon chip with its count.
+function componentTypeSummary(components: ModuleComponent[]) {
+  const counts = new Map<string, number>();
+  components.forEach(component => counts.set(component.type, (counts.get(component.type) || 0) + 1));
+  return Array.from(counts.entries()).map(([type, count]) => {
+    const meta = componentTypes.find(item => item.type === type);
+    return { type, count, label: meta?.label || type, icon: meta?.icon || 'ri-shapes-line' };
+  });
+}
+
 function formatHoursValue(hours: number) {
   const totalMinutes = Math.round(Math.max(0, Number(hours) || 0) * 60);
   const wholeHours = Math.floor(totalMinutes / 60);
@@ -2151,6 +2273,298 @@ function groupSessionDurationHours(group: Pick<GroupDraft, 'startTime' | 'endTim
   const endTotal = endHour * 60 + endMinute;
   const durationMinutes = endTotal >= startTotal ? endTotal - startTotal : endTotal + 1440 - startTotal;
   return Math.max(0, durationMinutes / 60);
+}
+
+function dayGap(startValue: string, endValue: string) {
+  const start = dateFromInput(startValue);
+  const end = dateFromInput(endValue);
+  if (!start || !end) return 0;
+  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
+}
+
+function formatDaySpanLabel(days: number) {
+  const safeDays = Math.max(0, Math.round(days));
+  if (!safeDays) return 'none';
+  if (safeDays < 14) return `${safeDays} day${safeDays === 1 ? '' : 's'}`;
+  if (safeDays < 62) return `${Math.round(safeDays / 7)} weeks`;
+  return `${Math.round(safeDays / 30.44)} months`;
+}
+
+function moduleDraftSessionTotal(draft: Pick<ModuleDraft, 'weeks' | 'sessionsNumber'>) {
+  return draft.weeks.length || Math.max(0, Math.round(Number(draft.sessionsNumber) || 0));
+}
+
+function groupSessionTotal(group: GroupDraft) {
+  return group.modules.filter(isConfiguredModule).reduce((total, draft) => total + moduleDraftSessionTotal(draft), 0);
+}
+
+function programmeSessionTotal(cohorts: CohortDraft[]) {
+  return cohorts.reduce((total, cohort) => (
+    total + cohort.groups.filter(isConfiguredGroup).reduce((groupTotal, group) => groupTotal + groupSessionTotal(group), 0)
+  ), 0);
+}
+
+/**
+ * Component OTJH is what the design promises the learner; scheduled contact hours are
+ * what the timetable actually books (sessions x session length). The two are authored
+ * in different steps and nothing forces them to agree, so a module can promise 28h of
+ * off-the-job learning while only booking 12h of delivery. That gap is the mistake this
+ * review step exists to catch, so both numbers are surfaced together rather than the
+ * component total alone.
+ */
+function moduleScheduledContactHours(draft: ModuleDraft, group: Pick<GroupDraft, 'startTime' | 'endTime'>) {
+  return moduleDraftSessionTotal(draft) * groupSessionDurationHours(group);
+}
+
+function groupScheduledContactHours(group: GroupDraft) {
+  return group.modules.filter(isConfiguredModule).reduce((total, draft) => total + moduleScheduledContactHours(draft, group), 0);
+}
+
+function cohortScheduledContactHours(cohort: CohortDraft) {
+  return cohort.groups.filter(isConfiguredGroup).reduce((total, group) => total + groupScheduledContactHours(group), 0);
+}
+
+function programmeScheduledContactHours(cohorts: CohortDraft[]) {
+  return cohorts.reduce((total, cohort) => total + cohortScheduledContactHours(cohort), 0);
+}
+
+/** A quarter-hour rounding difference is not a planning error, anything larger is. */
+const HOURS_BALANCE_TOLERANCE = 0.25;
+
+// Hover copy for the two review figures that look interchangeable and are not. Each
+// says where its number comes from, because that is the actual difference: one is
+// authored on the components, the other is derived from the group's clock.
+const OTJH_METRIC_HINT = 'Off-the-job hours promised to the learner. Added up from the hours set on each component in Module Builder, so it changes only when the module design changes.';
+const TIMETABLED_METRIC_HINT = 'Contact time the calendar actually books: sessions x session length, taking the length from this group start and end time. Nothing forces it to match OTJH, so a gap means the timetable and the module design disagree.';
+
+function reviewHoursBalance(plannedHours: number, scheduledHours: number) {
+  const difference = plannedHours - scheduledHours;
+  return {
+    plannedHours,
+    scheduledHours,
+    difference,
+    hasSchedule: scheduledHours > 0,
+    balanced: Math.abs(difference) <= HOURS_BALANCE_TOLERANCE,
+    overCommitted: difference > HOURS_BALANCE_TOLERANCE,
+    underCommitted: difference < -HOURS_BALANCE_TOLERANCE,
+  };
+}
+
+type ReviewHoursBalance = ReturnType<typeof reviewHoursBalance>;
+
+function hoursBalanceTone(balance: ReviewHoursBalance): 'success' | 'warning' | 'info' {
+  if (!balance.hasSchedule) return 'info';
+  return balance.balanced ? 'success' : 'warning';
+}
+
+function hoursBalanceLabel(balance: ReviewHoursBalance) {
+  if (!balance.hasSchedule) return 'No sessions timetabled yet';
+  if (balance.balanced) return 'Matches timetabled contact time';
+  const gap = formatHoursValue(Math.abs(balance.difference));
+  return balance.overCommitted
+    ? `${gap} more OTJH than timetabled`
+    : `${gap} of timetable carries no OTJH`;
+}
+
+function ksbMappingTypeCounts(mappings: ModuleComponent['ksbMappings']) {
+  return mappings.reduce((totals, mapping) => {
+    const type = ksbMappingTypeInitial(mapping);
+    if (type === 'K') totals.knowledge += 1;
+    else if (type === 'S') totals.skills += 1;
+    else if (type === 'B') totals.behaviours += 1;
+    else totals.untyped += 1;
+    return totals;
+  }, { knowledge: 0, skills: 0, behaviours: 0, untyped: 0 });
+}
+
+/**
+ * A bare KSB count has no denominator, so "0 KSBs" and "34 KSBs" read as equally
+ * neutral facts. Coverage against the selected standard turns them into a judgement.
+ */
+function ksbCoverage(mappings: ModuleComponent['ksbMappings'], totalAvailable: number) {
+  const mapped = mappings.length;
+  const total = Math.max(0, Math.round(Number(totalAvailable) || 0));
+  return {
+    mapped,
+    total,
+    percentage: total ? Math.min(100, Math.round((mapped / total) * 100)) : 0,
+    counts: ksbMappingTypeCounts(mappings),
+  };
+}
+
+type ReviewKsbCoverage = ReturnType<typeof ksbCoverage>;
+
+function ksbCoverageValue(coverage: ReviewKsbCoverage) {
+  if (coverage.total) return `${coverage.mapped} of ${coverage.total}`;
+  return coverage.mapped ? `${coverage.mapped} mapped` : 'None mapped';
+}
+
+function ksbCoverageDetail(coverage: ReviewKsbCoverage) {
+  if (!coverage.mapped) return 'Nothing mapped to the standard yet';
+  const { knowledge, skills, behaviours, untyped } = coverage.counts;
+  const parts = [
+    knowledge ? `K${knowledge}` : '',
+    skills ? `S${skills}` : '',
+    behaviours ? `B${behaviours}` : '',
+    untyped ? `${untyped} untyped` : '',
+  ].filter(Boolean);
+  const split = parts.join(' / ') || `${coverage.mapped} mapped`;
+  return coverage.total ? `${split} - ${coverage.percentage}% of the standard` : split;
+}
+
+function ksbCoverageTone(coverage: ReviewKsbCoverage): 'success' | 'warning' | 'info' {
+  if (!coverage.mapped) return 'warning';
+  if (coverage.total && coverage.percentage < 100) return 'info';
+  return 'success';
+}
+
+function formatComponentTypeLabel(type: string) {
+  const known = componentTypes.find(item => item.type === type);
+  if (known) return known.label;
+  const text = String(type || '').replace(/[-_]+/g, ' ').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : 'Other';
+}
+
+/**
+ * The component count alone says nothing about what learners will actually do, or about
+ * the evidence the programme will be able to show at audit. Reflection, workplace
+ * evidence and tutor validation are all authored per component and never summarised.
+ */
+function reviewComponentInsights(components: ModuleComponent[]) {
+  const byType = new Map<string, number>();
+  const insights = {
+    total: components.length,
+    reflection: 0,
+    workplaceEvidence: 0,
+    tutorValidation: 0,
+    points: 0,
+    withoutKsbs: 0,
+    withoutHours: 0,
+  };
+  components.forEach(component => {
+    const type = String(component.type || 'other');
+    byType.set(type, (byType.get(type) || 0) + 1);
+    if (component.reflectionRequired) insights.reflection += 1;
+    if (component.workplaceEvidenceRequired) insights.workplaceEvidence += 1;
+    if (component.tutorValidationRequired) insights.tutorValidation += 1;
+    insights.points += Math.max(0, Number(component.points) || 0);
+    if (!(component.ksbMappings || []).length) insights.withoutKsbs += 1;
+    if (!(Math.max(0, Number(component.expectedOtjh) || 0) > 0)) insights.withoutHours += 1;
+  });
+  const typeMix = Array.from(byType.entries())
+    .map(([type, count]) => ({ type, count, label: formatComponentTypeLabel(type) }))
+    .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
+  return { ...insights, typeMix };
+}
+
+function cohortSessionDates(cohort: CohortDraft) {
+  return cohort.groups
+    .filter(isConfiguredGroup)
+    .flatMap(group => group.modules.filter(isConfiguredModule))
+    .flatMap(draft => draft.weeks.map(week => week.date))
+    .filter(Boolean)
+    .sort(compareDateInputs);
+}
+
+/**
+ * How much of the cohort window actually has sessions in it. A cohort that runs for
+ * 24 months while its modules only cover four of them is invisible in a list of dates
+ * but obvious on a bar, and it is usually either a wrong duration or a missing module.
+ */
+function reviewDeliveryCoverage(cohort: CohortDraft) {
+  const dates = cohortSessionDates(cohort);
+  const firstSession = dates[0] || '';
+  const lastSession = dates[dates.length - 1] || '';
+  const totalDays = dayGap(cohort.startDate, cohort.endDate);
+  const leadInDays = firstSession ? dayGap(cohort.startDate, firstSession) : totalDays;
+  const trailingDays = lastSession ? dayGap(lastSession, cohort.endDate) : 0;
+  const coveredDays = firstSession && lastSession ? dayGap(firstSession, lastSession) : 0;
+  const scale = totalDays || 1;
+  const startsBeforeCohort = Boolean(firstSession && compareDateInputs(firstSession, cohort.startDate) < 0);
+  const endsAfterCohort = Boolean(lastSession && cohort.endDate && compareDateInputs(lastSession, cohort.endDate) > 0);
+  return {
+    sessionCount: dates.length,
+    firstSession,
+    lastSession,
+    totalDays,
+    leadInDays,
+    trailingDays,
+    coveredDays,
+    leadInPercent: Math.min(100, (leadInDays / scale) * 100),
+    coveredPercent: Math.min(100, (coveredDays / scale) * 100),
+    trailingPercent: Math.min(100, (trailingDays / scale) * 100),
+    startsBeforeCohort,
+    endsAfterCohort,
+    // A gap only matters if it is long enough to be a real hole in delivery.
+    hasLeadInGap: leadInDays >= 45,
+    hasTrailingGap: trailingDays >= 45,
+  };
+}
+
+type ReviewDeliveryCoverage = ReturnType<typeof reviewDeliveryCoverage>;
+
+/** Sessions the generator moved off a holiday, with where they landed and why. */
+function reviewSessionShifts(draft: ModuleDraft) {
+  return draft.weeks
+    .filter(week => week.shiftedFromDate && week.shiftedFromDate !== week.date)
+    .map(week => ({
+      sessionNumber: week.sessionNumber,
+      from: String(week.shiftedFromDate),
+      to: week.date,
+      reason: uniqueTextValues((week.shiftedHolidaySessions || []).map(session => session.holidayLabel)).join(', '),
+    }));
+}
+
+/**
+ * Off-the-job hours are a per-learner requirement, and a learner sits in exactly one
+ * group, so the programme target is checked per group rather than against the summed
+ * total. Adding three cohorts together would otherwise show a programme as compliant
+ * while every individual learner is hundreds of hours short.
+ */
+function reviewRequiredHoursCoverage(cohorts: CohortDraft[], requiredHours: unknown, freeMode = false) {
+  const target = Math.max(0, Number(requiredHours) || 0);
+  const perGroup = cohorts
+    .flatMap(cohort => cohort.groups.filter(isConfiguredGroup))
+    .map(group => groupActualComponentHours(group, freeMode));
+  const lowestHours = perGroup.length ? Math.min(...perGroup) : 0;
+  return {
+    target,
+    hasTarget: target > 0,
+    groupCount: perGroup.length,
+    meetingCount: perGroup.filter(hours => hours + HOURS_BALANCE_TOLERANCE >= target).length,
+    lowestHours,
+    shortfall: Math.max(0, target - lowestHours),
+    percentage: target ? Math.min(100, Math.round((lowestHours / target) * 100)) : 0,
+  };
+}
+
+type ReviewRequiredHours = ReturnType<typeof reviewRequiredHoursCoverage>;
+
+function requiredHoursTone(coverage: ReviewRequiredHours): 'success' | 'warning' | 'info' {
+  if (!coverage.hasTarget || !coverage.groupCount) return 'info';
+  return coverage.meetingCount === coverage.groupCount ? 'success' : 'warning';
+}
+
+function requiredHoursDetail(coverage: ReviewRequiredHours) {
+  if (!coverage.hasTarget) return 'No off-the-job target set on the programme';
+  if (!coverage.groupCount) return `${formatHoursValue(coverage.target)} required per learner`;
+  if (coverage.meetingCount === coverage.groupCount) {
+    return coverage.groupCount === 1
+      ? 'Meets the programme target'
+      : `All ${coverage.groupCount} groups meet the target`;
+  }
+  return `${formatHoursValue(coverage.shortfall)} short - ${coverage.meetingCount} of ${coverage.groupCount} group${coverage.groupCount === 1 ? ' meets' : 's meet'} it`;
+}
+
+function groupMeetsRequiredHours(groupHours: number, coverage: ReviewRequiredHours) {
+  return groupHours + HOURS_BALANCE_TOLERANCE >= coverage.target;
+}
+
+function moduleOutsideCohortWindow(draft: ModuleDraft, cohort: CohortDraft) {
+  if (!draft.startDate || !cohort.startDate) return false;
+  const startsEarly = compareDateInputs(draft.startDate, cohort.startDate) < 0;
+  const endsLate = Boolean(draft.endDate && cohort.endDate && compareDateInputs(draft.endDate, cohort.endDate) > 0);
+  return startsEarly || endsLate;
 }
 
 function moduleDraftDisplayName(draft: ModuleDraft, index: number, moduleOptions: CurriculumModule[]) {
@@ -2697,8 +3111,8 @@ function applyModuleBuilderContent(draft: ModuleDraft, structure: ModuleCatalogu
                 ...stripImportedTeamsSettings(component.settings),
                 ...teamsSettings,
                 sessionDate: week.date,
-                sessionTime: week.startTime || groupTime || '09:30',
-                sessionDateTimeUtc: new Date(`${week.date}T${week.startTime || groupTime || '09:30'}`).toISOString(),
+                sessionTime: week.startTime || groupTime || DEFAULT_GROUP_START_TIME,
+                sessionDateTimeUtc: new Date(`${week.date}T${week.startTime || groupTime || DEFAULT_GROUP_START_TIME}`).toISOString(),
               }
             : stripImportedTeamsSettings(component.settings),
         };
@@ -2802,6 +3216,53 @@ function reorderComponentInDraft(draft: ModuleDraft, sourceComponentId: string, 
   return {
     ...draft,
     weeks: draft.weeks.map(item => item.id === week.id ? { ...item, components } : item),
+  };
+}
+
+// Moves a component to another scheduled week. Drag-reorder only ever worked
+// inside one week, so before this a cross-week drag (or a mistyped placement)
+// left the component stranded in the week it was created in.
+function moveComponentToWeekInDraft(
+  draft: ModuleDraft,
+  componentId: string,
+  targetWeekId: string,
+  beforeComponentId?: string,
+) {
+  const sourceWeek = draft.weeks.find(week => week.components.some(component => component.id === componentId));
+  const targetWeek = draft.weeks.find(week => week.id === targetWeekId);
+  if (!sourceWeek || !targetWeek || sourceWeek.id === targetWeek.id) return draft;
+  const moved = sourceWeek.components.find(component => component.id === componentId);
+  if (!moved) return draft;
+  // A live session carries the Teams date/time of the week it sits in, so the
+  // schedule has to follow the move or the card would read as the old week.
+  const sessionDate = targetWeek.date || draft.startDate || todayIso();
+  const sessionTime = targetWeek.startTime || DEFAULT_GROUP_START_TIME;
+  const relocated: ModuleComponent = {
+    ...moved,
+    weekId: targetWeek.id,
+    settings: moved.type === 'live-session' && moved.settings?.sessionDate
+      ? {
+          ...moved.settings,
+          sessionDate,
+          sessionTime,
+          sessionDateTimeUtc: new Date(`${sessionDate}T${sessionTime}`).toISOString(),
+        }
+      : moved.settings,
+  };
+  return {
+    ...draft,
+    weeks: draft.weeks.map(week => {
+      if (week.id === sourceWeek.id) {
+        return { ...week, components: week.components.filter(component => component.id !== componentId) };
+      }
+      if (week.id !== targetWeek.id) return week;
+      const components = week.components.filter(component => component.id !== componentId);
+      const insertAt = beforeComponentId
+        ? components.findIndex(component => component.id === beforeComponentId)
+        : -1;
+      if (insertAt < 0) return { ...week, components: [...components, relocated] };
+      return { ...week, components: [...components.slice(0, insertAt), relocated, ...components.slice(insertAt)] };
+    }),
   };
 }
 
@@ -3086,6 +3547,7 @@ export function AddCurriculumStructureWizard({
     name: '',
     standard: '',
     level: '',
+    requiredOtjh: '',
     color: '#2563eb',
     description: '',
     structureType: 'scheduled' as ProgrammeStructureType,
@@ -3147,6 +3609,13 @@ export function AddCurriculumStructureWizard({
   const [builderStructureEmptyDraftIds, setBuilderStructureEmptyDraftIds] = useState<Set<string>>(new Set());
   const [builderStructureFailedDraftIds, setBuilderStructureFailedDraftIds] = useState<Set<string>>(new Set());
   const hydratedProgrammeRef = useRef('');
+  // Whether the hydration that produced hydratedProgrammeRef read the programme
+  // detail response, as opposed to the compact overview lists the fast path uses
+  // while the detail request is still in flight. A compact pass can legitimately
+  // find nothing (the overview omits archived cohorts, and it is scoped to
+  // operational visibility) and must not lock the wizard out of re-hydrating when
+  // the real detail arrives — on a cold cache that response can be seconds late.
+  const hydratedFromProgrammeDetailRef = useRef(false);
   const hydratedCohortIdsRef = useRef<Set<string>>(new Set());
   const hydratedGroupIdsRef = useRef<Set<string>>(new Set());
   const loadedBuilderStructureKeysRef = useRef<Set<string>>(new Set());
@@ -3551,6 +4020,10 @@ export function AddCurriculumStructureWizard({
   // a ref.
   const discardConfirmContextRef = useRef({ onClose, removedCohortIds, removedGroupIds, removedModuleIds });
   discardConfirmContextRef.current = { onClose, removedCohortIds, removedGroupIds, removedModuleIds };
+  // Populated further down this component, where `validation` and the draft save it
+  // points at are finally in scope. Read only from inside the effect below, which
+  // runs after the whole render pass, so it is never null by then.
+  const discardConfirmSaveRef = useRef<{ canSaveDraft: boolean; saveDraft: () => Promise<boolean> } | null>(null);
   useEffect(() => {
     if (!isOpen || !discardConfirmOpen) return;
 
@@ -3561,15 +4034,35 @@ export function AddCurriculumStructureWizard({
       context.removedGroupIds.length > 0 && `${context.removedGroupIds.length} group${context.removedGroupIds.length === 1 ? '' : 's'}`,
       context.removedModuleIds.length > 0 && `${context.removedModuleIds.length} module${context.removedModuleIds.length === 1 ? '' : 's'}`,
     ].filter(Boolean).join(', ');
-    const text = deletionList
-      ? `Closing now will discard the programme structure and delete ${deletionList} from the database.`
-      : 'Closing now will discard the programme structure in this wizard.';
+    // Offered only when the draft write would actually land: a blank programme name
+    // makes it a no-op, and an invalid programme step would persist a half-filled row.
+    const saveDraft = discardConfirmSaveRef.current?.canSaveDraft
+      ? discardConfirmSaveRef.current.saveDraft
+      : null;
+    const text = [
+      deletionList
+        ? `Closing now will discard the programme structure and delete ${deletionList} from the database.`
+        : 'Closing now will discard the programme structure in this wizard.',
+      saveDraft ? 'Save as draft to keep it without completing the update.' : '',
+    ].filter(Boolean).join(' ');
+    const denyOptions = saveDraft
+      ? {
+        denyButtonText: 'Save as draft',
+        onDeny: async () => {
+          // Leaves the wizard open on failure: the draft save reports its own
+          // error, and closing anyway would drop the work it just failed to store.
+          if (!await saveDraft()) throw new Error('The draft could not be saved, so nothing was closed.');
+          discardConfirmContextRef.current.onClose();
+        },
+      }
+      : {};
     showCurriculumConfirm({
       title: 'Discard unsaved changes?',
       text,
       icon: 'warning',
       confirmButtonText: 'Discard changes',
       cancelButtonText: 'Keep editing',
+      ...denyOptions,
       onConfirm: async () => {
         discardConfirmContextRef.current.onClose();
       },
@@ -3586,6 +4079,16 @@ export function AddCurriculumStructureWizard({
     () => buildHolidayAdjustedCohortPlan(cohortForm.startDate, cohortForm.durationMonths, activeHolidays),
     [activeHolidays, cohortForm.durationMonths, cohortForm.startDate],
   );
+  // Calculated from the practical end date the cohort actually carries (holiday
+  // extensions included), so a holiday that pushes the practical period out
+  // pushes the apprenticeship end date with it — until someone types a date of
+  // their own, which then stands until they clear the field.
+  const cohortApprenticeshipEndDate = resolveApprenticeshipEndDate(cohortForm);
+  const cohortApprenticeshipEndHelper = cohortForm.apprenticeshipEndDate
+    ? 'Set manually. Clear the field to go back to the calculated date.'
+    : cohortApprenticeshipEndDate
+      ? 'Practical end date plus the EPA period. Type a date to override it.'
+      : 'Set an EPA period, or type the date this apprenticeship ends.';
   const activeProgrammeSourceId = selectedProgramme?.sourceId || selectedProgramme?.id || slugify(programmeForm.name);
   const activeGroupCoachConflict = useMemo(
     () => groupCoachScheduleConflict(cohortDrafts, activeGroup.localId, data?.groups || []),
@@ -3881,17 +4384,25 @@ export function AddCurriculumStructureWizard({
     )));
   };
 
+  const moveFreeComponentToWeek = (moduleId: string, componentId: string, weekId: string, beforeComponentId?: string) => {
+    setModuleDrafts(previous => previous.map(draft => (
+      draft.localId === moduleId ? moveComponentToWeekInDraft(draft, componentId, weekId, beforeComponentId) : draft
+    )));
+  };
+
   const activeProgramme = selectedProgramme ? {
     ...selectedProgramme,
     name: programmeForm.name || selectedProgramme.name,
     standard: programmeForm.standard || selectedProgramme.standard,
     level: programmeForm.level || selectedProgramme.level,
+    requiredOtjh: parseRequiredOtjhInput(programmeForm.requiredOtjh),
     color: programmeForm.color || selectedProgramme.color,
     description: programmeForm.description || selectedProgramme.description,
   } : {
     name: programmeForm.name,
     standard: programmeForm.standard || programmeForm.name,
     level: programmeForm.level,
+    requiredOtjh: parseRequiredOtjhInput(programmeForm.requiredOtjh),
     color: programmeForm.color,
     description: programmeForm.description,
   } as CurriculumProgramme;
@@ -3940,11 +4451,15 @@ export function AddCurriculumStructureWizard({
       ? ['Choose the programme this module will be added to.']
       : !programmeForm.name.trim() ? ['Programme name is required.'] : [],
     cohort: isFreeProgramme ? [] : cohortDrafts.length
-      ? cohortDrafts.flatMap((cohort, index) => [
-          !cohort.name.trim() ? `Cohort ${index + 1}: name is required.` : '',
-          !cohort.startDate ? `Cohort ${index + 1}: start date is required.` : '',
-          (Number(cohort.durationMonths) || 0) < 1 ? `Cohort ${index + 1}: duration must be at least 1 month.` : '',
-        ].filter(Boolean))
+      ? cohortDrafts.flatMap((cohort, index) => {
+          const apprenticeshipIssue = apprenticeshipEndDateIssue(cohort);
+          return [
+            !cohort.name.trim() ? `Cohort ${index + 1}: name is required.` : '',
+            !cohort.startDate ? `Cohort ${index + 1}: start date is required.` : '',
+            (Number(cohort.durationMonths) || 0) < 1 ? `Cohort ${index + 1}: duration must be at least 1 month.` : '',
+            apprenticeshipIssue ? `Cohort ${index + 1}: ${apprenticeshipIssue}` : '',
+          ].filter(Boolean);
+        })
       : ['Add at least one cohort.'],
     group: isFreeProgramme ? [] : cohortDrafts.flatMap((cohort, cohortIndex) => (
       cohort.groups.length
@@ -3974,6 +4489,12 @@ export function AddCurriculumStructureWizard({
     name: !cohortForm.name.trim() ? 'Cohort name is required.' : '',
     startDate: !cohortForm.startDate ? 'Cohort start date is required.' : '',
     durationMonths: (Number(cohortForm.durationMonths) || 0) < 1 ? 'Duration must be at least 1 month.' : '',
+    // Optional: a cohort with no EPA period simply has no apprenticeship end
+    // date. Only a value that was typed and cannot be read is an error.
+    epaMonths: cohortForm.epaMonths.trim() && parseEpaMonthsInput(cohortForm.epaMonths) === null
+      ? 'EPA period must be a whole number of months.'
+      : '',
+    apprenticeshipEndDate: sentenceCase(apprenticeshipEndDateIssue(cohortForm)),
   };
   const activeGroupFieldErrors = isFreeProgramme ? {} : {
     name: !groupForm.name.trim() ? 'Group name is required.' : '',
@@ -3988,6 +4509,15 @@ export function AddCurriculumStructureWizard({
     && Boolean(selectedProgramme)
     && !programmeDetailFailed
     && (loading || programmeDetailLoading);
+
+  // countsPending goes true again on every background refresh, which is fine for a
+  // count skeleton but not for the module editor: blanking its numbers and
+  // disabling its inputs mid-edit is the same regression the Add Module button had
+  // to be rescued from (a cold DB connection can hold the detail open for ~20s).
+  // The editor's values are only provisional before the detail has ever landed -
+  // once programmeDetail holds a payload, a refresh is correcting real data, not
+  // standing in for it.
+  const moduleDataProvisional = structureCountsPending && !programmeDetail;
 
   // If the detail request failed we stop skeletoning and fall back to the compact
   // numbers, which may undercount. Say so explicitly rather than letting provisional
@@ -4074,7 +4604,7 @@ export function AddCurriculumStructureWizard({
     setDiscardConfirmOpen(false);
     setSubmitted(false);
     setSaving(null);
-    setProgrammeForm({ name: '', standard: '', level: '', color: '#2563eb', description: '', structureType: 'scheduled' });
+    setProgrammeForm({ name: '', standard: '', level: '', requiredOtjh: '', color: '#2563eb', description: '', structureType: 'scheduled' });
     setKsbSourceKind('profile');
     setKsbSourceValue('');
     setProgrammeDetail(null);
@@ -4094,6 +4624,7 @@ export function AddCurriculumStructureWizard({
     setActiveModuleId('');
     setExpandedModuleId('');
     hydratedProgrammeRef.current = '';
+    hydratedFromProgrammeDetailRef.current = false;
     hydratedCohortIdsRef.current.clear();
     hydratedGroupIdsRef.current.clear();
     loadedBuilderStructureKeysRef.current.clear();
@@ -4130,6 +4661,7 @@ export function AddCurriculumStructureWizard({
       name: programme.name || '',
       standard: programme.standard || programme.name || '',
       level: programme.level || '',
+      requiredOtjh: requiredOtjhInputValue(programme.requiredOtjh),
       color: programme.color || '#2563eb',
       description: programme.description || '',
       structureType: programme.structureType === 'free' ? 'free' : 'scheduled',
@@ -4146,6 +4678,7 @@ export function AddCurriculumStructureWizard({
     setActiveModuleId('');
     setExpandedModuleId('');
     hydratedProgrammeRef.current = '';
+    hydratedFromProgrammeDetailRef.current = false;
     hydratedCohortIdsRef.current.clear();
     hydratedGroupIdsRef.current.clear();
     loadedBuilderStructureKeysRef.current.clear();
@@ -4208,6 +4741,7 @@ export function AddCurriculumStructureWizard({
       name: selectedProgramme.name || '',
       standard: selectedProgramme.standard || selectedProgramme.name || '',
       level: selectedProgramme.level || '',
+      requiredOtjh: requiredOtjhInputValue(selectedProgramme.requiredOtjh),
       color: selectedProgramme.color || '#2563eb',
       description: selectedProgramme.description || '',
       structureType: selectedProgramme.structureType === 'free' ? 'free' : 'scheduled',
@@ -4308,14 +4842,18 @@ export function AddCurriculumStructureWizard({
     const hydratedProgrammeKey = selectedProgramme
       ? (selectedProgramme.id || selectedProgramme.sourceId || selectedProgramme.name)
       : '';
-    const compactHydrationKey = `${hydratedProgrammeKey}:compact`;
-    const compactModulesHydrationKey = `${hydratedProgrammeKey}:compact-modules`;
+    // Any hydration for this programme that did not come from the detail response
+    // is provisional, including one that produced no drafts at all. Keying this on
+    // the marker suffixes alone missed the empty case: a fast pass that found no
+    // cohorts wrote ':empty', which matched neither ':compact' nor
+    // ':compact-modules', so the arriving detail was ignored and the cohort step
+    // stayed on "No cohorts are found in the database for this programme" even
+    // though the response carried them.
     const canReplaceCompactHydration = Boolean(
       !userEditedWizardRef.current
-      && (
-        (hydratedProgrammeRef.current === compactHydrationKey && programmeDetail)
-        || (hydratedProgrammeRef.current === compactModulesHydrationKey && programmeDetail)
-      )
+      && programmeDetail
+      && !hydratedFromProgrammeDetailRef.current
+      && hydratedProgrammeRef.current.startsWith(`${hydratedProgrammeKey}:`)
     );
     if (!isOpen || !data || !selectedProgramme || loading) return;
     if (cohortDrafts.length && !canReplaceCompactHydration) return;
@@ -4354,9 +4892,11 @@ export function AddCurriculumStructureWizard({
       initialCohortId,
       initialGroupId,
       detailComponents,
+      otherProgrammeIdentityKeys(programmes, programmeDetail?.programme || selectedProgramme),
     );
 
     hydratedProgrammeRef.current = `${hydratedProgrammeKey}:${programmeDetail ? 'detail' : moduleOptions.length ? 'compact-modules' : 'compact'}`;
+    hydratedFromProgrammeDetailRef.current = Boolean(programmeDetail);
     hydratedCohortIdsRef.current = new Set(existingDrafts
       .map(cohort => cohort.sourceId)
       .filter((id): id is string => isCanonicalCurriculumId(id, 'COHORT')));
@@ -4409,7 +4949,7 @@ export function AddCurriculumStructureWizard({
     // empty "choose a module" panel.
     setActiveModuleId(firstModule?.localId || '');
     setExpandedModuleId('');
-  }, [activeCohortId, activeGroupId, cohortDrafts, completingNewDraftProgramme, data, holidays, initialCohortId, initialGroupId, pinnedInitialModuleId, isFreeProgramme, isOpen, loading, moduleOptions, modules, programmeDetail, programmeDetailFailed, programmeDetailLoading, selectedProgramme, step]);
+  }, [activeCohortId, activeGroupId, cohortDrafts, completingNewDraftProgramme, data, holidays, initialCohortId, initialGroupId, pinnedInitialModuleId, isFreeProgramme, isOpen, loading, moduleOptions, modules, programmeDetail, programmeDetailFailed, programmeDetailLoading, programmes, selectedProgramme, step]);
 
   useEffect(() => {
     if (!isOpen || isFreeProgramme || !selectedProgramme || !programmeDetail || !cohortDrafts.length) return;
@@ -4465,10 +5005,21 @@ export function AddCurriculumStructureWizard({
           if (group.modules.some(isConfiguredModule)) {
             const activeHolidays = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
             const modules = group.modules.map(draft => {
+              // Match on a key both sides actually have. `normalise` maps undefined and
+              // '' to the same empty string, so comparing raw values let a freshly added
+              // blank draft (no sourceId, no catalogueId, no name) equal the first saved
+              // module whose catalogueId was also empty - and inherit its whole schedule,
+              // which read as "the new module came back as a copy of the first one".
+              const draftKeys = {
+                sourceId: normalise(draft.sourceId),
+                catalogueId: normalise(draft.catalogueId),
+                name: normalise(draft.name),
+              };
+              if (!draftKeys.sourceId && !draftKeys.catalogueId && !draftKeys.name) return draft;
               const detailDraft = modulesForGroup.find(candidate => (
-                normalise(candidate.sourceId) === normalise(draft.sourceId)
-                || normalise(candidate.catalogueId) === normalise(draft.catalogueId)
-                || normalise(candidate.name) === normalise(draft.name)
+                (draftKeys.sourceId && normalise(candidate.sourceId) === draftKeys.sourceId)
+                || (draftKeys.catalogueId && normalise(candidate.catalogueId) === draftKeys.catalogueId)
+                || (draftKeys.name && normalise(candidate.name) === draftKeys.name)
               ));
               if (!detailDraft) return draft;
               if (moduleDraftDisplayComponentCount(draft, false) >= moduleDraftDisplayComponentCount(detailDraft, false)) return draft;
@@ -4865,14 +5416,15 @@ export function AddCurriculumStructureWizard({
     });
   }, [activeCohort.groups.length, activeCohort.localId, activeGroup.localId, activeHolidays, cohortDrafts.length, groupForm.deliveryDay, groupForm.startTime]);
 
+  // Closing with edits in hand always asks first. It used to silently write the
+  // whole tree to the database whenever the programme step happened to validate,
+  // which is every edit of an existing programme — so the one case where a
+  // reviewer most needs to be asked was the one case that never asked, and
+  // "close without saving" saved. The confirm now offers that write as an
+  // explicit choice instead of performing it unannounced.
   const requestClose = () => {
     if (saving === 'final') return;
     const hasDeletions = removedCohortIds.length > 0 || removedGroupIds.length > 0 || removedModuleIds.length > 0;
-    if ((hasUnsavedChanges || hasDeletions) && !submitted && validation.programme.length === 0) {
-      void autosaveDraftProgress();
-      onClose();
-      return;
-    }
     if ((hasUnsavedChanges || hasDeletions) && !submitted) {
       setDiscardConfirmOpen(true);
       return;
@@ -5321,6 +5873,8 @@ export function AddCurriculumStructureWizard({
             startDate: cohort.startDate,
             endDate: cohort.endDate,
             durationMonths: Number(cohort.durationMonths),
+            epaMonths: parseEpaMonthsInput(cohort.epaMonths),
+            apprenticeshipEndOverride: cohort.apprenticeshipEndDate || null,
             color: cohort.color,
             holidayIds: cohort.holidayIds,
             ...(groupsForSave.length ? { groups: groupsForSave } : {}),
@@ -5366,6 +5920,13 @@ export function AddCurriculumStructureWizard({
         draftAutosaveInFlightSnapshotRef.current = '';
       }
     }
+  };
+
+  // Hands the draft save to the discard confirm declared near the top of this
+  // component. Assigned here because both halves only exist by this point.
+  discardConfirmSaveRef.current = {
+    canSaveDraft: Boolean(programmeForm.name.trim()) && validation.programme.length === 0,
+    saveDraft: autosaveDraftProgress,
   };
 
   const handleNextStep = async () => {
@@ -5645,6 +6206,8 @@ export function AddCurriculumStructureWizard({
           startDate: cohort.startDate,
           endDate: cohort.endDate,
           durationMonths: Number(cohort.durationMonths),
+          epaMonths: parseEpaMonthsInput(cohort.epaMonths),
+          apprenticeshipEndOverride: cohort.apprenticeshipEndDate || null,
           color: cohort.color,
           holidayIds: cohort.holidayIds,
           ...(groupsForSave.length ? { groups: groupsForSave } : {}),
@@ -5989,12 +6552,69 @@ export function AddCurriculumStructureWizard({
                           <Field label="Start date" type="date" value={cohortForm.startDate} onChange={setCohortStartDate} required error={activeCohortFieldErrors.startDate} />
                           <Field label="Duration in months" type="number" value={cohortForm.durationMonths} onChange={value => setCohortForm(prev => ({ ...prev, durationMonths: value }))} required error={activeCohortFieldErrors.durationMonths} />
                           <Field
-                            label="Adjusted end date"
+                            label="Practical end date"
                             type="date"
                             value={cohortForm.endDate}
                             onChange={value => setCohortForm(prev => ({ ...prev, endDate: value }))}
+                            helper="Holiday adjusted. Ends the practical period."
                           />
                           <ColorField label="Cohort colour" value={cohortForm.color} onChange={value => setCohortForm(prev => ({ ...prev, color: value }))} />
+                        </div>
+                      </section>
+                      <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
+                        <div className="mb-4 flex items-center gap-3">
+                          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-600 text-white shadow-sm">
+                            <i className="ri-award-line text-lg"></i>
+                          </span>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-bold uppercase text-foreground-400">Apprenticeship period</p>
+                            <h4 className="truncate text-sm font-heading font-bold text-foreground-950">
+                              End Point Assessment
+                            </h4>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,2fr)]">
+                          <Field
+                            label="EPA period in months"
+                            type="number"
+                            min="0"
+                            value={cohortForm.epaMonths}
+                            onChange={value => setCohortForm(prev => ({ ...prev, epaMonths: value }))}
+                            error={activeCohortFieldErrors.epaMonths}
+                            placeholder="Example: 5"
+                            helper={cohortForm.apprenticeshipEndDate
+                              ? 'Kept on record, but the apprenticeship end date is set manually.'
+                              : 'Added to the practical end date.'}
+                          />
+                          <Field
+                            label="Apprenticeship end date"
+                            type="date"
+                            value={cohortApprenticeshipEndDate}
+                            onChange={value => setCohortForm(prev => ({ ...prev, apprenticeshipEndDate: value }))}
+                            min={cohortForm.endDate || undefined}
+                            error={activeCohortFieldErrors.apprenticeshipEndDate}
+                            helper={cohortApprenticeshipEndHelper}
+                          />
+                          <div className="rounded-xl border border-background-200 bg-background-0 p-3">
+                            <p className="text-[10px] font-bold uppercase text-foreground-400">Learner dates for this cohort</p>
+                            <dl className="mt-2 space-y-1 text-xs">
+                              <div className="flex items-center justify-between gap-3">
+                                <dt className="text-foreground-500">Practical</dt>
+                                <dd className="font-semibold text-foreground-900">
+                                  {cohortForm.startDate ? formatDateValue(cohortForm.startDate) : '--'} to {cohortForm.endDate ? formatDateValue(cohortForm.endDate) : '--'}
+                                </dd>
+                              </div>
+                              <div className="flex items-center justify-between gap-3">
+                                <dt className="text-foreground-500">Apprenticeship</dt>
+                                <dd className="font-semibold text-foreground-900">
+                                  {cohortForm.startDate ? formatDateValue(cohortForm.startDate) : '--'} to {cohortApprenticeshipEndDate ? formatDateValue(cohortApprenticeshipEndDate) : '--'}
+                                </dd>
+                              </div>
+                            </dl>
+                            <p className="mt-2 text-[11px] leading-snug text-foreground-500">
+                              The start date is the same for both. Every learner assigned to this cohort inherits these dates.
+                            </p>
+                          </div>
                         </div>
                       </section>
                       <div>
@@ -6096,7 +6716,7 @@ export function AddCurriculumStructureWizard({
                                     type="button"
                                     onClick={() => removeGroupDraft(group.localId)}
                                     disabled={removing}
-                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-wait"
+                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-400 transition-smooth hover:bg-red-50 hover:text-red-600 disabled:cursor-wait"
                                     aria-label={removing ? `Removing ${group.name || `Group ${index + 1}`}` : `Remove ${group.name || `Group ${index + 1}`}`}
                                     title={removing ? 'Removing group' : 'Remove group'}
                                   >
@@ -6106,7 +6726,7 @@ export function AddCurriculumStructureWizard({
                                     type="button"
                                     onClick={() => cloneGroupDraft(group.localId)}
                                     disabled={removing}
-                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-700 group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-wait"
+                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-400 transition-smooth hover:bg-primary-50 hover:text-primary-700 disabled:cursor-wait"
                                     aria-label={`Clone ${group.name || `Group ${index + 1}`}`}
                                     title="Clone group"
                                   >
@@ -6184,6 +6804,7 @@ export function AddCurriculumStructureWizard({
                     detailsLoading={!isFreeProgramme && Boolean(selectedProgramme) && !cohortDrafts.length && (loading || programmeDetailLoading || (!hydratedProgrammeRef.current && !programmeDetailFailed))}
                     countsPending={structureCountsPending}
                     countsStale={structureCountsStale}
+                    moduleDataProvisional={moduleDataProvisional}
                     onRetryDetails={wizardLazyData.reloadProgrammeDetail}
                     programmeName={activeProgramme.name || programmeForm.name}
                     cohortDrafts={cohortDrafts}
@@ -6277,6 +6898,7 @@ export function AddCurriculumStructureWizard({
                             onUpdateFreeComponent={updateFreeComponent}
                             onRemoveFreeComponent={removeFreeComponent}
                             onReorderFreeComponent={reorderFreeComponent}
+                            onMoveFreeComponentToWeek={moveFreeComponentToWeek}
                             onOpenModuleBuilder={setEmbeddedModuleBuilderUrl}
                           />
                         )) : (
@@ -6366,6 +6988,7 @@ export function AddCurriculumStructureWizard({
                               onUpdateFreeComponent={updateFreeComponent}
                               onRemoveFreeComponent={removeFreeComponent}
                               onReorderFreeComponent={reorderFreeComponent}
+                              onMoveFreeComponentToWeek={moveFreeComponentToWeek}
                               onOpenModuleBuilder={setEmbeddedModuleBuilderUrl}
                             />
                           ))}
@@ -6393,6 +7016,7 @@ export function AddCurriculumStructureWizard({
                     cohortHolidayExtensionDays={cohortHolidayPlan.extensionDays}
                     cohortDrafts={cohortDrafts}
                     holidays={holidays}
+                    ksbTotalAvailable={selectedKsbOptions.length}
                   />
                   {!canSave && <ValidationList items={[...validation.programme, ...validation.cohort, ...validation.group, ...validation.modules]} />}
                 </StepPanel>
@@ -6661,7 +7285,7 @@ function DraftSwitcher({
                   type="button"
                   onClick={() => onCloneItem(item.id)}
                   disabled={removing}
-                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-700 group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-wait"
+                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-400 transition-smooth hover:bg-primary-50 hover:text-primary-700 disabled:cursor-wait"
                   aria-label={`Clone ${item.label}`}
                   title={`Clone ${item.label}`}
                 >
@@ -6673,7 +7297,7 @@ function DraftSwitcher({
                   type="button"
                   onClick={() => onRemoveItem(item.id)}
                   disabled={removing}
-                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-wait"
+                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-400 transition-smooth hover:bg-red-50 hover:text-red-600 disabled:cursor-wait"
                   aria-label={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
                   title={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
                 >
@@ -7723,6 +8347,7 @@ function ModulesStepWorkspace({
   detailsLoading = false,
   countsPending = false,
   countsStale = false,
+  moduleDataProvisional = false,
   onRetryDetails,
   programmeName,
   cohortDrafts,
@@ -7751,6 +8376,12 @@ function ModulesStepWorkspace({
 }: {
   freeMode?: boolean;
   detailsLoading?: boolean;
+  /**
+   * The module drafts are the provisional ones from the compact list pass and the
+   * detail response has not landed yet. Narrower than `countsPending` on purpose -
+   * see the note where it is computed.
+   */
+  moduleDataProvisional?: boolean;
   countsPending?: boolean;
   countsStale?: boolean;
   onRetryDetails?: () => void | Promise<void>;
@@ -7787,6 +8418,11 @@ function ModulesStepWorkspace({
   // empty state reads as a factual answer, and showing it mid-hydration makes a
   // populated group look empty until the detail lands.
   const structureHydrating = detailsLoading || countsPending;
+  // Adding a module only appends a blank local draft - it reads nothing from the
+  // server. Gating it on `structureHydrating` meant any background refresh (a cold
+  // DB connection can hold the programme detail open for ~20s) silently disabled
+  // the button, so clicks during that window were dropped and the step looked stuck
+  // on the module already there.
   const groupSchedule = `${groupForm.deliveryDay || 'No delivery days'} ${groupForm.startTime || ''}-${groupForm.endTime || addHoursToTime(groupForm.startTime, 2)}`.trim();
   const workspaceTitle = freeMode ? 'Custom modules' : (groupForm.name || 'Select a group');
   const workspaceMeta = freeMode ? (programmeName || 'Module course') : groupSchedule;
@@ -7888,11 +8524,10 @@ function ModulesStepWorkspace({
               <button
                 type="button"
                 onClick={onAddModule}
-                disabled={structureHydrating}
                 className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-60"
               >
-                <i className={structureHydrating ? 'ri-loader-4-line animate-spin' : 'ri-add-line'}></i>
-                {structureHydrating ? 'Loading...' : 'Add Module'}
+                <i className="ri-add-line"></i>
+                Add Module
               </button>
             </div>
           </div>
@@ -7987,6 +8622,7 @@ function ModulesStepWorkspace({
               cohortStartDate={activeCohort.startDate}
               tutorConflict={firstTutorConflictForModule(tutorConflicts, activeModule.localId)}
               canRemove={!removingDraftId}
+              structureLoading={moduleDataProvisional}
               onLoadStaffProfiles={onLoadStaffProfiles}
               onRemove={() => onRemoveModule(activeModule.localId)}
               onChange={patch => onChangeModule(activeModule.localId, patch)}
@@ -8002,7 +8638,7 @@ function ModulesStepWorkspace({
                 </span>
                 <p className="mt-3 text-sm font-heading font-bold text-foreground-950">Choose or add a module</p>
                 <p className="mt-1 text-[12px] leading-5 text-foreground-500">The module form appears here after a module is selected.</p>
-                <button type="button" onClick={onAddModule} disabled={structureHydrating} className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700 disabled:cursor-wait disabled:opacity-60">
+                <button type="button" onClick={onAddModule} className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700 disabled:cursor-wait disabled:opacity-60">
                   <i className="ri-add-line"></i>
                   Add Module
                 </button>
@@ -8215,7 +8851,7 @@ function attachTeamsMeetingToWeeks(draft: ModuleDraft, meeting: TeamsMeetingDraf
   const settings = teamsComponentSettings(meeting, draft);
   return draft.weeks.map((week, weekIndex) => {
     const sessionDate = week.date || draft.startDate || todayIso();
-    const sessionTime = week.startTime || '09:30';
+    const sessionTime = week.startTime || DEFAULT_GROUP_START_TIME;
     const sessionSettings = {
       ...settings,
       sessionDate,
@@ -8250,10 +8886,10 @@ function teamsScheduleInputFromDraft(draft: ModuleDraft, moduleTitle: string, gr
   if (!meeting) return null;
   const durationMinutes = Math.max(30, Math.round(groupSessionDurationHours({ startTime: groupTime, endTime: groupEndTime }) * 60) || meeting.durationMinutes || 60);
   const scheduledOccurrences = draft.weeks.map((week, index) => {
-    const localDateTime = `${week.date || draft.startDate || todayIso()}T${week.startTime || groupTime || '09:30'}`;
+    const localDateTime = `${week.date || draft.startDate || todayIso()}T${week.startTime || groupTime || DEFAULT_GROUP_START_TIME}`;
     return {
       sessionNumber: week.sessionNumber || index + 1,
-      startDateTimeUtc: new Date(localDateTime).toISOString(),
+      startDateTimeUtc: zonedNaiveToUtcIso(localDateTime),
       durationMinutes,
     };
   });
@@ -8263,7 +8899,7 @@ function teamsScheduleInputFromDraft(draft: ModuleDraft, moduleTitle: string, gr
     title: moduleTitle || draft.name || 'Live session',
     organizerEmail: meeting.organizerEmail,
     eventId: meeting.eventId,
-    localStartDateTime: `${draft.weeks[0]?.date || draft.startDate || todayIso()}T${draft.weeks[0]?.startTime || groupTime || '09:30'}`,
+    localStartDateTime: `${draft.weeks[0]?.date || draft.startDate || todayIso()}T${draft.weeks[0]?.startTime || groupTime || DEFAULT_GROUP_START_TIME}`,
     startDateTimeUtc: first.startDateTimeUtc,
     durationMinutes,
     repeat: scheduledOccurrences.length > 1 ? 'weekly' as const : 'none' as const,
@@ -8292,8 +8928,8 @@ function teamsScheduleImpactSummary(draft: ModuleDraft, groupTime: string, group
   const first = weeks[0];
   const last = weeks[weeks.length - 1];
   const shiftedCount = weeks.filter(week => week.shiftedHolidaySessions?.length).length;
-  const firstTime = first.startTime || groupTime || '09:30';
-  const lastTime = last.startTime || groupTime || '09:30';
+  const firstTime = first.startTime || groupTime || DEFAULT_GROUP_START_TIME;
+  const lastTime = last.startTime || groupTime || DEFAULT_GROUP_START_TIME;
   const firstEnd = addHoursToTime(firstTime, durationMinutes / 60);
   const lastEnd = addHoursToTime(lastTime, durationMinutes / 60);
   return [
@@ -8329,6 +8965,7 @@ function ModulePlanningPanel({
   cohortStartDate,
   tutorConflict,
   canRemove,
+  structureLoading = false,
   onRemove,
   onChange,
   onSelectExisting,
@@ -8348,6 +8985,12 @@ function ModulePlanningPanel({
   cohortStartDate?: string;
   tutorConflict?: TutorScheduleConflict;
   canRemove: boolean;
+  /**
+   * The saved programme structure is still in flight, so this draft is the
+   * provisional one built from the compact list pass. Its session count and
+   * dates are placeholders the detail response is about to correct.
+   */
+  structureLoading?: boolean;
   onRemove: () => void;
   onChange: (patch: Partial<ModuleDraft>) => void;
   onSelectExisting: (catalogueId: string) => void;
@@ -8363,7 +9006,10 @@ function ModulePlanningPanel({
   const [teamsPersistMessage, setTeamsPersistMessage] = useState('');
   const [teamsScheduleSyncing, setTeamsScheduleSyncing] = useState(false);
   const [teamsSessionsLoading, setTeamsSessionsLoading] = useState(false);
-  const [teamsSessionsOpen, setTeamsSessionsOpen] = useState(true);
+  // The schedule panel's summary carries the counts, the date range and every
+  // holiday shift, so the row-per-session table starts closed. The Teams
+  // load/sync handlers open it when they fetch occurrences to put in it.
+  const [teamsSessionsOpen, setTeamsSessionsOpen] = useState(false);
   const [teamsSessionsError, setTeamsSessionsError] = useState('');
   const [teamsSessions, setTeamsSessions] = useState<TeamsMeetingOccurrence[]>([]);
   const lastTeamsScheduleFingerprintRef = useRef('');
@@ -8625,13 +9271,66 @@ function ModulePlanningPanel({
           </div>
         ) : (
         <div>
+          {/*
+            While the saved structure is still loading, every number in this card
+            comes from the compact list pass rather than the module itself - a
+            module the user scheduled with 14 sessions reads as 1 here. Saying so
+            costs one banner and stops the panel from looking like it lost their
+            work. The fieldset disables the inputs for the same window: hydration
+            replaces the drafts wholesale, so an edit made now is either thrown
+            away or (once userEditedWizardRef blocks the replace) freezes the
+            provisional numbers in place and saves them.
+          */}
+          {structureLoading ? (
+            <div
+              className="mb-3 flex items-start gap-2.5 rounded-xl border border-primary-200 bg-primary-50/70 px-3 py-2.5"
+              role="status"
+              aria-live="polite"
+            >
+              <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-background-50 ring-1 ring-primary-100">
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary-200 border-t-primary-600" />
+              </span>
+              <div className="min-w-0">
+                <p className="text-[11px] font-bold text-primary-800">Loading this module&apos;s saved schedule...</p>
+                <p className="mt-0.5 text-[11px] font-semibold leading-4 text-primary-700">
+                  The sessions and dates below are placeholders until the saved data arrives. Nothing has been lost - editing unlocks in a moment.
+                </p>
+              </div>
+            </div>
+          ) : null}
+          <fieldset
+            disabled={structureLoading}
+            className={`m-0 min-w-0 border-0 p-0 transition-opacity ${structureLoading ? 'opacity-60' : ''}`}
+          >
           <div className="rounded-xl border border-background-200 bg-background-50/80 p-3 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-3">
               <p className="text-[10px] font-bold uppercase text-foreground-400">Scheduling</p>
               <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] font-bold text-primary-700">
-                {formatSessionCount(plannedSessionCount)}
+                {structureLoading
+                  ? <CountSkeleton width="w-14" label="Loading session count" />
+                  : formatSessionCount(plannedSessionCount)}
               </span>
             </div>
+            {/*
+              Greying the real inputs out is not enough here: a disabled field
+              still reads "1 session" and "07/02/2026" in the user's own module,
+              which is the number they came to check. Swapped for placeholders on
+              the same grid so the layout does not jump when the real values land.
+            */}
+            {structureLoading ? (
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[7.75rem_minmax(10.75rem,1fr)_minmax(10.75rem,1fr)] 2xl:grid-cols-[7.75rem_minmax(10.75rem,1fr)_7rem_minmax(10.75rem,1fr)_minmax(11rem,1fr)] lg:items-end">
+                {['Colour', 'Start date', 'Sessions', 'End date', 'Tutor'].map(label => (
+                  <div key={label} className="min-w-0">
+                    <span className="text-[10px] font-bold uppercase text-foreground-400">{label}</span>
+                    <div
+                      className="mt-1 h-[42px] animate-pulse rounded-lg border border-background-200 bg-background-100"
+                      role="status"
+                      aria-label={`Loading ${label.toLowerCase()}`}
+                    ></div>
+                  </div>
+                ))}
+              </div>
+            ) : (
             <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[7.75rem_minmax(10.75rem,1fr)_minmax(10.75rem,1fr)] 2xl:grid-cols-[7.75rem_minmax(10.75rem,1fr)_7rem_minmax(10.75rem,1fr)_minmax(11rem,1fr)] lg:items-end">
               <div className="min-w-0">
                 <ColorField label="Colour" value={draft.color} onChange={value => onChange({ color: value })} compact />
@@ -8670,6 +9369,7 @@ function ModulePlanningPanel({
                 onOpen={onLoadStaffProfiles}
               />
             </div>
+            )}
             <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50/60 p-3">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex min-w-0 items-start gap-2.5">
@@ -8785,13 +9485,14 @@ function ModulePlanningPanel({
                 {teamsPersistMessage}
               </TeamsStatusMessage>
             ) : null}
-            <TeamsActualSessionPlan
+            <SessionSchedulePanel
               draft={draft}
               groupTime={groupTime}
               groupEndTime={groupEndTime}
               occurrences={teamsSessions}
               loading={teamsSessionsLoading}
               error={teamsSessionsError}
+              structureLoading={structureLoading}
               open={teamsSessionsOpen}
               onToggle={() => setTeamsSessionsOpen(current => !current)}
             />
@@ -8799,10 +9500,10 @@ function ModulePlanningPanel({
               <TutorConflictInlineCard conflict={tutorConflict} />
             ) : null}
           </div>
+          </fieldset>
         </div>
         )}
         <TextArea label="Notes" value={userFacingNotes(draft.notes)} onChange={value => onChange({ notes: userFacingNotes(value) })} rows={2} />
-        {!freeMode && <SessionPreview draft={draft} />}
         {teamsMeetingOpen && (
           <WizardTeamsMeetingModal
             draft={draft}
@@ -8873,13 +9574,177 @@ function ModulePlanningPanel({
   );
 }
 
-function TeamsActualSessionPlan({
+/** One mark on the schedule strip, resolved before render so hover, the legend
+ *  and the screen-reader summary all describe the same thing. */
+interface SessionTimelineMark {
+  key: string;
+  kind: 'session' | 'moved' | 'skipped';
+  left: number;
+  title: string;
+  detail: string;
+}
+
+const SESSION_TIMELINE_LEGEND: Array<{ kind: SessionTimelineMark['kind']; swatch: string; label: string; hint: string }> = [
+  { kind: 'session', swatch: 'bg-primary-500', label: 'Session', hint: 'Runs on its planned delivery day.' },
+  { kind: 'moved', swatch: 'bg-amber-500', label: 'Moved by a holiday', hint: 'Pushed to the next clear delivery day.' },
+  { kind: 'skipped', swatch: 'bg-red-400', label: 'Holiday date skipped', hint: 'A holiday a session moved off. Not counted as a session.' },
+];
+
+/**
+ * One tick per session on the module's own date axis, so the shape of the
+ * schedule — clusters, gaps, the stretch a holiday cluster opened up — reads
+ * without counting rows. Amber ticks are the sessions that moved; the red marks
+ * underneath are the holiday dates they moved off.
+ *
+ * Three colours of 3px bar mean nothing on their own, so the strip carries a
+ * legend and every mark explains itself on hover. The tooltip is ours rather
+ * than a `title`: a native one waits about a second before appearing, which
+ * nobody discovers on a 3px target, and it cannot carry a second line. The hit
+ * area is padded out to 14px around each bar for the same reason — the bar is
+ * what you see, not what you should have to hit.
+ */
+function SessionScheduleTimeline({
+  sessions,
+  skipped,
+  startDate,
+  endDate,
+}: {
+  sessions: WeekDraft[];
+  skipped: SkippedHolidaySession[];
+  startDate: string;
+  endDate: string;
+}) {
+  const [hoveredKey, setHoveredKey] = useState('');
+  const from = startDate || sessions[0]?.date || '';
+  const to = endDate || sessions[sessions.length - 1]?.date || '';
+  if (!from || !to || !sessions.length) return null;
+  // A single-day span would divide by zero and stack every tick on the left.
+  const span = dayGap(from, to) || 1;
+  const positionFor = (date: string) => Math.min(100, Math.max(0, (dayGap(from, date) / span) * 100));
+
+  const skippedMarks: SessionTimelineMark[] = skipped.map(session => ({
+    key: `skip-tick-${session.date}-${session.holidayId}`,
+    kind: 'skipped',
+    left: positionFor(session.date),
+    title: `Holiday date skipped - ${formatDateValue(session.date)}`,
+    detail: `${session.holidayLabel}. The session that landed here moved to the next clear delivery day, so this date is not counted as a session.`,
+  }));
+  const sessionMarks: SessionTimelineMark[] = sessions.map((session, index) => {
+    const movedFrom = session.shiftedHolidaySessions || [];
+    const moved = movedFrom.length > 0;
+    const number = session.sessionNumber || index + 1;
+    const movedOff = uniqueTextValues(movedFrom.map(item => item.holidayLabel)).join(', ');
+    return {
+      key: `session-tick-${session.id}`,
+      kind: moved ? 'moved' : 'session',
+      left: positionFor(session.date),
+      title: `Session ${number} - ${formatDateValue(session.date)}`,
+      detail: moved
+        ? `Moved off ${movedOff || 'a holiday'} to the next clear delivery day.`
+        : 'Runs on the group’s planned delivery day.',
+    };
+  });
+  // Skipped marks sit on their own row under the session ticks, so they are
+  // listed first and hover-tested last: a session tick sharing a date wins.
+  const marks = [...skippedMarks, ...sessionMarks];
+  const hovered = marks.find(mark => mark.key === hoveredKey);
+  const movedCount = sessionMarks.filter(mark => mark.kind === 'moved').length;
+  const visibleLegend = SESSION_TIMELINE_LEGEND.filter(item => (
+    item.kind === 'session'
+    || (item.kind === 'moved' && movedCount > 0)
+    || (item.kind === 'skipped' && skippedMarks.length > 0)
+  ));
+  // The strip is a picture; the screen-reader equivalent is this sentence plus
+  // the full date table the panel can expand below it.
+  const summary = [
+    `${sessions.length} session${sessions.length === 1 ? '' : 's'} from ${formatDateValue(from)} to ${formatDateValue(to)}`,
+    movedCount ? `${movedCount} moved by a holiday` : '',
+    skippedMarks.length ? `${skippedMarks.length} holiday date${skippedMarks.length === 1 ? '' : 's'} skipped` : '',
+  ].filter(Boolean).join(', ');
+
+  return (
+    <div className="px-3 pb-1.5 pt-2.5">
+      <div className="relative">
+        {hovered ? (
+          <div
+            className="pointer-events-none absolute bottom-full z-20 mb-1 w-max max-w-[15rem] rounded-lg bg-foreground-950 px-2.5 py-1.5 shadow-lg"
+            style={{
+              left: `${hovered.left}%`,
+              // Pulled in at the ends so a tooltip on the first or last mark
+              // stays inside the card instead of being clipped by it.
+              transform: hovered.left < 15 ? 'translateX(0)' : hovered.left > 85 ? 'translateX(-100%)' : 'translateX(-50%)',
+            }}
+            role="tooltip"
+          >
+            <p className="text-[11px] font-bold leading-4 text-white">{hovered.title}</p>
+            <p className="mt-0.5 text-[10px] font-semibold leading-4 text-background-300">{hovered.detail}</p>
+          </div>
+        ) : null}
+        <div className="relative h-7" role="img" aria-label={summary}>
+          <div className="absolute inset-x-0 top-3 h-1 rounded-full bg-background-200" aria-hidden="true"></div>
+          {marks.map(mark => {
+            const active = mark.key === hoveredKey;
+            const isSkipped = mark.kind === 'skipped';
+            return (
+              <span
+                key={mark.key}
+                onMouseEnter={() => setHoveredKey(mark.key)}
+                onMouseLeave={() => setHoveredKey(current => (current === mark.key ? '' : current))}
+                className={`absolute flex w-3.5 -translate-x-1/2 cursor-help justify-center ${isSkipped ? 'top-[17px] h-3.5 items-start' : 'top-0 h-7 items-start pt-1'}`}
+                style={{ left: `${mark.left}%` }}
+              >
+                <span
+                  className={`rounded-full transition-all ${isSkipped ? 'h-2.5 bg-red-400' : mark.kind === 'moved' ? 'h-5 bg-amber-500' : 'h-5 bg-primary-500'} ${active ? 'w-[5px] ring-2 ring-background-50' : 'w-[3px]'}`}
+                  aria-hidden="true"
+                ></span>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-2 text-[10px] font-semibold text-foreground-500">
+        <span>{formatDateValue(from)}</span>
+        <span className="text-foreground-400">{formatDaySpanLabel(span)} of delivery</span>
+        <span>{formatDateValue(to)}</span>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-background-200 pt-2">
+        {visibleLegend.map(item => (
+          <span key={item.kind} className="flex items-center gap-1.5" title={item.hint}>
+            <span className={`h-3 w-[3px] rounded-full ${item.swatch}`} aria-hidden="true"></span>
+            <span className="text-[10px] font-semibold text-foreground-500">{item.label}</span>
+          </span>
+        ))}
+        <span className="ml-auto text-[10px] font-medium text-foreground-400">Hover a mark for its date</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The one place a module's generated dates are reported.
+ *
+ * This replaces two panels that sat one under the other: a Teams table listing
+ * every session, and a card grid listing the same sessions again. The session
+ * number, date, "shifted" badge, shifted-from date and holiday labels were drawn
+ * twice, and each skipped holiday three times — once on the row that absorbed
+ * it, once on the card, once in a standalone skipped-holidays panel. Eleven of
+ * fourteen table rows said "No holiday clash", and with no Teams meeting created
+ * the Teams calendar and Link columns were placeholders on every row.
+ *
+ * So the schedule has one spine now. The summary answers the questions actually
+ * being asked — is the count right, when does it end, what moved and why — the
+ * full date list is one click away, the exceptions speak while the clean rows
+ * stay silent, and the Teams columns appear only once a meeting exists to fill
+ * them.
+ */
+function SessionSchedulePanel({
   draft,
   groupTime,
   groupEndTime,
   occurrences,
   loading,
   error,
+  structureLoading = false,
   open,
   onToggle,
 }: {
@@ -8889,139 +9754,267 @@ function TeamsActualSessionPlan({
   occurrences: TeamsMeetingOccurrence[];
   loading: boolean;
   error: string;
+  /** The draft's sessions are the provisional ones; see ModulePlanningPanel. */
+  structureLoading?: boolean;
   open: boolean;
   onToggle: () => void;
 }) {
   const meeting = draft.teamsMeeting;
-  const plannedWeeks = draft.weeks;
+  const sessions = draft.weeks;
   const [detailsOccurrence, setDetailsOccurrence] = useState<TeamsMeetingOccurrence | null>(null);
-  if (!plannedWeeks.length && !meeting) return null;
+  if (!sessions.length && !meeting) return null;
+
+  // A one-session timeline drawn from placeholder data is worse than no
+  // timeline: it reads as a schedule that lost thirteen sessions. Hold the
+  // whole panel at a skeleton until the saved sessions land.
+  if (structureLoading) {
+    return (
+      <div className="mt-3 overflow-hidden rounded-xl border border-primary-100 bg-background-50 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-background-200 bg-primary-50/60 px-3 py-2">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Session schedule</p>
+            <p className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-primary-700">
+              <i className="ri-loader-4-line animate-spin"></i>
+              Loading the saved sessions for this module...
+            </p>
+          </div>
+          <CountSkeleton width="w-24" label="Loading session count" />
+        </div>
+        <div className="px-3 py-3" role="status" aria-live="polite" aria-label="Loading session schedule">
+          <div className="h-1 animate-pulse rounded-full bg-background-200"></div>
+          <div className="mt-2.5 space-y-1.5">
+            <div className="h-3 w-2/3 animate-pulse rounded-full bg-background-200"></div>
+            <div className="h-3 w-1/2 animate-pulse rounded-full bg-background-200"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const durationMinutes = Math.max(30, Math.round(groupSessionDurationHours({ startTime: groupTime, endTime: groupEndTime }) * 60) || meeting?.durationMinutes || 60);
   const teamsCount = occurrences.length || meeting?.trackedOccurrences || meeting?.repeatOccurrences || 0;
+  const skipped = draft.skippedHolidaySessions;
+  const shifts = reviewSessionShifts(draft);
+  const firstDate = sessions[0]?.date || draft.startDate;
+  // The module's own end date, which is what the old panel reported as the
+  // "adjusted end". It can sit past the last session when someone types it by
+  // hand, and the timeline below shows that tail as empty track.
+  const moduleEndDate = draft.endDate || sessions[sessions.length - 1]?.date || '';
+  const meetingUrl = meeting?.joinUrl || meeting?.webLink || '';
+  // Three of the five columns are Teams data. Without a meeting they would be the
+  // same placeholder on every row, so they are not rendered at all.
+  const showTeams = Boolean(meeting);
+  // The exception block is a summary, not the record: the full picture is in the
+  // table below, so long lists are truncated rather than rebuilding the wall of
+  // rows this panel exists to remove.
+  const visibleShifts = shifts.slice(0, 5);
+  const visibleSkipped = skipped.slice(0, 6);
 
   return (
     <div className="mt-3 overflow-hidden rounded-xl border border-primary-100 bg-background-50 shadow-sm">
-      <div className="flex items-center justify-between gap-3 border-b border-background-200 bg-primary-50/60 px-3 py-2">
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 border-b border-background-200 bg-primary-50/60 px-3 py-2">
         <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Live sessions after holidays</p>
-          <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">
-            {plannedWeeks.length} wizard dates - {meeting ? `${teamsCount || 'No'} Teams calendar occurrence${teamsCount === 1 ? '' : 's'}` : 'Teams meeting not created yet'}
+          <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Session schedule</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-foreground-700">
+            {firstDate ? formatDateValue(firstDate) : 'No start date'} to {moduleEndDate ? formatDateValue(moduleEndDate) : 'No end date'}
+            {draft.extensionDays > 0 && draft.originalEndDate ? (
+              <span className="font-medium text-foreground-500"> - originally ended {formatDateValue(draft.originalEndDate)}</span>
+            ) : null}
           </p>
         </div>
-        <button type="button" onClick={onToggle} className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-foreground-500 hover:bg-background-100" aria-label={open ? 'Hide live session details' : 'Show live session details'}>
-          <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-base`}></i>
-        </button>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <ReviewBadge tone="info">{sessions.length} session{sessions.length === 1 ? '' : 's'}</ReviewBadge>
+          {skipped.length ? (
+            <ReviewBadge tone="warning">{skipped.length} holiday date{skipped.length === 1 ? '' : 's'} skipped</ReviewBadge>
+          ) : (
+            <ReviewBadge tone="success">No holiday clashes</ReviewBadge>
+          )}
+          {draft.extensionDays > 0 ? <ReviewBadge tone="warning">+{draft.extensionDays} days</ReviewBadge> : null}
+          <ReviewBadge tone={meeting ? 'success' : 'muted'}>
+            {meeting
+              ? `Teams: ${teamsCount || 'no'} occurrence${teamsCount === 1 ? '' : 's'}`
+              : 'Teams: not created'}
+          </ReviewBadge>
+        </div>
       </div>
-      {open ? (
+
+      {error ? (
+        <p className="border-b border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>
+      ) : loading ? (
+        <p className="border-b border-background-200 px-3 py-2 text-[11px] font-semibold text-foreground-500">
+          <i className="ri-loader-4-line mr-1 animate-spin"></i>
+          Loading Teams calendar occurrences...
+        </p>
+      ) : null}
+
+      {sessions.length ? (
         <>
-          {error ? (
-            <p className="border-b border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>
-          ) : loading ? (
-            <p className="border-b border-background-200 px-3 py-2 text-[11px] font-semibold text-foreground-500">
-              <i className="ri-loader-4-line mr-1 animate-spin"></i>
-              Loading Teams calendar occurrences...
-            </p>
+          <SessionScheduleTimeline
+            sessions={sessions}
+            skipped={skipped}
+            startDate={draft.startDate}
+            endDate={draft.endDate}
+          />
+
+          {shifts.length || skipped.length ? (
+            <div className="mx-3 mt-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2">
+              <p className="text-[10px] font-bold uppercase text-amber-700">
+                {shifts.length
+                  ? `${shifts.length} session${shifts.length === 1 ? '' : 's'} moved by holidays`
+                  : `${skipped.length} holiday date${skipped.length === 1 ? '' : 's'} skipped`}
+              </p>
+              {visibleShifts.length ? (
+                <ul className="mt-1 space-y-0.5">
+                  {visibleShifts.map(shift => (
+                    <li key={`shift-${shift.sessionNumber}-${shift.from}`} className="text-[11px] leading-4 text-foreground-700">
+                      Session {shift.sessionNumber}: {formatDateValue(shift.from)} moved to {formatDateValue(shift.to)}
+                      {shift.reason ? <span className="font-semibold text-amber-800"> - {shift.reason}</span> : null}
+                    </li>
+                  ))}
+                  {shifts.length > visibleShifts.length ? (
+                    <li className="text-[11px] font-semibold text-amber-800">
+                      +{shifts.length - visibleShifts.length} more - open all dates below
+                    </li>
+                  ) : null}
+                </ul>
+              ) : null}
+              {skipped.length ? (
+                <p className="mt-1.5 text-[10px] font-semibold leading-4 text-amber-800">
+                  Skipped, not counted: {visibleSkipped.map(session => `${formatDateValue(session.date)} (${session.holidayLabel})`).join(', ')}
+                  {skipped.length > visibleSkipped.length ? ` +${skipped.length - visibleSkipped.length} more` : ''}
+                </p>
+              ) : null}
+              <p className="mt-1 text-[10px] leading-4 text-foreground-500">
+                A session landing on a holiday keeps moving to the next delivery day until it finds a clear date, which is why the module runs longer.
+              </p>
+            </div>
           ) : null}
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] text-left text-[11px]">
-              <thead className="bg-background-100 text-[9px] uppercase text-foreground-400">
-                <tr>
-                  <th className="px-3 py-2 font-bold">Session</th>
-                  <th className="px-3 py-2 font-bold">Wizard schedule</th>
-                  <th className="px-3 py-2 font-bold">Teams calendar</th>
-                  <th className="px-3 py-2 font-bold">Details</th>
-                  <th className="px-3 py-2 font-bold">Link</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-background-200">
-                {plannedWeeks.map((week, index) => {
-                  const occurrence = teamsOccurrenceForWeek(week, index, occurrences);
-                  const plannedStart = week.startTime || groupTime || '09:30';
-                  const plannedEnd = addHoursToTime(plannedStart, durationMinutes / 60);
-                  const shifted = week.shiftedHolidaySessions?.length;
-                  const calendarValue = occurrence?.scheduled_start
-                    ? formatDateTimeValue(occurrence.scheduled_start)
-                    : meeting
-                    ? 'Not loaded from Teams yet'
-                    : 'Create / sync Teams meeting';
-                  const meetingUrl = meeting?.joinUrl || meeting?.webLink || '';
-                  return (
-                    <tr key={week.id} className={shifted ? 'bg-amber-50/35' : ''}>
-                      <td className="px-3 py-2 align-top">
-                        <p className="font-bold text-foreground-900">Session {week.sessionNumber || index + 1}</p>
-                        {shifted ? <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-800">Shifted by holiday</span> : null}
-                      </td>
-                      <td className="px-3 py-2 align-top font-semibold text-foreground-700">
-                        <p>{formatDateValue(week.date)}</p>
-                        <p className="mt-0.5 text-[10px] text-foreground-500">{formatTimeRange(plannedStart, plannedEnd)}</p>
-                      </td>
-                      <td className="px-3 py-2 align-top font-semibold text-foreground-700">
-                        <p>{calendarValue}</p>
-                        {occurrence?.scheduled_end ? <p className="mt-0.5 text-[10px] text-foreground-500">Ends {formatDateTimeValue(occurrence.scheduled_end)}</p> : null}
-                      </td>
-                      <td className="px-3 py-2 align-top text-foreground-600">
-                        {shifted ? (
-                          <div className="space-y-1">
-                            <p className="font-semibold">From {formatDateValue(week.shiftedFromDate || week.shiftedHolidaySessions?.[0]?.date || week.date)}</p>
-                            {week.shiftedHolidaySessions?.map(skipped => (
-                              <p key={`${week.id}-${skipped.date}-${skipped.holidayId}`} className="text-[10px] font-semibold text-amber-800">
-                                {formatDateValue(skipped.date)}: {skipped.holidayLabel}
-                              </p>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="font-semibold text-emerald-700">No holiday clash</p>
-                        )}
-                        {occurrence ? (
-                          <p className="mt-1 text-[10px] font-semibold text-foreground-500">
-                            {occurrence.status || 'scheduled'} - {occurrence.participant_count || occurrence.attendance?.length || 0} attendance - {occurrence.artifacts?.length || 0} artifacts
-                          </p>
-                        ) : null}
-                      </td>
-                      <td className="px-3 py-2 align-top">
-                        {meetingUrl || occurrence ? (
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {meetingUrl ? (
-                              <a href={meetingUrl} target="_blank" rel="noreferrer" className="inline-flex h-7 items-center gap-1 rounded-lg bg-primary-600 px-2.5 text-[10px] font-bold text-white hover:bg-primary-700">
-                                <i className="ri-microsoft-teams-line"></i>
-                                Open
-                              </a>
-                            ) : null}
-                            {occurrence ? (
-                              <button
-                                type="button"
-                                onClick={() => setDetailsOccurrence(occurrence)}
-                                className="inline-flex h-7 items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 text-[10px] font-bold text-primary-700 hover:bg-primary-50"
-                              >
-                                <i className="ri-file-list-3-line"></i>
-                                Details
-                              </button>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <span className="text-[10px] font-semibold text-foreground-400">No link</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-background-200 px-3 py-1.5">
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={open}
+              className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-50"
+            >
+              <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-base`}></i>
+              {open ? 'Hide all dates' : `All ${sessions.length} date${sessions.length === 1 ? '' : 's'}`}
+            </button>
+            <p className="text-[10px] font-semibold text-foreground-400">
+              {showTeams
+                ? 'Teams calendar times, attendance and links are in the table.'
+                : 'Create the Teams calendar to attach meeting links to these dates.'}
+            </p>
           </div>
-          {meeting ? (
-            <p className="border-t border-background-200 bg-background-100/60 px-3 py-2 text-[10px] font-semibold text-foreground-500">
-              The wizard schedule is the source of truth. Date, session, and holiday changes update Microsoft Teams calendar occurrences automatically.
-            </p>
-          ) : null}
-          {detailsOccurrence ? (
-            <TeamsOccurrenceDetailsModal
-              liveSessionId={meeting?.liveSessionId || ''}
-              occurrence={detailsOccurrence}
-              onClose={() => setDetailsOccurrence(null)}
-            />
+
+          {open ? (
+            <div className="overflow-x-auto border-t border-background-200">
+              <table className={`w-full text-left text-[11px] ${showTeams ? 'min-w-[760px]' : 'min-w-[440px]'}`}>
+                <thead className="bg-background-100 text-[9px] uppercase text-foreground-400">
+                  <tr>
+                    <th className="px-3 py-2 font-bold">Session</th>
+                    <th className="px-3 py-2 font-bold">Date &amp; time</th>
+                    <th className="px-3 py-2 font-bold">Holiday adjustment</th>
+                    {showTeams ? <th className="px-3 py-2 font-bold">Teams calendar</th> : null}
+                    {showTeams ? <th className="px-3 py-2 font-bold">Link</th> : null}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-background-200">
+                  {sessions.map((session, index) => {
+                    const occurrence = teamsOccurrenceForWeek(session, index, occurrences);
+                    const plannedStart = session.startTime || groupTime || DEFAULT_GROUP_START_TIME;
+                    const plannedEnd = addHoursToTime(plannedStart, durationMinutes / 60);
+                    const moved = Boolean(session.shiftedHolidaySessions?.length);
+                    return (
+                      <tr key={session.id} className={moved ? 'bg-amber-50/35' : ''}>
+                        <td className="px-3 py-2 align-top">
+                          <p className="font-bold text-foreground-900">Session {session.sessionNumber || index + 1}</p>
+                          {moved ? <span className="mt-1 inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold text-amber-800">Moved</span> : null}
+                        </td>
+                        <td className="px-3 py-2 align-top font-semibold text-foreground-700">
+                          <p>{formatDateValue(session.date)}</p>
+                          <p className="mt-0.5 text-[10px] text-foreground-500">{formatTimeRange(plannedStart, plannedEnd)}</p>
+                        </td>
+                        {/* A clean row says nothing rather than repeating "no clash" on
+                            every line — the exceptions are what needs reading. */}
+                        <td className="px-3 py-2 align-top text-foreground-600">
+                          {moved ? (
+                            <div className="space-y-1">
+                              <p className="font-semibold">Moved from {formatDateValue(session.shiftedFromDate || session.shiftedHolidaySessions?.[0]?.date || session.date)}</p>
+                              {session.shiftedHolidaySessions?.map(holiday => (
+                                <p key={`${session.id}-${holiday.date}-${holiday.holidayId}`} className="text-[10px] font-semibold text-amber-800">
+                                  {formatDateValue(holiday.date)}: {holiday.holidayLabel}
+                                </p>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-foreground-300" aria-label="No holiday clash">&mdash;</span>
+                          )}
+                        </td>
+                        {showTeams ? (
+                          <td className="px-3 py-2 align-top font-semibold text-foreground-700">
+                            <p>{occurrence?.scheduled_start ? formatDateTimeValue(occurrence.scheduled_start) : 'Not loaded from Teams yet'}</p>
+                            {occurrence?.scheduled_end ? <p className="mt-0.5 text-[10px] text-foreground-500">Ends {formatDateTimeValue(occurrence.scheduled_end)}</p> : null}
+                            {occurrence ? (
+                              <p className="mt-1 text-[10px] font-semibold text-foreground-500">
+                                {occurrence.status || 'scheduled'} - {occurrence.participant_count || occurrence.attendance?.length || 0} attendance - {occurrence.artifacts?.length || 0} artifacts
+                              </p>
+                            ) : null}
+                          </td>
+                        ) : null}
+                        {showTeams ? (
+                          <td className="px-3 py-2 align-top">
+                            {meetingUrl || occurrence ? (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {meetingUrl ? (
+                                  <a href={meetingUrl} target="_blank" rel="noreferrer" className="inline-flex h-7 items-center gap-1 rounded-lg bg-primary-600 px-2.5 text-[10px] font-bold text-white hover:bg-primary-700">
+                                    <i className="ri-microsoft-teams-line"></i>
+                                    Open
+                                  </a>
+                                ) : null}
+                                {occurrence ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setDetailsOccurrence(occurrence)}
+                                    className="inline-flex h-7 items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 text-[10px] font-bold text-primary-700 hover:bg-primary-50"
+                                  >
+                                    <i className="ri-file-list-3-line"></i>
+                                    Details
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-foreground-400">No link</span>
+                            )}
+                          </td>
+                        ) : null}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           ) : null}
         </>
+      ) : (
+        <p className="px-3 py-3 text-[12px] text-foreground-500">
+          Set a start date, session count and group delivery day to preview sessions.
+        </p>
+      )}
+
+      {meeting ? (
+        <p className="border-t border-background-200 bg-background-100/60 px-3 py-2 text-[10px] font-semibold text-foreground-500">
+          The wizard schedule is the source of truth. Date, session, and holiday changes update Microsoft Teams calendar occurrences automatically.
+        </p>
+      ) : null}
+      {/* Rendered outside the collapsible table: collapsing the panel used to tear
+          the open details modal off the screen. */}
+      {detailsOccurrence ? (
+        <TeamsOccurrenceDetailsModal
+          liveSessionId={meeting?.liveSessionId || ''}
+          occurrence={detailsOccurrence}
+          onClose={() => setDetailsOccurrence(null)}
+        />
       ) : null}
     </div>
   );
@@ -9782,7 +10775,10 @@ function WizardTeamsMeetingModal({
   const [organizerEmail, setOrganizerEmail] = useState(existing?.organizerEmail || DEFAULT_TEAMS_ORGANIZER_EMAIL);
   const [presenters, setPresenters] = useState((existingPresenters.length ? existingPresenters : DEFAULT_TEAMS_PRESENTERS).join('\n'));
   const [attendees, setAttendees] = useState((existingAttendees.length ? existingAttendees : DEFAULT_TEAMS_ATTENDEES).join('\n'));
-  const startDateTime = `${firstSessionDate}T${groupTime || '09:30'}`;
+  const startDateTime = `${firstSessionDate}T${groupTime || DEFAULT_GROUP_START_TIME}`;
+  // Session times mean the calendar's zone, so spell out the instant that actually
+  // reaches Teams -- and, when the two differ, the clock this reader will see.
+  const sessionTimeHint = describeSessionTime(startDateTime);
   const durationMinutes = defaultDuration;
   const repeat: TeamsMeetingInput['repeat'] = sessionCount > 1 ? 'weekly' : 'none';
   const repeatOccurrences = sessionCount;
@@ -9834,12 +10830,12 @@ function WizardTeamsMeetingModal({
     if (!attendeeEmails.length) return setError('Add at least one attendee email.');
     const start = new Date(startDateTime);
     if (Number.isNaN(start.getTime())) return setError('Choose a valid meeting start date and time.');
-    const scheduledWeeks = plannedWeeks.length ? plannedWeeks : [{ sessionNumber: 1, date: firstSessionDate, startTime: groupTime || '09:30' }];
+    const scheduledWeeks = plannedWeeks.length ? plannedWeeks : [{ sessionNumber: 1, date: firstSessionDate, startTime: groupTime || DEFAULT_GROUP_START_TIME }];
     const scheduledOccurrences = scheduledWeeks.map((week, index) => {
-      const scheduledStart = new Date(`${week.date || firstSessionDate}T${week.startTime || groupTime || '09:30'}`);
+      const scheduledStart = zonedNaiveToUtcIso(`${week.date || firstSessionDate}T${week.startTime || groupTime || DEFAULT_GROUP_START_TIME}`);
       return {
         sessionNumber: week.sessionNumber || index + 1,
-        startDateTimeUtc: scheduledStart.toISOString(),
+        startDateTimeUtc: scheduledStart,
         durationMinutes: defaultDuration,
       };
     });
@@ -9849,7 +10845,7 @@ function WizardTeamsMeetingModal({
       organizerEmail: organizerEmail.trim(),
       attendees: attendeeEmails,
       presenters: presenterEmails,
-      localStartDateTime: `${scheduledWeeks[0]?.date || firstSessionDate}T${scheduledWeeks[0]?.startTime || groupTime || '09:30'}`,
+      localStartDateTime: `${scheduledWeeks[0]?.date || firstSessionDate}T${scheduledWeeks[0]?.startTime || groupTime || DEFAULT_GROUP_START_TIME}`,
       startDateTimeUtc: authoritativeStart,
       durationMinutes: defaultDuration,
       repeat: scheduledOccurrences.length > 1 ? 'weekly' : 'none',
@@ -9950,7 +10946,17 @@ function WizardTeamsMeetingModal({
                   <p className="mt-1 text-[10px] font-semibold text-foreground-400">One email per line, comma, or semicolon.</p>
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Start · scheduling *</span><input type="datetime-local" value={startDateTime} readOnly className="mt-1 h-10 w-full cursor-not-allowed rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-semibold text-foreground-900" /></label>
+                  <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Start · scheduling *</span><input type="datetime-local" value={startDateTime} readOnly className="mt-1 h-10 w-full cursor-not-allowed rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-semibold text-foreground-900" />
+                    {sessionTimeHint && (
+                      <span className="mt-1 block text-[10px] font-semibold text-foreground-500">
+                        <i className="ri-global-line mr-1"></i>
+                        Booked as {sessionTimeHint.calendarClock} {sessionTimeHint.calendarZone} time
+                        {sessionTimeHint.viewerClock
+                          ? ` · shows as ${sessionTimeHint.viewerClock} on your device (${sessionTimeHint.viewerZone})`
+                          : ''}
+                      </span>
+                    )}
+                  </label>
                   <label className="block"><span className="text-[10px] font-bold uppercase text-foreground-400">Duration · group schedule</span><select value={durationMinutes} disabled className="mt-1 h-10 w-full cursor-not-allowed rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-semibold text-foreground-900">{[30, 45, 60, 90, 120, 180].map(value => <option key={value} value={value}>{value < 60 ? `${value} minutes` : `${value / 60} hour${value === 60 ? '' : 's'}`}</option>)}</select></label>
                 </div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -9971,7 +10977,7 @@ function WizardTeamsMeetingModal({
                   <FreeCheckbox label="Allow time proposals" checked={allowNewTimeProposals} onChange={setAllowNewTimeProposals} />
                   <FreeCheckbox label="Hide attendee list" checked={hideAttendees} onChange={setHideAttendees} />
                 </div>
-                {timeZone && <p className="text-[10px] font-semibold text-foreground-400"><i className="ri-time-line mr-1"></i>Calendar time zone: {timeZone}</p>}
+                {timeZone && <p className="text-[10px] font-semibold text-foreground-400"><i className="ri-time-line mr-1"></i>Sessions are booked in the calendar time zone ({timeZone}). Everyone sees them converted to their own device's time.</p>}
               </section>
             </div>
           )}
@@ -9990,93 +10996,6 @@ function WizardTeamsMeetingModal({
       </div>
     </div>,
     document.body,
-  );
-}
-
-function SessionPreview({ draft }: { draft: ModuleDraft }) {
-  const [open, setOpen] = useState(true);
-  const sessions = draft.weeks;
-  return (
-    <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50">
-      <div className={`${open ? 'border-b' : ''} border-background-200/70 bg-background-100/70 p-3`}>
-        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-[11px] font-bold uppercase text-foreground-500">Session plan preview</p>
-            <p className="mt-0.5 text-[11px] text-foreground-500">
-              Original end: {draft.originalEndDate ? formatDateValue(draft.originalEndDate) : 'N/A'} - Adjusted end: {draft.endDate ? formatDateValue(draft.endDate) : 'N/A'} - Extension: {draft.extensionDays} days
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-bold text-emerald-700">{sessions.length} counted</span>
-            <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700">{draft.skippedHolidaySessions.length} skipped</span>
-            {draft.extensionDays > 0 && <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] font-bold text-primary-700">+{draft.extensionDays} days</span>}
-            <button
-              type="button"
-              onClick={() => setOpen(value => !value)}
-              className="flex h-7 w-7 items-center justify-center rounded-md border border-background-200 bg-background-50 text-foreground-500 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
-              aria-label={open ? 'Collapse session preview' : 'Expand session preview'}
-            >
-              <i className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-base`}></i>
-            </button>
-          </div>
-        </div>
-      </div>
-      {open && <div className="p-3">
-      <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className="text-[11px] font-bold uppercase text-foreground-500">Counted session dates</p>
-          <p className="mt-0.5 text-[11px] text-foreground-500">These dates contribute to the required session count. Holiday clashes move the affected session to the next available delivery day.</p>
-        </div>
-      </div>
-      {sessions.length ? (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {sessions.map(session => (
-            <div key={session.id} className={`rounded-lg border px-3 py-2 ${session.shiftedHolidaySessions?.length ? 'border-amber-200 bg-amber-50/40' : 'border-emerald-100 bg-emerald-50/40'}`}>
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className={`text-[10px] font-bold uppercase ${session.shiftedHolidaySessions?.length ? 'text-amber-800' : 'text-emerald-700'}`}>Session {session.sessionNumber}</p>
-                  <p className="mt-0.5 text-[12px] font-bold text-foreground-900">{formatDateValue(session.date)}</p>
-                </div>
-                {session.shiftedHolidaySessions?.length ? (
-                  <span className="rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-bold text-amber-800">Shifted</span>
-                ) : null}
-              </div>
-              {session.shiftedHolidaySessions?.length ? (
-                <div className="mt-2 rounded-lg bg-background-50 px-2.5 py-2">
-                  <p className="text-[10px] font-bold uppercase text-amber-800">
-                    Shifted from {formatSessionDate(session.shiftedFromDate || session.shiftedHolidaySessions[0].date)}
-                  </p>
-                  <div className="mt-1 space-y-1">
-                    {session.shiftedHolidaySessions.map(skipped => (
-                      <p key={`${session.id}-${skipped.date}-${skipped.holidayId}`} className="text-[11px] font-semibold text-foreground-600">
-                        {formatSessionDate(skipped.date)} skipped: {skipped.holidayLabel}
-                      </p>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-[12px] text-foreground-500">Set a start date, session count and group delivery day to preview sessions.</p>
-      )}
-      {draft.skippedHolidaySessions.length > 0 && (
-        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-          <p className="text-[10px] font-bold uppercase text-amber-800">Skipped holiday sessions</p>
-          <p className="mt-0.5 text-[11px] font-semibold text-amber-800">Skipped dates are not counted. The affected session continues moving to the next delivery day until a non-holiday date is found.</p>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {draft.skippedHolidaySessions.map(skipped => (
-              <div key={`${skipped.date}-${skipped.holidayId}`} className="rounded-lg bg-background-50 px-3 py-2">
-                <p className="text-[11px] font-bold text-amber-800">{formatDateValue(skipped.date)}</p>
-                <p className="mt-0.5 text-[11px] font-semibold text-foreground-600">{skipped.holidayLabel}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      </div>}
-    </div>
   );
 }
 
@@ -10100,6 +11019,7 @@ function ModuleBuilderContentPreview({
   onUpdateFreeComponent,
   onRemoveFreeComponent,
   onReorderFreeComponent,
+  onMoveFreeComponentToWeek,
   onOpenModuleBuilder,
 }: {
   freeMode?: boolean;
@@ -10123,15 +11043,21 @@ function ModuleBuilderContentPreview({
   onUpdateFreeComponent?: (moduleId: string, componentId: string, patch: Partial<ModuleComponent>) => void;
   onRemoveFreeComponent?: (moduleId: string, componentId: string) => void;
   onReorderFreeComponent?: (moduleId: string, sourceComponentId: string, targetComponentId: string) => void;
+  onMoveFreeComponentToWeek?: (moduleId: string, componentId: string, weekId: string, beforeComponentId?: string) => void;
   onOpenModuleBuilder?: (url: string) => void;
 }) {
   const [moduleOpen, setModuleOpen] = useState(false);
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(() => new Set());
   const [expandedComponentIds, setExpandedComponentIds] = useState<Set<string>>(() => new Set());
   const [draggingComponentId, setDraggingComponentId] = useState('');
+  const [dropWeekId, setDropWeekId] = useState('');
   const [orderUpdated, setOrderUpdated] = useState(false);
-  const [newComponentType, setNewComponentType] = useState<ModuleComponentType>('video');
+  const [moveNotice, setMoveNotice] = useState('');
+  // The component-type picker: null is closed, 'module' scope carries its own week
+  // selector, 'week' scope is already targeted at the week it was opened from.
+  const [addPanel, setAddPanel] = useState<{ scope: 'module' | 'week'; weekId: string } | null>(null);
   const knownComponentIdsRef = useRef<Set<string>>(new Set());
+  const pendingComponentAddRef = useRef(false);
   const title = draft.name || 'Untitled module';
   const editableComponents = freeMode || draft.mode === 'new';
   const displayWeeks = useMemo(() => draft.weeks.map(week => ({
@@ -10177,12 +11103,32 @@ function ModuleBuilderContentPreview({
     programmeName,
     moduleName: draft.name || title,
   }), [draft.name, freeMode, programmeId, programmeName, title]);
+  // A scheduled module has one week per session, so its editable components are
+  // grouped under the week they are delivered in. A free module has a single
+  // self-paced container week, where grouping would only add a wrapper.
+  const groupComponentsByWeek = editableComponents && !freeMode && displayWeeks.length > 0;
+  const weekPlacementOptions = useMemo(() => displayWeeks.map(week => ({
+    id: week.id,
+    label: week.title || `Week ${week.sessionNumber}`,
+    meta: [week.day, week.date ? formatSessionDate(week.date) : ''].filter(Boolean).join(' '),
+  })), [displayWeeks]);
+  const emptyWeekCount = groupComponentsByWeek
+    ? displayWeeks.filter(week => !week.components.length).length
+    : 0;
+  const editableSummaryText = groupComponentsByWeek
+    ? `${formatComponentCount(componentCount)} across ${displayWeeks.length} scheduled week${displayWeeks.length === 1 ? '' : 's'}`
+    : `${formatComponentCount(componentCount)} - completed in this order`;
+  const weekLabelFor = (weekId: string) => weekPlacementOptions.find(option => option.id === weekId)?.label || 'this week';
 
   useEffect(() => {
     setModuleOpen(false);
     setExpandedWeekIds(new Set());
+    setExpandedComponentIds(new Set());
     setOrderUpdated(false);
+    setMoveNotice('');
+    setAddPanel(null);
     knownComponentIdsRef.current = new Set();
+    pendingComponentAddRef.current = false;
   }, [draft.localId]);
 
   useEffect(() => {
@@ -10202,11 +11148,17 @@ function ModuleBuilderContentPreview({
     if (!editableComponents) return;
     const previousKnown = knownComponentIdsRef.current;
     const currentIds = new Set(components.map(component => component.id));
+    // Only a component the user just added opens itself. Loading a module's own
+    // content also counted as "new", which blew every card open at once.
+    const expandNewComponents = pendingComponentAddRef.current;
+    pendingComponentAddRef.current = false;
     setExpandedComponentIds(previous => {
       const next = new Set(previous);
-      components.forEach(component => {
-        if (!previousKnown.has(component.id)) next.add(component.id);
-      });
+      if (expandNewComponents) {
+        components.forEach(component => {
+          if (!previousKnown.has(component.id)) next.add(component.id);
+        });
+      }
       Array.from(next).forEach(id => {
         if (!currentIds.has(id)) next.delete(id);
       });
@@ -10217,9 +11169,10 @@ function ModuleBuilderContentPreview({
   }, [componentIdSignature, components, editableComponents]);
 
   useEffect(() => {
-    if (!editableComponents || freeProgrammeComponentTypes.some(type => type.type === newComponentType)) return;
-    setNewComponentType(freeProgrammeComponentTypes[0]?.type || 'video');
-  }, [editableComponents, newComponentType]);
+    if (!moveNotice) return;
+    const timer = window.setTimeout(() => setMoveNotice(''), 2500);
+    return () => window.clearTimeout(timer);
+  }, [moveNotice]);
 
   const toggleWeek = (weekId: string) => {
     setExpandedWeekIds(previous => {
@@ -10255,11 +11208,66 @@ function ModuleBuilderContentPreview({
     });
   };
 
+  // Opening a module with every week collapsed reads as an empty module, so the
+  // first week carrying content comes up with it.
+  const revealModule = () => {
+    setModuleOpen(true);
+    if (!groupComponentsByWeek) return;
+    setExpandedWeekIds(previous => {
+      if (previous.size) return previous;
+      const firstWeek = displayWeeks.find(week => week.components.length) || displayWeeks[0];
+      return firstWeek ? new Set(previous).add(firstWeek.id) : previous;
+    });
+  };
+
+  const toggleModule = () => {
+    if (moduleOpen) {
+      setModuleOpen(false);
+      return;
+    }
+    revealModule();
+  };
+
+  const openWeekAddPanel = (weekId: string) => {
+    setModuleOpen(true);
+    setExpandedWeekIds(previous => new Set(previous).add(weekId));
+    setAddPanel({ scope: 'week', weekId });
+  };
+
+  const toggleModuleAddPanel = () => {
+    if (addPanel) {
+      setAddPanel(null);
+      return;
+    }
+    revealModule();
+    setAddPanel({ scope: 'module', weekId: displayWeeks[0]?.id || '' });
+  };
+
+  const handleAddComponent = (type: ModuleComponentType) => {
+    const targetWeekId = groupComponentsByWeek ? addPanel?.weekId || displayWeeks[0]?.id || '' : '';
+    // The picker is the only path that opens the new card, so the add is flagged
+    // here rather than inferred from the component list changing.
+    pendingComponentAddRef.current = true;
+    onAddFreeComponent?.(draft.localId, type, targetWeekId || undefined);
+    if (targetWeekId) setExpandedWeekIds(previous => new Set(previous).add(targetWeekId));
+    setModuleOpen(true);
+    setAddPanel(null);
+  };
+
   const handleComponentDragStart = (event: DragEvent<HTMLDivElement>, componentId: string) => {
     event.stopPropagation();
     setDraggingComponentId(componentId);
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', componentId);
+  };
+
+  const moveComponentToWeek = (componentId: string, weekId: string, beforeComponentId?: string) => {
+    if (!weekId) return;
+    const sourceWeek = draft.weeks.find(week => week.components.some(component => component.id === componentId));
+    if (!sourceWeek || sourceWeek.id === weekId) return;
+    onMoveFreeComponentToWeek?.(draft.localId, componentId, weekId, beforeComponentId);
+    setExpandedWeekIds(previous => new Set(previous).add(weekId));
+    setMoveNotice(`Moved to ${weekLabelFor(weekId)}`);
   };
 
   const handleComponentDrop = (event: DragEvent<HTMLDivElement>, targetComponentId: string) => {
@@ -10270,10 +11278,35 @@ function ModuleBuilderContentPreview({
     // up the "Order updated" badge for a move that never happened.
     const sourceComponentId = draggingComponentId;
     setDraggingComponentId('');
+    setDropWeekId('');
     if (!sourceComponentId || sourceComponentId === targetComponentId) return;
     if (!components.some(component => component.id === sourceComponentId)) return;
+    const sourceWeek = draft.weeks.find(week => week.components.some(component => component.id === sourceComponentId));
+    const targetWeek = draft.weeks.find(week => week.components.some(component => component.id === targetComponentId));
+    // Dragging across weeks used to land nowhere: the reorder only ever looked
+    // inside one week, so the card sprang back with no explanation.
+    if (sourceWeek && targetWeek && sourceWeek.id !== targetWeek.id) {
+      moveComponentToWeek(sourceComponentId, targetWeek.id, targetComponentId);
+      return;
+    }
     onReorderFreeComponent?.(draft.localId, sourceComponentId, targetComponentId);
     setOrderUpdated(true);
+  };
+
+  const handleWeekDragOver = (event: DragEvent<HTMLDivElement>, weekId: string) => {
+    if (!draggingComponentId) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    if (dropWeekId !== weekId) setDropWeekId(weekId);
+  };
+
+  const handleWeekDrop = (event: DragEvent<HTMLDivElement>, weekId: string) => {
+    event.preventDefault();
+    const sourceComponentId = draggingComponentId;
+    setDraggingComponentId('');
+    setDropWeekId('');
+    if (!sourceComponentId) return;
+    moveComponentToWeek(sourceComponentId, weekId);
   };
 
   return (
@@ -10281,7 +11314,7 @@ function ModuleBuilderContentPreview({
       <div className={`${moduleOpen ? 'border-b' : ''} flex flex-col gap-2 border-background-200/70 bg-background-100/50 px-4 py-3 sm:flex-row sm:items-start sm:justify-between`}>
         <button
           type="button"
-          onClick={() => setModuleOpen(open => !open)}
+          onClick={toggleModule}
           className="min-w-0 flex-1 text-left"
           aria-expanded={moduleOpen}
         >
@@ -10291,7 +11324,7 @@ function ModuleBuilderContentPreview({
               {waitingForActualComponents
                 ? 'Loading actual module-builder components...'
                 : editableComponents
-                ? `${componentCount} editable components`
+                ? editableSummaryText
                 : moduleBuilderAmbiguous
                 ? `${draft.weeks.length} scheduled weeks - several Module Builder modules share this title`
                 : moduleBuilderMissing
@@ -10320,33 +11353,34 @@ function ModuleBuilderContentPreview({
                 Load failed
               </span>
             ) : null}
-            {freeMode && orderUpdated ? (
+            {groupComponentsByWeek && emptyWeekCount ? (
+              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-200">
+                {emptyWeekCount} week{emptyWeekCount === 1 ? '' : 's'} still empty
+              </span>
+            ) : null}
+            {editableComponents && orderUpdated ? (
               <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-100">
                 Order updated
+              </span>
+            ) : null}
+            {editableComponents && moveNotice ? (
+              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-100">
+                {moveNotice}
               </span>
             ) : null}
           </div>
         </button>
         <div className="flex shrink-0 items-center gap-2">
           {editableComponents ? (
-            <>
-              <select
-                value={newComponentType}
-                onChange={event => setNewComponentType(event.target.value as ModuleComponentType)}
-                className="h-8 rounded-lg border border-background-200 bg-background-50 px-2 text-[11px] font-bold text-foreground-700 outline-none focus:border-primary-300"
-                aria-label="Component type"
-              >
-                {freeProgrammeComponentTypes.map(type => <option key={type.type} value={type.type}>{type.label}</option>)}
-              </select>
-              <button
-                type="button"
-                onClick={() => onAddFreeComponent?.(draft.localId, newComponentType, displayWeeks[0]?.id)}
-                className="inline-flex h-8 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
-              >
-                <i className="ri-add-line"></i>
-                Add Component
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={toggleModuleAddPanel}
+              aria-expanded={Boolean(addPanel)}
+              className={`inline-flex h-8 items-center justify-center gap-2 rounded-lg px-3 text-[11px] font-bold shadow-sm transition-smooth ${addPanel ? 'bg-primary-100 text-primary-800 ring-1 ring-primary-300' : 'bg-primary-600 text-white hover:bg-primary-700'}`}
+            >
+              <i className={addPanel ? 'ri-close-line' : 'ri-add-line'}></i>
+              {addPanel ? 'Close picker' : 'Add component'}
+            </button>
           ) : (
             <>
               <button
@@ -10363,7 +11397,7 @@ function ModuleBuilderContentPreview({
           )}
           <button
             type="button"
-            onClick={() => setModuleOpen(open => !open)}
+            onClick={toggleModule}
             className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-background-50 text-foreground-500 shadow-sm ring-1 ring-background-200 transition-smooth hover:bg-primary-50 hover:text-primary-700"
             aria-label={moduleOpen ? `Collapse ${title}` : `Expand ${title}`}
             title={moduleOpen ? 'Collapse module' : 'Expand module'}
@@ -10405,7 +11439,139 @@ function ModuleBuilderContentPreview({
           </div>
         ) : editableComponents ? (
           <div className="space-y-3 bg-background-100/40 p-4">
-            {components.length ? (
+            {addPanel?.scope === 'module' ? (
+              <ComponentTypePicker
+                types={freeProgrammeComponentTypes}
+                weekOptions={groupComponentsByWeek ? weekPlacementOptions : []}
+                targetWeekId={addPanel.weekId}
+                onTargetWeekChange={weekId => setAddPanel({ scope: 'module', weekId })}
+                onPick={handleAddComponent}
+                onClose={() => setAddPanel(null)}
+                scopeLabel={groupComponentsByWeek
+                  ? 'Choose the week it belongs to, then choose a type.'
+                  : 'Choose a type. It is added to the end of this module.'}
+              />
+            ) : null}
+            {groupComponentsByWeek ? (
+              <div className="space-y-2">
+                {displayWeeks.map(week => {
+                  const open = expandedWeekIds.has(week.id);
+                  const weekLabel = week.title || `Week ${week.sessionNumber}`;
+                  const typeSummary = componentTypeSummary(week.components);
+                  const isDropTarget = dropWeekId === week.id && Boolean(draggingComponentId);
+                  return (
+                    <div
+                      key={week.id}
+                      onDragOver={event => handleWeekDragOver(event, week.id)}
+                      onDragLeave={() => setDropWeekId(current => (current === week.id ? '' : current))}
+                      onDrop={event => handleWeekDrop(event, week.id)}
+                      className={`overflow-hidden rounded-xl border bg-background-50 transition-smooth ${isDropTarget ? 'border-primary-400 ring-2 ring-primary-200' : week.components.length ? 'border-background-200' : 'border-dashed border-background-300'}`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2 px-3 py-2.5">
+                        <button
+                          type="button"
+                          onClick={() => toggleWeek(week.id)}
+                          aria-expanded={open}
+                          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                        >
+                          <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[12px] font-black ${week.components.length ? 'bg-primary-50 text-primary-700' : 'bg-background-100 text-foreground-400'}`}>
+                            {week.sessionNumber}
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] font-bold text-foreground-900">{weekLabel}</span>
+                            <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">
+                              {[week.day, week.date ? formatSessionDate(week.date) : '', week.startTime ? `at ${week.startTime}` : ''].filter(Boolean).join(' ')}
+                            </span>
+                          </span>
+                        </button>
+                        <span className="flex shrink-0 items-center gap-2">
+                          {typeSummary.length ? (
+                            <span className="hidden items-center gap-1 md:flex">
+                              {typeSummary.slice(0, 4).map(item => (
+                                <span
+                                  key={item.type}
+                                  title={`${item.count} ${item.label}`}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-background-100 px-1.5 py-1 text-[10px] font-bold text-foreground-600"
+                                >
+                                  <i className={`${item.icon} text-[12px]`}></i>
+                                  {item.count}
+                                </span>
+                              ))}
+                              {typeSummary.length > 4 ? (
+                                <span className="text-[10px] font-bold text-foreground-400">+{typeSummary.length - 4}</span>
+                              ) : null}
+                            </span>
+                          ) : null}
+                          <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${week.components.length ? 'bg-primary-50 text-primary-700' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>
+                            {week.components.length ? formatComponentCount(week.components.length) : 'Empty'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => openWeekAddPanel(week.id)}
+                            className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100"
+                            title={`Add a component to ${weekLabel}`}
+                          >
+                            <i className="ri-add-line"></i>
+                            <span className="hidden sm:inline">Add</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => toggleWeek(week.id)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-background-50 text-foreground-500 ring-1 ring-background-200 transition-smooth hover:bg-primary-50 hover:text-primary-700"
+                            aria-label={open ? `Collapse ${weekLabel}` : `Expand ${weekLabel}`}
+                            title={open ? 'Collapse week' : 'Expand week'}
+                          >
+                            <i className={`ri-arrow-down-s-line text-lg transition-transform ${open ? 'rotate-180' : ''}`}></i>
+                          </button>
+                        </span>
+                      </div>
+                      {open ? (
+                        <div className="space-y-3 border-t border-background-200/70 bg-background-100/40 p-3">
+                          {addPanel?.scope === 'week' && addPanel.weekId === week.id ? (
+                            <ComponentTypePicker
+                              types={freeProgrammeComponentTypes}
+                              onPick={handleAddComponent}
+                              onClose={() => setAddPanel(null)}
+                              scopeLabel={`Adding to ${weekLabel}${week.date ? ` - ${formatSessionDate(week.date)}` : ''}`}
+                            />
+                          ) : null}
+                          {week.components.length ? (
+                            week.components.map(component => (
+                    <EditableFreeComponentCard
+                      key={component.id}
+                      component={component}
+                      weekScope={weekScope}
+                      groupOptions={componentGroupOptions}
+                      expanded={expandedComponentIds.has(component.id)}
+                      dragging={draggingComponentId === component.id}
+                      onToggle={() => toggleComponent(component.id)}
+                      onChange={patch => onUpdateFreeComponent?.(draft.localId, component.id, patch)}
+                      onRemove={() => { void confirmRemoveFreeComponent(component); }}
+                      ksbOptions={ksbOptions}
+                      ksbSourceId={ksbSourceId}
+                      onDragStart={event => handleComponentDragStart(event, component.id)}
+                      onDragEnd={() => { setDraggingComponentId(''); setDropWeekId(''); }}
+                      onDragOver={event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        event.dataTransfer.dropEffect = 'move';
+                      }}
+                      onDrop={event => handleComponentDrop(event, component.id)}
+                      weekOptions={weekPlacementOptions}
+                      currentWeekId={week.id}
+                      onMoveToWeek={weekId => moveComponentToWeek(component.id, weekId)}
+                    />
+                            ))
+                          ) : (
+                            <EmptyState text={`No components in ${weekLabel} yet. Use Add to place one here, or drag a card in from another week.`} />
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : components.length ? (
               components.map(component => (
                 <EditableFreeComponentCard
                   key={component.id}
@@ -10430,7 +11596,10 @@ function ModuleBuilderContentPreview({
                 />
               ))
             ) : (
-              <EmptyState text="No components yet. Choose a component type, then add it to this module." />
+              <EmptyState text={draft.weeks.length
+                ? 'No components yet. Use Add component to place the first one.'
+                : 'No weeks are scheduled yet. Set the start date and session count in the Modules step, then add components week by week.'}
+              />
             )}
           </div>
         ) : (
@@ -10504,6 +11673,100 @@ function ModuleBuilderContentPreview({
   );
 }
 
+// The old flow was a bare type dropdown plus an Add button in the module header:
+// it never said where the component would land (always week 1) and the type was
+// a name in a list. This panel names the target and shows the types as grouped
+// tiles, so one click places a known type in a known week.
+function ComponentTypePicker({
+  types,
+  weekOptions = [],
+  targetWeekId = '',
+  onTargetWeekChange,
+  onPick,
+  onClose,
+  scopeLabel,
+}: {
+  types: Array<{ type: ModuleComponentType; label: string; icon: string; group: string }>;
+  weekOptions?: Array<{ id: string; label: string; meta: string }>;
+  targetWeekId?: string;
+  onTargetWeekChange?: (weekId: string) => void;
+  onPick: (type: ModuleComponentType) => void;
+  onClose: () => void;
+  scopeLabel: string;
+}) {
+  const groupedTypes = useMemo(() => {
+    const groups = new Map<string, typeof types>();
+    types.forEach(type => {
+      const current = groups.get(type.group) || [];
+      groups.set(type.group, [...current, type]);
+    });
+    return Array.from(groups.entries());
+  }, [types]);
+  // Escape closes the picker without closing the wizard behind it.
+  useWizardEscapeLayer(true, onClose);
+  const showWeekSelector = weekOptions.length > 0 && Boolean(onTargetWeekChange);
+  return (
+    <section className="rounded-xl border border-primary-200 bg-primary-50/50 p-3 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-bold uppercase text-primary-700">Add a component</p>
+          <p className="mt-0.5 text-[11px] font-semibold text-foreground-600">{scopeLabel}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {showWeekSelector ? (
+            <label className="flex items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-2 py-1.5">
+              <span className="text-[10px] font-bold uppercase text-foreground-400">Week</span>
+              <select
+                value={targetWeekId}
+                onChange={event => onTargetWeekChange?.(event.target.value)}
+                className="bg-transparent text-[11px] font-bold text-foreground-900 outline-none"
+                aria-label="Week that receives the new component"
+              >
+                {weekOptions.map(option => (
+                  <option key={option.id} value={option.id}>
+                    {option.meta ? `${option.label} - ${option.meta}` : option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-500 transition-smooth hover:bg-background-100"
+            aria-label="Close component picker"
+            title="Close"
+          >
+            <i className="ri-close-line text-base"></i>
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 space-y-3">
+        {groupedTypes.map(([groupName, groupTypes]) => (
+          <div key={groupName}>
+            <p className="text-[10px] font-bold uppercase text-foreground-400">{groupName}</p>
+            <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {groupTypes.map(type => (
+                <button
+                  key={type.type}
+                  type="button"
+                  onClick={() => onPick(type.type)}
+                  className="flex items-center gap-2.5 rounded-xl border border-background-200 bg-background-50 px-3 py-2.5 text-left transition-smooth hover:border-primary-300 hover:bg-primary-50 focus:border-primary-300 focus:outline-none"
+                >
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary-50 text-primary-700">
+                    <i className={`${type.icon} text-base`}></i>
+                  </span>
+                  <span className="min-w-0 truncate text-[12px] font-bold text-foreground-900">{type.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function EditableFreeComponentCard({
   component,
   weekScope,
@@ -10519,6 +11782,9 @@ function EditableFreeComponentCard({
   onDragEnd,
   onDragOver,
   onDrop,
+  weekOptions = [],
+  currentWeekId = '',
+  onMoveToWeek,
 }: {
   component: ModuleComponent;
   weekScope: WeekScope;
@@ -10534,8 +11800,12 @@ function EditableFreeComponentCard({
   onDragEnd: () => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
+  weekOptions?: Array<{ id: string; label: string; meta: string }>;
+  currentWeekId?: string;
+  onMoveToWeek?: (weekId: string) => void;
 }) {
   const typeMeta = componentTypes.find(item => item.type === component.type);
+  const canMoveWeek = Boolean(onMoveToWeek) && weekOptions.length > 1 && weekOptions.some(option => option.id === currentWeekId);
   const [selectedKsbIds, setSelectedKsbIds] = useState<string[]>([]);
   const [ksbWeightClasses, setKsbWeightClasses] = useState<Record<string, WizardKsbWeightClass>>({});
   const [ksbWeights, setKsbWeights] = useState<Record<string, number>>({});
@@ -10602,7 +11872,25 @@ function EditableFreeComponentCard({
             <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">{typeMeta?.label || component.type}</p>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {canMoveWeek ? (
+            <label className="flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-100/70 px-2 py-1.5">
+              <i className="ri-calendar-2-line text-[13px] text-foreground-400"></i>
+              <select
+                value={currentWeekId}
+                onChange={event => onMoveToWeek?.(event.target.value)}
+                className="max-w-[8.5rem] bg-transparent text-[11px] font-bold text-foreground-700 outline-none"
+                aria-label={`Week for ${component.title || 'this component'}`}
+                title="Move this component to another week"
+              >
+                {weekOptions.map(option => (
+                  <option key={option.id} value={option.id}>
+                    {option.meta ? `${option.label} - ${option.meta}` : option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <button
             type="button"
             onClick={onToggle}
@@ -10950,11 +12238,12 @@ function ReviewSummary({
   cohortHolidayExtensionDays,
   cohortDrafts,
   holidays,
+  ksbTotalAvailable = 0,
 }: {
   isEditing?: boolean;
   freeMode?: boolean;
   programme: CurriculumProgramme;
-  cohortForm: { name: string; startDate: string; durationMonths: string; endDate: string; color: string; holidayIds: string[] };
+  cohortForm: { name: string; startDate: string; durationMonths: string; endDate: string; epaMonths: string; apprenticeshipEndDate: string; color: string; holidayIds: string[] };
   groupForm: { name: string; deliveryDay: string; startTime: string; endTime: string; color: string; coach?: string };
   moduleDrafts: ModuleDraft[];
   moduleOptions: CurriculumModule[];
@@ -10962,6 +12251,7 @@ function ReviewSummary({
   cohortHolidayExtensionDays: number;
   cohortDrafts: CohortDraft[];
   holidays: CurriculumHoliday[];
+  ksbTotalAvailable?: number;
 }) {
   const configuredCohorts = cohortDrafts.length ? cohortDrafts : [{
     localId: 'current-cohort',
@@ -10969,6 +12259,8 @@ function ReviewSummary({
     startDate: cohortForm.startDate,
     durationMonths: cohortForm.durationMonths,
     endDate: cohortForm.endDate,
+    epaMonths: cohortForm.epaMonths,
+    apprenticeshipEndDate: cohortForm.apprenticeshipEndDate,
     color: cohortForm.color,
     holidayIds: cohortForm.holidayIds,
     groups: [{
@@ -11001,23 +12293,128 @@ function ReviewSummary({
   const unassignedGroups = configuredGroups.filter(group => !group.coach).length;
   const unassignedModules = configuredModules.filter(module => !module.tutor).length;
   const deliveryDayCount = new Set(configuredGroups.flatMap(group => group.deliveryDays).filter(Boolean)).size;
-  const readinessWarnings = [
-    unassignedGroups ? `${unassignedGroups} group${unassignedGroups === 1 ? '' : 's'} need coach cover` : '',
-    unassignedModules ? `${unassignedModules} module${unassignedModules === 1 ? '' : 's'} need tutor cover` : '',
-    skippedCount ? `${skippedCount} session${skippedCount === 1 ? '' : 's'} shifted by holidays` : '',
-  ].filter(Boolean);
-  const readinessLabel = readinessWarnings.length ? 'Review warnings' : 'Ready to save';
-  const readinessTone = readinessWarnings.length ? 'warning' : 'success';
   const readyBadgeLabel = isEditing ? 'Ready to update' : 'Ready to create';
+  const sessionTotal = programmeSessionTotal(configuredCohorts);
+  const scheduledHours = programmeScheduledContactHours(configuredCohorts);
+  const hoursBalance = reviewHoursBalance(totalHours, scheduledHours);
+  // The standard's KSB count is the denominator that turns "0 KSBs" into a judgement.
+  // A brand new programme has no saved ksbTotal yet, so the picked standard supplies it.
+  const ksbStandardTotal = ksbTotalAvailable || Math.max(0, Number(programme?.ksbTotal) || 0);
+  const programmeCoverage = ksbCoverage(programmeKsbs, ksbStandardTotal);
+  const allComponents = configuredModules.flatMap(draft => moduleDraftDisplayableComponents(draft, freeMode));
+  const componentInsights = reviewComponentInsights(allComponents);
+  const modulesWithoutHours = configuredModules.filter(draft => moduleDraftActualComponentHours(draft, freeMode) <= 0).length;
+  const modulesOutsideWindow = freeMode ? 0 : configuredCohorts.reduce((total, cohort) => (
+    total + cohort.groups
+      .filter(isConfiguredGroup)
+      .flatMap(group => group.modules.filter(isConfiguredModule))
+      .filter(draft => moduleOutsideCohortWindow(draft, cohort)).length
+  ), 0);
+  const coverageGapCohorts = freeMode ? [] : configuredCohorts.filter(cohort => {
+    const coverage = reviewDeliveryCoverage(cohort);
+    return coverage.sessionCount > 0 && (coverage.hasLeadInGap || coverage.hasTrailingGap);
+  });
+  const requiredHours = reviewRequiredHoursCoverage(configuredCohorts, programme?.requiredOtjh, freeMode);
+  const learnerCount = Math.max(0, Number(programme?.learners) || 0);
+  const unmappedKsbCount = Math.max(0, programmeCoverage.total - programmeCoverage.mapped);
+  const reviewSignals = ([
+    modulesOutsideWindow ? {
+      tone: 'critical',
+      label: `${modulesOutsideWindow} module${modulesOutsideWindow === 1 ? '' : 's'} outside the cohort window`,
+      detail: 'Sessions land before the cohort starts or after it ends. Fix the dates in the Modules step.',
+    } : null,
+    requiredHours.hasTarget && requiredHours.groupCount && requiredHours.meetingCount < requiredHours.groupCount ? {
+      tone: 'critical',
+      label: `${formatHoursValue(requiredHours.shortfall)} short of the ${formatHoursValue(requiredHours.target)} off-the-job target`,
+      detail: `${requiredHours.meetingCount} of ${requiredHours.groupCount} group${requiredHours.groupCount === 1 ? ' reaches' : 's reach'} it. Learners below the target cannot complete the programme.`,
+    } : null,
+    !programmeCoverage.mapped ? {
+      tone: 'critical',
+      label: ksbStandardTotal ? `No KSBs mapped out of ${ksbStandardTotal} in the standard` : 'No KSBs mapped',
+      detail: 'Learners cannot evidence the standard and progress will report as zero. Map KSBs in Module Builder.',
+    } : programmeCoverage.total && programmeCoverage.percentage < 60 ? {
+      tone: 'warning',
+      label: `Only ${programmeCoverage.percentage}% of the standard is covered`,
+      detail: `${unmappedKsbCount} KSB${unmappedKsbCount === 1 ? '' : 's'} still unmapped across the programme.`,
+    } : null,
+    !String(programme?.level || '').trim() ? {
+      tone: 'warning',
+      label: 'Programme level not set',
+      detail: 'Reporting and funding views group by level, so the programme drops out of them while this is blank.',
+    } : null,
+    unassignedGroups ? {
+      tone: 'warning',
+      label: `${unassignedGroups} group${unassignedGroups === 1 ? '' : 's'} need coach cover`,
+      detail: 'Learners in these groups will be saved without a coach against them.',
+    } : null,
+    unassignedModules ? {
+      tone: 'warning',
+      label: `${unassignedModules} module${unassignedModules === 1 ? '' : 's'} need tutor cover`,
+      detail: 'Sessions will be created with no tutor, so the timetable cannot be checked for clashes.',
+    } : null,
+    hoursBalance.hasSchedule && !hoursBalance.balanced ? {
+      tone: 'warning',
+      label: hoursBalanceLabel(hoursBalance),
+      detail: `${formatHoursValue(totalHours)} of component OTJH against ${formatHoursValue(scheduledHours)} of timetabled session time.`,
+    } : null,
+    modulesWithoutHours ? {
+      tone: 'warning',
+      label: `${modulesWithoutHours} module${modulesWithoutHours === 1 ? '' : 's'} carry no OTJH`,
+      detail: 'Components need expected OTJH, otherwise the module adds nothing to off-the-job hours.',
+    } : null,
+    componentInsights.withoutKsbs ? {
+      tone: 'info',
+      label: `${componentInsights.withoutKsbs} of ${componentInsights.total} components have no KSBs`,
+      detail: 'They still count towards OTJH but contribute nothing towards the standard.',
+    } : null,
+    coverageGapCohorts.length ? {
+      tone: 'info',
+      label: `${coverageGapCohorts.length} cohort${coverageGapCohorts.length === 1 ? ' has' : 's have'} a long stretch with no sessions`,
+      detail: 'Check the cohort duration, or whether a module is still missing from the plan.',
+    } : null,
+    skippedCount ? {
+      tone: 'info',
+      label: `${skippedCount} session${skippedCount === 1 ? '' : 's'} moved by holidays`,
+      detail: 'Each module below lists which date moved and which holiday pushed it.',
+    } : null,
+    cohortHolidayExtensionDays > 0 ? {
+      tone: 'info',
+      label: `Cohort extended by ${cohortHolidayExtensionDays} day${cohortHolidayExtensionDays === 1 ? '' : 's'}`,
+      detail: 'The end date moved out to absorb the selected holidays.',
+    } : null,
+  ].filter(Boolean) as ReviewSignal[]);
+  const criticalSignalCount = reviewSignals.filter(signal => signal.tone === 'critical').length;
+  const warningSignalCount = reviewSignals.filter(signal => signal.tone === 'warning').length;
+  const signalTitle = criticalSignalCount
+    ? 'Important issues to resolve'
+    : warningSignalCount
+      ? 'Review warnings'
+      : isEditing ? 'Ready to update' : 'Ready to save';
+  const signalSummary = [
+    freeMode ? '' : `${cohortCount} cohort${cohortCount === 1 ? '' : 's'}`,
+    freeMode ? '' : `${groupCount} group${groupCount === 1 ? '' : 's'}`,
+    `${moduleCount} module${moduleCount === 1 ? '' : 's'}`,
+    `${componentCount} component${componentCount === 1 ? '' : 's'}`,
+    freeMode ? '' : `${sessionTotal} session${sessionTotal === 1 ? '' : 's'}`,
+    `${formatHoursValue(totalHours)} OTJH`,
+    `${ksbCoverageValue(programmeCoverage)} KSBs`,
+  ].filter(Boolean).join(' - ');
+  const selectedHolidayDays = selectedHolidays.reduce(
+    (total, holiday) => total + dayGap(holiday.startDate, holiday.endDate || holiday.startDate) + 1,
+    0,
+  );
+  const learnerImpactLabel = isEditing && learnerCount
+    ? `${learnerCount} enrolled learner${learnerCount === 1 ? '' : 's'} affected`
+    : undefined;
 
   if (freeMode) {
     return (
       <div className="space-y-5">
-        <ReviewReadinessPanel
-          tone={readinessTone}
-          title={readinessLabel}
-          summary={`${moduleCount} module${moduleCount === 1 ? '' : 's'} - ${componentCount} component${componentCount === 1 ? '' : 's'} - ${formatHoursValue(totalHours)} OTJH`}
-          warnings={readinessWarnings}
+        <ReviewSignalPanel
+          title={signalTitle}
+          summary={signalSummary}
+          signals={reviewSignals}
+          learnerImpact={learnerImpactLabel}
         />
         <section className="overflow-hidden rounded-2xl border bg-background-50 shadow-sm" style={{ borderColor: hexToRgba(programmeColor, 0.22) }}>
           <div className="border-b px-4 py-4 sm:px-5" style={{ ...reviewTintStyle(programmeColor, 0.09, 0.2), borderBottomColor: hexToRgba(programmeColor, 0.18) }}>
@@ -11035,12 +12432,29 @@ function ReviewSummary({
                   <p className="mt-1 text-[12px] font-semibold text-foreground-600">{programme?.level || 'Level not set'}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 lg:w-[27rem]">
-                <ReviewStat label="Programme OTJH" value={formatHoursValue(totalHours)} />
-                <ReviewStat label="Modules" value={String(moduleCount)} />
-                <ReviewStat label="Components" value={String(componentCount)} />
-                <ReviewStat label="KSBs mapped" value={String(programmeKsbs.length)} />
-                <ReviewStat label="Avg/module" value={formatHoursValue(averageModuleHours)} />
+              <div className="grid w-full grid-cols-1 gap-2 lg:w-[30rem]">
+                <ReviewCoverageStat
+                  label="KSB coverage"
+                  value={ksbCoverageValue(programmeCoverage)}
+                  detail={ksbCoverageDetail(programmeCoverage)}
+                  percentage={programmeCoverage.percentage}
+                  tone={ksbCoverageTone(programmeCoverage)}
+                />
+                {requiredHours.hasTarget ? (
+                  <ReviewCoverageStat
+                    label="OTJH vs required"
+                    value={`${formatHoursValue(requiredHours.lowestHours)} of ${formatHoursValue(requiredHours.target)}`}
+                    detail={requiredHoursDetail(requiredHours)}
+                    percentage={requiredHours.percentage}
+                    tone={requiredHoursTone(requiredHours)}
+                  />
+                ) : null}
+                <div className="grid grid-cols-4 gap-2">
+                  <ReviewStat label="OTJH" value={formatHoursValue(totalHours)} />
+                  <ReviewStat label="Modules" value={String(moduleCount)} />
+                  <ReviewStat label="Components" value={String(componentCount)} />
+                  <ReviewStat label="Avg/module" value={formatHoursValue(averageModuleHours)} />
+                </div>
               </div>
             </div>
           </div>
@@ -11053,6 +12467,9 @@ function ReviewSummary({
                 { icon: 'ri-checkbox-circle-line', label: 'Completion model', value: 'Certificate', detail: 'Issued after all components are complete', tone: 'amber' },
               ]}
             />
+            <div className="mb-4">
+              <ReviewComponentMix insights={componentInsights} />
+            </div>
             <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-sm font-heading font-bold text-foreground-950">Structure preview</p>
@@ -11067,7 +12484,7 @@ function ReviewSummary({
               <div className="flex flex-wrap gap-2">
                 <ReviewBadge tone="info">{formatModuleCount(moduleCount)}</ReviewBadge>
                 <ReviewBadge tone="success">{componentCount} components</ReviewBadge>
-                <ReviewBadge tone={programmeKsbs.length ? 'success' : 'warning'}>{programmeKsbs.length} KSBs</ReviewBadge>
+                <ReviewBadge tone={ksbCoverageTone(programmeCoverage)}>{ksbCoverageValue(programmeCoverage)} KSBs</ReviewBadge>
                 <ReviewBadge tone="success">{formatHoursValue(totalHours)} OTJH</ReviewBadge>
               </div>
             </div>
@@ -11098,7 +12515,7 @@ function ReviewSummary({
                     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
                       <ReviewMiniMetric label="OTJH" value={formatHoursValue(moduleHours)} tone="success" />
                       <ReviewMiniMetric label="Components" value={String(draftComponentCount)} tone="info" />
-                      <ReviewMiniMetric label="KSBs" value={moduleKsbs.length ? ksbMappingTypeSummary(moduleKsbs) : 'Needs mapping'} tone={moduleKsbs.length ? 'success' : 'warning'} />
+                      <ReviewMiniMetric label="KSBs" value={moduleKsbs.length ? ksbMappingTypeSummary(moduleKsbs) : 'Unmapped'} tone={moduleKsbs.length ? 'success' : 'warning'} />
                       <ReviewMiniMetric label="Certificate" value="On completion" tone="success" />
                     </div>
                     <ReviewKsbPreview mappings={moduleKsbs} />
@@ -11116,11 +12533,11 @@ function ReviewSummary({
 
   return (
     <div className="space-y-5">
-      <ReviewReadinessPanel
-        tone={readinessTone}
-        title={readinessLabel}
-        summary={`${cohortCount} cohort${cohortCount === 1 ? '' : 's'} - ${groupCount} group${groupCount === 1 ? '' : 's'} - ${moduleCount} module${moduleCount === 1 ? '' : 's'} - ${componentCount} component${componentCount === 1 ? '' : 's'}`}
-        warnings={readinessWarnings}
+      <ReviewSignalPanel
+        title={signalTitle}
+        summary={signalSummary}
+        signals={reviewSignals}
+        learnerImpact={learnerImpactLabel}
       />
       <section className="overflow-hidden rounded-2xl border bg-background-50 shadow-sm" style={{ borderColor: hexToRgba(programmeColor, 0.22) }}>
         <div className="border-b px-4 py-4 sm:px-5" style={{ ...reviewTintStyle(programmeColor, 0.09, 0.2), borderBottomColor: hexToRgba(programmeColor, 0.18) }}>
@@ -11138,14 +12555,39 @@ function ReviewSummary({
                 <p className="mt-1 text-[12px] font-semibold text-foreground-600">{programme?.level || 'Level not set'}</p>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:w-[36rem]">
-              <ReviewStat label="Programme OTJH" value={formatHoursValue(totalHours)} />
-              <ReviewStat label="Cohorts" value={String(cohortCount)} />
-            <ReviewStat label="Groups" value={String(groupCount)} />
-            <ReviewStat label="Modules" value={String(moduleCount)} />
-            <ReviewStat label="Components" value={String(componentCount)} />
-            <ReviewStat label="KSBs mapped" value={String(programmeKsbs.length)} />
-            <ReviewStat label="Avg/group" value={formatHoursValue(averageGroupHours)} />
+            <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:w-[38rem]">
+              <ReviewCoverageStat
+                label="KSB coverage"
+                value={ksbCoverageValue(programmeCoverage)}
+                detail={ksbCoverageDetail(programmeCoverage)}
+                percentage={programmeCoverage.percentage}
+                tone={ksbCoverageTone(programmeCoverage)}
+              />
+              <ReviewCoverageStat
+                label="Programme OTJH"
+                value={formatHoursValue(totalHours)}
+                detail={`${formatHoursValue(scheduledHours)} timetabled - ${hoursBalanceLabel(hoursBalance)}`}
+                percentage={totalHours ? Math.min(100, Math.round((scheduledHours / totalHours) * 100)) : 0}
+                tone={hoursBalanceTone(hoursBalance)}
+              />
+              {requiredHours.hasTarget ? (
+                <div className="sm:col-span-2">
+                  <ReviewCoverageStat
+                    label="OTJH vs required"
+                    value={`${formatHoursValue(requiredHours.lowestHours)} of ${formatHoursValue(requiredHours.target)}`}
+                    detail={requiredHoursDetail(requiredHours)}
+                    percentage={requiredHours.percentage}
+                    tone={requiredHoursTone(requiredHours)}
+                  />
+                </div>
+              ) : null}
+              <div className="grid grid-cols-5 gap-2 sm:col-span-2">
+                <ReviewStat label="Cohorts" value={String(cohortCount)} />
+                <ReviewStat label="Groups" value={String(groupCount)} />
+                <ReviewStat label="Modules" value={String(moduleCount)} />
+                <ReviewStat label="Sessions" value={String(sessionTotal)} />
+                <ReviewStat label="Avg/group" value={formatHoursValue(averageGroupHours)} />
+              </div>
             </div>
           </div>
         </div>
@@ -11153,12 +12595,16 @@ function ReviewSummary({
         <div className="p-4 sm:p-5">
           <ReviewInsightGrid
             items={[
-              { icon: 'ri-time-line', label: 'Programme OTJH', value: formatHoursValue(totalHours), detail: `${formatHoursValue(averageModuleHours)} average per module from components`, tone: 'emerald' },
-              { icon: 'ri-calendar-schedule-line', label: 'Delivery pattern', value: `${deliveryDayCount} day${deliveryDayCount === 1 ? '' : 's'}`, detail: `${skippedCount} skipped session${skippedCount === 1 ? '' : 's'} from holidays`, tone: skippedCount ? 'amber' : 'primary' },
+              { icon: 'ri-time-line', label: 'OTJH spread', value: `${formatHoursValue(averageModuleHours)} per module`, detail: `${formatHoursValue(averageGroupHours)} per group - ${formatHoursValue(sessionTotal ? totalHours / sessionTotal : 0)} per session`, tone: 'emerald' },
+              { icon: 'ri-calendar-schedule-line', label: 'Sessions', value: `${sessionTotal} session${sessionTotal === 1 ? '' : 's'}`, detail: `${deliveryDayCount} delivery day${deliveryDayCount === 1 ? '' : 's'} per week - ${skippedCount} moved by holidays`, tone: skippedCount ? 'amber' : 'primary' },
               { icon: 'ri-user-star-line', label: 'Coaching cover', value: `${assignedGroupCount}/${groupCount}`, detail: unassignedGroups ? `${unassignedGroups} group${unassignedGroups === 1 ? '' : 's'} need a coach` : `${coachCount} coach${coachCount === 1 ? '' : 'es'} assigned`, tone: unassignedGroups ? 'amber' : 'emerald' },
               { icon: 'ri-user-line', label: 'Tutor cover', value: `${assignedModuleCount}/${moduleCount}`, detail: unassignedModules ? `${unassignedModules} module${unassignedModules === 1 ? '' : 's'} need a tutor` : `${tutorCount} tutor${tutorCount === 1 ? '' : 's'} assigned`, tone: unassignedModules ? 'amber' : 'emerald' },
             ]}
           />
+          <div className="mb-4 grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
+            <ReviewHoursBalanceCard balance={hoursBalance} sessionCount={sessionTotal} />
+            <ReviewComponentMix insights={componentInsights} />
+          </div>
           <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-heading font-bold text-foreground-950">Structure preview</p>
@@ -11175,9 +12621,10 @@ function ReviewSummary({
             <div className="flex flex-wrap gap-2">
               <ReviewBadge>{formatGroupCount(groupCount)}</ReviewBadge>
               <ReviewBadge tone="info">{formatModuleCount(moduleCount)}</ReviewBadge>
-              <ReviewBadge tone={programmeKsbs.length ? 'success' : 'warning'}>{programmeKsbs.length} KSBs</ReviewBadge>
+              <ReviewBadge tone={ksbCoverageTone(programmeCoverage)}>{ksbCoverageValue(programmeCoverage)} KSBs</ReviewBadge>
               <ReviewBadge tone="success">{formatHoursValue(totalHours)} OTJH</ReviewBadge>
-              <ReviewBadge tone={skippedCount ? 'warning' : 'success'}>{skippedCount} skipped sessions</ReviewBadge>
+              <ReviewBadge tone={hoursBalanceTone(hoursBalance)}>{formatHoursValue(scheduledHours)} timetabled</ReviewBadge>
+              <ReviewBadge tone={skippedCount ? 'warning' : 'success'}>{skippedCount} moved sessions</ReviewBadge>
             </div>
           </div>
 
@@ -11188,7 +12635,11 @@ function ReviewSummary({
               const groups = cohort.groups.filter(isConfiguredGroup);
               const cohortHours = cohortActualComponentHours(cohort);
               const cohortKsbs = cohortKsbMappings(cohort);
+              const cohortCoverage = reviewDeliveryCoverage(cohort);
+              const cohortBalance = reviewHoursBalance(cohortHours, cohortScheduledContactHours(cohort));
+              const cohortKsbCoverage = ksbCoverage(cohortKsbs, ksbStandardTotal);
               const hasExtension = cohort.localId === 'current-cohort' && cohortHolidayExtensionDays > 0;
+              const cohortApprenticeshipEnd = resolveApprenticeshipEndDate(cohort);
               return (
                 <div key={cohort.localId} className="relative pl-8">
                   <span className="absolute left-3 top-12 bottom-0 w-px" style={{ backgroundColor: hexToRgba(cohortColor, 0.22) }} aria-hidden="true"></span>
@@ -11205,15 +12656,30 @@ function ReviewSummary({
                           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-500">Cohort {cohortIndex + 1}</p>
                           <ReviewBadge>{formatGroupCount(groups.length)}</ReviewBadge>
                           <ReviewBadge tone="success">{formatHoursValue(cohortHours)} OTJH</ReviewBadge>
-                          <ReviewBadge tone={cohortKsbs.length ? 'success' : 'warning'}>{cohortKsbs.length} KSBs</ReviewBadge>
+                          <ReviewBadge tone={hoursBalanceTone(cohortBalance)}>{formatHoursValue(cohortBalance.scheduledHours)} timetabled</ReviewBadge>
+                          <ReviewBadge tone={ksbCoverageTone(cohortKsbCoverage)}>{ksbCoverageValue(cohortKsbCoverage)} KSBs</ReviewBadge>
                           <ReviewBadge tone={selectedForCohort.length ? 'warning' : 'muted'}>{selectedForCohort.length} holidays</ReviewBadge>
                           {hasExtension ? <ReviewBadge tone="warning">extended {cohortHolidayExtensionDays}d</ReviewBadge> : null}
                         </div>
                         <p className="mt-1 truncate text-base font-heading font-bold text-foreground-950">{cohort.name || `Cohort ${cohortIndex + 1}`}</p>
                         <p className="mt-0.5 text-[12px] font-semibold text-foreground-500">
-                          {cohort.startDate ? formatDateValue(cohort.startDate) : 'No start'} to {cohort.endDate ? formatDateValue(cohort.endDate) : 'No end'} - {cohort.durationMonths || 0} months
+                          Practical: {cohort.startDate ? formatDateValue(cohort.startDate) : 'No start'} to {cohort.endDate ? formatDateValue(cohort.endDate) : 'No end'} - {cohort.durationMonths || 0} months
+                        </p>
+                        <p className="mt-0.5 text-[12px] font-semibold text-foreground-500">
+                          {cohortApprenticeshipEnd
+                            ? `Apprenticeship: ends ${formatDateValue(cohortApprenticeshipEnd)} - ${cohort.apprenticeshipEndDate ? 'set manually' : `${cohort.epaMonths} month EPA period`}`
+                            : 'Apprenticeship: no end date set'}
                         </p>
                       </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <ReviewCoverageTimeline
+                        coverage={cohortCoverage}
+                        color={cohortColor}
+                        cohortStart={cohort.startDate}
+                        cohortEnd={cohort.endDate}
+                      />
                     </div>
 
                     <div className="mt-3 space-y-3">
@@ -11222,6 +12688,9 @@ function ReviewSummary({
                         const modules = group.modules.filter(isConfiguredModule);
                         const groupHours = groupActualComponentHours(group);
                         const groupKsbs = groupKsbMappings(group);
+                        const groupBalance = reviewHoursBalance(groupHours, groupScheduledContactHours(group));
+                        const groupKsbCoverage = ksbCoverage(groupKsbs, ksbStandardTotal);
+                        const groupSessionDuration = groupSessionDurationHours(group);
                         return (
                           <div
                             key={group.localId}
@@ -11238,12 +12707,15 @@ function ReviewSummary({
                                   <div className="flex flex-wrap items-center gap-2">
                                     <p className="text-[10px] font-bold uppercase text-foreground-400">Group {groupIndex + 1}</p>
                                     <ReviewBadge tone="info">{formatModuleCount(modules.length)}</ReviewBadge>
-                                    <ReviewBadge tone="success">{formatHoursValue(groupHours)} OTJH</ReviewBadge>
-                                    <ReviewBadge tone={groupKsbs.length ? 'success' : 'warning'}>{groupKsbs.length} KSBs</ReviewBadge>
+                                    <ReviewBadge tone={requiredHours.hasTarget ? (groupMeetsRequiredHours(groupHours, requiredHours) ? 'success' : 'critical') : 'success'}>
+                                      {formatHoursValue(groupHours)}{requiredHours.hasTarget ? ` of ${formatHoursValue(requiredHours.target)}` : ''} OTJH
+                                    </ReviewBadge>
+                                    <ReviewBadge tone={ksbCoverageTone(groupKsbCoverage)}>{ksbCoverageValue(groupKsbCoverage)} KSBs</ReviewBadge>
                                   </div>
                                   <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{group.name || `Group ${groupIndex + 1}`}</p>
                                   <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">
                                     {group.deliveryDays.join(', ') || 'No delivery day'} - {group.startTime || '--:--'} to {group.endTime || '--:--'}
+                                    {groupSessionDuration ? ` - ${formatHoursValue(groupSessionDuration)} per session` : ''}
                                   </p>
                                   <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">
                                     Coach: {group.coach || 'Unassigned'}
@@ -11252,9 +12724,11 @@ function ReviewSummary({
                               </div>
                             </div>
                             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                              <ReviewMiniMetric label="Group OTJH" value={formatHoursValue(groupHours)} tone="success" />
+                              <ReviewMiniMetric label="Group OTJH" value={formatHoursValue(groupHours)} tone="success" hint={OTJH_METRIC_HINT} />
+                              <ReviewMiniMetric label="Timetabled" value={formatHoursValue(groupBalance.scheduledHours)} tone={hoursBalanceTone(groupBalance)} hint={TIMETABLED_METRIC_HINT} />
+                              <ReviewMiniMetric label="Sessions" value={String(groupSessionTotal(group))} />
                               <ReviewMiniMetric label="Modules" value={String(modules.length)} />
-                              <ReviewMiniMetric label="KSBs" value={groupKsbs.length ? ksbMappingTypeSummary(groupKsbs) : 'Needs mapping'} tone={groupKsbs.length ? 'success' : 'warning'} />
+                              <ReviewMiniMetric label="KSBs" value={groupKsbs.length ? ksbCoverageValue(groupKsbCoverage) : 'Unmapped'} tone={ksbCoverageTone(groupKsbCoverage)} />
                               <ReviewMiniMetric label="Coach" value={group.coach || 'Unassigned'} tone={group.coach ? 'success' : 'warning'} />
                             </div>
 
@@ -11265,6 +12739,10 @@ function ReviewSummary({
                                 const moduleHours = moduleDraftActualComponentHours(draft);
                                 const moduleColor = draft.color || '#7c3aed';
                                 const moduleKsbs = moduleDraftKsbMappings(draft);
+                                const moduleBalance = reviewHoursBalance(moduleHours, moduleScheduledContactHours(draft, group));
+                                const moduleKsbCoverage = ksbCoverage(moduleKsbs, ksbStandardTotal);
+                                const moduleShifts = reviewSessionShifts(draft);
+                                const outsideWindow = moduleOutsideCohortWindow(draft, cohort);
                                 return (
                                   <div
                                     key={draft.localId}
@@ -11278,6 +12756,7 @@ function ReviewSummary({
                                           <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: moduleColor }} aria-hidden="true"></span>
                                           <p className="truncate text-[13px] font-bold text-foreground-950">{moduleDraftDisplayName(draft, moduleIndex, moduleOptions)}</p>
                                           {draft.extensionDays > 0 ? <ReviewBadge tone="warning">extended {draft.extensionDays}d</ReviewBadge> : null}
+                                          {outsideWindow ? <ReviewBadge tone="critical">outside cohort window</ReviewBadge> : null}
                                         </div>
                                         <p className="mt-1 text-[11px] text-foreground-500">
                                           {draft.startDate ? formatDateValue(draft.startDate) : 'No start'} to {draft.endDate ? formatDateValue(draft.endDate) : 'No end'} - {draft.sessionsNumber || draft.weeks.length || 0} sessions - {formatHoursValue(moduleHours)} OTJH
@@ -11285,11 +12764,12 @@ function ReviewSummary({
                                       </div>
                                     </div>
                                     <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                      <ReviewMiniMetric label="Module OTJH" value={formatHoursValue(moduleHours)} tone="success" />
-                                      <ReviewMiniMetric label="KSBs" value={moduleKsbs.length ? ksbMappingTypeSummary(moduleKsbs) : 'Needs mapping'} tone={moduleKsbs.length ? 'success' : 'warning'} />
-                                      <ReviewMiniMetric label="Skipped" value={String(draft.skippedHolidaySessions.length)} tone={draft.skippedHolidaySessions.length ? 'warning' : 'success'} />
+                                      <ReviewMiniMetric label="Module OTJH" value={formatHoursValue(moduleHours)} tone="success" hint={OTJH_METRIC_HINT} />
+                                      <ReviewMiniMetric label="Timetabled" value={formatHoursValue(moduleBalance.scheduledHours)} tone={hoursBalanceTone(moduleBalance)} hint={TIMETABLED_METRIC_HINT} />
+                                      <ReviewMiniMetric label="KSBs" value={moduleKsbs.length ? ksbCoverageValue(moduleKsbCoverage) : 'Unmapped'} tone={ksbCoverageTone(moduleKsbCoverage)} />
                                       <ReviewMiniMetric label="Tutor" value={draft.tutor || 'Unassigned'} tone={draft.tutor ? 'success' : 'warning'} />
                                     </div>
+                                    <ReviewSessionShiftList shifts={moduleShifts} skipped={draft.skippedHolidaySessions} />
                                     <ReviewKsbPreview mappings={moduleKsbs} />
                                   </div>
                                 );
@@ -11321,8 +12801,12 @@ function ReviewSummary({
               <div className="flex flex-wrap items-center gap-2">
                 <p className="text-sm font-heading font-bold text-foreground-950">Holidays applied at the end</p>
                 <ReviewBadge tone={selectedHolidays.length ? 'warning' : 'muted'}>{selectedHolidays.length}</ReviewBadge>
+                {selectedHolidayDays ? <ReviewBadge tone="warning">{formatDaySpanLabel(selectedHolidayDays)} of holidays</ReviewBadge> : null}
               </div>
-              <p className="mt-1 text-[12px] text-foreground-600">These dates can extend the cohort and shift module sessions.</p>
+              <p className="mt-1 text-[12px] text-foreground-600">
+                These dates can extend the cohort and shift module sessions.
+                {skippedCount ? ` ${skippedCount} session${skippedCount === 1 ? '' : 's'} moved as a result.` : ''}
+              </p>
             </div>
           </div>
           <div className="grid w-full gap-2 lg:max-w-2xl">
@@ -11333,8 +12817,17 @@ function ReviewSummary({
                 <div key={`${cohort.localId}-holidays`} className="rounded-xl border border-amber-200/80 bg-white/80 px-3 py-2">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-[12px] font-bold text-foreground-900">{cohort.name || `Cohort ${index + 1}`}</p>
-                    <div className="flex flex-wrap gap-1.5 sm:justify-end">
-                      {cohortHolidays.map(holiday => <ReviewBadge key={holidayId(holiday)} tone="warning">{holiday.label}</ReviewBadge>)}
+                    <div className="grid w-full grid-cols-2 gap-1.5 sm:grid-cols-3 lg:w-auto">
+                      {[...cohortHolidays]
+                        .sort((left, right) => compareDateInputs(left.startDate, right.startDate))
+                        .map(holiday => (
+                          <span key={holidayId(holiday)} className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-left">
+                            <span className="block text-[11px] font-bold leading-4 text-amber-800">{holiday.label}</span>
+                            <span className="block text-[10px] font-semibold leading-3 text-amber-700/80">
+                              {holidayRangeLabel(holiday)} - {formatDaySpanLabel(dayGap(holiday.startDate, holiday.endDate || holiday.startDate) + 1)}
+                            </span>
+                          </span>
+                        ))}
                     </div>
                   </div>
                 </div>
@@ -11349,48 +12842,6 @@ function ReviewSummary({
   );
 }
 
-function ReviewReadinessPanel({
-  tone,
-  title,
-  summary,
-  warnings,
-}: {
-  tone: 'success' | 'warning';
-  title: string;
-  summary: string;
-  warnings: string[];
-}) {
-  const isWarning = tone === 'warning';
-
-  return (
-    <section className={`rounded-2xl border px-4 py-3 shadow-sm ${isWarning ? 'border-amber-200 bg-amber-50/70' : 'border-emerald-200 bg-emerald-50/70'}`}>
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-start gap-3">
-          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${isWarning ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-            <i className={`${isWarning ? 'ri-error-warning-line' : 'ri-checkbox-circle-line'} text-lg`}></i>
-          </span>
-          <div>
-            <p className="text-sm font-heading font-bold text-foreground-950">{title}</p>
-            <p className="mt-0.5 text-[12px] font-semibold text-foreground-600">{summary}</p>
-          </div>
-        </div>
-        {warnings.length ? (
-          <div className="flex flex-wrap gap-2 lg:justify-end">
-            {warnings.map(warning => (
-              <span key={warning} className="rounded-full border border-amber-200 bg-white/80 px-3 py-1 text-[11px] font-bold text-amber-800">
-                {warning}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <span className="rounded-full border border-emerald-200 bg-white/80 px-3 py-1 text-[11px] font-bold text-emerald-700">
-            No warnings
-          </span>
-        )}
-      </div>
-    </section>
-  );
-}
 
 function ReviewInsightGrid({
   items,
@@ -11423,6 +12874,335 @@ function ReviewInsightGrid({
   );
 }
 
+
+type ReviewSignalTone = 'critical' | 'warning' | 'info' | 'success';
+
+interface ReviewSignal {
+  tone: ReviewSignalTone;
+  label: string;
+  detail: string;
+}
+
+/**
+ * Replaces the flat row of warning pills. Signals carry a severity and a "what to do
+ * about it" line, and they are ordered worst-first so the thing most likely to need
+ * fixing is the first thing read.
+ */
+function ReviewSignalPanel({
+  title,
+  summary,
+  signals,
+  learnerImpact,
+}: {
+  title: string;
+  summary: string;
+  signals: ReviewSignal[];
+  learnerImpact?: string;
+}) {
+  const order: ReviewSignalTone[] = ['critical', 'warning', 'info', 'success'];
+  const ranked = [...signals].sort((left, right) => order.indexOf(left.tone) - order.indexOf(right.tone));
+  const worst = ranked[0]?.tone ?? 'success';
+  const criticalCount = signals.filter(signal => signal.tone === 'critical').length;
+  const warningCount = signals.filter(signal => signal.tone === 'warning').length;
+
+  const shell = {
+    critical: 'border-red-200 bg-red-50/70',
+    warning: 'border-amber-200 bg-amber-50/70',
+    info: 'border-primary-100 bg-primary-50/50',
+    success: 'border-emerald-200 bg-emerald-50/70',
+  }[worst];
+  const badge = {
+    critical: 'bg-red-100 text-red-700',
+    warning: 'bg-amber-100 text-amber-700',
+    info: 'bg-primary-100 text-primary-700',
+    success: 'bg-emerald-100 text-emerald-700',
+  }[worst];
+  const icon = {
+    critical: 'ri-close-circle-line',
+    warning: 'ri-error-warning-line',
+    info: 'ri-information-line',
+    success: 'ri-checkbox-circle-line',
+  }[worst];
+
+  const signalShell = {
+    critical: 'border-red-200 bg-white',
+    warning: 'border-amber-200 bg-white',
+    info: 'border-primary-100 bg-white',
+    success: 'border-emerald-200 bg-white',
+  };
+  const signalDot = {
+    critical: 'bg-red-500',
+    warning: 'bg-amber-500',
+    info: 'bg-primary-500',
+    success: 'bg-emerald-500',
+  };
+
+  return (
+    <section className={`rounded-2xl border px-4 py-3 shadow-sm ${shell}`}>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-start gap-3">
+          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${badge}`}>
+            <i className={`${icon} text-lg`}></i>
+          </span>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-heading font-bold text-foreground-950">{title}</p>
+              {criticalCount ? <ReviewBadge tone="critical">{criticalCount} to fix</ReviewBadge> : null}
+              {warningCount ? <ReviewBadge tone="warning">{warningCount} to check</ReviewBadge> : null}
+            </div>
+            <p className="mt-0.5 text-[12px] font-semibold text-foreground-600">{summary}</p>
+          </div>
+        </div>
+        {learnerImpact ? (
+          <div className="flex items-center gap-2 rounded-xl border border-white/80 bg-white/85 px-3 py-2 shadow-sm">
+            <i className="ri-group-line text-base text-primary-700"></i>
+            <div>
+              <p className="text-[9px] font-bold uppercase text-foreground-400">Learner impact</p>
+              <p className="text-[12px] font-bold text-foreground-900">{learnerImpact}</p>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {ranked.length ? (
+        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {ranked.map(signal => (
+            <div key={signal.label} className={`flex items-start gap-2 rounded-xl border px-3 py-2 shadow-[0_1px_0_rgba(15,23,42,0.03)] ${signalShell[signal.tone]}`}>
+              <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${signalDot[signal.tone]}`} aria-hidden="true"></span>
+              <div className="min-w-0">
+                <p className="text-[12px] font-bold text-foreground-900">{signal.label}</p>
+                <p className="mt-0.5 text-[11px] leading-4 text-foreground-500">{signal.detail}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 rounded-xl border border-emerald-200 bg-white px-3 py-2 text-[12px] font-semibold text-emerald-700">
+          Everything checks out - nothing needs attention before saving.
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** A headline number with the bar that gives it a denominator. */
+function ReviewCoverageStat({
+  label,
+  value,
+  detail,
+  percentage,
+  tone,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+  percentage: number;
+  tone: 'success' | 'warning' | 'info';
+}) {
+  const bar = { success: 'bg-emerald-500', warning: 'bg-amber-500', info: 'bg-primary-500' }[tone];
+  const text = { success: 'text-emerald-700', warning: 'text-amber-700', info: 'text-primary-700' }[tone];
+
+  return (
+    <div className="rounded-xl border border-white/70 bg-white/85 px-3 py-2 shadow-sm">
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[9px] font-bold uppercase text-foreground-400">{label}</p>
+        <p className={`text-[10px] font-bold ${text}`}>{percentage}%</p>
+      </div>
+      <p className="mt-0.5 text-lg font-heading font-bold text-foreground-950">{value}</p>
+      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-background-200">
+        <div className={`h-full rounded-full ${bar} transition-all`} style={{ width: `${Math.max(percentage, percentage > 0 ? 4 : 0)}%` }}></div>
+      </div>
+      <p className="mt-1 text-[10px] leading-4 text-foreground-500">{detail}</p>
+    </div>
+  );
+}
+
+/** Promised OTJH against timetabled contact time, with the gap named explicitly. */
+function ReviewHoursBalanceCard({ balance, sessionCount }: { balance: ReviewHoursBalance; sessionCount: number }) {
+  const tone = hoursBalanceTone(balance);
+  const shell = {
+    success: 'border-emerald-200 bg-emerald-50/50',
+    warning: 'border-amber-200 bg-amber-50/50',
+    info: 'border-primary-100 bg-primary-50/40',
+  }[tone];
+  const chip = {
+    success: 'bg-emerald-100 text-emerald-700',
+    warning: 'bg-amber-100 text-amber-700',
+    info: 'bg-primary-100 text-primary-700',
+  }[tone];
+  const perSession = sessionCount ? balance.plannedHours / sessionCount : 0;
+
+  return (
+    <div className={`rounded-xl border px-3 py-3 shadow-sm ${shell}`}>
+      <div className="flex items-start gap-3">
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${chip}`}>
+          <i className="ri-scales-3-line text-base"></i>
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[9px] font-bold uppercase text-foreground-400">OTJH vs timetable</p>
+          <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <p className="text-sm font-heading font-bold text-foreground-950">{formatHoursValue(balance.plannedHours)}</p>
+            <span className="text-[11px] font-semibold text-foreground-400">planned</span>
+            <i className="ri-arrow-left-right-line text-[11px] text-foreground-400"></i>
+            <p className="text-sm font-heading font-bold text-foreground-950">{formatHoursValue(balance.scheduledHours)}</p>
+            <span className="text-[11px] font-semibold text-foreground-400">timetabled</span>
+          </div>
+          <p className="mt-0.5 text-[11px] leading-4 text-foreground-500">
+            {hoursBalanceLabel(balance)}
+            {sessionCount ? ` - ${formatHoursValue(perSession)} OTJH per session across ${sessionCount} session${sessionCount === 1 ? '' : 's'}` : ''}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The cohort window as a bar, with the stretch that actually carries sessions filled in.
+ * Lead-in and trailing gaps are the two failure modes worth seeing at a glance.
+ */
+function ReviewCoverageTimeline({ coverage, color, cohortStart, cohortEnd }: {
+  coverage: ReviewDeliveryCoverage;
+  color: string;
+  cohortStart: string;
+  cohortEnd: string;
+}) {
+  if (!coverage.sessionCount) {
+    return (
+      <div className="rounded-xl border border-dashed border-background-200 bg-background-100 px-3 py-2 text-[11px] font-semibold text-foreground-500">
+        No sessions generated yet, so delivery coverage cannot be checked.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-background-200 bg-white/80 px-3 py-2.5 shadow-[0_1px_0_rgba(15,23,42,0.03)]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[9px] font-bold uppercase text-foreground-400">Delivery coverage</p>
+        <div className="flex flex-wrap gap-1.5">
+          {coverage.hasLeadInGap ? <ReviewBadge tone="warning">{formatDaySpanLabel(coverage.leadInDays)} before first session</ReviewBadge> : null}
+          {coverage.hasTrailingGap ? <ReviewBadge tone="warning">{formatDaySpanLabel(coverage.trailingDays)} after last session</ReviewBadge> : null}
+          {coverage.startsBeforeCohort ? <ReviewBadge tone="critical">Starts before the cohort</ReviewBadge> : null}
+          {coverage.endsAfterCohort ? <ReviewBadge tone="critical">Runs past the cohort end</ReviewBadge> : null}
+          {!coverage.hasLeadInGap && !coverage.hasTrailingGap && !coverage.startsBeforeCohort && !coverage.endsAfterCohort
+            ? <ReviewBadge tone="success">Spread across the cohort</ReviewBadge>
+            : null}
+        </div>
+      </div>
+
+      <div className="mt-2 flex h-2.5 w-full overflow-hidden rounded-full bg-background-200">
+        <div style={{ width: `${coverage.leadInPercent}%` }} aria-hidden="true"></div>
+        <div
+          className="h-full"
+          style={{ width: `${Math.max(coverage.coveredPercent, 2)}%`, backgroundColor: color }}
+          aria-hidden="true"
+        ></div>
+      </div>
+
+      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 text-[10px] font-semibold text-foreground-500">
+        <span>{cohortStart ? formatDateValue(cohortStart) : 'No start'}</span>
+        <span className="text-foreground-700">
+          {coverage.sessionCount} session{coverage.sessionCount === 1 ? '' : 's'}
+          {coverage.firstSession ? ` - ${formatDateValue(coverage.firstSession)} to ${formatDateValue(coverage.lastSession)}` : ''}
+          {` (${formatDaySpanLabel(coverage.coveredDays)} with sessions)`}
+        </span>
+        <span>{cohortEnd ? formatDateValue(cohortEnd) : 'No end'}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Which sessions moved, where they went, and which holiday pushed them. */
+function ReviewSessionShiftList({
+  shifts,
+  skipped,
+}: {
+  shifts: Array<{ sessionNumber: number; from: string; to: string; reason: string }>;
+  skipped: SkippedHolidaySession[];
+}) {
+  if (!shifts.length && !skipped.length) return null;
+  const rows = shifts.length
+    ? shifts.map(shift => ({
+      key: `shift-${shift.sessionNumber}-${shift.from}`,
+      text: `Session ${shift.sessionNumber}: ${formatDateValue(shift.from)} moved to ${formatDateValue(shift.to)}`,
+      reason: shift.reason,
+    }))
+    : skipped.map(session => ({
+      key: `skipped-${session.date}-${session.holidayId}`,
+      text: `${formatDateValue(session.date)} (${session.day}) fell on a holiday`,
+      reason: session.holidayLabel,
+    }));
+
+  return (
+    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2">
+      <p className="text-[10px] font-bold uppercase text-amber-700">
+        {shifts.length ? `${shifts.length} session${shifts.length === 1 ? '' : 's'} moved by holidays` : `${skipped.length} session${skipped.length === 1 ? '' : 's'} hit a holiday`}
+      </p>
+      <ul className="mt-1 space-y-0.5">
+        {rows.slice(0, 4).map(row => (
+          <li key={row.key} className="text-[11px] leading-4 text-foreground-700">
+            {row.text}
+            {row.reason ? <span className="font-semibold text-amber-800"> - {row.reason}</span> : null}
+          </li>
+        ))}
+        {rows.length > 4 ? (
+          <li className="text-[11px] font-semibold text-amber-800">+{rows.length - 4} more</li>
+        ) : null}
+      </ul>
+    </div>
+  );
+}
+
+/** Component mix plus the evidence requirements that matter at audit. */
+function ReviewComponentMix({ insights }: { insights: ReturnType<typeof reviewComponentInsights> }) {
+  if (!insights.total) return null;
+  const requirements = [
+    { label: 'Reflection', value: insights.reflection, icon: 'ri-lightbulb-line' },
+    { label: 'Workplace evidence', value: insights.workplaceEvidence, icon: 'ri-briefcase-line' },
+    { label: 'Tutor validation', value: insights.tutorValidation, icon: 'ri-user-star-line' },
+  ];
+
+  return (
+    <div className="rounded-xl border border-background-200 bg-white/80 px-3 py-2.5 shadow-[0_1px_0_rgba(15,23,42,0.03)]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[9px] font-bold uppercase text-foreground-400">What learners will do</p>
+        <div className="flex flex-wrap gap-1.5">
+          {insights.withoutKsbs ? <ReviewBadge tone="warning">{insights.withoutKsbs} without KSBs</ReviewBadge> : null}
+          {insights.withoutHours ? <ReviewBadge tone="warning">{insights.withoutHours} without OTJH</ReviewBadge> : null}
+          {insights.points ? <ReviewBadge tone="info">{insights.points} points</ReviewBadge> : null}
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {insights.typeMix.slice(0, 8).map(item => (
+          <span key={item.type} className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2.5 py-1 text-[11px] font-semibold text-foreground-700">
+            {item.label}
+            <span className="font-bold text-foreground-950">{item.count}</span>
+          </span>
+        ))}
+        {insights.typeMix.length > 8 ? (
+          <span className="inline-flex items-center rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-[11px] font-semibold text-foreground-500">
+            +{insights.typeMix.length - 8} more types
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-2">
+        {requirements.map(requirement => (
+          <div key={requirement.label} className="rounded-lg border border-background-200 bg-background-50 px-2 py-1.5">
+            <div className="flex items-center gap-1.5">
+              <i className={`${requirement.icon} text-[13px] text-foreground-400`}></i>
+              <p className="text-[9px] font-bold uppercase leading-3 text-foreground-400">{requirement.label}</p>
+            </div>
+            <p className="mt-0.5 text-[13px] font-heading font-bold text-foreground-950">
+              {requirement.value}
+              <span className="text-[10px] font-semibold text-foreground-400">/{insights.total}</span>
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ReviewStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-white/70 bg-white/80 px-3 py-2 shadow-sm">
@@ -11432,19 +13212,29 @@ function ReviewStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ReviewBadge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'success' | 'warning' | 'info' | 'muted' }) {
+function ReviewBadge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'success' | 'warning' | 'info' | 'muted' | 'critical' }) {
   const classes = {
     default: 'border-background-200 bg-background-50 text-foreground-700',
     success: 'border-emerald-200 bg-white text-emerald-700',
     warning: 'border-amber-200 bg-amber-50 text-amber-700',
     info: 'border-primary-100 bg-white text-primary-700',
     muted: 'border-background-200 bg-background-100 text-foreground-500',
+    critical: 'border-red-200 bg-red-50 text-red-700',
   }[tone];
 
   return <span className={`inline-flex min-h-6 items-center rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${classes}`}>{children}</span>;
 }
 
-function ReviewMiniMetric({ label, value, tone = 'default' }: { label: string; value: string; tone?: 'default' | 'success' | 'warning' | 'info' }) {
+/**
+ * One tile in the review metric grid. Pass `hint` for the two numbers reviewers
+ * routinely confuse — OTJH and Timetabled — and the tile explains itself on hover.
+ *
+ * Deliberately not focusable. A review of three cohorts renders dozens of these
+ * tiles, and making each hinted one a tab stop would bury the Save button behind
+ * them. The hint is instead carried as screen-reader text in the tile's reading
+ * order, so it is announced without adding anything to the tab sequence.
+ */
+function ReviewMiniMetric({ label, value, tone = 'default', hint }: { label: string; value: string; tone?: 'default' | 'success' | 'warning' | 'info'; hint?: string }) {
   const toneClass = {
     default: 'bg-background-50 text-foreground-900',
     success: 'bg-background-50 text-emerald-700',
@@ -11452,10 +13242,32 @@ function ReviewMiniMetric({ label, value, tone = 'default' }: { label: string; v
     info: 'bg-background-50 text-primary-700',
   }[tone];
 
+  if (!hint) {
+    return (
+      <div className={`min-w-0 rounded-lg px-3 py-2 ${toneClass}`}>
+        <p className="text-[9px] font-bold uppercase opacity-70">{label}</p>
+        <p className="mt-0.5 truncate text-[11px] font-bold">{value}</p>
+      </div>
+    );
+  }
+
   return (
-    <div className={`min-w-0 rounded-lg px-3 py-2 ${toneClass}`}>
-      <p className="text-[9px] font-bold uppercase opacity-70">{label}</p>
+    <div className={`group/metric relative min-w-0 cursor-help rounded-lg px-3 py-2 ${toneClass}`}>
+      <p className="flex items-center gap-1 text-[9px] font-bold uppercase opacity-70">
+        <span className="truncate">{label}</span>
+        <span aria-hidden="true" className="flex h-3 w-3 shrink-0 items-center justify-center rounded-full border border-current text-[7px] leading-none">?</span>
+      </p>
       <p className="mt-0.5 truncate text-[11px] font-bold">{value}</p>
+      <span className="sr-only">{hint}</span>
+      {/* left-0 rather than centred: the hinted tiles are never in the last column
+          of their grid, so the note stays inside the review scroll container.
+          aria-hidden because the sr-only copy above already carries the same text. */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute left-0 top-full z-30 mt-1 w-60 rounded-lg bg-foreground-950 px-3 py-2 text-[11px] font-medium leading-snug text-background-50 opacity-0 shadow-lg transition-opacity group-hover/metric:opacity-100"
+      >
+        {hint}
+      </span>
     </div>
   );
 }

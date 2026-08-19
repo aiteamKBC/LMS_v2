@@ -526,11 +526,31 @@ BOOKED_EVENT_JSON_TYPES = {
 
 
 def get_graph_settings() -> dict[str, str]:
+    """Credentials for the app-only Graph client (Teams meetings, calendar sync).
+
+    MICROSOFT_GRAPH_* comes first and deliberately so. The bare MICROSOFT_CLIENT_ID
+    name is shared with the learner calendar-connection OAuth app, which is a
+    delegated-auth registration holding no application roles; whichever of the two
+    the .env declares last used to win here, so adding that app silently repointed
+    Teams booking at credentials Graph answers with 403 ErrorAccessDenied. The old
+    names stay as a fallback for deployments not yet carrying the dedicated ones.
+    """
     load_env_file()
     return {
-        "tenant_id": clean_text(os.environ.get("MICROSOFT_TENANT_ID") or os.environ.get("TENANTID")),
-        "client_id": clean_text(os.environ.get("MICROSOFT_CLIENT_ID") or os.environ.get("CLIENTID")),
-        "client_secret": clean_text(os.environ.get("MICROSOFT_CLIENT_SECRET")),
+        "tenant_id": clean_text(
+            os.environ.get("MICROSOFT_GRAPH_TENANT_ID")
+            or os.environ.get("MICROSOFT_TENANT_ID")
+            or os.environ.get("TENANTID")
+        ),
+        "client_id": clean_text(
+            os.environ.get("MICROSOFT_GRAPH_CLIENT_ID")
+            or os.environ.get("MICROSOFT_CLIENT_ID")
+            or os.environ.get("CLIENTID")
+        ),
+        "client_secret": clean_text(
+            os.environ.get("MICROSOFT_GRAPH_CLIENT_SECRET")
+            or os.environ.get("MICROSOFT_CLIENT_SECRET")
+        ),
         "scope": clean_text(os.environ.get("MICROSOFT_GRAPH_SCOPE")) or MICROSOFT_GRAPH_DEFAULT_SCOPE,
         "base_url": clean_text(os.environ.get("MICROSOFT_GRAPH_BASE_URL")) or MICROSOFT_GRAPH_DEFAULT_BASE_URL,
         "timezone": clean_text(os.environ.get("MICROSOFT_GRAPH_TIMEZONE")) or MICROSOFT_GRAPH_DEFAULT_TIMEZONE,

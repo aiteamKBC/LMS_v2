@@ -55,6 +55,7 @@ import logging
 import os
 import threading
 import time
+from html import escape
 
 import httpx
 
@@ -377,4 +378,162 @@ def access_request_message(*, requester_name, requester_email, console_url):
         f"{who} ({requester_email}) has signed in but has no access level yet.\n\n"
         f"Grant one here:\n{console_url}\n"
     )
+    return subject, html, text
+
+
+# ---------------------------------------------------------------------------
+# Staffing notifications
+# ---------------------------------------------------------------------------
+# Unlike the invitation/reset mails above, these carry no token and no secret —
+# only the delivery facts a tutor needs in order to know what they are teaching,
+# to whom, and when. That is why the body is a details table rather than a bare
+# call-to-action: the mail has to be useful when read on a phone without ever
+# opening the platform.
+
+
+def _detail_table(pairs):
+    """Two-column label/value rows. Pairs with an empty value are dropped.
+
+    Dropping blanks rather than printing "—" matters here: a module authored
+    before its group has a schedule would otherwise mail a table half full of
+    placeholders, which reads as broken data instead of detail-not-set-yet.
+    """
+    rows = []
+    for label, value in pairs:
+        text = str(value if value is not None else "").strip()
+        if not text:
+            continue
+        rows.append(
+            '<tr>'
+            '<td style="padding:4px 12px 4px 0;font-size:13px;color:#616e7c;'
+            'white-space:nowrap;vertical-align:top;">' + escape(str(label)) + '</td>'
+            '<td style="padding:4px 0;font-size:13px;color:#1f2933;'
+            'font-weight:600;vertical-align:top;">' + escape(text) + '</td>'
+            '</tr>'
+        )
+    if not rows:
+        return ""
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" '
+        'style="width:100%;border-collapse:collapse;">' + "".join(rows) + '</table>'
+    )
+
+
+def _module_card(module):
+    """One assigned module, rendered as a titled details block."""
+    heading = escape(str(module.get("name") or "Untitled module"))
+    code = str(module.get("code") or "").strip()
+    code_html = (
+        f'<div style="margin:2px 0 10px;font-size:12px;color:#9aa5b1;'
+        f'letter-spacing:0.4px;">{escape(code)}</div>'
+        if code else '<div style="height:8px;"></div>'
+    )
+    details = _detail_table([
+        ("Programme", module.get("programme")),
+        ("Cohort", module.get("cohort")),
+        ("Group", module.get("group")),
+        ("Schedule", module.get("schedule")),
+        ("Runs", module.get("dates")),
+        ("Sessions", module.get("sessions")),
+        ("Off-the-job hours", module.get("otjh")),
+        ("Group coach", module.get("coach")),
+    ])
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" '
+        'style="margin:0 0 16px;border:1px solid #e4e7eb;border-radius:8px;'
+        'border-collapse:separate;">'
+        '<tr><td style="padding:16px 18px;">'
+        f'<div style="font-size:16px;font-weight:600;color:#0b3d6b;">{heading}</div>'
+        f'{code_html}'
+        f'{details}'
+        '</td></tr></table>'
+    )
+
+
+def _module_text(module):
+    lines = [f"- {module.get('name') or 'Untitled module'}"]
+    if str(module.get("code") or "").strip():
+        lines.append(f"    {'Module ID:':<14}{module['code']}")
+    for label, key in (
+        ("Programme", "programme"),
+        ("Cohort", "cohort"),
+        ("Group", "group"),
+        ("Schedule", "schedule"),
+        ("Runs", "dates"),
+        ("Sessions", "sessions"),
+        ("OTJ hours", "otjh"),
+        ("Group coach", "coach"),
+    ):
+        value = str(module.get(key) or "").strip()
+        if value:
+            lines.append(f"    {label + ':':<14}{value}")
+    return "\n".join(lines)
+
+
+def tutor_assignment_message(*, tutor_name, modules, workspace_url):
+    """Tell a tutor which modules they have just been put on.
+
+    ``modules`` is a list of already-formatted dicts (name, code, programme,
+    cohort, group, schedule, dates, sessions, otjh, coach) — this function does
+    no database work and no date formatting, so it stays testable on its own and
+    the curriculum layer keeps ownership of what a "schedule" reads like.
+
+    One mail covers every module in the batch. A wizard save that puts a tutor on
+    six modules at once should land as one message, not six.
+    """
+    modules = list(modules or [])
+    greeting = f"Hello {tutor_name}," if tutor_name else "Hello,"
+    count = len(modules)
+
+    if count == 1:
+        subject = f"You have been assigned to {modules[0].get('name') or 'a module'}"
+        lead = "You have been assigned as the tutor for the following module."
+    else:
+        subject = f"You have been assigned to {count} modules"
+        lead = f"You have been assigned as the tutor for the following {count} modules."
+    subject = f"{subject} — {_BRAND}"
+
+    cards = "".join(_module_card(module) for module in modules)
+    html = f"""\
+<!doctype html>
+<html>
+  <body style="margin:0;padding:24px;background:#f4f5f7;font-family:Segoe UI,Arial,sans-serif;color:#1f2933;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e4e7eb;">
+      <tr>
+        <td style="background:#0b3d6b;padding:20px 28px;color:#ffffff;font-size:18px;font-weight:600;">{_BRAND}</td>
+      </tr>
+      <tr>
+        <td style="padding:28px;">
+          <h1 style="margin:0 0 12px;font-size:20px;color:#0b3d6b;">New teaching assignment</h1>
+          <p style="margin:0 0 20px;font-size:15px;line-height:1.55;">{escape(greeting)}<br><br>{escape(lead)}</p>
+          {cards}
+          <p style="margin:24px 0 8px;">
+            <a href="{escape(workspace_url)}" style="display:inline-block;background:#0b3d6b;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:6px;font-size:15px;font-weight:600;">Open your tutor workspace</a>
+          </p>
+          <p style="margin:16px 0 0;font-size:13px;color:#616e7c;line-height:1.5;">
+            Session content, learners and KSB mappings for each module are in the workspace.
+            If any of these details look wrong, reply to your curriculum lead rather than to this address.
+          </p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:16px 28px;background:#f9fafb;font-size:12px;color:#9aa5b1;border-top:1px solid #e4e7eb;">
+          This is an automated message from the {_BRAND} learning platform. Please do not reply.
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>"""
+
+    text = "\n".join([
+        greeting,
+        "",
+        lead,
+        "",
+        "\n\n".join(_module_text(module) for module in modules),
+        "",
+        f"Open your tutor workspace:\n{workspace_url}",
+        "",
+        "This is an automated message. Please do not reply.",
+    ])
     return subject, html, text

@@ -1,11 +1,12 @@
 import json
+import os
 import threading
 from unittest.mock import patch
 
 from django.db import connection
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase
 
-from . import views
+from . import tutor_notifications, views
 from .ksb_coverage import build_coverage
 
 
@@ -533,7 +534,13 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertIn('Organizer email is required', response.json()['error'])
 
 
-class CurriculumPersistenceTests(TestCase):
+class CurriculumPersistenceHarness(TestCase):
+    """Schema setup and payload builders shared by the persistence test suites.
+
+    Split out from ``CurriculumPersistenceTests`` so sibling suites can reuse the
+    fixture without inheriting — and therefore re-running — every test in it.
+    """
+
     def setUp(self):
         views.reset_schema_ready_flags()
         views.invalidate_curriculum_cache()
@@ -750,6 +757,8 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         return {item['requestId']: item for item in response.json()['results']}
 
+
+class CurriculumPersistenceTests(CurriculumPersistenceHarness):
     def test_tree_save_persists_components_without_a_module_builder_save(self):
         """A wizard-created module's components must land in the normalized tables
         immediately, so resolve-structures reports them with no manual Save."""
@@ -1227,6 +1236,73 @@ class CurriculumPersistenceTests(TestCase):
         self.assertIn('COHORT-DATA-1', response.json()['removedCohortIds'])
         self.assertIn('GROUP-DATA-1', response.json()['removedGroupIds'])
         self.assertRemovedFromCurriculum('COHORT-DATA-1', 'GROUP-DATA-1')
+
+    def test_tree_save_persists_an_authored_apprenticeship_end_date(self):
+        payload = self.tree_payload()
+        payload['cohorts'][0]['epaMonths'] = 5
+        payload['cohorts'][0]['apprenticeshipEndOverride'] = '2028-02-29'
+
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        row = self.row(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', 'COHORT-DATA-1')
+        self.assertEqual(views.format_date(row['apprenticeship_end_override']), '2028-02-29')
+        # The cache SQL consumers read follows the authored date, not the EPA sum
+        # (2027-08-31 + 5 months would be 2028-01-31).
+        self.assertEqual(views.format_date(row['apprenticeship_end_date']), '2028-02-29')
+        self.assertEqual(views.parse_epa_months(row['epa_months']), 5)
+
+        cohort = response.json()['cohorts'][0]
+        self.assertEqual(cohort['apprenticeshipEndDate'], '2028-02-29')
+        self.assertEqual(cohort['apprenticeshipEndOverride'], '2028-02-29')
+
+    def test_an_omitted_apprenticeship_end_date_keeps_the_authored_one(self):
+        payload = self.tree_payload()
+        payload['cohorts'][0]['epaMonths'] = 5
+        payload['cohorts'][0]['apprenticeshipEndOverride'] = '2028-02-29'
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+
+        # A partial save that never mentions the date must not drop it.
+        later = self.tree_payload()
+        later['cohorts'][0]['epaMonths'] = 5
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', later)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        row = self.row(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', 'COHORT-DATA-1')
+        self.assertEqual(views.format_date(row['apprenticeship_end_override']), '2028-02-29')
+        self.assertEqual(views.format_date(row['apprenticeship_end_date']), '2028-02-29')
+
+    def test_clearing_the_authored_date_restores_the_epa_calculation(self):
+        payload = self.tree_payload()
+        payload['cohorts'][0]['epaMonths'] = 5
+        payload['cohorts'][0]['apprenticeshipEndOverride'] = '2028-02-29'
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+
+        cleared = self.tree_payload()
+        cleared['cohorts'][0]['epaMonths'] = 5
+        cleared['cohorts'][0]['apprenticeshipEndOverride'] = None
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', cleared)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        row = self.row(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', 'COHORT-DATA-1')
+        self.assertIsNone(row['apprenticeship_end_override'])
+        self.assertEqual(views.format_date(row['apprenticeship_end_date']), '2028-01-31')
+        self.assertEqual(response.json()['cohorts'][0]['apprenticeshipEndDate'], '2028-01-31')
+
+    def test_patching_only_the_apprenticeship_end_date_keeps_the_epa_period(self):
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        self.patch_json('/curriculum_api/curriculum/cohorts/COHORT-DATA-1/', {'epaMonths': 5})
+
+        response = self.patch_json(
+            '/curriculum_api/curriculum/cohorts/COHORT-DATA-1/',
+            {'apprenticeshipEndDate': '2028-02-29'},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        row = self.row(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', 'COHORT-DATA-1')
+        self.assertEqual(views.parse_epa_months(row['epa_months']), 5)
+        self.assertEqual(views.format_date(row['apprenticeship_end_override']), '2028-02-29')
+        self.assertEqual(views.format_date(row['apprenticeship_end_date']), '2028-02-29')
 
     def test_programme_card_counts_cohorts_without_delivery_modules(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
@@ -1738,6 +1814,334 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
         results, metadata = views.paginate_curriculum_results(request, list(range(300)))
         self.assertEqual(len(results), 250)
         self.assertEqual(metadata['pageSize'], 250)
+
+    def test_a_read_scope_reads_each_table_once(self):
+        """build_programmes() asks the same whole-table questions once per programme.
+
+        programme_component_ksb_mapping_count() and programme_learner_ksb_progress()
+        each re-read authoring modules, programmes, cohorts, groups and ksb_profiles
+        in full, so a ten-programme payload issued ~300 round trips for ~30 rows. The
+        scope collapses those repeats; without it a remote database made every write
+        response wait tens of seconds.
+        """
+        reads = []
+
+        @views.scoped_curriculum_read
+        def fetch(table, where_sql='', params=None):
+            reads.append((table, where_sql, tuple(params or ())))
+            return []
+
+        with views.curriculum_read_scope():
+            fetch('modules')
+            fetch('modules')
+            fetch('weeks', 'module_catalogue_id = %s', ['MOD-A'])
+            fetch('weeks', 'module_catalogue_id = %s', ['MOD-A'])
+            fetch('weeks', 'module_catalogue_id = %s', ['MOD-B'])
+
+        self.assertEqual(reads, [
+            ('modules', '', ()),
+            ('weeks', 'module_catalogue_id = %s', ('MOD-A',)),
+            ('weeks', 'module_catalogue_id = %s', ('MOD-B',)),
+        ])
+
+    def test_outside_a_read_scope_every_call_still_hits_the_database(self):
+        """The memo must not outlive a build: a write path reads back what it wrote."""
+        reads = []
+
+        @views.scoped_curriculum_read
+        def fetch(table):
+            reads.append(table)
+            return []
+
+        fetch('modules')
+        fetch('modules')
+        self.assertEqual(reads, ['modules', 'modules'])
+
+    def test_a_read_scope_does_not_survive_its_own_block(self):
+        reads = []
+
+        @views.scoped_curriculum_read
+        def fetch(table):
+            reads.append(table)
+            return []
+
+        with views.curriculum_read_scope():
+            fetch('modules')
+        with views.curriculum_read_scope():
+            fetch('modules')
+        self.assertEqual(reads, ['modules', 'modules'])
+
+    def test_a_nested_scope_reuses_the_outer_one(self):
+        """build_curriculum_payload() opens a scope and calls a function that opens
+        another; the inner block must not tear the outer memo down on exit."""
+        reads = []
+
+        @views.scoped_curriculum_read
+        def fetch(table):
+            reads.append(table)
+            return []
+
+        with views.curriculum_read_scope():
+            with views.curriculum_read_scope():
+                fetch('modules')
+            fetch('modules')
+        self.assertEqual(reads, ['modules'])
+
+    def test_an_unkeyable_argument_reads_rather_than_raising(self):
+        """A caller must never be broken by an argument the memo cannot key on."""
+        class Unhashable:
+            __hash__ = None
+
+        reads = []
+
+        @views.scoped_curriculum_read
+        def fetch(spec):
+            reads.append(spec)
+            return []
+
+        with views.curriculum_read_scope():
+            fetch(Unhashable())
+            fetch(Unhashable())
+        self.assertEqual(len(reads), 2)
+
+    def test_programme_detail_payload_builds_inside_a_read_scope(self):
+        """The wizard's detail endpoint pays the same per-programme read tax.
+
+        build_curriculum_programme_tree_detail_payload() calls build_programmes(),
+        so without a scope it re-read authoring modules, programmes, cohorts, groups
+        and ksb_profiles once per programme: ~250 round trips to a remote database
+        (18-30s) instead of ~40 (~3s). The wizard opens on that response, so a cold
+        cache left the cohort step spinning for half a minute.
+        """
+        scopes = []
+
+        def probe(identifier, visibility):
+            scopes.append(getattr(views._CURRICULUM_READ_SCOPE, 'memo', None) is not None)
+            return None
+
+        with patch.object(views, '_build_curriculum_programme_tree_detail_payload', probe):
+            views.build_curriculum_programme_tree_detail_payload('PROG-1', 'all')
+
+        self.assertEqual(scopes, [True])
+
+    def test_equal_list_arguments_share_one_read(self):
+        """Query params arrive as lists, which are not hashable on their own."""
+        reads = []
+
+        @views.scoped_curriculum_read
+        def fetch(table, params):
+            reads.append((table, tuple(params)))
+            return []
+
+        with views.curriculum_read_scope():
+            fetch('weeks', ['MOD-A', 'MOD-B'])
+            fetch('weeks', ['MOD-A', 'MOD-B'])
+            fetch('weeks', ['MOD-B', 'MOD-A'])
+        self.assertEqual(reads, [
+            ('weeks', ('MOD-A', 'MOD-B')),
+            ('weeks', ('MOD-B', 'MOD-A')),
+        ])
+
+
+class ProgrammePermanentDeleteTests(SimpleTestCase):
+    """A permanent programme delete has to satisfy the guards, not remove them.
+
+    Migration 0038 gave cohorts, groups, modules and week_templates ON DELETE
+    RESTRICT foreign keys into curriculum.programmes, which is why a hand-written
+    ``delete from curriculum."programmes"`` is rejected with
+    cohorts_programme_id_fkey. The application answer is ordering: delete the
+    children first, inside one transaction, and leave the constraints in place.
+    """
+
+    def test_an_empty_id_list_never_widens_to_the_whole_table(self):
+        """The property everything else rests on: no ids means no statement.
+
+        A clause builder that fell back to a default predicate for an empty list
+        would turn 'delete this programme's components' into 'delete every
+        component'.
+        """
+        self.assertEqual(views.curriculum_in_clause('cohort_id', []), ('', []))
+        self.assertEqual(views.curriculum_in_clause('cohort_id', ['', '  ']), ('', []))
+        self.assertEqual(views.curriculum_where_any([('', []), ('', [])]), ('', []))
+
+    def test_clauses_are_ored_with_their_params_in_order(self):
+        first = views.curriculum_in_clause('programme_id', ['PROG-1'])
+        second = views.curriculum_in_clause('group_id', ['GROUP-1', 'GROUP-2'])
+        where_sql, params = views.curriculum_where_any([first, ('', []), second])
+        self.assertEqual(where_sql, '"programme_id" in (%s) or "group_id" in (%s, %s)')
+        self.assertEqual(params, ['PROG-1', 'GROUP-1', 'GROUP-2'])
+
+    def test_identifier_candidates_collapse_to_the_distinct_ids(self):
+        candidates = views.programme_identifier_candidates(
+            'PROG-1',
+            {'id': 'PROG-1', 'sourceId': 'PROG-1-legacy'},
+            {'programme_id': 'PROG-1'},
+        )
+        self.assertEqual(candidates, ['PROG-1', 'PROG-1-legacy'])
+
+    def test_children_are_deleted_before_their_parents(self):
+        """Ordering is the whole point, so it is pinned table by table."""
+        deletes = []
+
+        def record(table, where_sql, params):
+            deletes.append(table)
+            self.assertTrue(where_sql, f'{table} was deleted without a where clause')
+            self.assertTrue(params, f'{table} was deleted without parameters')
+            return [{'id': 'row'}]
+
+        plan = {
+            'candidates': ['PROG-1'],
+            'childIds': {
+                'cohortIds': ['COHORT-1'],
+                'groupIds': ['GROUP-1'],
+                'moduleIds': ['MOD-1'],
+                'weekIds': ['WEEK-1'],
+                'componentIds': ['COMP-1'],
+                'weekTemplateIds': ['TPL-1'],
+            },
+        }
+        with patch.object(views, 'table_exists', lambda table: True),              patch.object(views, 'delete_rows', record),              patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+            removed = views.permanently_delete_programme_structure(plan)
+
+        for child, parent in (
+            ('ksb_mappings', 'components'),
+            ('components', 'weeks'),
+            ('weeks', 'modules'),
+            ('quiz_course_links', 'modules'),
+            ('module_details', 'modules'),
+            ('live_sessions', 'modules'),
+            ('week_template_components', 'week_templates'),
+            ('modules', 'groups'),
+            ('groups', 'cohorts'),
+            ('cohorts', 'programmes'),
+        ):
+            self.assertLess(
+                deletes.index(child), deletes.index(parent),
+                f'{child} must be deleted before {parent}',
+            )
+        self.assertEqual(deletes[-1], 'programmes')
+        self.assertEqual(removed['programmes'], 1)
+
+    def test_nothing_is_deleted_without_a_programme_id(self):
+        deletes = []
+        with patch.object(views, 'table_exists', lambda table: True),              patch.object(views, 'delete_rows', lambda *args: deletes.append(args)):
+            removed = views.permanently_delete_programme_structure({'candidates': [], 'childIds': {}})
+        self.assertEqual(deletes, [])
+        self.assertEqual(removed, {})
+
+    def test_a_live_programme_is_refused_before_any_query_runs(self):
+        """is_archived is the switch that turns an irreversible delete on."""
+        response = views.permanent_programme_delete_response(
+            'PROG-1', {'status': 'active'}, {'programme_id': 'PROG-1', 'is_archived': False},
+        )
+        self.assertEqual(response.status_code, 409)
+        payload = json.loads(response.content)
+        self.assertEqual(payload['reason'], 'programme-not-archived')
+        self.assertFalse(payload['deleted'])
+
+    def test_permanent_delete_is_opt_in_per_request(self):
+        factory = RequestFactory()
+        self.assertFalse(views.request_wants_permanent_programme_delete(
+            factory.delete('/curriculum/programmes/PROG-1/')))
+        self.assertFalse(views.request_wants_permanent_programme_delete(
+            factory.delete('/curriculum/programmes/PROG-1/?permanent=false')))
+        for query in ('permanent=true', 'hard=1', 'mode=permanent'):
+            self.assertTrue(views.request_wants_permanent_programme_delete(
+                factory.delete(f'/curriculum/programmes/PROG-1/?{query}')), query)
+
+    def test_learner_delivery_rows_are_reported_not_deleted(self):
+        """Learner training plans reference this content with ON DELETE RESTRICT.
+
+        A learner's plan is their delivery record, so a programme delete reports
+        it as a blocker instead of removing it.
+        """
+        self.assertEqual(
+            [key for _table, _column, key in views.PROGRAMME_PERMANENT_DELETE_LEARNER_LINKS],
+            ['moduleIds', 'weekIds', 'componentIds'],
+        )
+        with patch.object(views.connection, 'vendor', 'sqlite'):
+            self.assertEqual(views.programme_permanent_delete_blockers({'moduleIds': ['MOD-1']}), {})
+
+
+class KsbFrameworkLibraryVisibilityTests(SimpleTestCase):
+    """The framework library is a catalogue of standards, not a view of programmes.
+
+    Frameworks used to be filtered down to those a currently-visible programme
+    pointed at, which hid every profile that no live programme had picked up yet
+    -- including one the user had only just created. Deactivating a profile stays
+    the way to take it out of the catalogue.
+    """
+
+    @staticmethod
+    def _profile(profile_id, name, programme_ids, is_active=True):
+        return {
+            'id': profile_id,
+            'name': name,
+            'programme_ids': json.dumps(programme_ids),
+            'knowledge_codes': json.dumps(['K1', 'K2']),
+            'skill_codes': json.dumps(['S1']),
+            'behaviour_codes': json.dumps([]),
+            'ksb_items': json.dumps([]),
+            'is_active': is_active,
+            'created_by': 'Tester',
+        }
+
+    def _payload(self, profiles, programmes):
+        rows = {
+            'training': [],
+            'modules': [],
+            'authoring_modules': [],
+            'ksb_profiles': profiles,
+            'program_configs': [],
+            'holidays': [],
+            'tutors': [],
+            'coaches': [],
+            'tutor_modules': [],
+        }
+        with patch.object(views, 'build_programmes', return_value=programmes),              patch.object(views, 'build_modules', return_value=[]),              patch.object(views, 'build_cohorts_and_groups', return_value=([], [])):
+            return views.build_curriculum_payload_from_rows(rows, compact=True)
+
+    def test_a_framework_no_live_programme_points_at_is_still_listed(self):
+        payload = self._payload(
+            [
+                self._profile('KSBP-1', 'Associate Project Manager', ['PROG-LIVE']),
+                self._profile('KSBP-2', 'Marketing Manager', ['PROG-RETIRED']),
+                self._profile('KSBP-3', 'Brand new profile', []),
+            ],
+            [{'name': 'Live programme', 'standard': 'Associate Project Manager', 'sourceId': 'PROG-LIVE'}],
+        )
+        self.assertEqual(
+            sorted(item['name'] for item in payload['ksbFrameworks']),
+            ['Associate Project Manager', 'Brand new profile', 'Marketing Manager'],
+        )
+        self.assertEqual(payload['stats']['ksbFrameworks'], 3)
+        self.assertEqual(len(payload['ksbSets']), 3)
+
+    def test_deactivating_a_profile_is_what_removes_it(self):
+        payload = self._payload(
+            [
+                self._profile('KSBP-1', 'Associate Project Manager', ['PROG-LIVE']),
+                self._profile('KSBP-2', 'Retired standard', ['PROG-LIVE'], is_active=False),
+            ],
+            [{'name': 'Live programme', 'standard': 'Associate Project Manager', 'sourceId': 'PROG-LIVE'}],
+        )
+        self.assertEqual([item['name'] for item in payload['ksbFrameworks']], ['Associate Project Manager'])
+
+    def test_the_all_visibility_still_carries_inactive_profiles(self):
+        rows = {
+            'training': [],
+            'modules': [],
+            'authoring_modules': [],
+            'ksb_profiles': [self._profile('KSBP-2', 'Retired standard', [], is_active=False)],
+            'program_configs': [],
+            'holidays': [],
+            'tutors': [],
+            'coaches': [],
+            'tutor_modules': [],
+        }
+        with patch.object(views, 'build_programmes', return_value=[]),              patch.object(views, 'build_modules', return_value=[]),              patch.object(views, 'build_cohorts_and_groups', return_value=([], [])):
+            payload = views.build_curriculum_payload_from_rows(rows, visibility='all', compact=True)
+        self.assertEqual([item['name'] for item in payload['ksbFrameworks']], ['Retired standard'])
 
 
 class StructurePayloadsCacheKeyTests(SimpleTestCase):
@@ -2271,3 +2675,459 @@ class ProgrammeIntegrityRegressionTests(TestCase):
     def test_saving_a_module_without_a_programme_creates_no_junk_programme(self):
         self.assertIsNone(views.ensure_programme_config_for_authoring('Unassigned programme', 'programme-local'))
         self.assertEqual(self._programme_rows(), [])
+
+
+class CohortEpaPeriodTests(SimpleTestCase):
+    """The apprenticeship end date is the practical one plus the EPA period.
+
+    The two end dates use different month arithmetic on purpose. A cohort's
+    practical end date is the last day *before* the duration elapses (a 24 month
+    cohort starting 2026-09-01 ends 2028-08-31), whereas the EPA window is
+    counted forward from a date that has already passed, so it keeps the same day
+    of the month.
+    """
+
+    def test_epa_period_is_added_to_the_practical_end_date(self):
+        # The worked example from the delivery team: a practical period ending
+        # 2027-03-04 with a 5 month EPA period ends 2027-08-04.
+        self.assertEqual(
+            views.format_date(views.calculate_apprenticeship_end_date('2027-03-04', 5)),
+            '2027-08-04',
+        )
+
+    def test_epa_period_rolls_over_the_year(self):
+        self.assertEqual(
+            views.format_date(views.calculate_apprenticeship_end_date('2027-11-30', 3)),
+            '2028-02-29',
+        )
+
+    def test_epa_period_clamps_to_a_shorter_target_month(self):
+        # 31 January + 1 month has no 31st to land on.
+        self.assertEqual(
+            views.format_date(views.calculate_apprenticeship_end_date('2027-01-31', 1)),
+            '2027-02-28',
+        )
+
+    def test_no_epa_period_means_no_apprenticeship_end_date(self):
+        # Distinct from "ends the same day": nothing is offered until a period is
+        # recorded, so the wizard can prompt for one.
+        self.assertIsNone(views.calculate_apprenticeship_end_date('2027-03-04', None))
+        self.assertIsNone(views.calculate_apprenticeship_end_date('2027-03-04', 0))
+        self.assertIsNone(views.calculate_apprenticeship_end_date('', 5))
+
+    def test_epa_months_parses_only_whole_non_negative_months(self):
+        self.assertEqual(views.parse_epa_months('5'), 5)
+        self.assertEqual(views.parse_epa_months(0), 0)
+        self.assertIsNone(views.parse_epa_months(''))
+        self.assertIsNone(views.parse_epa_months(None))
+        self.assertIsNone(views.parse_epa_months('-3'))
+        self.assertIsNone(views.parse_epa_months('not a number'))
+
+    def test_an_absent_epa_period_keeps_the_stored_one(self):
+        # A partial save that never mentions the EPA period must not drop it.
+        self.assertEqual(views.payload_epa_months({'name': 'Sep-2026'}, {'epa_months': 5}), 5)
+        # An explicit blank clears it.
+        self.assertIsNone(views.payload_epa_months({'epaMonths': ''}, {'epa_months': 5}))
+        self.assertEqual(views.payload_epa_months({'epaMonths': 3}, {'epa_months': 5}), 3)
+
+    def test_serialized_cohort_exposes_both_end_dates(self):
+        detail = views.serialize_cohort_authoring_detail({
+            'cohort_id': 'COHORT-EPA-0001',
+            'cohort_name': 'Nov-2025',
+            'start_date': '2025-11-05',
+            'end_date': '2027-03-04',
+            'epa_months': 5,
+        })
+        self.assertEqual(detail['startDate'], '2025-11-05')
+        self.assertEqual(detail['endDate'], '2027-03-04')
+        self.assertEqual(detail['practicalEndDate'], '2027-03-04')
+        self.assertEqual(detail['epaMonths'], 5)
+        self.assertEqual(detail['apprenticeshipEndDate'], '2027-08-04')
+
+    def test_a_moved_practical_end_date_moves_the_apprenticeship_one(self):
+        # The stored apprenticeship_end_date is a cache, so a row whose practical
+        # end date moved without the cache being rewritten must still read true.
+        detail = views.serialize_cohort_authoring_detail({
+            'cohort_id': 'COHORT-EPA-0002',
+            'end_date': '2027-04-04',
+            'epa_months': 5,
+            'apprenticeship_end_date': '2027-08-04',
+        })
+        self.assertEqual(detail['apprenticeshipEndDate'], '2027-09-04')
+
+    def test_cohort_without_an_epa_period_reports_no_apprenticeship_end_date(self):
+        detail = views.serialize_cohort_authoring_detail({
+            'cohort_id': 'COHORT-EPA-0003',
+            'end_date': '2027-03-04',
+        })
+        self.assertEqual(detail['endDate'], '2027-03-04')
+        self.assertIsNone(detail['epaMonths'])
+        self.assertEqual(detail['apprenticeshipEndDate'], '')
+
+
+class ApprenticeshipEndDateOverrideTests(SimpleTestCase):
+    """The apprenticeship end date is editable, and the edit wins.
+
+    The calculated date is only a default. A cohort that has to move it — a break
+    in learning, a resit window, an EPAO with no capacity — usually lands on a
+    date no whole number of EPA months reaches, so the authored date has to
+    override the arithmetic rather than be reverse-engineered into months.
+    """
+
+    def test_an_authored_date_wins_over_the_epa_calculation(self):
+        self.assertEqual(
+            views.format_date(views.cohort_apprenticeship_end_date('2027-03-04', 5, '2027-09-30')),
+            '2027-09-30',
+        )
+
+    def test_no_override_falls_back_to_the_epa_calculation(self):
+        self.assertEqual(
+            views.format_date(views.cohort_apprenticeship_end_date('2027-03-04', 5, None)),
+            '2027-08-04',
+        )
+        self.assertEqual(
+            views.format_date(views.cohort_apprenticeship_end_date('2027-03-04', 5, '')),
+            '2027-08-04',
+        )
+
+    def test_an_override_stands_in_with_no_epa_period_at_all(self):
+        # A cohort can now carry an apprenticeship end date without anyone having
+        # to invent an EPA period to produce it.
+        self.assertEqual(
+            views.format_date(views.cohort_apprenticeship_end_date('2027-03-04', None, '2027-09-30')),
+            '2027-09-30',
+        )
+
+    def test_an_unreadable_override_falls_back_rather_than_raising(self):
+        self.assertEqual(
+            views.format_date(views.cohort_apprenticeship_end_date('2027-03-04', 5, 'not a date')),
+            '2027-08-04',
+        )
+
+    def test_an_absent_override_keeps_the_stored_one(self):
+        # A partial save that never mentions the date must not drop it.
+        self.assertEqual(
+            views.format_date(views.payload_apprenticeship_end_override(
+                {'name': 'Sep-2026'},
+                {'apprenticeship_end_override': '2027-09-30'},
+            )),
+            '2027-09-30',
+        )
+        # An explicit blank clears it and hands the date back to the EPA rule.
+        self.assertIsNone(views.payload_apprenticeship_end_override(
+            {'apprenticeshipEndDate': ''},
+            {'apprenticeship_end_override': '2027-09-30'},
+        ))
+        self.assertEqual(
+            views.format_date(views.payload_apprenticeship_end_override(
+                {'apprenticeshipEndDate': '2028-01-15'},
+                {'apprenticeship_end_override': '2027-09-30'},
+            )),
+            '2028-01-15',
+        )
+
+    def test_a_round_tripped_cohort_cannot_promote_a_calculated_date(self):
+        # A serialized cohort carries the effective apprenticeshipEndDate next to
+        # the authored apprenticeshipEndOverride. Reading the effective one as an
+        # override would freeze a calculated date into an authored one, so the
+        # explicit key wins.
+        self.assertIsNone(views.payload_apprenticeship_end_override({
+            'apprenticeshipEndDate': '2027-08-04',
+            'apprenticeshipEndOverride': '',
+        }))
+
+    def test_serialized_cohort_reports_the_override_and_flags_it(self):
+        detail = views.serialize_cohort_authoring_detail({
+            'cohort_id': 'COHORT-EPA-0004',
+            'end_date': '2027-03-04',
+            'epa_months': 5,
+            'apprenticeship_end_override': '2027-09-30',
+        })
+        self.assertEqual(detail['practicalEndDate'], '2027-03-04')
+        self.assertEqual(detail['epaMonths'], 5)
+        self.assertEqual(detail['apprenticeshipEndDate'], '2027-09-30')
+        self.assertEqual(detail['apprenticeshipEndOverride'], '2027-09-30')
+
+    def test_a_calculated_cohort_reports_no_override(self):
+        detail = views.serialize_cohort_authoring_detail({
+            'cohort_id': 'COHORT-EPA-0005',
+            'end_date': '2027-03-04',
+            'epa_months': 5,
+        })
+        self.assertEqual(detail['apprenticeshipEndDate'], '2027-08-04')
+        self.assertEqual(detail['apprenticeshipEndOverride'], '')
+
+    def test_an_override_does_not_move_with_the_practical_end_date(self):
+        # The opposite of the calculated case: an authored date is the date the
+        # delivery team was given, so a shifted practical period leaves it alone.
+        detail = views.serialize_cohort_authoring_detail({
+            'cohort_id': 'COHORT-EPA-0006',
+            'end_date': '2027-04-04',
+            'epa_months': 5,
+            'apprenticeship_end_override': '2027-09-30',
+        })
+        self.assertEqual(detail['apprenticeshipEndDate'], '2027-09-30')
+
+    def test_cohort_view_payload_carries_both_dates(self):
+        cohort = views.curriculum_cohort_from_authoring_detail({
+            'cohortId': 'COHORT-EPA-0007',
+            'endDate': '2027-03-04',
+            'epaMonths': 5,
+            'apprenticeshipEndOverride': '2027-09-30',
+        })
+        self.assertEqual(cohort['practicalEndDate'], '2027-03-04')
+        self.assertEqual(cohort['apprenticeshipEndDate'], '2027-09-30')
+        self.assertEqual(cohort['apprenticeshipEndOverride'], '2027-09-30')
+
+
+class TutorAssignmentNotificationTests(TestCase):
+    """Mailing a tutor the delivery facts when a module lands on them."""
+
+    def setUp(self):
+        views.reset_schema_ready_flags()
+        views.invalidate_curriculum_cache()
+        views.ensure_module_authoring_tables()
+        views.ensure_staff_profile_tables()
+        with connection.cursor() as cursor:
+            for table in (
+                views.AUTHORING_MODULES_TABLE,
+                views.GROUPS_TABLE,
+                views.COHORT_AUTHORING_DETAILS_TABLE,
+                views.STAFF_PROFILE_TABLES['tutor'],
+            ):
+                cursor.execute(f'delete from {views.authoring_table_name(table)}')
+        # Provisioned against empty tables, so the seed records nothing and every
+        # assignment these tests make afterwards counts as new.
+        tutor_notifications.ensure_notification_table()
+
+    # -- fixtures ----------------------------------------------------------
+
+    def seed_tutor(self, name='Amira Hassan', email='amira@example.com', module_ids=None):
+        return views.insert_row(views.STAFF_PROFILE_TABLES['tutor'], {
+            'id': 'TUTOR-1',
+            'name': name,
+            'email': email,
+            'assigned_module_ids': views.json_db_value(module_ids or []),
+            'is_archived': False,
+        })
+
+    def seed_delivery(self, module_id='MOD-ALPHA', title='Data Handling', tutor_name=''):
+        views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
+            'cohort_id': 'COH-1',
+            'cohort_name': 'September 2026',
+            'programme_id': 'PROG-1',
+            'programme_name': 'Data Analyst L4',
+            'start_date': '2026-09-01',
+            'end_date': '2027-06-30',
+        })
+        views.authoring_upsert(views.GROUPS_TABLE, ['group_id'], {
+            'group_id': 'GRP-1',
+            'group_name': 'Group A',
+            'cohort_id': 'COH-1',
+            'cohort_name': 'September 2026',
+            'programme_id': 'PROG-1',
+            'programme_name': 'Data Analyst L4',
+            'coach_name': 'Sam Coach',
+            'session_week_day': 'Tuesday',
+            'session_start_time': '09:00',
+            'session_end_time': '12:00',
+        })
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': module_id,
+            'title': title,
+            'programme_id': 'PROG-1',
+            'programme_name': 'Data Analyst L4',
+            'cohort_id': 'COH-1',
+            'cohort_name': 'September 2026',
+            'group_id': 'GRP-1',
+            'group_name': 'Group A',
+            'tutor_name': tutor_name,
+            'sessions_number': 8,
+            'start_date': '2026-09-08',
+            'end_date': '2026-11-03',
+            'total_otjh': 24,
+        })
+
+    def sent_mail(self):
+        return patch.object(
+            tutor_notifications.email_azure, 'send_mail', return_value=(True, None)
+        )
+
+    # -- tests -------------------------------------------------------------
+
+    def test_assignment_mail_carries_the_full_delivery_context(self):
+        """The mail has to answer "what, for whom, when" without opening the LMS."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+
+        send.assert_called_once()
+        kwargs = send.call_args.kwargs
+        self.assertEqual(kwargs['to'], 'amira@example.com')
+        self.assertIn('Data Handling', kwargs['subject'])
+
+        body = kwargs['text_body']
+        self.assertIn('Data Handling', body)
+        self.assertIn('MOD-ALPHA', body)
+        self.assertIn('Data Analyst L4', body)
+        self.assertIn('September 2026', body)
+        self.assertIn('Group A', body)
+        # Schedule falls back to the group when the module row carries none.
+        self.assertIn('Tuesday 09:00-12:00', body)
+        self.assertIn('2026-09-08 to 2026-11-03', body)
+        self.assertRegex(body, r'Sessions:\s+8')
+        self.assertRegex(body, r'OTJ hours:\s+24 hours')
+        self.assertIn('Sam Coach', body)
+        self.assertIn('Data Handling', kwargs['html_body'])
+
+    def test_the_same_assignment_is_not_mailed_twice(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail():
+            tutor_notifications.dispatch_assignment_notifications()
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+
+        send.assert_not_called()
+
+    def test_several_modules_saved_together_produce_one_mail(self):
+        """A wizard save that attaches three modules is one assignment, not three."""
+        self.seed_tutor()
+        self.seed_delivery(module_id='MOD-A', title='Module A', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-B', title='Module B', tutor_name='Amira Hassan')
+        self.seed_delivery(module_id='MOD-C', title='Module C', tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+
+        send.assert_called_once()
+        body = send.call_args.kwargs['text_body']
+        self.assertIn('Module A', body)
+        self.assertIn('Module B', body)
+        self.assertIn('Module C', body)
+        self.assertIn('3 modules', send.call_args.kwargs['subject'])
+
+    def test_a_tutor_with_no_email_is_skipped_and_stays_notifiable(self):
+        """No address is not a delivered notification — record nothing, retry later."""
+        self.seed_tutor(email='')
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+        views.update_rows(
+            views.STAFF_PROFILE_TABLES['tutor'], 'id = %s', ['TUTOR-1'],
+            {'email': 'amira@example.com'},
+        )
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_called_once()
+
+    def test_reassignment_after_removal_is_mailed_again(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail():
+            tutor_notifications.dispatch_assignment_notifications()
+
+        views.update_authoring_rows(
+            views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-ALPHA'],
+            {'tutor_name': ''},
+        )
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+        views.update_authoring_rows(
+            views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-ALPHA'],
+            {'tutor_name': 'Amira Hassan'},
+        )
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_called_once()
+
+    def test_a_failed_send_is_retried_then_given_up_on(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        failing = patch.object(
+            tutor_notifications.email_azure, 'send_mail', return_value=(False, 'graph 503')
+        )
+        for _ in range(tutor_notifications.MAX_SEND_ATTEMPTS):
+            with failing as send:
+                tutor_notifications.dispatch_assignment_notifications()
+                send.assert_called_once()
+
+        with failing as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()
+
+    def test_a_deleted_module_is_not_mailed_and_frees_its_ledger_row(self):
+        """A module removed from the programme is not a teaching assignment."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with self.sent_mail():
+            tutor_notifications.dispatch_assignment_notifications()
+
+        views.update_authoring_rows(
+            views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', ['MOD-ALPHA'],
+            {'is_programme_deleted': True},
+        )
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+    def test_assignments_predating_the_ledger_are_seeded_rather_than_mailed(self):
+        """First deployment must not mail every tutor their whole back catalogue."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with connection.cursor() as cursor:
+            cursor.execute(
+                'drop table if exists '
+                + views.table_name(tutor_notifications.NOTIFICATION_TABLE)
+            )
+        views.reset_schema_ready_flags()
+
+        with self.sent_mail() as send:
+            tutor_notifications.dispatch_assignment_notifications()
+
+        send.assert_not_called()
+        rows = tutor_notifications.ledger_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['status'], 'seeded')
+
+    def test_the_wizard_module_step_triggers_the_mail_on_commit(self):
+        """save_tree_group_modules reaches this through sync_module_tutor_profile_links."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            with self.captureOnCommitCallbacks(execute=True):
+                views.sync_module_tutor_profile_links('Amira Hassan', ['MOD-ALPHA'])
+        send.assert_called_once()
+        self.assertEqual(send.call_args.kwargs['to'], 'amira@example.com')
+
+    def test_nothing_is_sent_while_the_transaction_is_still_open(self):
+        """A save that rolls back must not have told anybody it happened."""
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with self.sent_mail() as send:
+            with self.captureOnCommitCallbacks(execute=False):
+                views.sync_module_tutor_profile_links('Amira Hassan', ['MOD-ALPHA'])
+            send.assert_not_called()
+
+    def test_the_feature_can_be_switched_off(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+
+        with patch.dict(os.environ, {'TUTOR_ASSIGNMENT_EMAILS': 'false'}):
+            with self.sent_mail() as send:
+                tutor_notifications.dispatch_assignment_notifications()
+        send.assert_not_called()

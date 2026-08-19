@@ -23,6 +23,13 @@ type CurriculumConfirmOptions = {
   successTitle?: string;
   successText?: string;
   onConfirm: () => void | Promise<void>;
+  /**
+   * Optional third choice, for the case where cancelling and confirming are not
+   * the only two sensible answers — "discard / keep my work / go back". Omit both
+   * fields and the dialog keeps its two buttons.
+   */
+  denyButtonText?: string;
+  onDeny?: () => void | Promise<void>;
 };
 
 const loadingPopupClass = 'kbc-standard-swal-loading';
@@ -84,6 +91,8 @@ export async function showCurriculumConfirm({
   successTitle,
   successText,
   onConfirm,
+  denyButtonText,
+  onDeny,
 }: CurriculumConfirmOptions) {
   const result = await Swal.fire({
     title,
@@ -92,6 +101,9 @@ export async function showCurriculumConfirm({
     width: 512,
     showCancelButton: true,
     showLoaderOnConfirm: true,
+    showDenyButton: Boolean(denyButtonText),
+    showLoaderOnDeny: true,
+    denyButtonText,
     reverseButtons: true,
     focusCancel: true,
     confirmButtonText,
@@ -105,6 +117,7 @@ export async function showCurriculumConfirm({
       htmlContainer: 'kbc-standard-swal-text',
       actions: 'kbc-standard-swal-actions',
       confirmButton: 'kbc-standard-swal-confirm',
+      denyButton: 'kbc-standard-swal-deny',
       cancelButton: 'kbc-standard-swal-cancel',
       loader: 'kbc-standard-swal-loader',
       validationMessage: 'kbc-standard-swal-validation',
@@ -112,6 +125,15 @@ export async function showCurriculumConfirm({
     preConfirm: async () => {
       try {
         await onConfirm();
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err instanceof Error ? err.message : 'Unable to complete this action.');
+        return false;
+      }
+    },
+    preDeny: async () => {
+      try {
+        await onDeny?.();
         return true;
       } catch (err) {
         Swal.showValidationMessage(err instanceof Error ? err.message : 'Unable to complete this action.');

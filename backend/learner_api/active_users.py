@@ -868,16 +868,27 @@ def recompute_completed_hours(learner_id):
         return None
 
 
-def cohort_dates(programme, cohort):
+def cohort_delivery_window(programme, cohort):
+    """The authored dates a learner inherits by being assigned to a cohort.
+
+    Returns ``(start_date, practical_end_date, apprenticeship_end_date)``. The
+    practical end date is the cohort's ``end_date`` — the name every learner
+    table already stores it under — and the apprenticeship end date is the
+    one authored on the cohort when there is one, otherwise the practical end
+    date plus its End Point Assessment period. The apprenticeship date is None
+    for a cohort with neither recorded, which is not the same as one that ends
+    the day its practical period does.
+    """
     programme, cohort = _s(programme), _s(cohort)
     if not programme or not cohort:
-        return None, None
+        return None, None, None
     try:
         with connections["enrolment"].cursor() as cursor:
             cursor.execute(
                 # Table was renamed cohort_authoring_details -> cohorts by
                 # curriculum_api migration 0004; same columns.
-                'SELECT start_date, end_date FROM curriculum."cohorts" '
+                'SELECT start_date, end_date, apprenticeship_end_date '
+                'FROM curriculum."cohorts" '
                 "WHERE lower(btrim(programme_name)) = lower(%s) "
                 "AND lower(btrim(cohort_name)) = lower(%s) "
                 "ORDER BY updated_at DESC NULLS LAST LIMIT 1",
@@ -886,8 +897,15 @@ def cohort_dates(programme, cohort):
             row = cursor.fetchone()
     except DatabaseError as exc:
         logger.warning("Could not find cohort dates for %s / %s: %s", programme, cohort, exc)
-        return None, None
-    return (row[0], row[1]) if row else (None, None)
+        return None, None, None
+    return (row[0], row[1], row[2]) if row else (None, None, None)
+
+
+def cohort_dates(programme, cohort):
+    """The cohort's practical delivery window, for callers that only store one
+    end date. See cohort_delivery_window for the apprenticeship end date."""
+    start_date, practical_end_date, _ = cohort_delivery_window(programme, cohort)
+    return start_date, practical_end_date
 
 
 def _plan_module_ids(training_plan):

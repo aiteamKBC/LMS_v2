@@ -819,10 +819,91 @@ export interface TeamsMeetingConfiguration {
   configured: boolean;
   defaultOrganizer: string;
   timeZone: string;
+  timeZoneIana: string;
+}
+
+// The calendar's own timezone. A session time typed into the wizard means this zone --
+// the college's -- and not the zone of whoever happens to be filling the form in, so
+// "09:00 Saturday" is the same instant whether the programme is set up from London or
+// from Cairo. Viewers are unaffected either way: the event carries one absolute
+// instant, and every calendar renders it in its own reader's local time.
+let calendarTimeZone = 'Europe/London';
+
+export function getCalendarTimeZone() {
+  return calendarTimeZone;
+}
+
+function zoneOffsetMs(instant: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(instant).reduce<Record<string, number>>((acc, part) => {
+    if (part.type !== 'literal') acc[part.type] = Number(part.value);
+    return acc;
+  }, {});
+  const wallClock = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour % 24, parts.minute, parts.second);
+  return wallClock - instant.getTime();
+}
+
+/** Read a naive `YYYY-MM-DDTHH:mm` wall clock as a time in `timeZone`, as UTC ISO. */
+export function zonedNaiveToUtcIso(naiveLocal: string, timeZone = calendarTimeZone) {
+  const [datePart, timePart = '00:00'] = (naiveLocal || '').split('T');
+  const [year, month, day] = (datePart || '').split('-').map(Number);
+  const [hour, minute] = timePart.split(':').map(Number);
+  if ([year, month, day, hour, minute].some(value => !Number.isFinite(value))) {
+    return new Date(naiveLocal).toISOString();
+  }
+  const wallClock = Date.UTC(year, month - 1, day, hour, minute);
+  // Guess the instant as if the wall clock were UTC, then subtract the offset the zone
+  // actually had there. A second pass settles the hour a DST jump adds or removes.
+  let instant = wallClock;
+  for (let pass = 0; pass < 2; pass += 1) {
+    const corrected = wallClock - zoneOffsetMs(new Date(instant), timeZone);
+    if (corrected === instant) break;
+    instant = corrected;
+  }
+  return new Date(instant).toISOString();
+}
+
+function clockIn(instant: Date, timeZone: string) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone, hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(instant);
+}
+
+function shortZoneName(timeZone: string) {
+  return timeZone.split('/').pop()?.replace(/_/g, ' ') || timeZone;
+}
+
+/**
+ * How a wizard session time reads in the calendar's zone and in the viewer's own.
+ * `viewer` is omitted when both zones show the same clock, so the hint stays quiet
+ * for the people it would tell nothing new.
+ */
+export function describeSessionTime(naiveLocal: string) {
+  const iso = zonedNaiveToUtcIso(naiveLocal);
+  const instant = new Date(iso);
+  if (Number.isNaN(instant.getTime())) return null;
+  const viewerZone = Intl.DateTimeFormat().resolvedOptions().timeZone || calendarTimeZone;
+  const calendarClock = clockIn(instant, calendarTimeZone);
+  const viewerClock = clockIn(instant, viewerZone);
+  return {
+    iso,
+    calendarClock,
+    calendarZone: shortZoneName(calendarTimeZone),
+    viewerClock: viewerClock === calendarClock ? '' : viewerClock,
+    viewerZone: shortZoneName(viewerZone),
+  };
 }
 
 export function loadTeamsMeetingConfiguration() {
-  return apiJson<TeamsMeetingConfiguration>('/curriculum/teams-meetings/', { timeoutMs: 15000 });
+  return apiJson<TeamsMeetingConfiguration>('/curriculum/teams-meetings/', { timeoutMs: 15000 })
+    .then(configuration => {
+      if (configuration.timeZoneIana) calendarTimeZone = configuration.timeZoneIana;
+      return configuration;
+    });
 }
 
 export function restoreModuleTeamsMeeting(moduleCatalogueId: string) {

@@ -102,20 +102,43 @@ const DEPENDENCY_LABELS: Record<string, string> = {
   cohorts: 'cohorts',
   groups: 'groups',
   modules: 'modules',
+  weeks: 'weeks',
+  components: 'components',
+  ksb_mappings: 'KSB mappings',
+  live_sessions: 'live sessions',
+  module_details: 'module details',
+  module_completion_criteria: 'completion criteria',
   week_templates: 'week templates',
   quizzes: 'quizzes',
   free_programme_components: 'free-course components',
   learners: 'learners',
 };
 
-function isProgrammeDependencyError(error: unknown): error is CurriculumApiError & { data: CurriculumProgrammeDependencyError } {
+function isProgrammeDeleteRefusal(error: unknown): error is CurriculumApiError & { data: CurriculumProgrammeDependencyError } {
   return (
     error instanceof CurriculumApiError
     && error.status === 409
     && Boolean(error.data)
     && typeof error.data === 'object'
-    && (error.data as CurriculumProgrammeDependencyError).reason === 'programme-has-dependencies'
+    && typeof (error.data as CurriculumProgrammeDependencyError).reason === 'string'
   );
+}
+
+function isProgrammeDependencyError(error: unknown): error is CurriculumApiError & { data: CurriculumProgrammeDependencyError } {
+  return isProgrammeDeleteRefusal(error) && error.data.reason === 'programme-has-dependencies';
+}
+
+const LEARNER_DELIVERY_LABELS: Record<string, string> = {
+  learner_training_plan_modules: 'learner plan modules',
+  learner_training_plan_weeks: 'learner plan weeks',
+  learner_training_plan_components: 'learner plan components',
+};
+
+function countSummary(counts: Record<string, number> | undefined, labels: Record<string, string>) {
+  const parts = Object.entries(counts || {})
+    .filter(([, value]) => Number(value) > 0)
+    .map(([key, value]) => `${value} ${labels[key] || key.replace(/_/g, ' ')}`);
+  return parts.length ? parts.join(', ') : '';
 }
 
 function programmeDependencySummary(report?: CurriculumProgrammeDependencyReport) {
@@ -141,6 +164,7 @@ function programmeIsArchived(programme: CurriculumProgramme) {
 
 export default function CurriculumProgrammes() {
   const [search, setSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
   const [programmePage, setProgrammePage] = useState(1);
   const [editingProgramme, setEditingProgramme] = useState<CurriculumProgramme | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -184,7 +208,14 @@ export default function CurriculumProgrammes() {
     () => programmes.filter(programme => !programmeIsArchived(programme)),
     [programmes],
   );
-  const filtered = visibleProgrammes.filter(p => {
+  const archivedProgrammes = useMemo(
+    () => programmes.filter(programme => programmeIsArchived(programme)),
+    [programmes],
+  );
+  // The stat tiles stay on live programmes; only the grid switches, so the
+  // archive is a place to review and clear old programmes, not a second dashboard.
+  const listedProgrammes = showArchived ? archivedProgrammes : visibleProgrammes;
+  const filtered = listedProgrammes.filter(p => {
     const needle = search.toLowerCase();
     if (needle && !p.name.toLowerCase().includes(needle)) return false;
     return true;
@@ -197,7 +228,7 @@ export default function CurriculumProgrammes() {
 
   useEffect(() => {
     setProgrammePage(1);
-  }, [search]);
+  }, [search, showArchived]);
 
   useEffect(() => {
     setProgrammePage(currentPage => Math.min(currentPage, totalProgrammePages));
@@ -273,29 +304,33 @@ export default function CurriculumProgrammes() {
     setWizardGroupId(undefined);
   };
 
-  const deleteProgramme = async (programme: CurriculumProgramme) => {
+  // Two different operations behind one button. A live programme is archived
+  // (reversible, nothing is removed). An archived one can be deleted for good,
+  // with every cohort, group, module, week and component beneath it - which is
+  // what the API allows only once is_archived is set.
+  const archiveProgramme = async (programme: CurriculumProgramme) => {
     const programmeId = programme.sourceId || programme.id;
     setActionError(null);
-    let outcome: 'deleted' | null = null;
+    let outcome: 'archived' | null = null;
     let dependencyReport: CurriculumProgrammeDependencyReport | null = null;
     await showCurriculumConfirm({
-      title: 'Delete programme?',
-      text: `Delete "${programme.name}" permanently? This is only allowed after its cohorts, groups, modules and related records have been removed.`,
+      title: 'Archive programme?',
+      text: `Archive "${programme.name}"? It leaves the active list but keeps every cohort, group and module, and can be deleted for good from the archive afterwards.`,
       icon: 'warning',
-      confirmButtonText: 'Check & Delete',
+      confirmButtonText: 'Archive',
       cancelButtonText: 'Cancel',
       onConfirm: async () => {
         setDeletingProgrammeId(programmeId);
         try {
           const result = await deleteCurriculumProgramme(programmeId);
-          outcome = result.deleted ? 'deleted' : null;
+          outcome = result.deleted ? 'archived' : null;
           removeProgramme(programmeId);
         } catch (err) {
           if (isProgrammeDependencyError(err)) {
             dependencyReport = err.data.dependencyReport || null;
             return;
           }
-          setActionError(err instanceof Error ? err.message : 'Unable to delete programme.');
+          setActionError(err instanceof Error ? err.message : 'Unable to archive programme.');
           throw err;
         } finally {
           setDeletingProgrammeId(null);
@@ -319,13 +354,67 @@ export default function CurriculumProgrammes() {
           setWizardOpen(true);
         },
       });
-    } else if (outcome === 'deleted') {
+    } else if (outcome === 'archived') {
       await showProgrammeSwalToast(
-        'Programme deleted',
-        `${programme.name} was deleted from the programme list.`,
+        'Programme archived',
+        `${programme.name} moved to the archive. Open the archive to delete it permanently.`,
       );
     }
   };
+
+  const permanentlyDeleteProgramme = async (programme: CurriculumProgramme) => {
+    const programmeId = programme.sourceId || programme.id;
+    setActionError(null);
+    let removed: Record<string, number> | null = null;
+    let blockers: Record<string, number> | undefined;
+    const contents = countSummary(
+      { cohorts: programme.cohorts || 0, groups: programme.groups || 0, modules: programme.modules || 0 },
+      DEPENDENCY_LABELS,
+    );
+    await showCurriculumConfirm({
+      title: 'Delete permanently?',
+      text: `Delete "${programme.name}" and everything beneath it${contents ? ` (${contents})` : ''} from the database. This cannot be undone.`,
+      icon: 'warning',
+      confirmButtonText: 'Delete permanently',
+      cancelButtonText: 'Cancel',
+      onConfirm: async () => {
+        setDeletingProgrammeId(programmeId);
+        try {
+          const result = await deleteCurriculumProgramme(programmeId, { permanent: true });
+          removed = result.removed || {};
+          removeProgramme(programmeId);
+        } catch (err) {
+          if (isProgrammeDeleteRefusal(err)) {
+            blockers = err.data.blockers;
+            setActionError(err.data.error || err.data.message || 'Unable to delete programme.');
+            return;
+          }
+          setActionError(err instanceof Error ? err.message : 'Unable to delete programme.');
+          throw err;
+        } finally {
+          setDeletingProgrammeId(null);
+        }
+      },
+    });
+    if (blockers && Object.keys(blockers).length) {
+      await showProgrammeSwalToast(
+        'Learner records block this delete',
+        `${programme.name} still supplies ${countSummary(blockers, LEARNER_DELIVERY_LABELS)}. Learner plans are never deleted with a programme.`,
+      );
+    } else if (removed) {
+      // 'programmes' is the programme row itself, which the title already says.
+      const { programmes: _programmeRow, ...children } = removed as Record<string, number>;
+      const summary = countSummary(children, DEPENDENCY_LABELS);
+      await showProgrammeSwalToast(
+        'Programme deleted permanently',
+        summary ? `${programme.name}: removed ${summary}.` : `${programme.name} was removed from the database.`,
+      );
+    }
+  };
+
+  const deleteProgramme = (programme: CurriculumProgramme) => (
+    programmeIsArchived(programme) ? permanentlyDeleteProgramme(programme) : archiveProgramme(programme)
+  );
 
   const openProgrammeKsbReview = async (programme: CurriculumProgramme) => {
     const programmeId = programme.sourceId || programme.id;
@@ -599,8 +688,29 @@ export default function CurriculumProgrammes() {
                 </button>
               )}
             </div>
+            <button
+              type="button"
+              onClick={() => setShowArchived(previous => !previous)}
+              aria-pressed={showArchived}
+              className={`inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl border px-4 text-[12px] font-bold transition-smooth ${showArchived
+                ? 'border-amber-300 bg-amber-100 text-amber-800 hover:bg-amber-200'
+                : 'border-foreground-200/70 bg-background-50 text-foreground-700 hover:bg-background-100'}`}
+            >
+              <AppIcon className={showArchived ? 'ri-inbox-unarchive-line text-base' : 'ri-archive-line text-base'}></AppIcon>
+              {showArchived ? 'Viewing archive' : 'Archive'}
+              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-black ${showArchived ? 'bg-amber-200 text-amber-900' : 'bg-background-200 text-foreground-600'}`}>
+                {archivedProgrammes.length}
+              </span>
+            </button>
           </div>
         </section>
+
+        {showArchived && (
+          <div className="rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800">
+            Archived programmes are hidden from planning. Deleting one here removes it and every cohort, group,
+            module, week and component beneath it from the database - learner accounts and progress are never touched.
+          </div>
+        )}
 
         {loading ? (
           <CardGridSkeleton count={6} />
@@ -619,6 +729,7 @@ export default function CurriculumProgrammes() {
               const hasLearnerKsbDenominator = (prog.learnerKsbExpectedWeight || 0) > 0 && learnerKsbLearnerCount > 0;
               const cardColor = normaliseHex(prog.color || '#6941c6');
               const isDraftProgramme = programmeIsDraft(prog);
+              const isArchivedProgramme = programmeIsArchived(prog);
               return (
               <article key={prog.id} className="programmes-card programme-color-card group relative flex h-full flex-col overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-4 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg" style={{ '--programme-card-color': cardColor } as CSSProperties}>
                 <div className="programme-card-accent absolute inset-x-0 top-0 h-1" />
@@ -712,12 +823,19 @@ export default function CurriculumProgrammes() {
                     <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
                   </button>
                   <button
-                    className="programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-1.5 py-1 text-[10px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    className={`programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border px-1.5 py-1 text-[10px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-60 ${isArchivedProgramme
+                      ? 'border-red-600 bg-red-600 text-white hover:bg-red-700'
+                      : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'}`}
                     disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
                     onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
+                    title={isArchivedProgramme
+                      ? 'Delete this programme and everything beneath it permanently'
+                      : 'Archive this programme; it can be deleted permanently afterwards'}
                   >
-                    <AppIcon className={deletingProgrammeId === (prog.sourceId || prog.id) ? 'ri-loader-4-line animate-spin text-sm' : 'ri-delete-bin-6-line text-sm'}></AppIcon>
-                    Delete
+                    <AppIcon className={deletingProgrammeId === (prog.sourceId || prog.id)
+                      ? 'ri-loader-4-line animate-spin text-sm'
+                      : isArchivedProgramme ? 'ri-delete-bin-6-line text-sm' : 'ri-archive-line text-sm'}></AppIcon>
+                    {isArchivedProgramme ? 'Delete forever' : 'Archive'}
                   </button>
                 </div>
               </article>
@@ -735,6 +853,7 @@ export default function CurriculumProgrammes() {
         ) : (
           <ProgrammesEmptyState
             hasSearch={Boolean(search.trim())}
+            archived={showArchived}
             onClear={() => setSearch('')}
             onCreate={() => {
               setWizardProgrammeId(undefined);
@@ -1622,22 +1741,29 @@ function ProgrammePagination({ currentPage, totalPages, onPageChange }: {
 
 function ProgrammesEmptyState({
   hasSearch,
+  archived = false,
   onClear,
   onCreate,
 }: {
   hasSearch: boolean;
+  archived?: boolean;
   onClear: () => void;
   onCreate: () => void;
 }) {
-  const title = hasSearch ? 'No programmes match your search' : 'No programmes created yet';
-  const message = hasSearch
-    ? 'Try a different programme name or standard.'
-    : 'Create the first programme structure to add cohorts, groups, modules and weekly components.';
+  // "Create the first programme" is the wrong prompt for an empty archive.
+  const title = archived
+    ? hasSearch ? 'No archived programmes match your search' : 'The archive is empty'
+    : hasSearch ? 'No programmes match your search' : 'No programmes created yet';
+  const message = archived
+    ? 'Archived programmes appear here, where they can be deleted permanently with everything beneath them.'
+    : hasSearch
+      ? 'Try a different programme name or standard.'
+      : 'Create the first programme structure to add cohorts, groups, modules and weekly components.';
 
   return (
     <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50 px-6 py-14 text-center shadow-sm">
       <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-50 text-primary-700 ring-1 ring-primary-100">
-        <AppIcon className={`${hasSearch ? 'ri-search-line' : 'ri-stack-line'} text-2xl`}></AppIcon>
+        <AppIcon className={`${hasSearch ? 'ri-search-line' : archived ? 'ri-archive-line' : 'ri-stack-line'} text-2xl`}></AppIcon>
       </span>
       <h3 className="mt-4 text-base font-heading font-bold text-foreground-950">{title}</h3>
       <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-foreground-500">{message}</p>
@@ -1648,10 +1774,12 @@ function ProgrammesEmptyState({
             Clear search
           </button>
         )}
-        <button type="button" onClick={onCreate} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-          <AppIcon className="ri-add-line"></AppIcon>
-          Create programme
-        </button>
+        {!archived && (
+          <button type="button" onClick={onCreate} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
+            <AppIcon className="ri-add-line"></AppIcon>
+            Create programme
+          </button>
+        )}
       </div>
     </div>
   );

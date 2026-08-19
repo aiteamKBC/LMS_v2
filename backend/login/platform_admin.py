@@ -983,7 +983,7 @@ _SUBSYSTEMS = [
     ("blob", "Azure Blob Storage", "Generated compliance documents",
      ("AZURE_STORAGE_CONNECTION_STRING", "AZURE_STORAGE_ACCOUNT")),
     ("graph", "Microsoft Graph", "Teams meetings and Outlook calendar sync",
-     ("MICROSOFT_CLIENT_ID", "CLIENTID")),
+     ("MICROSOFT_GRAPH_CLIENT_ID", "MICROSOFT_CLIENT_ID", "CLIENTID")),
     ("openai", "AI provider", "Reflection proofreading and transcription",
      ("AZURE_OPENAI_API_KEY", "OPENAI_API_KEY")),
 ]

@@ -1468,6 +1468,7 @@ table tbody td:last-child {
 }
 
 .kbc-standard-swal-confirm,
+.kbc-standard-swal-deny,
 .kbc-standard-swal-cancel,
 .kbc-standard-swal-popup .swal2-cancel {
   min-height: 46px;
@@ -1487,6 +1488,19 @@ table tbody td:last-child {
 
 .kbc-standard-swal-confirm:hover {
   background: #5b35d1;
+  transform: translateY(-1px);
+}
+
+/* The optional third choice. Green because where it appears it is the one button
+   that keeps the user's work — the confirm next to it is the destructive answer. */
+.kbc-standard-swal-deny {
+  background: #059669;
+  color: #fff;
+  box-shadow: 0 10px 20px rgba(5, 150, 105, 0.22);
+}
+
+.kbc-standard-swal-deny:hover {
+  background: #047857;
   transform: translateY(-1px);
 }
 
