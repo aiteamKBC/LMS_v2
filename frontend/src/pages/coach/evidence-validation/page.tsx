@@ -1,11 +1,14 @@
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
 
 export default function CoachEvidenceValidation() {
+  const coach = useCoachIdentity();
+
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Evidence Validation" pageSubtitle="Review and validate learner evidence submissions" userName="Med Maher" userRole="Progress Coach">
+    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Evidence Validation" pageSubtitle="Review and validate learner evidence submissions" userName={coach.name} userRole="Progress Coach">
       <div className="p-6 space-y-6">
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />

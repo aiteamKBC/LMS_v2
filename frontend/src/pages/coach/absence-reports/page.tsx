@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
+import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import type { AbsenceReport } from '@/mocks/absence-reports';
@@ -72,6 +73,7 @@ function evidenceActionLabel(report: AbsenceReport) {
 
 export default function CoachAbsenceReports() {
   const { success, error } = useToast();
+  const coach = useCoachIdentity();
   const [reports, setReports] = useState<AbsenceReport[]>([]);
   const [loadingReports, setLoadingReports] = useState(true);
   const [reportsError, setReportsError] = useState<string | null>(null);
@@ -94,8 +96,15 @@ export default function CoachAbsenceReports() {
   const [itemsPerPage, setItemsPerPage] = useState(8);
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
+    if (!coach.email) {
+      setReports([]);
+      setReportsError('Coach access is required to load absence reports.');
+      setLoadingReports(false);
+      return;
+    }
     const controller = new AbortController();
-    fetch(API_ENDPOINT, { signal: controller.signal })
+    fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email), { signal: controller.signal })
       .then(async response => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
@@ -114,7 +123,7 @@ export default function CoachAbsenceReports() {
         if (!controller.signal.aborted) setLoadingReports(false);
       });
     return () => controller.abort();
-  }, []);
+  }, [coach.email, coach.isInitialized]);
 
   const programmes = useMemo(() => [...new Set(reports.map(r => r.programme))].sort(), [reports]);
   const cohorts = useMemo(() => [...new Set(reports.map(r => r.cohort))].sort(), [reports]);
@@ -176,7 +185,7 @@ export default function CoachAbsenceReports() {
     const report = reports.find(item => item.id === reportId);
     if (!report) return;
     try {
-      const response = await fetch(API_ENDPOINT, {
+      const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: reportId, status, coachNote: coachNoteText }),
@@ -231,7 +240,7 @@ export default function CoachAbsenceReports() {
   };
 
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Absence Reports" pageSubtitle="Review, approve or decline learner absence reports" userName="Med Maher" userRole="Progress Coach">
+    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Absence Reports" pageSubtitle="Review, approve or decline learner absence reports" userName={coach.name} userRole="Progress Coach">
       <div className="min-h-screen space-y-4 bg-[#f7f6fb] p-3 md:p-5">
 
         {/* ===== Hero Banner ===== */}

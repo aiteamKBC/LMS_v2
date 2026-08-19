@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
+import { useAuth } from '@/hooks/useAuth';
 import { roleNavMap } from '@/mocks/navigation';
 import {
-  DEFAULT_COACH_EMAIL,
   type CoachCalendarEvent,
   eventDisplayDate,
   eventTargetDate,
@@ -27,9 +28,12 @@ type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
 type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
 
 const EMPTY_VALUE = '--';
-const DASHBOARD_ENDPOINT = `/coach_api/coach/dashboard?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
 const AT_RISK_SCROLL_THRESHOLD = 8;
 const COACHING_CALENDAR_WINDOW_DAYS = 7;
+
+function coachDashboardEndpoint(ownerEmail: string) {
+  return `/coach_api/coach/dashboard?owner_email=${encodeURIComponent(ownerEmail)}`;
+}
 
 function toIsoDate(value: Date) {
   const year = value.getFullYear();
@@ -551,10 +555,6 @@ function upcomingLiveSessionMetaLabel(event: CoachCalendarEvent) {
   ].filter(Boolean).join(' · ') || EMPTY_VALUE;
 }
 
-function liveSessionGroupingKey(event: CoachCalendarEvent) {
-  return normalizeIdentity(event.group || event.learner || `${event.programme}-${event.cohort}-${event.title}`);
-}
-
 function buildTimetableFocusState(event: CoachCalendarEvent) {
   return {
     focusEvent: {
@@ -763,8 +763,11 @@ function CoachingCalendarSkeleton() {
 }
 
 export default function CoachDashboard() {
+  const { auth, isInitialized } = useAuth();
+  const authenticatedCoachEmail = auth.account?.access === 'coach' ? auth.account.email : '';
+  const authenticatedCoachName = auth.account?.displayName || auth.user?.fullName || 'Coach';
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
-  const [ownerName, setOwnerName] = useState('Med Maher');
+  const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<CoachLearner[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
   const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>([]);
@@ -778,6 +781,7 @@ export default function CoachDashboard() {
   const [liveSessionsError, setLiveSessionsError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!isInitialized) return;
     const controller = new AbortController();
 
     async function loadDashboard() {
@@ -788,8 +792,27 @@ export default function CoachDashboard() {
       setLiveSessionsLoading(true);
       setLiveSessionsError(null);
 
+      if (!authenticatedCoachEmail) {
+        setOwnerName(authenticatedCoachName);
+        setLearners([]);
+        setCalendarEvents([]);
+        setCalendarPreviewEvents([]);
+        setLiveSessionEvents([]);
+        setEvidenceQueue([]);
+        setLoadWarning('Coach access is required to load this dashboard.');
+        setCalendarError('Coach access is required.');
+        setLiveSessionsError('Coach access is required.');
+        setCalendarLoading(false);
+        setLiveSessionsLoading(false);
+        setLoading(false);
+        return;
+      }
+
       try {
-        const dashboard = await fetchSharedJsonGet<CoachDashboardApiResponse>(DASHBOARD_ENDPOINT, { signal: controller.signal });
+        const dashboard = await fetchSharedJsonGet<CoachDashboardApiResponse>(
+          coachDashboardEndpoint(authenticatedCoachEmail),
+          { signal: controller.signal },
+        );
         if (controller.signal.aborted) return;
 
         const queueItems = (dashboard.evidence?.items || []).map(normalizeEvidenceQueueLearner);
@@ -798,7 +821,7 @@ export default function CoachDashboard() {
         const events = sortEvents(dashboard.timetable?.events || []);
         const nonLiveEvents = events.filter(event => event.source !== 'live-session');
 
-        setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? 'Med Maher' : String(dashboard.owner?.name));
+        setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name));
         setLearners(mergeEvidenceQueueIntoLearners(
           mergeAttendanceRates(normalizedLearners, attendanceLearners),
           queueItems,
@@ -831,7 +854,7 @@ export default function CoachDashboard() {
     return () => {
       controller.abort();
     };
-  }, []);
+  }, [authenticatedCoachEmail, authenticatedCoachName, isInitialized]);
 
   useEffect(() => {
     if (!selectedKpi) return;
@@ -898,15 +921,7 @@ export default function CoachDashboard() {
     () => upcomingLiveSessions.filter(isWithinCalendarPreviewWindow),
     [upcomingLiveSessions],
   );
-  const upcomingLiveSessionCards = useMemo(() => Array.from(
-    upcomingLiveSessions.reduce((byGroup, event) => {
-      const groupKey = liveSessionGroupingKey(event);
-      if (!byGroup.has(groupKey)) {
-        byGroup.set(groupKey, event);
-      }
-      return byGroup;
-    }, new Map<string, CoachCalendarEvent>()).values(),
-  ), [upcomingLiveSessions]);
+  const upcomingLiveSessionCards = upcomingLiveSessions;
   const upcomingLiveSessionGroups = useMemo(() => {
     const groupedSessions = new Map<string, CoachCalendarEvent[]>();
     upcomingLiveSessionCards.forEach(event => {
@@ -1318,6 +1333,21 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
   const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
   const evidenceLearners = evidenceQueue;
 
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
   const openLearnerProfile = (learner: CoachLearner) => {
     navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`, {
       state: { learnerId: learner.id, learnerName: learner.name },
@@ -1325,71 +1355,67 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
     onClose();
   };
 
-  return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title">
-      <button type="button" onClick={onClose} className="absolute inset-0 bg-foreground-950/45 backdrop-blur-[5px]" aria-label="Close popup"></button>
-      <div className="relative flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-[28px] border border-foreground-200/70 bg-background-50/95 shadow-[0_36px_90px_-38px_rgba(15,23,42,0.5)]">
-        <header className="flex items-start justify-between gap-4 border-b border-foreground-100/80 bg-background-50/95 px-5 py-5 md:px-6">
-          <div className="flex items-center gap-3">
-            <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-[0_10px_24px_-18px_rgba(15,23,42,0.35)] ${current.iconStyle}`}><AppIcon className={`${current.icon} text-lg`}></AppIcon></span>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 id="kpi-modal-title" className="font-heading text-lg font-bold text-foreground-900">{current.title}</h2>
-                <span className="rounded-full border border-foreground-200/70 bg-background-100 px-2.5 py-1 text-[10px] font-bold text-foreground-600">{type === 'evidence' ? pendingEvidence : type === 'reviews' ? reviews.length : modalLearners.length}</span>
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-3 sm:p-6 lg:p-8" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title" aria-describedby="kpi-modal-description">
+      <button type="button" onClick={onClose} className="absolute inset-0 bg-foreground-950/10 backdrop-blur-[5px] backdrop-saturate-125" aria-label="Close popup"></button>
+      <div className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-[26px] border border-white/80 bg-background-50 shadow-[0_32px_90px_-28px_rgba(15,23,42,0.55)] sm:rounded-[32px]">
+        <header className="relative overflow-hidden border-b border-foreground-100/80 bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60 px-5 py-5 sm:px-7 sm:py-6">
+          <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-primary-200/25 blur-3xl"></div>
+          <div className="relative flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-4">
+              <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm ring-1 ring-white/80 sm:h-14 sm:w-14 ${current.iconStyle}`}><AppIcon className={`${current.icon} text-xl`}></AppIcon></span>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <h2 id="kpi-modal-title" className="font-heading text-xl font-bold tracking-tight text-foreground-900 sm:text-2xl">{current.title}</h2>
+                  <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full border border-primary-200/80 bg-background-50 px-2.5 text-xs font-bold text-primary-700 shadow-sm">{type === 'evidence' ? pendingEvidence : type === 'reviews' ? reviews.length : modalLearners.length}</span>
+                </div>
+                <p id="kpi-modal-description" className="mt-1.5 text-xs leading-5 text-foreground-500 sm:text-sm">{current.subtitle}</p>
               </div>
-              <p className="mt-1 text-[11px] text-foreground-400">{current.subtitle}</p>
             </div>
+            <button type="button" onClick={onClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-foreground-200/80 bg-background-50/90 text-foreground-500 shadow-sm transition-all hover:-translate-y-0.5 hover:border-foreground-300 hover:text-foreground-800 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2" aria-label="Close"><AppIcon className="ri-close-line text-xl"></AppIcon></button>
           </div>
-          <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-foreground-400 transition-colors hover:border-foreground-200 hover:bg-background-100 hover:text-foreground-700" aria-label="Close"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
         </header>
 
-        <div className="flex-1 overflow-y-auto bg-gradient-to-b from-background-50 to-background-100/35 p-4 md:p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-background-50 to-background-100/50 p-4 sm:p-6">
           {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'gateway' || type === 'epa') && (
-            <div className="space-y-3">
+            <div className="space-y-3.5">
               {modalLearners.map(learner => {
                 const status = OTJH_STATUS_META[normalizeOtjhStatus(learner.otjhStatus)];
                 const attendance = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
                 const otjh = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
                 const badge = learnerStageBadge(learner);
                 return (
-                  <div key={learner.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-[0_1px_2px_rgba(16,24,40,0.04)] transition-all hover:-translate-y-px hover:border-foreground-300/70 hover:shadow-[0_14px_32px_-24px_rgba(15,23,42,0.28)]">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center">
-                    <button
-                      type="button"
-                      onClick={() => openLearnerProfile(learner)}
-                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition-transform hover:scale-[1.04] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 ${badge.avatarClass}`}
-                      title={`Open ${learner.name}'s profile`}
-                      aria-label={`Open ${learner.name}'s profile`}
-                    >
-                      <span>{learner.initials}</span>
-                    </button>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openLearnerProfile(learner)}
-                          className="truncate text-left text-[12px] font-semibold text-foreground-900 transition-colors hover:text-primary-700 focus:outline-none focus:text-primary-700"
-                          title={`Open ${learner.name}'s profile`}
-                        >
-                          {learner.name}
-                        </button>
-                        {type === 'active' || type === 'on-break' ? (
-                          <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${isActiveLearner(learner) ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>{displayValue(learner.rawProgramStatus)}</span>
-                        ) : type === 'gateway' || type === 'epa' ? (
-                          <span className="rounded-full border border-secondary-100 bg-secondary-50 px-2 py-0.5 text-[9px] font-semibold text-secondary-700">{type === 'gateway' ? 'Gateway' : 'EPA'}</span>
-                        ) : (
-                          <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${status.bg} ${status.text}`}>{status.label}</span>
-                        )}
+                  <button
+                    key={learner.id}
+                    type="button"
+                    onClick={() => openLearnerProfile(learner)}
+                    className="group grid w-full gap-4 rounded-2xl border border-foreground-200/80 bg-background-50 p-4 text-left shadow-[0_4px_18px_-14px_rgba(15,23,42,0.35)] transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-[0_18px_38px_-24px_rgba(76,29,149,0.3)] focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:p-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)_auto] lg:items-center"
+                    title={`Open ${learner.name}'s profile`}
+                    aria-label={`Open ${learner.name}'s profile`}
+                  >
+                    <div className="flex min-w-0 items-center gap-3.5">
+                      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-xs font-bold shadow-sm ring-1 ring-black/5 transition-transform group-hover:scale-[1.03] ${badge.avatarClass}`}>{learner.initials}</span>
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-bold text-foreground-900 transition-colors group-hover:text-primary-700 sm:text-[15px]">{learner.name}</span>
+                          {type === 'active' || type === 'on-break' ? (
+                            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${isActiveLearner(learner) ? 'border-emerald-100 bg-emerald-50 text-emerald-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>{displayValue(learner.rawProgramStatus)}</span>
+                          ) : type === 'gateway' || type === 'epa' ? (
+                            <span className="rounded-full border border-secondary-100 bg-secondary-50 px-2.5 py-1 text-[10px] font-semibold text-secondary-700">{type === 'gateway' ? 'Gateway' : 'EPA'}</span>
+                          ) : (
+                            <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${status.bg} ${status.text}`}>{status.label}</span>
+                          )}
+                        </div>
+                        <p className="mt-1 truncate text-xs text-foreground-500">{learner.programme} <span className="text-foreground-300">·</span> {learner.group}</p>
                       </div>
-                      <p className="mt-0.5 truncate text-[9px] text-foreground-400">{learner.programme} · {learner.group}</p>
                     </div>
-                    <div className="hidden grid-cols-3 gap-2 text-center md:grid md:min-w-[250px]">
+                    <div className="grid min-w-0 grid-cols-3 gap-2 text-center sm:col-span-2 lg:col-span-1 lg:min-w-[320px]">
                       <ModalMiniMetric label="OTJH" value={otjh} />
                       <ModalMiniMetric label="KSB" value={learner.ksbProgressAvailable ? `${learner.ksbProgress}%` : EMPTY_VALUE} />
                       <ModalMiniMetric label="Attendance" value={attendance} tone={toneFromPercent(learner.attendanceRateAvailable ? learner.attendanceRate : null, 80, 90)} />
                     </div>
-                    </div>
-                  </div>
+                    <span className="hidden h-10 w-10 items-center justify-center rounded-xl bg-background-100 text-foreground-400 transition-colors group-hover:bg-primary-50 group-hover:text-primary-700 sm:flex"><AppIcon className="ri-arrow-right-s-line text-xl"></AppIcon></span>
+                  </button>
                 );
               })}
               {!modalLearners.length && <ModalEmpty icon={current.icon} title="No learners in this status" description="This list will update automatically when learner data changes." />}
@@ -1427,14 +1453,15 @@ function KpiDetailModal({ type, learners, calendarEvents, evidenceQueue, pending
           )}
         </div>
 
-        <footer className="flex flex-wrap items-center justify-end gap-2 border-t border-foreground-100 bg-background-100/50 px-5 py-4">
-          <button type="button" onClick={onClose} className="rounded-xl border border-foreground-200 bg-background-50 px-3.5 py-2 text-[10px] font-semibold text-foreground-600 transition-colors hover:bg-background-100">Close</button>
-          {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="rounded-xl bg-primary-600 px-3.5 py-2 text-[10px] font-semibold text-white transition-colors hover:bg-primary-700">Jump to at-risk list</button>}
-          {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="rounded-xl bg-primary-600 px-3.5 py-2 text-[10px] font-semibold text-white transition-colors hover:bg-primary-700">Open marking queue</Link>}
-          {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="rounded-xl bg-primary-600 px-3.5 py-2 text-[10px] font-semibold text-white transition-colors hover:bg-primary-700">Open reviews</Link>}
+        <footer className="flex flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 bg-background-100/60 px-5 py-4 sm:px-7">
+          <button type="button" onClick={onClose} className="rounded-xl border border-foreground-200 bg-background-50 px-4 py-2.5 text-xs font-semibold text-foreground-700 shadow-sm transition-colors hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Close</button>
+          {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Jump to at-risk list</button>}
+          {type === 'evidence' && <Link to="/coach/marking-queue" onClick={onClose} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}
+          {type === 'reviews' && <Link to="/coach/progress-reviews" onClick={onClose} className="rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open reviews</Link>}
         </footer>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1450,9 +1477,9 @@ function ModalMiniMetric({ label, value, tone = 'neutral' }: { label: string; va
           : 'border-foreground-200/60 bg-background-50 text-foreground-800';
 
   return (
-    <div className={`rounded-xl border px-2.5 py-2 ${toneClass}`}>
-      <p className="text-[10px] font-bold leading-none">{value}</p>
-      <p className="mt-1 text-[7px] font-semibold uppercase tracking-[0.14em] opacity-70">{label}</p>
+    <div className={`min-w-0 rounded-xl border px-2 py-2.5 sm:px-3 ${toneClass}`}>
+      <p className="truncate text-xs font-bold leading-none sm:text-sm">{value}</p>
+      <p className="mt-1.5 truncate text-[8px] font-semibold uppercase tracking-[0.1em] opacity-70 sm:text-[9px]">{label}</p>
     </div>
   );
 }

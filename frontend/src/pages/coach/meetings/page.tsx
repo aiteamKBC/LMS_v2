@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { MonthlyCoachingCompletionModal } from './MonthlyCoachingCompletionModal';
@@ -78,11 +79,12 @@ const EMPTY_SCHEDULE_FORM: ScheduleFormState = {
 const MEETINGS_PER_PAGE = 10;
 
 export default function CoachMeetings() {
+  const coach = useCoachIdentity();
   const [filter, setFilter] = useState<MeetingFilter>('this-month');
   const [currentPage, setCurrentPage] = useState(1);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
-  const [ownerName, setOwnerName] = useState('Med Maher');
+  const [ownerName, setOwnerName] = useState('Coach');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
@@ -92,16 +94,24 @@ export default function CoachMeetings() {
   const [completionEvent, setCompletionEvent] = useState<CoachCalendarEvent | null>(null);
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
+    if (!coach.email) {
+      setEvents([]);
+      setOwnerName(coach.name);
+      setError('Coach access is required to load coaching meetings.');
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
 
     const loadEvents = async () => {
       setLoading(true);
       setError(null);
       try {
-        const data = await fetchCoachCalendarEvents(controller.signal);
+        const data = await fetchCoachCalendarEvents(controller.signal, coach.email);
         const mcrEvents = sortEvents((data.events || []).filter(event => event.source === 'mcr'));
         setEvents(mcrEvents);
-        setOwnerName(data.owner?.name || 'Med Maher');
+        setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
         setEvents([]);
@@ -113,7 +123,7 @@ export default function CoachMeetings() {
 
     loadEvents();
     return () => controller.abort();
-  }, []);
+  }, [coach.email, coach.isInitialized, coach.name]);
 
   const thisMonthEvents = events.filter(event => isEventThisMonth(event));
   const atRiskEvents = events.filter(event => isAtRiskEvent(event));

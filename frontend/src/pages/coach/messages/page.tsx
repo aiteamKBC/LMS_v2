@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { chatSocketUrl, type ChatSocketMessage } from '@/api/chat';
 import {
@@ -140,6 +141,7 @@ function mergeCoachThreads(current: CoachMessageThread[], incoming: CoachMessage
 
 export default function CoachMessagesPage() {
   const navigate = useNavigate();
+  const coach = useCoachIdentity();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialLearnerIdRef = useRef(searchParams.get('learner'));
   const [ownerName, setOwnerName] = useState('Progress Coach');
@@ -172,16 +174,26 @@ export default function CoachMessagesPage() {
   };
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
+    if (!coach.email) {
+      setOwnerName(coach.name);
+      setOwnerEmail('');
+      setThreads([]);
+      setSelectedLearnerId(null);
+      setError('Coach access is required to load learner messages.');
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
 
     async function loadThreads() {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetchCoachMessageThreads();
+        const response = await fetchCoachMessageThreads(coach.email);
         if (controller.signal.aborted) return;
-        setOwnerName(response.owner.name || 'Progress Coach');
-        setOwnerEmail(response.owner.email || '');
+        setOwnerName(response.owner.name || coach.name);
+        setOwnerEmail(response.owner.email || coach.email);
         setThreads(current => mergeCoachThreads(current, response.threads || []));
         const requestedLearner = initialLearnerIdRef.current;
         const fallbackLearner = response.threads[0]?.learnerId || null;
@@ -202,7 +214,7 @@ export default function CoachMessagesPage() {
 
     loadThreads();
     return () => controller.abort();
-  }, []);
+  }, [coach.email, coach.isInitialized, coach.name]);
 
   useEffect(() => {
     const requestedLearner = searchParams.get('learner');
@@ -214,11 +226,12 @@ export default function CoachMessagesPage() {
   // Keep the coach inbox current when the learner sends a message. This page
   // uses the coach_api endpoints, so it needs its own live refresh loop.
   useEffect(() => {
+    if (!ownerEmail) return;
     let cancelled = false;
 
     const syncThreads = async () => {
       try {
-        const response = await fetchCoachMessageThreads(ownerEmail || undefined);
+        const response = await fetchCoachMessageThreads(ownerEmail);
         if (cancelled) return;
         setOwnerName(response.owner.name || 'Progress Coach');
         setOwnerEmail(response.owner.email || '');
@@ -240,7 +253,7 @@ export default function CoachMessagesPage() {
   }, [ownerEmail, selectedLearnerId]);
 
   useEffect(() => {
-    if (!selectedLearnerId) {
+    if (!selectedLearnerId || !ownerEmail) {
       setActiveThread(null);
       setMessages([]);
       return;
@@ -254,7 +267,7 @@ export default function CoachMessagesPage() {
       setDetailLoading(true);
       setDetailError(null);
       try {
-        const response = await fetchCoachMessageThread(selectedLearnerId);
+        const response = await fetchCoachMessageThread(selectedLearnerId, ownerEmail);
         if (controller.signal.aborted) return;
         setOwnerName((current) => response.owner.name || current);
         setOwnerEmail((current) => response.owner.email || current);
@@ -272,7 +285,7 @@ export default function CoachMessagesPage() {
 
     loadThread();
     return () => controller.abort();
-  }, [selectedLearnerId]);
+  }, [ownerEmail, selectedLearnerId]);
 
   useEffect(() => {
     if (!selectedLearnerId) return;
@@ -282,7 +295,7 @@ export default function CoachMessagesPage() {
 
     const syncActiveThread = async () => {
       try {
-        const response = await fetchCoachMessageThread(selectedLearnerId, ownerEmail || undefined);
+        const response = await fetchCoachMessageThread(selectedLearnerId, ownerEmail);
         if (cancelled) return;
         setActiveThread(response.thread);
         setMessages(current => mergeCoachMessages(current, response.messages || []));
@@ -407,7 +420,7 @@ export default function CoachMessagesPage() {
     setSending(true);
     setDetailError(null);
     try {
-      const response = await sendCoachMessage(activeThread.learnerId, newMessage.trim(), ownerEmail || undefined);
+      const response = await sendCoachMessage(activeThread.learnerId, newMessage.trim(), ownerEmail);
       setOwnerName(response.owner.name || ownerName);
       setOwnerEmail(response.owner.email || ownerEmail);
       setMessages((current) => mergeLiveCoachMessage(current, response.message));
@@ -618,7 +631,7 @@ export default function CoachMessagesPage() {
                   </div>
                   <div className="hidden">
                     <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-                      {false && <div className="flex items-start gap-4 min-w-0">
+                      <div className="flex items-start gap-4 min-w-0">
                         <div className="w-14 h-14 rounded-2xl bg-primary-100 text-primary-700 font-semibold text-lg shrink-0 flex items-center justify-center">
                           {activeThread.learnerInitials}
                         </div>
@@ -651,7 +664,6 @@ export default function CoachMessagesPage() {
                           </div>
                         </div>
                       </div>
-                      }
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(activeThread.learnerId)}`)}
@@ -662,7 +674,7 @@ export default function CoachMessagesPage() {
                       </div>
                     </div>
 
-                    {false && activeThread.riskFlags.length > 0 && (
+                    {activeThread.riskFlags.length > 0 && (
                       <div className="flex flex-wrap items-center gap-2">
                         {activeThread.riskFlags.map((flag) => (
                           <span key={flag} className="text-[11px] font-medium px-3 py-1.5 rounded-full bg-red-50 text-red-700 border border-red-200/60">

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import SparklineChart from '@/components/feature/SparklineChart';
+import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import TrendChart from './components/TrendChart';
 
@@ -314,6 +315,7 @@ function StatCard({ icon, label, value, hint, tone = 'primary', onClick }: { ico
 
 export default function CoachAttendance() {
   const navigate = useNavigate();
+  const coach = useCoachIdentity();
 
   const [learners, setLearners] = useState<AttendanceLearner[]>([]);
   const [summary, setSummary] = useState<AttendanceSummary>(EMPTY_SUMMARY);
@@ -339,13 +341,21 @@ export default function CoachAttendance() {
   const [attendanceDetailsError, setAttendanceDetailsError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
     let cancelled = false;
 
     async function loadAttendance() {
       setLoading(true);
       setError(null);
+      if (!coach.email) {
+        setError('Coach access is required to load attendance data.');
+        setLearners([]);
+        setSummary(EMPTY_SUMMARY);
+        setLoading(false);
+        return;
+      }
       try {
-        const response = await fetch(API_ENDPOINT);
+        const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email));
         if (!response.ok) throw new Error(`Request failed with ${response.status}`);
         const data: AttendanceApiResponse = await response.json();
         if (cancelled) return;
@@ -371,7 +381,7 @@ export default function CoachAttendance() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [coach.email, coach.isInitialized]);
 
   const cohorts = useMemo(() => [...new Set(learners.map(l => l.cohort).filter(Boolean))].sort(), [learners]);
   const programmes = useMemo(() => [...new Set(learners.map(l => l.programme).filter(Boolean))].sort(), [learners]);
@@ -488,6 +498,7 @@ export default function CoachAttendance() {
 
     try {
       const params = new URLSearchParams();
+      params.set('owner_email', coach.email);
       params.set('learner_id', learner.id);
       if (learner.email) {
         params.set('learner_email', learner.email);
@@ -527,7 +538,7 @@ export default function CoachAttendance() {
   };
 
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Attendance Dashboard" pageSubtitle="Attendance overview from KBC attendance records" userName="Med Maher" userRole="Progress Coach">
+    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Attendance Dashboard" pageSubtitle="Attendance overview from KBC attendance records" userName={coach.name} userRole="Progress Coach">
       <div className="min-h-screen space-y-4 bg-[#f7f6fb] p-3 md:p-5">
         <section
           className="rounded-2xl border border-white/10 px-6 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)]"

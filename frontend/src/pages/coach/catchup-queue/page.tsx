@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import {
@@ -60,7 +61,7 @@ function calendarEventToCatchUp(event: CoachCalendarEvent): CatchUpItem {
     missedDateIso: targetDateIso,
     catchupDate: formatDateLabel(catchupDateIso),
     catchupDateIso,
-    tutor: event.ownerName || 'Med Maher',
+    tutor: event.ownerName || 'Coach',
     status,
     priority,
     notes: event.notes || 'No notes added',
@@ -349,6 +350,7 @@ function FilterDropdown({ label, value, onChange, options, allLabel }: { label: 
 export default function CoachCatchupQueue() {
   const navigate = useNavigate();
   const { success, info } = useToast();
+  const coach = useCoachIdentity();
 
   const [filter, setFilter] = useState<'all' | 'scheduled' | 'overdue' | 'completed'>('all');
   const [cohortFilter, setCohortFilter] = useState<string>('all');
@@ -379,11 +381,18 @@ export default function CoachCatchupQueue() {
   }, []);
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
+    if (!coach.email) {
+      setCatchupQueue([]);
+      setQueueError('Coach access is required to load catch-up sessions.');
+      setQueueLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setQueueLoading(true);
     setQueueError('');
 
-    fetchCoachCalendarEvents(controller.signal)
+    fetchCoachCalendarEvents(controller.signal, coach.email)
       .then((data) => {
         const catchups = (data.events || [])
           .filter((event) => event.source === 'catch-up')
@@ -400,7 +409,7 @@ export default function CoachCatchupQueue() {
       });
 
     return () => controller.abort();
-  }, []);
+  }, [coach.email, coach.isInitialized]);
 
   const filtered = catchupQueue.filter((c) => {
     if (filter !== 'all' && c.status !== filter) return false;
@@ -516,7 +525,7 @@ export default function CoachCatchupQueue() {
   ];
 
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Catch-up Queue" pageSubtitle="Manage and schedule catch-up sessions for missed learning" userName="Med Maher" userRole="Progress Coach">
+    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Catch-up Queue" pageSubtitle="Manage and schedule catch-up sessions for missed learning" userName={coach.name} userRole="Progress Coach">
       <ChartAnimations />
       <div className="p-4 md:p-6 space-y-6">
 
