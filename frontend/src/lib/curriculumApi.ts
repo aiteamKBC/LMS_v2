@@ -109,6 +109,9 @@ export interface CurriculumProgramme {
   description: string;
   structureType?: 'scheduled' | 'free' | string;
   ksbProfileSourceId?: string;
+  // Off-the-job hours a learner must complete for the whole programme. null means no
+  // target has been set, which is different from a target of zero.
+  requiredOtjh?: number | null;
 }
 
 export interface CurriculumModule {
@@ -687,7 +690,15 @@ export interface CurriculumCohort {
   programme: string;
   programmeId: string;
   startDate: string;
+  /** End of the practical period. practicalEndDate is the same date under the name the apprenticeship model uses. */
   endDate: string;
+  practicalEndDate?: string;
+  /** End Point Assessment window in whole months. null means none recorded, which is not the same as 0. */
+  epaMonths?: number | null;
+  /** The date the apprenticeship ends: apprenticeshipEndOverride when set, otherwise practical end date plus epaMonths. */
+  apprenticeshipEndDate?: string;
+  /** Manually authored apprenticeship end date. Empty when the date is calculated. */
+  apprenticeshipEndOverride?: string;
   durationMonths?: string | number;
   status: 'active' | 'planned' | 'completed' | 'archived' | string;
   learners: number;
@@ -775,6 +786,10 @@ export interface CurriculumCohortAuthoringDetail {
   programmeName: string;
   startDate: string;
   endDate: string;
+  practicalEndDate?: string;
+  epaMonths?: number | null;
+  apprenticeshipEndDate?: string;
+  apprenticeshipEndOverride?: string;
   durationMonths: number;
   color: string;
   status: string;
@@ -900,8 +915,14 @@ export interface CurriculumSessionPlanPreview {
 
 export interface CurriculumCohortEndDatePreview {
   endDate: string;
+  practicalEndDate?: string;
+  epaMonths?: number | null;
+  apprenticeshipEndDate?: string;
+  apprenticeshipEndOverride?: string;
   autoCalculated: boolean;
   rule: string;
+  epaRule?: string;
+  apprenticeshipRule?: string;
   warnings: string[];
 }
 
@@ -1621,7 +1642,7 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   ksbMappings?: unknown[];
 };
 export type CurriculumComponentInput = Partial<Omit<CurriculumComponent, 'lastEdited'>>;
-export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; color?: string; moduleName?: string; sessionsNumber?: number; holidayIds?: Array<string | number> };
+export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; epaMonths?: number | null; /** null clears the manual apprenticeship end date and restores the calculated one. */ apprenticeshipEndOverride?: string | null; color?: string; moduleName?: string; sessionsNumber?: number; holidayIds?: Array<string | number> };
 export type CurriculumGroupInput = { id?: string; groupId?: string; name?: string; cohortId?: string; programmeId?: string; tutor?: string; coach?: string; color?: string; weekDays?: string; startTime?: string; endTime?: string; startDate?: string; endDate?: string; moduleName?: string; sessionsNumber?: number };
 export type CurriculumSessionInput = Partial<Pick<CurriculumSession, 'date' | 'startTime' | 'endTime' | 'tutor'>>;
 export type CurriculumStaffingInput = { groupId?: string; tutor?: string; coach?: string };
@@ -1708,6 +1729,10 @@ export type CurriculumProgrammeDeleteResult = {
   reason?: string;
   message?: string;
   id: string;
+  // Permanent deletes only: rows removed per table, and how many learner records
+  // still name this programme (learner rows are never deleted).
+  removed?: Record<string, number>;
+  learners?: number;
 };
 
 export type CurriculumProgrammeDependencyReport = {
@@ -1725,20 +1750,34 @@ export type CurriculumProgrammeDependencyReport = {
 
 export type CurriculumProgrammeDependencyError = {
   error?: string;
-  reason?: 'programme-has-dependencies' | string;
+  reason?: 'programme-has-dependencies'
+    | 'programme-not-archived'
+    | 'programme-has-learner-delivery'
+    | 'programme-delete-restricted'
+    | string;
   deleted?: false;
   permanent?: false;
   id?: string;
   dependencyReport?: CurriculumProgrammeDependencyReport;
+  // programme-has-learner-delivery: learner training-plan rows per table that the
+  // database refuses to orphan, so the permanent delete cannot proceed.
+  blockers?: Record<string, number>;
+  detail?: string;
   message?: string;
 };
 
-export function deleteCurriculumProgramme(id: string) {
-  return fetchJson<CurriculumProgrammeDeleteResult>(`/curriculum/programmes/${encodeURIComponent(id)}/`, { method: 'DELETE', timeoutMs: 60000 });
+/** Archives by default. `permanent` removes the programme and everything beneath
+ *  it for good, which the API only allows once the programme is archived. */
+export function deleteCurriculumProgramme(id: string, options: { permanent?: boolean } = {}) {
+  const suffix = options.permanent ? '?permanent=true' : '';
+  return fetchJson<CurriculumProgrammeDeleteResult>(
+    `/curriculum/programmes/${encodeURIComponent(id)}/${suffix}`,
+    { method: 'DELETE', timeoutMs: 60000 },
+  );
 }
 
-export const archiveCurriculumProgramme = deleteCurriculumProgramme;
-export const permanentlyDeleteCurriculumProgramme = deleteCurriculumProgramme;
+export const archiveCurriculumProgramme = (id: string) => deleteCurriculumProgramme(id);
+export const permanentlyDeleteCurriculumProgramme = (id: string) => deleteCurriculumProgramme(id, { permanent: true });
 
 export function createCurriculumCohort(input: CurriculumCohortInput) {
   return postJson<{ created: boolean; cohort: CurriculumCohort }>('/curriculum/cohorts/', input);

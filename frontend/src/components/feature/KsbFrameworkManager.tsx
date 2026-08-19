@@ -300,10 +300,21 @@ export function KsbFrameworkManager({
     setImportResult(null);
   }, [creating, selectedFramework, selectedSet]);
 
-  const filteredFrameworks = frameworks.filter(framework => {
-    const needle = search.toLowerCase();
-    return !needle || framework.name.toLowerCase().includes(needle) || (framework.programmeName || framework.ifateRef || '').toLowerCase().includes(needle);
-  });
+  const searchNeedle = search.trim().toLowerCase();
+  const filteredFrameworks = useMemo(() => frameworks.filter(framework => {
+    if (!searchNeedle) return true;
+    return framework.name.toLowerCase().includes(searchNeedle)
+      || (framework.programmeName || framework.ifateRef || '').toLowerCase().includes(searchNeedle);
+  }), [frameworks, searchNeedle]);
+
+  // The first fetch leaves `frameworks` legitimately empty, and "0 frameworks"
+  // reads as an answer rather than as a wait. While a search is narrowing the
+  // list, the total on its own contradicts what is on screen.
+  const frameworkCountLabel = loading
+    ? 'Loading frameworks...'
+    : searchNeedle
+      ? `${filteredFrameworks.length} of ${frameworks.length} frameworks`
+      : `${frameworks.length} ${frameworks.length === 1 ? 'framework' : 'frameworks'}`;
 
   const groupedItems = useMemo(() => ({
     K: sortKsbItems(items.filter(item => item.type === 'K')),
@@ -475,7 +486,7 @@ export function KsbFrameworkManager({
           <div className="flex items-center gap-2">
             <div className="flex-1">
               <h2 className="text-sm font-heading font-bold text-foreground-900">KSB Frameworks</h2>
-              <p className="text-xs text-foreground-400">{frameworks.length} frameworks</p>
+              <p className="text-xs text-foreground-400">{frameworkCountLabel}</p>
             </div>
             <button onClick={() => { setCreating(true); setSelectedId(''); }} className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary-700 text-white transition-smooth hover:bg-primary-600">
               <AppIcon className="ri-add-line" size={16}></AppIcon>
@@ -487,27 +498,66 @@ export function KsbFrameworkManager({
           </div>
         </div>
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {loading ? <p className="p-3 text-xs text-foreground-400">Loading frameworks...</p> : filteredFrameworks.map(framework => {
+          {loading ? (
+            [0, 1, 2].map(placeholder => (
+              <div key={placeholder} aria-hidden="true" className="rounded-xl border border-background-200 bg-background-50 p-3">
+                <div className="flex items-start gap-2">
+                  <span className="h-9 w-10 shrink-0 animate-pulse rounded-lg bg-background-200" />
+                  <div className="min-w-0 flex-1 space-y-1.5 py-1">
+                    <span className="block h-2.5 w-3/4 animate-pulse rounded bg-background-200" />
+                    <span className="block h-2 w-1/2 animate-pulse rounded bg-background-200" />
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : !filteredFrameworks.length ? (
+            <div className="px-3 py-10 text-center">
+              <AppIcon className={searchNeedle ? 'ri-search-line text-2xl text-foreground-300' : 'ri-bar-chart-line text-2xl text-foreground-300'}></AppIcon>
+              <p className="mt-2 text-xs font-semibold text-foreground-700">
+                {searchNeedle ? `No framework matches "${search.trim()}".` : 'No KSB frameworks yet.'}
+              </p>
+              <button
+                onClick={() => { if (searchNeedle) { setSearch(''); return; } setCreating(true); setSelectedId(''); }}
+                className="mt-2 text-[11px] font-semibold text-primary-700 underline-offset-2 hover:underline"
+              >
+                {searchNeedle ? 'Clear search' : 'Create the first framework'}
+              </button>
+            </div>
+          ) : filteredFrameworks.map(framework => {
             const ksbCount = getFrameworkSet(framework, ksbSets)?.ksbs.length ?? 0;
+            const isSelected = selectedFramework?.id === framework.id && !creating;
+            const subtitle = framework.programmeName || framework.ifateRef || framework.standard;
             return (
-            <div key={framework.id} className={`rounded-xl border p-3 transition-smooth hover:border-primary-200 hover:shadow-sm ${selectedFramework?.id === framework.id && !creating ? 'border-primary-500 bg-primary-50/50' : 'border-background-200 bg-background-50'}`}>
-              <button onClick={() => { setCreating(false); setSelectedId(framework.id); }} className="w-full text-left">
+            <div key={framework.id} className={`relative rounded-xl border transition-smooth hover:border-primary-200 hover:shadow-sm ${isSelected ? 'border-primary-500 bg-primary-50/50' : 'border-background-200 bg-background-50'}`}>
+              {/* The card is the edit affordance; a separate Edit button ran the
+                  same handler and cost a row of height in a 290px rail. */}
+              <button
+                onClick={() => { setCreating(false); setSelectedId(framework.id); }}
+                aria-current={isSelected || undefined}
+                className="w-full rounded-xl p-3 pr-10 text-left outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+              >
                 <div className="flex items-start gap-2">
                   <span className="flex h-9 w-10 shrink-0 flex-col items-center justify-center rounded-lg bg-primary-100 text-primary-700">
                     <span className="text-xs font-bold leading-none">{ksbCount}</span>
                     <span className="mt-0.5 text-[8px] font-bold leading-none uppercase">KSBs</span>
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs font-bold text-foreground-900 truncate">{framework.name}</p>
-                    <p className="text-[11px] text-foreground-400 truncate">{framework.programmeName || framework.ifateRef || framework.standard}</p>
+                    <p className="text-xs font-bold text-foreground-900 truncate" title={framework.name}>{framework.name}</p>
+                    <p className="text-[11px] text-foreground-400 truncate" title={subtitle}>{subtitle}</p>
                   </div>
                 </div>
                 <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[9px] font-semibold ${framework.status === 'archived' ? 'bg-foreground-100 text-foreground-500' : 'bg-primary-100 text-primary-700'}`}>{framework.status === 'archived' ? 'Archived' : 'Active'}</span>
               </button>
-              <div className="mt-2 flex items-center gap-1.5">
-                <button onClick={() => { setCreating(false); setSelectedId(framework.id); }} className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-background-200 px-2 text-[10px] font-semibold transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"><AppIcon name="ri-pencil-line" size={14}></AppIcon>Edit</button>
-                <button onClick={() => void requestDeleteFramework(framework)} className="inline-flex h-8 items-center justify-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2 text-[10px] font-semibold text-red-600 transition-smooth hover:bg-red-100"><AppIcon name="ri-delete-bin-line" size={14}></AppIcon>Delete</button>
-              </div>
+              {/* Kept visible rather than hover-revealed: a hover-only control is
+                  unreachable on touch. Quiet until pointed at instead. */}
+              <button
+                onClick={() => void requestDeleteFramework(framework)}
+                aria-label={`Delete ${framework.name}`}
+                title={`Delete ${framework.name}`}
+                className="absolute right-1.5 top-1.5 inline-flex h-7 w-7 items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+              >
+                <AppIcon name="ri-delete-bin-line" size={14}></AppIcon>
+              </button>
             </div>
             );
           })}

@@ -59,6 +59,7 @@ TABLE_OWNER_MIGRATION = {
     'groups': 'curriculum_api.0005_create_groups_table',
     'coaches': 'curriculum_api.0008_create_staff_profile_tables',
     'tutors': 'curriculum_api.0008_create_staff_profile_tables',
+    'tutor_module_notifications': 'curriculum_api.0049_tutor_module_notifications',
     'free_courses': 'curriculum_api.0029_rename_free_programme_modules_to_free_courses',
     'free_programme_components': 'curriculum_api.0030_free_courses_week_link_and_ids',
     'free_course_weeks': 'curriculum_api.0034_split_free_courses_and_weeks',

@@ -1,3 +1,5 @@
+import contextlib
+import functools
 import hashlib
 import json
 import logging
@@ -31,6 +33,7 @@ from learner_api.progress_rules import (
 )
 
 from . import schema_gate
+from . import tutor_notifications
 from .schema_gate import SchemaNotProvisioned
 from .ksb_coverage import (
     SUPPORTED_CLASSIFICATIONS,
@@ -95,6 +98,73 @@ def invalidate_curriculum_cache():
     except Exception:
         logger.warning('Unable to invalidate shared curriculum cache.', exc_info=True)
     _TABLE_EXISTS_CACHE.clear()
+
+
+# Whole-table reads memoised for the duration of one payload build. build_programmes()
+# calls programme_component_ksb_mapping_count() and programme_learner_ksb_progress()
+# once per programme, and each of those re-reads authoring modules, programmes,
+# cohorts, groups and ksb_profiles in full. On a remote database that turned a
+# ~30-row payload into ~300 round trips (35s per build). The scope is opened only
+# around read-only payload assembly and torn down on exit, so a write path never
+# reads back rows it just wrote from a stale memo.
+_CURRICULUM_READ_SCOPE = threading.local()
+
+
+@contextlib.contextmanager
+def curriculum_read_scope():
+    """Deduplicate repeated whole-table curriculum reads inside one build.
+
+    Reentrant: a nested ``with`` reuses the outermost scope, which owns the
+    lifetime, so a payload build called from inside another one still sees a
+    single set of reads.
+    """
+    if getattr(_CURRICULUM_READ_SCOPE, 'memo', None) is not None:
+        yield
+        return
+    _CURRICULUM_READ_SCOPE.memo = {}
+    try:
+        yield
+    finally:
+        _CURRICULUM_READ_SCOPE.memo = None
+
+
+def _scope_memo_key(value):
+    """Hashable stand-in for a call argument (query params arrive as lists)."""
+    if isinstance(value, (list, tuple)):
+        return tuple(_scope_memo_key(item) for item in value)
+    if isinstance(value, (set, frozenset)):
+        return frozenset(_scope_memo_key(item) for item in value)
+    if isinstance(value, dict):
+        return tuple(sorted((key, _scope_memo_key(item)) for key, item in value.items()))
+    return value
+
+
+def scoped_curriculum_read(fn):
+    """Memoise a read-only helper for the current curriculum_read_scope().
+
+    Outside a scope the call passes straight through, so nothing changes for
+    write paths or for callers that have not opted in. An argument that cannot
+    be reduced to a hashable key also passes straight through rather than
+    failing the request.
+    """
+    @functools.wraps(fn)
+    def wrapped(*args, **kwargs):
+        memo = getattr(_CURRICULUM_READ_SCOPE, 'memo', None)
+        if memo is None:
+            return fn(*args, **kwargs)
+        try:
+            key = (
+                fn.__qualname__,
+                _scope_memo_key(args),
+                _scope_memo_key(tuple(sorted(kwargs.items()))),
+            )
+            hash(key)
+        except TypeError:
+            return fn(*args, **kwargs)
+        if key not in memo:
+            memo[key] = fn(*args, **kwargs)
+        return memo[key]
+    return wrapped
 
 
 def shared_curriculum_epoch():
@@ -387,6 +457,7 @@ def ensure_program_config_archive_columns():
             'is_archived': 'boolean',
             'status': 'varchar(32)',
             'ksb_profile_source_id': 'varchar(128)',
+            'required_otjh': 'numeric(8, 2)',
         })
     except Exception as exc:
         logger.warning('Could not inspect programme config archive columns: %s', exc)
@@ -1004,16 +1075,26 @@ def teams_event_payload(payload, graph_settings):
     if details:
         body_parts.append(f'<p>{escape(details).replace(chr(10), "<br>")}</p>')
 
+    # Anchor the series to the same UTC instant the per-session occurrences are
+    # derived from. The wizard computes those in the browser's timezone, so reading
+    # the naive local string in the organizer's Graph timezone can put the weekly
+    # grid hours away from every target: nothing matches, every occurrence has to be
+    # moved, and Graph rejects moves that cross a neighbour -- which shreds the
+    # series into standalone recreations. Same instant either way, minus the churn.
+    anchor = utc_start
+    if anchor.tzinfo is not None:
+        anchor = anchor.astimezone(timezone.utc).replace(tzinfo=None)
+    anchor = anchor.replace(second=0, microsecond=0)
     event = {
         'subject': title,
         'body': {'contentType': 'HTML', 'content': ''.join(body_parts)},
         'start': {
-            'dateTime': local_start.replace(second=0, microsecond=0).isoformat(timespec='seconds'),
-            'timeZone': graph_settings['timezone'],
+            'dateTime': anchor.isoformat(timespec='seconds'),
+            'timeZone': 'UTC',
         },
         'end': {
-            'dateTime': (local_start + timedelta(minutes=duration)).replace(second=0, microsecond=0).isoformat(timespec='seconds'),
-            'timeZone': graph_settings['timezone'],
+            'dateTime': (anchor + timedelta(minutes=duration)).isoformat(timespec='seconds'),
+            'timeZone': 'UTC',
         },
         'attendees': [
             {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
@@ -1028,7 +1109,11 @@ def teams_event_payload(payload, graph_settings):
     transaction_id = clean_str(payload.get('transactionId'))[:255]
     if transaction_id:
         event['transactionId'] = transaction_id
-    recurrence = teams_event_recurrence(repeat, local_start, occurrences)
+    # Holiday shifts stretch the calendar span past the Nth weekly slot, so size the
+    # recurrence by the span the wizard actually needs. Sizing it by session count
+    # leaves the trailing shifted dates with no instance to move onto.
+    recurrence_slots = teams_recurrence_slot_count(payload, anchor, repeat, occurrences)
+    recurrence = teams_event_recurrence(repeat, anchor, max(2, recurrence_slots))
     if recurrence:
         event['recurrence'] = recurrence
     # Return normalized timing too, for the component settings response.
@@ -1123,6 +1208,186 @@ def teams_online_meeting_from_join_url(organizer, join_url):
     return values[0] if values else {}
 
 
+# Graph names timezones the Windows way; browsers only know IANA ids. Only the zones
+# this deployment can realistically be configured with need an entry -- anything else
+# is covered by the MICROSOFT_GRAPH_TIMEZONE_IANA override.
+GRAPH_WINDOWS_TO_IANA = {
+    'GMT Standard Time': 'Europe/London',
+    'UTC': 'UTC',
+    'W. Europe Standard Time': 'Europe/Berlin',
+    'Romance Standard Time': 'Europe/Paris',
+    'Egypt Standard Time': 'Africa/Cairo',
+    'Arabian Standard Time': 'Asia/Dubai',
+}
+
+
+def graph_timezone_iana(graph_settings):
+    """IANA id for the calendar's timezone, for the wizard to schedule against."""
+    override = clean_str(os.environ.get('MICROSOFT_GRAPH_TIMEZONE_IANA'))
+    if override:
+        return override
+    return GRAPH_WINDOWS_TO_IANA.get(clean_str(graph_settings.get('timezone')), 'Europe/London')
+
+
+def teams_shifted_occurrence_targets(payload, default_duration):
+    """Wizard dates the calendar occurrences must land on, holiday shifts included."""
+    supplied = payload.get('scheduledOccurrences')
+    if not isinstance(supplied, list) or len(supplied) <= 1:
+        return []
+    targets = []
+    for index, item in enumerate(supplied):
+        if not isinstance(item, dict):
+            continue
+        start = parse_graph_datetime(item.get('startDateTimeUtc'))
+        if not start:
+            continue
+        try:
+            item_duration = max(15, min(1440, int(item.get('durationMinutes') or default_duration)))
+        except (TypeError, ValueError):
+            item_duration = default_duration
+        try:
+            session_number = max(1, int(item.get('sessionNumber') or index + 1))
+        except (TypeError, ValueError):
+            session_number = index + 1
+        targets.append({
+            'session_number': session_number,
+            'start': start,
+            'end': start + timedelta(minutes=item_duration),
+        })
+    return targets
+
+
+def apply_teams_occurrence_shifts(owner_key, event_key, title, target_occurrences, invited_people):
+    """Move the plain weekly Graph occurrences onto the wizard's shifted dates.
+
+    Graph recurrences can only be unbroken weekly patterns, so a holiday-shifted plan
+    has to be reconciled instance by instance once the series exists. Creating a
+    series needs this exactly as much as rescheduling one does: the wizard sends the
+    shifted dates on both calls, and skipping the reconciliation leaves Teams showing
+    sessions on the very holidays the wizard moved them off.
+
+    Returns a list of warning dicts; an empty list means the calendar matches the plan.
+    """
+    from coach_api.views import microsoft_graph_request
+
+    warnings = []
+    if not target_occurrences:
+        return warnings
+
+    instance_start = (min(item['start'] for item in target_occurrences) - timedelta(days=7)).isoformat()
+    instance_end = (max(item['end'] for item in target_occurrences) + timedelta(days=7)).isoformat()
+    # Graph pages /instances at 10 by default. Without an explicit $top the later
+    # sessions of a long series are simply invisible here, so their holiday shifts
+    # were never applied and the pairing below mistook present-but-unlisted slots
+    # for missing ones. Series length is capped at 52 occurrences, so one page fits.
+    instance_query = urllib_parse.urlencode({
+        'startDateTime': instance_start,
+        'endDateTime': instance_end,
+        '$top': 200,
+    })
+    target_by_key = {
+        teams_calendar_minute_key(target['start']): target
+        for target in target_occurrences
+    }
+    try:
+        instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
+        instances = instance_response.get('value') if isinstance(instance_response, dict) else []
+        instances = sorted(instances, key=lambda item: clean_str((item.get('start') or {}).get('dateTime')))
+        recreated_event_ids = set()
+        # Claim instances that already sit on a wanted date before assigning the
+        # rest. Pairing purely by position would move an instance that is already
+        # correct onto another wanted date and duplicate it, because a shifted
+        # series spans more weekly slots than there are sessions.
+        sorted_targets = sorted(target_occurrences, key=lambda item: item['session_number'])
+        remaining_instances = list(instances)
+        paired_instances = []
+        unmatched_targets = []
+        for target in sorted_targets:
+            target_key = teams_calendar_minute_key(target['start'])
+            match = next(
+                (
+                    candidate for candidate in remaining_instances
+                    if teams_calendar_minute_key((candidate.get('start') or {}).get('dateTime')) == target_key
+                ),
+                None,
+            )
+            if match is None:
+                unmatched_targets.append(target)
+                continue
+            remaining_instances.remove(match)
+            paired_instances.append((match, target))
+        # A target already on the right day but at a different clock time -- a DST
+        # boundary moves the UTC instant by an hour -- belongs to that day's
+        # instance. Only genuinely date-shifted sessions fall through to position,
+        # where a wrong guess drags an occurrence across its neighbour.
+        positional_targets = []
+        for target in unmatched_targets:
+            target_day = target['start'].date()
+            match = next(
+                (
+                    candidate for candidate in remaining_instances
+                    if (parse_graph_datetime((candidate.get('start') or {}).get('dateTime')) or datetime.min).date() == target_day
+                ),
+                None,
+            )
+            if match is None:
+                positional_targets.append(target)
+                continue
+            remaining_instances.remove(match)
+            paired_instances.append((match, target))
+        for target in positional_targets:
+            if not remaining_instances:
+                break
+            paired_instances.append((remaining_instances.pop(0), target))
+        for instance, target in reversed(paired_instances):
+            instance_id = clean_str(instance.get('id'))
+            if not instance_id:
+                continue
+            current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
+            target_key = teams_calendar_minute_key(target['start'])
+            if current_key and current_key == target_key:
+                continue
+            instance_key = urllib_parse.quote(instance_id, safe='')
+            try:
+                microsoft_graph_request('PATCH', f'users/{owner_key}/events/{instance_key}', payload={
+                    'start': {'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+                    'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+                })
+            except RuntimeError as exc:
+                recreated = microsoft_graph_request(
+                    'POST',
+                    f'users/{owner_key}/events',
+                    payload=teams_single_occurrence_payload(title, target, invited_people),
+                )
+                if isinstance(recreated, dict):
+                    recreated_id = clean_str(recreated.get('id'))
+                    if recreated_id:
+                        recreated_event_ids.add(recreated_id)
+                microsoft_graph_request('DELETE', f'users/{owner_key}/events/{instance_key}')
+                warnings.append({
+                    'code': 'teams_shifted_occurrence_recreated',
+                    'message': 'Microsoft Teams could not move a recurring occurrence across the series boundary, so it was recreated on the wizard date and the old occurrence was removed.',
+                    'detail': str(exc),
+                })
+        instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
+        instances = instance_response.get('value') if isinstance(instance_response, dict) else []
+        for instance in instances:
+            instance_id = clean_str(instance.get('id'))
+            if not instance_id or instance_id in recreated_event_ids:
+                continue
+            current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
+            if current_key and current_key not in target_by_key:
+                microsoft_graph_request('DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}')
+    except RuntimeError as exc:
+        logger.warning('Unable to reconcile individual Teams event instances: %s', exc)
+        warnings.append({
+            'code': 'teams_individual_occurrences_not_updated',
+            'message': 'Microsoft Teams updated the meeting series, but could not update shifted individual sessions.',
+            'detail': str(exc),
+        })
+    return warnings
+
+
 @csrf_exempt
 def curriculum_teams_meeting(request):
     """
@@ -1141,6 +1406,7 @@ def curriculum_teams_meeting(request):
             'configured': has_graph_credentials(),
             'defaultOrganizer': default_organizer,
             'timeZone': graph_settings.get('timezone') or 'GMT Standard Time',
+            'timeZoneIana': graph_timezone_iana(graph_settings),
         })
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
@@ -1182,6 +1448,20 @@ def curriculum_teams_meeting(request):
             pass
 
     warnings = []
+    # Graph has just built a plain weekly series. Move its occurrences onto the
+    # wizard's holiday-shifted dates now, otherwise the calendar keeps sessions on
+    # holidays the wizard already moved them off and the two disagree from day one.
+    if event_id:
+        for shift_warning in apply_teams_occurrence_shifts(
+            owner_key,
+            urllib_parse.quote(event_id, safe=''),
+            clean_str(payload.get('title')) or 'Live session',
+            teams_shifted_occurrence_targets(payload, duration),
+            attendees,
+        ):
+            message = clean_str(shift_warning.get('message'))
+            detail = clean_str(shift_warning.get('detail'))
+            warnings.append(f'{message} ({detail})' if detail else message)
     meeting_options_url = ''
     lobby_choice = clean_str(payload.get('lobbyBypass')).lower() or 'invited'
     if lobby_choice not in TEAMS_LOBBY_VALUES:
@@ -1421,118 +1701,13 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         logger.warning('Unable to update Module Builder Teams event schedule: %s', exc)
         return json_error('Microsoft Teams could not update the meeting schedule.', status=502, detail=str(exc))
 
-    warnings = []
-    supplied_occurrences = payload.get('scheduledOccurrences') if isinstance(payload.get('scheduledOccurrences'), list) else []
-    if len(supplied_occurrences) > 1:
-        target_occurrences = []
-        for index, item in enumerate(supplied_occurrences):
-            if not isinstance(item, dict):
-                continue
-            start = parse_graph_datetime(item.get('startDateTimeUtc'))
-            if not start:
-                continue
-            try:
-                item_duration = max(15, min(1440, int(item.get('durationMinutes') or duration)))
-            except (TypeError, ValueError):
-                item_duration = duration
-            try:
-                session_number = max(1, int(item.get('sessionNumber') or index + 1))
-            except (TypeError, ValueError):
-                session_number = index + 1
-            target_occurrences.append({
-                'session_number': session_number,
-                'start': start,
-                'end': start + timedelta(minutes=item_duration),
-            })
-        if target_occurrences:
-            instance_start = (min(item['start'] for item in target_occurrences) - timedelta(days=7)).isoformat()
-            instance_end = (max(item['end'] for item in target_occurrences) + timedelta(days=7)).isoformat()
-            instance_query = urllib_parse.urlencode({
-                'startDateTime': instance_start,
-                'endDateTime': instance_end,
-            })
-            try:
-                instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
-                instances = instance_response.get('value') if isinstance(instance_response, dict) else []
-                instances = sorted(instances, key=lambda item: clean_str((item.get('start') or {}).get('dateTime')))
-                target_by_key = {
-                    teams_calendar_minute_key(target['start']): target
-                    for target in target_occurrences
-                }
-                invited_people = teams_series_email_list(series.get('presenters'), series.get('attendees'))
-                recreated_event_ids = set()
-                # Claim instances that already sit on a wanted date before assigning the
-                # rest. Pairing purely by position would move an instance that is already
-                # correct onto another wanted date and duplicate it, because a shifted
-                # series spans more weekly slots than there are sessions.
-                sorted_targets = sorted(target_occurrences, key=lambda item: item['session_number'])
-                remaining_instances = list(instances)
-                paired_instances = []
-                unmatched_targets = []
-                for target in sorted_targets:
-                    target_key = teams_calendar_minute_key(target['start'])
-                    match = next(
-                        (
-                            candidate for candidate in remaining_instances
-                            if teams_calendar_minute_key((candidate.get('start') or {}).get('dateTime')) == target_key
-                        ),
-                        None,
-                    )
-                    if match is None:
-                        unmatched_targets.append(target)
-                        continue
-                    remaining_instances.remove(match)
-                    paired_instances.append((match, target))
-                for target in unmatched_targets:
-                    if not remaining_instances:
-                        break
-                    paired_instances.append((remaining_instances.pop(0), target))
-                for instance, target in reversed(paired_instances):
-                    instance_id = clean_str(instance.get('id'))
-                    if not instance_id:
-                        continue
-                    current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
-                    target_key = teams_calendar_minute_key(target['start'])
-                    if current_key and current_key == target_key:
-                        continue
-                    instance_key = urllib_parse.quote(instance_id, safe='')
-                    try:
-                        microsoft_graph_request('PATCH', f'users/{owner_key}/events/{instance_key}', payload={
-                            'start': {'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
-                            'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
-                        })
-                    except RuntimeError as exc:
-                        recreated = microsoft_graph_request(
-                            'POST',
-                            f'users/{owner_key}/events',
-                            payload=teams_single_occurrence_payload(title, target, invited_people),
-                        )
-                        if isinstance(recreated, dict):
-                            recreated_id = clean_str(recreated.get('id'))
-                            if recreated_id:
-                                recreated_event_ids.add(recreated_id)
-                        microsoft_graph_request('DELETE', f'users/{owner_key}/events/{instance_key}')
-                        warnings.append({
-                            'code': 'teams_shifted_occurrence_recreated',
-                            'message': 'Microsoft Teams could not move a recurring occurrence across the series boundary, so it was recreated on the wizard date and the old occurrence was removed.',
-                            'detail': str(exc),
-                        })
-                instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
-                instances = instance_response.get('value') if isinstance(instance_response, dict) else []
-                for instance in instances:
-                    instance_id = clean_str(instance.get('id'))
-                    if not instance_id or instance_id in recreated_event_ids:
-                        continue
-                    current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
-                    if current_key and current_key not in target_by_key:
-                        microsoft_graph_request('DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}')
-            except RuntimeError as exc:
-                logger.warning('Unable to update individual Teams event instances: %s', exc)
-                warnings.append({
-                    'code': 'teams_individual_occurrences_not_updated',
-                    'message': 'Microsoft Teams updated the meeting series, but could not update shifted individual sessions.',
-                    'detail': str(exc),
-                })
+    warnings = apply_teams_occurrence_shifts(
+        owner_key,
+        event_key,
+        title,
+        teams_shifted_occurrence_targets(payload, duration),
+        teams_series_email_list(series.get('presenters'), series.get('attendees')),
+    )
 
     join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or clean_str(series.get('join_url'))
     occurrence_rows = replace_live_session_occurrences(
@@ -2128,6 +2303,38 @@ def parse_int(value, default=0):
         return default
 
 
+def parse_required_otjh(value):
+    """Off-the-job hours a learner must complete for the programme.
+
+    Returns None for a blank or unparseable entry so the column stays NULL: the
+    review step distinguishes "no target set" from a target of zero hours, and
+    treating a cleared field as 0 would report every programme as already met.
+    """
+    text = clean_str(value)
+    if not text:
+        return None
+    hours = parse_float(text, -1)
+    if hours < 0:
+        return None
+    return round(hours, 2)
+
+
+def payload_required_otjh(payload, existing=None):
+    """Resolve required_otjh for a write, leaving it untouched when unsent.
+
+    An absent key must not wipe a stored target, so callers that pass this into
+    update_rows also pass allow_null_columns=['required_otjh'] — that lets an
+    explicitly emptied field clear the column while an omitted one is dropped.
+    """
+    payload = payload or {}
+    for key in ('requiredOtjh', 'required_otjh'):
+        if key in payload:
+            return parse_required_otjh(payload.get(key))
+    if existing is None:
+        return None
+    return parse_required_otjh((existing or {}).get('required_otjh'))
+
+
 def parse_float(value, default=0):
     try:
         return float(str(value).strip())
@@ -2174,6 +2381,114 @@ def calculate_cohort_end_date(start_value, duration_months):
     month = month_index % 12 + 1
     day = min(start.day, calendar.monthrange(year, month)[1])
     return date(year, month, day) - timedelta(days=1)
+
+
+def parse_epa_months(value):
+    """Read an End Point Assessment period in whole months.
+
+    None means "no EPA period recorded", which is not the same as zero: a
+    cohort with no EPA period has no apprenticeship end date to show, whereas
+    an explicit 0 means the apprenticeship ends when the practical period does.
+    """
+    if value in (None, ''):
+        return None
+    months = parse_int(value, -1)
+    return months if months >= 0 else None
+
+
+def payload_epa_months(payload, existing=None):
+    """Resolve the EPA period for a write, leaving it untouched when unsent.
+
+    An explicit blank clears the period; an absent key keeps whatever the stored
+    row already has, so a partial save cannot drop an authored period.
+    """
+    for key in ('epaMonths', 'epa_months'):
+        if key in (payload or {}):
+            return parse_epa_months((payload or {}).get(key))
+    return parse_epa_months((existing or {}).get('epa_months'))
+
+
+def parse_apprenticeship_end_override(value):
+    """Read a manually authored apprenticeship end date.
+
+    None means "no override": the calculated date stands. An unparseable value
+    is treated the same way rather than raising, so a bad string cannot wedge a
+    save — the cohort simply keeps its calculated date.
+    """
+    if value in (None, ''):
+        return None
+    return parse_date(value)
+
+
+def payload_apprenticeship_end_override(payload, existing=None):
+    """Resolve the override for a write, leaving it untouched when unsent.
+
+    Mirrors ``payload_epa_months``: an explicit blank clears the override and
+    hands the date back to the EPA calculation, while an absent key keeps
+    whatever the stored row already has so a partial save cannot drop an
+    authored date.
+    """
+    # The explicit override keys are read first so a payload that round-trips a
+    # serialized cohort -- which carries the *effective* apprenticeshipEndDate
+    # alongside the authored apprenticeshipEndOverride -- cannot promote a
+    # calculated date into an authored one.
+    for key in ('apprenticeshipEndOverride', 'apprenticeship_end_override', 'apprenticeshipEndDate', 'apprenticeship_end_date'):
+        if key in (payload or {}):
+            return parse_apprenticeship_end_override((payload or {}).get(key))
+    return parse_apprenticeship_end_override((existing or {}).get('apprenticeship_end_override'))
+
+
+def apprenticeship_end_override_sent(payload, meta=None):
+    """Whether this write carries an apprenticeship end date at all."""
+    keys = ('apprenticeshipEndDate', 'apprenticeship_end_date', 'apprenticeshipEndOverride', 'apprenticeship_end_override')
+    return any(key in (payload or {}) for key in keys) or 'apprenticeship_end_override' in (meta or {})
+
+
+def calculate_apprenticeship_end_date(practical_end_value, epa_months):
+    """The apprenticeship end date: the practical end date plus the EPA period.
+
+    Unlike ``calculate_cohort_end_date`` this keeps the same day of the month
+    and does not subtract a day — the practical period already ended, and the
+    EPA window is counted forward from that date. A practical period ending
+    2027-03-04 with a 5 month EPA period ends 2027-08-04.
+    """
+    practical_end = parse_date(practical_end_value)
+    months = parse_epa_months(epa_months)
+    if not practical_end or not months:
+        return None
+
+    month_index = practical_end.month - 1 + months
+    year = practical_end.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(practical_end.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def cohort_apprenticeship_end_date(practical_end_value, epa_months, override=None):
+    """The date a cohort's apprenticeship actually ends.
+
+    An authored override wins outright — it is the date the delivery team was
+    given, and no whole number of EPA months need land on it. With no override
+    the date is calculated from the practical end date plus the EPA period.
+    """
+    manual = parse_apprenticeship_end_override(override)
+    if manual:
+        return manual
+    return calculate_apprenticeship_end_date(practical_end_value, epa_months)
+
+
+def cohort_epa_dates(practical_end_value, epa_months, override=None):
+    """Resolve the pair of end dates a cohort exposes, as ISO strings.
+
+    The apprenticeship end date is always resolved here rather than read back
+    from its ``apprenticeship_end_date`` column: that column is a cache for SQL
+    consumers (the enrolment backfill joins on it), and serving the cache would
+    surface a stale date whenever the practical end date moved without the EPA
+    period being resent. The override column is the authored input and *is* read
+    back, which is exactly why the two are kept apart.
+    """
+    practical_end = format_date(practical_end_value)
+    return practical_end, format_date(cohort_apprenticeship_end_date(practical_end, epa_months, override))
 
 
 WEEKDAY_INDEX = {
@@ -2744,6 +3059,293 @@ def soft_delete_programme_authoring_structure(identifier, programme=None, config
         raise
     invalidate_curriculum_cache()
     return result
+
+
+# Learner-side tables holding ON DELETE RESTRICT foreign keys into the curriculum
+# content a programme owns. Postgres itself refuses to remove content a learner
+# has already been given, so a permanent delete reports these as blockers instead
+# of quietly deleting somebody's delivery record.
+PROGRAMME_PERMANENT_DELETE_LEARNER_LINKS = (
+    ('learner_training_plan_modules', 'curriculum_module_id', 'moduleIds'),
+    ('learner_training_plan_weeks', 'curriculum_week_id', 'weekIds'),
+    ('learner_training_plan_components', 'curriculum_component_id', 'componentIds'),
+)
+
+
+def curriculum_in_clause(column, values):
+    """``column in (...)`` for a list of ids, or an empty clause when there are none."""
+    values = [value for value in (values or []) if clean_str(value)]
+    if not values:
+        return '', []
+    placeholders = ', '.join(['%s'] * len(values))
+    return f'{quote_ident(column)} in ({placeholders})', values
+
+
+def curriculum_where_any(clauses):
+    """OR the non-empty clauses together, or return no SQL at all.
+
+    An empty id list must never widen into ``where true``: on a delete that is
+    the whole table. Callers therefore skip the statement entirely when this
+    returns an empty ``where`` rather than falling back to a default predicate.
+    """
+    usable = [(sql, params) for sql, params in clauses if sql and params]
+    if not usable:
+        return '', []
+    return (
+        ' or '.join(sql for sql, _ in usable),
+        [value for _, values in usable for value in values],
+    )
+
+
+def curriculum_ids_matching(table, column, clauses):
+    where_sql, params = curriculum_where_any(clauses)
+    if not where_sql or not table_exists(table):
+        return []
+    rows = fetch_all(
+        f'select distinct {quote_ident(column)} as value from {table_name(table)} where {where_sql}',
+        params,
+    )
+    return [clean_str(row.get('value')) for row in rows if clean_str(row.get('value'))]
+
+
+def programme_identifier_candidates(identifier, programme=None, config=None):
+    """Every id a child row may legitimately carry for this programme."""
+    values = {
+        clean_str(identifier),
+        clean_str(programme_config_identity(config)),
+        clean_str((programme or {}).get('sourceId')),
+        clean_str((programme or {}).get('id')),
+    }
+    return sorted(value for value in values if value)
+
+
+def programme_permanent_delete_blockers(child_ids):
+    """Learner rows the database itself refuses to orphan.
+
+    ``Learner.learner_training_plan_{modules,weeks,components}`` reference
+    curriculum modules, weeks and components with ON DELETE RESTRICT. A learner's
+    training plan is their delivery record, so content they hold is not something
+    a programme delete may remove; it is reported and the delete is refused.
+    """
+    blockers = {}
+    if connection.vendor != 'postgresql':
+        return blockers
+    for table, column, key in PROGRAMME_PERMANENT_DELETE_LEARNER_LINKS:
+        values = [value for value in (child_ids.get(key) or []) if clean_str(value)]
+        if not values:
+            continue
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute('select to_regclass(%s)', [f'"Learner"."{table}"'])
+                if not cursor.fetchone()[0]:
+                    continue
+                placeholders = ', '.join(['%s'] * len(values))
+                cursor.execute(
+                    f'select count(*) from "Learner".{quote_ident(table)} '
+                    f'where {quote_ident(column)} in ({placeholders})',
+                    values,
+                )
+                total = int(cursor.fetchone()[0] or 0)
+        except Exception:
+            # A count we cannot run is not a green light: the RESTRICT foreign key
+            # still refuses the delete, and the caller turns that into the same 409.
+            logger.warning('Could not count %s rows for a permanent programme delete.', table, exc_info=True)
+            continue
+        if total:
+            blockers[table] = total
+    return blockers
+
+
+def programme_permanent_delete_plan(identifier, programme=None, config=None):
+    """Read-only plan for a permanent delete: what would go, and what blocks it.
+
+    Children are resolved through their own parents as well as through
+    ``programme_id``. A group whose programme_id was never stamped, or a module
+    attached only to a group, still belongs to the programme and must not survive
+    it - those are precisely the orphans migration 0038 was added to stop.
+    """
+    candidates = programme_identifier_candidates(identifier, programme, config)
+    plan = {
+        'candidates': candidates,
+        'childIds': {
+            'cohortIds': [],
+            'groupIds': [],
+            'moduleIds': [],
+            'weekIds': [],
+            'componentIds': [],
+            'weekTemplateIds': [],
+        },
+        'blockers': {},
+        'learners': 0,
+    }
+    if not candidates:
+        return plan
+
+    programme_clause = curriculum_in_clause('programme_id', candidates)
+    child = plan['childIds']
+    child['cohortIds'] = curriculum_ids_matching(
+        COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', [programme_clause],
+    )
+    child['groupIds'] = curriculum_ids_matching(GROUPS_TABLE, 'group_id', [
+        programme_clause,
+        curriculum_in_clause('cohort_id', child['cohortIds']),
+    ])
+    child['moduleIds'] = curriculum_ids_matching(AUTHORING_MODULES_TABLE, 'module_catalogue_id', [
+        programme_clause,
+        curriculum_in_clause('cohort_id', child['cohortIds']),
+        curriculum_in_clause('group_id', child['groupIds']),
+    ])
+    child['weekIds'] = curriculum_ids_matching(AUTHORING_WEEKS_TABLE, 'id', [
+        curriculum_in_clause('module_catalogue_id', child['moduleIds']),
+    ])
+    child['componentIds'] = curriculum_ids_matching(AUTHORING_COMPONENTS_TABLE, 'id', [
+        curriculum_in_clause('module_catalogue_id', child['moduleIds']),
+        curriculum_in_clause('week_id', child['weekIds']),
+    ])
+    child['weekTemplateIds'] = curriculum_ids_matching(WEEK_TEMPLATES_TABLE, 'id', [
+        programme_clause,
+        curriculum_in_clause('group_id', child['groupIds']),
+        curriculum_in_clause('module_catalogue_id', child['moduleIds']),
+    ])
+    plan['blockers'] = programme_permanent_delete_blockers(child)
+    plan['learners'] = parse_int(programme_dependency_counts(identifier, config).get('learners'), 0)
+    return plan
+
+
+def permanently_delete_programme_structure(plan):
+    """Delete an archived programme and every curriculum row beneath it, for real.
+
+    The order is dictated by the foreign keys migration 0038 added (children
+    first, ON DELETE RESTRICT). That ordering is exactly what a hand-written
+    ``delete from curriculum.programmes`` cannot supply, which is why Postgres
+    answers it with ``cohorts_programme_id_fkey``.
+
+    Where a cascade already exists it is left to do its job: deleting a live
+    session takes its occurrences, attendance, artifacts and recording events,
+    and deleting a quiz takes its questions, answers and links. The link tables
+    are still cleared explicitly first, because a link may point at this
+    programme's module from a quiz that belongs to another programme.
+
+    Learner accounts, progress and enrolment rows are never touched. The
+    training-plan tables that reference this content are RESTRICT-guarded and
+    surface through ``plan['blockers']`` before anything is deleted.
+    """
+    candidates = plan.get('candidates') or []
+    child = plan.get('childIds') or {}
+    removed = {}
+    if not candidates:
+        return removed
+
+    def wipe(table, clauses):
+        where_sql, params = curriculum_where_any(clauses)
+        if not where_sql or not table_exists(table):
+            return
+        rows = delete_rows(table, where_sql, params)
+        if rows:
+            removed[table] = len(rows)
+
+    programme_clause = curriculum_in_clause('programme_id', candidates)
+    module_clause = curriculum_in_clause('module_catalogue_id', child.get('moduleIds'))
+    week_clause = curriculum_in_clause('week_id', child.get('weekIds'))
+    component_clause = curriculum_in_clause('component_id', child.get('componentIds'))
+    template_clause = curriculum_in_clause('id', child.get('weekTemplateIds'))
+
+    wipe(AUTHORING_KSB_MAPPINGS_TABLE, [module_clause, week_clause, component_clause])
+    wipe('quiz_component_links', [component_clause])
+    wipe('quiz_course_links', [module_clause, week_clause])
+    wipe('quizzes', [programme_clause, week_clause])
+    wipe('tutor_module_notifications', [module_clause])
+    wipe('module_completion_criteria', [module_clause])
+    wipe('module_details', [module_clause])
+    wipe(LIVE_SESSIONS_TABLE, [module_clause])
+    wipe(AUTHORING_COMPONENTS_TABLE, [curriculum_in_clause('id', child.get('componentIds'))])
+    wipe(AUTHORING_WEEKS_TABLE, [curriculum_in_clause('id', child.get('weekIds'))])
+    wipe('week_template_components', [
+        curriculum_in_clause('week_template_id', child.get('weekTemplateIds')),
+    ])
+    wipe(WEEK_TEMPLATES_TABLE, [template_clause])
+    wipe('free_programme_components', [programme_clause])
+    wipe('free_programme_modules', [programme_clause])
+    wipe(AUTHORING_MODULES_TABLE, [
+        curriculum_in_clause('module_catalogue_id', child.get('moduleIds')),
+    ])
+    wipe(GROUPS_TABLE, [curriculum_in_clause('group_id', child.get('groupIds'))])
+    wipe(COHORT_AUTHORING_DETAILS_TABLE, [
+        curriculum_in_clause('cohort_id', child.get('cohortIds')),
+    ])
+    wipe('programmes', [curriculum_in_clause(programme_config_key_column(), candidates)])
+
+    invalidate_curriculum_cache()
+    return removed
+
+
+def request_wants_permanent_programme_delete(request):
+    """A permanent delete is opt-in per request; the default DELETE still archives."""
+    return (
+        truthy(request.GET.get('permanent'))
+        or truthy(request.GET.get('hard'))
+        or clean_str(request.GET.get('mode')).lower() in {'permanent', 'hard'}
+    )
+
+
+def permanent_programme_delete_response(identifier, programme=None, config=None):
+    """HTTP outcome of a permanent programme delete.
+
+    Archived-only by design: ``is_archived`` is the switch that turns an
+    irreversible delete on. A live programme is refused with 409 so the caller
+    archives it first, which is what the plain DELETE does.
+    """
+    archived = is_archived_program_config(config) or programme_status_is_archived(
+        (programme or {}).get('status')
+    )
+    if not archived:
+        return json_error(
+            'Archive the programme before deleting it permanently.',
+            status=409,
+            reason='programme-not-archived',
+            deleted=False,
+            permanent=False,
+            id=clean_str(identifier),
+        )
+
+    plan = programme_permanent_delete_plan(identifier, programme, config)
+    if plan['blockers']:
+        return json_error(
+            'Learner training plans still reference this curriculum, so the programme '
+            'cannot be deleted permanently.',
+            status=409,
+            reason='programme-has-learner-delivery',
+            deleted=False,
+            permanent=False,
+            id=clean_str(identifier),
+            blockers=plan['blockers'],
+        )
+
+    try:
+        with transaction.atomic():
+            removed = permanently_delete_programme_structure(plan)
+    except (IntegrityError, DatabaseError) as exc:
+        logger.warning('Permanent delete of programme %s was refused: %s', identifier, exc)
+        return json_error(
+            'The database refused the permanent delete because other rows still '
+            'reference this programme.',
+            status=409,
+            reason='programme-delete-restricted',
+            deleted=False,
+            permanent=False,
+            id=clean_str(identifier),
+            detail=clean_str(str(exc)),
+        )
+
+    return JsonResponse({
+        'deleted': True,
+        'permanent': True,
+        'archived': False,
+        'id': clean_str(identifier),
+        'removed': removed,
+        'learners': plan['learners'],
+        'message': 'Programme and every curriculum row beneath it were deleted permanently.',
+    })
 
 
 def curriculum_visibility(request):
@@ -3465,27 +4067,6 @@ def authoring_modules_as_catalogue_rows():
     return rows
 
 
-def profile_matches_visible_programmes(profile, programmes):
-    candidates = [
-        profile.get('name'),
-        *ksb_profile_context_ids(profile, 'programme_ids'),
-    ]
-    candidate_norms = [normalise(candidate) for candidate in candidates if normalise(candidate)]
-    if not candidate_norms:
-        return False
-
-    for programme in programmes:
-        programme_norms = [
-            normalise(programme.get('name')),
-            normalise(programme.get('standard')),
-            normalise(programme.get('sourceId')),
-        ]
-        for candidate_norm in candidate_norms:
-            if any(candidate_norm == value or candidate_norm in value or value in candidate_norm for value in programme_norms if value):
-                return True
-    return False
-
-
 def _notes_with_authoring_meta(module_row, programme_row=None, cohort_row=None, group_row=None):
     module_row = module_row or {}
     programme_row = programme_row or {}
@@ -3574,6 +4155,7 @@ def get_training_rows_from_authoring_tables():
     return rows
 
 
+@scoped_curriculum_read
 def get_training_rows():
     return authoring_modules_as_training_rows()
 
@@ -3609,6 +4191,7 @@ def get_module_rows():
     ''')
 
 
+@scoped_curriculum_read
 def get_ksb_profile_rows():
     if not table_exists('ksb_profiles'):
         return []
@@ -3629,6 +4212,7 @@ def get_skills_england_ksb_rows():
     ''')
 
 
+@scoped_curriculum_read
 def get_program_config_rows_raw():
     return fetch_all(f'''
         select *
@@ -3887,6 +4471,7 @@ def staff_profile_table(role):
     return table
 
 
+@scoped_curriculum_read
 def get_staff_profile_rows(role, include_archived=False):
     table = staff_profile_table(role)
     where = '' if include_archived else 'where coalesce(is_archived, false) = false'
@@ -4300,6 +4885,30 @@ def serialize_staff_profile(row, role, modules=None, groups=None):
     return profile
 
 
+def archived_staff_profile_name_keys(role):
+    """Name keys of staff profiles that have been deleted (archived).
+
+    A delete archives the profile row but leaves the person's name behind on
+    whatever curriculum they were assigned to. ``build_staff_profiles`` derives
+    stand-in profiles from those names, so without this set a deleted tutor or
+    coach is re-materialised on the very next read under a synthetic
+    ``tutor-<slug>`` id and reads as active again.
+    """
+    try:
+        rows = get_staff_profile_rows(role, include_archived=True)
+    except (Exception, AssertionError):
+        logger.debug('Could not read archived staff profiles for %s.', role, exc_info=True)
+        return set()
+    keys = set()
+    for row in rows or []:
+        if not staff_profile_is_archived(row):
+            continue
+        name_key = staff_assignment_key(staff_profile_name(row))
+        if name_key:
+            keys.add(name_key)
+    return keys
+
+
 def build_staff_profiles(training_rows, profile_rows, role, modules=None, groups=None):
     column_name = STAFF_PROFILE_ASSIGNMENT_COLUMNS[role]
     if modules is None:
@@ -4316,10 +4925,17 @@ def build_staff_profiles(training_rows, profile_rows, role, modules=None, groups
         if name_key:
             merged_name_keys.add(name_key)
 
+    # Archived rows are filtered out of ``profile_rows`` on operational reads, so
+    # their names are absent from ``merged_name_keys``. Suppress them explicitly
+    # or the training-derived fallback below resurrects every deleted profile.
+    suppressed_name_keys = archived_staff_profile_name_keys(role) - merged_name_keys
+
     for profile in build_staff_profiles_from_training(training_rows, column_name, role):
         key = staff_profile_identity_key(profile.get('name'), profile.get('email'))
         name_key = staff_assignment_key(profile.get('name'))
         if key in merged or (name_key and name_key in merged_name_keys):
+            continue
+        if name_key and name_key in suppressed_name_keys:
             continue
         merged[key] = serialize_staff_profile(profile, role, modules, groups)
         if name_key:
@@ -4688,6 +5304,7 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             'description': (config or {}).get('description') or (profile or {}).get('description') or '',
             'structureType': structure_type,
             'ksbProfileSourceId': normalise_ksb_profile_source_value((config or {}).get('ksb_profile_source_id') or ''),
+            'requiredOtjh': parse_required_otjh((config or {}).get('required_otjh')),
             'freeComponents': parse_int(free_counts.get('components'), 0),
         })
     return programmes
@@ -4937,6 +5554,8 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
 
     cohorts = []
     for detail in cohort_authoring_detail_rows():
+        if programme_deleted_row(detail):
+            continue
         if not include_archived and detail_is_archived(detail):
             continue
         cohort_id = clean_str(detail.get('cohortId'))
@@ -4951,6 +5570,10 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'programmeId': clean_str(detail.get('programmeId')),
             'startDate': format_date(detail.get('startDate')),
             'endDate': format_date(detail.get('endDate')),
+            'practicalEndDate': format_date(detail.get('practicalEndDate') or detail.get('endDate')),
+            'epaMonths': parse_epa_months(detail.get('epaMonths')),
+            'apprenticeshipEndDate': format_date(detail.get('apprenticeshipEndDate')),
+            'apprenticeshipEndOverride': format_date(detail.get('apprenticeshipEndOverride')),
             'durationMonths': parse_int(
                 detail.get('durationMonths'),
                 infer_duration_months(detail.get('startDate'), detail.get('endDate'), 0),
@@ -4973,7 +5596,9 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
     groups = []
     seen_group_ids = set()
     for detail in group_authoring_detail_rows():
-        if not include_archived and (detail_is_archived(detail) or programme_deleted_row(detail)):
+        if programme_deleted_row(detail):
+            continue
+        if not include_archived and detail_is_archived(detail):
             continue
         group_id = clean_str(detail.get('id'))
         if not group_id:
@@ -5678,10 +6303,16 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
 
 def build_curriculum_payload(visibility='operational', compact=False):
     logger.info('build_curriculum_payload: running DB build for visibility=%s compact=%s', visibility, compact)
-    return build_curriculum_payload_from_rows(get_curriculum_rows(compact=compact), visibility, compact=compact)
+    with curriculum_read_scope():
+        return build_curriculum_payload_from_rows(get_curriculum_rows(compact=compact), visibility, compact=compact)
 
 
 def build_curriculum_payload_from_rows(rows, visibility='operational', compact=False):
+    with curriculum_read_scope():
+        return _build_curriculum_payload_from_rows(rows, visibility, compact=compact)
+
+
+def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=False):
     training_rows = rows['training'] if visibility == 'all' else [row for row in rows['training'] if is_operational_training_row(row)]
     ksb_profiles = rows['ksb_profiles'] if visibility == 'all' else [profile for profile in rows['ksb_profiles'] if profile.get('is_active')]
     authoring_modules = rows['authoring_modules'] if visibility == 'all' else [
@@ -5729,11 +6360,14 @@ def build_curriculum_payload_from_rows(rows, visibility='operational', compact=F
         )
         authoring_sessions = build_sessions_from_authoring_modules(authoring_modules)
         sessions = prefer_authoring_module_sessions(training_sessions, authoring_sessions)
-    visible_ksb_profiles = ksb_profiles if visibility == 'all' else [
-        profile for profile in ksb_profiles
-        if profile_matches_visible_programmes(profile, programmes)
-    ]
-    frameworks, ksb_profiles = build_ksb_data(visible_ksb_profiles, modules, training_rows)
+    # Every active profile is exposed, whether or not a programme currently
+    # points at it. A KSB framework is a reusable standard (an IfATE profile is
+    # shared by many programmes and outlives all of them), and this payload backs
+    # the framework library page, where an unattached profile is precisely what
+    # the user has to be able to see in order to attach it. Filtering the library
+    # by programme linkage made a newly-created framework vanish on save.
+    # `is_active` above is the intended soft-delete for a profile.
+    frameworks, ksb_profiles = build_ksb_data(ksb_profiles, modules, training_rows)
 
     holiday_rows = rows['holidays'] if visibility == 'all' else [
         item for item in rows['holidays']
@@ -6407,7 +7041,28 @@ def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, 
     for row in rows:
         meta.update(row.get('_meta') or extract_notes_meta(row.get('notes')))
     start_date = format_date(cohort.get('startDate') or next((row.get('Starting_date_lable') or row.get('start_date') for row in rows if row), ''))
-    end_date = format_date(cohort.get('endDate') or meta.get('cohort_end_date') or next((row.get('end_date') for row in rows if row), ''))
+    end_date = format_date(cohort.get('endDate') or cohort.get('practicalEndDate') or meta.get('cohort_end_date') or next((row.get('end_date') for row in rows if row), ''))
+    # The EPA period is only written when the caller actually carries one, so
+    # the sync/repair paths that rebuild a cohort from training-plan rows cannot
+    # blank an authored period by simply not knowing about it. The authored
+    # apprenticeship end date is guarded the same way, for the same reason.
+    epa_sent = 'epaMonths' in cohort or 'epa_months' in cohort or 'epa_months' in meta
+    epa_months = payload_epa_months(cohort, {'epa_months': meta.get('epa_months')}) if epa_sent else None
+    override_sent = apprenticeship_end_override_sent(cohort, meta)
+    apprenticeship_end_override = format_date(payload_apprenticeship_end_override(
+        cohort,
+        {'apprenticeship_end_override': meta.get('apprenticeship_end_override')},
+    )) if override_sent else ''
+    # apprenticeship_end_date caches whichever of the two inputs applies, so it
+    # has to be recomputed from *both* even when only one was sent — a write that
+    # clears the override has to hand the cache back to the stored EPA period,
+    # and one that only sets the period must not lose an authored date.
+    stored_cohort = {}
+    if epa_sent != override_sent:
+        stored_cohort = fetch_cohort_row(clean_str(cohort.get('id') or meta.get('cohort_id'))) or {}
+    cached_epa_months = epa_months if epa_sent else parse_epa_months(stored_cohort.get('epa_months'))
+    cached_override = apprenticeship_end_override if override_sent else format_date(stored_cohort.get('apprenticeship_end_override'))
+    _, apprenticeship_end_date = cohort_epa_dates(end_date, cached_epa_months, cached_override)
     holiday_info = cohort_holiday_details(
         holiday_rows or [],
         cohort.get('holidayIds') or meta.get('holiday_ids'),
@@ -6453,6 +7108,12 @@ def cohort_authoring_payload(cohort, rows=None, groups=None, holiday_rows=None, 
         'source_type': 'curriculum_authoring',
         'source_id': training_plan_ids[0] if training_plan_ids else '',
     }
+    if epa_sent:
+        payload['epa_months'] = epa_months
+    if override_sent:
+        payload['apprenticeship_end_override'] = apprenticeship_end_override or None
+    if epa_sent or override_sent:
+        payload['apprenticeship_end_date'] = apprenticeship_end_date or None
     payload.update(extra or {})
     return payload
 
@@ -6462,23 +7123,49 @@ def persist_cohort_authoring_detail(cohort, rows=None, groups=None, holiday_rows
     if not payload.get('cohort_id'):
         return None
     try:
-        return authoring_upsert(COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], payload)
+        return authoring_upsert(
+            COHORT_AUTHORING_DETAILS_TABLE,
+            ['cohort_id'],
+            payload,
+            # Clearing the EPA period or the authored apprenticeship end date has
+            # to reach the database; the keys are only present when the caller
+            # sent one (see cohort_authoring_payload).
+            allow_null_columns=('epa_months', 'apprenticeship_end_date', 'apprenticeship_end_override'),
+        )
     except (Exception, AssertionError) as exc:
         logger.warning('Could not persist cohort authoring details for %s: %s', payload.get('cohort_id'), exc)
         return None
 
 
 def serialize_cohort_authoring_detail(row):
+    epa_months = parse_epa_months(row.get('epa_months'))
+    apprenticeship_end_override = format_date(row.get('apprenticeship_end_override'))
+    practical_end_date, apprenticeship_end_date = cohort_epa_dates(
+        row.get('end_date'),
+        epa_months,
+        apprenticeship_end_override,
+    )
     return {
         'cohortId': row.get('cohort_id'),
         'cohortName': row.get('cohort_name'),
         'programmeId': row.get('programme_id'),
         'programmeName': row.get('programme_name'),
         'startDate': format_date(row.get('start_date')),
-        'endDate': format_date(row.get('end_date')),
+        # endDate stays the practical period end so every existing reader keeps
+        # its meaning; practicalEndDate is the same value under the name the
+        # apprenticeship model uses, and apprenticeshipEndDate adds the EPA
+        # period on top of it.
+        'endDate': practical_end_date,
+        'practicalEndDate': practical_end_date,
+        'epaMonths': epa_months,
+        'apprenticeshipEndDate': apprenticeship_end_date,
+        # Blank unless a human authored the date, so readers can tell an edited
+        # apprenticeship end date from one the EPA period produced.
+        'apprenticeshipEndOverride': apprenticeship_end_override,
         'durationMonths': parse_int(row.get('duration_months'), 0),
         'color': row.get('color') or '',
         'status': row.get('status') or 'planned',
+        'isProgrammeDeleted': programme_deleted_row(row),
         'trainingPlanIds': as_json_value(row.get('training_plan_ids'), []),
         'groupIds': as_json_value(row.get('group_ids'), []),
         'moduleNames': as_json_value(row.get('module_names'), []),
@@ -6522,7 +7209,10 @@ def module_row_belongs_to_group(row, group):
 
 def group_authoring_payload(group, rows=None, module_rows=None, extra=None):
     rows = rows or []
-    module_rows = [row for row in (module_rows or []) if module_row_belongs_to_group(row, group)]
+    module_rows = [
+        row for row in surviving_authoring_module_rows(module_rows or [])
+        if module_row_belongs_to_group(row, group)
+    ]
     first_row = rows[0] if rows else {}
     meta = extract_notes_meta(first_row.get('notes')) if first_row else {}
     group_id = clean_str(group.get('id') or group.get('groupId') or group.get('group_id') or meta.get('group_id'))
@@ -6773,21 +7463,22 @@ def find_programme(payload, identifier):
 
 
 def rows_for_programme(identifier, visibility='all'):
-    curriculum_rows = get_curriculum_rows()
-    payload = build_curriculum_payload_from_rows(curriculum_rows, visibility)
-    programme = find_programme(payload, identifier)
-    if not programme:
-        return None, []
-    rows = []
-    configs_by_id = program_config_by_id(curriculum_rows['program_configs'])
-    for row in curriculum_rows['training']:
-        identity = programme_identity(row, configs_by_id)
-        if (
-            clean_str(identity['sourceId']) == clean_str(programme['sourceId'])
-            or clean_str(identity['name']) == clean_str(programme['name'])
-        ):
-            rows.append(row)
-    return programme, rows
+    with curriculum_read_scope():
+        curriculum_rows = get_curriculum_rows()
+        payload = build_curriculum_payload_from_rows(curriculum_rows, visibility)
+        programme = find_programme(payload, identifier)
+        if not programme:
+            return None, []
+        rows = []
+        configs_by_id = program_config_by_id(curriculum_rows['program_configs'])
+        for row in curriculum_rows['training']:
+            identity = programme_identity(row, configs_by_id)
+            if (
+                clean_str(identity['sourceId']) == clean_str(programme['sourceId'])
+                or clean_str(identity['name']) == clean_str(programme['name'])
+            ):
+                rows.append(row)
+        return programme, rows
 
 
 # LEGACY/UNUSED: superseded by resolve_cohort_row()/resolve_group_row(), which
@@ -6888,6 +7579,24 @@ def programme_response(identifier):
     if not programme:
         return None
     return programme
+
+
+def first_programme_response(*identifiers):
+    """First programme matching any of ``identifiers``, from a single payload build.
+
+    ``programme_response(a) or programme_response(b)`` assembled the whole
+    curriculum payload once per identifier tried; the fallbacks only ever differ
+    in what they look up, never in the data they look it up in.
+    """
+    wanted = [clean_str(identifier) for identifier in identifiers if clean_str(identifier)]
+    if not wanted:
+        return None
+    payload = build_curriculum_payload('all')
+    for identifier in wanted:
+        programme = find_programme(payload, identifier)
+        if programme:
+            return programme
+    return None
 
 
 def ensure_programme_config_for_authoring(programme_name, programme_id=None, status=''):
@@ -7541,6 +8250,18 @@ def provision_module_authoring_tables():
                 start_date date,
                 end_date date,
                 duration_months integer not null default 0,
+                -- end_date is the practical period end. epa_months is the End
+                -- Point Assessment window that follows it, and
+                -- apprenticeship_end_date is where that window lands. Both
+                -- nullable: a cohort with no EPA period recorded has no
+                -- apprenticeship end date, which is not the same as one that
+                -- ends the day the practical period does.
+                epa_months integer,
+                apprenticeship_end_date date,
+                -- apprenticeship_end_override is the authored date a human
+                -- typed; NULL means none, so the calculated date stands.
+                -- apprenticeship_end_date caches whichever of the two applies.
+                apprenticeship_end_override date,
                 color varchar(32),
                 status varchar(32) not null default 'planned',
                 training_plan_ids {json_type},
@@ -7557,6 +8278,24 @@ def provision_module_authoring_tables():
                 updated_at timestamp not null default current_timestamp
             )
         ''')
+        # The apprenticeship columns post-date the cohorts table, so a database
+        # provisioned before them needs them added. Production schema is
+        # migration-owned (0048_cohort_epa_period, then
+        # 0050_cohort_apprenticeship_end_override); this covers test/local
+        # provisioning.
+        if connection.vendor == 'postgresql':
+            cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists epa_months integer')
+            cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists apprenticeship_end_date date')
+            cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column if not exists apprenticeship_end_override date')
+        else:
+            cursor.execute(f'pragma table_info({quote_ident(COHORT_AUTHORING_DETAILS_TABLE)})')
+            cohort_columns = {row[1] for row in cursor.fetchall()}
+            if 'epa_months' not in cohort_columns:
+                cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column epa_months integer')
+            if 'apprenticeship_end_date' not in cohort_columns:
+                cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column apprenticeship_end_date date')
+            if 'apprenticeship_end_override' not in cohort_columns:
+                cursor.execute(f'alter table {authoring_table_name(COHORT_AUTHORING_DETAILS_TABLE)} add column apprenticeship_end_override date')
         cursor.execute(f'''
             create table if not exists {authoring_table_name(GROUPS_TABLE)} (
                 group_id varchar(128) primary key,
@@ -7864,6 +8603,7 @@ def provision_free_programme_tables():
     _FREE_PROGRAMME_TABLES_READY = True
 
 
+@scoped_curriculum_read
 def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensure_tables=True):
     if ensure_tables:
         ensure_module_authoring_tables()
@@ -7885,6 +8625,64 @@ def safe_authoring_module_rows():
         return []
 
 
+def surviving_authoring_module_rows(module_rows=None):
+    """Module rows that are not soft-deleted, directly or through a parent.
+
+    ``safe_authoring_module_rows`` deliberately reads every row so archive views
+    can still show withdrawn curriculum. Anything that rebuilds a *surviving*
+    parent's denormalized child list has to filter first, otherwise an archived
+    module keeps being written back into it.
+    """
+    rows = module_rows if module_rows is not None else safe_authoring_module_rows()
+    return [row for row in rows if row and not curriculum_row_effectively_deleted(row)]
+
+
+def refresh_group_module_cache(group_id, module_rows=None):
+    """Rebuild ``groups.module_ids``/``module_names`` from surviving modules.
+
+    A surviving parent's denormalized child arrays list only surviving children
+    — the rule ``repair_curriculum_parent_links`` documents — so the rebuild
+    drops deleted module rows. Without that filter an archived module stayed in
+    the cached list, and because ``build_cohorts_and_groups`` falls back to the
+    stored list when a group has no live module rows, the wizard rendered it as
+    a real attachment.
+    """
+    identifier = clean_str(group_id)
+    if not identifier:
+        return None
+    rows = [
+        row for row in surviving_authoring_module_rows(module_rows)
+        if clean_str(row.get('group_id')) == identifier
+    ]
+    return update_group_fields(identifier, {
+        'module_ids': json_db_value(unique([
+            clean_str(row.get('module_catalogue_id')) for row in rows if row.get('module_catalogue_id')
+        ])),
+        'module_names': json_db_value(unique([
+            clean_str(row.get('title')) for row in rows if row.get('title')
+        ])),
+    })
+
+
+def programme_archived_for_authoring(programme_id):
+    """Is the programme a module is being saved against archived or deleted?
+
+    Used to re-derive ``modules.is_programme_deleted`` on save instead of
+    trusting the flag already on the row: the flag records *the programme's*
+    state, so a module moved onto a live programme has to lose it.
+    """
+    identifier = clean_str(programme_id)
+    if not identifier:
+        return False
+    try:
+        config = program_config_by_id(get_program_config_rows()).get(identifier)
+    except (Exception, AssertionError):
+        logger.debug('Unable to resolve programme %s for delete-flag derivation.', identifier, exc_info=True)
+        return False
+    return bool(config) and is_archived_program_config(config)
+
+
+@scoped_curriculum_read
 def free_programme_fetch_all(table, where_sql='', params=None, order_sql=''):
     ensure_free_programme_tables()
     query = f'select * from {authoring_table_name(table)}'
@@ -7909,13 +8707,21 @@ def free_programme_delete(table, where_sql, params=None):
         cursor.execute(f'delete from {authoring_table_name(table)} where {where_sql}', params or [])
 
 
-def authoring_upsert(table, key_columns, payload):
+def authoring_upsert(table, key_columns, payload, allow_null_columns=None):
+    """Insert-or-update one authoring row.
+
+    ``None`` normally means "leave this column alone", which is what every
+    caller that builds a partial payload relies on. ``allow_null_columns``
+    opts specific columns out of that rule so a value can be cleared — mirroring
+    the same argument on ``update_rows``.
+    """
     ensure_module_authoring_tables()
     writable = column_names(table)
+    nullable = set(SOFT_DELETE_COLUMNS) | set(allow_null_columns or ())
     values = {
         key: value
         for key, value in payload.items()
-        if key in writable and (value is not None or key in SOFT_DELETE_COLUMNS)
+        if key in writable and (value is not None or key in nullable)
     }
     values['updated_at'] = datetime.utcnow()
     if 'created_at' not in values:
@@ -8091,16 +8897,19 @@ def resolve_group_row(identifier):
     return None
 
 
-def update_cohort_fields(cohort_id, fields):
+def update_cohort_fields(cohort_id, fields, allow_null_columns=None):
     """Apply a targeted field update to a single normalized cohort row.
 
     Only the provided columns are written; the canonical ``cohort_id`` and all
     unrelated columns (programme_id, group_ids, dates, status, …) are preserved.
+    ``None`` means "leave this column alone" unless the column is named in
+    ``allow_null_columns``, which lets a value be cleared outright.
     """
     ident = clean_str(cohort_id)
     if not ident:
         return None
-    values = {key: value for key, value in fields.items() if value is not None}
+    nullable = set(allow_null_columns or ())
+    values = {key: value for key, value in fields.items() if value is not None or key in nullable}
     if not values:
         return fetch_cohort_row(ident)
     values['updated_at'] = datetime.utcnow()
@@ -10946,11 +11755,20 @@ def save_module_authoring_structure(module_catalogue_id, payload):
     session_start_time = payload.get('startTime') or payload.get('sessionStartTime') or payload.get('session_start_time') or delivery_metadata.get('startTime') or delivery_metadata.get('start_time') or existing_module_row.get('session_start_time')
     session_end_time = payload.get('endTime') or payload.get('sessionEndTime') or payload.get('session_end_time') or delivery_metadata.get('endTime') or delivery_metadata.get('end_time') or existing_module_row.get('session_end_time')
     has_programme_deleted_flag = 'isProgrammeDeleted' in payload or 'is_programme_deleted' in payload
-    is_programme_deleted = (
-        truthy(payload.get('isProgrammeDeleted') or payload.get('is_programme_deleted'))
-        if has_programme_deleted_flag
-        else programme_deleted_row(existing_module_row)
-    )
+    # An unsent flag is re-derived from the programme this save attaches the
+    # module to, but only for a row that carries no delete stamp. Carrying the
+    # flag over left a module flagged as programme-deleted with deleted_at null
+    # after it had been re-attached to a live programme: the tree filtered it
+    # out and the parent repair stripped it from groups.module_ids, so a cohort
+    # with attached modules read as having none. A row that *is* stamped
+    # deleted keeps its state — saving must never resurrect curriculum that was
+    # withdrawn on purpose, so restoring stays an explicit operation.
+    if has_programme_deleted_flag:
+        is_programme_deleted = truthy(payload.get('isProgrammeDeleted') or payload.get('is_programme_deleted'))
+    elif row_has_deleted_at(existing_module_row):
+        is_programme_deleted = True
+    else:
+        is_programme_deleted = programme_archived_for_authoring(programme_id)
     saved_module_row = None
     with transaction.atomic():
         saved_module_row = authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
@@ -11631,13 +12449,26 @@ def curriculum_preview_cohort_end_date(request):
     if payload is None:
         return json_error('Invalid JSON body.')
     end_date = calculate_cohort_end_date(payload.get('startDate') or payload.get('start_date'), payload.get('durationMonths') or payload.get('duration_months'))
+    epa_months = payload_epa_months(payload)
+    override = payload_apprenticeship_end_override(payload)
+    apprenticeship_end_date = cohort_apprenticeship_end_date(end_date, epa_months, override)
     warnings = []
     if not end_date:
         warnings.append('Set cohort start date and duration months to calculate the end date.')
+    if end_date and not apprenticeship_end_date:
+        warnings.append('Set an EPA period in months to calculate the apprenticeship end date.')
+    if override and end_date and override < parse_date(end_date):
+        warnings.append('The apprenticeship end date is before the practical end date.')
     return JsonResponse({
         'endDate': format_date(end_date),
+        'practicalEndDate': format_date(end_date),
+        'epaMonths': epa_months,
+        'apprenticeshipEndDate': format_date(apprenticeship_end_date),
+        'apprenticeshipEndOverride': format_date(override),
         'autoCalculated': bool(end_date),
         'rule': 'add duration months minus one day',
+        'epaRule': 'add the EPA period in months to the practical end date',
+        'apprenticeshipRule': 'the authored apprenticeship end date when set, otherwise the EPA rule',
         'warnings': warnings,
     })
 
@@ -11704,6 +12535,16 @@ def curriculum_programme_tree_detail(request, identifier):
 
 
 def build_curriculum_programme_tree_detail_payload(identifier, visibility):
+    # Same reason build_curriculum_payload() opens a read scope: build_programmes()
+    # re-reads authoring modules, programmes, cohorts, groups and ksb_profiles in
+    # full once per programme, so without the scope this detail build issued ~250
+    # round trips to Neon (~18-30s) instead of ~40 (~3s). The scope is read-only
+    # and reentrant, so a caller that already opened one keeps its own lifetime.
+    with curriculum_read_scope():
+        return _build_curriculum_programme_tree_detail_payload(identifier, visibility)
+
+
+def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
     curriculum_rows = get_curriculum_rows(compact=True)
     training_rows = curriculum_rows['training'] if visibility == 'all' else [
         row for row in curriculum_rows['training']
@@ -11753,11 +12594,19 @@ def build_curriculum_programme_tree_detail_payload(identifier, visibility):
     ]) if clean_str(value)]
     programme_names = [value for value in unique([programme.get('name')]) if clean_str(value)]
 
+    known_programme_ids = {
+        programme_config_identity(item)
+        for item in program_configs
+        if programme_config_identity(item)
+    }
+
     def belongs_to_selected_programme(item):
-        return (
-            any(matches_curriculum_identifier(item.get('programmeId'), candidate) for candidate in programme_ids)
-            or any(matches_curriculum_identifier(item.get('programme'), candidate) for candidate in programme_names)
-        )
+        item_programme_id = clean_str(item.get('programmeId'))
+        if any(matches_curriculum_identifier(item_programme_id, candidate) for candidate in programme_ids):
+            return True
+        if item_programme_id in known_programme_ids:
+            return False
+        return any(matches_curriculum_identifier(item.get('programme'), candidate) for candidate in programme_names)
 
     config_cohorts = [
         normalise_programme_config_cohort(item, programme)
@@ -11856,6 +12705,11 @@ def curriculum_programme_detail(request, identifier):
         if not programme and not config:
             return json_error('Programme not found.', status=404)
 
+        # An archived programme can be removed for good, with everything beneath it.
+        # Archiving stays the default so a delete is never irreversible by accident.
+        if request_wants_permanent_programme_delete(request):
+            return permanent_programme_delete_response(identifier, programme, config)
+
         with transaction.atomic():
             soft_deleted = soft_delete_programme_authoring_structure(identifier, programme, config)
         return JsonResponse({
@@ -11876,9 +12730,15 @@ def curriculum_programme_detail(request, identifier):
     # programmes.structure_type was dropped; everything is scheduled now.
     structure_type = 'scheduled'
     config = programme_config_by_identifier(identifier)
-    programme, rows = rows_for_programme(identifier, 'all')
-    if not config and not programme:
-        return json_error('Programme not found.', status=404)
+    # rows_for_programme() assembles the whole 'all' curriculum payload, which is
+    # only needed for the legacy fallback below (a delivery-row programme with no
+    # programmes config yet). Skipping it when a config exists keeps the common
+    # update path off a full payload build.
+    programme = None
+    if not config:
+        programme, _rows = rows_for_programme(identifier, 'all')
+        if not programme:
+            return json_error('Programme not found.', status=404)
     if not config and programme:
         source_id = unique_program_id(programme.get('sourceId') or name or programme.get('name'), get_program_config_rows())
         programme_status = programme_status_from_payload(payload, programme)
@@ -11891,6 +12751,7 @@ def curriculum_programme_detail(request, identifier):
             'color': payload.get('color') or programme.get('color') or '#6941c6',
             'description': payload.get('description') or programme.get('description') or '',
             'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or programme.get('ksbProfileSourceId') or ''),
+            'required_otjh': payload_required_otjh(payload, programme),
             'status': programme_status,
             'is_active': programme_status_is_active(programme_status),
             'is_archived': programme_status_is_archived(programme_status),
@@ -11906,6 +12767,7 @@ def curriculum_programme_detail(request, identifier):
             'color': payload.get('color') or config.get('color'),
             'description': payload.get('description'),
             'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else config.get('ksb_profile_source_id')),
+            'required_otjh': payload_required_otjh(payload, config),
             'status': programme_status,
             'is_active': programme_status_is_active(programme_status),
             'is_archived': programme_status_is_archived(programme_status),
@@ -11916,7 +12778,7 @@ def curriculum_programme_detail(request, identifier):
         except Exception:
             key_column = programme_config_key_column()
         key_value = config.get(key_column)
-        update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates)
+        update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])
         if 'ksbProfileSourceId' in payload or 'ksb_profile_source_id' in payload:
             set_programme_modules_ksb_source(
                 unique([identifier, key_value, config.get('program_id'), config.get('name'), name]),
@@ -11940,7 +12802,7 @@ def curriculum_programme_detail(request, identifier):
                 'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') or ''),
             },
         })
-    return JsonResponse({'updated': True, 'programme': programme_response(identifier) or programme_response(name) or {'id': identifier}})
+    return JsonResponse({'updated': True, 'programme': first_programme_response(identifier, name) or {'id': identifier}})
 
 
 def propagate_programme_name(programme_id, programme_name):
@@ -11993,7 +12855,17 @@ def curriculum_programme_collection(request):
     archived_reuse_program_id = ''
     if existing_config:
         if is_archived_program_config(existing_config):
-            archived_reuse_program_id = f'{programme_config_identity(existing_config) or slugify(name)}-2'
+            taken = {
+                programme_config_identity(config)
+                for config in program_configs
+                if programme_config_identity(config)
+            }
+            base = programme_config_identity(existing_config) or slugify(name)
+            attempt = 2
+            archived_reuse_program_id = f'{base}-{attempt}'
+            while archived_reuse_program_id in taken:
+                attempt += 1
+                archived_reuse_program_id = f'{base}-{attempt}'
             existing_config = None
     if existing_config:
         programme_status = programme_status_from_payload(payload, existing_config)
@@ -12003,6 +12875,7 @@ def curriculum_programme_collection(request):
             'color': payload.get('color') or existing_config.get('color') or '#6941c6',
             'description': payload.get('description') if 'description' in payload else existing_config.get('description'),
             'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else existing_config.get('ksb_profile_source_id')),
+            'required_otjh': payload_required_otjh(payload, existing_config),
             'status': programme_status,
             'is_active': programme_status_is_active(programme_status),
             'is_archived': programme_status_is_archived(programme_status),
@@ -12013,9 +12886,9 @@ def curriculum_programme_collection(request):
         except Exception:
             key_column = programme_config_key_column()
         key_value = existing_config.get(key_column)
-        update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates)
+        update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])
         invalidate_curriculum_cache()
-        return JsonResponse({'created': False, 'programme': programme_response(key_value) or programme_response(name) or {'sourceId': key_value, 'name': name}})
+        return JsonResponse({'created': False, 'programme': first_programme_response(key_value, name) or {'sourceId': key_value, 'name': name}})
 
     source_id = archived_reuse_program_id or unique_program_id(explicit_program_id or name, program_configs)
     programme_status = programme_status_from_payload(payload, default='active')
@@ -12033,6 +12906,7 @@ def curriculum_programme_collection(request):
         'description': payload.get('description') or '',
         'structure_type': structure_type,
         'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or ''),
+        'required_otjh': payload_required_otjh(payload),
         'status': programme_status,
         'is_active': programme_status_is_active(programme_status),
         'is_archived': programme_status_is_archived(programme_status),
@@ -12067,6 +12941,7 @@ def upsert_programme_for_tree(payload):
         'color': payload.get('color') or '#6941c6',
         'description': payload.get('description') or '',
         'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') or payload.get('ksb_profile_source_id') or (config or {}).get('ksb_profile_source_id') or ''),
+        'required_otjh': payload_required_otjh(payload, config),
         'status': programme_status,
         'is_active': programme_status_is_active(programme_status),
         'is_archived': programme_status_is_archived(programme_status),
@@ -12075,7 +12950,7 @@ def upsert_programme_for_tree(payload):
     if config:
         key_column = programme_config_key_column()
         key_value = config.get(key_column)
-        update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates)
+        update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])
         source_id = programme_config_id(config) or clean_str(key_value)
         propagate_programme_name(source_id, name)
         return {
@@ -12089,6 +12964,7 @@ def upsert_programme_for_tree(payload):
             'description': updates['description'],
             'structureType': structure_type,
             'ksbProfileSourceId': normalise_ksb_profile_source_value(updates.get('ksb_profile_source_id') or ''),
+            'requiredOtjh': updates.get('required_otjh'),
         }
 
     source_id = unique_program_id(requested_id or name, get_program_config_rows())
@@ -12111,6 +12987,7 @@ def upsert_programme_for_tree(payload):
         'description': row.get('description') or updates['description'],
         'structureType': structure_type,
         'ksbProfileSourceId': normalise_ksb_profile_source_value(row.get('ksb_profile_source_id') or updates.get('ksb_profile_source_id') or ''),
+        'requiredOtjh': parse_required_otjh(row.get('required_otjh')) if row.get('required_otjh') is not None else updates.get('required_otjh'),
     }
 
 
@@ -12122,6 +12999,19 @@ def save_tree_cohort(cohort, programme_id, programme_name, preserve_missing_grou
     duration_months = cohort.get('durationMonths') or 24
     end_date = cohort.get('endDate') or format_date(calculate_cohort_end_date(cohort.get('startDate'), duration_months))
     existing = fetch_cohort_row(cohort_id) or {}
+    if existing and curriculum_row_effectively_deleted(existing):
+        logger.warning(
+            'Tree save addressed deleted cohort %s; saving as a new cohort instead.', cohort_id
+        )
+        cohort_id = unique_cohort_id()
+        existing = {}
+    # The stored period stands in for an omitted one so a partial tree save
+    # cannot silently drop it, but it is always re-derived against the end date
+    # being written — the apprenticeship end date moves with the practical
+    # one, unless an authored apprenticeship end date has been set for the cohort.
+    # The authored date is guarded the same way: unsent keeps the stored one.
+    epa_months = payload_epa_months(cohort, existing)
+    apprenticeship_end_override = format_date(payload_apprenticeship_end_override(cohort, existing))
     holiday_ids = parse_notes_id_list(cohort.get('holidayIds') or cohort.get('holiday_ids'))
     group_ids = [clean_str(group.get('id') or group.get('groupId') or group.get('sourceId')) for group in cohort.get('groups') or []]
     if preserve_missing_groups:
@@ -12133,6 +13023,8 @@ def save_tree_cohort(cohort, programme_id, programme_name, preserve_missing_grou
         'programmeId': programme_id,
         'startDate': cohort.get('startDate'),
         'endDate': end_date,
+        'epaMonths': epa_months,
+        'apprenticeshipEndOverride': apprenticeship_end_override,
         'status': title_case_status(clean_str(existing.get('status')) == 'archived', cohort.get('startDate'), end_date),
         'color': cohort.get('color') or existing.get('color') or '',
         'holidayIds': holiday_ids,
@@ -12172,6 +13064,12 @@ def save_tree_group(group, cohort_row):
     group_id = unique_group_id(group.get('id') or group.get('groupId') or group.get('sourceId'))
     cohort = serialize_cohort_authoring_detail(cohort_row)
     existing = fetch_group_row(group_id) or {}
+    if existing and curriculum_row_effectively_deleted(existing):
+        logger.warning(
+            'Tree save addressed deleted group %s; saving as a new group instead.', group_id
+        )
+        group_id = unique_group_id()
+        existing = {}
     group_payload = {
         'id': group_id,
         'name': name,
@@ -12246,13 +13144,10 @@ def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
         saved_modules.append(saved)
     removed = [] if preserve_missing else unassign_authoring_modules_from_group(group.get('id'), saved_catalogue_ids)
     group_module_rows = [
-        row for row in safe_authoring_module_rows()
+        row for row in surviving_authoring_module_rows()
         if clean_str(row.get('group_id')) == clean_str(group.get('id'))
     ]
-    update_group_fields(group.get('id'), {
-        'module_ids': json_db_value(unique([clean_str(row.get('module_catalogue_id')) for row in group_module_rows if row.get('module_catalogue_id')])),
-        'module_names': json_db_value(unique([clean_str(row.get('title')) for row in group_module_rows if row.get('title')])),
-    })
+    refresh_group_module_cache(group.get('id'), group_module_rows)
     for row in group_module_rows:
         sync_module_tutor_profile_links(
             clean_str(row.get('tutor_name')),
@@ -13061,6 +13956,29 @@ def curriculum_uploaded_file(request, path):
         return FileResponse(default_storage.open(relative_path, 'rb'), as_attachment=False, filename=Path(relative_path).name)
 
 
+def authoring_child_rows_for_modules(table, module_ids):
+    """Rows of an authoring child table (weeks/components/mappings) for module ids.
+
+    Inside a curriculum_read_scope() the table is read once in full and filtered in
+    memory. build_programmes() asks this question once per programme and the union
+    of those asks is the whole table, so N targeted round trips cost more than one
+    full read. Outside a scope (single-module/week/component endpoints) the targeted
+    query is kept, so one module never pulls the whole table.
+    """
+    wanted = {clean_str(value) for value in module_ids if clean_str(value)}
+    if not wanted:
+        return []
+    if getattr(_CURRICULUM_READ_SCOPE, 'memo', None) is None:
+        ids = sorted(wanted)
+        placeholders = ', '.join(['%s'] * len(ids))
+        return authoring_fetch_all(table, f'module_catalogue_id in ({placeholders})', ids)
+    return [
+        row for row in authoring_fetch_all(table)
+        if clean_str(row.get('module_catalogue_id')) in wanted
+    ]
+
+
+@scoped_curriculum_read
 def authoring_scope_data(scope='', identifier=''):
     ensure_module_authoring_tables()
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
@@ -13159,10 +14077,9 @@ def authoring_scope_data(scope='', identifier=''):
     if not module_ids:
         return [], [], [], []
 
-    placeholders = ', '.join(['%s'] * len(module_ids))
-    week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE, f'module_catalogue_id in ({placeholders})', module_ids))
-    component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE, f'module_catalogue_id in ({placeholders})', module_ids))
-    mapping_rows = active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, f'module_catalogue_id in ({placeholders})', module_ids))
+    week_rows = active_week_rows(authoring_child_rows_for_modules(AUTHORING_WEEKS_TABLE, module_ids))
+    component_rows = active_component_rows(authoring_child_rows_for_modules(AUTHORING_COMPONENTS_TABLE, module_ids))
+    mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(AUTHORING_KSB_MAPPINGS_TABLE, module_ids))
 
     if scope in {'programme', 'cohort'}:
         module_rows = dedupe_authoring_module_rows(module_rows, mapping_rows, component_rows, week_rows)
@@ -13252,6 +14169,7 @@ def coverage_response(request, scope='', identifier=''):
     })
 
 
+@scoped_curriculum_read
 def learner_schema_table_exists(table):
     if connection.vendor != 'postgresql':
         return False
@@ -14773,13 +15691,30 @@ def curriculum_cohorts(request):
 
 def curriculum_cohort_from_authoring_detail(detail):
     detail = detail or {}
+    epa_months = parse_epa_months(
+        detail.get('epaMonths') if detail.get('epaMonths') is not None else detail.get('epa_months')
+    )
+    override = format_date(
+        detail.get('apprenticeshipEndOverride')
+        if detail.get('apprenticeshipEndOverride') is not None
+        else detail.get('apprenticeship_end_override')
+    )
+    practical_end_date, apprenticeship_end_date = cohort_epa_dates(
+        detail.get('endDate') or detail.get('end_date') or detail.get('practicalEndDate') or '',
+        epa_months,
+        override,
+    )
     return {
         'id': detail.get('cohortId') or detail.get('id') or detail.get('cohort_id'),
         'name': detail.get('cohortName') or detail.get('name') or detail.get('cohort_name') or '',
         'programmeId': detail.get('programmeId') or detail.get('programme_id') or '',
         'programme': detail.get('programmeName') or detail.get('programme') or detail.get('programme_name') or '',
         'startDate': detail.get('startDate') or detail.get('start_date') or '',
-        'endDate': detail.get('endDate') or detail.get('end_date') or '',
+        'endDate': practical_end_date,
+        'practicalEndDate': practical_end_date,
+        'epaMonths': epa_months,
+        'apprenticeshipEndDate': apprenticeship_end_date,
+        'apprenticeshipEndOverride': override,
         'durationMonths': detail.get('durationMonths') or detail.get('duration_months') or 0,
         'color': detail.get('color') or '',
         'holidayIds': detail.get('holidayIds') or detail.get('holiday_ids') or [],
@@ -14878,6 +15813,11 @@ def create_curriculum_cohort(payload):
     cohort_id = unique_cohort_id(payload.get('id') or payload.get('cohortId') or payload.get('cohort_id'))
     duration_months = payload.get('durationMonths') or 24
     end_date = payload.get('endDate') or format_date(calculate_cohort_end_date(payload.get('startDate'), duration_months))
+    epa_months = payload_epa_months(payload)
+    apprenticeship_end_override = format_date(payload_apprenticeship_end_override(payload))
+    apprenticeship_end_date = format_date(
+        cohort_apprenticeship_end_date(end_date, epa_months, apprenticeship_end_override)
+    )
     holiday_ids = parse_notes_id_list(payload.get('holidayIds') or payload.get('holiday_ids'))
 
     # A cohort with the same canonical id, or the same name within the same
@@ -14906,6 +15846,14 @@ def create_curriculum_cohort(payload):
             'start_date': payload.get('startDate') or None,
             'end_date': end_date or None,
             'duration_months': parse_int(duration_months, duplicate.get('durationMonths') or 0),
+            'epa_months': epa_months if epa_months is not None else parse_epa_months(duplicate.get('epaMonths')),
+            # An unsent apprenticeship end date leaves the stored override alone;
+            # an explicit blank clears it and restores the calculated date.
+            'apprenticeship_end_override': (
+                apprenticeship_end_override or None
+                if apprenticeship_end_override_sent(payload)
+                else format_date(duplicate.get('apprenticeshipEndOverride')) or None
+            ),
             'color': payload.get('color') or None,
             'status': title_case_status(
                 normalise(duplicate.get('status')) == 'archived',
@@ -14913,9 +15861,22 @@ def create_curriculum_cohort(payload):
                 end_date,
             ),
         }
+        # Recomputed from the end date being written, not from the payload, so a
+        # POST that only moves the end date still lands a matching EPA window --
+        # unless an authored apprenticeship end date stands, which wins outright.
+        updates['apprenticeship_end_date'] = format_date(
+            cohort_apprenticeship_end_date(
+                end_date,
+                updates['epa_months'],
+                updates['apprenticeship_end_override'],
+            )
+        ) or None
         if 'holidayIds' in payload or 'holiday_ids' in payload:
             updates['holiday_ids'] = json_db_value(holiday_ids)
-        update_cohort_fields(existing_id, updates)
+        nullable = ['apprenticeship_end_date', 'apprenticeship_end_override']
+        if 'epaMonths' in payload or 'epa_months' in payload:
+            nullable.append('epa_months')
+        update_cohort_fields(existing_id, updates, allow_null_columns=tuple(nullable))
         invalidate_curriculum_cache()
         return JsonResponse({'created': False, 'cohort': curriculum_cohort_from_authoring_detail({
             'cohortId': existing_id,
@@ -14924,6 +15885,9 @@ def create_curriculum_cohort(payload):
             'programmeName': programme,
             'startDate': payload.get('startDate'),
             'endDate': end_date,
+            'epaMonths': updates['epa_months'],
+            'apprenticeshipEndDate': updates['apprenticeship_end_date'] or '',
+            'apprenticeshipEndOverride': updates['apprenticeship_end_override'] or '',
             'durationMonths': duration_months,
             'color': payload.get('color') or '',
             'holidayIds': holiday_ids,
@@ -14937,6 +15901,8 @@ def create_curriculum_cohort(payload):
         'programmeId': programme_id,
         'startDate': payload.get('startDate'),
         'endDate': end_date,
+        'epaMonths': epa_months,
+        'apprenticeshipEndDate': apprenticeship_end_override,
         'status': title_case_status(False, payload.get('startDate'), end_date),
         'color': payload.get('color') or '',
         'holidayIds': holiday_ids,
@@ -14958,6 +15924,9 @@ def create_curriculum_cohort(payload):
         'programmeName': programme,
         'startDate': payload.get('startDate'),
         'endDate': end_date,
+        'epaMonths': epa_months,
+        'apprenticeshipEndDate': apprenticeship_end_date,
+        'apprenticeshipEndOverride': apprenticeship_end_override,
         'durationMonths': duration_months,
         'color': payload.get('color') or '',
         'holidayIds': holiday_ids,
@@ -15012,6 +15981,14 @@ def curriculum_cohort_detail(request, identifier):
         if duration_months else ''
     )
     end_date = payload.get('endDate') or computed_end or format_date(cohort_row.get('end_date'))
+    # end_date is the practical period end; the apprenticeship end date is
+    # re-derived from it on every PATCH so moving one moves the other.
+    epa_months = payload_epa_months(payload, cohort_row)
+    epa_sent = 'epaMonths' in payload or 'epa_months' in payload
+    # An authored apprenticeship end date overrides that derivation. Unsent keeps
+    # the stored one; an explicit blank clears it and the EPA rule takes over.
+    override = format_date(payload_apprenticeship_end_override(payload, cohort_row))
+    override_sent = apprenticeship_end_override_sent(payload)
 
     # Build a targeted update: only columns explicitly present in the payload
     # (or derived from them) are written. programme_id / group_ids / source_type
@@ -15025,6 +16002,14 @@ def curriculum_cohort_detail(request, identifier):
         updates['end_date'] = end_date or None
     if duration_months is not None:
         updates['duration_months'] = parse_int(duration_months, cohort_row.get('duration_months') or 0)
+    if epa_sent:
+        updates['epa_months'] = epa_months
+    if override_sent:
+        updates['apprenticeship_end_override'] = override or None
+    if end_date or epa_sent or override_sent:
+        updates['apprenticeship_end_date'] = format_date(
+            cohort_apprenticeship_end_date(end_date, epa_months, override)
+        ) or None
     if 'color' in payload and clean_str(payload.get('color')):
         updates['color'] = payload.get('color')
     if 'holidayIds' in payload or 'holiday_ids' in payload:
@@ -15046,7 +16031,12 @@ def curriculum_cohort_detail(request, identifier):
         end_date,
     )
 
-    update_cohort_fields(cohort_id, updates)
+    nullable = ['apprenticeship_end_date']
+    if epa_sent:
+        nullable.append('epa_months')
+    if override_sent:
+        nullable.append('apprenticeship_end_override')
+    update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))
     invalidate_curriculum_cache()
     return JsonResponse({'updated': True, 'id': cohort_id})
 
@@ -15638,14 +16628,7 @@ def curriculum_group_modules(request, identifier):
         )
         # Refresh only the group's derived module_ids/module_names from
         # curriculum.modules. Coach/tutor/dates/status stay untouched.
-        group_module_rows = [
-            row for row in safe_authoring_module_rows()
-            if clean_str(row.get('group_id')) == clean_str(group_row.get('group_id'))
-        ]
-        update_group_fields(group_row.get('group_id'), {
-            'module_ids': json_db_value(unique([clean_str(row.get('module_catalogue_id')) for row in group_module_rows if row.get('module_catalogue_id')])),
-            'module_names': json_db_value(unique([clean_str(row.get('title')) for row in group_module_rows if row.get('title')])),
-        })
+        refresh_group_module_cache(group_row.get('group_id'))
         repair_curriculum_parent_links(clean_str(group.get('programmeId') or group.get('programme_id')))
         invalidate_curriculum_cache()
         return JsonResponse({
@@ -15910,6 +16893,7 @@ def add_staff_profile_assignments(role, staff_name, column, assignment_ids):
         column: json_db_value(next_values),
         'updated_at': datetime.utcnow(),
     })
+    tutor_notifications.schedule_assignment_notifications()
     return next_values
 
 
@@ -15965,6 +16949,7 @@ def sync_group_staff_profile_links(group_id, coach_name='', tutor_name='', modul
             if not target_key or target_key == 'unassigned' or staff_assignment_key(row_name) != target_key:
                 remove_staff_profile_assignments('tutor', row_name, 'assigned_module_ids', module_assignment_ids)
     add_staff_profile_assignments('tutor', tutor_name, 'assigned_module_ids', module_assignment_ids)
+    tutor_notifications.schedule_assignment_notifications()
 
 
 def sync_module_tutor_profile_links(tutor_name='', module_assignment_ids=None):
@@ -15977,6 +16962,58 @@ def sync_module_tutor_profile_links(tutor_name='', module_assignment_ids=None):
         if not target_key or target_key == 'unassigned' or staff_assignment_key(row_name) != target_key:
             remove_staff_profile_assignments('tutor', row_name, 'assigned_module_ids', module_assignment_ids)
     add_staff_profile_assignments('tutor', tutor_name, 'assigned_module_ids', module_assignment_ids)
+    # Scheduled here as well as inside add_staff_profile_assignments: the wizard's
+    # module step writes the tutor onto curriculum.modules first, so the profile
+    # mirror can already be up to date (nothing to add) while the assignment
+    # itself is brand new.
+    tutor_notifications.schedule_assignment_notifications()
+
+
+def release_staff_assignments_from_authoring(role, staff_name):
+    """Clear a deleted staff member's name off the curriculum they held.
+
+    Deleting a profile only archives its row. The name itself lives on
+    ``curriculum.modules.tutor_name`` / ``curriculum.groups.coach_name``, which
+    is what the training rows — and therefore the derived-profile fallback and
+    the assignment mirror — are built from. Leaving it there means the person is
+    still attached to live curriculum after being deleted, so release it here.
+
+    Returns the ids of the rows that were cleared.
+    """
+    target_key = staff_assignment_key(staff_name)
+    if not target_key:
+        return []
+    if role == 'tutor':
+        table, key_column, name_column = AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'tutor_name'
+    elif role == 'coach':
+        table, key_column, name_column = GROUPS_TABLE, 'group_id', 'coach_name'
+    else:
+        return []
+
+    cleared = []
+    try:
+        if name_column not in column_names(table):
+            return []
+        for row in authoring_fetch_all(table) or []:
+            if staff_assignment_key(row.get(name_column)) != target_key:
+                continue
+            identifier = clean_str(row.get(key_column))
+            if not identifier:
+                continue
+            update_authoring_rows(table, f'{quote_ident(key_column)} = %s', [identifier], {
+                name_column: '',
+                'updated_at': datetime.utcnow(),
+            })
+            cleared.append(identifier)
+    except (Exception, AssertionError):
+        logger.warning(
+            'Could not release %s assignments for %r from curriculum authoring tables.',
+            role,
+            staff_name,
+            exc_info=True,
+        )
+        return cleared
+    return cleared
 
 
 def rebuild_staff_profile_assignments_from_authoring(*, allow_writes=True):
@@ -16082,6 +17119,7 @@ def rebuild_staff_profile_assignments_from_authoring(*, allow_writes=True):
                 changed = True
         if changed:
             invalidate_curriculum_cache()
+        tutor_notifications.schedule_assignment_notifications()
     except (Exception, AssertionError):
         logger.warning('Could not rebuild staff profile assignments from curriculum modules.', exc_info=True)
 
@@ -16147,6 +17185,7 @@ def curriculum_staff_profile_collection(request, role):
                 elif role == 'coach':
                     group_assignment_ids = as_json_value(profile_payload.get('assigned_group_ids'), [])
                     sync_staff_profile_group_assignments(row.get('name'), group_assignment_ids, clear_missing=False)
+                tutor_notifications.schedule_assignment_notifications()
                 invalidate_curriculum_cache()
                 return JsonResponse({'created': False, 'restored': True, 'profile': current_staff_profile_payload(role, row.get('id'))})
             if duplicates_changed:
@@ -16165,6 +17204,7 @@ def curriculum_staff_profile_collection(request, role):
         elif role == 'coach':
             group_assignment_ids = as_json_value(profile_payload.get('assigned_group_ids'), [])
             sync_staff_profile_group_assignments(row.get('name'), group_assignment_ids, clear_missing=False)
+    tutor_notifications.schedule_assignment_notifications()
     invalidate_curriculum_cache()
     return JsonResponse({'created': True, 'profile': current_staff_profile_payload(role, row.get('id'))}, status=201)
 
@@ -16200,10 +17240,22 @@ def curriculum_staff_profile_detail(request, role, identifier):
                     archive_updates['status'] = 'archived'
                 update_rows(table, 'id = %s', [duplicate.get('id')], archive_updates)
                 archived_ids.append(duplicate.get('id'))
+            # Archiving the row is not enough on its own: the name also has to
+            # come off the curriculum it was assigned to, or the training rows
+            # keep reporting it and the profile is rebuilt on the next read.
+            release_staff_assignments_from_authoring(role, staff_profile_name(row))
+            assignment_column = STAFF_PROFILE_ASSIGNMENT_DB_COLUMNS.get(role)
+            if assignment_column and assignment_column in column_names(table):
+                for archived_id in archived_ids:
+                    update_rows(table, 'id = %s', [archived_id], {
+                        assignment_column: json_db_value([]),
+                        'updated_at': datetime.utcnow(),
+                    })
             if role == 'tutor':
                 sync_staff_profile_module_assignments(role, staff_profile_name(row), [], previous_name=staff_profile_name(row), clear_missing=True)
             elif role == 'coach':
                 sync_staff_profile_group_assignments(staff_profile_name(row), [], previous_name=staff_profile_name(row), clear_missing=True)
+            tutor_notifications.schedule_assignment_notifications()
         invalidate_curriculum_cache()
         return JsonResponse({'archived': True, 'id': row.get('id'), 'count': len(archived_ids), 'ids': archived_ids})
 
@@ -16269,6 +17321,7 @@ def curriculum_staff_profile_detail(request, role, identifier):
             sync_staff_profile_module_assignments(role, profile_payload.get('name'), None, previous_name=previous_name)
         elif role == 'coach':
             sync_staff_profile_group_assignments(profile_payload.get('name'), None, previous_name=previous_name)
+    tutor_notifications.schedule_assignment_notifications()
     invalidate_curriculum_cache()
     profile_id = (updated_rows[0] if updated_rows else row).get('id')
     return JsonResponse({'updated': True, 'profile': current_staff_profile_payload(role, profile_id)})
@@ -16419,6 +17472,9 @@ def reset_schema_ready_flags():
     call this in setUp so provisioning state always matches the live schema.
     """
     globals().update({name: False for name in _SCHEMA_READY_FLAGS})
+    # The notification ledger keeps its own latch, in its own module, for the
+    # same reason as the ones above.
+    tutor_notifications._TABLE_READY = False
     _TABLE_COLUMNS_CACHE.clear()
     _TABLE_EXISTS_CACHE.clear()
     schema_gate.reset_verification_cache()

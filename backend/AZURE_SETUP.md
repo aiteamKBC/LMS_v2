@@ -1,4 +1,4 @@
-# Azure setup for platform email (invitations + password resets)
+# Azure setup for platform email (invitations, password resets, tutor assignments)
 
 Everything in the login system is built and working **except the outbound
 email**. Until the app registration below exists, no mail is sent and the API
@@ -108,6 +108,10 @@ AZURE_MAIL_SENDER=noreply@kentbusinesscollege.com
 
 # Optional. Set to false to force the console fallback (useful in staging).
 AZURE_MAIL_ENABLED=true
+
+# Optional. Set to false to stop tutor assignment emails without touching the
+# rest of the mail transport. See "Tutor assignment emails" below.
+TUTOR_ASSIGNMENT_EMAILS=true
 ```
 
 Restart the Django process after editing `.env` — it is read at startup.
@@ -123,6 +127,39 @@ FRONTEND_URL=https://lms.kentbusinesscollege.net
 # sees the real client IP instead of the proxy's.
 TRUST_PROXY_IP_HEADER=true
 ```
+
+---
+
+## Tutor assignment emails
+
+Whenever a tutor ends up attached to a module — through the programme
+creation/edit wizard's Modules step, the staffing screen, or a staff-profile
+save that carries `assignedModuleIds` — they are emailed the delivery detail for
+it: module title and id, programme, cohort, group, schedule, run dates, session
+count, off-the-job hours, and the group's coach. Several modules saved in one go
+arrive as one email, not one per module.
+
+It uses the same app registration as the invitation and reset mail, so there is
+nothing extra to create in Azure. Two things govern it:
+
+- `curriculum.tutor_module_notifications` — the ledger of pairs already mailed,
+  created and pre-seeded by migration `curriculum_api.0049`. **Run
+  `python manage.py migrate curriculum_api` before the feature is used.** The
+  seed matters: without it the first pass reads every existing assignment as new
+  and mails every tutor their entire back catalogue.
+- `TUTOR_ASSIGNMENT_EMAILS=false` — switches the whole feature off. Set this
+  when restoring a production database into staging, otherwise the reconcile
+  finds a ledger that does not match the restored assignments and mails real
+  tutors about a test system.
+
+A tutor with no email address on their profile is skipped and *not* recorded, so
+they are notified as soon as an address is filled in. A tutor removed from a
+module and put back on it later is notified again.
+
+Failures are recorded on the ledger row (`status='failed'`, with `attempts`) and
+retried on the next curriculum write, up to three times. Nothing here can fail a
+curriculum save — the pass runs after the transaction commits and swallows its
+own errors.
 
 ---
 

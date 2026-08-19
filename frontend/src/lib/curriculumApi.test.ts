@@ -17,6 +17,7 @@ import {
   fetchCurriculumProgrammeDetail,
   fetchCurriculumModules,
   createCurriculumProgramme,
+  deleteCurriculumProgramme,
   clearCurriculumGetCache,
   invalidateCurriculumCacheByEntity,
   getCurriculumCacheStats,
@@ -319,5 +320,32 @@ describe('Curriculum API Caching', () => {
 
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
+  });
+});
+
+describe('Programme delete mode', () => {
+  it('archives by default and only asks for a permanent delete when told to', async () => {
+    // The API refuses a permanent delete unless the programme is archived, so the
+    // flag has to be absent on the ordinary (archiving) call - otherwise every
+    // delete in the UI would be irreversible.
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ deleted: true, permanent: false, id: 'PROG-1' }) });
+    await deleteCurriculumProgramme('PROG-1');
+
+    const [archiveUrl, archiveInit] = mockFetch.mock.calls[0];
+    expect(String(archiveUrl)).toContain('/curriculum/programmes/PROG-1/');
+    expect(String(archiveUrl)).not.toContain('permanent');
+    expect(archiveInit.method).toBe('DELETE');
+
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ deleted: true, permanent: true, id: 'PROG-1' }) });
+    await deleteCurriculumProgramme('PROG-1', { permanent: true });
+
+    expect(String(mockFetch.mock.calls[1][0])).toContain('/curriculum/programmes/PROG-1/?permanent=true');
+  });
+
+  it('encodes the programme id it was given', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ deleted: true, permanent: true, id: 'PROG 1/2' }) });
+    await deleteCurriculumProgramme('PROG 1/2', { permanent: true });
+
+    expect(String(mockFetch.mock.calls[0][0])).toContain('/curriculum/programmes/PROG%201%2F2/?permanent=true');
   });
 });

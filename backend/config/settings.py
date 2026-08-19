@@ -25,9 +25,12 @@ def load_env_file(path):
     if not path.exists():
         return
 
-    # Real process-level environment variables keep priority. Microsoft calendar
-    # credentials were historically appended more than once, so only for that
-    # integration use the last file declaration. Other settings retain the
+    # Real process-level environment variables keep priority. The bare MICROSOFT_*
+    # names are declared more than once and belong to the learner calendar-connection
+    # OAuth app, whose block sits last in the file, so those keep last-declaration
+    # order. The app-only Graph client no longer rides on them: it reads the
+    # dedicated MICROSOFT_GRAPH_* names, which must NOT be listed here so a single
+    # declaration cannot be overridden from further down. Other settings retain the
     # original first-declaration behaviour (several legacy DB aliases depend on it).
     process_environment_keys = set(os.environ)
     last_declaration_keys = {

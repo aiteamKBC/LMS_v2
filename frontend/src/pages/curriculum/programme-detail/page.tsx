@@ -186,7 +186,13 @@ interface Cohort {
   id: string;
   name: string;
   startDate: string;
+  /** End of the practical period. */
   endDate: string;
+  /** When the apprenticeship ends: the authored date when there is one, otherwise the practical end date plus the EPA period. Blank when neither is recorded. */
+  apprenticeshipEndDate: string;
+  /** True when the date above was typed rather than calculated. */
+  apprenticeshipEndIsManual: boolean;
+  epaMonths: number | null;
   status: 'active' | 'planned' | 'completed';
   learners: number;
   groups: Group[];
@@ -1174,6 +1180,9 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     name: cohort.name,
     startDate: formatDateLabel(cohort.startDate),
     endDate: formatDateLabel(cohort.endDate),
+    apprenticeshipEndDate: formatDateLabel(cohort.apprenticeshipEndDate || ''),
+    apprenticeshipEndIsManual: Boolean(cohort.apprenticeshipEndOverride),
+    epaMonths: cohort.epaMonths ?? null,
     status: cohortStatus(cohort.status),
     learners: cohort.learners || 0,
     holidayIds: (cohort.holidayIds || []).map(String),
@@ -1213,6 +1222,11 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       name: firstModule.cohort || 'Cohort',
       startDate: formatDateLabel(firstModule.weeksData[0]?.startDate || ''),
       endDate: formatDateLabel(firstModule.weeksData.at(-1)?.endDate || ''),
+      // Synthesized from module rows rather than an authored cohort, so there is
+      // no EPA period to read and no apprenticeship end date to derive.
+      apprenticeshipEndDate: '',
+      apprenticeshipEndIsManual: false,
+      epaMonths: null,
       status: 'active' as const,
       learners: 0,
       holidayIds: [],
@@ -2426,7 +2440,10 @@ export default function ProgrammeDetailPage() {
                         <StatusChip status={c.status} />
                       </div>
                       <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
-                        <MetaItem icon="ri-calendar-line">{c.startDate} &ndash; {c.endDate}</MetaItem>
+                        <MetaItem icon="ri-calendar-line">Practical: {c.startDate} &ndash; {c.endDate}</MetaItem>
+                        {c.apprenticeshipEndDate ? (
+                          <MetaItem icon="ri-award-line">Apprenticeship ends {c.apprenticeshipEndDate} ({c.apprenticeshipEndIsManual ? 'set manually' : `${c.epaMonths}m EPA`})</MetaItem>
+                        ) : null}
                         <MetaItem icon="ri-graduation-cap-line">{c.learners} learners</MetaItem>
                         <MetaItem icon="ri-team-line">{c.groups.length} {c.groups.length === 1 ? 'group' : 'groups'}</MetaItem>
                       </div>
