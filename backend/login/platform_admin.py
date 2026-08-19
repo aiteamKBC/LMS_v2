@@ -15,7 +15,8 @@ invent an endpoint. So the surface here is small on purpose:
 
     GET  /login_api/admin/overview/    headline counts across login + enrolment
     GET  /login_api/admin/accounts/    sign-in accounts, filterable, paginated
-    POST /login_api/admin/accounts/<id>/   suspend / restore / unlock
+    POST /login_api/admin/accounts/<id>/   suspend / restore / unlock /
+                                           resend-invitation / send-password-reset
     GET  /login_api/admin/audit/       login."Login_audit", filterable, paginated
     GET  /login_api/admin/roles/       the four real roles + live member counts
     GET  /login_api/admin/email-log/   invitation + reset delivery attempts
@@ -461,9 +462,9 @@ def accounts(request):
 @require_POST
 @require_role(ROLE_ADMIN)
 def account_action(request, pk):
-    """Suspend, restore or unlock one account.
+    """Suspend, restore, unlock, or re-send an account's onboarding mail.
 
-    The three writes the console legitimately owns. Deliberately *not* here:
+    The writes the console legitimately owns. Deliberately *not* here:
     changing an account's role. Role is recomputed from the person's enrolment
     row by ``identity.ensure_account`` on every request, so a value written here
     would be silently reverted — the honest place to change it is the staff form.
@@ -480,9 +481,17 @@ def account_action(request, pk):
         return _error("Request body must be a JSON object.", 400)
 
     action = (payload.get("action") or "").strip().lower()
-    if action not in {"suspend", "restore", "unlock", "resend-invitation"}:
+    if action not in {
+        "suspend",
+        "restore",
+        "unlock",
+        "resend-invitation",
+        "send-password-reset",
+    }:
         return _error(
-            "action must be one of: suspend, restore, unlock, resend-invitation.", 400
+            "action must be one of: suspend, restore, unlock, resend-invitation, "
+            "send-password-reset.",
+            400,
         )
 
     try:
@@ -533,6 +542,47 @@ def account_action(request, pk):
             "sentTo": account.email,
             "account": _account_json(account, timezone.now(), _staff_access_map([account])),
         })
+    if action == "send-password-reset":
+        # The counterpart to resend-invitation, and the two are mutually
+        # exclusive: an invitation sets the first password, a reset replaces one
+        # that already exists. The console shows whichever applies, and this
+        # guard is what makes that more than a UI convention.
+        #
+        # Not routed through the public forgot-password endpoint on purpose.
+        # That one answers with a deliberately uniform 200 so it cannot be used
+        # to discover which addresses have accounts, and it is throttled per
+        # address — both right for an anonymous caller, both wrong here, where an
+        # authenticated admin has already been shown the account and needs to
+        # know whether the mail actually went out.
+        if not account.password_set_at:
+            return _error(
+                "That account has not set a password yet — resend the invitation "
+                "instead.",
+                400,
+                code="not_onboarded",
+            )
+        try:
+            from .invitations import send_reset
+
+            _, sent, detail = send_reset(
+                account,
+                ip=client_ip(request),
+                user_agent=user_agent(request),
+            )
+        except DatabaseError as exc:
+            return _error(f"Database error: {exc}", 502)
+
+        if not sent:
+            return _error(
+                f"Could not send the password reset: {detail}", 502, code="send_failed"
+            )
+        return JsonResponse({
+            "ok": True,
+            "resetSent": True,
+            "sentTo": account.email,
+            "account": _account_json(account, timezone.now(), _staff_access_map([account])),
+        })
+
     # An admin suspending themselves would lock the console's own door with no
     # way back through the UI. Cheap guard, and the failure mode is expensive.
     if action == "suspend" and actor is not None and actor.id == account.id:

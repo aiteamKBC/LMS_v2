@@ -154,24 +154,39 @@ export function fetchAccounts(query: AccountQuery = {}): Promise<Paged<PlatformA
 }
 
 /**
- * Suspend, restore, unlock, or re-send an invitation.
+ * Suspend, restore, unlock, or re-send an account's onboarding mail.
  *
  * Role is deliberately not editable here — it is recomputed from the person's
  * enrolment row on every request, so a value written from this console would be
  * silently reverted.
  *
- * `resend-invitation` supersedes any earlier unused invitation, so the previous
- * link stops working rather than leaving two live at once. It throws when the
- * send fails, carrying the transport's reason.
+ * `resend-invitation` and `send-password-reset` are mutually exclusive and the
+ * server enforces which applies: an invitation sets a first password, a reset
+ * replaces one that already exists, so sending the wrong one is rejected rather
+ * than quietly doing nothing. Both supersede any earlier unused link, so the
+ * previous one stops working rather than leaving two live at once, and both
+ * throw when the send fails, carrying the transport's reason.
  */
 export function accountAction(
   id: number,
-  action: 'suspend' | 'restore' | 'unlock' | 'resend-invitation',
-): Promise<{ account: PlatformAccount; resent?: boolean; sentTo?: string }> {
-  return request<{ account: PlatformAccount; resent?: boolean; sentTo?: string }>(
-    `${BASE}/accounts/${id}/`,
-    { method: 'POST', body: JSON.stringify({ action }) },
-  );
+  action:
+    | 'suspend'
+    | 'restore'
+    | 'unlock'
+    | 'resend-invitation'
+    | 'send-password-reset',
+): Promise<{
+  account: PlatformAccount;
+  resent?: boolean;
+  resetSent?: boolean;
+  sentTo?: string;
+}> {
+  return request<{
+    account: PlatformAccount;
+    resent?: boolean;
+    resetSent?: boolean;
+    sentTo?: string;
+  }>(`${BASE}/accounts/${id}/`, { method: 'POST', body: JSON.stringify({ action }) });
 }
 
 /* -------------------------------------------------------------------------- */

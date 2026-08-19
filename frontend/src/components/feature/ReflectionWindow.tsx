@@ -66,6 +66,7 @@ interface ReflectionSubmission {
 export function ReflectionWindow({
   learnerKsbs,
   plannedTimeLabel,
+  plannedHours: plannedHoursProp,
   noun = 'quiz',
   submitting,
   submitError,
@@ -84,6 +85,18 @@ export function ReflectionWindow({
   learnerKsbs: LearnerKsbItem[];
   elapsedSeconds: number;
   plannedTimeLabel: string;
+  /**
+   * The planned time as a number of **hours**, used to preset "Actual time
+   * spent (hours)".
+   *
+   * Separate from `plannedTimeLabel` because that is only ever a display
+   * string, and its unit depends on which fallback produced it — a component's
+   * authored OTJH renders as "1h 42m", a real video length as "102:25" (MM:SS),
+   * an authored duration as "45 min". Reading a number back out of that text
+   * cannot tell hours from minutes, so a 102-minute video was preset as 102
+   * hours and submitted as such. Callers now convert to hours once, here.
+   */
+  plannedHours?: number;
   noun?: string;
   submitting: boolean;
   submitError: string | null;
@@ -99,7 +112,14 @@ export function ReflectionWindow({
   evidenceSectionRef?: string;
   onClose?: () => void;
 }) {
-  const plannedHours = plannedTimeLabel.match(/\d+(?:\.\d+)?/)?.[0] || '';
+  // Two decimals, and no trailing ".00" — the field takes a plain hours number,
+  // so "1.71" and "2" both read correctly while 102 minutes can no longer
+  // arrive as 102 hours. Falls back to blank rather than to a parsed label: an
+  // empty field is an honest "unknown", a wrong number is not.
+  const plannedHours =
+    plannedHoursProp != null && Number.isFinite(plannedHoursProp) && plannedHoursProp > 0
+      ? String(Number(plannedHoursProp.toFixed(2)))
+      : '';
   const [tab, setTab] = useState<TabId>('learning');
   const [reflection, setReflection] = useState('');
   const [selectedKsbs, setSelectedKsbs] = useState<string[]>([]);
@@ -914,7 +934,7 @@ export function ReflectionWindow({
                   {plannedTimeLabel || 'Not set'}
                 </div>
               </Field>
-              <Field label="Actual time spent (hours)">
+              <Field label="Actual time spent (minutes)">
                 <input
                   type="number"
                   min="0"

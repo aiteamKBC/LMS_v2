@@ -316,10 +316,12 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
 @csrf_exempt
 @staff_only(writes_only=True)
 def learner_coach(request, pk):
-    """Read/update a learner's coach contact, stored on the "Learner"."Active_users"
-    mirror (columns coach_name / coach_email). Set from the Delivery block of the
-    learner's own page (BoardPage's Programme panel). The learner must be Active —
-    they only have a mirror row then — so this 404s otherwise and the UI treats
+    """Read/update a learner's coach contact, stored on "Learner"."learners"
+    (LearnerProfile, columns coach_name / coach_email), resolved from the
+    enrolment row by ``learner_profile_for_source``. Set from the Owner cell in
+    the learner header (BoardPage's HeroCoach), which picks a Caseowner/Admin out
+    of Staff_users and writes both columns together. The learner must be Active —
+    they only have a profile row then — so this 404s otherwise and the UI treats
     that as "no coach yet" rather than an error.
 
         GET   /learner_api/learners/<id>/coach/   -> {coachName, coachEmail}
@@ -351,11 +353,16 @@ def learner_coach(request, pk):
         except ValidationError as exc:
             return _error(str(exc), 400)
 
+        # Empty string, never None: both columns on "Learner"."learners" are
+        # NOT NULL, so coercing a cleared field to NULL made unassigning a coach
+        # fail with an IntegrityError. "" is the table's own "no coach" value —
+        # the model declares blank=True and every reader already treats a blank
+        # as unassigned.
         update = {}
         if "coachName" in payload:
-            update["coach_name"] = (str(payload["coachName"]).strip() or None) if payload["coachName"] is not None else None
+            update["coach_name"] = str(payload["coachName"] or "").strip()
         if "coachEmail" in payload:
-            update["coach_email"] = (str(payload["coachEmail"]).strip() or None) if payload["coachEmail"] is not None else None
+            update["coach_email"] = str(payload["coachEmail"] or "").strip()
         if not update:
             return _error("Provide coachName and/or coachEmail.", 400)
 

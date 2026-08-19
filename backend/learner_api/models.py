@@ -206,6 +206,20 @@ class EnrolmentUser(models.Model):
 
     id = models.AutoField(primary_key=True, db_column="id")
 
+    # The user's permanent public identifier, added by apply_user_uuid. The
+    # integer pk above stays the internal join key — ~25 columns across three
+    # schemas hold it as bigint — so this is the id to expose in APIs and URLs,
+    # not to join on. The database fills it (DEFAULT gen_random_uuid()), so it
+    # is read back, never written by Django.
+    # default= matters as much as the database default: editable=False still
+    # puts the field in Django's INSERT, so without it the ORM sends an explicit
+    # NULL, overriding DEFAULT gen_random_uuid() and tripping the NOT NULL
+    # constraint on every create. An explicit value — a learner profile
+    # inheriting the enrolment row's uuid — still wins over this.
+    uuid = models.UUIDField(
+        db_column="uuid", unique=True, editable=False, default=uuid.uuid4
+    )
+
     # Which kind of learner this row is: 'apprenticeship' | 'commercial'.
     # Added by the merge_commercial_into_enrolment management command, which
     # folded enrolment."Commercial_users" into this table.
@@ -388,6 +402,20 @@ class StaffUser(models.Model):
 
     id = models.AutoField(primary_key=True, db_column="id")
 
+    # The user's permanent public identifier, added by apply_user_uuid. The
+    # integer pk above stays the internal join key — ~25 columns across three
+    # schemas hold it as bigint — so this is the id to expose in APIs and URLs,
+    # not to join on. The database fills it (DEFAULT gen_random_uuid()), so it
+    # is read back, never written by Django.
+    # default= matters as much as the database default: editable=False still
+    # puts the field in Django's INSERT, so without it the ORM sends an explicit
+    # NULL, overriding DEFAULT gen_random_uuid() and tripping the NOT NULL
+    # constraint on every create. An explicit value — a learner profile
+    # inheriting the enrolment row's uuid — still wins over this.
+    uuid = models.UUIDField(
+        db_column="uuid", unique=True, editable=False, default=uuid.uuid4
+    )
+
     username = models.TextField(db_column="Username", null=True, blank=True)
     email = models.TextField(db_column="Email", null=True, blank=True)
     phone_number = models.TextField(db_column="Phone_number", null=True, blank=True)
@@ -433,6 +461,19 @@ class LearnerProfile(models.Model):
     """Permanent learner identity shared by active and inactive workflows."""
 
     id = models.BigAutoField(primary_key=True)
+
+    # The same value as this learner's Created_users.uuid — one identity across
+    # the enrolment and active phases, which is the point of the column.
+    # apply_user_uuid copies it across via enrolment_id; a profile with no
+    # enrolment row of its own gets a fresh one.
+    # default= matters as much as the database default: editable=False still
+    # puts the field in Django's INSERT, so without it the ORM sends an explicit
+    # NULL, overriding DEFAULT gen_random_uuid() and tripping the NOT NULL
+    # constraint on every create. An explicit value — a learner profile
+    # inheriting the enrolment row's uuid — still wins over this.
+    uuid = models.UUIDField(
+        db_column="uuid", unique=True, editable=False, default=uuid.uuid4
+    )
     full_name = models.TextField()
     email = models.EmailField(max_length=320, unique=True)
     # GENERATED ALWAYS in Postgres — the database derives it from `email`, and an
@@ -1390,6 +1431,20 @@ class Employer(models.Model):
     """
 
     id = models.AutoField(primary_key=True, db_column="id")
+
+    # The user's permanent public identifier, added by apply_user_uuid. The
+    # integer pk above stays the internal join key — ~25 columns across three
+    # schemas hold it as bigint — so this is the id to expose in APIs and URLs,
+    # not to join on. The database fills it (DEFAULT gen_random_uuid()), so it
+    # is read back, never written by Django.
+    # default= matters as much as the database default: editable=False still
+    # puts the field in Django's INSERT, so without it the ORM sends an explicit
+    # NULL, overriding DEFAULT gen_random_uuid() and tripping the NOT NULL
+    # constraint on every create. An explicit value — a learner profile
+    # inheriting the enrolment row's uuid — still wins over this.
+    uuid = models.UUIDField(
+        db_column="uuid", unique=True, editable=False, default=uuid.uuid4
+    )
 
     first_name = models.TextField(db_column="First_name", null=True, blank=True)
     surname = models.TextField(db_column="Surname", null=True, blank=True)

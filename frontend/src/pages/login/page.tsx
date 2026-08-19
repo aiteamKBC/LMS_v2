@@ -14,7 +14,19 @@ import { AuthError, type Role } from '@/api/auth';
  * on the user directory. Falls back to the coarse role for accounts with no
  * access recorded, and for learners and employers, which have no grant.
  */
-function homeFor(account: { role: Role; accessHome?: string | null }): string {
+function homeFor(account: {
+  role: Role;
+  accessHome?: string | null;
+  subjectId?: number | null;
+}): string {
+  // An employer's console is their own record, so the route needs their id —
+  // there is no single static path to send them to. `subjectId` is the
+  // employer's Employers.id, which is exactly what /employers/:employerId
+  // names. The generic workspace dashboard stays the fallback for an account
+  // with no usable subject id.
+  if (account.role === 'employer' && account.subjectId) {
+    return `/employers/${account.subjectId}`;
+  }
   return account.accessHome || HOME_BY_ROLE[account.role];
 }
 

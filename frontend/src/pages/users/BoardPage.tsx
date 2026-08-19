@@ -26,6 +26,8 @@ import {
   type WrittenAgreementDocument,
 } from '@/api/writtenAgreement';
 import { renderWrittenAgreementPdf, writtenAgreementFilename } from '@/lib/writtenAgreementPdf';
+import { fetchLearnerCoach, updateLearnerCoach } from '@/api/coach';
+import { fetchCoachOptions, type CoachOption } from '@/api/staffUsers';
 
 /** Render the Written Agreement from its record and save it. */
 function downloadWrittenAgreement(document: WrittenAgreementDocument) {
@@ -131,7 +133,7 @@ function MetaItem({ icon, label, value }: { icon: string; label: string; value: 
 function LearnerHeader({
   name,
   reference,
-  owner,
+  ownerSlot,
   programme,
   employer,
   onboardingStatus,
@@ -140,7 +142,8 @@ function LearnerHeader({
 }: {
   name: string;
   reference: string;
-  owner: string;
+  /** The Owner cell. A control rather than a string: the coach is editable here. */
+  ownerSlot: ReactNode;
   programme: string;
   employer?: string;
   onboardingStatus: string;
@@ -148,9 +151,10 @@ function LearnerHeader({
   actions: ReactNode;
 }) {
   // Only the facts that exist — an "Employer: —" cell on every learner without
-  // one is noise. Owner is always shown: "unassigned" is itself worth knowing.
+  // one is noise. Owner is no longer in this list: it is an editable control
+  // (the coach picker), so it renders as `ownerSlot` in the same grid instead of
+  // as a read-only MetaItem.
   const meta = [
-    { icon: 'ri-user-star-line', label: 'Owner', value: owner || 'Unassigned' },
     ...(programme ? [{ icon: 'ri-book-open-line', label: 'Programme', value: programme }] : []),
     ...(employer ? [{ icon: 'ri-briefcase-line', label: 'Employer', value: employer }] : []),
   ];
@@ -189,12 +193,11 @@ function LearnerHeader({
           </div>
         </div>
 
-        {/* Facts */}
-        {meta.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 pt-4 border-t border-white/10">
-            {meta.map((m) => <MetaItem key={m.label} {...m} />)}
-          </div>
-        )}
+        {/* Facts. Owner leads, and is a control rather than text. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 pt-4 border-t border-white/10">
+          {ownerSlot}
+          {meta.map((m) => <MetaItem key={m.label} {...m} />)}
+        </div>
 
         {/* Controls — their own row, so a long name never squeezes them and they
             never squeeze the name. */}
@@ -203,6 +206,138 @@ function LearnerHeader({
           <div className="flex items-center gap-2 flex-wrap">{actions}</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The learner's coach, picked from the staff directory and saved to
+ * "Learner"."learners" (columns coach_name / coach_email).
+ *
+ * Replaces the read-only Owner cell. The options are the Caseowner/Admin staff
+ * in enrolment."Staff_users" — the same set the create form's Case owner
+ * dropdown offers — and the pick carries both name and email so the two columns
+ * are always written together and cannot disagree about who the coach is. That
+ * matters because the calendar and absence reports address the coach by
+ * `coach_email` while the UI shows `coach_name`.
+ *
+ * Keyed by email, not name: two staff can share a display name, and the email is
+ * the value the rest of the system actually routes on.
+ *
+ * Only Active learners have a "Learner"."learners" row, so the GET 404s before
+ * then. That is the normal state for a learner still in enrolment, not an
+ * error — it falls back to showing the enrolment record's case owner as plain
+ * text, exactly as this cell did before.
+ *
+ * The pick is held locally until Save, matching HeroProgrammeStatus, so a
+ * mis-click never writes to the learner's record.
+ */
+function HeroCoach({ learnerId, fallbackOwner }: { learnerId: string; fallbackOwner: string }) {
+  const [options, setOptions] = useState<CoachOption[]>([]);
+  // '' = no coach set. Otherwise the chosen staff member's email.
+  const [val, setVal] = useState('');
+  const [saved, setSaved] = useState('');
+  // The stored coach_name, kept so a coach who is not in the staff list (a
+  // legacy or free-text value) can still be shown rather than silently
+  // rendering as "no coach set".
+  const [savedName, setSavedName] = useState('');
+  const [editable, setEditable] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      // The staff list and the current coach are independent reads; a failure to
+      // load options must not hide a coach that is already set.
+      const [opts, current] = await Promise.all([
+        fetchCoachOptions().catch(() => [] as CoachOption[]),
+        fetchLearnerCoach(learnerId).then(
+          (c) => c,
+          // 404 = not Active yet, so there is nothing to edit.
+          () => null,
+        ),
+      ]);
+      if (cancelled) return;
+      setOptions(opts);
+      setEditable(current !== null);
+      const email = current?.coachEmail?.trim() || '';
+      setVal(email);
+      setSaved(email);
+      setSavedName(current?.coachName?.trim() || '');
+    })();
+    return () => { cancelled = true; };
+  }, [learnerId]);
+
+  const dirty = val !== saved;
+
+  const save = async () => {
+    if (!dirty || saving) return;
+    const picked = options.find((o) => o.email === val);
+    // Clearing the field is a legitimate edit — it unassigns the coach.
+    if (val && !picked) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      // Both columns in one PATCH: writing only one would leave the name and
+      // the email pointing at different people.
+      const next = await updateLearnerCoach(learnerId, {
+        coachName: picked ? picked.name : '',
+        coachEmail: picked ? picked.email : '',
+      });
+      const email = next.coachEmail?.trim() || '';
+      setVal(email);
+      setSaved(email);
+      setSavedName(next.coachName?.trim() || '');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Not Active yet: no row to write to, so show what the enrolment record says.
+  if (!editable) {
+    return <MetaItem icon="ri-user-star-line" label="Owner" value={fallbackOwner || 'Unassigned'} />;
+  }
+
+  // A stored coach who is not among the staff options — keep them visible
+  // rather than dropping to a blank select that misreads as "unassigned".
+  // Also covers a name recorded with no email (the endpoint used to accept one
+  // field at a time): there is no email to key on, so the option carries the
+  // empty value and simply shows who is currently recorded.
+  const unlisted = saved
+    ? !options.some((o) => o.email === saved)
+    : Boolean(savedName);
+
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wider text-white/50 mb-0.5">Owner</p>
+      <div className="flex items-center gap-2 min-w-0">
+        <select
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          aria-label="Coach"
+          className="min-w-0 flex-1 px-2.5 py-1.5 text-[13px] font-medium bg-white/15 backdrop-blur-sm border border-white/25 rounded-lg text-white outline-none cursor-pointer hover:bg-white/20 focus:border-white/50 transition-smooth max-w-[220px] [&>option]:text-foreground-900 [&>option]:bg-background-50"
+        >
+          <option value="">— Unassigned —</option>
+          {unlisted && saved && <option value={saved}>{savedName || saved}</option>}
+          {unlisted && !saved && <option value="" disabled>{savedName} (no email on record)</option>}
+          {options.map((o) => (
+            <option key={o.email} value={o.email}>{o.name}</option>
+          ))}
+        </select>
+        {dirty && (
+          <button
+            onClick={save}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white text-primary-700 rounded-lg text-[12px] font-semibold hover:bg-white/90 transition-smooth cursor-pointer disabled:opacity-60 shrink-0"
+          >
+            {saving ? <i className="ri-loader-4-line animate-spin" /> : <><i className="ri-save-line" />Save</>}
+          </button>
+        )}
+      </div>
+      {err && <span className="block text-[11px] text-red-200 mt-1"><i className="ri-error-warning-line mr-1" />{err}</span>}
     </div>
   );
 }
@@ -1277,7 +1412,7 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
           <LearnerHeader
             name={board.user.name}
             reference={board.user.reference}
-            owner={board.user.owner}
+            ownerSlot={<HeroCoach learnerId={userId} fallbackOwner={board.user.owner} />}
             programme={board.programme.name}
             employer={board.user.employer}
             onboardingStatus={board.programme.onboardingStatus}
