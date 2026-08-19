@@ -177,7 +177,9 @@ function visibleFields(kind: LearnerKind): FieldDef[] {
 export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: (row: UserListRow) => void }) {
   const { success, error } = useToast();
   const [formData, setFormData] = useState<Record<string, string>>(INITIAL);
-  const [kind, setKind] = useState<LearnerKind>('apprenticeship');
+  // Apprenticeship intake is temporarily switched off, so commercial is the
+  // only selectable kind and therefore the default.
+  const [kind, setKind] = useState<LearnerKind>('commercial');
   const [submitting, setSubmitting] = useState(false);
 
   // Live curriculum cascade: programmes load once, then cohorts follow the chosen
@@ -581,30 +583,42 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
                 value: 'apprenticeship' as LearnerKind,
                 label: 'Apprenticeship learner',
                 detail: 'Full ILR, compliance documents and the enrolment wizard.',
+                disabled: true,
               },
               {
                 value: 'commercial' as LearnerKind,
                 label: 'Commercial learner',
                 detail: 'Commercial delivery, no funded-ILR compliance trail.',
+                disabled: false,
               },
             ]).map((opt) => (
               <label
                 key={opt.value}
-                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-smooth ${
-                  kind === opt.value
-                    ? 'border-primary-400 bg-primary-50/60'
-                    : 'border-foreground-200 hover:bg-background-100/60'
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-smooth ${
+                  opt.disabled
+                    ? 'border-foreground-200 bg-background-100/40 opacity-60 cursor-not-allowed'
+                    : kind === opt.value
+                      ? 'border-primary-400 bg-primary-50/60 cursor-pointer'
+                      : 'border-foreground-200 hover:bg-background-100/60 cursor-pointer'
                 }`}
               >
                 <input
                   type="radio"
                   name="cu-learner-kind"
                   checked={kind === opt.value}
+                  disabled={opt.disabled}
                   onChange={() => setKind(opt.value)}
-                  className="accent-primary-500 mt-0.5"
+                  className="accent-primary-500 mt-0.5 disabled:cursor-not-allowed"
                 />
                 <span className="min-w-0">
-                  <span className="block text-[13px] font-medium text-foreground-800">{opt.label}</span>
+                  <span className="block text-[13px] font-medium text-foreground-800">
+                    {opt.label}
+                    {opt.disabled && (
+                      <span className="ml-2 align-middle rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide bg-foreground-200/70 text-foreground-500">
+                        Unavailable
+                      </span>
+                    )}
+                  </span>
                   <span className="block text-[11px] text-foreground-400 mt-0.5">{opt.detail}</span>
                 </span>
               </label>

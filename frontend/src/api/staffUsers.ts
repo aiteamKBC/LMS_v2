@@ -179,6 +179,30 @@ export async function fetchCaseOwners(): Promise<string[]> {
   return rows.map((r) => r.name).filter(Boolean);
 }
 
+/** A staff member who can be assigned as a learner's coach. */
+export interface CoachOption {
+  name: string;
+  email: string;
+}
+
+/**
+ * Case owners as {name, email} pairs, for the learner header's coach picker.
+ *
+ * Same source and positions as `fetchCaseOwners` — a coach has to be a real
+ * Caseowner/Admin account — but keeps the email, because assigning a coach
+ * writes both coach_name and coach_email to "Learner"."learners" and the email
+ * is what the calendar and absence-report code actually sends to.
+ *
+ * Rows with no email are dropped: they cannot fill both columns, and a
+ * name-only pick would leave the two fields disagreeing about who the coach is.
+ */
+export async function fetchCoachOptions(): Promise<CoachOption[]> {
+  const rows = await fetchStaffUsers(CASE_OWNER_POSITIONS);
+  return rows
+    .filter((r) => r.name && r.email)
+    .map((r) => ({ name: r.name, email: r.email }));
+}
+
 /** Create a staff/admin account; returns the new row. */
 export function createStaffUser(input: CreateStaffUserInput): Promise<StaffUserRow> {
   return request<StaffUserRow>(`${BASE}/`, { method: 'POST', body: JSON.stringify(input) });

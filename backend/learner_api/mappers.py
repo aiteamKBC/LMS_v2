@@ -71,6 +71,9 @@ def to_list_row(u):
     utype = _s(u.type) or "User"
     return {
         "id": str(u.id),
+        # Permanent identifier, stable across the enrolment/active phases.
+        # "id" stays the integer the existing routes are built on.
+        "uuid": str(u.uuid) if getattr(u, "uuid", None) else None,
         "name": _s(u.username),
         "type": utype,
         "email": _s(u.email),
@@ -211,6 +214,11 @@ def to_board(u):
     board = {
         "user": {
             "id": str(u.id),
+            # The learner's permanent identifier, the same value before and after
+            # they become active. "id" above stays the enrolment integer because
+            # existing callers and routes are built on it; prefer this for
+            # anything new that needs to name a learner.
+            "uuid": str(u.uuid) if getattr(u, "uuid", None) else None,
             "name": _s(u.username),
             "reference": _s(u.organization),
             # The case owner is chosen on the create form (picked from the
@@ -612,6 +620,7 @@ COMMERCIAL_WRITABLE_FIELDS = {
 def to_commercial_row(u):
     return {
         "id": str(u.id),
+        "uuid": str(u.uuid) if getattr(u, "uuid", None) else None,
         "username": _s(u.username),
         "email": _s(u.email),
         "phone": _s(u.phone_number),
@@ -696,6 +705,7 @@ def to_staff_row(u):
     status = _s(u.status)
     return {
         "id": str(u.id),
+        "uuid": str(u.uuid) if getattr(u, "uuid", None) else None,
         "name": _s(u.username),
         # The directory's Type column shows the staff position (Admin,
         # Caseowner, ...) — that's the meaningful role for a non-learner.

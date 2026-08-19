@@ -864,7 +864,7 @@ The learning has strengthened my understanding of KSB K5 (customer segmentation)
                           </div>
                         </label>
                         <label className="block">
-                          <span className="block text-xs font-medium text-foreground-700 mb-1.5">Actual time spent (hours)</span>
+                          <span className="block text-xs font-medium text-foreground-700 mb-1.5">Actual time spent (minutes)</span>
                           <input
                             type="number"
                             min="0"

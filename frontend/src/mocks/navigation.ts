@@ -230,73 +230,19 @@ export const tutorNavItems: SidebarNavItem[] = [
 // EMPLOYER WORKSPACE — Grouped sidebar (7 groups)
 // ============================================================================
 export const employerNavItems: SidebarNavItem[] = [
-  // Dashboard
+  // Deliberately one entry. The employer's console is the single portal page at
+  // /employers/:employerId — everything they do (their learners, and the
+  // documents waiting on their signature) is on it, so a sidebar of section
+  // links would only offer ways to leave the one page they need.
+  //
+  // The pages the removed links pointed at (/employer/apprentices,
+  // /employer/documents, the OTJH and review queues, clubs, events, reports)
+  // still exist and are still routed — they are simply not advertised here.
+  // Restoring any of them is adding its entry back.
+  //
+  // EmployerPortalPage overrides this href with the signed-in employer's own
+  // id: the portal route is per-employer, so no static path can name it.
   { id: 'employer-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/employer' },
-
-  // My Apprentices
-  {
-    id: 'employer-group-apprentices',
-    label: 'My Apprentices',
-    icon: 'ri-star-line',
-    children: [
-      { id: 'employer-apprentice-overview', label: 'Apprentice Overview', icon: 'ri-group-line', href: '/employer/apprentices' },
-      { id: 'employer-apprentice-progress', label: 'Apprentice Progress', icon: 'ri-bar-chart-line', href: '/employer/apprentice-progress' },
-      { id: 'employer-apprentice-risk', label: 'Apprentice Risk', icon: 'ri-alert-line', href: '/employer/apprentice-risk', statusDot: 'red' },
-    ],
-  },
-
-  // Actions Required
-  {
-    id: 'employer-group-actions',
-    label: 'Actions Required',
-    icon: 'ri-alert-line',
-    children: [
-      { id: 'employer-documents-sign', label: 'Documents to Sign', icon: 'ri-pen-nib-line', href: '/employer/documents', statusDot: 'red' },
-      { id: 'employer-workplace-confirm', label: 'Workplace Confirmations', icon: 'ri-building-line', href: '/employer/workplace-confirm', statusDot: 'amber' },
-      { id: 'employer-otjh-confirm', label: 'OTJH Confirmations', icon: 'ri-time-line', href: '/employer/otjh-confirm', statusDot: 'amber' },
-      { id: 'employer-review-actions', label: 'Review Actions', icon: 'ri-file-chart-line', href: '/employer/review-actions', statusDot: 'red' },
-    ],
-  },
-
-  // Learning & Progress
-  {
-    id: 'employer-group-learning',
-    label: 'Learning & Progress',
-    icon: 'ri-book-open-line',
-    children: [
-      { id: 'employer-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/employer/progress-reviews' },
-      { id: 'employer-ksb-progress', label: 'KSB Progress', icon: 'ri-bar-chart-2-line', href: '/employer/ksb-progress' },
-      { id: 'employer-evidence-summary', label: 'Evidence Summary', icon: 'ri-folder-upload-line', href: '/employer/evidence-summary' },
-      { id: 'employer-gateway-epa', label: 'Gateway & EPA', icon: 'ri-flag-line', href: '/employer/gateway-epa', statusDot: 'amber' },
-    ],
-  },
-
-  // Community
-  {
-    id: 'employer-group-community',
-    label: 'Community',
-    icon: 'ri-team-line',
-    children: [
-      { id: 'employer-employer-clubs', label: 'Employer Clubs', icon: 'ri-building-2-line', href: '/employer/employer-clubs' },
-      { id: 'employer-learner-clubs', label: 'Learner Clubs', icon: 'ri-team-line', href: '/employer/learner-clubs', statusDot: 'blue' },
-      { id: 'employer-events', label: 'Events', icon: 'ri-calendar-event-line', href: '/employer/events', statusDot: 'green' },
-      { id: 'employer-community-activity', label: 'Community Activity', icon: 'ri-heart-line', href: '/employer/community-activity', statusDot: 'blue' },
-    ],
-  },
-
-  // Communication
-  {
-    id: 'employer-group-communication',
-    label: 'Communication',
-    icon: 'ri-mail-line',
-    children: [
-      { id: 'employer-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', statusDot: 'blue' },
-      { id: 'employer-support', label: 'Support Requests', icon: 'ri-question-line', href: '/employer/support' },
-    ],
-  },
-
-  // Reporting
-  { id: 'employer-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/employer/reports' },
 ];
 
 // ============================================================================

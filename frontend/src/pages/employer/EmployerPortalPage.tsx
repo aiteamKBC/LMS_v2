@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useAuth } from '@/hooks/useAuth';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEmployerPortal, type EmployerLearnerCard, type EmployerPortal } from '@/api/employerPortal';
 import { Hero, StatCard, btnSecondary } from '@/pages/users/components/ui';
@@ -19,7 +20,13 @@ import { Hero, StatCard, btnSecondary } from '@/pages/users/components/ui';
 // several learners can see where they are needed without opening each one.
 // ============================================================================
 
-const employerNav = roleNavMap.apprentice;
+// Two audiences reach this page. Staff open it from the Users directory's View
+// action, and it is also the employer's own landing page after they sign in —
+// so the chrome follows the session rather than being fixed. An employer gets
+// the employer nav and their own name; staff keep the enrolment console they
+// navigated in from, so the back button and sidebar still make sense.
+const staffNav = roleNavMap.apprentice;
+const employerNav = roleNavMap.employer;
 
 function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -91,6 +98,7 @@ function LearnerCard({ card, onOpen }: { card: EmployerLearnerCard; onOpen: () =
 export default function EmployerPortalPage() {
   const { employerId = '' } = useParams();
   const navigate = useNavigate();
+  const { auth } = useAuth();
   const [data, setData] = useState<EmployerPortal | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -109,16 +117,33 @@ export default function EmployerPortalPage() {
   const learners = data?.learners ?? [];
   const active = learners.filter((l) => l.isActive).length;
 
+  // An employer viewing their own record, as opposed to staff looking in.
+  const isEmployerViewer = auth.account?.role === 'employer';
+  const nav = isEmployerViewer ? employerNav : staffNav;
+  // The employer sidebar's single Dashboard entry is this page, so it has to
+  // carry this employer's id — the shared nav array can only hold a static
+  // href. Pointing it at itself also keeps the item highlighted as current.
+  const navItems = isEmployerViewer
+    ? nav.items.map((item) =>
+        item.id === 'employer-dashboard'
+          ? { ...item, href: `/employers/${employerId}` }
+          : item,
+      )
+    : nav.items;
+  const viewerName = isEmployerViewer
+    ? auth.account?.displayName || data?.employer.name || 'Employer'
+    : 'Enrolment Officer';
+
   return (
     <WorkspaceShell
-      role="compliance"
-      roleLabel={employerNav.label}
-      navItems={employerNav.items}
-      workspaceLabel={employerNav.workspaceLabel}
+      role={isEmployerViewer ? 'employer' : 'compliance'}
+      roleLabel={nav.label}
+      navItems={navItems}
+      workspaceLabel={nav.workspaceLabel}
       pageTitle="Employer"
       pageSubtitle={data?.employer.name ?? 'Employer portal'}
-      userName="Enrolment Officer"
-      userRole="Enrolment Officer"
+      userName={viewerName}
+      userRole={nav.label}
     >
       <div className="p-6 max-w-6xl mx-auto space-y-6">
         <div className="animate-fade-in-up">
@@ -136,9 +161,14 @@ export default function EmployerPortalPage() {
                 : undefined
             }
             right={
+              // Staff arrived from the Users directory and need the way back.
+              // An employer is already home — there is nothing behind this page
+              // for them, and the staff directory is not theirs to open.
+              isEmployerViewer ? undefined : (
               <button onClick={() => navigate(-1)} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white/15 backdrop-blur-sm border border-white/25 text-white rounded-xl text-[13px] font-semibold hover:bg-white/25 transition-smooth cursor-pointer">
                 <i className="ri-arrow-left-line" />Back to users
               </button>
+              )
             }
           />
         </div>

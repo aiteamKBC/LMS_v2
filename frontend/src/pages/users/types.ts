@@ -21,6 +21,11 @@ export type ProgrammeStatus =
 
 export interface UserListRow {
   id: string;
+  /** Permanent identifier, the same value before and after the learner becomes
+   *  active. `id` remains the integer the current routes are built on; prefer
+   *  this when something new needs to name a user. Null only on rows written
+   *  before the uuid backfill. */
+  uuid: string | null;
   name: string;
   type: UserType;
   email: string;

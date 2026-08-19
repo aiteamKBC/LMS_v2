@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Bell, ClipboardList, CirclePlus, Mail, MailOpen } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
 
@@ -35,117 +34,28 @@ function SignOutConfirmModal({ onClose, onConfirm }: { onClose: () => void; onCo
 }
 
 // Notification sound
-function playNotificationSound() {
-  try {
-    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!AudioCtx) return;
-    const ctx = new AudioCtx();
-    const oscillator = ctx.createOscillator();
-    const gainNode = ctx.createGain();
-    oscillator.connect(gainNode);
-    gainNode.connect(ctx.destination);
-    oscillator.type = 'sine';
-    oscillator.frequency.setValueAtTime(880, ctx.currentTime);
-    oscillator.frequency.setValueAtTime(1100, ctx.currentTime + 0.1);
-    gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-    oscillator.start(ctx.currentTime);
-    oscillator.stop(ctx.currentTime + 0.3);
-  } catch { /* AudioContext not available */ }
-}
-
 export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar }: HeaderProps) {
-  const { auth, hasPermission, logout } = useAuth();
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [tasksOpen, setTasksOpen] = useState(false);
-  const [messagesOpen, setMessagesOpen] = useState(false);
-  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const { auth, logout } = useAuth();
+  // Profile is the only dropdown left in the header, so the state that used to
+  // coordinate six of them is gone along with them — as are the hard-coded
+  // notification, task and message lists that fed their badge counts.
   const [profileOpen, setProfileOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
 
-  // Track if new message notification came from external page
-  const [newMsgFlashed, setNewMsgFlashed] = useState(false);
-
-  const notifRef = useRef<HTMLDivElement>(null);
-  const tasksRef = useRef<HTMLDivElement>(null);
-  const messagesRef = useRef<HTMLDivElement>(null);
-  const createRef = useRef<HTMLDivElement>(null);
   const profileRef = useRef<HTMLDivElement>(null);
-  const helpRef = useRef<HTMLDivElement>(null);
 
-  const closeOthers = useCallback((except: string) => {
-    if (except !== 'notif') setNotificationsOpen(false);
-    if (except !== 'tasks') setTasksOpen(false);
-    if (except !== 'messages') setMessagesOpen(false);
-    if (except !== 'create') setQuickCreateOpen(false);
-    if (except !== 'profile') setProfileOpen(false);
-    if (except !== 'help') setHelpOpen(false);
-  }, []);
-
-  // Listen for new-message events from messages pages
-  useEffect(() => {
-    const handler = () => {
-      playNotificationSound();
-      setNewMsgFlashed(true);
-      setTimeout(() => setNewMsgFlashed(false), 2000);
-    };
-    window.addEventListener('new-message-received', handler);
-    return () => window.removeEventListener('new-message-received', handler);
-  }, []);
+  // Kept as a no-arg close so the Profile button's handler reads the same as
+  // before; there is no longer anything else to close.
+  const closeOthers = useCallback((_except: string) => {}, []);
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       const target = e.target as Node;
-      if (notifRef.current && !notifRef.current.contains(target)) setNotificationsOpen(false);
-      if (tasksRef.current && !tasksRef.current.contains(target)) setTasksOpen(false);
-      if (messagesRef.current && !messagesRef.current.contains(target)) setMessagesOpen(false);
-      if (createRef.current && !createRef.current.contains(target)) setQuickCreateOpen(false);
       if (profileRef.current && !profileRef.current.contains(target)) setProfileOpen(false);
-      if (helpRef.current && !helpRef.current.contains(target)) setHelpOpen(false);
     }
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
-
-  const canAccessSettings = hasPermission('settings.view');
-
-  const notifications = [
-    { id: 1, text: 'Coach Martin confirmed your OTJH entry', time: '2m ago', unread: true, type: 'otjh' },
-    { id: 2, text: 'Monthly checkpoint assessment is ready', time: '1h ago', unread: true, type: 'assessment' },
-    { id: 3, text: 'Employer signed your progress review', time: '3h ago', unread: false, type: 'review' },
-    { id: 4, text: 'New module available: Data Analysis', time: 'Yesterday', unread: false, type: 'module' },
-    { id: 5, text: 'QA spot check scheduled for Cohort B', time: 'Yesterday', unread: false, type: 'qa' },
-  ];
-
-  const tasks = [
-    { id: 1, text: 'Validate OTJH entries — Cohort A', due: '14 Jun', priority: 'high' as const, assignee: 'Helen Curtis' },
-    { id: 2, text: 'Complete Q2 progress reports', due: '20 Jun', priority: 'medium' as const, assignee: 'You' },
-    { id: 3, text: 'Review evidence submissions', due: '12 Jun', priority: 'high' as const, assignee: 'You' },
-    { id: 4, text: 'Update ILR data for May', due: '15 Jun', priority: 'low' as const, assignee: 'Lisa Nguyen' },
-  ];
-
-  const messages_data = [
-    { id: 1, sender: 'Martin Reeves', subject: 'RE: Monthly Check-in Preparation', preview: 'Hi Sarah, I\'ve reviewed your latest evidence and...', time: '2h ago', unread: true, href: '/learner/messages' },
-    { id: 2, sender: 'Helen Curtis', subject: 'Assignment feedback ready', preview: 'Your Module 7 assignment has been marked...', time: '5h ago', unread: true, href: '/messages' },
-    { id: 3, sender: 'Mark Davies', subject: 'Employer Review Scheduling', preview: 'Would next Thursday work for the quarterly...', time: 'Yesterday', unread: false, href: '/messages' },
-    { id: 4, sender: 'Sophie Williams', subject: 'Coaching Session Reschedule', preview: 'Need to reschedule our session on the 18th...', time: '3h ago', unread: true, href: '/coach/messages' },
-  ];
-
-  const quickCreateItems = [
-    { label: 'New Learner Record', icon: 'ri-user-add-line', permission: 'users.manage' },
-    { label: 'New Cohort', icon: 'ri-group-line', permission: 'cohorts.create' },
-    { label: 'New Programme', icon: 'ri-stack-line', permission: 'programmes.manage' },
-    { label: 'New Employer', icon: 'ri-building-line', permission: 'employer.manage' },
-    { label: 'Log OTJH Entry', icon: 'ri-time-line', permission: 'otjh.claim' },
-    { label: 'Upload Evidence', icon: 'ri-upload-cloud-line', permission: 'evidence.create' },
-    { label: 'Schedule Progress Review', icon: 'ri-calendar-check-line', permission: 'reviews.create' },
-    { label: 'New Document Template', icon: 'ri-file-text-line', permission: 'compliance.manage' },
-  ];
-
-  const unreadNotifs = notifications.filter(n => n.unread).length;
-  const highPriorityTasks = tasks.filter(t => t.priority === 'high' && t.assignee === 'You').length;
-  const unreadMessages = messages_data.filter(m => m.unread).length;
 
   const displayName = auth.user?.fullName || userName;
   const roleSlug = auth.roles[0]?.slug || 'learner';
@@ -184,202 +94,13 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
       {/* Below lg the title has no room, so the actions simply push right. */}
       <div className="flex-1 lg:hidden"></div>
 
-      {/* Global Search trigger */}
-      <button
-        onClick={onOpenSearch}
-        className="group hidden shrink-0 cursor-pointer items-center gap-2.5 rounded-xl border border-foreground-100 bg-background-100/70 px-3 py-2 transition-smooth hover:border-primary-200 hover:bg-primary-50/50 md:flex md:w-[200px] lg:w-[260px]"
-      >
-        <AppIcon className="ri-search-line text-[15px] text-foreground-400 transition-smooth group-hover:text-primary-600"></AppIcon>
-        <span className="flex-1 text-left text-[13px] text-foreground-400 transition-smooth group-hover:text-foreground-600">Search anything…</span>
-        <span className="whitespace-nowrap rounded border border-foreground-100 bg-background-50 px-1.5 py-0.5 text-[10px] font-semibold text-foreground-300">⌘K</span>
-      </button>
+      {/* The global search trigger and the Messages / Tasks / Notifications /
+          Quick Create / Help / Settings icons were removed from the header.
+          Their destinations are still routed and still reachable from the
+          sidebar, so this removes the header entry points, not the features. */}
 
-      {/* Mobile search icon */}
-      <button
-        onClick={onOpenSearch}
-        className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700 md:hidden"
-        title="Search"
-        aria-label="Search"
-      >
-        <AppIcon className="ri-search-line text-lg"></AppIcon>
-      </button>
-
-      {/* Action icons */}
+      {/* Profile — kept: it is the only route to Sign Out. */}
       <div className="flex items-center gap-0.5">
-        {/* Messages */}
-        <div className="relative" ref={messagesRef}>
-          <button
-            onClick={() => { closeOthers('messages'); setMessagesOpen(!messagesOpen); }}
-            className={`relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg transition-smooth ${
-              newMsgFlashed ? 'bg-primary-50 text-primary-600' : 'text-foreground-400 hover:bg-primary-50/70 hover:text-primary-700'
-            }`}
-            title="Messages"
-          >
-            {newMsgFlashed ? <MailOpen size={18} strokeWidth={1.8} /> : <Mail size={18} strokeWidth={1.8} />}
-            {unreadMessages > 0 && (
-              <span className="absolute top-1 right-1 min-w-[14px] h-3.5 rounded-full bg-primary-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">{unreadMessages}</span>
-            )}
-          </button>
-          {messagesOpen && (
-            <DropdownPanel title="Messages" count={unreadMessages} countLabel="unread" viewAllHref={roleMessagesPath}>
-              {messages_data.map(m => (
-                <a key={m.id} href={m.href} className="block px-4 py-2.5 hover:bg-primary-50/60 transition-smooth border-b border-background-100 last:border-0">
-                  <div className="flex items-start gap-2.5">
-                    <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${m.unread ? 'bg-primary-500' : 'bg-transparent'}`}></span>
-                    <div className="min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium text-foreground-900 truncate">{m.sender}</span>
-                        <span className="text-xs text-foreground-300 whitespace-nowrap">{m.time}</span>
-                      </div>
-                      <p className="text-sm text-foreground-700 font-medium truncate mt-0.5">{m.subject}</p>
-                      <p className="text-xs text-foreground-400 truncate">{m.preview}</p>
-                    </div>
-                  </div>
-                </a>
-              ))}
-            </DropdownPanel>
-          )}
-        </div>
-
-        {/* Tasks */}
-        <div className="relative hidden sm:block" ref={tasksRef}>
-          <button
-            onClick={() => { closeOthers('tasks'); setTasksOpen(!tasksOpen); }}
-            className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
-            title="Tasks"
-          >
-            <ClipboardList size={18} strokeWidth={1.8} />
-            {highPriorityTasks > 0 && (
-              <span className="absolute top-1 right-1 min-w-[14px] h-3.5 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">{highPriorityTasks}</span>
-            )}
-          </button>
-          {tasksOpen && (
-            <DropdownPanel title="Tasks" count={tasks.length} countLabel="total" viewAllHref="/tasks">
-              {tasks.map(t => (
-                <a key={t.id} href={`/tasks/${t.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-primary-50/60 transition-smooth border-b border-background-100 last:border-0">
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    t.priority === 'high' ? 'bg-red-500' : t.priority === 'medium' ? 'bg-amber-500' : 'bg-foreground-300'
-                  }`}></span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-foreground-800 truncate">{t.text}</p>
-                    <p className="text-xs text-foreground-400">Due {t.due} · {t.assignee}</p>
-                  </div>
-                  {t.priority === 'high' && (
-                    <span className="text-xs font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded whitespace-nowrap">High</span>
-                  )}
-                </a>
-              ))}
-            </DropdownPanel>
-          )}
-        </div>
-
-        {/* Notifications */}
-        <div className="relative" ref={notifRef}>
-          <button
-            onClick={() => { closeOthers('notif'); setNotificationsOpen(!notificationsOpen); }}
-            className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
-            title="Notifications"
-          >
-            <Bell size={18} strokeWidth={1.8} />
-            {unreadNotifs > 0 && (
-              <span className="absolute top-1 right-1 min-w-[14px] h-3.5 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center px-0.5 leading-none">{unreadNotifs}</span>
-            )}
-          </button>
-          {notificationsOpen && (
-            <DropdownPanel title="Notifications" count={unreadNotifs} countLabel="unread" viewAllHref="/notifications" onMarkAllRead={() => {}}>
-              {notifications.map(n => (
-                <a
-                  key={n.id}
-                  href={`/notifications/${n.id}`}
-                  className={`flex items-start gap-3 px-4 py-2.5 hover:bg-primary-50/60 transition-smooth border-b border-background-100 last:border-0 ${
-                    n.unread ? 'bg-primary-50/30' : ''
-                  }`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${n.unread ? 'bg-primary-500' : 'bg-transparent'}`}></span>
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-sm leading-snug ${n.unread ? 'text-foreground-900 font-medium' : 'text-foreground-600'}`}>
-                      {n.text}
-                    </p>
-                    <p className="text-xs text-foreground-400 mt-0.5">{n.time}</p>
-                  </div>
-                </a>
-              ))}
-            </DropdownPanel>
-          )}
-        </div>
-
-        {/* Divider */}
-        <div className="mx-1 hidden h-5 w-px bg-foreground-100 sm:block"></div>
-
-        {/* Quick Create */}
-        <div className="relative hidden md:block" ref={createRef}>
-          <button
-            onClick={() => { closeOthers('create'); setQuickCreateOpen(!quickCreateOpen); }}
-            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
-            title="Quick Create"
-          >
-            <CirclePlus size={18} strokeWidth={1.8} />
-          </button>
-          {quickCreateOpen && (
-            <div className="absolute right-0 top-full mt-1.5 w-56 bg-background-50 rounded-xl border border-foreground-100 shadow-xl shadow-foreground-950/5 z-50 py-1 overflow-hidden">
-              <div className="px-4 py-2 border-b border-background-100">
-                <span className="text-xs font-semibold text-foreground-400 uppercase tracking-wider">Quick Create</span>
-              </div>
-              {quickCreateItems.filter(item => hasPermission(item.permission)).map((item, i) => (
-                <a
-                  key={i}
-                  href="#"
-                  className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth cursor-pointer"
-                  onClick={e => { e.preventDefault(); setQuickCreateOpen(false); }}
-                >
-                  <AppIcon className={`${item.icon} text-foreground-400`}></AppIcon>
-                  {item.label}
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Help */}
-        <div className="relative hidden md:block" ref={helpRef}>
-          <button
-            onClick={() => { closeOthers('help'); setHelpOpen(!helpOpen); }}
-            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
-            title="Help & Support"
-          >
-            <AppIcon className="ri-question-line text-lg"></AppIcon>
-          </button>
-          {helpOpen && (
-            <div className="absolute right-0 top-full mt-1.5 w-48 bg-background-50 rounded-xl border border-foreground-100 shadow-xl shadow-foreground-950/5 z-50 py-1 overflow-hidden">
-              <a href="/help" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
-                <AppIcon className="ri-book-open-line text-foreground-400"></AppIcon> Knowledge Base
-              </a>
-              <a href="/help/guides" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
-                <AppIcon className="ri-guide-line text-foreground-400"></AppIcon> User Guides
-              </a>
-              <a href="/help/support" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
-                <AppIcon className="ri-customer-service-line text-foreground-400"></AppIcon> Contact Support
-              </a>
-              <div className="border-t border-background-100 my-1"></div>
-              <a href="/help/release-notes" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
-                <AppIcon className="ri-rocket-line text-foreground-400"></AppIcon> What's New
-              </a>
-            </div>
-          )}
-        </div>
-
-        {/* Settings (permission-based) */}
-        {canAccessSettings && (
-          <a
-            href="/admin/system"
-            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
-            title="Settings"
-          >
-            <AppIcon className="ri-settings-3-line text-lg"></AppIcon>
-          </a>
-        )}
-
-        {/* Profile */}
         <div className="relative" ref={profileRef}>
           <button
             onClick={() => { closeOthers('profile'); setProfileOpen(!profileOpen); }}
@@ -396,13 +117,9 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
                 <p className="text-sm font-semibold text-foreground-900">{displayName}</p>
                 <p className="text-xs text-foreground-400">{auth.user?.email || 'User'}</p>
               </div>
-              <a href="/profile" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
-                <AppIcon className="ri-user-line text-foreground-400"></AppIcon> My Profile
-              </a>
-              <a href="/profile/preferences" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
-                <AppIcon className="ri-equalizer-line text-foreground-400"></AppIcon> Preferences
-              </a>
-              <div className="border-t border-background-100 my-1"></div>
+              {/* My Profile and Preferences removed; the separator went with
+                  them, since Sign Out no longer follows anything. The name and
+                  email above stay — they are what identifies the session. */}
               <button
                 onClick={() => { setProfileOpen(false); setSignOutOpen(true); }}
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-red-600 hover:bg-red-50/50 transition-smooth text-left cursor-pointer"
@@ -427,46 +144,3 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 }
 
 // Reusable dropdown panel wrapper
-function DropdownPanel({
-  title,
-  count,
-  countLabel,
-  viewAllHref,
-  onMarkAllRead,
-  children,
-}: {
-  title: string;
-  count: number;
-  countLabel: string;
-  viewAllHref: string;
-  onMarkAllRead?: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="absolute right-0 top-full z-50 mt-1.5 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-foreground-100 bg-background-50 shadow-xl shadow-foreground-950/5">
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-background-100">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-foreground-900 font-heading">{title}</span>
-          {count > 0 && (
-            <span className="text-xs font-medium text-foreground-400 bg-background-100 px-1.5 py-0.5 rounded-full">
-              {count} {countLabel}
-            </span>
-          )}
-        </div>
-        {onMarkAllRead && (
-          <button onClick={onMarkAllRead} className="text-xs text-primary-600 hover:text-primary-700 font-medium cursor-pointer">
-            Mark all read
-          </button>
-        )}
-      </div>
-      <div className="max-h-72 overflow-y-auto">
-        {children}
-      </div>
-      <div className="px-4 py-2.5 border-t border-background-100 bg-background-50">
-        <a href={viewAllHref} className="text-sm text-primary-600 hover:text-primary-700 font-medium">
-          View all {title.toLowerCase()}
-        </a>
-      </div>
-    </div>
-  );
-}

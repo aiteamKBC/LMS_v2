@@ -1,7 +1,8 @@
 // ============================================================================
 // Learner coach-contact API client.
-// Reads/writes coach_name + coach_email on "Learner"."Active_users" (the mirror).
-// Only Active learners have a mirror row, so GET 404s for non-Active learners.
+// Reads/writes coach_name + coach_email on "Learner"."learners" (LearnerProfile,
+// resolved from the enrolment row by learner_profile_for_source).
+// Only Active learners have a profile row, so GET 404s for non-Active learners.
 // ============================================================================
 
 const BASE = '/learner_api/learners';
@@ -14,7 +15,19 @@ export interface CoachContact {
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...init });
+    res = await fetch(url, {
+      // Writes here are gated by login.permissions.staff_only, which reads the
+      // HttpOnly kbc_session cookie — without this the PATCH 401s even though
+      // the GET (an open read path) succeeds.
+      credentials: 'include',
+      ...init,
+      // Spread last so a caller passing headers cannot drop these two.
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(init?.headers || {}),
+      },
+    });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }

@@ -64,6 +64,9 @@ export default function AdminAccountsPage() {
   const [editingAccess, setEditingAccess] = useState<PlatformAccount | null>(null);
   const { auth } = useAuth();
   const [actionError, setActionError] = useState<string | null>(null);
+  // Mail actions need a positive result, not just the absence of an error:
+  // the whole reason to press them is to know something was sent.
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const { data, loading, error, reload, setData } = useAdminData(
     useCallback(
@@ -80,16 +83,28 @@ export default function AdminAccountsPage() {
     setPage(1);
   }
 
-  async function runAction(account: PlatformAccount, action: 'suspend' | 'restore' | 'unlock') {
+  async function runAction(
+    account: PlatformAccount,
+    action: 'suspend' | 'restore' | 'unlock' | 'resend-invitation' | 'send-password-reset',
+  ) {
     setBusy(account.id);
     setActionError(null);
+    setActionNotice(null);
     try {
-      const { account: updated } = await accountAction(account.id, action);
+      const res = await accountAction(account.id, action);
+      const updated = res.account;
       // Patch in place so the row updates without losing the current page.
       setData(prev => prev && ({
         ...prev,
         results: prev.results.map(r => (r.id === updated.id ? updated : r)),
       }));
+      // Only the two mail actions report back; suspend/restore/unlock show their
+      // result in the row itself.
+      if (res.resent) {
+        setActionNotice(`Invitation sent to ${res.sentTo || updated.email}.`);
+      } else if (res.resetSent) {
+        setActionNotice(`Password reset sent to ${res.sentTo || updated.email}.`);
+      }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Action failed.');
     } finally {
@@ -145,6 +160,16 @@ export default function AdminAccountsPage() {
           <AppIcon className="ri-error-warning-line text-red-600 text-sm"></AppIcon>
           <p className="text-[12px] text-red-800 flex-1">{actionError}</p>
           <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600 cursor-pointer">
+            <AppIcon className="ri-close-line"></AppIcon>
+          </button>
+        </div>
+      )}
+
+      {actionNotice && (
+        <div className="bg-emerald-50 border border-emerald-200/60 rounded-xl p-3 flex items-center gap-2.5">
+          <AppIcon className="ri-mail-check-line text-emerald-600 text-sm"></AppIcon>
+          <p className="text-[12px] text-emerald-800 flex-1">{actionNotice}</p>
+          <button onClick={() => setActionNotice(null)} className="text-emerald-400 hover:text-emerald-600 cursor-pointer">
             <AppIcon className="ri-close-line"></AppIcon>
           </button>
         </div>
@@ -234,6 +259,15 @@ export default function AdminAccountsPage() {
                       <div className="flex items-center gap-1.5 justify-end">
                         {account.locked && (
                           <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'unlock')} tone="warn" icon="ri-lock-unlock-line" label="Unlock" />
+                        )}
+                        {/* One or the other, never both: an invitation sets the
+                            first password, a reset replaces an existing one. The
+                            server enforces the same split, so this is the
+                            applicable action rather than just the tidier label. */}
+                        {account.hasPassword ? (
+                          <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'send-password-reset')} tone="warn" icon="ri-lock-password-line" label="Reset password" />
+                        ) : (
+                          <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'resend-invitation')} tone="warn" icon="ri-mail-send-line" label="Resend invitation" />
                         )}
                         {account.isActive ? (
                           <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'suspend')} tone="bad" icon="ri-forbid-line" label="Suspend" />

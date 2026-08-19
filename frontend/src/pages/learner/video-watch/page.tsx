@@ -157,11 +157,25 @@ export default function ComponentViewPage() {
   // means the same thing for every component type in the training plan.
   // Falls back to the real video length / authored duration only when no
   // expected_otjh was set for this component.
-  const plannedTimeLabel = component?.expectedOtjh != null && component.expectedOtjh > 0
-    ? formatHoursMinutes(component.expectedOtjh)
-    : isVideo && realDuration !== null
-      ? formatClock(realDuration)
-      : component?.durationMinutes ? `${component.durationMinutes} min` : '';
+  // The planned time as a number of hours, from whichever source is authoritative
+  // for this component. Every branch converts to hours here so the reflection
+  // window is never handed a value whose unit depends on where it came from:
+  // expected_otjh is already hours, a real video length is seconds, and an
+  // authored duration is minutes.
+  const plannedHours =
+    component?.expectedOtjh != null && component.expectedOtjh > 0
+      ? component.expectedOtjh
+      : isVideo && realDuration !== null
+        ? realDuration / 3600
+        : component?.durationMinutes
+          ? component.durationMinutes / 60
+          : null;
+
+  // Shown to the learner. Rendered from the hours above rather than from each
+  // source's own units, so "Planned time" reads as hours-and-minutes ("1h 42m")
+  // everywhere instead of switching to a MM:SS clock for videos — which is what
+  // made a 1h42m video look like 102 hours.
+  const plannedTimeLabel = plannedHours != null ? formatHoursMinutes(plannedHours) : '';
 
   // Stamp the start time once we're on an openable component.
   useEffect(() => {
@@ -240,6 +254,7 @@ export default function ComponentViewPage() {
             <ReflectionWindow
               noun={noun}
               plannedTimeLabel={plannedTimeLabel}
+              plannedHours={plannedHours ?? undefined}
               learnerKsbs={learnerKsbs}
               // Components carry their own authored KSB mappings, so the learner
               // is shown what will be credited instead of picking by hand.
