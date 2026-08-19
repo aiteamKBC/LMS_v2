@@ -17,6 +17,7 @@ import {
   type CoachCalendarEvent,
 } from '@/pages/coach/shared/calendarEvents';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
+import { withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 
 const CASELOAD_BASE = '/coach_api/coach/caseload';
 const ATTENDANCE_BASE = '/coach_api/coach/attendance';
@@ -230,6 +231,8 @@ export function useCoachLearnerCaseFileData(args: {
   learnerId?: string | null;
   learnerName?: string | null;
   kind?: LearnerKind | null;
+  ownerEmail?: string | null;
+  enabled?: boolean;
 }) {
   const [data, setData] = useState<CoachLearnerCaseFileData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -238,7 +241,15 @@ export function useCoachLearnerCaseFileData(args: {
   useEffect(() => {
     const rawLearnerId = args.learnerId?.trim();
     const rawLearnerName = args.learnerName?.trim();
+    const ownerEmail = args.ownerEmail?.trim();
     let cancelled = false;
+
+    if (args.enabled === false || !ownerEmail) {
+      setData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
 
     if (!rawLearnerId && !rawLearnerName) {
       setData(null);
@@ -255,10 +266,10 @@ export function useCoachLearnerCaseFileData(args: {
       // URL already contains a numeric id instead of waiting for all coach-wide
       // collections first (the old flow added both request times together).
       const coachDataPromise = Promise.allSettled([
-        fetchCoachCaseload(),
-        fetchCoachAttendance(),
-        fetchCoachMarkingQueue(),
-        fetchCoachTimetable(),
+        fetchCoachCaseload(ownerEmail),
+        fetchCoachAttendance(ownerEmail),
+        fetchCoachMarkingQueue(ownerEmail),
+        fetchCoachTimetable(ownerEmail),
       ]);
       const directId = numericId(rawLearnerId);
       const directDetailPromise = directId
@@ -368,7 +379,7 @@ export function useCoachLearnerCaseFileData(args: {
     return () => {
       cancelled = true;
     };
-  }, [args.kind, args.learnerId, args.learnerName]);
+  }, [args.enabled, args.kind, args.learnerId, args.learnerName, args.ownerEmail]);
 
   return { data, loading, error };
 }
@@ -526,23 +537,23 @@ async function requestUncached<T>(url: string): Promise<T> {
   return data as T;
 }
 
-async function fetchCoachCaseload() {
-  const data = await request<CoachCaseloadResponse>(CASELOAD_BASE);
+async function fetchCoachCaseload(ownerEmail: string) {
+  const data = await request<CoachCaseloadResponse>(withCoachOwnerEmail(CASELOAD_BASE, ownerEmail));
   return data.learners || [];
 }
 
-async function fetchCoachAttendance() {
-  const data = await request<CoachAttendanceResponse>(ATTENDANCE_BASE);
+async function fetchCoachAttendance(ownerEmail: string) {
+  const data = await request<CoachAttendanceResponse>(withCoachOwnerEmail(ATTENDANCE_BASE, ownerEmail));
   return data.learners || [];
 }
 
-async function fetchCoachMarkingQueue() {
-  const data = await request<CoachMarkingQueueResponse>(MARKING_BASE);
+async function fetchCoachMarkingQueue(ownerEmail: string) {
+  const data = await request<CoachMarkingQueueResponse>(withCoachOwnerEmail(MARKING_BASE, ownerEmail));
   return data.items || [];
 }
 
-async function fetchCoachTimetable() {
-  const data = await fetchCoachCalendarEvents();
+async function fetchCoachTimetable(ownerEmail: string) {
+  const data = await fetchCoachCalendarEvents(undefined, ownerEmail);
   return data.events || [];
 }
 

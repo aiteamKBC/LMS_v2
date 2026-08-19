@@ -5,6 +5,7 @@ import 'sweetalert2/dist/sweetalert2.min.css';
 import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
+import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
@@ -876,6 +877,7 @@ function TimetableSurfaceSkeleton() {
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function CoachTimetablePage() {
   const location = useLocation();
+  const coach = useCoachIdentity();
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const todayStartTime = todayStart.getTime();
@@ -980,11 +982,23 @@ export default function CoachTimetablePage() {
   const loadTimetable = useCallback(async () => {
     let cancelled = false;
 
+    if (!coach.isInitialized) {
+      return () => { cancelled = true; };
+    }
+
     const run = async () => {
       setLoading(true);
       setError(null);
+      if (!coach.email) {
+        setError('Coach access is required to load timetable data.');
+        setEvents([]);
+        setSchedulerCatchUpEvents([]);
+        setSummary(EMPTY_SUMMARY);
+        setLoading(false);
+        return;
+      }
       try {
-        const response = await fetch(API_ENDPOINT);
+        const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email));
         if (!response.ok) throw new Error(`Request failed with ${response.status}`);
 
         const data: TimetableResponse = await response.json();
@@ -1017,7 +1031,7 @@ export default function CoachTimetablePage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [coach.email, coach.isInitialized]);
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -1562,6 +1576,7 @@ export default function CoachTimetablePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          ownerEmail: coach.email,
           learnerId: createSessionLearnerId,
           sessionType: createSessionType,
           scheduledDate: createSessionDate,
@@ -1607,6 +1622,7 @@ export default function CoachTimetablePage() {
     createSessionNotes,
     createSessionTime,
     createSessionType,
+    coach.email,
     focusEventOnCalendar,
     updateSingleEvent,
   ]);
@@ -1768,7 +1784,7 @@ export default function CoachTimetablePage() {
     <WorkspaceShell
       role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel}
       pageTitle="Calendar" pageSubtitle="Your coaching schedule, sessions, and meetings - all in one place"
-      userName="Med Maher" userRole="Progress Coach"
+      userName={coach.name} userRole="Progress Coach"
     >
       <div className="p-3 md:p-6 space-y-5 md:space-y-6">
 

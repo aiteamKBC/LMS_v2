@@ -4,6 +4,8 @@ import { jsPDF } from 'jspdf';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
+import { useAuth } from '@/hooks/useAuth';
+import { withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 
 type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter';
@@ -143,12 +145,15 @@ interface AttendanceApiResponse {
 
 const coachNav = roleNavMap.coach;
 const PAGE_SIZE = 8;
-const DEFAULT_COACH_NAME = 'Med Maher';
-const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
 const EMPTY_VALUE = '--';
 const API_ENDPOINT = '/coach_api/coach/caseload';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
 const COACH_RAG_ENDPOINT = (learnerId: string) => `/coach_api/coach/caseload/${learnerId}/coach-rag`;
+
+function coachCaseloadEndpoint(ownerEmail: string) {
+  return `${API_ENDPOINT}?owner_email=${encodeURIComponent(ownerEmail)}`;
+}
+
 const COACH_RAG_OPTIONS = [
   { value: '', label: EMPTY_VALUE },
   { value: 'green', label: 'Green' },
@@ -492,8 +497,11 @@ async function fetchAttendanceLearners(signal: AbortSignal, ownerEmail: string) 
 
 export default function CoachCaseload() {
   const navigate = useNavigate();
-  const [ownerName, setOwnerName] = useState(DEFAULT_COACH_NAME);
-  const [ownerEmail, setOwnerEmail] = useState(DEFAULT_COACH_EMAIL);
+  const { auth, isInitialized } = useAuth();
+  const authenticatedCoachEmail = auth.account?.access === 'coach' ? auth.account.email : '';
+  const authenticatedCoachName = auth.account?.displayName || auth.user?.fullName || 'Coach';
+  const [ownerName, setOwnerName] = useState('Coach');
+  const [ownerEmail, setOwnerEmail] = useState('');
   const [learners, setLearners] = useState<Learner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -529,22 +537,32 @@ export default function CoachCaseload() {
   const suppressRowClickRef = useRef(false);
 
   useEffect(() => {
+    if (!isInitialized) return;
     const controller = new AbortController();
 
     async function loadCaseload() {
       setLoading(true);
       setError(null);
 
+      if (!authenticatedCoachEmail) {
+        setOwnerName(authenticatedCoachName);
+        setOwnerEmail('');
+        setLearners([]);
+        setError('Coach access is required to load this caseload.');
+        setLoading(false);
+        return;
+      }
+
       try {
-        const caseloadResponse = await fetch(API_ENDPOINT, { signal: controller.signal });
+        const caseloadResponse = await fetch(coachCaseloadEndpoint(authenticatedCoachEmail), { signal: controller.signal });
 
         if (!caseloadResponse.ok) {
           throw new Error(`Request failed with status ${caseloadResponse.status}`);
         }
 
         const data: CaseloadApiResponse = await caseloadResponse.json();
-        const resolvedOwnerName = data.owner?.name || DEFAULT_COACH_NAME;
-        const resolvedOwnerEmail = data.owner?.email || DEFAULT_COACH_EMAIL;
+        const resolvedOwnerName = data.owner?.name || authenticatedCoachName;
+        const resolvedOwnerEmail = data.owner?.email || authenticatedCoachEmail;
         const attendanceLearners = await fetchAttendanceLearners(controller.signal, resolvedOwnerEmail);
 
         setOwnerName(resolvedOwnerName);
@@ -570,7 +588,7 @@ export default function CoachCaseload() {
     loadCaseload();
 
     return () => controller.abort();
-  }, []);
+  }, [authenticatedCoachEmail, authenticatedCoachName, isInitialized]);
 
   const cohortOptions = useMemo(
     () =>
@@ -820,7 +838,7 @@ export default function CoachCaseload() {
     setLearnerCoachRag(learnerId, nextValue);
 
     try {
-      const response = await fetch(COACH_RAG_ENDPOINT(learnerId), {
+      const response = await fetch(withCoachOwnerEmail(COACH_RAG_ENDPOINT(learnerId), coachEmail), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ coachRag: nextValue || null }),

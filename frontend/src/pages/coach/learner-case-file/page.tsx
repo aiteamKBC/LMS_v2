@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchKsbProfile } from '@/api/curriculum';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import OTJHTab from './components/OTJHTab';
 import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
@@ -86,6 +87,7 @@ interface AttendanceDetailsErrorResponse {
 }
 
 export default function LearnerCaseFile() {
+  const coach = useCoachIdentity();
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [stickyVisible, setStickyVisible] = useState(false);
   const navigate = useNavigate();
@@ -102,6 +104,8 @@ export default function LearnerCaseFile() {
     learnerId,
     learnerName,
     kind: explicitKind,
+    ownerEmail: coach.email,
+    enabled: coach.isInitialized && coach.hasCoachAccess,
   });
 
   useEffect(() => {
@@ -155,7 +159,7 @@ export default function LearnerCaseFile() {
       case 'progress':
         return <ReferenceProgressContent data={data} />;
       case 'attendance':
-        return <ReferenceAttendanceContent data={data} />;
+        return <ReferenceAttendanceContent data={data} ownerEmail={coach.email} />;
       case 'reviews':
         return <ReferenceReviewsContent data={data} />;
       case 'coach-notes':
@@ -189,7 +193,7 @@ export default function LearnerCaseFile() {
       workspaceLabel={coachNav.workspaceLabel}
       pageTitle={pageTitle}
       pageSubtitle={pageSubtitle}
-      userName={data?.coachName || '--'}
+      userName={data?.coachName || coach.name}
       userRole="Progress Coach"
     >
       <main className="min-h-screen bg-[#f7f6fb] p-4 md:p-6">
@@ -1130,7 +1134,7 @@ function KsbOverviewCard({
   );
 }
 
-function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }) {
+function ReferenceAttendanceContent({ data, ownerEmail }: { data: CoachLearnerCaseFileData; ownerEmail: string }) {
   const attendance = data.attendance;
   const [attendanceSessions, setAttendanceSessions] = useState<AttendanceDetailSession[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -1155,8 +1159,8 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
         if (learnerEmail) {
           params.set('learner_email', learnerEmail);
         }
-        if (data.coachEmail) {
-          params.set('owner_email', data.coachEmail);
+        if (ownerEmail) {
+          params.set('owner_email', ownerEmail);
         }
 
         const response = await fetch(`${ATTENDANCE_DETAILS_ENDPOINT}?${params.toString()}`, {
@@ -1192,7 +1196,7 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
     return () => {
       cancelled = true;
     };
-  }, [attendance?.id, attendance?.email, attendance?.hasAttendance, data.coachEmail, data.email]);
+  }, [attendance?.id, attendance?.email, attendance?.hasAttendance, data.email, ownerEmail]);
 
   if (!attendance || !attendance.hasAttendance) return <ReferencePanel title="Attendance" icon="ri-calendar-check-line" tone="primary"><ProfileEmpty text="Live attendance data is not available for this learner." /></ReferencePanel>;
   const sessions = attendance.sessions || 0;

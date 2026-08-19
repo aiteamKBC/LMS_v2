@@ -8,10 +8,10 @@ import {
   type LearnerKind,
 } from '@/api/learnerDetail';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
+import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
 import {
-  DEFAULT_COACH_EMAIL,
   type CoachCalendarEvent,
   eventDisplayDate,
   fetchCoachCalendarEvents,
@@ -22,8 +22,8 @@ import type { GeneratedReport, ReportSection } from './types';
 
 const coachNav = roleNavMap.coach;
 const EMPTY_VALUE = '--';
-const CASELOAD_ENDPOINT = `/coach_api/coach/caseload?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
-const ATTENDANCE_ENDPOINT = `/coach_api/coach/attendance?owner_email=${encodeURIComponent(DEFAULT_COACH_EMAIL)}`;
+const CASELOAD_ENDPOINT = '/coach_api/coach/caseload';
+const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
 const MARKING_QUEUE_ENDPOINT = '/coach_api/coach/marking-queue';
 const REPORT_LIMIT = 50;
 
@@ -337,8 +337,8 @@ async function readJson<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-async function fetchCoachMarkingQueue(signal?: AbortSignal): Promise<MarkingQueueResponse> {
-  const response = await fetch(MARKING_QUEUE_ENDPOINT, { signal });
+async function fetchCoachMarkingQueue(ownerEmail: string, signal?: AbortSignal): Promise<MarkingQueueResponse> {
+  const response = await fetch(withCoachOwnerEmail(MARKING_QUEUE_ENDPOINT, ownerEmail), { signal });
   return readJson<MarkingQueueResponse>(response);
 }
 
@@ -2381,8 +2381,9 @@ function ExportChip({
 }
 
 export default function CoachReports() {
+  const coach = useCoachIdentity();
   const initialRange = currentMonthRange();
-  const [ownerName, setOwnerName] = useState('Med Maher');
+  const [ownerName, setOwnerName] = useState('Coach');
   const [caseloadLearners, setCaseloadLearners] = useState<CaseloadLearner[]>([]);
   const [attendanceLearners, setAttendanceLearners] = useState<AttendanceLearner[]>([]);
   const [timetableEvents, setTimetableEvents] = useState<CoachCalendarEvent[]>([]);
@@ -2415,6 +2416,16 @@ export default function CoachReports() {
   });
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
+    if (!coach.email) {
+      setOwnerName(coach.name);
+      setCaseloadLearners([]);
+      setAttendanceLearners([]);
+      setTimetableEvents([]);
+      setWarnings(['coach access']);
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
 
     async function loadSources() {
@@ -2422,9 +2433,9 @@ export default function CoachReports() {
       const nextWarnings: string[] = [];
 
       const [caseloadResult, attendanceResult, timetableResult] = await Promise.allSettled([
-        fetch(CASELOAD_ENDPOINT, { signal: controller.signal }).then(response => readJson<CaseloadResponse>(response)),
-        fetch(ATTENDANCE_ENDPOINT, { signal: controller.signal }).then(response => readJson<AttendanceResponse>(response)),
-        fetchCoachCalendarEvents(controller.signal),
+        fetch(withCoachOwnerEmail(CASELOAD_ENDPOINT, coach.email), { signal: controller.signal }).then(response => readJson<CaseloadResponse>(response)),
+        fetch(withCoachOwnerEmail(ATTENDANCE_ENDPOINT, coach.email), { signal: controller.signal }).then(response => readJson<AttendanceResponse>(response)),
+        fetchCoachCalendarEvents(controller.signal, coach.email),
       ]);
 
       if (controller.signal.aborted) return;
@@ -2465,7 +2476,7 @@ export default function CoachReports() {
 
     loadSources();
     return () => controller.abort();
-  }, []);
+  }, [coach.email, coach.isInitialized, coach.name]);
 
   useEffect(() => {
     if (!options.learnerId && caseloadLearners.length) {
@@ -2648,7 +2659,7 @@ export default function CoachReports() {
       if (detailKind && reportOptions.learnerId && reportOptions.learnerId !== 'all') {
         const [reflectionResult, evidenceResult] = await Promise.allSettled([
           reportOptions.inclusions.learnerReflections
-            ? fetchCoachMarkingQueue().then(data => data.items || [])
+            ? fetchCoachMarkingQueue(coach.email).then(data => data.items || [])
             : Promise.resolve([] as MarkingQueueSubmission[]),
           reportOptions.inclusions.evidenceLinks
             ? fetchEvidence(detailKind, reportOptions.learnerId)

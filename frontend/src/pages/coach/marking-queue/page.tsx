@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
@@ -121,6 +122,7 @@ function DetailSection({
 
 export default function CoachMarkingQueue() {
   const navigate = useNavigate();
+  const coach = useCoachIdentity();
   const [items, setItems] = useState<MarkingSubmission[]>([]);
   const [summary, setSummary] = useState<QueueSummary>(EMPTY_SUMMARY);
   const [filter, setFilter] = useState<QueueFilter>('pending');
@@ -131,10 +133,18 @@ export default function CoachMarkingQueue() {
   const [error, setError] = useState('');
 
   const loadQueue = useCallback(async () => {
+    if (!coach.isInitialized) return;
     setLoading(true);
     setError('');
+    if (!coach.email) {
+      setItems([]);
+      setSummary(EMPTY_SUMMARY);
+      setError('Coach access is required to load the marking queue.');
+      setLoading(false);
+      return;
+    }
     try {
-      const response = await fetch(API_ENDPOINT);
+      const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email));
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
       if (!response.ok) throw new Error(data.detail || 'Unable to load the marking queue.');
@@ -145,7 +155,7 @@ export default function CoachMarkingQueue() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [coach.email, coach.isInitialized]);
 
   useEffect(() => {
     void loadQueue();
@@ -175,13 +185,13 @@ export default function CoachMarkingQueue() {
     setReviewing(true);
     setError('');
     try {
-      const response = await fetch(`${API_ENDPOINT}/${selected.id}`, {
+      const response = await fetch(withCoachOwnerEmail(`${API_ENDPOINT}/${selected.id}`, coach.email), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           decision,
           feedback: feedback.trim(),
-          reviewedBy: 'Med Maher',
+          reviewedBy: coach.name,
         }),
       });
       const text = await response.text();
@@ -212,7 +222,7 @@ export default function CoachMarkingQueue() {
       workspaceLabel={coachNav.workspaceLabel}
       pageTitle="Marking Queue"
       pageSubtitle="Review learner reflections, evidence and OTJH"
-      userName="Med Maher"
+      userName={coach.name}
       userRole="Progress Coach"
     >
       <div className="space-y-5 p-4 md:p-6">

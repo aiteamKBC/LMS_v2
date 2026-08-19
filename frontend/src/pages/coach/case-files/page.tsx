@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachAssignedLearnerNames } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
@@ -101,20 +102,22 @@ const docStatusConfig: Record<string, { icon: string; color: string; bg: string 
 };
 
 export default function CoachCaseFiles() {
+  const coach = useCoachAssignedLearnerNames();
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState<string | null>('cf-1');
 
-  const filtered = CASE_FILES.filter(cf => {
+  const caseFiles = CASE_FILES.filter(cf => coach.assignedLearnerNames.has(cf.learner.trim().toLocaleLowerCase()));
+  const filtered = caseFiles.filter(cf => {
     if (search && !cf.learner.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
 
-  const completeDocs = CASE_FILES.reduce((acc, cf) => acc + cf.documents.filter(d => d.status === 'complete').length, 0);
-  const pendingDocs = CASE_FILES.reduce((acc, cf) => acc + cf.documents.filter(d => d.status === 'pending').length, 0);
-  const missingDocs = CASE_FILES.reduce((acc, cf) => acc + cf.documents.filter(d => d.status === 'missing').length, 0);
+  const completeDocs = caseFiles.reduce((acc, cf) => acc + cf.documents.filter(d => d.status === 'complete').length, 0);
+  const pendingDocs = caseFiles.reduce((acc, cf) => acc + cf.documents.filter(d => d.status === 'pending').length, 0);
+  const missingDocs = caseFiles.reduce((acc, cf) => acc + cf.documents.filter(d => d.status === 'missing').length, 0);
 
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Learner Case Files" pageSubtitle="Complete learner documentation and case history" userName="Med Maher" userRole="Progress Coach">
+    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Learner Case Files" pageSubtitle="Complete learner documentation and case history" userName={coach.name} userRole="Progress Coach">
       <div className="p-6 space-y-6">
         {/* Hero Banner */}
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
@@ -127,7 +130,7 @@ export default function CoachCaseFiles() {
             <div className="flex-1">
               <h2 className="text-lg font-heading font-bold text-white mb-1">Learner Case Files</h2>
               <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{CASE_FILES.length} case files</strong> with {completeDocs} complete documents, {pendingDocs} pending, {missingDocs} missing.
+                <strong>{caseFiles.length} case files</strong> with {completeDocs} complete documents, {pendingDocs} pending, {missingDocs} missing.
               </p>
             </div>
             <div className="flex items-center gap-3 shrink-0">
@@ -212,6 +215,14 @@ export default function CoachCaseFiles() {
               </div>
             );
           })}
+          {!coach.caseloadLoading && filtered.length === 0 && (
+            <div className="rounded-xl border border-foreground-200/60 bg-background-50 px-6 py-16 text-center">
+              <AppIcon className="ri-folder-user-line text-3xl text-foreground-300"></AppIcon>
+              <p className="mt-3 text-sm font-semibold text-foreground-700">
+                {coach.caseloadError || (search ? 'No assigned case files match your search.' : 'No case files are available for your assigned learners.')}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </WorkspaceShell>

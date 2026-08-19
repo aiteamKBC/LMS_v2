@@ -93,24 +93,21 @@ async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T
   return data as T;
 }
 
-export function fetchCoachMessageThreads(ownerEmail?: string): Promise<CoachMessageThreadsResponse> {
-  const search = new URLSearchParams();
-  if (ownerEmail) search.set('owner_email', ownerEmail);
-  const url = search.toString() ? `${BASE}?${search.toString()}` : BASE;
+export function fetchCoachMessageThreads(ownerEmail: string): Promise<CoachMessageThreadsResponse> {
+  const search = new URLSearchParams({ owner_email: ownerEmail });
+  const url = `${BASE}?${search.toString()}`;
   return request<CoachMessageThreadsResponse>(url);
 }
 
-export function fetchCoachMessageThread(learnerId: string, ownerEmail?: string): Promise<CoachMessageThreadResponse> {
-  const search = new URLSearchParams();
-  if (ownerEmail) search.set('owner_email', ownerEmail);
-  const url = search.toString() ? `${BASE}/${encodeURIComponent(learnerId)}?${search.toString()}` : `${BASE}/${encodeURIComponent(learnerId)}`;
+export function fetchCoachMessageThread(learnerId: string, ownerEmail: string): Promise<CoachMessageThreadResponse> {
+  const search = new URLSearchParams({ owner_email: ownerEmail });
+  const url = `${BASE}/${encodeURIComponent(learnerId)}?${search.toString()}`;
   return request<CoachMessageThreadResponse>(url);
 }
 
-export function sendCoachMessage(learnerId: string, body: string, ownerEmail?: string): Promise<CoachSendMessageResponse> {
-  const search = new URLSearchParams();
-  if (ownerEmail) search.set('owner_email', ownerEmail);
-  const url = search.toString() ? `${BASE}/${encodeURIComponent(learnerId)}?${search.toString()}` : `${BASE}/${encodeURIComponent(learnerId)}`;
+export function sendCoachMessage(learnerId: string, body: string, ownerEmail: string): Promise<CoachSendMessageResponse> {
+  const search = new URLSearchParams({ owner_email: ownerEmail });
+  const url = `${BASE}/${encodeURIComponent(learnerId)}?${search.toString()}`;
   return request<CoachSendMessageResponse>(url, {
     method: 'POST',
     body: JSON.stringify({ body }),

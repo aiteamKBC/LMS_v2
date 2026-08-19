@@ -118,12 +118,6 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/caseload',
   },
   {
-    id: 'coach-messages',
-    label: 'Learner Messages',
-    icon: 'ri-message-3-line',
-    href: '/coach/messages',
-  },
-  {
     id: 'coach-group-attendance',
     label: 'Attendance',
     icon: 'ri-calendar-2-line',
@@ -162,15 +156,6 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
       { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
-    ],
-  },
-  {
-    id: 'coach-group-employer',
-    label: 'Employer Engagement',
-    icon: 'ri-building-2-line',
-    href: '',
-    children: [
-      { id: 'coach-employer-actions', label: 'Employer Actions', icon: 'ri-building-2-line', href: '/coach/employer-actions' },
     ],
   },
 ];

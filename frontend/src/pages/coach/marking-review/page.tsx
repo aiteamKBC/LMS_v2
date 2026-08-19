@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
@@ -68,6 +69,7 @@ function formatFileSize(bytes: number) {
 export default function CoachMarkingReviewPage() {
   const { submissionId } = useParams<{ submissionId: string }>();
   const navigate = useNavigate();
+  const coach = useCoachIdentity();
   const [items, setItems] = useState<Submission[]>([]);
   const [feedback, setFeedback] = useState('');
   const [tab, setTab] = useState<ReviewTab>('overview');
@@ -80,10 +82,17 @@ export default function CoachMarkingReviewPage() {
   const [openingEvidenceId, setOpeningEvidenceId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (!coach.isInitialized) return;
     setLoading(true);
     setError('');
+    if (!coach.email) {
+      setItems([]);
+      setError('Coach access is required to load submissions.');
+      setLoading(false);
+      return;
+    }
     try {
-      const response = await fetch(API_ENDPOINT);
+      const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email));
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
       if (!response.ok) throw new Error(data.detail || 'Unable to load submissions.');
@@ -93,7 +102,7 @@ export default function CoachMarkingReviewPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [coach.email, coach.isInitialized]);
 
   useEffect(() => {
     void load();
@@ -172,10 +181,10 @@ export default function CoachMarkingReviewPage() {
     setSaving(true);
     setError('');
     try {
-      const response = await fetch(`${API_ENDPOINT}/${selected.id}`, {
+      const response = await fetch(withCoachOwnerEmail(`${API_ENDPOINT}/${selected.id}`, coach.email), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: 'Med Maher' }),
+        body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name }),
       });
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
@@ -205,7 +214,7 @@ export default function CoachMarkingReviewPage() {
       workspaceLabel={coachNav.workspaceLabel}
       pageTitle="Submission Review"
       pageSubtitle="Review, adjust and validate learner evidence"
-      userName="Med Maher"
+      userName={coach.name}
       userRole="Progress Coach"
     >
       <div className="mx-auto w-full max-w-[1680px] p-5 md:p-8 lg:px-12">
