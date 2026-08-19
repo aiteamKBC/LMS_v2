@@ -1,0 +1,53 @@
+# Skill interface metadata.
+# Kept deliberately minimal: only fields whose meaning is unambiguous from the
+# skill itself. Add runtime-specific keys once the consuming tool's schema is
+# confirmed — do not guess them.
+
+name: xcode-lms-actual-hours
+version: 1.0.0
+description: >-
+  Inspect, implement, refactor, or review Swift/Xcode projects that manage
+  learner Attendance, Aptem Assignments, LMS Actual Hours, timestamps, manual
+  overrides, auditor approvals, revision history, and analytics. Preserves
+  genuine submitted learner records; uses ranges and percentages only for
+  validation and reporting, never to fabricate timestamps or hours.
+
+entrypoint: SKILL.md
+
+references:
+  - path: references/product-requirements.md
+    purpose: Complete business rules, constants, flags, and testing matrix. Read before implementing or reviewing.
+  - path: references/vscode-codex-prompt.md
+    purpose: Standalone, copy-paste Codex task prompt with the safety rules carried over intact.
+
+workflows:
+  - id: implement
+    summary: Inspect a Swift/Xcode repository and implement the Actual Hours rules.
+    reads: [references/product-requirements.md]
+  - id: review
+    summary: Audit an existing implementation against the requirements and report gaps with file and symbol references.
+    reads: [references/product-requirements.md]
+  - id: codex-prompt
+    summary: Emit one self-contained Markdown prompt for VS Code Codex.
+    reads: [references/vscode-codex-prompt.md]
+
+triggers:
+  - LMS Actual Hours
+  - Aptem assignment hours
+  - Time Stamped vs Input hours
+  - Europe/London working-hours validation
+  - Reading/Quiz and Video/Audio duration classification
+  - second-auditor approval of Actual Hours
+  - Actual Hours revision history
+  - Actual Hours analytics
+
+constraints:
+  - Treat all data as real submitted learner records.
+  - Never fabricate, randomize, shift, or silently replace hours, timestamps, pauses, sources, Attendance, or Aptem values.
+  - Leave existing Attendance, Assignment, and Aptem logic unchanged.
+  - Percentages and duration ranges are for validation and analytics only, never generation.
+  - Retain the original value and every approved or rejected revision permanently.
+  - Flag invalid or unusual records instead of rewriting them.
+
+requires_network: false
+mutates_repository: true   # only via the implement workflow, and never learner data values

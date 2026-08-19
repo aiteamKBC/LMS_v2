@@ -31,7 +31,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .identity import learner_profile_for_source
 
-from .active_users import save_progress_record
+from .active_users import ComponentReferenceError, save_progress_record
 from .models import CommercialUser, EnrolmentUser
 
 SOURCE_MODELS = {
@@ -508,6 +508,8 @@ def submit_quiz_attempt(request, quiz_id):
         }
         try:
             save_progress_record(active, attempt, activity)
+        except ComponentReferenceError as exc:
+            return _error(str(exc), 400)
         except DatabaseError as exc:
             return _error(f"Database error saving attempt: {exc}", 502)
 

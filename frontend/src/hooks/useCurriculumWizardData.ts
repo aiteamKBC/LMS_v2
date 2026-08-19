@@ -6,7 +6,7 @@
  * - Cohort step: full programme tree, KSB options
  * - Group step: programme tree detail, staff profiles
  * - Modules step: module catalogue, staff profiles
- * - Weeks step: module details (week structure)
+ * - Weeks step: module structures are resolved directly by catalogue id
  * - Review step: (uses previously loaded data)
  *
  * Features:
@@ -87,7 +87,10 @@ export function useCurriculumWizardData({
   isOpen,
   currentStep,
   selectedProgrammeId,
-}: UseCurriculumWizardDataOptions): WizardStepData & { reloadStaffProfiles?: () => Promise<void> } {
+}: UseCurriculumWizardDataOptions): WizardStepData & {
+  reloadStaffProfiles?: () => Promise<void>;
+  reloadProgrammeDetail?: () => Promise<void>;
+} {
   const [stepData, setStepData] = useState<WizardStepData>({});
 
   const abortControllersRef = useRef(new Map<string, AbortController>());
@@ -218,36 +221,77 @@ export function useCurriculumWizardData({
     }
   }, [loadResource, nextGeneration, currentGeneration]);
 
+  const loadKsbOptions = useCallback(async () => {
+    const ksbSetsKey = 'ksb-options-all-sets';
+    const ksbStandardsKey = 'ksb-options-all-standards';
+    const ksbSetsGen = nextGeneration(ksbSetsKey);
+    const ksbStandardsGen = nextGeneration(ksbStandardsKey);
+
+    setStepData(prev => ({
+      ...prev,
+      ksbOptions: { data: prev.ksbOptions?.data ?? null, loading: true, error: null },
+    }));
+
+    try {
+      const [ksbSets, standards] = await Promise.all([
+        fetchCurriculumKsbSets(undefined, { all: true }),
+        fetchCurriculumStandards(),
+      ]);
+
+      if (
+        !isMountedRef.current
+        || currentGeneration(ksbSetsKey) !== ksbSetsGen
+        || currentGeneration(ksbStandardsKey) !== ksbStandardsGen
+      ) {
+        return;
+      }
+
+      setStepData(prev => ({
+        ...prev,
+        ksbOptions: {
+          data: { sets: ksbSets, standards },
+          loading: false,
+          error: null,
+        },
+      }));
+    } catch (err) {
+      if (
+        !isMountedRef.current
+        || currentGeneration(ksbSetsKey) !== ksbSetsGen
+        || currentGeneration(ksbStandardsKey) !== ksbStandardsGen
+      ) {
+        return;
+      }
+      const error = err instanceof Error ? err.message : 'Failed to load KSB options';
+      setStepData(prev => ({
+        ...prev,
+        ksbOptions: { ...prev.ksbOptions, loading: false, error },
+      }));
+    }
+  }, [currentGeneration, nextGeneration]);
+
   // Load programme detail + KSB options (step 2)
   const loadCohortStepData = useCallback(
     async (programmeId: string) => {
       if (!programmeId) return;
 
       const detailKey = `programme-detail-${programmeId}`;
-      const ksbSetsKey = `ksb-options-${programmeId}-sets`;
-      const ksbStandardsKey = `ksb-options-${programmeId}-standards`;
       const detailGen = nextGeneration(detailKey);
-      const ksbSetsGen = nextGeneration(ksbSetsKey);
-      const ksbStandardsGen = nextGeneration(ksbStandardsKey);
 
       setStepData(prev => ({
         ...prev,
         programmeDetail: { data: prev.programmeDetail?.data ?? null, loading: true, error: null },
-        ksbOptions: { data: prev.ksbOptions?.data ?? null, loading: true, error: null },
       }));
 
       try {
-        const [detail, ksbSets, standards] = await Promise.all([
-          loadResource(detailKey, signal => fetchCurriculumProgrammeDetail(programmeId, signal), detailGen),
-          loadResource(ksbSetsKey, fetchCurriculumKsbSets, ksbSetsGen),
-          loadResource(ksbStandardsKey, fetchCurriculumStandards, ksbStandardsGen),
+        const [detail] = await Promise.all([
+          loadResource(detailKey, signal => fetchCurriculumProgrammeDetail(programmeId, signal, { visibility: 'all', skipCache: true }), detailGen, undefined, { force: true }),
+          loadKsbOptions(),
         ]);
 
         if (
           !isMountedRef.current
           || currentGeneration(detailKey) !== detailGen
-          || currentGeneration(ksbSetsKey) !== ksbSetsGen
-          || currentGeneration(ksbStandardsKey) !== ksbStandardsGen
         ) {
           return;
         }
@@ -255,18 +299,11 @@ export function useCurriculumWizardData({
         setStepData(prev => ({
           ...prev,
           programmeDetail: { data: detail || prev.programmeDetail?.data || null, loading: false, error: null },
-          ksbOptions: {
-            data: ksbSets && standards ? { sets: ksbSets, standards } : prev.ksbOptions?.data || null,
-            loading: false,
-            error: null,
-          },
         }));
       } catch (err) {
         if (
           !isMountedRef.current
           || currentGeneration(detailKey) !== detailGen
-          || currentGeneration(ksbSetsKey) !== ksbSetsGen
-          || currentGeneration(ksbStandardsKey) !== ksbStandardsGen
         ) {
           return;
         }
@@ -274,11 +311,10 @@ export function useCurriculumWizardData({
         setStepData(prev => ({
           ...prev,
           programmeDetail: { ...prev.programmeDetail, loading: false, error },
-          ksbOptions: { ...prev.ksbOptions, loading: false, error },
         }));
       }
     },
-    [loadResource, nextGeneration, currentGeneration]
+    [loadKsbOptions, loadResource, nextGeneration, currentGeneration]
   );
 
   const loadStaffProfiles = useCallback(async () => {
@@ -330,7 +366,7 @@ export function useCurriculumWizardData({
     }
   }, [currentGeneration, loadResource, nextGeneration]);
 
-  // Load modules (step 4+)
+  // Load modules (step 4 dropdown only)
   const loadModuleStepData = useCallback(async () => {
     const moduleKey = 'modules-list';
     const moduleGen = nextGeneration(moduleKey);
@@ -341,7 +377,11 @@ export function useCurriculumWizardData({
     }));
 
     try {
-      const modules = await loadResource(moduleKey, fetchCurriculumModules, moduleGen);
+      const modules = await loadResource(
+        moduleKey,
+        signal => fetchCurriculumModules(signal, { compact: true, skipCache: true }),
+        moduleGen,
+      );
 
       if (
         !isMountedRef.current
@@ -416,7 +456,7 @@ export function useCurriculumWizardData({
     const loadDataForStep = async () => {
       switch (currentStep) {
         case 'programme':
-          await loadProgrammes();
+          await Promise.all([loadProgrammes(), loadKsbOptions()]);
           break;
         case 'cohort':
           if (selectedProgrammeId) {
@@ -424,11 +464,14 @@ export function useCurriculumWizardData({
           }
           break;
         case 'modules':
+          await Promise.all([
+            selectedProgrammeId ? loadCohortStepData(selectedProgrammeId) : Promise.resolve(),
+            loadModuleStepData(),
+            loadStaffProfiles(),
+          ]);
+          break;
         case 'weeks':
-          await Promise.all([loadModuleStepData(), loadStaffProfiles()]);
-          if (currentStep === 'weeks') {
-            await loadHolidays();
-          }
+          await loadHolidays();
           break;
         case 'group':
           await Promise.all([
@@ -437,13 +480,15 @@ export function useCurriculumWizardData({
           ]);
           break;
         case 'review':
-          // No additional data needed beyond what's loaded in previous steps
+          if (selectedProgrammeId) {
+            await loadCohortStepData(selectedProgrammeId);
+          }
           break;
       }
     };
 
     void loadDataForStep();
-  }, [isOpen, currentStep, selectedProgrammeId, loadProgrammes, loadCohortStepData, loadModuleStepData, loadStaffProfiles, loadHolidays]);
+  }, [isOpen, currentStep, selectedProgrammeId, loadProgrammes, loadKsbOptions, loadCohortStepData, loadModuleStepData, loadStaffProfiles, loadHolidays]);
 
   // Prefetch next step's data
   useEffect(() => {
@@ -466,8 +511,18 @@ export function useCurriculumWizardData({
             }
             break;
           case 'modules':
+            await Promise.all([
+              selectedProgrammeId ? loadCohortStepData(selectedProgrammeId) : Promise.resolve(),
+              loadModuleStepData(),
+              loadStaffProfiles(),
+            ]);
+            break;
           case 'weeks':
-            await Promise.all([loadModuleStepData(), loadStaffProfiles()]);
+            await Promise.all([
+              selectedProgrammeId ? loadCohortStepData(selectedProgrammeId) : Promise.resolve(),
+              loadModuleStepData(),
+              loadStaffProfiles(),
+            ]);
             if (nextStep === 'weeks') {
               await loadHolidays();
             }
@@ -494,6 +549,11 @@ export function useCurriculumWizardData({
 
   // Cleanup on unmount
   useEffect(() => {
+    // Must be re-armed here, not only at useRef(true): StrictMode mounts, runs the
+    // cleanup below, then mounts again. Without this the flag stays false for the
+    // rest of the wizard's life and every loadResource call bails out before
+    // fetching, so detail/modules/staff silently never load.
+    isMountedRef.current = true;
     const controllers = abortControllersRef.current;
     const prefetchTimer = prefetchTimerRef.current;
 
@@ -512,5 +572,8 @@ export function useCurriculumWizardData({
   return {
     ...stepData,
     reloadStaffProfiles: loadStaffProfiles,
+    reloadProgrammeDetail: selectedProgrammeId
+      ? () => loadCohortStepData(selectedProgrammeId)
+      : undefined,
   };
 }

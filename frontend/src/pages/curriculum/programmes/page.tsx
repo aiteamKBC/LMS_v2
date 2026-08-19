@@ -12,6 +12,7 @@ import {
   archiveCurriculumCohort,
   archiveCurriculumGroup,
   archiveCurriculumModule,
+  CurriculumApiError,
   deleteCurriculumProgramme,
   fetchCurriculumModules,
   fetchCurriculumProgrammeKsbCoverage,
@@ -33,6 +34,8 @@ import {
   type CurriculumGroup,
   type CurriculumModule,
   type CurriculumProgramme,
+  type CurriculumProgrammeDependencyError,
+  type CurriculumProgrammeDependencyReport,
   type CurriculumProgrammeInput,
   type CurriculumSession,
   type CurriculumStaffProfile,
@@ -65,8 +68,13 @@ type ProgrammeKsbSourceItem = {
 type LearnerKsbAchievement = {
   code: string;
   count: number;
+  // Achieved weight, from the Component Progress snapshot only. A reflection's
+  // own KSB declaration for the same activity lands in `declaredWeight` and is
+  // never added here — see backend curriculum_api ksbAchievementPolicy.
   weight: number;
+  declaredWeight: number;
   actualOtjh: number | null;
+  actualOtjhSource: string;
   plannedOtjh: number | null;
   plannedOtjhSource: string;
   activities: string[];
@@ -88,6 +96,47 @@ function showProgrammeSwalToast(title: string, text: string, icon: 'success' | '
     timer: icon === 'error' ? undefined : 1800,
     confirmButtonText: icon === 'error' ? 'Close' : 'Done',
   });
+}
+
+const DEPENDENCY_LABELS: Record<string, string> = {
+  cohorts: 'cohorts',
+  groups: 'groups',
+  modules: 'modules',
+  week_templates: 'week templates',
+  quizzes: 'quizzes',
+  free_programme_components: 'free-course components',
+  learners: 'learners',
+};
+
+function isProgrammeDependencyError(error: unknown): error is CurriculumApiError & { data: CurriculumProgrammeDependencyError } {
+  return (
+    error instanceof CurriculumApiError
+    && error.status === 409
+    && Boolean(error.data)
+    && typeof error.data === 'object'
+    && (error.data as CurriculumProgrammeDependencyError).reason === 'programme-has-dependencies'
+  );
+}
+
+function programmeDependencySummary(report?: CurriculumProgrammeDependencyReport) {
+  const counts = report?.counts || {};
+  const parts = Object.entries(counts)
+    .filter(([, value]) => Number(value) > 0)
+    .map(([key, value]) => `${value} ${DEPENDENCY_LABELS[key] || key.replace(/_/g, ' ')}`);
+  return parts.length ? parts.join(', ') : 'linked curriculum data';
+}
+
+function programmeStatus(programme: CurriculumProgramme) {
+  return String(programme.status || 'active').trim().toLowerCase();
+}
+
+function programmeIsDraft(programme: CurriculumProgramme) {
+  return programmeStatus(programme) === 'draft';
+}
+
+function programmeIsArchived(programme: CurriculumProgramme) {
+  if (typeof programme.isArchived === 'boolean') return programme.isArchived;
+  return programmeStatus(programme) === 'archived';
 }
 
 export default function CurriculumProgrammes() {
@@ -116,14 +165,14 @@ export default function CurriculumProgrammes() {
   const [ksbSets, setKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
   const [programmeSourceOverrides, setProgrammeSourceOverrides] = useState<Map<string, string>>(new Map());
-  const { programmes, loading, error, reload } = useCurriculumProgrammes();
+  const { programmes, loading, error, reload, removeProgramme } = useCurriculumProgrammes({ visibility: 'all' });
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 
   useEffect(() => {
     const controller = new AbortController();
     void Promise.all([
-      fetchCurriculumKsbSets(controller.signal).then(setKsbSets),
+      fetchCurriculumKsbSets(controller.signal, { all: true }).then(setKsbSets),
       fetchCurriculumStandards(controller.signal).then(setStandards),
     ]).catch(err => {
       if (!controller.signal.aborted) console.warn('Unable to load KSB descriptions for programme review.', err);
@@ -131,7 +180,11 @@ export default function CurriculumProgrammes() {
     return () => controller.abort();
   }, []);
 
-  const filtered = programmes.filter(p => {
+  const visibleProgrammes = useMemo(
+    () => programmes.filter(programme => !programmeIsArchived(programme)),
+    [programmes],
+  );
+  const filtered = visibleProgrammes.filter(p => {
     const needle = search.toLowerCase();
     if (needle && !p.name.toLowerCase().includes(needle)) return false;
     return true;
@@ -150,36 +203,52 @@ export default function CurriculumProgrammes() {
     setProgrammePage(currentPage => Math.min(currentPage, totalProgrammePages));
   }, [totalProgrammePages]);
 
-  const totalProgrammes = programmes.length;
-  const totalLearners = programmes.reduce((a, b) => a + (b.learners || 0), 0);
-  const totalCohorts = programmes.reduce((a, b) => a + (b.cohorts || 0), 0);
-  const totalModules = programmes.reduce((a, b) => a + (b.modules || 0), 0);
-  const totalSessions = programmes.reduce((a, b) => a + (b.weeks || 0), 0);
+  const totalProgrammes = visibleProgrammes.length;
+  const totalLearners = visibleProgrammes.reduce((a, b) => a + (b.learners || 0), 0);
+  const totalCohorts = visibleProgrammes.reduce((a, b) => a + (b.cohorts || 0), 0);
+  const totalModules = visibleProgrammes.reduce((a, b) => a + (b.modules || 0), 0);
+  const totalSessions = visibleProgrammes.reduce((a, b) => a + (b.weeks || 0), 0);
   const programmeKsbSources = useMemo(() => {
     const lookup = new Map<string, ProgrammeAppliedKsbSource>();
-    programmes.forEach(programme => {
+    visibleProgrammes.forEach(programme => {
       const key = programme.sourceId || programme.id;
       const override = programmeSourceOverrides.get(key);
       const effectiveProgramme = override === undefined ? programme : { ...programme, ksbProfileSourceId: override };
       lookup.set(key, resolveProgrammeAppliedKsbSource(effectiveProgramme, ksbSets, standards));
     });
     return lookup;
-  }, [ksbSets, programmeSourceOverrides, programmes, standards]);
-  const programmesWithKsb = programmes.filter(programme => (
+  }, [ksbSets, programmeSourceOverrides, standards, visibleProgrammes]);
+  const programmesWithKsb = visibleProgrammes.filter(programme => (
     Boolean(programmeKsbSources.get(programme.sourceId || programme.id)?.value) && programme.ksbTotal > 0
   ));
   const averageKsbCoverage = programmesWithKsb.length
     ? Math.round(programmesWithKsb.reduce((sum, programme) => sum + ((programme.ksbMapped / programme.ksbTotal) * 100), 0) / programmesWithKsb.length)
+    : 0;
+  // Learner-consumed KSB progress across every visible programme. Weighted by
+  // achieved/expected weight rather than averaging percentages, so a programme
+  // with 40 learners is not given the same say as one with 1.
+  const learnerKsbTotals = visibleProgrammes.reduce(
+    (totals, programme) => ({
+      consumed: totals.consumed + (programme.learnerKsbConsumedWeight || 0),
+      expected: totals.expected + (programme.learnerKsbExpectedWeight || 0),
+    }),
+    { consumed: 0, expected: 0 },
+  );
+  const averageLearnerKsbProgress = learnerKsbTotals.expected > 0
+    ? Math.min(100, Math.round((learnerKsbTotals.consumed / learnerKsbTotals.expected) * 100))
     : 0;
   const pageSubtitle = `${totalProgrammes} programmes - ${totalCohorts} cohorts - ${totalModules} modules - ${totalLearners} learners`;
   const heroSummary = <><strong>{totalProgrammes} programmes</strong> - {totalCohorts} cohorts - {totalModules} modules</>;
 
   const refreshProgrammeCards = async () => {
     const [nextKsbSets, nextStandards] = await Promise.all([
-      fetchCurriculumKsbSets().catch(() => ksbSets),
+      fetchCurriculumKsbSets(undefined, { all: true }).catch(() => ksbSets),
       fetchCurriculumStandards().catch(() => standards),
-      reload(),
-      reloadCurriculumData(),
+      // Silent: the wizard has already closed on a successful save, so the cards
+      // stay on screen with the previous data instead of collapsing to skeletons
+      // while the (slow) uncached programme/tree requests come back.
+      reload({ skipCache: true, silent: true }),
+      reloadCurriculumData({ skipCache: true, silent: true }),
     ]);
     setKsbSets(nextKsbSets);
     setStandards(nextStandards);
@@ -207,20 +276,25 @@ export default function CurriculumProgrammes() {
   const deleteProgramme = async (programme: CurriculumProgramme) => {
     const programmeId = programme.sourceId || programme.id;
     setActionError(null);
+    let outcome: 'deleted' | null = null;
+    let dependencyReport: CurriculumProgrammeDependencyReport | null = null;
     await showCurriculumConfirm({
       title: 'Delete programme?',
-      text: `Delete "${programme.name}" and its curriculum structure from the programme list? This will remove its cohorts, groups, modules, weeks and component mappings.`,
+      text: `Delete "${programme.name}" permanently? This is only allowed after its cohorts, groups, modules and related records have been removed.`,
       icon: 'warning',
-      confirmButtonText: 'Delete Programme',
+      confirmButtonText: 'Check & Delete',
       cancelButtonText: 'Cancel',
-      successTitle: 'Programme deleted',
-      successText: `${programme.name} was deleted from the programme list.`,
       onConfirm: async () => {
         setDeletingProgrammeId(programmeId);
         try {
-          await deleteCurriculumProgramme(programmeId);
-          await reload();
+          const result = await deleteCurriculumProgramme(programmeId);
+          outcome = result.deleted ? 'deleted' : null;
+          removeProgramme(programmeId);
         } catch (err) {
+          if (isProgrammeDependencyError(err)) {
+            dependencyReport = err.data.dependencyReport || null;
+            return;
+          }
           setActionError(err instanceof Error ? err.message : 'Unable to delete programme.');
           throw err;
         } finally {
@@ -228,6 +302,29 @@ export default function CurriculumProgrammes() {
         }
       },
     });
+    // outcome stays null when the user cancels or the request failed.
+    if (dependencyReport) {
+      await showCurriculumConfirm({
+        title: 'Clean up programme first',
+        text: `${programme.name} is linked to ${programmeDependencySummary(dependencyReport)}. Open the wizard and remove the linked modules, groups and cohorts before deleting the programme.`,
+        icon: 'info',
+        confirmButtonText: 'Open cleanup wizard',
+        cancelButtonText: 'Cancel',
+        onConfirm: () => {
+          setWizardProgrammeId(programmeId);
+          setWizardProgramme(programme);
+          setWizardStartStep('cohort');
+          setWizardCohortId(undefined);
+          setWizardGroupId(undefined);
+          setWizardOpen(true);
+        },
+      });
+    } else if (outcome === 'deleted') {
+      await showProgrammeSwalToast(
+        'Programme deleted',
+        `${programme.name} was deleted from the programme list.`,
+      );
+    }
   };
 
   const openProgrammeKsbReview = async (programme: CurriculumProgramme) => {
@@ -303,10 +400,10 @@ export default function CurriculumProgrammes() {
           color: programme.color,
           description: programme.description,
           structureType: programme.structureType,
-          ksbProfileSourceId: `profile:${selectedProfileId}`,
+          ksbProfileSourceId: selectedProfileId,
         });
-        setProgrammeSourceOverrides(previous => new Map(previous).set(programmeId, `profile:${selectedProfileId}`));
-        await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, `profile:${selectedProfileId}`);
+        setProgrammeSourceOverrides(previous => new Map(previous).set(programmeId, selectedProfileId));
+        await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, selectedProfileId);
       } else {
         const standard = standards.find(item => item.id === id);
         if (!standard) throw new Error('Selected standard could not be found.');
@@ -322,16 +419,19 @@ export default function CurriculumProgrammes() {
         setProgrammeSourceOverrides(previous => new Map(previous).set(programmeId, `standard:${standard.id}`));
         await cascadeKsbSourceToProgrammeModules(programme, modulesForCascade, `standard:${standard.id}`);
       }
-      await reload();
-      await reloadCurriculumData();
+      // Refresh in parallel and silently: the source override is already applied
+      // optimistically above, so the cards should not collapse to skeletons while
+      // the uncached programme/tree requests come back.
       await Promise.all([
-        fetchCurriculumKsbSets().then(setKsbSets),
+        reload({ skipCache: true, silent: true }),
+        reloadCurriculumData({ skipCache: true, silent: true }),
+        fetchCurriculumKsbSets(undefined, { all: true }).then(setKsbSets),
         fetchCurriculumStandards().then(setStandards),
       ]);
       setApplyProgramme(null);
-      await showProgrammeSwalToast('KSB source applied', `${programme.name} will now use the selected ${kind === 'profile' ? 'KSB profile' : 'standard'} for coverage.`, 'success');
+      await showProgrammeSwalToast('KSB Source applied', `${programme.name} will now use the selected ${kind === 'profile' ? 'KSB profile' : 'standard'} for coverage.`, 'success');
     } catch (err) {
-      await showProgrammeSwalToast('Unable to apply KSB source', err instanceof Error ? err.message : 'The programme KSB source could not be saved.', 'error');
+      await showProgrammeSwalToast('Unable to apply KSB Source', err instanceof Error ? err.message : 'The programme KSB Source could not be saved.', 'error');
     } finally {
       setApplyingKsbSource(false);
     }
@@ -342,13 +442,13 @@ export default function CurriculumProgrammes() {
     if (!programmeId || !source.value) return;
     const [kind, id] = source.value.split(':');
     const confirmed = await showCurriculumConfirm({
-      title: 'Unapply KSB source?',
+      title: 'Unapply KSB Source?',
       text: `${programme.name} will no longer be measured against ${source.title}. Existing component KSB mappings will not be deleted.`,
       icon: 'warning',
       confirmButtonText: 'Unapply source',
       cancelButtonText: 'Keep source',
-      successTitle: 'KSB source unapplied',
-      successText: `${programme.name} no longer has an applied KSB source.`,
+      successTitle: 'KSB Source unapplied',
+      successText: `${programme.name} no longer has applied KSB Source.`,
       onConfirm: async () => {
         setApplyingKsbSource(true);
         try {
@@ -356,7 +456,7 @@ export default function CurriculumProgrammes() {
             ksbProfileSourceId: '',
           });
         } catch (err) {
-          throw err instanceof Error ? err : new Error('Unable to unapply KSB source.');
+          throw err instanceof Error ? err : new Error('Unable to unapply KSB Source.');
         } finally {
           setApplyingKsbSource(false);
         }
@@ -381,13 +481,13 @@ export default function CurriculumProgrammes() {
         }
       }
       const [nextKsbSets, nextStandards] = await Promise.all([
-        fetchCurriculumKsbSets().catch(() => ksbSets),
+        fetchCurriculumKsbSets(undefined, { all: true }).catch(() => ksbSets),
         fetchCurriculumStandards().catch(() => standards),
         reload({ silent: true }),
       ]);
       setKsbSets(nextKsbSets);
       setStandards(nextStandards);
-    })().catch(err => console.warn('Unable to refresh KSB source state after unapply.', err));
+    })().catch(err => console.warn('Unable to refresh KSB Source state after unapply.', err));
   };
 
   const openAppliedKsbSourceReview = (programme: CurriculumProgramme, source: ProgrammeAppliedKsbSource) => {
@@ -410,7 +510,7 @@ export default function CurriculumProgrammes() {
         return;
       }
     }
-    void showProgrammeSwalToast('KSB source not found', 'The selected KSB profile could not be loaded yet. Try refreshing the page.', 'error');
+    void showProgrammeSwalToast('KSB Source not found', 'The selected KSB profile could not be loaded yet. Try refreshing the page.', 'error');
   };
 
   return (
@@ -458,7 +558,14 @@ export default function CurriculumProgrammes() {
               <DashboardStat icon="ri-layout-masonry-line" label="Actual programmes" value={String(totalProgrammes)} detail={`${totalModules} modules connected`} />
               <DashboardStat icon="ri-calendar-event-line" label="Cohorts" value={String(totalCohorts)} detail={`${totalLearners} learners allocated`} />
               <DashboardStat icon="ri-stack-line" label="Modules" value={String(totalModules)} detail={`${totalSessions} planned sessions`} />
-              <DashboardStat icon="ri-node-tree" label="KSB coverage" value={`${averageKsbCoverage}%`} detail={programmesWithKsb.length ? 'Average mapped coverage' : 'No mapped KSBs yet'} />
+              <DashboardStat
+                icon="ri-node-tree"
+                label="KSB progress"
+                value={`${averageLearnerKsbProgress}%`}
+                detail={learnerKsbTotals.expected > 0
+                  ? `Learner-evidenced · ${averageKsbCoverage}% mapped`
+                  : programmesWithKsb.length ? `${averageKsbCoverage}% mapped, no learner progress yet` : 'No mapped KSBs yet'}
+              />
             </div>
           </div>
         </section>
@@ -503,8 +610,15 @@ export default function CurriculumProgrammes() {
             {paginatedProgrammes.map(prog => {
               const appliedSource = programmeKsbSources.get(prog.sourceId || prog.id) || resolveProgrammeAppliedKsbSource(prog, ksbSets, standards);
               const hasAppliedKsbSource = Boolean(appliedSource.value);
-              const coverage = hasAppliedKsbSource && prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
+              const mappingCoverage = hasAppliedKsbSource && prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
+              // Learner-consumed KSB progress. Read straight off the programme
+              // payload, so unlike the design-mapping figure above it does not
+              // wait on ksbSets/standards and cannot flicker to 0 mid-load.
+              const learnerKsbProgress = Math.max(0, Math.min(100, Math.round(prog.learnerKsbProgressPercentage || 0)));
+              const learnerKsbLearnerCount = prog.learnerKsbLearnerCount || 0;
+              const hasLearnerKsbDenominator = (prog.learnerKsbExpectedWeight || 0) > 0 && learnerKsbLearnerCount > 0;
               const cardColor = normaliseHex(prog.color || '#6941c6');
+              const isDraftProgramme = programmeIsDraft(prog);
               return (
               <article key={prog.id} className="programmes-card programme-color-card group relative flex h-full flex-col overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-4 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg" style={{ '--programme-card-color': cardColor } as CSSProperties}>
                 <div className="programme-card-accent absolute inset-x-0 top-0 h-1" />
@@ -516,10 +630,17 @@ export default function CurriculumProgrammes() {
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
                       <p className="text-[11px] text-foreground-400">Level: {prog.level || 'Not set'}</p>
-                        <span className="programme-type-badge mt-1 inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary-700 ring-1 ring-primary-100">
-                        <AppIcon className="ri-calendar-event-line text-[10px]"></AppIcon>
-                        Programme
-                      </span>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="programme-type-badge inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary-700 ring-1 ring-primary-100">
+                          <AppIcon className="ri-calendar-event-line text-[10px]"></AppIcon>
+                          Programme
+                        </span>
+                        {isDraftProgramme && (
+                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700 ring-1 ring-amber-200">
+                            Draft
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -527,7 +648,7 @@ export default function CurriculumProgrammes() {
                   type="button"
                   onClick={e => { e.stopPropagation(); openAppliedKsbSourceReview(prog, appliedSource); }}
                   className={`programme-source-button mb-2.5 w-full rounded-xl border px-2 py-1.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${appliedSource.value ? 'programme-source-applied' : 'programme-source-missing'}`}
-                  aria-label={appliedSource.value ? `View KSBs for ${appliedSource.title}` : 'Choose KSB source'}
+                  aria-label={appliedSource.value ? `View KSBs for ${appliedSource.title}` : 'Choose KSB Source'}
                 >
                   <div className="flex items-start gap-2">
                     <span className={`programme-source-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${appliedSource.value ? 'programme-source-applied' : 'programme-source-missing'}`}>
@@ -535,7 +656,7 @@ export default function CurriculumProgrammes() {
                     </span>
                     <div className="min-w-0 flex-1">
                       <p className={`text-[9px] font-black uppercase tracking-wide ${appliedSource.value ? 'text-primary-700' : 'text-amber-700'}`}>
-                        {appliedSource.value ? 'Applied KSB source' : 'No KSB source selected'}
+                        {appliedSource.value ? 'Applied KSB Source' : 'No KSB Source selected'}
                       </p>
                       <p className="mt-0.5 truncate text-[12px] font-heading font-bold text-foreground-950">{appliedSource.title}</p>
                       <p className="mt-0.5 truncate text-[10px] font-semibold text-foreground-500">{appliedSource.detail || appliedSource.subtitle}</p>
@@ -552,12 +673,26 @@ export default function CurriculumProgrammes() {
                   <Metric label="Sessions" value={`${prog.weeks}`} />
                   <Metric label="Learners" value={String(prog.learners)} />
                   <div className="col-span-2 sm:col-span-5">
-                    <p className="text-[9px] text-foreground-400 uppercase">KSB Mapping</p>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <p className="text-[9px] text-foreground-400 uppercase">KSB Progress</p>
+                      <p className="text-[9px] font-semibold text-foreground-400">
+                        {hasLearnerKsbDenominator
+                          ? `${prog.learnerKsbCodesStarted || 0}/${prog.learnerKsbCodesTotal || 0} KSBs · ${learnerKsbLearnerCount} learner${learnerKsbLearnerCount === 1 ? '' : 's'}`
+                          : `Mapping ${hasAppliedKsbSource ? `${mappingCoverage}%` : 'not applied'}`}
+                      </p>
+                    </div>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <div className="flex-1 h-1.5 bg-background-200 rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full ${!hasAppliedKsbSource ? 'bg-background-300' : coverage >= 100 ? 'bg-emerald-500' : coverage >= 70 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${coverage}%` }}></div>
+                        <div
+                          className={`h-full rounded-full ${!hasLearnerKsbDenominator ? 'bg-background-300' : learnerKsbProgress >= 100 ? 'bg-emerald-500' : learnerKsbProgress >= 70 ? 'bg-primary-500' : learnerKsbProgress > 0 ? 'bg-amber-500' : 'bg-background-300'}`}
+                          style={{ width: `${hasLearnerKsbDenominator ? learnerKsbProgress : 0}%` }}
+                        ></div>
                       </div>
-                      <span className="text-[10px] font-semibold">{hasAppliedKsbSource ? `${coverage}%` : 'Not applied'}</span>
+                      <span className="text-[10px] font-semibold">
+                        {hasLearnerKsbDenominator
+                          ? `${learnerKsbProgress}%`
+                          : learnerKsbLearnerCount === 0 ? 'No learners' : 'Needs mapping'}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -568,7 +703,7 @@ export default function CurriculumProgrammes() {
                     Open
                   </button>
                   <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
-                    <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB source
+                    <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB Source
                   </button>
                   <button className="programme-action-button programme-action-learners inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-1.5 py-1 text-[10px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
                     <AppIcon className="ri-user-follow-line text-sm"></AppIcon>Learners
@@ -849,7 +984,17 @@ function ProgrammeLearnerImpactRow({
                   {item.reflections[0] && <span className="mt-0.5 block truncate text-[11px] font-medium text-foreground-500" title={item.reflections[0]}>{item.reflections[0]}</span>}
                 </span>
                 <span className="text-right font-black">{item.count}</span>
-                <span className="text-right font-black">{formatMetricNumber(item.weight)}</span>
+                <span className="text-right font-black">
+                  {formatMetricNumber(item.weight)}
+                  {item.declaredWeight > 0 && (
+                    <span
+                      className="block text-[9px] font-bold uppercase text-foreground-400"
+                      title="Weight the learner declared in their reflection. Supplementary evidence — not added to achieved weight."
+                    >
+                      {formatMetricNumber(item.declaredWeight)} declared
+                    </span>
+                  )}
+                </span>
                 <span className="text-right font-black">
                   {formatOtjhPair(item.actualOtjh, item.plannedOtjh)}
                   <span className="block text-[9px] font-bold uppercase text-foreground-400">{plannedOtjhSourceLabel(item.plannedOtjhSource)}</span>
@@ -868,38 +1013,84 @@ function ProgrammeLearnerImpactRow({
   );
 }
 
+/** Achieved KSB weight per learner, plus the reflection context for each code.
+ *
+ * Achievement comes from `consumptionSources.progress` alone — the Component
+ * Progress snapshot. Reflections used to be summed into the same `weight` here,
+ * which would have double-counted every activity that has both a snapshot and a
+ * reflection once the reflection join started resolving. They now annotate:
+ * actual OTJH, the reflection text, and the declared weight shown separately.
+ *
+ * The annotation walks `learnerActivities`, which is keyed on the progress entry
+ * id, so a reflection's hours land on exactly the codes that activity achieved.
+ */
 function learnerAchievementMap(data: CurriculumProgrammeLearnerKsbImpactResponse | null) {
   const byLearner = new Map<string, Map<string, LearnerKsbAchievement>>();
-  const add = (learnerId: unknown, code: unknown, weight: unknown, meta: Record<string, unknown> = {}) => {
-    const learnerKey = String(learnerId || '').trim();
-    const ksbCode = String(code || '').trim().toUpperCase();
-    if (!learnerKey || !ksbCode) return;
-    const weightValue = Number(weight || 0);
+  const rowFor = (learnerKey: string, ksbCode: string, create: boolean) => {
     const learnerRows = byLearner.get(learnerKey) || new Map<string, LearnerKsbAchievement>();
-    const row = learnerRows.get(ksbCode) || { code: ksbCode, count: 0, weight: 0, actualOtjh: null, plannedOtjh: null, plannedOtjhSource: 'not_returned', activities: [], reflections: [] };
+    const existing = learnerRows.get(ksbCode);
+    if (!existing && !create) return null;
+    const row = existing || {
+      code: ksbCode,
+      count: 0,
+      weight: 0,
+      declaredWeight: 0,
+      actualOtjh: null,
+      actualOtjhSource: 'not_returned',
+      plannedOtjh: null,
+      plannedOtjhSource: 'not_returned',
+      activities: [],
+      reflections: [],
+    };
+    learnerRows.set(ksbCode, row);
+    byLearner.set(learnerKey, learnerRows);
+    return row;
+  };
+
+  (data?.consumptionSources?.progress || []).forEach(source => {
+    const meta = source as Record<string, unknown>;
+    const learnerKey = String(meta.learnerId || '').trim();
+    const ksbCode = String(meta.code || '').trim().toUpperCase();
+    if (!learnerKey || !ksbCode) return;
+    const row = rowFor(learnerKey, ksbCode, true);
+    if (!row) return;
+    const weightValue = Number(meta.weight || 0);
     row.count += 1;
     row.weight += Number.isFinite(weightValue) ? weightValue : 0;
-    if (meta.actualTimeHours !== undefined && meta.actualTimeHours !== null) {
-      row.actualOtjh = (row.actualOtjh || 0) + Number(meta.actualTimeHours || 0);
-    }
+    // Expected OTJH only; actual OTJH is the reflection's, attached below.
     if (meta.plannedOtjh !== undefined && meta.plannedOtjh !== null) {
       row.plannedOtjh = (row.plannedOtjh || 0) + Number(meta.plannedOtjh || 0);
       row.plannedOtjhSource = String(meta.plannedOtjhSource || 'returned');
     }
-    const activity = [
-      meta.activityTitle || meta.componentTitle,
-      meta.module,
-      meta.week,
-    ].map(value => String(value || '').trim()).filter(Boolean).join(' - ');
+    const activity = [meta.componentTitle, meta.module, meta.week]
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .join(' - ');
     if (activity && !row.activities.includes(activity)) row.activities.push(activity);
-    const reflection = String(meta.reflection || '').trim();
-    if (reflection && !row.reflections.includes(reflection)) row.reflections.push(reflection);
-    learnerRows.set(ksbCode, row);
-    byLearner.set(learnerKey, learnerRows);
-  };
+  });
 
-  (data?.consumptionSources?.progress || []).forEach(row => add(row.learnerId, row.code, row.weight, row));
-  (data?.consumptionSources?.learningReflectionSubmissions || []).forEach(row => add(row.learnerId, row.code, row.weight, row));
+  (data?.learnerActivities || []).forEach(activity => {
+    const learnerKey = String(activity.learnerId ?? '').trim();
+    if (!learnerKey) return;
+    const reflection = activity.reflection;
+    const actualOtjh = activity.actualOtjh;
+    (activity.ksbSnapshot || []).forEach(item => {
+      const row = rowFor(learnerKey, String(item.code || '').trim().toUpperCase(), false);
+      if (!row) return;
+      if (actualOtjh !== undefined && actualOtjh !== null) {
+        row.actualOtjh = (row.actualOtjh || 0) + Number(actualOtjh || 0);
+        row.actualOtjhSource = String(activity.actualOtjhSource || 'returned');
+      }
+      const text = String(reflection?.text || '').trim();
+      if (text && !row.reflections.includes(text)) row.reflections.push(text);
+    });
+    // Declared weight is reported next to achieved weight, never inside it.
+    (activity.declaredReflectionKsbs || []).forEach(item => {
+      const row = rowFor(learnerKey, String(item.code || '').trim().toUpperCase(), false);
+      if (!row) return;
+      row.declaredWeight += Number(item.weight || 0);
+    });
+  });
 
   return new Map(
     Array.from(byLearner.entries()).map(([learnerId, rows]) => [
@@ -1220,11 +1411,11 @@ function ApplyProgrammeKsbSourceModal({
           }}
         >
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Apply KSB source</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-200">Apply KSB Source</p>
             <h3 className="mt-2 text-xl font-heading font-bold text-white">{programme.name}</h3>
-            <p className="mt-1 text-[12px] font-semibold text-white/70">Choose the profile or Skills Standard this programme must be measured against.</p>
+            <p className="mt-1 text-[12px] font-semibold text-white/70">Choose the profile or standard this programme must be measured against.</p>
           </div>
-          <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB source">
+          <button type="button" onClick={onClose} className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-white transition-smooth hover:bg-white/15" aria-label="Close KSB Source">
             <AppIcon className="ri-close-line text-lg"></AppIcon>
           </button>
         </div>
@@ -1232,7 +1423,7 @@ function ApplyProgrammeKsbSourceModal({
           <div className="mb-4 grid grid-cols-2 gap-1 rounded-xl bg-background-100 p-1">
             {(['profile', 'standard'] as const).map(kind => (
               <button key={kind} type="button" onClick={() => setSourceKind(kind)} className={`h-10 rounded-lg text-[12px] font-black transition-smooth ${sourceKind === kind ? 'bg-background-50 text-foreground-950 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'}`}>
-                {kind === 'profile' ? 'KSB profile' : 'Skills Standard'}
+                {kind === 'profile' ? 'KSB profile' : 'KSB standard'}
               </button>
             ))}
           </div>
@@ -1257,14 +1448,14 @@ function ApplyProgrammeKsbSourceModal({
             })}
             {!options.length && (
               <div className="rounded-xl border border-dashed border-foreground-200 bg-background-100 p-6 text-center">
-                <p className="text-sm font-bold text-foreground-800">No {sourceKind === 'profile' ? 'KSB profiles' : 'standards'} available</p>
+                <p className="text-sm font-bold text-foreground-800">No {sourceKind === 'profile' ? 'KSB profiles' : 'KSB standards'} available</p>
                 <p className="mt-1 text-[12px] text-foreground-500">Add the source first, then come back to apply it to this programme.</p>
               </div>
             )}
           </div>
           {selectedOption && (
             <div className={`mt-4 rounded-xl border px-4 py-3 text-[12px] font-semibold ${selectedIsCurrent ? 'border-primary-100 bg-primary-50 text-primary-800' : 'border-emerald-100 bg-emerald-50 text-emerald-800'}`}>
-              {selectedIsCurrent ? 'This is the active KSB source for this programme: ' : 'Applying this will make programme coverage, missing KSBs, occurrences and component weights roll up against: '}
+              {selectedIsCurrent ? 'This is the active KSB Source selection for this programme: ' : 'Applying this will make programme coverage, missing KSBs, occurrences and component weights roll up against: '}
               <strong>{selectedOption.title}</strong>.
             </div>
           )}
@@ -1274,7 +1465,7 @@ function ApplyProgrammeKsbSourceModal({
             {currentSource.value && (
               <button type="button" disabled={applying} onClick={onUnapply} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50">
                 <AppIcon className={applying ? 'ri-loader-4-line animate-spin' : 'ri-link-unlink-m'}></AppIcon>
-                Unapply source
+                Unapply Standards
               </button>
             )}
           </div>
@@ -1284,7 +1475,7 @@ function ApplyProgrammeKsbSourceModal({
             </button>
             <button type="button" disabled={!selectedSource || applying || selectedIsCurrent} onClick={() => onApply(selectedSource)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
               <AppIcon className={applying ? 'ri-loader-4-line animate-spin' : selectedIsCurrent ? 'ri-checkbox-circle-line' : 'ri-check-line'}></AppIcon>
-              {applying ? 'Applying...' : selectedIsCurrent ? 'Applied' : 'Apply source'}
+              {applying ? 'Applying...' : selectedIsCurrent ? 'Applied' : 'Apply Standards'}
             </button>
           </div>
         </div>
@@ -1932,7 +2123,7 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
         return {
           value: `standard:${standard.id}`,
           kind: 'standard',
-          title: standard.name || standard.standardRef || 'Skills Standard',
+          title: standard.name || standard.standardRef || 'KSB standard',
           subtitle: `${standard.code || standard.standardRef || 'Standard'} - ${standard.level || standard.levelValue || programme.level || 'Level not set'}`,
           detail: standardCountsLabel(standard),
         };
@@ -1943,7 +2134,7 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
   return {
     value: '',
     kind: 'none',
-    title: 'Choose a KSB profile or Skills Standard',
+    title: 'Choose a KSB profile or KSB standard',
     subtitle: 'Coverage will not be measured against a selected source yet',
     detail: 'Not applied',
   };
@@ -2426,9 +2617,9 @@ function GroupEditorRow({ group, tutors, coaches, onRefreshStaffProfiles, onSave
     name: group.name,
     tutor: group.tutor === 'Unassigned' ? '' : group.tutor || '',
     coach: group.coach === 'Unassigned' ? '' : group.coach || '',
-    weekDays: group.schedule || '',
-    startTime: '',
-    endTime: '',
+    weekDays: group.weekDays || group.schedule || '',
+    startTime: group.startTime || '',
+    endTime: group.endTime || '',
   });
   const [saving, setSaving] = useState(false);
   const [confirmArchive, setConfirmArchive] = useState(false);

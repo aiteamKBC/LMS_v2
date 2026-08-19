@@ -314,9 +314,6 @@ export default function CohortDetailPage() {
               <p className="text-[13px] text-foreground-500 mt-1">{data.programme} {data.level} · {data.groups.length} groups · {data.totalLearners} learners</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              <Link to={`/curriculum/cohorts/${data.id}/allocate`} className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <AppIcon className="ri-user-add-line mr-1"></AppIcon> Allocate Learners
-              </Link>
               <button className="px-4 py-2.5 bg-background-50 border border-background-200 rounded-xl text-[12px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                 <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit Cohort
               </button>
@@ -483,11 +480,9 @@ export default function CohortDetailPage() {
                   <div className="px-4 pb-4 border-t border-background-200/30">
                     {g.learners.length === 0 ? (
                       <div className="p-6 text-center">
-                        <AppIcon className="ri-user-add-line text-3xl text-foreground-300 mb-2 block"></AppIcon>
-                        <p className="text-[12px] text-foreground-400 mb-3">No learners assigned to this group yet.</p>
-                        <Link to={`/curriculum/cohorts/${data.id}/allocate`} className="inline-block px-4 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          <AppIcon className="ri-user-add-line mr-1"></AppIcon> Allocate Learners
-                        </Link>
+                        <AppIcon className="ri-user-search-line text-3xl text-foreground-300 mb-2 block"></AppIcon>
+                        <p className="text-[12px] text-foreground-400">No learners assigned to this group yet.</p>
+                        <p className="text-[11px] text-foreground-400 mt-1">Learners appear here once the enrolment team assigns them to this group.</p>
                       </div>
                     ) : (
                       <div className="mt-3 space-y-2">
@@ -530,21 +525,19 @@ export default function CohortDetailPage() {
                     )}
 
                     <div className="flex items-center gap-2 mt-3 pt-3 border-t border-background-200/30">
-                      <Link to={`/curriculum/cohorts/${data.id}/allocate`} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                        <AppIcon className="ri-user-add-line mr-1"></AppIcon> Allocate Learners
-                      </Link>
                       <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
                         <AppIcon className="ri-edit-line mr-1"></AppIcon> Edit Group
                       </button>
+                      <span className="text-[10px] text-foreground-400">Learner placements are managed by the enrolment team.</span>
                     </div>
                   </div>
                 )}
               </div>
             ))}
-            <Link to={`/curriculum/cohorts/${data.id}/allocate`} className="block w-full p-4 border-2 border-dashed border-background-200 rounded-xl text-center hover:border-primary-300 hover:bg-primary-50/30 transition-smooth cursor-pointer">
+            <button type="button" className="block w-full p-4 border-2 border-dashed border-background-200 rounded-xl text-center hover:border-primary-300 hover:bg-primary-50/30 transition-smooth cursor-pointer">
               <AppIcon className="ri-add-line text-foreground-400 text-lg mb-1 block"></AppIcon>
               <p className="text-[12px] font-medium text-foreground-500">Add New Group</p>
-            </Link>
+            </button>
           </div>
         )}
 

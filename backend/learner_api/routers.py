@@ -10,6 +10,9 @@ Everything else (django.contrib.auth, sessions, admin, migrations) stays on
 
 APP_LABELS = frozenset({"learner_api", "enrolment_api", "login"})
 ENROLMENT_DB = "enrolment"
+# Aliases that must never receive a Django migration: their schemas are created
+# and owned outside this project.
+NON_MIGRATED_DATABASES = frozenset({ENROLMENT_DB, "audit", "audit_clone", "kbc_attendance"})
 
 
 class EnrolmentRouter:
@@ -28,10 +31,16 @@ class EnrolmentRouter:
         return None
 
     def allow_migrate(self, db, app_label, model_name=None, **hints):
+        if app_label in APP_LABELS and hints.get("learner_schema_migration"):
+            return db == "default"
         # These apps' models are unmanaged (managed=False) — never migrate them.
         if app_label in APP_LABELS:
             return False
-        # Keep every other app off the Neon database entirely.
-        if db == ENROLMENT_DB:
+        # Keep every other app off the Neon databases entirely. The audit
+        # branches carry externally-created schemas (Last_audit, Audit, …) and
+        # their DDL is applied by reviewed setup commands, never by migrate —
+        # so `migrate --database=audit_clone` must be a no-op, not a surprise
+        # django_migrations table on an audit branch.
+        if db in NON_MIGRATED_DATABASES:
             return False
         return None

@@ -200,13 +200,8 @@ export function WorkspaceShell({
   };
 
   const handleReturnToPreviousWindow = () => {
-    const currentRoute = `${location.pathname}${location.search}${location.hash}`;
-    const history = readRouteHistory();
-    while (history.length && history.at(-1) === currentRoute) history.pop();
-    const targetRoute = history.pop() || previousRoute;
-    if (targetRoute) {
-      writeRouteHistory(history);
-      navigate(targetRoute);
+    if (window.history.length > 1) {
+      navigate(-1);
       return;
     }
     const fallbackRoute = breadcrumbs.find(crumb => crumb.isLink && crumb.href && crumb.href !== `${location.pathname}${location.search}`)?.href || '/';

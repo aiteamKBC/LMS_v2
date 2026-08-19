@@ -16,6 +16,7 @@ import {
   fetchCurriculumProgrammes,
   fetchCurriculumProgrammeDetail,
   fetchCurriculumModules,
+  createCurriculumProgramme,
   clearCurriculumGetCache,
   invalidateCurriculumCacheByEntity,
   getCurriculumCacheStats,
@@ -275,6 +276,48 @@ describe('Curriculum API Caching', () => {
       // Skip cache explicitly
       await fetchCurriculumProgrammes(undefined, { skipCache: true } as any);
       expect(mockFetch).toHaveBeenCalledTimes(2); // Fetched despite cache
+    });
+
+    it('should deduplicate concurrent skipCache requests for the same endpoint', async () => {
+      // Several hooks refresh the same endpoints at once after a save. skipCache
+      // means "do not read a stale cached value", not "do not share a request
+      // that is already on the wire", so these must collapse to one call.
+      const mockData = { schema: 'v1', count: 0, results: [] };
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => mockData,
+      });
+
+      await Promise.all([
+        fetchCurriculumProgrammes(undefined, { skipCache: true } as any),
+        fetchCurriculumProgrammes(undefined, { skipCache: true } as any),
+        fetchCurriculumProgrammes(undefined, { skipCache: true } as any),
+      ]);
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('should not let a skipCache request reuse a GET started before a mutation', async () => {
+      // The in-flight GET predates the write, so its response would be stale.
+      let resolveFirst: (value: unknown) => void = () => {};
+      const firstResponse = new Promise(resolve => { resolveFirst = resolve; });
+      mockFetch.mockReturnValueOnce(firstResponse);
+
+      const stale = fetchCurriculumProgrammes();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      // A mutation lands while the first GET is still in flight.
+      mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ created: true }) });
+      await createCurriculumProgramme({ name: 'Prog A' } as any).catch(() => {});
+
+      // A post-write refresh must go to the network rather than join the stale GET.
+      mockFetch.mockResolvedValue({ ok: true, json: async () => ({ schema: 'v1', count: 0, results: [] }) });
+      const fresh = fetchCurriculumProgrammes(undefined, { skipCache: true } as any);
+
+      resolveFirst({ ok: true, json: async () => ({ schema: 'v1', count: 0, results: [] }) });
+      await Promise.all([stale.catch(() => {}), fresh.catch(() => {})]);
+
+      expect(mockFetch).toHaveBeenCalledTimes(3);
     });
   });
 });

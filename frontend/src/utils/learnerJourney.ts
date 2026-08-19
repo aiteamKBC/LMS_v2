@@ -220,29 +220,55 @@ export function buildKsbProgress(src: KsbProgressSource): KsbProgress[] {
   });
 }
 
+/** Mirrors backend `learner_api/progress_rules.py`: kinds whose row is a graded
+ * attempt, where achievement needs an explicit pass. Everything else records a
+ * completion, so `passed` stays null and the row itself is the achievement. */
+const GRADED_PROGRESS_KINDS = new Set(['quiz']);
+
+/** Does this progress record count as achieved delivery?
+ *
+ * `passed === false` never counts, whatever the kind — a failed attempt with a
+ * valid componentId and valid KSB codes is still a failed attempt. A graded
+ * kind must have passed outright.
+ */
+export function progressCountsAsAchieved(
+  record: { kind?: string | null; passed?: boolean | null } | null | undefined,
+): boolean {
+  if (!record) return false;
+  if (record.passed === false) return false;
+  if (GRADED_PROGRESS_KINDS.has(String(record.kind || '').trim().toLowerCase())) {
+    return record.passed === true;
+  }
+  return true;
+}
+
 /** Component ids the learner has finished, de-duplicated across every
- * completion source (a re-watch or retake must not count twice). */
+ * completion source (a re-watch or retake must not count twice). A failed
+ * attempt is excluded: it is history, not a completion. */
 export function completedComponentIds(real: {
-  videoProgress?: { componentId: string }[];
-  componentProgress?: { componentId: string }[];
+  videoProgress?: { componentId: string; kind?: string; passed?: boolean | null }[];
+  componentProgress?: { componentId: string; kind?: string; passed?: boolean | null }[];
 } | null): Set<string> {
   const ids = new Set<string>();
-  for (const v of real?.videoProgress || []) if (v.componentId) ids.add(v.componentId);
-  for (const c of real?.componentProgress || []) if (c.componentId) ids.add(c.componentId);
+  for (const v of real?.videoProgress || []) if (v.componentId && progressCountsAsAchieved(v)) ids.add(v.componentId);
+  for (const c of real?.componentProgress || []) if (c.componentId && progressCountsAsAchieved(c)) ids.add(c.componentId);
   return ids;
 }
 
-/** KSBs backed by a genuine completed learner activity. Failed quizzes are
- * deliberately excluded: some legacy attempts attach an entire KSB profile
- * even when the learner scored zero. Video/component completions remain valid
- * evidence when a curriculum refresh has changed their authored component id.
+/** KSBs backed by a genuine completed learner activity. Failed attempts are
+ * deliberately excluded — some legacy quiz attempts attach an entire KSB
+ * profile even when the learner scored zero, and the same must hold for a
+ * component or video recorded as not passed. Video/component completions remain
+ * valid evidence when a curriculum refresh has changed their authored id.
  */
 export function recordedKsbEvidenceCodes(real: LearnerDetail | null): Set<string> {
   const codes = new Set<string>();
   const records = [
-    ...(real?.quizAttempts || []).filter((attempt) => attempt.passed),
-    ...(real?.videoProgress || []),
-    ...(real?.componentProgress || []),
+    // quizAttempts is the graded bucket by construction — pre-'kind' rows land
+    // there without one, so name the kind rather than relying on the field.
+    ...(real?.quizAttempts || []).filter((attempt) => progressCountsAsAchieved({ kind: 'quiz', passed: attempt.passed })),
+    ...(real?.videoProgress || []).filter((entry) => progressCountsAsAchieved(entry)),
+    ...(real?.componentProgress || []).filter((entry) => progressCountsAsAchieved(entry)),
   ];
   for (const record of records) {
     for (const rawCode of record.ksbs || []) {

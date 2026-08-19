@@ -6,27 +6,19 @@ import { useAuth } from '@/hooks/useAuth';
 import { DatePickerField } from '@/components/feature/DatePickerField';
 import { snapshotOptimizer } from '@/lib/snapshotOptimizer';
 import {
-  attachCurriculumModulesToGroup,
-  archiveCurriculumCohort,
-  archiveCurriculumGroup,
   archiveCurriculumHoliday,
-  createCohortGroup,
-  createCurriculumCohort,
-  createCurriculumGroup,
   createCurriculumHoliday,
   createCurriculumModule,
   createCurriculumProgramme,
   fetchCurriculumCoaches,
-  fetchCurriculumModules,
   fetchCurriculumKsbSets,
+  fetchCurriculumModules,
   fetchCurriculumProgrammeDetail,
   fetchCurriculumStandards,
   fetchCurriculumTutors,
   fetchFreeProgrammeModules,
   saveFreeProgrammeModules,
   saveCurriculumProgrammeTree,
-  updateCurriculumCohort,
-  updateCurriculumGroup,
   updateCurriculumHoliday,
   updateCurriculumKsbFramework,
   updateCurriculumModule,
@@ -62,7 +54,6 @@ import {
   loadTeamsMeetingArtifacts,
   MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
-  saveModuleStructure,
   syncTeamsMeetingArtifacts,
   teamsMeetingArtifactContentUrl,
   teamsMeetingArtifactPreviewUrl,
@@ -77,6 +68,8 @@ import {
   type TeamsMeetingOccurrence,
   type TeamsMeetingResult,
 } from '@/pages/curriculum/module-builder/moduleAuthoringData';
+import { ComponentEditor as WeekComponentEditor } from '@/pages/curriculum/shared/components/weekAuthoringLazy';
+import type { GroupOption, WeekScope } from '@/pages/curriculum/shared/components/weekAuthoring';
 import { closeCurriculumLoading, showCurriculumAlert, showCurriculumConfirm, showCurriculumLoading } from '@/components/feature/CurriculumSweetAlert';
 
 type WizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'review';
@@ -85,7 +78,7 @@ type SaveIntent = 'draft' | 'final';
 type ProgrammeStructureType = 'scheduled' | 'free';
 
 const MODULE_BUILDER_SYNC_CHANNEL = 'kbc-module-builder-sync';
-const DEFAULT_TEAMS_ORGANIZER_EMAIL = 'Khaled.Ashraf@kentbusinesscollege.net';
+const DEFAULT_TEAMS_ORGANIZER_EMAIL = 'Khaled.Ashraf@kentbusinesscollege.com';
 const DEFAULT_TEAMS_PRESENTERS = ['Ahmed.Lotfi@kentbusinesscollege.com'];
 const DEFAULT_TEAMS_ATTENDEES = ['engagement@kentbusinesscollege.com', 'Mahmoud.Fouda@kentbusinesscollege.com'];
 const RECORDING_TRACKER_BROWSER_SESSION_KEY = 'kbc.recording-tracker.browser-session';
@@ -140,6 +133,15 @@ interface ModuleDraft {
   extensionDays: number;
   teamsMeeting?: TeamsMeetingDraft;
 }
+
+type WizardKsbOption = {
+  id: string;
+  code: string;
+  description: string;
+  title?: string;
+  type?: string;
+};
+type WizardKsbWeightClass = 'hard' | 'soft' | 'possible';
 
 interface TeamsMeetingDraft {
   liveSessionId: string;
@@ -396,6 +398,28 @@ function wizardKsbSourceId(profile: CurriculumKsbSet) {
   return String(profile.frameworkId || profile.ksbProfileId || profile.profileId || profile.programmeId || profile.standard || profile.programmeName || '');
 }
 
+function programmeKsbSourceStorageValue(value: string) {
+  if (value.startsWith('profile:')) return value.slice('profile:'.length);
+  return value;
+}
+
+function wizardKsbSourceValueFromStored(
+  value: unknown,
+  profileOptions: Array<{ profile: CurriculumKsbSet; id: string }>,
+  standardOptions: CurriculumStandard[],
+) {
+  const stored = String(value || '').trim();
+  if (!stored) return '';
+  if (stored.startsWith('profile:') || stored.startsWith('standard:')) return stored;
+  if (profileOptions.some(item => normalise(item.id) === normalise(stored))) return `profile:${stored}`;
+  const matchingStandard = standardOptions.find(standard => (
+    normalise(standard.id) === normalise(stored)
+    || normalise(standard.standardRef) === normalise(stored)
+    || normalise(standard.name) === normalise(stored)
+  ));
+  return matchingStandard ? `standard:${matchingStandard.id}` : stored;
+}
+
 function wizardKsbSetCountsLabel(profile: CurriculumKsbSet) {
   const counts = profile.ksbs.reduce((total, item) => {
     const type = String(item.type || '').toLowerCase();
@@ -536,16 +560,6 @@ function buildHolidayAdjustedCohortPlan(startDate: string, durationMonths: numbe
   }
 
   return { baseEndDate, adjustedEndDate, extensionDays };
-}
-
-function getNextGroupDeliveryDate(startDate: string, groupDay: string) {
-  const start = dateFromInput(startDate);
-  const targetDay = weekdayIndexes[groupDay];
-  if (!start || targetDay === undefined) return '';
-  const offset = (targetDay - start.getDay() + 7) % 7;
-  const next = new Date(start);
-  next.setDate(start.getDate() + offset);
-  return toDateInput(next);
 }
 
 function parseDeliveryDays(value: string | string[]) {
@@ -904,22 +918,38 @@ function mergeCurriculumModule(existing: CurriculumModule | undefined, next: Cur
   const nextComponentCount = curriculumModuleComponentCount(next);
   const richer = nextComponentCount >= existingComponentCount ? next : existing;
   const other = richer === next ? existing : next;
+  const scheduled = moduleHasDeliveryContext(next) ? next : moduleHasDeliveryContext(existing) ? existing : richer;
+  const unscheduled = scheduled === next ? existing : next;
   return {
     ...other,
     ...richer,
-    programme: richer.programme && richer.programme !== 'Unassigned' ? richer.programme : other.programme,
-    cohort: richer.cohort || other.cohort,
-    group: richer.group || other.group,
-    startDate: richer.startDate || other.startDate,
-    endDate: richer.endDate || other.endDate,
-    tutor: staffAssignment(richer.tutor, other.tutor),
-    coach: staffAssignment(richer.coach, other.coach),
+    programmeId: scheduled.programmeId || unscheduled.programmeId,
+    programme: scheduled.programme && scheduled.programme !== 'Unassigned' ? scheduled.programme : unscheduled.programme,
+    cohortId: scheduled.cohortId || unscheduled.cohortId,
+    cohort: scheduled.cohort || unscheduled.cohort,
+    groupId: scheduled.groupId || unscheduled.groupId,
+    group: scheduled.group || unscheduled.group,
+    startDate: scheduled.startDate || unscheduled.startDate,
+    endDate: scheduled.endDate || unscheduled.endDate,
+    sessionsNumber: scheduled.sessionsNumber || scheduled.weeks || unscheduled.sessionsNumber,
+    tutor: staffAssignment(scheduled.tutor, unscheduled.tutor),
+    coach: staffAssignment(scheduled.coach, unscheduled.coach),
     notes: userFacingNotes(richer.notes) || userFacingNotes(other.notes),
     weekStructure: richer.weekStructure?.length ? richer.weekStructure : other.weekStructure,
     lessons: Math.max(Number(existing.lessons) || 0, Number(next.lessons) || 0),
     quizzes: Math.max(Number(existing.quizzes) || 0, Number(next.quizzes) || 0),
     assignments: Math.max(Number(existing.assignments) || 0, Number(next.assignments) || 0),
   };
+}
+
+function moduleHasDeliveryContext(module: CurriculumModule) {
+  return Boolean(
+    String(module.groupId || module.group || '').trim()
+    || String(module.cohortId || module.cohort || '').trim()
+    || String(module.startDate || module.endDate || '').trim()
+    || Number(module.sessionsNumber || 0) > 0
+    || staffAssignment(module.tutor),
+  );
 }
 
 function moduleBuilderDraftToCurriculumModule(module: ModuleCatalogueItem): CurriculumModule {
@@ -1049,12 +1079,10 @@ function moduleBuilderStructureSessionCount(structure: ModuleCatalogueItem, fall
   return Math.max(0, Math.round(Number(structure.sessionsNumber) || Number(structure.weeks) || fallback));
 }
 
-function moduleBuilderStructureComponentCount(structure: ModuleCatalogueItem) {
-  return structure.weekStructure.reduce((total, week) => total + (week.components || []).length, 0);
-}
-
-function moduleDraftComponentCount(draft: Pick<ModuleDraft, 'weeks'>) {
-  return draft.weeks.reduce((total, week) => total + week.components.length, 0);
+function deliverySessionCountForBuilderSync(draft: ModuleDraft, structure: ModuleCatalogueItem, fallbackModule?: CurriculumModule) {
+  const plannedCount = moduleDraftSessionCount(draft, fallbackModule);
+  if (plannedCount > 0) return plannedCount;
+  return moduleBuilderStructureSessionCount(structure, 1);
 }
 
 function curriculumModuleComponentCount(module: CurriculumModule) {
@@ -1340,13 +1368,13 @@ function moduleBelongsToGroup(module: CurriculumModule, group: CurriculumGroup, 
 
 function uniqueModulesByName(modules: CurriculumModule[]) {
   const preferred = [...modules].sort((left, right) => curriculumModuleComponentCount(right) - curriculumModuleComponentCount(left));
-  const seen = new Set<string>();
-  return preferred.filter(module => {
-    const key = normalise(module.name || moduleOptionId(module));
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
+  const byKey = new Map<string, CurriculumModule>();
+  preferred.forEach(module => {
+    const key = normalise(moduleOptionId(module) || module.name);
+    if (!key) return;
+    byKey.set(key, mergeCurriculumModule(byKey.get(key), module));
   });
+  return Array.from(byKey.values());
 }
 
 function uniqueGroupsByIdentity(groups: CurriculumGroup[]) {
@@ -1420,7 +1448,169 @@ function ksbCodesToMappings(codes: unknown[] = [], sourceId = ''): ModuleCompone
     type: 'secondary',
     classification: 'secondary',
     weight: 20,
+    weightClass: 'soft',
   }));
+}
+
+const WIZARD_KSB_WEIGHT_DEFAULTS: Record<WizardKsbWeightClass, number> = {
+  hard: 50,
+  soft: 30,
+  possible: 20,
+};
+
+function wizardKsbWeightClass(value: unknown): WizardKsbWeightClass {
+  const normalised = String(value || '').trim().toLowerCase();
+  if (normalised === 'hard' || normalised === 'soft' || normalised === 'possible') return normalised;
+  return 'hard';
+}
+
+function wizardKsbWeightForClass(value: unknown) {
+  return WIZARD_KSB_WEIGHT_DEFAULTS[wizardKsbWeightClass(value)];
+}
+
+function clampWizardKsbWeight(value: unknown, fallbackClass: WizardKsbWeightClass = 'hard') {
+  const numeric = Math.round(Number(value));
+  if (!Number.isFinite(numeric) || numeric <= 0) return wizardKsbWeightForClass(fallbackClass);
+  return Math.max(1, Math.min(100, numeric));
+}
+
+function wizardKsbKind(code?: string, type?: string) {
+  const typeText = String(type || '').trim().toLowerCase();
+  const codePrefix = String(code || '').trim().toUpperCase().slice(0, 1);
+  if (typeText.startsWith('knowledge') || codePrefix === 'K') return 'K';
+  if (typeText.startsWith('skill') || codePrefix === 'S') return 'S';
+  if (typeText.startsWith('behaviour') || typeText.startsWith('behavior') || codePrefix === 'B') return 'B';
+  return '?';
+}
+
+function wizardKsbTone(code?: string, type?: string) {
+  const kind = wizardKsbKind(code, type);
+  if (kind === 'K') {
+    return {
+      kind,
+      label: 'Knowledge',
+      icon: 'ri-book-open-line',
+      row: 'border-primary-100 border-l-primary-500 bg-primary-50/35 hover:bg-primary-50',
+      selectedRow: 'border-primary-300 border-l-primary-600 bg-primary-50 ring-1 ring-primary-100',
+      mappedRow: 'border-primary-300 border-l-primary-600 bg-primary-50 ring-1 ring-primary-100',
+      iconClass: 'bg-primary-100 text-primary-700',
+      badgeClass: 'bg-primary-100 text-primary-700',
+      status: 'bg-primary-100 text-primary-700',
+      weightClass: 'bg-primary-50 text-primary-700',
+      chipClass: 'border-primary-100 bg-primary-50 text-primary-700',
+    };
+  }
+  if (kind === 'S') {
+    return {
+      kind,
+      label: 'Skill',
+      icon: 'ri-tools-line',
+      row: 'border-amber-100 border-l-amber-500 bg-amber-50/35 hover:bg-amber-50',
+      selectedRow: 'border-amber-300 border-l-amber-600 bg-amber-50 ring-1 ring-amber-100',
+      mappedRow: 'border-amber-300 border-l-amber-600 bg-amber-50 ring-1 ring-amber-100',
+      iconClass: 'bg-amber-100 text-amber-700',
+      badgeClass: 'bg-amber-100 text-amber-700',
+      status: 'bg-amber-100 text-amber-700',
+      weightClass: 'bg-amber-50 text-amber-700',
+      chipClass: 'border-amber-100 bg-amber-50 text-amber-700',
+    };
+  }
+  if (kind === 'B') {
+    return {
+      kind,
+      label: 'Behaviour',
+      icon: 'ri-user-heart-line',
+      row: 'border-emerald-100 border-l-emerald-500 bg-emerald-50/35 hover:bg-emerald-50',
+      selectedRow: 'border-emerald-300 border-l-emerald-600 bg-emerald-50 ring-1 ring-emerald-100',
+      mappedRow: 'border-emerald-300 border-l-emerald-600 bg-emerald-50 ring-1 ring-emerald-100',
+      iconClass: 'bg-emerald-100 text-emerald-700',
+      badgeClass: 'bg-emerald-100 text-emerald-700',
+      status: 'bg-emerald-100 text-emerald-700',
+      weightClass: 'bg-emerald-50 text-emerald-700',
+      chipClass: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+    };
+  }
+  return {
+    kind,
+    label: 'KSB',
+    icon: 'ri-node-tree',
+    row: 'border-slate-100 border-l-slate-500 bg-slate-50/35 hover:bg-slate-50',
+    selectedRow: 'border-slate-300 border-l-slate-600 bg-slate-50 ring-1 ring-slate-100',
+    mappedRow: 'border-slate-300 border-l-slate-600 bg-slate-50 ring-1 ring-slate-100',
+    iconClass: 'bg-slate-100 text-slate-600',
+    badgeClass: 'bg-slate-100 text-slate-600',
+    status: 'bg-slate-100 text-slate-600',
+    weightClass: 'bg-slate-50 text-slate-600',
+    chipClass: 'border-slate-100 bg-slate-50 text-slate-700',
+  };
+}
+
+function wizardKsbOptionTitle(option: WizardKsbOption) {
+  const title = String(option.title || '').trim();
+  const description = String(option.description || '').trim();
+  const code = String(option.code || option.id || '').trim();
+  if (!title) return '';
+  if (normalise(title) === normalise(description) || normalise(title) === normalise(code)) return '';
+  if (['knowledge', 'skill', 'skills', 'behaviour', 'behaviours', 'behavior', 'behaviors'].includes(title.toLowerCase())) return '';
+  return title;
+}
+
+function wizardKsbOptionDescription(option: WizardKsbOption, displayTitle = wizardKsbOptionTitle(option)) {
+  const description = String(option.description || '').trim();
+  if (!description || normalise(description) === normalise(displayTitle)) return '';
+  return description;
+}
+
+function wizardKsbOptionsFromSource(profile?: CurriculumKsbSet, standard?: CurriculumStandard): WizardKsbOption[] {
+  const rawItems = profile?.ksbs?.length
+    ? profile.ksbs.map(item => ({
+        id: String(item.id || item.code),
+        code: String(item.code || item.id || ''),
+        title: item.title,
+        description: item.description || item.title || '',
+        type: item.type,
+      }))
+    : (standard?.ksbs || standard?.sampleKsbs || []).map(item => ({
+        id: String(item.id || item.code),
+        code: String(item.code || item.id || ''),
+        title: item.description,
+        description: item.description || '',
+        type: item.type,
+      }));
+  const seen = new Set<string>();
+  return rawItems.filter(item => {
+    const key = normalise(item.code || item.id);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function ksbSourceParts(sourceValue = '') {
+  const [kind, ...idParts] = sourceValue.split(':');
+  const sourceId = idParts.join(':') || sourceValue;
+  return {
+    sourceType: kind === 'standard' ? 'standard' : sourceId ? 'framework' : '',
+    sourceId,
+  };
+}
+
+function ksbMappingFromOption(option: WizardKsbOption, sourceValue: string, index: number, weightClass: WizardKsbWeightClass = 'hard', weight = wizardKsbWeightForClass(weightClass)): ModuleComponent['ksbMappings'][number] {
+  const source = ksbSourceParts(sourceValue);
+  const normalisedWeightClass = wizardKsbWeightClass(weightClass);
+  return {
+    id: `wizard-ksb-${slugify(source.sourceId || 'source')}-${slugify(option.code || option.id)}-${index}`,
+    ksbId: option.id || option.code,
+    code: option.code,
+    description: option.description || option.title || '',
+    sourceType: source.sourceType,
+    sourceId: source.sourceId,
+    type: 'secondary',
+    classification: 'secondary',
+    weight: clampWizardKsbWeight(weight, normalisedWeightClass),
+    weightClass: normalisedWeightClass,
+    weight_class: normalisedWeightClass,
+  };
 }
 
 function moduleKsbMappingsFromCurriculumModule(module: CurriculumModule): ModuleComponent['ksbMappings'] {
@@ -1719,16 +1909,26 @@ function buildExistingProgrammeDrafts(
     .sort((left, right) => Number(right.sourceId === initialCohortId) - Number(left.sourceId === initialCohortId));
 }
 
-function emptyModuleDraft(groupDay = '', groupTime = '09:30', activeHolidays: CurriculumHoliday[] = []): ModuleDraft {
+// A module can never begin before its cohort - the wizard rejects it and the date
+// input sets `min` to the cohort start - so a cohort starting in the future has to
+// win over "today", otherwise every new module defaults to an invalid date.
+function defaultModuleStartDate(cohortStartDate?: string) {
+  const today = todayIso();
+  const cohortStart = String(cohortStartDate || '').trim();
+  if (!cohortStart) return today;
+  return compareDateInputs(today, cohortStart) < 0 ? cohortStart : today;
+}
+
+function emptyModuleDraft(groupDay = '', groupTime = '09:30', activeHolidays: CurriculumHoliday[] = [], startDate = todayIso()): ModuleDraft {
   const localId = `module-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const plan = buildHolidayAdjustedSessionPlan(todayIso(), 0, groupDay, groupTime, activeHolidays);
+  const plan = buildHolidayAdjustedSessionPlan(startDate, 0, groupDay, groupTime, activeHolidays);
   return {
     localId,
     mode: 'new',
     catalogueId: '',
     name: '',
     color: '#2563eb',
-    startDate: todayIso(),
+    startDate,
     endDate: plan.adjustedEndDate,
     sessionsNumber: '0',
     coach: '',
@@ -1943,14 +2143,6 @@ function programmeActualComponentHours(cohorts: CohortDraft[], freeMode = false)
   return cohorts.reduce((total, cohort) => total + cohortActualComponentHours(cohort, freeMode), 0);
 }
 
-function moduleDraftAuthoredHours(draft: ModuleDraft, moduleOptions: CurriculumModule[]) {
-  const authoredTotal = componentTotalHours(moduleDraftDisplayableComponents(draft));
-  if (authoredTotal > 0) return authoredTotal;
-  const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
-  const moduleTotals = selectedModule as (CurriculumModule & { declaredTotalOtjh?: number; totalOtjh?: number }) | undefined;
-  return Math.max(0, Number(moduleTotals?.declaredTotalOtjh || moduleTotals?.totalOtjh || 0) || 0);
-}
-
 function groupSessionDurationHours(group: Pick<GroupDraft, 'startTime' | 'endTime'>) {
   const [startHour, startMinute] = String(group.startTime || '').split(':').map(Number);
   const [endHour, endMinute] = String(group.endTime || addHoursToTime(group.startTime, 2)).split(':').map(Number);
@@ -1959,28 +2151,6 @@ function groupSessionDurationHours(group: Pick<GroupDraft, 'startTime' | 'endTim
   const endTotal = endHour * 60 + endMinute;
   const durationMinutes = endTotal >= startTotal ? endTotal - startTotal : endTotal + 1440 - startTotal;
   return Math.max(0, durationMinutes / 60);
-}
-
-function moduleDraftScheduledHours(draft: ModuleDraft, group: Pick<GroupDraft, 'startTime' | 'endTime'>, moduleOptions: CurriculumModule[]) {
-  const selectedModule = draft.mode === 'existing' ? findModuleOption(moduleOptions, draft.catalogueId) : undefined;
-  return moduleDraftSessionCount(draft, selectedModule) * groupSessionDurationHours(group);
-}
-
-function moduleDraftTotalHours(draft: ModuleDraft, group: Pick<GroupDraft, 'startTime' | 'endTime'>, moduleOptions: CurriculumModule[]) {
-  const authoredHours = moduleDraftAuthoredHours(draft, moduleOptions);
-  return authoredHours > 0 ? authoredHours : moduleDraftScheduledHours(draft, group, moduleOptions);
-}
-
-function groupTotalHours(group: GroupDraft, moduleOptions: CurriculumModule[]) {
-  return group.modules.filter(isConfiguredModule).reduce((total, draft) => total + moduleDraftTotalHours(draft, group, moduleOptions), 0);
-}
-
-function cohortTotalHours(cohort: CohortDraft, moduleOptions: CurriculumModule[]) {
-  return cohort.groups.filter(isConfiguredGroup).reduce((total, group) => total + groupTotalHours(group, moduleOptions), 0);
-}
-
-function programmeTotalHours(cohorts: CohortDraft[], moduleOptions: CurriculumModule[]) {
-  return cohorts.reduce((total, cohort) => total + cohortTotalHours(cohort, moduleOptions), 0);
 }
 
 function moduleDraftDisplayName(draft: ModuleDraft, index: number, moduleOptions: CurriculumModule[]) {
@@ -2270,8 +2440,8 @@ function moduleModeSwitchPatch(draft: ModuleDraft, nextMode: ModuleMode): Partia
   };
 }
 
-function freshNewModulePatch(draft: ModuleDraft, groupDay: string, groupTime: string): Partial<ModuleDraft> {
-  const fresh = emptyModuleDraft(groupDay, groupTime, []);
+function freshNewModulePatch(draft: ModuleDraft, groupDay: string, groupTime: string, cohortStartDate?: string): Partial<ModuleDraft> {
+  const fresh = emptyModuleDraft(groupDay, groupTime, [], defaultModuleStartDate(cohortStartDate));
   return {
     ...fresh,
     localId: draft.localId,
@@ -2317,6 +2487,7 @@ function moduleBuilderUrlForDraft(
     params.set('ksbProfileSourceId', ksbSourceId);
   }
   if (ksbSourceLabel) params.set('ksbSourceLabel', ksbSourceLabel);
+  params.set('programmeStatus', 'draft');
   params.set('cohortId', cohort?.sourceId || cohort?.localId || '');
   params.set('cohortName', cohort ? cohortDisplayName(cohort) : '');
   params.set('groupId', group?.sourceId || group?.localId || '');
@@ -2384,48 +2555,34 @@ function validationGroupLabel(group: GroupDraft, index: number) {
   return name ? `Group ${index + 1} (${name})` : `Group ${index + 1}`;
 }
 
-function isCurriculumNotFoundError(err: unknown) {
-  return err instanceof Error && /\b404\b/.test(err.message);
-}
+// Escape must close only the topmost panel: the wizard shell and every portal it
+// renders share this stack, and the layer that registered last is the one that
+// answers the key. Registration order alone cannot decide it, because nested panels
+// mount long after the shell.
+const wizardEscapeLayers: object[] = [];
 
-// Existing vs new is decided solely by the presence of a stored canonical
-// sourceId (PROG-/COHORT-/GROUP-/MOD-...). An existing entity is PATCHed and
-// never silently recreated as a POST: if the canonical id cannot be found the
-// save fails loudly so a rename can never fork into a duplicate row.
-async function saveCurriculumCohort(sourceId: string | undefined, payload: CurriculumCohortInput) {
-  if (!sourceId) return createCurriculumCohort(payload);
-  try {
-    return await updateCurriculumCohort(sourceId, payload);
-  } catch (err) {
-    if (isCurriculumNotFoundError(err)) {
-      throw new Error(
-        `Cohort "${payload.name || sourceId}" could not be found (${sourceId}). ` +
-        'It may have been deleted in another session. Reload the curriculum and try again — ' +
-        'the rename was not saved and no duplicate was created.',
-      );
-    }
-    throw err;
-  }
-}
-
-async function saveCurriculumGroup(sourceId: string | undefined, payload: CurriculumGroupInput) {
-  if (!sourceId && payload.cohortId) {
-    const { cohortId, ...groupInput } = payload;
-    return createCohortGroup(cohortId, groupInput);
-  }
-  if (!sourceId) return createCurriculumGroup(payload);
-  try {
-    return await updateCurriculumGroup(sourceId, payload);
-  } catch (err) {
-    if (isCurriculumNotFoundError(err)) {
-      throw new Error(
-        `Group "${payload.name || sourceId}" could not be found (${sourceId}). ` +
-        'It may have been deleted in another session. Reload the curriculum and try again — ' +
-        'the rename was not saved and no duplicate was created.',
-      );
-    }
-    throw err;
-  }
+function useWizardEscapeLayer(active: boolean, onEscape: () => void) {
+  const escapeHandlerRef = useRef(onEscape);
+  escapeHandlerRef.current = onEscape;
+  useEffect(() => {
+    if (!active) return;
+    const layer = {};
+    wizardEscapeLayers.push(layer);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      if (wizardEscapeLayers[wizardEscapeLayers.length - 1] !== layer) return;
+      event.preventDefault();
+      escapeHandlerRef.current();
+    };
+    // Capture phase so the key is handled before it reaches a focused field's own
+    // Escape behaviour (native date pickers, comboboxes).
+    document.addEventListener('keydown', handleEscape, true);
+    return () => {
+      document.removeEventListener('keydown', handleEscape, true);
+      const index = wizardEscapeLayers.indexOf(layer);
+      if (index >= 0) wizardEscapeLayers.splice(index, 1);
+    };
+  }, [active]);
 }
 
 function showWizardSwalToast(title: string, text: string, icon: 'success' | 'error' | 'info' = 'success') {
@@ -2508,26 +2665,32 @@ function reconcileModuleDraft(draft: ModuleDraft, groupDay: string, groupTime: s
 function applyModuleBuilderContent(draft: ModuleDraft, structure: ModuleCatalogueItem, groupDay: string, groupTime: string, activeHolidays: CurriculumHoliday[]) {
   const structureTutor = staffAssignment(structure.tutor, structure.deliveryMetadata?.tutor, structure.sourceModule?.tutor);
   const structureCoach = staffAssignment(structure.coach, structure.deliveryMetadata?.coach, structure.sourceModule?.coach);
-  const sessionsNumber = String(moduleBuilderStructureSessionCount(structure, moduleDraftSessionCount(draft)));
+  const sessionsNumber = Number(draft.sessionsNumber) > 0
+    ? String(draft.sessionsNumber)
+    : String(moduleBuilderStructureSessionCount(structure, moduleDraftSessionCount(draft)));
   const structureMeeting = teamsMeetingFromModule(structure, draft.localId);
   const next = reconcileModuleDraft({ ...draft, sessionsNumber, teamsMeeting: draft.teamsMeeting || structureMeeting }, groupDay, groupTime, activeHolidays);
   const teamsSettings = next.teamsMeeting ? teamsComponentSettings(next.teamsMeeting, next) : null;
   return {
     ...next,
     sessionsNumber,
+    endDate: draft.endDate || next.endDate,
     moduleKsbMappings: structure.moduleKsbMappings || next.moduleKsbMappings || [],
     tutor: staffAssignment(next.tutor, structureTutor),
     coach: staffAssignment(next.coach, structureCoach),
     notes: userFacingNotes(next.notes),
     weeks: next.weeks.map((week, index) => {
       const sourceWeek = structure.weekStructure[index];
+      const sourceComponents = sourceWeek?.components || [];
       return {
         ...week,
         title: sourceWeek?.title || week.title,
         ksbMappings: sourceWeek?.ksbMappings || [],
-        components: (sourceWeek?.components || []).map(component => ({
+        components: (sourceComponents.length ? sourceComponents : week.components).map(component => {
+          const componentId = String(component.id || component.sourceId || '');
+          return {
           ...component,
-          id: `${week.id}-${component.id}`,
+          id: componentId.startsWith(`${week.id}-`) ? componentId : `${week.id}-${componentId || component.type}`,
           weekId: week.id,
           settings: component.type === 'live-session' && teamsSettings
             ? {
@@ -2538,7 +2701,8 @@ function applyModuleBuilderContent(draft: ModuleDraft, structure: ModuleCatalogu
                 sessionDateTimeUtc: new Date(`${week.date}T${week.startTime || groupTime || '09:30'}`).toISOString(),
               }
             : stripImportedTeamsSettings(component.settings),
-        })),
+        };
+        }),
       };
     }),
   };
@@ -2557,59 +2721,100 @@ function freeComponentContainerWeek(draft: ModuleDraft): WeekDraft {
   };
 }
 
-function addFreeComponentToDraft(draft: ModuleDraft, type: ModuleComponentType) {
-  const week = freeComponentContainerWeek(draft);
+function componentContainerWeek(draft: ModuleDraft, freeMode: boolean, weekId?: string): WeekDraft {
+  if (freeMode) return freeComponentContainerWeek(draft);
+  return draft.weeks.find(week => week.id === weekId) || draft.weeks[0] || freeComponentContainerWeek(draft);
+}
+
+function addComponentToDraft(draft: ModuleDraft, type: ModuleComponentType, options: { freeMode: boolean; weekId?: string }) {
+  const week = componentContainerWeek(draft, options.freeMode, options.weekId);
   const component = createEmptyComponent(week.id, type, week.components.length + 1);
+  if (options.freeMode) {
+    return {
+      ...draft,
+      sessionsNumber: '1',
+      weeks: [{ ...week, components: [...week.components, component] }],
+    };
+  }
+  const weeks = draft.weeks.length ? draft.weeks : [week];
   return {
     ...draft,
-    sessionsNumber: '1',
-    weeks: [{ ...week, components: [...week.components, component] }],
+    weeks: weeks.map(item => (
+      item.id === week.id ? { ...item, components: [...item.components, component] } : item
+    )),
   };
 }
 
-function updateFreeComponentInDraft(draft: ModuleDraft, componentId: string, patch: Partial<ModuleComponent>) {
-  const week = freeComponentContainerWeek(draft);
+function updateComponentInDraft(draft: ModuleDraft, componentId: string, patch: Partial<ModuleComponent>, freeMode: boolean) {
+  if (freeMode) {
+    const week = freeComponentContainerWeek(draft);
+    return {
+      ...draft,
+      weeks: [{
+        ...week,
+        components: week.components.map(component => (
+          component.id === componentId ? { ...component, ...patch, weekId: week.id } : component
+        )),
+      }],
+    };
+  }
   return {
     ...draft,
-    weeks: [{
+    weeks: draft.weeks.map(week => ({
       ...week,
       components: week.components.map(component => (
         component.id === componentId ? { ...component, ...patch, weekId: week.id } : component
       )),
-    }],
+    })),
   };
 }
 
-function removeFreeComponentFromDraft(draft: ModuleDraft, componentId: string) {
-  const week = freeComponentContainerWeek(draft);
+function removeComponentFromDraft(draft: ModuleDraft, componentId: string, freeMode: boolean) {
+  if (freeMode) {
+    const week = freeComponentContainerWeek(draft);
+    return {
+      ...draft,
+      weeks: [{ ...week, components: week.components.filter(component => component.id !== componentId) }],
+    };
+  }
   return {
     ...draft,
-    weeks: [{ ...week, components: week.components.filter(component => component.id !== componentId) }],
+    weeks: draft.weeks.map(week => ({
+      ...week,
+      components: week.components.filter(component => component.id !== componentId),
+    })),
   };
 }
 
-function reorderFreeComponentInDraft(draft: ModuleDraft, sourceComponentId: string, targetComponentId: string) {
+function reorderComponentInDraft(draft: ModuleDraft, sourceComponentId: string, targetComponentId: string, freeMode: boolean) {
   if (sourceComponentId === targetComponentId) return draft;
-  const week = freeComponentContainerWeek(draft);
+  const week = freeMode
+    ? freeComponentContainerWeek(draft)
+    : draft.weeks.find(item => item.components.some(component => component.id === sourceComponentId || component.id === targetComponentId));
+  if (!week) return draft;
   const sourceIndex = week.components.findIndex(component => component.id === sourceComponentId);
   const targetIndex = week.components.findIndex(component => component.id === targetComponentId);
   if (sourceIndex < 0 || targetIndex < 0) return draft;
   const components = [...week.components];
   const [moved] = components.splice(sourceIndex, 1);
   components.splice(targetIndex, 0, moved);
+  if (freeMode) return { ...draft, weeks: [{ ...week, components }] };
   return {
     ...draft,
-    weeks: [{ ...week, components }],
+    weeks: draft.weeks.map(item => item.id === week.id ? { ...item, components } : item),
   };
 }
 
 function freeProgrammeModuleInput(draft: ModuleDraft, moduleId: string, moduleName: string): FreeProgrammeModuleInput {
+  const firstWeek = draft.weeks[0];
   return {
     id: moduleId,
+    weekId: firstWeek?.id,
+    weekNumber: firstWeek?.sessionNumber || 1,
+    weekTitle: firstWeek?.title || 'Components',
+    courseName: moduleName,
     title: moduleName,
     description: userFacingNotes(draft.notes),
-    status: 'draft',
-    color: draft.color,
     components: draft.weeks.flatMap(week => week.components).map((component, componentIndex) => ({
       id: component.sourceId || component.id,
       displayOrder: componentIndex,
@@ -2621,6 +2826,8 @@ function freeProgrammeModuleInput(draft: ModuleDraft, moduleId: string, moduleNa
       reflectionRequired: component.reflectionRequired,
       workplaceEvidenceRequired: false,
       tutorValidationRequired: component.tutorValidationRequired,
+      weekId: component.weekId || firstWeek?.id,
+      ksbMappings: component.ksbMappings || [],
       settings: component.settings,
     })),
   };
@@ -2683,7 +2890,7 @@ function moduleDraftAuthoringPayload(
     summary: current?.weekStructure?.[weekIndex]?.summary || '',
     learningOutcomes: current?.weekStructure?.[weekIndex]?.learningOutcomes || [],
     ksbMappings: week.ksbMappings || current?.weekStructure?.[weekIndex]?.ksbMappings || [],
-    components: week.components.map((component, componentIndex) => ({
+    components: (week.components.length ? week.components : current?.weekStructure?.[weekIndex]?.components || []).map((component, componentIndex) => ({
       ...component,
       id: component.sourceId || component.id,
       moduleId,
@@ -2775,15 +2982,15 @@ function freeProgrammeModulesToDrafts(modules: FreeProgrammeModule[], programmeN
   const group = cohort.groups[0] || emptyGroupDraft();
   const moduleDrafts = modules.map((module, moduleIndex): ModuleDraft => {
     const localId = module.id ? `${module.id}-${moduleIndex + 1}` : `free-module-${moduleIndex + 1}`;
-    const weekId = `${localId}-components`;
+    const weekId = module.weekId || `${localId}-components`;
     return {
       ...emptyModuleDraft(),
       localId,
       sourceId: module.id,
       mode: 'new',
       catalogueId: '',
-      name: module.title || `Free module ${moduleIndex + 1}`,
-      color: module.color || '#7c3aed',
+      name: module.courseName || module.title || `Free module ${moduleIndex + 1}`,
+      color: '#7c3aed',
       startDate: todayIso(),
       endDate: todayIso(),
       sessionsNumber: '1',
@@ -2792,11 +2999,11 @@ function freeProgrammeModulesToDrafts(modules: FreeProgrammeModule[], programmeN
       notes: module.description || '',
       weeks: [{
         id: weekId,
-        sessionNumber: 1,
+        sessionNumber: module.weekNumber || 1,
         date: todayIso(),
         day: 'Self-paced',
         startTime: '09:00',
-        title: 'Components',
+        title: module.weekTitle || 'Components',
         components: [...(module.components || [])]
           .sort((left, right) => Number(left.displayOrder ?? 0) - Number(right.displayOrder ?? 0))
           .map((component, componentIndex): ModuleComponent => ({
@@ -2844,6 +3051,27 @@ export function AddCurriculumStructureWizard({
   startStep = 'programme',
   modulePlacementMode = false,
 }: AddCurriculumStructureWizardProps) {
+  // The parent rebuilds the wizard's inputs (initialProgramme and friends) on
+  // every programme refetch. Left unpinned they re-triggered the open-time reset
+  // and re-ran hydration, wiping in-progress drafts and bouncing the user back to
+  // the first step. Pin them for the lifetime of one open session; they only
+  // refresh while the wizard is closed.
+  const wasOpenRef = useRef(false);
+  const startStepRef = useRef(startStep);
+  const initialProgrammeIdRef = useRef(initialProgrammeId);
+  const initialModuleIdRef = useRef(initialModuleId);
+  const pinnedInitialProgrammeRef = useRef(initialProgramme);
+  if (!isOpen) {
+    startStepRef.current = startStep;
+    initialProgrammeIdRef.current = initialProgrammeId;
+    initialModuleIdRef.current = initialModuleId;
+    pinnedInitialProgrammeRef.current = initialProgramme;
+  }
+  const pinnedStartStep = startStepRef.current;
+  const pinnedInitialProgrammeId = initialProgrammeIdRef.current;
+  const pinnedInitialModuleId = initialModuleIdRef.current;
+  const pinnedInitialProgramme = pinnedInitialProgrammeRef.current;
+
   // Load only programmes and holidays immediately when wizard opens.
   // Modules, staff, and programme detail are lazy-loaded via useCurriculumWizardData
   // based on which step the user reaches, reducing initial payload.
@@ -2853,7 +3081,7 @@ export function AddCurriculumStructureWizard({
     includeHolidays: true,
     refreshModules: false, // disabled: loaded via lazy hook instead
   });
-  const [step, setStep] = useState<WizardStep>(startStep);
+  const [step, setStep] = useState<WizardStep>(pinnedStartStep);
   const [programmeForm, setProgrammeForm] = useState({
     name: '',
     standard: '',
@@ -2871,12 +3099,14 @@ export function AddCurriculumStructureWizard({
   const [programmeDetailLoading, setProgrammeDetailLoading] = useState(false);
   const [programmeDetailFailed, setProgrammeDetailFailed] = useState(false);
   const [chosenProgrammeId, setChosenProgrammeId] = useState('');
+  const [draftProgrammeOverride, setDraftProgrammeOverride] = useState<CurriculumProgramme | null>(null);
+  const [createdDraftProgrammeId, setCreatedDraftProgrammeId] = useState('');
 
   // Lazy-loading hook coordinates step-based data loading
   const wizardLazyData = useCurriculumWizardData({
     isOpen,
     currentStep: step,
-    selectedProgrammeId: chosenProgrammeId || initialProgrammeId,
+    selectedProgrammeId: chosenProgrammeId || pinnedInitialProgrammeId,
   });
 
   const catalogueModules = useMemo(() => {
@@ -2910,6 +3140,10 @@ export function AddCurriculumStructureWizard({
   // catalogue identifier) so a resolved module can never keep spinning.
   const [builderStructureResolvedDraftIds, setBuilderStructureResolvedDraftIds] = useState<Set<string>>(new Set());
   const [builderStructureMissingDraftIds, setBuilderStructureMissingDraftIds] = useState<Set<string>>(new Set());
+  // Ambiguity is terminal and per-draft: no retry or key-variant bookkeeping can
+  // resolve it, only a human relinking the module. So it is keyed on draft id
+  // alone rather than mirrored across the loadKey/draftId set pairs above.
+  const [builderStructureAmbiguousDrafts, setBuilderStructureAmbiguousDrafts] = useState<Map<string, string>>(new Map());
   const [builderStructureEmptyDraftIds, setBuilderStructureEmptyDraftIds] = useState<Set<string>>(new Set());
   const [builderStructureFailedDraftIds, setBuilderStructureFailedDraftIds] = useState<Set<string>>(new Set());
   const hydratedProgrammeRef = useRef('');
@@ -2919,18 +3153,57 @@ export function AddCurriculumStructureWizard({
   const loadingBuilderStructureKeysRef = useRef<Set<string>>(new Set());
   const loadedFreeProgrammeRef = useRef('');
   const openedDraftSnapshotRef = useRef('');
+  const lastDraftAutosaveSnapshotRef = useRef('');
+  const draftAutosaveInFlightSnapshotRef = useRef('');
   const baselineInitializedRef = useRef(false);
   const preHydrationDirtyRef = useRef(false);
   const userEditedWizardRef = useRef(false);
   const focusedInitialModuleRef = useRef('');
+  const stepScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const finishSuccessfulSave = useCallback(async () => {
+    onClose();
+    try {
+      await onSaved?.();
+    } catch (err) {
+      console.warn('Unable to refresh programme cards after saving from the wizard.', err);
+    }
+  }, [onClose, onSaved]);
 
   const programmes = useMemo(() => data?.programmes ?? [], [data?.programmes]);
-  const selectedProgramme = useMemo(
-    () => initialProgramme || programmes.find(programme => (
-      programme.id === (chosenProgrammeId || initialProgrammeId)
-      || programme.sourceId === (chosenProgrammeId || initialProgrammeId)
-    )),
-    [chosenProgrammeId, initialProgramme, initialProgrammeId, programmes],
+  const selectedProgramme = useMemo(() => {
+    const selectedId = chosenProgrammeId || pinnedInitialProgrammeId;
+    const baseProgramme = draftProgrammeOverride || pinnedInitialProgramme;
+    const latestProgramme = programmes.find(programme => {
+      const candidates = uniqueTextValues([
+        selectedId,
+        baseProgramme?.id,
+        baseProgramme?.sourceId,
+        baseProgramme?.name,
+      ]);
+      return candidates.some(candidate => (
+        normalise(programme.id) === normalise(candidate)
+        || normalise(programme.sourceId) === normalise(candidate)
+        || normalise(programme.name) === normalise(candidate)
+      ));
+    });
+    if (!baseProgramme) return latestProgramme;
+    if (!latestProgramme) return baseProgramme;
+    return {
+      ...baseProgramme,
+      id: latestProgramme.id || baseProgramme.id,
+      sourceId: latestProgramme.sourceId || baseProgramme.sourceId,
+      ksbProfileSourceId: latestProgramme.ksbProfileSourceId || baseProgramme.ksbProfileSourceId,
+      status: latestProgramme.status || baseProgramme.status,
+    };
+  }, [chosenProgrammeId, draftProgrammeOverride, pinnedInitialProgramme, pinnedInitialProgrammeId, programmes]);
+  const completingNewDraftProgramme = Boolean(
+    createdDraftProgrammeId
+    && selectedProgramme
+    && (
+      selectedProgramme.id === createdDraftProgrammeId
+      || selectedProgramme.sourceId === createdDraftProgrammeId
+    ),
   );
   const ksbProfileOptions = useMemo(() => (
     ksbSets
@@ -2955,9 +3228,13 @@ export function AddCurriculumStructureWizard({
   }, [ksbSourceValue, standardOptions]);
   const selectedKsbSourceLabel = useMemo(() => {
     if (selectedKsbProfile) return selectedKsbProfile.standard || selectedKsbProfile.programmeName || 'KSB profile';
-    if (selectedKsbStandard) return selectedKsbStandard.name || selectedKsbStandard.standardRef || selectedKsbStandard.code || 'KSB source';
+    if (selectedKsbStandard) return selectedKsbStandard.name || selectedKsbStandard.standardRef || selectedKsbStandard.code || 'KSB standard';
     return '';
   }, [selectedKsbProfile, selectedKsbStandard]);
+  const selectedKsbOptions = useMemo(
+    () => wizardKsbOptionsFromSource(selectedKsbProfile, selectedKsbStandard),
+    [selectedKsbProfile, selectedKsbStandard],
+  );
   const modules = useMemo(() => {
     const merged = new Map<string, CurriculumModule>();
     catalogueModules.forEach(module => {
@@ -2969,15 +3246,29 @@ export function AddCurriculumStructureWizard({
     });
     return Array.from(merged.values());
   }, [catalogueModules, localBuilderModules]);
+  // "Link Existing Module" must never offer another programme's modules: linking
+  // one would attach content owned elsewhere to this group. Modules that carry no
+  // programme of their own are still offered, because an unassigned catalogue
+  // module is legitimately reusable by any programme.
   const moduleOptions = useMemo(() => {
+    const programmeKeys = uniqueTextValues([
+      selectedProgramme?.sourceId,
+      selectedProgramme?.id,
+      selectedProgramme?.name,
+      programmeForm.name,
+    ]).map(normalise).filter(Boolean);
     return modules.filter(module => {
-      return Boolean(moduleOptionId(module) || String(module.name || '').trim());
+      if (!moduleOptionId(module) && !String(module.name || '').trim()) return false;
+      if (!programmeKeys.length) return true;
+      const moduleProgrammeKeys = [module.programmeId, module.programme].map(normalise).filter(Boolean);
+      if (!moduleProgrammeKeys.length) return true;
+      return moduleProgrammeKeys.some(key => programmeKeys.includes(key));
     });
-  }, [modules]);
+  }, [modules, programmeForm.name, selectedProgramme]);
   const holidays = useMemo(() => data?.holidays ?? [], [data?.holidays]);
   const isFreeProgramme = programmeForm.structureType === 'free' || selectedProgramme?.structureType === 'free';
   const visibleSteps = isFreeProgramme ? steps.filter(item => item.key !== 'cohort' && item.key !== 'group') : steps;
-  const shouldLoadCatalogueModules = isOpen && (step === 'modules' || step === 'weeks' || step === 'review');
+  const shouldLoadCatalogueModules = isOpen && step === 'modules';
   const activeCohort = useMemo(() => cohortDrafts.find(cohort => cohort.localId === activeCohortId) || cohortDrafts[0] || emptyCohortDraft(), [activeCohortId, cohortDrafts]);
   const activeGroup = useMemo(() => activeCohort.groups.find(group => group.localId === activeGroupId) || activeCohort.groups[0] || emptyGroupDraft(), [activeCohort, activeGroupId]);
   const cohortForm = activeCohort;
@@ -3004,8 +3295,11 @@ export function AddCurriculumStructureWizard({
     // A resolved draft is never "loading" again, even if applyModuleBuilderContent
     // rewrote its catalogueId into an identifier the request never registered.
     if (builderStructureResolvedDraftIds.has(draft.localId)) return false;
+    // Ambiguity is terminal: no further load will resolve it, so the spinner must
+    // stop and give way to the relink prompt.
+    if (builderStructureAmbiguousDrafts.has(draft.localId)) return false;
     return builderStructureLoadingKeys.has(loadKey) || !loadedBuilderStructureKeysRef.current.has(loadKey);
-  }, [builderStructureEmptyKeys, builderStructureFailedKeys, builderStructureLoadingKeys, builderStructureMissingKeys, builderStructureResolvedDraftIds, isFreeProgramme, moduleOptions, step]);
+  }, [builderStructureAmbiguousDrafts, builderStructureEmptyKeys, builderStructureFailedKeys, builderStructureLoadingKeys, builderStructureMissingKeys, builderStructureResolvedDraftIds, isFreeProgramme, moduleOptions, step]);
   const moduleBuilderStructureMissing = useCallback((draft: ModuleDraft) => {
     if (isFreeProgramme) return false;
     if (builderStructureMissingDraftIds.has(draft.localId)) return true;
@@ -3013,6 +3307,10 @@ export function AddCurriculumStructureWizard({
     if (!identifier) return false;
     return builderStructureMissingKeys.has(`${draft.localId}:${identifier}`);
   }, [builderStructureMissingDraftIds, builderStructureMissingKeys, isFreeProgramme, moduleOptions]);
+  const moduleBuilderStructureAmbiguous = useCallback((draft: ModuleDraft) => {
+    if (isFreeProgramme) return '';
+    return builderStructureAmbiguousDrafts.get(draft.localId) || '';
+  }, [builderStructureAmbiguousDrafts, isFreeProgramme]);
   const moduleBuilderStructureFailed = useCallback((draft: ModuleDraft) => {
     if (isFreeProgramme) return false;
     if (builderStructureFailedDraftIds.has(draft.localId)) return true;
@@ -3051,7 +3349,7 @@ export function AddCurriculumStructureWizard({
               const payload = JSON.parse(stored) as { module?: ModuleCatalogueItem } | ModuleCatalogueItem;
               const structure = recalculateModule(('module' in payload && payload.module ? payload.module : payload) as ModuleCatalogueItem);
               if (!structure.catalogueId) return draft;
-              const sessionsNumber = String(moduleBuilderStructureSessionCount(structure, moduleDraftSessionCount(draft)));
+              const sessionsNumber = String(deliverySessionCountForBuilderSync(draft, structure));
               groupChanged = true;
               cohortChanged = true;
               changed = true;
@@ -3101,6 +3399,7 @@ export function AddCurriculumStructureWizard({
     setBuilderStructureMissingDraftIds(new Set());
     setBuilderStructureEmptyDraftIds(new Set());
     setBuilderStructureFailedDraftIds(new Set());
+    setBuilderStructureAmbiguousDrafts(new Map());
     setBuilderStructureSyncTick(tick => tick + 1);
   }, []);
 
@@ -3136,7 +3435,7 @@ export function AddCurriculumStructureWizard({
               let groupChanged = false;
               const modules = group.modules.map(draft => {
                 if (draft.localId !== draftId) return draft;
-                const sessionsNumber = String(moduleBuilderStructureSessionCount(structure, moduleDraftSessionCount(draft)));
+                const sessionsNumber = String(deliverySessionCountForBuilderSync(draft, structure));
                 groupChanged = true;
                 cohortChanged = true;
                 loadedBuilderStructureKeysRef.current.add(`${draft.localId}:${structure.catalogueId || structureId}`);
@@ -3244,17 +3543,25 @@ export function AddCurriculumStructureWizard({
     };
   }, [closeEmbeddedModuleBuilder, embeddedModuleBuilderUrl, isFreeProgramme, isOpen, refreshRemoteBuilderStructures, step, syncWizardDraftsFromModuleBuilder]);
 
+  // This effect opens a dialog, so it must fire only on the transition into
+  // `discardConfirmOpen`. It used to also depend on `onClose` and the three removed-id
+  // arrays; one call site passes `onClose={() => setWizardOpen(false)}`, a fresh
+  // identity per parent render, so any parent re-render while the confirm was showing
+  // stacked a second confirm on top of it. Everything but the trigger is read through
+  // a ref.
+  const discardConfirmContextRef = useRef({ onClose, removedCohortIds, removedGroupIds, removedModuleIds });
+  discardConfirmContextRef.current = { onClose, removedCohortIds, removedGroupIds, removedModuleIds };
   useEffect(() => {
     if (!isOpen || !discardConfirmOpen) return;
 
     let active = true;
-    const hasDeletions = removedCohortIds.length > 0 || removedGroupIds.length > 0 || removedModuleIds.length > 0;
+    const context = discardConfirmContextRef.current;
     const deletionList = [
-      removedCohortIds.length > 0 && `${removedCohortIds.length} cohort${removedCohortIds.length === 1 ? '' : 's'}`,
-      removedGroupIds.length > 0 && `${removedGroupIds.length} group${removedGroupIds.length === 1 ? '' : 's'}`,
-      removedModuleIds.length > 0 && `${removedModuleIds.length} module${removedModuleIds.length === 1 ? '' : 's'}`,
+      context.removedCohortIds.length > 0 && `${context.removedCohortIds.length} cohort${context.removedCohortIds.length === 1 ? '' : 's'}`,
+      context.removedGroupIds.length > 0 && `${context.removedGroupIds.length} group${context.removedGroupIds.length === 1 ? '' : 's'}`,
+      context.removedModuleIds.length > 0 && `${context.removedModuleIds.length} module${context.removedModuleIds.length === 1 ? '' : 's'}`,
     ].filter(Boolean).join(', ');
-    const text = hasDeletions
+    const text = deletionList
       ? `Closing now will discard the programme structure and delete ${deletionList} from the database.`
       : 'Closing now will discard the programme structure in this wizard.';
     showCurriculumConfirm({
@@ -3264,7 +3571,7 @@ export function AddCurriculumStructureWizard({
       confirmButtonText: 'Discard changes',
       cancelButtonText: 'Keep editing',
       onConfirm: async () => {
-        onClose();
+        discardConfirmContextRef.current.onClose();
       },
     }).finally(() => {
       if (active) setDiscardConfirmOpen(false);
@@ -3273,7 +3580,7 @@ export function AddCurriculumStructureWizard({
     return () => {
       active = false;
     };
-  }, [discardConfirmOpen, isOpen, onClose, removedCohortIds, removedGroupIds, removedModuleIds]);
+  }, [discardConfirmOpen, isOpen]);
 
   const cohortHolidayPlan = useMemo(
     () => buildHolidayAdjustedCohortPlan(cohortForm.startDate, cohortForm.durationMonths, activeHolidays),
@@ -3502,7 +3809,7 @@ export function AddCurriculumStructureWizard({
 
   const addModuleDraft = (options: { focusModulesStep?: boolean } = {}) => {
     userEditedWizardRef.current = true;
-    const baseDraft = emptyModuleDraft(groupForm.deliveryDay, groupForm.startTime, activeHolidays);
+    const baseDraft = emptyModuleDraft(groupForm.deliveryDay, groupForm.startTime, activeHolidays, defaultModuleStartDate(cohortForm.startDate));
     const next = isFreeProgramme
       ? {
           ...baseDraft,
@@ -3550,27 +3857,27 @@ export function AddCurriculumStructureWizard({
     setRemovingDraftId('');
   };
 
-  const addFreeComponent = (moduleId: string, type: ModuleComponentType) => {
+  const addFreeComponent = (moduleId: string, type: ModuleComponentType, weekId?: string) => {
     setModuleDrafts(previous => previous.map(draft => (
-      draft.localId === moduleId ? addFreeComponentToDraft(draft, type) : draft
+      draft.localId === moduleId ? addComponentToDraft(draft, type, { freeMode: isFreeProgramme, weekId }) : draft
     )));
   };
 
   const updateFreeComponent = (moduleId: string, componentId: string, patch: Partial<ModuleComponent>) => {
     setModuleDrafts(previous => previous.map(draft => (
-      draft.localId === moduleId ? updateFreeComponentInDraft(draft, componentId, patch) : draft
+      draft.localId === moduleId ? updateComponentInDraft(draft, componentId, patch, isFreeProgramme) : draft
     )));
   };
 
   const removeFreeComponent = (moduleId: string, componentId: string) => {
     setModuleDrafts(previous => previous.map(draft => (
-      draft.localId === moduleId ? removeFreeComponentFromDraft(draft, componentId) : draft
+      draft.localId === moduleId ? removeComponentFromDraft(draft, componentId, isFreeProgramme) : draft
     )));
   };
 
   const reorderFreeComponent = (moduleId: string, sourceComponentId: string, targetComponentId: string) => {
     setModuleDrafts(previous => previous.map(draft => (
-      draft.localId === moduleId ? reorderFreeComponentInDraft(draft, sourceComponentId, targetComponentId) : draft
+      draft.localId === moduleId ? reorderComponentInDraft(draft, sourceComponentId, targetComponentId, isFreeProgramme) : draft
     )));
   };
 
@@ -3656,12 +3963,57 @@ export function AddCurriculumStructureWizard({
     weeks: [],
   };
 
+  // Inline errors used to be recovered by substring-matching the aggregate lists
+  // ("Cohort", "Start", "Duration", "Group"). Every cohort message contains
+  // "Cohort", so the name field showed whichever cohort message came first, while
+  // "Start"/"Duration" never matched the lowercase text at all and those two fields
+  // never flagged. Worse, the search spanned every cohort, so another cohort's
+  // problem surfaced on the one on screen. Derive each field from the active draft
+  // instead.
+  const activeCohortFieldErrors = isFreeProgramme ? {} : {
+    name: !cohortForm.name.trim() ? 'Cohort name is required.' : '',
+    startDate: !cohortForm.startDate ? 'Cohort start date is required.' : '',
+    durationMonths: (Number(cohortForm.durationMonths) || 0) < 1 ? 'Duration must be at least 1 month.' : '',
+  };
+  const activeGroupFieldErrors = isFreeProgramme ? {} : {
+    name: !groupForm.name.trim() ? 'Group name is required.' : '',
+    deliveryDays: !activeGroup.deliveryDays.length ? 'Choose at least one delivery day.' : '',
+    startTime: !groupForm.startTime ? 'Start time is required.' : '',
+  };
+
+  // Counts hydrate in two waves: a compact pass off the list payload, then the full
+  // programme detail. While the detail request is still in flight the compact numbers
+  // are provisional, so show a skeleton instead of a count the API is about to correct.
+  const structureCountsPending = !isFreeProgramme
+    && Boolean(selectedProgramme)
+    && !programmeDetailFailed
+    && (loading || programmeDetailLoading);
+
+  // If the detail request failed we stop skeletoning and fall back to the compact
+  // numbers, which may undercount. Say so explicitly rather than letting provisional
+  // counts read as confirmed. (When nothing hydrated at all, the cohort step already
+  // shows its own error state, so this only covers the partially-hydrated case.)
+  const structureCountsStale = !isFreeProgramme
+    && Boolean(selectedProgramme)
+    && programmeDetailFailed
+    && cohortDrafts.length > 0;
+
+  const editingScheduledProgrammeNeedsHydration = Boolean(
+    selectedProgramme
+    && !isFreeProgramme
+    && !completingNewDraftProgramme
+    && programmeDetailLoading
+    && !cohortDrafts.length
+    && !programmeDetailFailed
+  );
   const canContinue = (
-    step === 'programme' ? validation.programme.length === 0 :
-    step === 'cohort' ? validation.cohort.length === 0 :
-    step === 'group' ? validation.group.length === 0 :
-    step === 'modules' ? activeStepModuleIssues.length === 0 :
-    true
+    !editingScheduledProgrammeNeedsHydration && (
+      step === 'programme' ? validation.programme.length === 0 :
+      step === 'cohort' ? validation.cohort.length === 0 :
+      step === 'group' ? validation.group.length === 0 :
+      step === 'modules' ? !structureCountsPending && activeStepModuleIssues.length === 0 :
+      true
+    )
   );
   const canSave = validation.programme.length === 0 && validation.cohort.length === 0 && validation.group.length === 0 && validation.modules.length === 0;
   const canSaveProgrammeDetails = Boolean(selectedProgramme && step === 'programme' && validation.programme.length === 0);
@@ -3686,7 +4038,11 @@ export function AddCurriculumStructureWizard({
     step === 'modules' ? activeStepModuleIssues :
     []
   );
-  const footerBlocker = !canContinue && currentValidationItems.length
+  const footerBlocker = editingScheduledProgrammeNeedsHydration
+    ? 'Loading the saved programme structure before editing.'
+    : step === 'modules' && structureCountsPending
+    ? 'Loading this group’s modules...'
+    : !canContinue && currentValidationItems.length
     ? step === 'modules' && activeGroupTutorScheduleIssues.length && !activeGroupModuleIssuesWithoutTutorConflicts.length
       ? ''
       : currentValidationItems[0]
@@ -3706,8 +4062,14 @@ export function AddCurriculumStructureWizard({
   }[step];
 
   useEffect(() => {
-    if (!isOpen) return;
-    setStep(startStep);
+    if (!isOpen) {
+      wasOpenRef.current = false;
+      return;
+    }
+    // Already open: a parent re-render must not restart the wizard.
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
+    setStep(pinnedStartStep);
     setMessage(null);
     setDiscardConfirmOpen(false);
     setSubmitted(false);
@@ -3719,6 +4081,8 @@ export function AddCurriculumStructureWizard({
     setProgrammeDetailLoading(false);
     setProgrammeDetailFailed(false);
     setChosenProgrammeId('');
+    setDraftProgrammeOverride(null);
+    setCreatedDraftProgrammeId('');
     setCohortDrafts([]);
     setRemovedCohortIds([]);
     setRemovedGroupIds([]);
@@ -3739,17 +4103,29 @@ export function AddCurriculumStructureWizard({
     setBuilderStructureMissingDraftIds(new Set());
     setBuilderStructureEmptyDraftIds(new Set());
     setBuilderStructureFailedDraftIds(new Set());
+    setBuilderStructureAmbiguousDrafts(new Map());
     loadedFreeProgrammeRef.current = '';
     openedDraftSnapshotRef.current = '';
+    lastDraftAutosaveSnapshotRef.current = '';
+    draftAutosaveInFlightSnapshotRef.current = '';
     baselineInitializedRef.current = false;
     preHydrationDirtyRef.current = false;
     userEditedWizardRef.current = false;
     focusedInitialModuleRef.current = '';
-  }, [initialModuleId, initialProgrammeId, isOpen, startStep]);
+    // Deliberately depends on isOpen alone: the reset's inputs are read from
+    // refs above so that a parent refetch can never re-trigger it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  useEffect(() => {
+    stepScrollRef.current?.scrollTo({ top: 0 });
+  }, [step]);
 
   const chooseExistingProgramme = (programme: CurriculumProgramme) => {
     const programmeId = programme.sourceId || programme.id;
     setChosenProgrammeId(programmeId);
+    setDraftProgrammeOverride(programme);
+    setCreatedDraftProgrammeId('');
     setProgrammeForm({
       name: programme.name || '',
       standard: programme.standard || programme.name || '',
@@ -3779,8 +4155,11 @@ export function AddCurriculumStructureWizard({
     setBuilderStructureMissingDraftIds(new Set());
     setBuilderStructureEmptyDraftIds(new Set());
     setBuilderStructureFailedDraftIds(new Set());
+    setBuilderStructureAmbiguousDrafts(new Map());
     loadedFreeProgrammeRef.current = '';
     openedDraftSnapshotRef.current = '';
+    lastDraftAutosaveSnapshotRef.current = '';
+    draftAutosaveInFlightSnapshotRef.current = '';
     baselineInitializedRef.current = false;
     preHydrationDirtyRef.current = false;
     userEditedWizardRef.current = false;
@@ -3788,15 +4167,43 @@ export function AddCurriculumStructureWizard({
 
   // Wire KSB options from lazy-loading hook into component state
   useEffect(() => {
-    if (wizardLazyData.ksbOptions) {
-      setKsbSets(wizardLazyData.ksbOptions.data?.sets ?? []);
-      setStandards(wizardLazyData.ksbOptions.data?.standards ?? []);
-      setKsbSourcesLoading(wizardLazyData.ksbOptions.loading);
+    const lazyOptions = wizardLazyData.ksbOptions;
+    if (!lazyOptions) return;
+    if (lazyOptions.data) {
+      setKsbSets(lazyOptions.data.sets ?? []);
+      setStandards(lazyOptions.data.standards ?? []);
+      setKsbSourcesLoading(false);
+      return;
     }
-  }, [wizardLazyData.ksbOptions]);
+    if (!ksbSets.length && !standards.length) {
+      setKsbSourcesLoading(lazyOptions.loading);
+    }
+  }, [ksbSets.length, standards.length, wizardLazyData.ksbOptions]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setKsbSourcesLoading(true);
+    void Promise.all([
+      fetchCurriculumKsbSets(undefined, { all: true }),
+      fetchCurriculumStandards(),
+    ]).then(([nextKsbSets, nextStandards]) => {
+      if (cancelled) return;
+      setKsbSets(nextKsbSets);
+      setStandards(nextStandards);
+    }).catch(err => {
+      if (!cancelled) console.warn('Unable to load wizard KSB sources.', err);
+    }).finally(() => {
+      if (!cancelled) setKsbSourcesLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || !selectedProgramme) return;
+    if (userEditedWizardRef.current) return;
     setProgrammeForm({
       name: selectedProgramme.name || '',
       standard: selectedProgramme.standard || selectedProgramme.name || '',
@@ -3809,6 +4216,12 @@ export function AddCurriculumStructureWizard({
 
   useEffect(() => {
     if (!isOpen || !selectedProgramme) return;
+    const storedSourceValue = wizardKsbSourceValueFromStored(selectedProgramme.ksbProfileSourceId, ksbProfileOptions, standardOptions);
+    if (storedSourceValue) {
+      setKsbSourceKind(storedSourceValue.startsWith('standard:') ? 'standard' : 'profile');
+      setKsbSourceValue(storedSourceValue);
+      return;
+    }
     const programmeIds = uniqueTextValues([selectedProgramme.sourceId, selectedProgramme.id, selectedProgramme.name]);
     const linkedProfile = ksbProfileOptions.find(({ profile }) => {
       const profileProgrammeIds = uniqueTextValues([
@@ -3866,9 +4279,14 @@ export function AddCurriculumStructureWizard({
     return () => controller.abort();
   }, [isFreeProgramme, isOpen, programmeForm.color, programmeForm.name, selectedProgramme]);
 
+  // A free programme hides the cohort/group steps. If the user is standing on one
+  // when that becomes true, move them forward to 'modules' rather than back to
+  // 'programme': the step is gone, but their work is not.
   useEffect(() => {
     const availableSteps = visibleSteps;
-    if (!availableSteps.some(item => item.key === step)) setStep(availableSteps[0].key);
+    if (availableSteps.some(item => item.key === step)) return;
+    const forward = availableSteps.find(item => item.key === 'modules') || availableSteps[0];
+    setStep(forward.key);
   }, [step, visibleSteps]);
 
   // Wire programme detail from lazy-loading hook into component state
@@ -3895,22 +4313,24 @@ export function AddCurriculumStructureWizard({
     const canReplaceCompactHydration = Boolean(
       !userEditedWizardRef.current
       && (
-        (hydratedProgrammeRef.current === compactHydrationKey && (programmeDetail || (step === 'modules' && moduleOptions.length > 0)))
+        (hydratedProgrammeRef.current === compactHydrationKey && programmeDetail)
         || (hydratedProgrammeRef.current === compactModulesHydrationKey && programmeDetail)
       )
     );
     if (!isOpen || !data || !selectedProgramme || loading) return;
     if (cohortDrafts.length && !canReplaceCompactHydration) return;
     if (hydratedProgrammeRef.current && !canReplaceCompactHydration) return;
-    const allowCompactHydration = canReplaceCompactHydration || (step === 'modules' && Boolean(initialModuleId));
+    const allowCompactHydration = canReplaceCompactHydration;
     const allowFastCohortHydration = !isFreeProgramme
       && !programmeDetail
       && !programmeDetailFailed
       && programmeDetailLoading
       && step === 'cohort'
       && ((data.cohorts || []).length > 0 || (data.groups || []).length > 0);
-    if (!isFreeProgramme && programmeDetailLoading && !allowCompactHydration && !allowFastCohortHydration) return;
-    if (!isFreeProgramme && !programmeDetail && !programmeDetailFailed && !allowCompactHydration && !allowFastCohortHydration) return;
+    const draftProgrammeHydration = completingNewDraftProgramme || String(selectedProgramme.status || '').toLowerCase() === 'draft';
+    const allowEmptyDraftCohortHydration = draftProgrammeHydration && step === 'cohort';
+    if (!isFreeProgramme && programmeDetailLoading && !allowCompactHydration && !allowFastCohortHydration && !allowEmptyDraftCohortHydration) return;
+    if (!isFreeProgramme && !programmeDetail && !programmeDetailFailed && !allowCompactHydration && !allowFastCohortHydration && !allowEmptyDraftCohortHydration) return;
     const detailCohorts = programmeDetail?.cohorts || [];
     const detailFlat = programmeDetail?.flat;
     const flatGroups = ((detailFlat?.groups || data.groups || []).filter((group): group is CurriculumGroup => Boolean(group && typeof group === 'object')));
@@ -3957,7 +4377,12 @@ export function AddCurriculumStructureWizard({
         });
       });
     });
-    if (!existingDrafts.length) return;
+    if (!existingDrafts.length) {
+      hydratedProgrammeRef.current = `${hydratedProgrammeKey}:empty`;
+      hydratedCohortIdsRef.current = new Set();
+      hydratedGroupIdsRef.current = new Set();
+      return;
+    }
 
     if (existingDrafts.length === 1 && isFreeCourseContainer(existingDrafts[0])) {
       setProgrammeForm(previous => ({ ...previous, structureType: 'free' }));
@@ -3973,14 +4398,18 @@ export function AddCurriculumStructureWizard({
     const firstGroup = firstCohort.groups.find(group => (
       previousActiveGroupSourceId && group.sourceId === previousActiveGroupSourceId
     )) || firstCohort.groups[0];
+    const firstModule = firstGroup?.modules.find(isConfiguredModule) || firstGroup?.modules[0];
     setCohortDrafts(existingDrafts);
     setActiveCohortId(firstCohort.localId);
     setExpandedCohortId('');
     setActiveGroupId(firstGroup?.localId || '');
     setExpandedGroupId('');
-    setActiveModuleId('');
+    // Preselect the hydrated module for the same reason the cohort/group above
+    // are preselected: the modules step must open on saved work, not on the
+    // empty "choose a module" panel.
+    setActiveModuleId(firstModule?.localId || '');
     setExpandedModuleId('');
-  }, [cohortDrafts.length, data, holidays, initialCohortId, initialGroupId, initialModuleId, isFreeProgramme, isOpen, loading, moduleOptions, modules, programmeDetail, programmeDetailFailed, programmeDetailLoading, selectedProgramme, step]);
+  }, [activeCohortId, activeGroupId, cohortDrafts, completingNewDraftProgramme, data, holidays, initialCohortId, initialGroupId, pinnedInitialModuleId, isFreeProgramme, isOpen, loading, moduleOptions, modules, programmeDetail, programmeDetailFailed, programmeDetailLoading, selectedProgramme, step]);
 
   useEffect(() => {
     if (!isOpen || isFreeProgramme || !selectedProgramme || !programmeDetail || !cohortDrafts.length) return;
@@ -4030,9 +4459,40 @@ export function AddCurriculumStructureWizard({
       const next = previous.map(cohort => ({
         ...cohort,
         groups: cohort.groups.map(group => {
-          if (!group.sourceId || group.modules.some(isConfiguredModule)) return group;
+          if (!group.sourceId) return group;
           const modulesForGroup = detailGroupModules.get(group.sourceId);
           if (!modulesForGroup?.length) return group;
+          if (group.modules.some(isConfiguredModule)) {
+            const activeHolidays = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
+            const modules = group.modules.map(draft => {
+              const detailDraft = modulesForGroup.find(candidate => (
+                normalise(candidate.sourceId) === normalise(draft.sourceId)
+                || normalise(candidate.catalogueId) === normalise(draft.catalogueId)
+                || normalise(candidate.name) === normalise(draft.name)
+              ));
+              if (!detailDraft) return draft;
+              if (moduleDraftDisplayComponentCount(draft, false) >= moduleDraftDisplayComponentCount(detailDraft, false)) return draft;
+              changed = true;
+              return reconcileModuleDraft({
+                ...draft,
+                moduleKsbMappings: draft.moduleKsbMappings?.length ? draft.moduleKsbMappings : detailDraft.moduleKsbMappings,
+                weeks: detailDraft.weeks.map((detailWeek, index) => {
+                  const currentWeek = draft.weeks[index];
+                  return {
+                    ...detailWeek,
+                    id: currentWeek?.id || detailWeek.id,
+                    date: currentWeek?.date || detailWeek.date,
+                    startTime: currentWeek?.startTime || detailWeek.startTime,
+                    title: currentWeek?.title || detailWeek.title,
+                    open: currentWeek?.open ?? detailWeek.open,
+                    components: currentWeek?.components?.length ? currentWeek.components : detailWeek.components,
+                    ksbMappings: currentWeek?.ksbMappings?.length ? currentWeek.ksbMappings : detailWeek.ksbMappings,
+                  };
+                }),
+              }, group.deliveryDays.join(', '), group.startTime, activeHolidays);
+            });
+            return { ...group, modules };
+          }
           changed = true;
           return { ...group, modules: modulesForGroup };
         }),
@@ -4042,7 +4502,7 @@ export function AddCurriculumStructureWizard({
   }, [cohortDrafts.length, holidays, isFreeProgramme, isOpen, programmeDetail, selectedProgramme]);
 
   useEffect(() => {
-    const target = String(initialModuleId || '').trim();
+    const target = String(pinnedInitialModuleId || '').trim();
     if (!isOpen || !target || !cohortDrafts.length) return;
     if (focusedInitialModuleRef.current === target) return;
 
@@ -4072,7 +4532,7 @@ export function AddCurriculumStructureWizard({
         }
       }
     }
-  }, [cohortDrafts, initialModuleId, isOpen, moduleOptions, step]);
+  }, [cohortDrafts, pinnedInitialModuleId, isOpen, moduleOptions, step]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -4085,7 +4545,9 @@ export function AddCurriculumStructureWizard({
     }
     if (!baselineInitializedRef.current) {
       baselineInitializedRef.current = true;
-      openedDraftSnapshotRef.current = wizardDraftSnapshot(programmeForm, ksbSourceKind, ksbSourceValue, cohortDrafts, removedCohortIds, removedGroupIds, removedModuleIds);
+      const baselineSnapshot = wizardDraftSnapshot(programmeForm, ksbSourceKind, ksbSourceValue, cohortDrafts, removedCohortIds, removedGroupIds, removedModuleIds);
+      openedDraftSnapshotRef.current = baselineSnapshot;
+      lastDraftAutosaveSnapshotRef.current = baselineSnapshot;
     }
   }, [
     cohortDrafts,
@@ -4131,7 +4593,6 @@ export function AddCurriculumStructureWizard({
 
     if (!targets.length) return;
 
-    let retryExpectedComponents = false;
     targets.forEach(target => target.keyVariants.forEach(key => loadingBuilderStructureKeysRef.current.add(key)));
     setBuilderStructureLoadingKeys(previous => {
       const next = new Set(previous);
@@ -4145,21 +4606,25 @@ export function AddCurriculumStructureWizard({
       identifiers: target.identifiers,
     }))).then(results => {
       const targetByDraftId = new Map(targets.map(target => [target.draftId, target]));
-      const waitingForComponentsDraftIds = new Set(results
-        .filter(result => {
-          const target = targetByDraftId.get(result.requestId);
-          return Boolean(target?.expectsComponents && (!result.found || !result.hasComponents));
-        })
-        .map(result => result.requestId));
-      retryExpectedComponents = waitingForComponentsDraftIds.size > 0;
+      const waitingForComponentsDraftIds = new Set<string>();
       results.forEach(result => {
         const target = targetByDraftId.get(result.requestId);
         if (!target) return;
         if (waitingForComponentsDraftIds.has(result.requestId)) return;
         target.keyVariants.forEach(key => loadedBuilderStructureKeysRef.current.add(key));
       });
+      // An ambiguous result is not missing: the module exists in Module Builder but
+      // several share its title, so it must not be reported as absent (which reads
+      // as "go create it") nor as empty.
+      const ambiguousDraftIds = results
+        .filter(result => result.ambiguous && !waitingForComponentsDraftIds.has(result.requestId))
+        .map(result => result.requestId)
+        .filter(requestId => targetByDraftId.has(requestId));
+      const ambiguousMessagesByDraftId = new Map(results
+        .filter(result => result.ambiguous && targetByDraftId.has(result.requestId))
+        .map(result => [result.requestId, String(result.message || 'Several Module Builder modules share this title.')]));
       const missingKeys = results
-        .filter(result => !result.found && !waitingForComponentsDraftIds.has(result.requestId))
+        .filter(result => !result.found && !result.ambiguous && !waitingForComponentsDraftIds.has(result.requestId))
         .flatMap(result => targetByDraftId.get(result.requestId)?.keyVariants || []);
       const emptyKeys = results
         .filter(result => result.found && !result.hasComponents && !waitingForComponentsDraftIds.has(result.requestId))
@@ -4197,6 +4662,14 @@ export function AddCurriculumStructureWizard({
         targets.forEach(target => target.keyVariants.forEach(key => {
           next.delete(key);
         }));
+        return next;
+      });
+      setBuilderStructureAmbiguousDrafts(previous => {
+        const next = new Map(previous);
+        targets.forEach(target => next.delete(target.draftId));
+        ambiguousDraftIds.forEach(draftId => {
+          next.set(draftId, ambiguousMessagesByDraftId.get(draftId) || 'Several Module Builder modules share this title.');
+        });
         return next;
       });
       // Resolve by stable draft id so the spinner always clears, and record the
@@ -4251,7 +4724,7 @@ export function AddCurriculumStructureWizard({
             const match = loaded.get(draft.localId);
             if (!match) return draft;
             const selectedModule = findModuleOption(moduleOptions, draft.catalogueId);
-            const sessionsNumber = String(moduleBuilderStructureSessionCount(match.structure, moduleDraftSessionCount(draft, selectedModule)));
+            const sessionsNumber = String(deliverySessionCountForBuilderSync(draft, match.structure, selectedModule));
             groupChanged = true;
             cohortChanged = true;
             const nextDraft = applyModuleBuilderContent(
@@ -4312,11 +4785,6 @@ export function AddCurriculumStructureWizard({
         }));
         return next;
       });
-      if (active && retryExpectedComponents) {
-        window.setTimeout(() => {
-          if (active) setBuilderStructureSyncTick(tick => tick + 1);
-        }, 1000);
-      }
     });
 
     return () => {
@@ -4339,9 +4807,19 @@ export function AddCurriculumStructureWizard({
     if (nextGroup && nextGroup.localId !== activeGroupId) setActiveGroupId(nextGroup.localId);
     if (!nextGroup && activeGroupId) setActiveGroupId('');
     if (expandedGroupId && !nextCohort.groups.some(group => group.localId === expandedGroupId)) setExpandedGroupId('');
-    const nextModule = activeModuleId ? nextGroup?.modules.find(module => module.localId === activeModuleId) : undefined;
-    if (activeModuleId && !nextModule) setActiveModuleId('');
-    if (expandedModuleId && !nextGroup?.modules.some(module => module.localId === expandedModuleId)) setExpandedModuleId('');
+    // Modules follow the same fallback rule as the cohort/group selections above:
+    // keep the current pick when it still exists, otherwise fall back to the
+    // group's first configured module. Without the fallback a reopened draft
+    // hydrates its module chips but leaves the editor on the "choose a module"
+    // empty state, which reads as if the saved module had been lost.
+    const groupModules = nextGroup?.modules || [];
+    const nextModule = activeModuleId
+      ? groupModules.find(module => module.localId === activeModuleId)
+      : undefined;
+    const fallbackModule = groupModules.find(isConfiguredModule) || groupModules[0];
+    const resolvedModuleId = (nextModule || fallbackModule)?.localId || '';
+    if (resolvedModuleId !== activeModuleId) setActiveModuleId(resolvedModuleId);
+    if (expandedModuleId && !groupModules.some(module => module.localId === expandedModuleId)) setExpandedModuleId('');
   }, [activeCohortId, activeGroupId, activeModuleId, cohortDrafts, expandedCohortId, expandedGroupId, expandedModuleId]);
 
   useEffect(() => {
@@ -4388,14 +4866,31 @@ export function AddCurriculumStructureWizard({
   }, [activeCohort.groups.length, activeCohort.localId, activeGroup.localId, activeHolidays, cohortDrafts.length, groupForm.deliveryDay, groupForm.startTime]);
 
   const requestClose = () => {
-    if (saving) return;
+    if (saving === 'final') return;
     const hasDeletions = removedCohortIds.length > 0 || removedGroupIds.length > 0 || removedModuleIds.length > 0;
+    if ((hasUnsavedChanges || hasDeletions) && !submitted && validation.programme.length === 0) {
+      void autosaveDraftProgress();
+      onClose();
+      return;
+    }
     if ((hasUnsavedChanges || hasDeletions) && !submitted) {
       setDiscardConfirmOpen(true);
       return;
     }
     onClose();
   };
+
+  // The embedded Module Builder is inline JSX rather than its own component, so the
+  // shell answers for it before falling through to closing the wizard. A discard
+  // confirm is already showing its own dialog, so Escape belongs to that.
+  useWizardEscapeLayer(isOpen, () => {
+    if (discardConfirmOpen) return;
+    if (embeddedModuleBuilderUrl) {
+      void closeEmbeddedModuleBuilder();
+      return;
+    }
+    requestClose();
+  });
 
   const resolveTutorConflict = (conflict: TutorScheduleConflict) => {
     const target = conflict.proposed.moduleLocalId ? conflict.proposed : conflict.conflicting;
@@ -4439,6 +4934,11 @@ export function AddCurriculumStructureWizard({
     const currentStructure = sourceModule ? getDefaultStructure(curriculumModuleToCatalogue(sourceModule)) : null;
     const programmeId = selectedProgramme?.sourceId || selectedProgramme?.id || activeProgrammeSourceId;
     const moduleName = sourceModule?.name || draft.name || draft.catalogueId || 'Module';
+    // Without canonical cohort/group ids the backend can only match this module
+    // by name, and group names repeat across cohorts - the module then lands on
+    // a different cohort's group. The draft is still held in wizard state, so
+    // deferring the write until the parents are persisted loses nothing.
+    if (!String(activeCohort.sourceId || '') || !String(activeGroup.sourceId || '')) return;
     const authored = moduleDraftAuthoringPayload(nextDraft, moduleId, moduleName, {
       programmeId,
       programmeName: selectedProgramme?.name || programmeForm.name,
@@ -4625,12 +5125,12 @@ export function AddCurriculumStructureWizard({
         color: programme?.color || programmeForm.color,
         description: programme?.description || programmeForm.description,
         structureType: programme?.structureType || programmeForm.structureType,
-        ksbProfileSourceId: `profile:${selectedProfileId}`,
+        ksbProfileSourceId: selectedProfileId,
       });
       // Compact is safe here: the cascade reads only programme/name/colour/notes and
       // identity fields, and this array is local to the callback (never stored).
       const modulesForCascade = modules.length ? modules : await fetchCurriculumModules(undefined, { compact: true });
-      await cascadeWizardKsbSourceToProgrammeModules(programmeSourceId, programmeName, modulesForCascade, `profile:${selectedProfileId}`);
+      await cascadeWizardKsbSourceToProgrammeModules(programmeSourceId, programmeName, modulesForCascade, selectedProfileId);
       return;
     }
 
@@ -4652,14 +5152,263 @@ export function AddCurriculumStructureWizard({
     }
   }, [ksbSets, ksbSourceValue, modules, programmeForm.color, programmeForm.description, programmeForm.level, programmeForm.structureType, standards]);
 
+  const autosaveDraftProgress = async (override: {
+    programmeForm?: typeof programmeForm;
+    ksbSourceKind?: typeof ksbSourceKind;
+    ksbSourceValue?: string;
+    programmeOnly?: boolean;
+  } = {}) => {
+    const draftProgrammeForm = override.programmeForm || programmeForm;
+    const draftKsbSourceKind = override.ksbSourceKind || ksbSourceKind;
+    const draftKsbSourceValue = override.ksbSourceValue ?? ksbSourceValue;
+    const programmeOnly = Boolean(override.programmeOnly);
+    if (!draftProgrammeForm.name.trim()) return true;
+    const autosaveSnapshot = wizardDraftSnapshot(draftProgrammeForm, draftKsbSourceKind, draftKsbSourceValue, cohortDrafts, removedCohortIds, removedGroupIds, removedModuleIds);
+    if (autosaveSnapshot === lastDraftAutosaveSnapshotRef.current || autosaveSnapshot === draftAutosaveInFlightSnapshotRef.current) return true;
+    const storedKsbSourceValue = programmeKsbSourceStorageValue(draftKsbSourceValue);
+    setMessage(null);
+    draftAutosaveInFlightSnapshotRef.current = autosaveSnapshot;
+    try {
+      const matchingProgramme = selectedProgramme;
+      const programmePayload = {
+        ...draftProgrammeForm,
+        standard: draftProgrammeForm.standard || draftProgrammeForm.name,
+        ksbProfileSourceId: storedKsbSourceValue || matchingProgramme?.ksbProfileSourceId || '',
+        status: 'active',
+      };
+      const programmeResult = matchingProgramme
+        ? await updateCurriculumProgramme(matchingProgramme.sourceId || matchingProgramme.id, programmePayload)
+        : await createCurriculumProgramme(programmePayload);
+      const savedProgramme = programmeResult.programme || matchingProgramme;
+      const programmeName = savedProgramme?.name || draftProgrammeForm.name;
+      const programmeSourceId = savedProgramme?.sourceId || savedProgramme?.id || matchingProgramme?.sourceId || matchingProgramme?.id || slugify(programmeName);
+      const nextProgramme = {
+        ...(matchingProgramme || {}),
+        ...(savedProgramme || {}),
+        id: savedProgramme?.id || programmeSourceId,
+        sourceId: savedProgramme?.sourceId || programmeSourceId,
+        name: programmeName,
+        standard: programmePayload.standard,
+        level: programmePayload.level,
+        color: programmePayload.color,
+        description: programmePayload.description,
+        structureType: programmePayload.structureType,
+        ksbProfileSourceId: programmePayload.ksbProfileSourceId,
+        status: 'active',
+      } as CurriculumProgramme;
+
+      setDraftProgrammeOverride(nextProgramme);
+      setChosenProgrammeId(programmeSourceId);
+      if (!matchingProgramme) setCreatedDraftProgrammeId(programmeSourceId);
+
+      if (isFreeProgramme) {
+        if (validation.modules.length === 0 && hasAnyModuleDraft) {
+          const freeModules = cohortDrafts
+            .flatMap(cohort => cohort.groups.flatMap(group => group.modules))
+            .filter(isConfiguredModule)
+            .map((draft, index) => {
+              const moduleName = draft.name || `Free module ${index + 1}`;
+              const moduleId = draft.sourceId || draft.catalogueId || `${programmeSourceId}-${slugify(moduleName)}-${index + 1}`;
+              return freeProgrammeModuleInput(draft, moduleId, moduleName);
+            });
+          if (!programmeOnly) await saveFreeProgrammeModules(programmeSourceId, {
+            programmeName,
+            modules: freeModules,
+          });
+        }
+      } else if (!programmeOnly) {
+        let idsChanged = false;
+        const draftsWithIds = cohortDrafts.map(cohort => {
+          const cohortSourceId = cohort.sourceId || (cohort.name.trim() ? generatedCurriculumId('COHORT') : '');
+          if (cohortSourceId && cohortSourceId !== cohort.sourceId) idsChanged = true;
+          return {
+            ...cohort,
+            sourceId: cohortSourceId || cohort.sourceId,
+            groups: cohort.groups.map(group => {
+              const groupSourceId = group.sourceId || (group.name.trim() ? generatedCurriculumId('GROUP') : '');
+              if (groupSourceId && groupSourceId !== group.sourceId) idsChanged = true;
+              return { ...group, sourceId: groupSourceId || group.sourceId };
+            }),
+          };
+        });
+        if (idsChanged) setCohortDrafts(draftsWithIds);
+
+        const includeModules = true;
+        const treeCohorts: Array<CurriculumCohortInput & {
+          id: string;
+          groups?: Array<CurriculumGroupInput & {
+            id: string;
+            modules?: CurriculumModuleAttachmentInput[];
+            modulesPartial?: boolean;
+          }>;
+        }> = [];
+
+        for (const cohort of draftsWithIds) {
+          if (!cohort.name.trim() || !cohort.startDate || (Number(cohort.durationMonths) || 0) < 1 || !cohort.sourceId) continue;
+          const cohortActiveHolidays = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
+          const groupsForSave = [];
+          for (const group of cohort.groups) {
+            if (!group.name.trim() || !group.deliveryDays.length || !group.startTime || !group.sourceId) continue;
+            const deliveryDayValue = group.deliveryDays.join(', ');
+            const modulesForSave: CurriculumModuleAttachmentInput[] = [];
+            if (includeModules) {
+              for (const originalDraft of group.modules.filter(isConfiguredModule)) {
+                const draft = reconcileModuleDraft(originalDraft, deliveryDayValue, group.startTime, cohortActiveHolidays);
+                const sourceModule = draft.mode === 'existing'
+                  ? findModuleOption(moduleOptions, draft.catalogueId) || findModuleOption(modules, draft.catalogueId)
+                  : undefined;
+                const catalogueId = sourceModule ? moduleOptionId(sourceModule) : draft.catalogueId;
+                const moduleName = sourceModule?.name || draft.name || draft.existingName || draft.catalogueId || 'Module';
+                if (!moduleName.trim() || !draft.startDate || !draft.weeks.length) continue;
+                const deliverySessionCount = Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || (sourceModule ? moduleSessionCount(sourceModule) : 1));
+                const canonicalCatalogueId = isCanonicalModuleBuilderId(catalogueId) ? catalogueId : '';
+                const authored = moduleDraftAuthoringPayload(draft, canonicalCatalogueId, moduleName, {
+                  programmeId: programmeSourceId,
+                  programmeName,
+                  cohortId: cohort.sourceId,
+                  cohortName: cohort.name,
+                  groupId: group.sourceId,
+                  groupName: group.name,
+                  tutor: draft.tutor,
+                  coach: group.coach,
+                  weekDays: deliveryDayValue,
+                  startTime: group.startTime,
+                  endTime: group.endTime || addHoursToTime(group.startTime, 2),
+                });
+                modulesForSave.push({
+                  moduleName,
+                  catalogueId: canonicalCatalogueId,
+                  programmeId: programmeSourceId,
+                  cohortId: cohort.sourceId,
+                  groupId: group.sourceId,
+                  color: draft.color || sourceModule?.color,
+                  startDate: draft.startDate,
+                  endDate: draft.endDate,
+                  coach: group.coach,
+                  tutor: draft.tutor,
+                  weekDays: deliveryDayValue,
+                  startTime: group.startTime,
+                  endTime: group.endTime || addHoursToTime(group.startTime, 2),
+                  notes: userFacingNotes(draft.notes),
+                  holidays: cohortActiveHolidays,
+                  ...authored,
+                  sessionsNumber: deliverySessionCount,
+                  weeks: deliverySessionCount,
+                  weekStructure: authored.weekStructure || [],
+                } as CurriculumModuleAttachmentInput);
+              }
+            }
+            groupsForSave.push({
+              id: group.sourceId,
+              name: group.name,
+              cohortId: cohort.sourceId,
+              programmeId: programmeSourceId,
+              weekDays: deliveryDayValue,
+              startTime: group.startTime,
+              endTime: group.endTime || addHoursToTime(group.startTime, 2),
+              coach: group.coach,
+              color: group.color,
+              startDate: cohort.startDate,
+              endDate: cohort.endDate,
+              ...(includeModules ? { modules: modulesForSave, modulesPartial: true } : {}),
+            });
+          }
+          treeCohorts.push({
+            id: cohort.sourceId,
+            name: cohort.name,
+            programme: programmeName,
+            programmeId: programmeSourceId,
+            startDate: cohort.startDate,
+            endDate: cohort.endDate,
+            durationMonths: Number(cohort.durationMonths),
+            color: cohort.color,
+            holidayIds: cohort.holidayIds,
+            ...(groupsForSave.length ? { groups: groupsForSave } : {}),
+          });
+        }
+
+        if (treeCohorts.length || removedCohortIds.length || removedGroupIds.length || removedModuleIds.length) {
+          await saveCurriculumProgrammeTree({
+            programme: {
+              id: programmeSourceId,
+              sourceId: programmeSourceId,
+              ...draftProgrammeForm,
+              standard: draftProgrammeForm.standard || draftProgrammeForm.name,
+              ksbProfileSourceId: storedKsbSourceValue,
+              status: 'active',
+            },
+            cohorts: treeCohorts,
+            partialTree: true,
+            removeMissing: false,
+            hydrationComplete: false,
+            removeCohortIds: removedCohortIds,
+            removeGroupIds: removedGroupIds,
+            removeModuleIds: removedModuleIds,
+          });
+        }
+      }
+
+      openedDraftSnapshotRef.current = autosaveSnapshot;
+      lastDraftAutosaveSnapshotRef.current = autosaveSnapshot;
+      baselineInitializedRef.current = true;
+      preHydrationDirtyRef.current = false;
+      userEditedWizardRef.current = false;
+      await reload();
+      await onSaved?.();
+      return true;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'Unable to save draft progress.';
+      setMessage(detail);
+      showWizardSwalToast('Draft save failed', detail, 'error');
+      return false;
+    } finally {
+      if (draftAutosaveInFlightSnapshotRef.current === autosaveSnapshot) {
+        draftAutosaveInFlightSnapshotRef.current = '';
+      }
+    }
+  };
+
+  const handleNextStep = async () => {
+    if (!canContinue || saving === 'final') return;
+    setStep(nextStepMeta.key);
+  };
+
+  const selectKsbProfileSource = (value: string) => {
+    if (saving === 'final') return;
+    if (ksbSourceKind === 'profile' && ksbSourceValue === value) return;
+    userEditedWizardRef.current = true;
+    setKsbSourceKind('profile');
+    setKsbSourceValue(value);
+  };
+
+  const selectKsbStandardSource = (standard: CurriculumStandard, value: string) => {
+    if (saving === 'final') return;
+    if (ksbSourceKind === 'standard' && ksbSourceValue === value) return;
+    const nextProgrammeForm = {
+      ...programmeForm,
+      standard: standard.name || standard.standardRef || programmeForm.standard,
+      level: standard.levelValue || standard.level || programmeForm.level,
+    };
+    userEditedWizardRef.current = true;
+    setKsbSourceKind('standard');
+    setKsbSourceValue(value);
+    setProgrammeForm(nextProgrammeForm);
+  };
+
   const persistStructure = async (intent: SaveIntent) => {
+    // Both intents must claim `saving`: tracking only 'final' left the Save Draft
+    // button live during its own request, and a second click POSTed a duplicate
+    // programme.
+    if (saving) return;
     if (!canSaveDraft) {
       setMessage('Complete the required fields before saving.');
       return;
     }
+    const programmeSaveStatus = 'active';
     setSaving(intent);
     setMessage(null);
     try {
+      const storedKsbSourceValue = programmeKsbSourceStorageValue(ksbSourceValue);
       // Only update a programme that the user explicitly opened or selected.
       // Name matching can point at stale catalogue data and incorrectly turn a
       // "create" action into a PATCH against a programme that no longer exists.
@@ -4667,18 +5416,21 @@ export function AddCurriculumStructureWizard({
       const initialSnapshot = selectedProgramme ? parseWizardDraftSnapshot(openedDraftSnapshotRef.current) : null;
       const programmeChanged = !matchingProgramme || !initialSnapshot || stableDraftFingerprint(initialSnapshot.programmeForm) !== stableDraftFingerprint(programmeForm);
       const ksbSourceChanged = !matchingProgramme || !initialSnapshot || initialSnapshot.ksbSourceKind !== ksbSourceKind || initialSnapshot.ksbSourceValue !== ksbSourceValue;
+      const statusChanged = Boolean(matchingProgramme && String(matchingProgramme.status || 'active').toLowerCase() !== programmeSaveStatus);
       const programmeResult = matchingProgramme
-        ? programmeChanged || ksbSourceChanged
+        ? programmeChanged || ksbSourceChanged || statusChanged
           ? await updateCurriculumProgramme(matchingProgramme.sourceId || matchingProgramme.id, {
             ...programmeForm,
             standard: programmeForm.standard || programmeForm.name,
-            ksbProfileSourceId: ksbSourceValue || matchingProgramme.ksbProfileSourceId || '',
+            ksbProfileSourceId: storedKsbSourceValue || matchingProgramme.ksbProfileSourceId || '',
+            status: programmeSaveStatus,
           })
           : { updated: false, programme: matchingProgramme }
         : await createCurriculumProgramme({
             ...programmeForm,
             standard: programmeForm.standard || programmeForm.name,
-            ksbProfileSourceId: ksbSourceValue,
+            ksbProfileSourceId: storedKsbSourceValue,
+            status: programmeSaveStatus,
           });
       const savedProgramme = programmeResult.programme;
       const programmeName = savedProgramme?.name || programmeForm.name;
@@ -4690,9 +5442,8 @@ export function AddCurriculumStructureWizard({
         }
         await reload();
         setSubmitted(true);
+        await finishSuccessfulSave();
         showWizardSwalToast('Programme updated', 'The programme details were saved.');
-        await onSaved?.();
-        onClose();
         return;
       }
 
@@ -4711,16 +5462,26 @@ export function AddCurriculumStructureWizard({
         }
         await reload();
         setSubmitted(true);
+        await finishSuccessfulSave();
         showWizardSwalToast(
           matchingProgramme ? 'Free modules updated' : (intent === 'draft' ? 'Draft free modules saved' : 'Free modules created'),
           'The free modules and components were saved.',
         );
-        await onSaved?.();
-        onClose();
         return;
       }
 
       const hydrationComplete = !selectedProgramme || Boolean(hydratedProgrammeRef.current && !loading && data);
+      let programmeDetailForSave = programmeDetail;
+      if (selectedProgramme && !isFreeProgramme && !programmeDetailForSave && programmeSourceId) {
+        try {
+          programmeDetailForSave = await fetchCurriculumProgrammeDetail(programmeSourceId, undefined, { visibility: 'all' });
+          setProgrammeDetail(programmeDetailForSave);
+          setProgrammeDetailLoading(false);
+          setProgrammeDetailFailed(false);
+        } catch (error) {
+          console.warn('Unable to load saved programme detail before updating tree.', error);
+        }
+      }
       const initialCohorts = initialSnapshot?.cohortDrafts || [];
       const initialCohortByKey = new Map<string, CohortDraft>();
       const initialGroupByKey = new Map<string, GroupDraft>();
@@ -4734,7 +5495,12 @@ export function AddCurriculumStructureWizard({
           });
         });
       });
+      const detailModulesForSave = programmeDetailForSave ? enrichModulesWithDetailComponents([
+        ...((programmeDetailForSave.cohorts || []).flatMap(cohort => nestedGroupsForCohort(cohort)).flatMap(group => nestedModulesForGroup(group))),
+        ...(((programmeDetailForSave.flat?.modules || []) as CurriculumModule[]).filter(module => Boolean(module && typeof module === 'object'))),
+      ], programmeDetailForSave.flat?.components || []) : [];
       const partialTree = Boolean(selectedProgramme && initialSnapshot);
+      const forcePersistVisibleTree = Boolean(selectedProgramme && intent === 'final' && !isFreeProgramme);
       const treeCohorts = [];
       for (const cohort of cohortDrafts) {
         const cohortActiveHolidays = holidays.filter(holiday => cohort.holidayIds.includes(holidayId(holiday)));
@@ -4756,8 +5522,8 @@ export function AddCurriculumStructureWizard({
           for (const originalDraft of group.modules) {
             const draft = reconcileModuleDraft(originalDraft, deliveryDayValue, group.startTime, cohortActiveHolidays);
             const initialModule = initialModuleByKey.get(draftIdentity(draft.sourceId, draft.catalogueId, draft.localId, draft.name));
-            const moduleChanged = !partialTree || !initialModule || moduleDraftFingerprint(initialModule) !== moduleDraftFingerprint(draft);
-            if (partialTree && !groupModuleMembershipChanged && !moduleChanged) {
+            const moduleChanged = forcePersistVisibleTree || !partialTree || !initialModule || moduleDraftFingerprint(initialModule) !== moduleDraftFingerprint(draft);
+            if (partialTree && !forcePersistVisibleTree && !groupModuleMembershipChanged && !moduleChanged) {
               continue;
             }
             let sourceModule: CurriculumModule | undefined;
@@ -4786,6 +5552,14 @@ export function AddCurriculumStructureWizard({
               catalogueId = sourceModule ? moduleOptionId(sourceModule) : draft.catalogueId;
               moduleName = sourceModule?.name || draft.name;
             }
+            const detailSourceModule = detailModulesForSave.find(module => (
+              normalise(module.id) === normalise(sourceModule?.id || draft.sourceId)
+              || normalise(moduleOptionId(module)) === normalise(catalogueId || draft.catalogueId)
+              || normalise(module.name) === normalise(moduleName || draft.name)
+            ));
+            if (detailSourceModule) {
+              sourceModule = sourceModule ? mergeCurriculumModule(sourceModule, detailSourceModule) : detailSourceModule;
+            }
             const deliverySessionCount = Math.max(1, Number(draft.sessionsNumber) || draft.weeks.length || (draft.mode === 'existing' && sourceModule ? moduleSessionCount(sourceModule) : 1));
             const canonicalCatalogueId = isCanonicalModuleBuilderId(catalogueId) ? catalogueId : '';
             const authored = moduleDraftAuthoringPayload(draft, canonicalCatalogueId, moduleName, {
@@ -4800,7 +5574,7 @@ export function AddCurriculumStructureWizard({
               weekDays: deliveryDayValue,
               startTime: group.startTime,
               endTime: group.endTime || addHoursToTime(group.startTime, 2),
-            });
+            }, sourceModule ? actualModuleCatalogueStructure(sourceModule) : null);
             if (draft.teamsMeeting) {
               const teamsScheduleInput = teamsScheduleInputFromDraft(
                 draft,
@@ -4838,7 +5612,7 @@ export function AddCurriculumStructureWizard({
               weekStructure: authored.weekStructure || [],
             } as CurriculumModuleAttachmentInput);
           }
-          if (partialTree && !groupMetaChanged && !modulesForSave.length) {
+          if (partialTree && !forcePersistVisibleTree && !groupMetaChanged && !modulesForSave.length) {
             continue;
           }
           const groupPayload: CurriculumGroupInput & { id: string; modules?: CurriculumModuleAttachmentInput[]; modulesPartial?: boolean } = {
@@ -4854,13 +5628,13 @@ export function AddCurriculumStructureWizard({
             startDate: cohort.startDate,
             endDate: cohort.endDate,
           };
-          if (!partialTree || modulesForSave.length) {
+          if (forcePersistVisibleTree || !partialTree || modulesForSave.length) {
             groupPayload.modules = modulesForSave;
             groupPayload.modulesPartial = partialTree && !groupModuleMembershipChanged;
           }
           groupsForSave.push(groupPayload);
         }
-        if (partialTree && !cohortMetaChanged && !groupsForSave.length) {
+        if (partialTree && !forcePersistVisibleTree && !cohortMetaChanged && !groupsForSave.length) {
           continue;
         }
         treeCohorts.push({
@@ -4877,7 +5651,7 @@ export function AddCurriculumStructureWizard({
         });
       }
 
-      const hasTreeChanges = Boolean(treeCohorts.length || removedCohortIds.length || removedGroupIds.length || removedModuleIds.length || !partialTree);
+      const hasTreeChanges = Boolean(forcePersistVisibleTree || treeCohorts.length || removedCohortIds.length || removedGroupIds.length || removedModuleIds.length || !partialTree);
       if (hasTreeChanges) {
         await saveCurriculumProgrammeTree({
           programme: {
@@ -4885,7 +5659,8 @@ export function AddCurriculumStructureWizard({
             sourceId: programmeSourceId,
             ...programmeForm,
             standard: programmeForm.standard || programmeForm.name,
-            ksbProfileSourceId: ksbSourceValue,
+            ksbProfileSourceId: storedKsbSourceValue,
+            status: programmeSaveStatus,
           },
           cohorts: treeCohorts,
           partialTree,
@@ -4902,14 +5677,16 @@ export function AddCurriculumStructureWizard({
 
       await reload();
       setSubmitted(true);
+      // Close the wizard and refresh the cards before announcing success. Showing
+      // the toast first left it hanging over a page that was still refreshing,
+      // which read as a failed save even though the write had succeeded.
+      await finishSuccessfulSave();
       showWizardSwalToast(
-        matchingProgramme ? 'Programme updated' : (intent === 'draft' ? 'Draft programme saved' : 'Programme created'),
+        matchingProgramme && !completingNewDraftProgramme ? 'Programme updated' : (intent === 'draft' ? 'Draft programme saved' : 'Programme created'),
         isFreeProgramme
           ? 'The free modules and custom module links were saved. Module content remains managed in Module Builder.'
           : 'The programme, cohorts, groups and module links were saved through scoped curriculum endpoints. Module content remains managed in Module Builder.',
       );
-      await onSaved?.();
-      onClose();
     } catch (err) {
       const detail = err instanceof Error ? err.message : 'Unable to save programme structure.';
       setMessage(detail);
@@ -4921,18 +5698,24 @@ export function AddCurriculumStructureWizard({
 
   if (!isOpen) return null;
 
-  const showCohortDatabaseLoading = step === 'cohort' && Boolean(selectedProgramme) && !isFreeProgramme && programmeDetailLoading && !cohortDrafts.length;
+  const draftProgrammeHydratedEmpty = Boolean(selectedProgramme && String(selectedProgramme.status || '').toLowerCase() === 'draft' && hydratedProgrammeRef.current.endsWith(':empty'));
+  const showCohortDatabaseLoading = step === 'cohort' && Boolean(selectedProgramme) && !isFreeProgramme && !completingNewDraftProgramme && !draftProgrammeHydratedEmpty && programmeDetailLoading && !cohortDrafts.length;
   const showCohortDatabaseError = step === 'cohort' && Boolean(selectedProgramme) && !isFreeProgramme && programmeDetailFailed && !cohortDrafts.length;
-  const showNoDatabaseCohorts = step === 'cohort' && Boolean(selectedProgramme) && !isFreeProgramme && !programmeDetailLoading && !programmeDetailFailed && Boolean(hydratedProgrammeRef.current) && !cohortDrafts.length;
+  const showNoDatabaseCohorts = step === 'cohort' && Boolean(selectedProgramme) && !isFreeProgramme && !programmeDetailFailed && Boolean(hydratedProgrammeRef.current) && !cohortDrafts.length && (!programmeDetailLoading || completingNewDraftProgramme || draftProgrammeHydratedEmpty);
 
   return createPortal((
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/35 p-2 backdrop-blur-sm sm:p-5">
-      <div key={step} className={`relative z-10 flex max-h-[94vh] w-full ${dialogWidth} flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-xl`} onClick={event => event.stopPropagation()}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="curriculum-wizard-title"
+        className={`relative z-10 flex max-h-[94vh] w-full ${dialogWidth} flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-xl`}
+      >
         <header className="border-b border-foreground-200/70 bg-background-50 px-5 py-4 sm:px-6">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-primary-600">Curriculum Studio</p>
-              <h2 className="mt-1 text-xl font-heading font-bold text-foreground-950">{currentStepMeta.label}</h2>
+              <h2 id="curriculum-wizard-title" className="mt-1 text-xl font-heading font-bold text-foreground-950">{currentStepMeta.label}</h2>
               <p className="mt-1 max-w-2xl text-[12px] leading-5 text-foreground-500">
                 {stepInstruction}
               </p>
@@ -4944,7 +5727,7 @@ export function AddCurriculumStructureWizard({
           <PopupTrail current={step} stepIndex={stepIndex} steps={visibleSteps} onNavigate={setStep} />
         </header>
 
-        <div className="min-h-0 flex-1 overflow-y-scroll bg-background-100/70" style={{ scrollbarGutter: 'stable' }}>
+        <div ref={stepScrollRef} className="min-h-0 flex-1 overflow-y-scroll bg-background-100/70" style={{ scrollbarGutter: 'stable' }}>
           <main className="min-w-0 p-3 sm:p-5" onChangeCapture={() => { userEditedWizardRef.current = true; }}>
               {error && <PanelTone icon="ri-error-warning-line" text={`Curriculum API error: ${error}`} tone="error" />}
               {message && <PanelTone icon="ri-information-line" text={message} tone={message.includes('Unable') || message.includes('returned') || message.includes('Complete') ? 'error' : 'info'} />}
@@ -5040,7 +5823,7 @@ export function AddCurriculumStructureWizard({
                     <div className="lg:col-span-2 rounded-xl border border-primary-100 bg-background-50 p-4">
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
-                          <p className="text-[10px] font-bold uppercase text-primary-700">Apply KSB source</p>
+                          <p className="text-[10px] font-bold uppercase text-primary-700">Apply KSB Source</p>
                           <p className="mt-1 text-[12px] font-medium text-foreground-500">
                             {selectedKsbProfile
                               ? `${selectedKsbProfile.standard || selectedKsbProfile.programmeName} - ${wizardKsbSetCountsLabel(selectedKsbProfile)}`
@@ -5063,7 +5846,7 @@ export function AddCurriculumStructureWizard({
                               }}
                               className={`rounded-md px-3 py-2 text-[11px] font-bold ${ksbSourceKind === kind ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-50'}`}
                             >
-                              {kind === 'profile' ? 'KSB profile' : 'KSB source'}
+                              {kind === 'profile' ? 'KSB profile' : 'KSB standard'}
                             </button>
                           ))}
                         </div>
@@ -5076,13 +5859,13 @@ export function AddCurriculumStructureWizard({
                             <button
                               key={value}
                               type="button"
-                              onClick={() => {
-                                userEditedWizardRef.current = true;
-                                setKsbSourceValue(value);
-                              }}
-                              className={`rounded-lg border px-3 py-2 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-50 text-foreground-800 hover:border-primary-200'}`}
+                              onClick={() => selectKsbProfileSource(value)}
+                              className={`rounded-lg border px-3 py-2 text-left transition-smooth ${selected ? 'border-primary-500 bg-primary-50 text-primary-950 ring-2 ring-primary-200' : 'border-background-200 bg-background-50 text-foreground-800 hover:border-primary-200'}`}
                             >
-                              <span className="block truncate text-[12px] font-bold">{profile.standard || profile.programmeName || 'KSB profile'}</span>
+                              <span className="flex items-center justify-between gap-2">
+                                <span className="min-w-0 truncate text-[12px] font-bold">{profile.standard || profile.programmeName || 'KSB profile'}</span>
+                                {selected && <span className="shrink-0 rounded-full bg-primary-600 px-2 py-0.5 text-[9px] font-black uppercase text-white">Selected</span>}
+                              </span>
                               <span className="mt-1 block text-[10px] font-semibold text-foreground-500">{wizardKsbSetCountsLabel(profile)}</span>
                             </button>
                           );
@@ -5094,18 +5877,13 @@ export function AddCurriculumStructureWizard({
                             <button
                               key={value}
                               type="button"
-                              onClick={() => {
-                                userEditedWizardRef.current = true;
-                                setKsbSourceValue(value);
-                                setProgrammeForm(prev => ({
-                                  ...prev,
-                                  standard: standard.name || standard.standardRef || prev.standard,
-                                  level: standard.levelValue || standard.level || prev.level,
-                                }));
-                              }}
-                              className={`rounded-lg border px-3 py-2 text-left transition-smooth ${selected ? 'border-primary-300 bg-primary-50 text-primary-900' : 'border-background-200 bg-background-50 text-foreground-800 hover:border-primary-200'}`}
+                              onClick={() => selectKsbStandardSource(standard, value)}
+                              className={`rounded-lg border px-3 py-2 text-left transition-smooth ${selected ? 'border-primary-500 bg-primary-50 text-primary-950 ring-2 ring-primary-200' : 'border-background-200 bg-background-50 text-foreground-800 hover:border-primary-200'}`}
                             >
-                              <span className="block truncate text-[12px] font-bold">{standard.name || standard.standardRef}</span>
+                              <span className="flex items-center justify-between gap-2">
+                                <span className="min-w-0 truncate text-[12px] font-bold">{standard.name || standard.standardRef}</span>
+                                {selected && <span className="shrink-0 rounded-full bg-primary-600 px-2 py-0.5 text-[9px] font-black uppercase text-white">Selected</span>}
+                              </span>
                               <span className="mt-1 block text-[10px] font-semibold text-foreground-500">{wizardStandardCountsLabel(standard)}</span>
                             </button>
                           );
@@ -5114,7 +5892,7 @@ export function AddCurriculumStructureWizard({
                           <p className="rounded-lg border border-dashed border-background-200 px-3 py-4 text-[12px] font-medium text-foreground-500">No KSB profiles found.</p>
                         )}
                         {!ksbSourcesLoading && ksbSourceKind === 'standard' && !standardOptions.length && (
-                          <p className="rounded-lg border border-dashed border-background-200 px-3 py-4 text-[12px] font-medium text-foreground-500">No KSB sources found.</p>
+                          <p className="rounded-lg border border-dashed border-background-200 px-3 py-4 text-[12px] font-medium text-foreground-500">No KSB standards found.</p>
                         )}
                       </div>
                     </div>
@@ -5207,9 +5985,9 @@ export function AddCurriculumStructureWizard({
                           </div>
                         </div>
                         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_220px]">
-                          <Field label="Cohort name" value={cohortForm.name} onChange={value => setCohortForm(prev => ({ ...prev, name: value }))} required error={validation.cohort.find(item => item.includes('Cohort'))} placeholder="Example: Jan 2026 Cohort" />
-                          <Field label="Start date" type="date" value={cohortForm.startDate} onChange={setCohortStartDate} required error={validation.cohort.find(item => item.includes('Start'))} />
-                          <Field label="Duration in months" type="number" value={cohortForm.durationMonths} onChange={value => setCohortForm(prev => ({ ...prev, durationMonths: value }))} required error={validation.cohort.find(item => item.includes('Duration'))} />
+                          <Field label="Cohort name" value={cohortForm.name} onChange={value => setCohortForm(prev => ({ ...prev, name: value }))} required error={activeCohortFieldErrors.name} placeholder="Example: Jan 2026 Cohort" />
+                          <Field label="Start date" type="date" value={cohortForm.startDate} onChange={setCohortStartDate} required error={activeCohortFieldErrors.startDate} />
+                          <Field label="Duration in months" type="number" value={cohortForm.durationMonths} onChange={value => setCohortForm(prev => ({ ...prev, durationMonths: value }))} required error={activeCohortFieldErrors.durationMonths} />
                           <Field
                             label="Adjusted end date"
                             type="date"
@@ -5318,16 +6096,19 @@ export function AddCurriculumStructureWizard({
                                     type="button"
                                     onClick={() => removeGroupDraft(group.localId)}
                                     disabled={removing}
-                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 disabled:cursor-wait"
-                                    aria-label={`Remove ${group.name || `Group ${index + 1}`}`}
+                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-wait"
+                                    aria-label={removing ? `Removing ${group.name || `Group ${index + 1}`}` : `Remove ${group.name || `Group ${index + 1}`}`}
+                                    title={removing ? 'Removing group' : 'Remove group'}
                                   >
                                     <i className={`${removing ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} text-sm`}></i>
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => cloneGroupDraft(group.localId)}
-                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-700 group-hover:opacity-100"
+                                    disabled={removing}
+                                    className="flex w-9 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-700 group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-wait"
                                     aria-label={`Clone ${group.name || `Group ${index + 1}`}`}
+                                    title="Clone group"
                                   >
                                     <i className="ri-file-copy-line text-sm"></i>
                                   </button>
@@ -5343,14 +6124,14 @@ export function AddCurriculumStructureWizard({
                           <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_280px]">
                             <div className="space-y-4">
                               <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_8rem]">
-                                <Field label="Group name" value={groupForm.name} onChange={value => setGroupForm(prev => ({ ...prev, name: value }))} required error={validation.group.find(item => item.includes('Group'))} placeholder="Example: Wednesday AM" />
+                                <Field label="Group name" value={groupForm.name} onChange={value => setGroupForm(prev => ({ ...prev, name: value }))} required error={activeGroupFieldErrors.name} placeholder="Example: Wednesday AM" />
                                 <ColorField label="Colour" value={groupForm.color} onChange={value => setGroupForm(prev => ({ ...prev, color: value }))} compact />
                               </div>
                               <div className="rounded-xl border border-background-200 bg-background-100/50 p-3">
-                                <WeekdayCheckboxes label="Delivery days" value={activeGroup.deliveryDays} onChange={deliveryDays => setGroupForm(prev => ({ ...prev, deliveryDays }))} error={validation.group.find(item => item.includes('delivery day'))} compact />
+                                <WeekdayCheckboxes label="Delivery days" value={activeGroup.deliveryDays} onChange={deliveryDays => setGroupForm(prev => ({ ...prev, deliveryDays }))} error={activeGroupFieldErrors.deliveryDays} compact />
                               </div>
                               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                                <Field label="Start time" type="time" value={groupForm.startTime} onChange={value => setGroupForm(prev => ({ ...prev, startTime: value, endTime: addHoursToTime(value, 2) }))} required error={validation.group.find(item => item.includes('Start time'))} />
+                                <Field label="Start time" type="time" value={groupForm.startTime} onChange={value => setGroupForm(prev => ({ ...prev, startTime: value, endTime: addHoursToTime(value, 2) }))} required error={activeGroupFieldErrors.startTime} />
                                 <Field label="End time" type="time" value={groupForm.endTime} onChange={value => setGroupForm(prev => ({ ...prev, endTime: value }))} />
                               </div>
                             </div>
@@ -5401,6 +6182,9 @@ export function AddCurriculumStructureWizard({
                   <ModulesStepWorkspace
                     freeMode={isFreeProgramme}
                     detailsLoading={!isFreeProgramme && Boolean(selectedProgramme) && !cohortDrafts.length && (loading || programmeDetailLoading || (!hydratedProgrammeRef.current && !programmeDetailFailed))}
+                    countsPending={structureCountsPending}
+                    countsStale={structureCountsStale}
+                    onRetryDetails={wizardLazyData.reloadProgrammeDetail}
                     programmeName={activeProgramme.name || programmeForm.name}
                     cohortDrafts={cohortDrafts}
                     activeCohort={activeCohort}
@@ -5478,6 +6262,7 @@ export function AddCurriculumStructureWizard({
                             draft={draft}
                             actualComponentsLoading={moduleActualComponentsLoading(draft)}
                             moduleBuilderMissing={moduleBuilderStructureMissing(draft)}
+                            moduleBuilderAmbiguous={moduleBuilderStructureAmbiguous(draft)}
                             moduleBuilderLoadFailed={moduleBuilderStructureFailed(draft)}
                             moduleBuilderEmpty={moduleBuilderStructureEmpty(draft)}
                             moduleOptions={moduleOptions}
@@ -5485,6 +6270,7 @@ export function AddCurriculumStructureWizard({
                             programmeName={activeProgramme.name || programmeForm.name}
                             ksbSourceId={ksbSourceValue}
                             ksbSourceLabel={selectedKsbSourceLabel}
+                            ksbOptions={selectedKsbOptions}
                             cohort={activeCohort}
                             group={activeGroup}
                             onAddFreeComponent={addFreeComponent}
@@ -5540,7 +6326,6 @@ export function AddCurriculumStructureWizard({
                       onCloneItem={id => cloneGroupDraft(id, { focusGroupStep: true })}
                       onRemoveItem={removeGroupDraft}
                       removingId={removingDraftId}
-                      defaultOpen={false}
                     />
                     {activeCohort.groups.length > 0 && (
                       <NestedScopeCard
@@ -5566,6 +6351,7 @@ export function AddCurriculumStructureWizard({
                               draft={draft}
                               actualComponentsLoading={moduleActualComponentsLoading(draft)}
                               moduleBuilderMissing={moduleBuilderStructureMissing(draft)}
+                              moduleBuilderAmbiguous={moduleBuilderStructureAmbiguous(draft)}
                               moduleBuilderLoadFailed={moduleBuilderStructureFailed(draft)}
                               moduleBuilderEmpty={moduleBuilderStructureEmpty(draft)}
                               moduleOptions={moduleOptions}
@@ -5573,8 +6359,13 @@ export function AddCurriculumStructureWizard({
                               programmeName={activeProgramme.name || programmeForm.name}
                               ksbSourceId={ksbSourceValue}
                               ksbSourceLabel={selectedKsbSourceLabel}
+                              ksbOptions={selectedKsbOptions}
                               cohort={activeCohort}
                               group={activeGroup}
+                              onAddFreeComponent={addFreeComponent}
+                              onUpdateFreeComponent={updateFreeComponent}
+                              onRemoveFreeComponent={removeFreeComponent}
+                              onReorderFreeComponent={reorderFreeComponent}
                               onOpenModuleBuilder={setEmbeddedModuleBuilderUrl}
                             />
                           ))}
@@ -5617,20 +6408,20 @@ export function AddCurriculumStructureWizard({
             </div>
           )}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <button type="button" onClick={stepIndex === 0 ? requestClose : () => setStep(visibleSteps[stepIndex - 1].key)} disabled={Boolean(saving)} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
+          <button type="button" onClick={stepIndex === 0 ? requestClose : () => setStep(visibleSteps[stepIndex - 1].key)} disabled={saving === 'final'} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
             <i className={stepIndex === 0 ? 'ri-close-line' : 'ri-arrow-left-line'}></i>
             {stepIndex === 0 ? 'Cancel' : 'Back'}
           </button>
           <div className="flex flex-col sm:flex-row sm:items-center gap-2">
             {step === 'review' && (
               <div className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[11px] font-bold text-foreground-600 sm:text-right">
-                {selectedProgramme ? 'Ready to update' : 'Ready to save'}: <span className="text-foreground-950">{reviewSaveSummary}</span>
+                {selectedProgramme && !completingNewDraftProgramme ? 'Ready to update' : 'Ready to save'}: <span className="text-foreground-950">{reviewSaveSummary}</span>
               </div>
             )}
-            {!selectedProgramme && (canSaveDraft || saving === 'draft') && (
+            {!selectedProgramme && canSaveDraft && (
               <button type="button" onClick={() => persistStructure('draft')} disabled={Boolean(saving) || !canSaveDraft} className="inline-flex items-center justify-center gap-2 rounded-lg border border-background-200 bg-background-50 px-4 py-2 text-[12px] font-bold text-foreground-700 hover:bg-background-100 disabled:opacity-50 transition-smooth">
-                <i className="ri-save-3-line"></i>
-                {saving === 'draft' ? 'Saving...' : 'Save Draft'}
+                <i className={saving === 'draft' ? 'ri-loader-4-line animate-spin' : 'ri-save-3-line'}></i>
+                {saving === 'draft' ? 'Saving draft...' : 'Save Draft'}
               </button>
             )}
             {selectedProgramme && step !== 'review' && hasUnsavedChanges && (
@@ -5642,10 +6433,10 @@ export function AddCurriculumStructureWizard({
             {step === 'review' ? (
               <button type="button" onClick={() => persistStructure('final')} disabled={Boolean(saving) || !canSave} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 py-2 text-[12px] font-bold text-white hover:bg-primary-700 disabled:opacity-50 transition-smooth">
                 <i className="ri-checkbox-circle-line"></i>
-                {saving === 'final' ? 'Saving...' : selectedProgramme ? 'Update Programme' : 'Create Programme'}
+                {saving === 'final' ? 'Saving...' : selectedProgramme && !completingNewDraftProgramme ? 'Update Programme' : 'Create Programme'}
               </button>
             ) : (
-              <button type="button" onClick={() => setStep(nextStepMeta.key)} disabled={!canContinue || Boolean(saving)} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 py-2 text-[12px] font-bold text-white hover:bg-primary-700 disabled:opacity-50 transition-smooth">
+              <button type="button" onClick={() => { void handleNextStep(); }} disabled={!canContinue || saving === 'final'} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 py-2 text-[12px] font-bold text-white hover:bg-primary-700 disabled:opacity-50 transition-smooth">
                 {`Next: ${nextStepMeta.label}`}
                 <i className="ri-arrow-right-line"></i>
               </button>
@@ -5746,91 +6537,6 @@ function PopupTrail({
   );
 }
 
-function NestedPopupBackdrop({
-  stepIndex,
-  programme,
-  cohort,
-  group,
-  freeMode = false,
-}: {
-  stepIndex: number;
-  programme: CurriculumProgramme;
-  cohort: CohortDraft;
-  group: GroupDraft & { deliveryDay?: string };
-  freeMode?: boolean;
-}) {
-  const cards = (freeMode ? [
-    {
-      label: 'Programme',
-      title: programme?.name || 'Programme',
-      meta: programme?.level || 'Free course',
-      color: programme?.color || '#2563eb',
-      icon: 'ri-book-2-line',
-    },
-    {
-      label: 'Modules',
-      title: 'Custom modules',
-      meta: formatModuleCount(configuredModuleCount(group)),
-      color: '#7c3aed',
-      icon: 'ri-stack-line',
-    },
-  ] : [
-    {
-      label: 'Programme',
-      title: programme?.name || 'Programme',
-      meta: programme?.level || 'Created',
-      color: programme?.color || '#2563eb',
-      icon: 'ri-book-2-line',
-    },
-    {
-      label: 'Cohort',
-      title: cohort.name || 'Cohort',
-      meta: cohort.startDate && cohort.endDate ? `${formatDateValue(cohort.startDate)} to ${formatDateValue(cohort.endDate)}` : 'Dates selected',
-      color: cohort.color,
-      icon: 'ri-calendar-event-line',
-    },
-    {
-      label: 'Group',
-      title: group.name || 'Group',
-      meta: group.deliveryDay || group.deliveryDays.join(', ') || 'Delivery selected',
-      color: group.color,
-      icon: 'ri-team-line',
-    },
-    {
-      label: 'Modules',
-      title: 'Modules',
-      meta: `${formatModuleCount(configuredModuleCount(group))} inside selected group`,
-      color: '#7c3aed',
-      icon: 'ri-stack-line',
-    },
-  ]).slice(0, Math.max(0, Math.min(stepIndex, freeMode ? 2 : 4)));
-
-  if (!cards.length) return null;
-
-  return (
-    <div className="pointer-events-none absolute left-4 top-1/2 z-0 hidden -translate-y-1/2 flex-col gap-3 xl:flex">
-      {cards.map((card, index) => (
-        <div
-          key={card.label}
-          className="w-64 rounded-2xl border border-white/15 bg-background-50/80 p-3 shadow-2xl backdrop-blur-sm"
-          style={{ transform: `translate(${index * 14}px, ${index * 8}px)`, opacity: 0.95 - index * 0.12 }}
-        >
-          <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white" style={{ backgroundColor: card.color }}>
-              <i className={card.icon}></i>
-            </span>
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase text-foreground-400">{card.label}</p>
-              <p className="truncate text-[12px] font-heading font-bold text-foreground-950">{card.title}</p>
-              <p className="truncate text-[10px] font-semibold text-foreground-500">{card.meta}</p>
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function DraftSwitcher({
   label,
   items,
@@ -5853,7 +6559,6 @@ function DraftSwitcher({
   onRemoveItem?: (id: string) => void | Promise<void>;
   removingId?: string;
   compact?: boolean;
-  defaultOpen?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -5956,7 +6661,7 @@ function DraftSwitcher({
                   type="button"
                   onClick={() => onCloneItem(item.id)}
                   disabled={removing}
-                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-700 group-hover:opacity-100 disabled:cursor-wait"
+                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-primary-50 hover:text-primary-700 group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-wait"
                   aria-label={`Clone ${item.label}`}
                   title={`Clone ${item.label}`}
                 >
@@ -5968,7 +6673,7 @@ function DraftSwitcher({
                   type="button"
                   onClick={() => onRemoveItem(item.id)}
                   disabled={removing}
-                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 disabled:cursor-wait"
+                  className="flex w-8 shrink-0 items-center justify-center border-l border-background-200 text-foreground-300 opacity-0 transition-smooth hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus-visible:opacity-100 disabled:cursor-wait"
                   aria-label={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
                   title={removing ? `Removing ${item.label}` : `Remove ${item.label}`}
                 >
@@ -6383,6 +7088,7 @@ function HolidayManagerModal({
   const [draft, setDraft] = useState<HolidayManagerDraft>(emptyHolidayManagerDraft);
   const [saving, setSaving] = useState(false);
   const [busyId, setBusyId] = useState<string | number | null>(null);
+  useWizardEscapeLayer(true, onClose);
   const [typeBusy, setTypeBusy] = useState<string | null>(null);
   const [typeDraft, setTypeDraft] = useState<HolidayTypeDraft | null>(null);
   const [collapsedHolidayYears, setCollapsedHolidayYears] = useState<Record<string, boolean>>({});
@@ -6397,7 +7103,8 @@ function HolidayManagerModal({
   );
   const holidayYearGroups = useMemo(() => buildHolidayYearGroups(filteredHolidays), [filteredHolidays]);
   const holidayYears = useMemo(() => buildHolidayYearGroups(holidays).map(group => group.year), [holidays]);
-  const canSave = Boolean(draft.label.trim() && draft.startDate && draft.endDate);
+  const dateRangeInverted = Boolean(draft.startDate && draft.endDate && compareDateInputs(draft.endDate, draft.startDate) < 0);
+  const canSave = Boolean(draft.label.trim() && draft.startDate && draft.endDate) && !dateRangeInverted;
   const draftDuration = holidayDraftDurationLabel(draft);
   const draftDateSummary = draft.startDate
     ? `${formatSessionDate(draft.startDate)}${draft.endDate && draft.endDate !== draft.startDate ? ` to ${formatSessionDate(draft.endDate)}` : ''}`
@@ -6550,7 +7257,7 @@ function HolidayManagerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[10040] flex items-center justify-center bg-black/35 p-3 sm:p-6" onClick={event => event.stopPropagation()}>
+    <div className="fixed inset-0 z-[10040] flex items-center justify-center bg-black/35 p-3 sm:p-6">
       <section className="flex max-h-[92vh] w-full max-w-[1760px] flex-col overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-2xl">
         <header className="border-b border-foreground-200/60 bg-background-50 px-5 py-4">
           <div className="flex items-start justify-between gap-4">
@@ -6564,7 +7271,7 @@ function HolidayManagerModal({
                 <p className="mt-1 text-[12px] leading-5 text-foreground-500">Manage global holidays here, then select which ones apply to this cohort.</p>
               </div>
             </div>
-            <button type="button" onClick={onClose} className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-700 hover:bg-background-200">
+            <button type="button" onClick={onClose} aria-label="Close holiday manager" title="Close holiday manager" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-700 hover:bg-background-200">
               <i className="ri-close-line text-lg"></i>
             </button>
           </div>
@@ -6606,8 +7313,25 @@ function HolidayManagerModal({
                   onSaveEdit={saveType}
                   onRemove={removeType}
                 />
-                <Field label="Start date" type="date" value={draft.startDate} onChange={value => updateDraft({ startDate: value, endDate: draft.endDate || value })} required />
-                <Field label="End date" type="date" value={draft.endDate} onChange={value => updateDraft({ endDate: value })} required />
+                <Field
+                  label="Start date"
+                  type="date"
+                  value={draft.startDate}
+                  onChange={value => updateDraft({
+                    startDate: value,
+                    endDate: !draft.endDate || (value && compareDateInputs(draft.endDate, value) < 0) ? value : draft.endDate,
+                  })}
+                  required
+                />
+                <Field
+                  label="End date"
+                  type="date"
+                  value={draft.endDate}
+                  onChange={value => updateDraft({ endDate: value })}
+                  required
+                  min={draft.startDate}
+                  error={dateRangeInverted ? 'End date cannot be before the start date.' : ''}
+                />
               </div>
 
               <div className="mt-4 overflow-hidden rounded-xl border border-background-200 bg-background-100/70">
@@ -6997,6 +7721,9 @@ function buildHolidayTypeLibrary(holidays: CurriculumHoliday[]): HolidayTypeDefi
 function ModulesStepWorkspace({
   freeMode = false,
   detailsLoading = false,
+  countsPending = false,
+  countsStale = false,
+  onRetryDetails,
   programmeName,
   cohortDrafts,
   activeCohort,
@@ -7024,6 +7751,9 @@ function ModulesStepWorkspace({
 }: {
   freeMode?: boolean;
   detailsLoading?: boolean;
+  countsPending?: boolean;
+  countsStale?: boolean;
+  onRetryDetails?: () => void | Promise<void>;
   programmeName: string;
   cohortDrafts: CohortDraft[];
   activeCohort: CohortDraft;
@@ -7050,6 +7780,13 @@ function ModulesStepWorkspace({
   onResolveTutorConflict: (conflict: TutorScheduleConflict) => void;
 }) {
   const activeModuleIndex = activeModule ? Math.max(0, moduleDrafts.findIndex(draft => draft.localId === activeModule.localId)) : -1;
+  // `detailsLoading` only covers the first paint, when no cohort has arrived at
+  // all. Counts keep hydrating after that (the compact list pass is corrected by
+  // the full programme detail), so an empty module list during `countsPending`
+  // means "not here yet", not "none exist". Telling those apart matters: the
+  // empty state reads as a factual answer, and showing it mid-hydration makes a
+  // populated group look empty until the detail lands.
+  const structureHydrating = detailsLoading || countsPending;
   const groupSchedule = `${groupForm.deliveryDay || 'No delivery days'} ${groupForm.startTime || ''}-${groupForm.endTime || addHoursToTime(groupForm.startTime, 2)}`.trim();
   const workspaceTitle = freeMode ? 'Custom modules' : (groupForm.name || 'Select a group');
   const workspaceMeta = freeMode ? (programmeName || 'Module course') : groupSchedule;
@@ -7067,6 +7804,24 @@ function ModulesStepWorkspace({
 
   return (
     <div className={`grid grid-cols-1 gap-4 ${freeMode ? '' : 'xl:grid-cols-[300px_minmax(0,1fr)]'}`}>
+      {countsStale && (
+        <div className={`${freeMode ? '' : 'xl:col-span-2'} flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800`} role="alert">
+          <i className="ri-error-warning-line text-sm"></i>
+          <span className="min-w-0 flex-1">
+            Couldn&apos;t load the full programme detail, so these counts may be incomplete.
+          </span>
+          {onRetryDetails && (
+            <button
+              type="button"
+              onClick={() => { void onRetryDetails(); }}
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 text-[11px] font-bold text-amber-800 transition-smooth hover:bg-amber-100"
+            >
+              <i className="ri-refresh-line"></i>
+              Retry
+            </button>
+          )}
+        </div>
+      )}
       {!freeMode && <aside className="space-y-3 xl:sticky xl:top-3 xl:self-start">
         <DeliveryPathPanel
           title="Current path"
@@ -7083,10 +7838,11 @@ function ModulesStepWorkspace({
           label="Cohorts"
           context={programmeName ? `Inside ${programmeName}` : 'Inside programme'}
           count={cohortDrafts.length}
+          countPending={countsPending}
           items={cohortDrafts.map(cohort => ({
             id: cohort.localId,
             label: cohortDisplayName(cohort),
-            meta: formatGroupCount(configuredGroupCount(cohort)),
+            meta: countsPending ? 'Loading groups...' : formatGroupCount(configuredGroupCount(cohort)),
             color: cohort.color,
           }))}
           activeId={activeCohort.localId}
@@ -7098,6 +7854,7 @@ function ModulesStepWorkspace({
           label="Groups"
           context={`Inside ${cohortDisplayName(activeCohort)}`}
           count={activeCohort.groups.length}
+          countPending={countsPending}
           items={activeCohort.groups.map((group, index) => ({
             id: group.localId,
             label: group.name || `Group ${index + 1}`,
@@ -7126,16 +7883,16 @@ function ModulesStepWorkspace({
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <span className="rounded-full bg-background-50 px-3 py-1.5 text-[11px] font-bold text-foreground-600 shadow-sm">
-                {formatModuleCount(configuredModuleCount(activeGroup))}
+                {countsPending ? <CountSkeleton width="w-16" label="Loading module count" /> : formatModuleCount(configuredModuleCount(activeGroup))}
               </span>
               <button
                 type="button"
                 onClick={onAddModule}
-                disabled={detailsLoading}
+                disabled={structureHydrating}
                 className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-wait disabled:opacity-60"
               >
-                <i className={detailsLoading ? 'ri-loader-4-line animate-spin' : 'ri-add-line'}></i>
-                {detailsLoading ? 'Loading...' : 'Add Module'}
+                <i className={structureHydrating ? 'ri-loader-4-line animate-spin' : 'ri-add-line'}></i>
+                {structureHydrating ? 'Loading...' : 'Add Module'}
               </button>
             </div>
           </div>
@@ -7152,11 +7909,8 @@ function ModulesStepWorkspace({
               Select a tutor inside each module
             </span>
           </div>
-          {detailsLoading ? (
-            <LoadingState
-              title="Loading curriculum details"
-              text="Programme, cohorts, groups and modules are still being loaded."
-            />
+          {structureHydrating && !moduleDrafts.length ? (
+            <ModuleChipSkeletonRow />
           ) : moduleDrafts.length ? (
             <div className="flex gap-2 overflow-x-auto pb-1">
               {moduleDrafts.map((draft, index) => {
@@ -7172,7 +7926,9 @@ function ModulesStepWorkspace({
                     <button type="button" onClick={() => onSelectModule(draft.localId)} className="min-w-0 flex-1 px-3 py-1.5 text-left">
                       <span className="block truncate text-[12px] font-bold text-foreground-950">{title}</span>
                       <span className="mt-0.5 block truncate text-[11px] font-semibold text-foreground-500">
-                        {isConfiguredModule(draft) ? (freeMode ? `${draft.weeks.reduce((total, week) => total + week.components.length, 0)} components` : formatSessionCount(moduleDraftChipSessionCount(draft, moduleOptions))) : 'Not configured'}
+                        {countsPending
+                          ? <CountSkeleton width="w-14" label="Loading module details" />
+                          : isConfiguredModule(draft) ? (freeMode ? `${draft.weeks.reduce((total, week) => total + week.components.length, 0)} components` : formatSessionCount(moduleDraftChipSessionCount(draft, moduleOptions))) : 'Not configured'}
                       </span>
                     </button>
                     <button
@@ -7202,10 +7958,16 @@ function ModulesStepWorkspace({
           ) : (
             <EmptyState text={freeMode ? 'No free modules yet. Add the first custom module.' : 'No modules in this group yet. Add the first module to start scheduling.'} />
           )}
+          {structureHydrating && (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] font-semibold text-primary-700" role="status" aria-live="polite">
+              <i className="ri-loader-4-line animate-spin"></i>
+              Still loading this group&apos;s modules...
+            </p>
+          )}
         </div>
 
         <div className="bg-background-100/50 p-4">
-          {detailsLoading ? (
+          {structureHydrating && !activeModule ? (
             <LoadingState
               title="Loading module details"
               text="The module settings will appear here as soon as the data is ready."
@@ -7240,7 +8002,7 @@ function ModulesStepWorkspace({
                 </span>
                 <p className="mt-3 text-sm font-heading font-bold text-foreground-950">Choose or add a module</p>
                 <p className="mt-1 text-[12px] leading-5 text-foreground-500">The module form appears here after a module is selected.</p>
-                <button type="button" onClick={onAddModule} disabled={detailsLoading} className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700 disabled:cursor-wait disabled:opacity-60">
+                <button type="button" onClick={onAddModule} disabled={structureHydrating} className="mt-4 inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white hover:bg-primary-700 disabled:cursor-wait disabled:opacity-60">
                   <i className="ri-add-line"></i>
                   Add Module
                 </button>
@@ -7302,6 +8064,7 @@ function EntityPickerPanel({
   label,
   context,
   count,
+  countPending = false,
   items,
   activeId,
   onSelect,
@@ -7315,6 +8078,7 @@ function EntityPickerPanel({
   label: string;
   context?: string;
   count: number;
+  countPending?: boolean;
   items: Array<{ id: string; label: string; meta: string; color?: string }>;
   activeId: string;
   onSelect: (id: string) => void;
@@ -7334,7 +8098,7 @@ function EntityPickerPanel({
           <div className="flex min-w-0 items-center gap-1.5">
             <p className="truncate text-[10px] font-bold uppercase text-foreground-400">{label}</p>
             <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-600">
-              {count}
+              {countPending ? <CountSkeleton width="w-3" label={`Loading ${label.toLowerCase()} count`} /> : count}
             </span>
           </div>
           {context && <p className="mt-0.5 truncate text-[11px] font-semibold text-foreground-500">{context}</p>}
@@ -7409,10 +8173,41 @@ function EntityPickerPanel({
             );
           })}
         </div>
+      ) : countPending ? (
+        <EntityRowSkeleton label={label} />
       ) : (
         <p className="rounded-xl border border-dashed border-background-300 bg-background-100/60 px-3 py-4 text-[11px] font-semibold text-foreground-400">{emptyText}</p>
       ))}
     </section>
+  );
+}
+
+// Placeholder rows for a picker whose items have not arrived yet. Mirrors the real
+// row height so the sidebar does not jump when the data lands.
+function EntityRowSkeleton({ label, rows = 2 }: { label: string; rows?: number }) {
+  return (
+    <div className="space-y-1.5" role="status" aria-live="polite" aria-label={`Loading ${label.toLowerCase()}`}>
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="rounded-xl border border-background-200 bg-background-100/60 px-3 py-2">
+          <span className="block h-3.5 w-24 animate-pulse rounded-md bg-background-200" />
+          <span className="mt-1.5 block h-2.5 w-32 animate-pulse rounded-full bg-background-200/70" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Placeholder chips for the module strip while a group's modules are still loading.
+function ModuleChipSkeletonRow({ chips = 2 }: { chips?: number }) {
+  return (
+    <div className="flex gap-2 pb-1" role="status" aria-live="polite" aria-label="Loading modules">
+      {Array.from({ length: chips }).map((_, index) => (
+        <div key={index} className="min-w-[174px] rounded-xl border border-background-200 bg-background-100/60 px-3 py-1.5">
+          <span className="block h-3.5 w-28 animate-pulse rounded-md bg-background-200" />
+          <span className="mt-1 block h-2.5 w-16 animate-pulse rounded-full bg-background-200/70" />
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -7580,6 +8375,9 @@ function ModulePlanningPanel({
   const startDateError = draft.startDate && cohortStartDate && compareDateInputs(draft.startDate, cohortStartDate) < 0
     ? `Module cannot start before cohort start (${formatDateValue(cohortStartDate)}).`
     : '';
+  const endDateError = draft.startDate && draft.endDate && compareDateInputs(draft.endDate, draft.startDate) < 0
+    ? `Module cannot end before it starts (${formatDateValue(draft.startDate)}).`
+    : '';
   const visibleModeOptions = freeMode ? moduleModeOptions.filter(option => option.key === 'new') : moduleModeOptions;
   const tutorEmail = String(tutorProfiles.find(profile => normalise(staffName(profile)) === normalise(draft.tutor))?.email || '');
   const teamsScheduleFingerprintValue = useMemo(
@@ -7596,7 +8394,7 @@ function ModulePlanningPanel({
       return;
     }
     const patch = option.key === 'new' && draft.mode !== 'new'
-      ? freshNewModulePatch(draft, groupDay, groupTime)
+      ? freshNewModulePatch(draft, groupDay, groupTime, cohortStartDate)
       : moduleModeSwitchPatch(draft, option.key);
     if (Object.keys(patch).length) onChange(patch);
     if (option.key === 'existing' && draft.mode !== 'existing' && draft.existingCatalogueId) {
@@ -7745,7 +8543,7 @@ function ModulePlanningPanel({
             </div>
             <p className="text-[11px] text-foreground-500">
               {freeMode
-                ? `${componentCount} components - certificate after completion`
+                ? `${componentCount} editable components`
                 : draft.mode === 'existing'
                 ? selectedModule
                   ? `${formatSessionCount(plannedSessionCount)} from linked content scheduled on ${groupDay} at ${groupTime}`
@@ -7855,7 +8653,14 @@ function ModulePlanningPanel({
               ) : (
                 <Field label="Sessions" type="number" value={draft.sessionsNumber} onChange={value => onChange({ sessionsNumber: value, existingSessionsNumber: value })} required />
               )}
-              <Field label="End date" type="date" value={draft.endDate} onChange={value => onChange({ endDate: value })} />
+              <Field
+                label="End date"
+                type="date"
+                value={draft.endDate}
+                onChange={value => onChange({ endDate: value })}
+                min={draft.startDate || cohortStartDate}
+                error={endDateError}
+              />
               <StaffSelect
                 label="Tutor"
                 value={draft.tutor}
@@ -8240,6 +9045,7 @@ function TeamsOccurrenceDetailsModal({
   const [attendanceTranscriptText, setAttendanceTranscriptText] = useState('');
   const [transcriptLoading, setTranscriptLoading] = useState('');
   const [transcriptError, setTranscriptError] = useState('');
+  useWizardEscapeLayer(true, onClose);
 
   const loadTranscript = async (artifact: TeamsMeetingArtifact) => {
     if (!liveSessionId) return;
@@ -8994,6 +9800,9 @@ function WizardTeamsMeetingModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [created, setCreated] = useState<TeamsMeetingResult | null>(null);
+  // Same in-flight guard as the modal's own close button: a half-created meeting
+  // must not be abandoned by a stray key press.
+  useWizardEscapeLayer(!submitting, onClose);
 
   useEffect(() => {
     let active = true;
@@ -9093,7 +9902,7 @@ function WizardTeamsMeetingModal({
 
   return createPortal(
     <div className="fixed inset-0 z-[10150] flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-5">
-      <div role="dialog" aria-modal="true" aria-labelledby="wizard-teams-title" className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby="wizard-teams-title" className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl">
         <div className="flex shrink-0 items-start justify-between gap-4 bg-primary-950 px-5 py-4 text-white">
           <div className="flex min-w-0 items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-white/10 text-cyan-300"><i className="ri-microsoft-teams-line text-xl"></i></span>
@@ -9276,6 +10085,7 @@ function ModuleBuilderContentPreview({
   draft,
   actualComponentsLoading = false,
   moduleBuilderMissing = false,
+  moduleBuilderAmbiguous = '',
   moduleBuilderLoadFailed = false,
   moduleBuilderEmpty = false,
   moduleOptions,
@@ -9283,6 +10093,7 @@ function ModuleBuilderContentPreview({
   programmeName,
   ksbSourceId,
   ksbSourceLabel,
+  ksbOptions = [],
   cohort,
   group,
   onAddFreeComponent,
@@ -9295,6 +10106,9 @@ function ModuleBuilderContentPreview({
   draft: ModuleDraft;
   actualComponentsLoading?: boolean;
   moduleBuilderMissing?: boolean;
+  // Non-empty when the linked title matches several Module Builder modules: the
+  // message explains the collision so a human can relink deliberately.
+  moduleBuilderAmbiguous?: string;
   moduleBuilderLoadFailed?: boolean;
   moduleBuilderEmpty?: boolean;
   moduleOptions: CurriculumModule[];
@@ -9302,9 +10116,10 @@ function ModuleBuilderContentPreview({
   programmeName: string;
   ksbSourceId?: string;
   ksbSourceLabel?: string;
+  ksbOptions?: WizardKsbOption[];
   cohort: CohortDraft;
   group: GroupDraft;
-  onAddFreeComponent?: (moduleId: string, type: ModuleComponentType) => void;
+  onAddFreeComponent?: (moduleId: string, type: ModuleComponentType, weekId?: string) => void;
   onUpdateFreeComponent?: (moduleId: string, componentId: string, patch: Partial<ModuleComponent>) => void;
   onRemoveFreeComponent?: (moduleId: string, componentId: string) => void;
   onReorderFreeComponent?: (moduleId: string, sourceComponentId: string, targetComponentId: string) => void;
@@ -9318,10 +10133,11 @@ function ModuleBuilderContentPreview({
   const [newComponentType, setNewComponentType] = useState<ModuleComponentType>('video');
   const knownComponentIdsRef = useRef<Set<string>>(new Set());
   const title = draft.name || 'Untitled module';
+  const editableComponents = freeMode || draft.mode === 'new';
   const displayWeeks = useMemo(() => draft.weeks.map(week => ({
     ...week,
-    components: freeMode ? week.components : week.components.filter(component => isDisplayableModuleBuilderComponent(component, week.title)),
-  })), [draft.weeks, freeMode]);
+    components: editableComponents ? week.components : week.components.filter(component => isDisplayableModuleBuilderComponent(component, week.title)),
+  })), [draft.weeks, editableComponents]);
   const displayComponentCount = displayWeeks.reduce((total, week) => total + week.components.length, 0);
   const waitingForActualComponents = !freeMode && actualComponentsLoading && !moduleBuilderEmpty;
   const componentCount = waitingForActualComponents ? 0 : displayComponentCount;
@@ -9341,8 +10157,26 @@ function ModuleBuilderContentPreview({
     return () => window.clearInterval(timer);
   }, [waitingForActualComponents]);
   const components = useMemo(() => draft.weeks.flatMap(week => week.components), [draft.weeks]);
+  // "Order updated" is a confirmation, not a status: it used to latch on until the
+  // whole module was swapped out.
+  useEffect(() => {
+    if (!orderUpdated) return;
+    const timer = window.setTimeout(() => setOrderUpdated(false), 2500);
+    return () => window.clearTimeout(timer);
+  }, [orderUpdated]);
   const componentIdSignature = components.map(component => component.id).join('|');
   const moduleBuilderUrl = moduleBuilderUrlForDraft(draft, moduleOptions, programmeName, programmeId, cohort, group, ksbSourceId, ksbSourceLabel);
+  const componentGroupOptions = useMemo<GroupOption[]>(() => {
+    const key = group.sourceId || group.localId || group.name;
+    if (!key) return [];
+    return [{ key, name: group.name || key, cohort: cohort.name || '' }];
+  }, [cohort.name, group.localId, group.name, group.sourceId]);
+  const weekScope = useMemo<WeekScope>(() => ({
+    courseType: freeMode ? 'free' : 'paid',
+    programmeId,
+    programmeName,
+    moduleName: draft.name || title,
+  }), [draft.name, freeMode, programmeId, programmeName, title]);
 
   useEffect(() => {
     setModuleOpen(false);
@@ -9352,7 +10186,7 @@ function ModuleBuilderContentPreview({
   }, [draft.localId]);
 
   useEffect(() => {
-    if (waitingForActualComponents || freeMode || !componentCount) return;
+    if (waitingForActualComponents || editableComponents || !componentCount) return;
     const weeksWithComponents = displayWeeks.filter(week => week.components.length).map(week => week.id);
     if (!weeksWithComponents.length) return;
     setModuleOpen(true);
@@ -9362,10 +10196,10 @@ function ModuleBuilderContentPreview({
       if (next.size === previous.size && Array.from(next).every(id => previous.has(id))) return previous;
       return next;
     });
-  }, [componentCount, componentIdSignature, displayWeeks, freeMode, waitingForActualComponents]);
+  }, [componentCount, componentIdSignature, displayWeeks, editableComponents, waitingForActualComponents]);
 
   useEffect(() => {
-    if (!freeMode) return;
+    if (!editableComponents) return;
     const previousKnown = knownComponentIdsRef.current;
     const currentIds = new Set(components.map(component => component.id));
     setExpandedComponentIds(previous => {
@@ -9380,12 +10214,12 @@ function ModuleBuilderContentPreview({
       return next;
     });
     knownComponentIdsRef.current = currentIds;
-  }, [componentIdSignature, components, freeMode]);
+  }, [componentIdSignature, components, editableComponents]);
 
   useEffect(() => {
-    if (!freeMode || freeProgrammeComponentTypes.some(type => type.type === newComponentType)) return;
+    if (!editableComponents || freeProgrammeComponentTypes.some(type => type.type === newComponentType)) return;
     setNewComponentType(freeProgrammeComponentTypes[0]?.type || 'video');
-  }, [freeMode, newComponentType]);
+  }, [editableComponents, newComponentType]);
 
   const toggleWeek = (weekId: string) => {
     setExpandedWeekIds(previous => {
@@ -9411,7 +10245,7 @@ function ModuleBuilderContentPreview({
   const confirmRemoveFreeComponent = async (component: ModuleComponent) => {
     await showCurriculumConfirm({
       title: 'Delete component?',
-      text: `${component.title || 'This component'} will be removed from this free module.`,
+      text: `${component.title || 'This component'} will be removed from this module.`,
       icon: 'warning',
       confirmButtonText: 'Delete component',
       cancelButtonText: 'Keep component',
@@ -9431,9 +10265,13 @@ function ModuleBuilderContentPreview({
   const handleComponentDrop = (event: DragEvent<HTMLDivElement>, targetComponentId: string) => {
     event.preventDefault();
     event.stopPropagation();
-    const sourceComponentId = event.dataTransfer.getData('text/plain') || draggingComponentId;
+    // Only a drag that started on a component handle can reorder. Without this,
+    // dropping selected text into a field inside a card read as a reorder and lit
+    // up the "Order updated" badge for a move that never happened.
+    const sourceComponentId = draggingComponentId;
     setDraggingComponentId('');
     if (!sourceComponentId || sourceComponentId === targetComponentId) return;
+    if (!components.some(component => component.id === sourceComponentId)) return;
     onReorderFreeComponent?.(draft.localId, sourceComponentId, targetComponentId);
     setOrderUpdated(true);
   };
@@ -9452,8 +10290,10 @@ function ModuleBuilderContentPreview({
             <span className={waitingForActualComponents ? 'font-semibold text-sky-800' : ''}>
               {waitingForActualComponents
                 ? 'Loading actual module-builder components...'
-                : freeMode
-                ? `${componentCount} components - certificate after completion`
+                : editableComponents
+                ? `${componentCount} editable components`
+                : moduleBuilderAmbiguous
+                ? `${draft.weeks.length} scheduled weeks - several Module Builder modules share this title`
                 : moduleBuilderMissing
                 ? `${draft.weeks.length} scheduled weeks - module not found in Module Builder`
                 : moduleBuilderLoadFailed
@@ -9466,6 +10306,10 @@ function ModuleBuilderContentPreview({
               <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700 ring-1 ring-sky-200">
                 <i className="ri-loader-4-line animate-spin"></i>
                 Loading
+              </span>
+            ) : moduleBuilderAmbiguous ? (
+              <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700 ring-1 ring-red-200">
+                Needs relinking
               </span>
             ) : moduleBuilderMissing ? (
               <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 ring-1 ring-amber-200">
@@ -9484,7 +10328,7 @@ function ModuleBuilderContentPreview({
           </div>
         </button>
         <div className="flex shrink-0 items-center gap-2">
-          {freeMode ? (
+          {editableComponents ? (
             <>
               <select
                 value={newComponentType}
@@ -9496,7 +10340,7 @@ function ModuleBuilderContentPreview({
               </select>
               <button
                 type="button"
-                onClick={() => onAddFreeComponent?.(draft.localId, newComponentType)}
+                onClick={() => onAddFreeComponent?.(draft.localId, newComponentType, displayWeeks[0]?.id)}
                 className="inline-flex h-8 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
               >
                 <i className="ri-add-line"></i>
@@ -9528,7 +10372,16 @@ function ModuleBuilderContentPreview({
           </button>
         </div>
       </div>
-      {!freeMode && !waitingForActualComponents && !moduleOpen && (moduleBuilderMissing || moduleBuilderLoadFailed) ? (
+      {!freeMode && !waitingForActualComponents && !moduleOpen && moduleBuilderAmbiguous ? (
+        <div className="flex items-start gap-3 border-t border-red-100 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-800">
+          <i className="ri-error-warning-line mt-0.5 text-base"></i>
+          <span>
+            {moduleBuilderAmbiguous} Content is not shown because loading the wrong
+            module would attach another programme's content to this group.
+          </span>
+        </div>
+      ) : null}
+      {!freeMode && !waitingForActualComponents && !moduleOpen && !moduleBuilderAmbiguous && (moduleBuilderMissing || moduleBuilderLoadFailed) ? (
         <div className="flex items-start gap-3 border-t border-amber-100 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
           <i className="ri-error-warning-line mt-0.5 text-base"></i>
           <span>
@@ -9550,18 +10403,22 @@ function ModuleBuilderContentPreview({
               </span>
             </div>
           </div>
-        ) : freeMode ? (
+        ) : editableComponents ? (
           <div className="space-y-3 bg-background-100/40 p-4">
             {components.length ? (
               components.map(component => (
                 <EditableFreeComponentCard
                   key={component.id}
                   component={component}
+                  weekScope={weekScope}
+                  groupOptions={componentGroupOptions}
                   expanded={expandedComponentIds.has(component.id)}
                   dragging={draggingComponentId === component.id}
                   onToggle={() => toggleComponent(component.id)}
                   onChange={patch => onUpdateFreeComponent?.(draft.localId, component.id, patch)}
                   onRemove={() => { void confirmRemoveFreeComponent(component); }}
+                  ksbOptions={ksbOptions}
+                  ksbSourceId={ksbSourceId}
                   onDragStart={event => handleComponentDragStart(event, component.id)}
                   onDragEnd={() => setDraggingComponentId('')}
                   onDragOver={event => {
@@ -9578,7 +10435,12 @@ function ModuleBuilderContentPreview({
           </div>
         ) : (
         <div className="divide-y divide-background-200/70">
-          {moduleBuilderLoadFailed ? (
+          {moduleBuilderAmbiguous ? (
+            <div className="flex items-start gap-3 border-b border-red-100 bg-red-50 px-4 py-3 text-[12px] font-semibold text-red-800">
+              <i className="ri-error-warning-line mt-0.5 text-base"></i>
+              <span>{moduleBuilderAmbiguous} Relink it from the module step to load the right content.</span>
+            </div>
+          ) : moduleBuilderLoadFailed ? (
             <div className="flex items-start gap-3 border-b border-amber-100 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
               <i className="ri-error-warning-line mt-0.5 text-base"></i>
               <span>Unable to load the actual Module Builder components. Try refreshing this step before editing components.</span>
@@ -9632,7 +10494,7 @@ function ModuleBuilderContentPreview({
           })}
           {!displayWeeks.length ? (
             <EmptyState text="No module-builder weeks are defined for this module yet. Add them in Module Builder." />
-          ) : displayComponentCount === 0 && !moduleBuilderMissing && !moduleBuilderLoadFailed ? (
+          ) : displayComponentCount === 0 && !moduleBuilderMissing && !moduleBuilderLoadFailed && !moduleBuilderAmbiguous ? (
             <EmptyState text="No components have been added to this module yet. Create them in Module Builder." />
           ) : null}
         </div>
@@ -9644,30 +10506,76 @@ function ModuleBuilderContentPreview({
 
 function EditableFreeComponentCard({
   component,
+  weekScope,
+  groupOptions,
   expanded,
   dragging,
   onToggle,
   onChange,
   onRemove,
+  ksbOptions = [],
+  ksbSourceId = '',
   onDragStart,
   onDragEnd,
   onDragOver,
   onDrop,
 }: {
   component: ModuleComponent;
+  weekScope: WeekScope;
+  groupOptions: GroupOption[];
   expanded: boolean;
   dragging: boolean;
   onToggle: () => void;
   onChange: (patch: Partial<ModuleComponent>) => void;
   onRemove: () => void;
+  ksbOptions?: WizardKsbOption[];
+  ksbSourceId?: string;
   onDragStart: (event: DragEvent<HTMLDivElement>) => void;
   onDragEnd: () => void;
   onDragOver: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent<HTMLDivElement>) => void;
 }) {
   const typeMeta = componentTypes.find(item => item.type === component.type);
-  const updateSetting = (key: string, value: string | number | boolean | string[]) => {
-    onChange({ settings: { ...(component.settings || {}), [key]: value } });
+  const [selectedKsbIds, setSelectedKsbIds] = useState<string[]>([]);
+  const [ksbWeightClasses, setKsbWeightClasses] = useState<Record<string, WizardKsbWeightClass>>({});
+  const [ksbWeights, setKsbWeights] = useState<Record<string, number>>({});
+  const componentKsbCodes = new Set((component.ksbMappings || []).map(mapping => normalise(mapping.code || mapping.ksbId)));
+  const availableKsbOptions = ksbOptions.filter(option => !componentKsbCodes.has(normalise(option.code || option.id)));
+  const availableKsbIds = new Set(availableKsbOptions.map(option => option.id || option.code));
+  const selectedAvailableKsbIds = selectedKsbIds.filter(id => availableKsbIds.has(id));
+  const toggleKsbSelection = (value: string) => {
+    setSelectedKsbIds(current => current.includes(value) ? current.filter(item => item !== value) : [...current, value]);
+  };
+  const updateKsbWeightClass = (value: string, weightClass: WizardKsbWeightClass) => {
+    setKsbWeightClasses(current => ({ ...current, [value]: weightClass }));
+    setKsbWeights(current => ({ ...current, [value]: wizardKsbWeightForClass(weightClass) }));
+  };
+  const updateKsbWeight = (value: string, weight: number) => {
+    setKsbWeights(current => ({
+      ...current,
+      [value]: clampWizardKsbWeight(weight, ksbWeightClasses[value] || 'hard'),
+    }));
+  };
+  const addKsbs = () => {
+    const selectedOptions = selectedAvailableKsbIds
+      .map(id => availableKsbOptions.find(item => item.id === id || item.code === id))
+      .filter((option): option is WizardKsbOption => Boolean(option));
+    if (!selectedOptions.length) return;
+    const currentMappings = component.ksbMappings || [];
+    const nextMappings = uniqueKsbMappings([
+      ...currentMappings,
+      ...selectedOptions.map((option, index) => {
+        const value = option.id || option.code;
+        const weightClass = ksbWeightClasses[value] || 'hard';
+        const weight = ksbWeights[value] ?? wizardKsbWeightForClass(weightClass);
+        return ksbMappingFromOption(option, ksbSourceId, currentMappings.length + index + 1, weightClass, weight);
+      }),
+    ]);
+    onChange({ ksbMappings: nextMappings });
+    setSelectedKsbIds([]);
+  };
+  const removeKsb = (mappingId: string) => {
+    onChange({ ksbMappings: (component.ksbMappings || []).filter(mapping => mapping.id !== mappingId) });
   };
   return (
     <div
@@ -9716,177 +10624,193 @@ function EditableFreeComponentCard({
         </div>
       </div>
       {expanded && (
-        <>
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_7rem_7rem]">
-            <Field
-              label="Component title"
-              value={component.title}
-              onChange={value => onChange({ title: value })}
-              placeholder={typeMeta?.label || 'Component title'}
-            />
-            <Field
-              label="OTJH"
-              type="number"
-              value={String(component.expectedOtjh ?? 0)}
-              onChange={value => onChange({ expectedOtjh: Number(value) || 0 })}
-            />
-            <Field
-              label="Points"
-              type="number"
-              value={String(component.points ?? 0)}
-              onChange={value => onChange({ points: Number(value) || 0 })}
-            />
-          </div>
-          <div className="mt-3">
-            <TextArea
-              label="Description"
-              value={component.description || ''}
-              onChange={value => onChange({ description: value })}
-              rows={2}
-            />
-          </div>
-          <FreeComponentLmsDetails component={component} onSettingChange={updateSetting} />
-        </>
+        <div className="space-y-3">
+          <WeekComponentEditor
+            component={component}
+            onChange={onChange}
+            onBack={onToggle}
+            groupOptions={groupOptions}
+            rulePoints={component.points}
+            weekScope={weekScope}
+          />
+          <ComponentKsbEditor
+            mappings={component.ksbMappings || []}
+            options={ksbOptions}
+            selectedIds={selectedAvailableKsbIds}
+            weightClasses={ksbWeightClasses}
+            weights={ksbWeights}
+            onToggle={toggleKsbSelection}
+            onWeightClassChange={updateKsbWeightClass}
+            onWeightChange={updateKsbWeight}
+            onAdd={addKsbs}
+            onRemove={removeKsb}
+          />
+        </div>
       )}
     </div>
   );
 }
 
-function FreeComponentLmsDetails({
-  component,
-  onSettingChange,
+function ComponentKsbEditor({
+  mappings,
+  options,
+  selectedIds,
+  weightClasses,
+  weights,
+  onToggle,
+  onWeightClassChange,
+  onWeightChange,
+  onAdd,
+  onRemove,
 }: {
-  component: ModuleComponent;
-  onSettingChange: (key: string, value: string | number | boolean | string[]) => void;
+  mappings: ModuleComponent['ksbMappings'];
+  options: WizardKsbOption[];
+  selectedIds: string[];
+  weightClasses: Record<string, WizardKsbWeightClass>;
+  weights: Record<string, number>;
+  onToggle: (value: string) => void;
+  onWeightClassChange: (value: string, weightClass: WizardKsbWeightClass) => void;
+  onWeightChange: (value: string, weight: number) => void;
+  onAdd: () => void;
+  onRemove: (mappingId: string) => void;
 }) {
-  const settings = component.settings || {};
-  const getString = (key: string, fallback = '') => String(settings[key] ?? fallback);
-  const getNumber = (key: string, fallback = 0) => Number(settings[key] ?? fallback);
-  const getBool = (key: string, fallback = false) => Boolean(settings[key] ?? fallback);
-  const videoSourceTypes = ['HTML (MP4)', 'YouTube', 'Vimeo', 'External Link', 'Embed', 'Shortcode'];
-  const normaliseVideoSource = (value: string) => {
-    const clean = String(value || '').trim();
-    if (videoSourceTypes.includes(clean)) return clean;
-    if (clean === 'Upload file') return 'HTML (MP4)';
-    if (clean === 'External link') return 'External Link';
-    return 'YouTube';
-  };
-  const videoSourceType = normaliseVideoSource(getString('sourceType') || getString('provider'));
-  const updateVideoSourceType = (value: string) => {
-    onSettingChange('sourceType', value);
-    onSettingChange('provider', value === 'HTML (MP4)' ? 'Upload file' : value === 'External Link' ? 'External link' : value);
-  };
-
+  const mappedByKey = useMemo(() => {
+    const mapped = new Map<string, ModuleComponent['ksbMappings'][number]>();
+    mappings.forEach(mapping => {
+      [mapping.code, mapping.ksbId, mapping.id].forEach(value => {
+        const key = normalise(value);
+        if (key) mapped.set(key, mapping);
+      });
+    });
+    return mapped;
+  }, [mappings]);
+  const sortedOptions = useMemo(() => [...options].sort((left, right) => {
+    const leftMapped = Boolean(mappedByKey.get(normalise(left.code)) || mappedByKey.get(normalise(left.id)));
+    const rightMapped = Boolean(mappedByKey.get(normalise(right.code)) || mappedByKey.get(normalise(right.id)));
+    if (leftMapped !== rightMapped) return leftMapped ? -1 : 1;
+    const leftSelected = selectedIds.includes(left.id || left.code);
+    const rightSelected = selectedIds.includes(right.id || right.code);
+    if (leftSelected !== rightSelected) return leftSelected ? -1 : 1;
+    return String(left.code || left.id).localeCompare(String(right.code || right.id), undefined, { numeric: true });
+  }), [mappedByKey, options, selectedIds]);
   return (
     <section className="mt-3 rounded-xl border border-background-200 bg-background-100/60 p-3">
-      <div className="flex items-center justify-between gap-3 text-[12px] font-bold text-foreground-800">
-        <span className="inline-flex items-center gap-2">
-          <i className="ri-settings-3-line text-primary-600"></i>
-          LMS details
-        </span>
-      </div>
-      <div className="mt-3 space-y-3">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-          <SelectNative
-            label="Content status"
-            value={getString('contentStatus', 'Draft')}
-            onChange={value => onSettingChange('contentStatus', value)}
-            options={['Draft', 'Ready for QA', 'Approved', 'Needs changes']}
-          />
-          <Field
-            label="Version"
-            value={getString('version', '0.1')}
-            onChange={value => onSettingChange('version', value)}
-          />
-          <Field
-            label="Release timing"
-            value={getString('releaseTiming', 'Available immediately')}
-            onChange={value => onSettingChange('releaseTiming', value)}
-          />
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[10px] font-bold uppercase text-foreground-400">KSB mapping</span>
+          <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500 ring-1 ring-background-200">
+            {mappings.length} mapped - {selectedIds.length} selected
+          </span>
         </div>
-        <TextArea
-          label="Completion rule"
-          value={getString('completionRule', 'Mark complete')}
-          onChange={value => onSettingChange('completionRule', value)}
-          rows={2}
-        />
-        <TextArea
-          label="Reflection prompt"
-          value={getString('reflectionPrompt', 'What did you learn and how will you apply it?')}
-          onChange={value => onSettingChange('reflectionPrompt', value)}
-          rows={2}
-        />
-
-        {component.type === 'video' && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <SelectNative label="Source type" value={videoSourceType} onChange={updateVideoSourceType} options={videoSourceTypes} />
-            {videoSourceType === 'Embed' ? (
-              <TextArea label="Embed iframe content" value={getString('embedCode')} onChange={value => onSettingChange('embedCode', value)} rows={3} />
-            ) : videoSourceType === 'Shortcode' ? (
-              <TextArea label="Shortcode" value={getString('shortcode')} onChange={value => onSettingChange('shortcode', value)} rows={2} />
-            ) : (
-              <Field label={videoSourceType === 'HTML (MP4)' ? 'MP4 file URL' : 'Video URL'} value={getString('videoUrl')} onChange={value => onSettingChange('videoUrl', value)} />
-            )}
-            <Field label="Duration minutes" type="number" value={String(getNumber('durationMinutes', 10))} onChange={value => onSettingChange('durationMinutes', Number(value) || 0)} />
-            <FreeCheckbox label="Lesson preview" checked={getBool('lessonPreview')} onChange={value => onSettingChange('lessonPreview', value)} />
-            <FreeCheckbox label="Captions available" checked={getBool('captionsAvailable')} onChange={value => onSettingChange('captionsAvailable', value)} />
-            <TextArea label="Short description" value={getString('shortDescription') || getString('learningBrief')} onChange={value => { onSettingChange('shortDescription', value); onSettingChange('learningBrief', value); }} rows={2} />
-            <TextArea label="Lesson content" value={getString('lessonContent')} onChange={value => onSettingChange('lessonContent', value)} rows={3} />
-            <TextArea label="Lesson materials" value={getString('lessonMaterialLinks')} onChange={value => onSettingChange('lessonMaterialLinks', value)} rows={2} />
-            <TextArea label="Material instructions" value={getString('lessonMaterialsNotes')} onChange={value => onSettingChange('lessonMaterialsNotes', value)} rows={2} />
-            <TextArea label="Markers and questions" value={getString('markersAndQuestions')} onChange={value => onSettingChange('markersAndQuestions', value)} rows={2} />
-            <TextArea label="Q&A" value={getString('qAndA')} onChange={value => onSettingChange('qAndA', value)} rows={2} />
-            <TextArea label="Post-watch task" value={getString('postWatchTask')} onChange={value => onSettingChange('postWatchTask', value)} rows={2} />
-          </div>
+        <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
+          {sortedOptions.length ? sortedOptions.map(option => {
+            const value = option.id || option.code;
+            const mapped = mappedByKey.get(normalise(option.code)) || mappedByKey.get(normalise(option.id));
+            const checked = Boolean(mapped) || selectedIds.includes(value);
+            const tone = wizardKsbTone(option.code, option.type);
+            const weightClass = mapped ? wizardKsbWeightClass(mapped.weightClass || mapped.weight_class) : weightClasses[value] || 'hard';
+            const weight = mapped ? clampWizardKsbWeight(mapped.weight, weightClass) : weights[value] ?? wizardKsbWeightForClass(weightClass);
+            const displayTitle = wizardKsbOptionTitle(option);
+            const displayDescription = wizardKsbOptionDescription(option, displayTitle);
+            return (
+              <div
+                key={value}
+                className={`flex flex-col gap-2 border border-l-4 px-3 py-2 text-[12px] transition-smooth sm:flex-row sm:items-start ${mapped ? `${tone.mappedRow} cursor-default` : checked ? `${tone.selectedRow} cursor-pointer` : `${tone.row} cursor-pointer text-foreground-800`}`}
+              >
+                <label className={`flex min-w-0 flex-1 items-start gap-2 ${mapped ? 'cursor-default' : 'cursor-pointer'}`}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={Boolean(mapped)}
+                    onChange={() => onToggle(value)}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-background-300 text-primary-600 focus:ring-primary-300 disabled:cursor-not-allowed disabled:opacity-80"
+                  />
+                  <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${tone.iconClass}`}>
+                    <i className={`${tone.icon} text-[13px]`}></i>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-1.5 font-bold">
+                      <span className="text-[12px] font-bold text-foreground-900">{option.code}</span>
+                      <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
+                      {displayTitle ? <span className="text-[12px] font-bold text-foreground-900">- {displayTitle}</span> : null}
+                      {mapped ? (
+                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${tone.status}`}>Mapped here</span>
+                      ) : null}
+                    </span>
+                    {displayDescription && (
+                      <span className="mt-1 block text-[11px] font-medium leading-5 text-foreground-600">{displayDescription}</span>
+                    )}
+                  </span>
+                </label>
+                <span className="grid shrink-0 grid-cols-2 gap-2 pl-6 sm:w-56 sm:pl-0">
+                  <span className="block">
+                    <span className="block text-[9px] font-bold uppercase text-foreground-400">Weight class</span>
+                    <select
+                      value={weightClass}
+                      disabled={Boolean(mapped)}
+                      onClick={event => event.stopPropagation()}
+                      onChange={event => onWeightClassChange(value, wizardKsbWeightClass(event.target.value))}
+                      className="mt-1 h-8 w-full rounded-md border border-background-200 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
+                    >
+                      <option value="hard">Hard</option>
+                      <option value="soft">Soft</option>
+                      <option value="possible">Possible</option>
+                    </select>
+                  </span>
+                  <span className="block">
+                    <span className="block text-[9px] font-bold uppercase text-foreground-400">Weight</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      step={1}
+                      value={weight}
+                      disabled={Boolean(mapped)}
+                      onClick={event => event.stopPropagation()}
+                      onChange={event => onWeightChange(value, Number(event.target.value))}
+                      className="mt-1 h-8 w-full rounded-md border border-background-200 bg-background-50 px-2 text-[11px] font-bold text-foreground-900 outline-none focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-500"
+                    />
+                  </span>
+                </span>
+              </div>
+            );
+          }) : (
+            <div className="px-3 py-4 text-[12px] font-semibold text-foreground-400">No KSBs available</div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={!selectedIds.length}
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-background-200 disabled:text-foreground-400"
+        >
+          <i className="ri-add-line"></i>
+          Add KSB{selectedIds.length === 1 ? '' : 's'}
+        </button>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {mappings.length ? mappings.map(mapping => {
+          const tone = wizardKsbTone(mapping.code || mapping.ksbId, mapping.type);
+          return (
+          <span key={mapping.id || mapping.code} className={`inline-flex max-w-full items-center gap-2 rounded-md border px-2 py-1 text-[10px] font-bold ${tone.chipClass}`}>
+            <span className={`rounded px-1 text-[8px] font-semibold ${tone.badgeClass}`}>{tone.label}</span>
+            <span className="truncate">{mapping.code || mapping.ksbId}</span>
+            <span className="rounded bg-white/70 px-1 text-[8px] font-semibold capitalize">{mapping.weightClass || mapping.weight_class || 'hard'}</span>
+            <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{Number(mapping.weight || 0)}%</span>
+            <button
+              type="button"
+              onClick={() => onRemove(mapping.id)}
+              className="grid h-5 w-5 place-items-center rounded-full bg-white/70 text-primary-700 hover:bg-red-50 hover:text-red-600"
+              aria-label={`Remove ${mapping.code || mapping.ksbId}`}
+              title="Remove KSB"
+            >
+              <i className="ri-close-line text-[12px]"></i>
+            </button>
+          </span>
+          );
+        }) : (
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-[11px] font-bold text-amber-700 ring-1 ring-amber-100">No KSBs mapped</span>
         )}
-
-        {component.type === 'podcast' && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <SelectNative label="Podcast source" value={getString('podcastSource', 'External URL')} onChange={value => onSettingChange('podcastSource', value)} options={['External URL', 'Upload', 'LMS resource']} />
-            <Field label="Podcast URL" value={getString('podcastUrl')} onChange={value => onSettingChange('podcastUrl', value)} />
-            <Field label="Duration minutes" type="number" value={String(getNumber('durationMinutes', 20))} onChange={value => onSettingChange('durationMinutes', Number(value) || 0)} />
-            <TextArea label="Listening focus" value={getString('listeningFocus')} onChange={value => onSettingChange('listeningFocus', value)} rows={2} />
-          </div>
-        )}
-
-        {component.type === 'reading' && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <SelectNative label="Requirement" value={getString('requirement', 'Required')} onChange={value => onSettingChange('requirement', value)} options={['Required', 'Recommended', 'Stretch']} />
-            <SelectNative label="Difficulty" value={getString('difficulty', 'Standard')} onChange={value => onSettingChange('difficulty', value)} options={['Introductory', 'Standard', 'Advanced']} />
-            <Field label="Resource URL" value={getString('resourceUrl')} onChange={value => onSettingChange('resourceUrl', value)} />
-            <Field label="Estimated reading minutes" type="number" value={String(getNumber('estimatedReadingTime', 20))} onChange={value => onSettingChange('estimatedReadingTime', Number(value) || 0)} />
-            <TextArea label="Learner instruction" value={getString('learnerInstruction')} onChange={value => onSettingChange('learnerInstruction', value)} rows={2} />
-            <TextArea label="Learning outcomes" value={getString('mainLearningOutcomes')} onChange={value => onSettingChange('mainLearningOutcomes', value)} rows={2} />
-          </div>
-        )}
-
-        {component.type === 'powerpoint' && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <Field label="File name or URL" value={getString('fileName') || getString('resourceUrl')} onChange={value => onSettingChange('fileName', value)} />
-            <Field label="Slide range" value={getString('slideRange')} onChange={value => onSettingChange('slideRange', value)} />
-            <TextArea label="Speaker notes" value={getString('speakerNotes')} onChange={value => onSettingChange('speakerNotes', value)} rows={2} />
-            <FreeCheckbox label="Download allowed" checked={getBool('downloadAllowed', true)} onChange={value => onSettingChange('downloadAllowed', value)} />
-          </div>
-        )}
-
-        {component.type === 'quiz' && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            <Field label="Questions" type="number" value={String(getNumber('numberOfQuestions', 10))} onChange={value => onSettingChange('numberOfQuestions', Number(value) || 0)} />
-            <Field label="Pass mark %" type="number" value={String(getNumber('passMarkPercentage', 70))} onChange={value => onSettingChange('passMarkPercentage', Number(value) || 0)} />
-            <Field label="Attempts" type="number" value={String(getNumber('attemptsAllowed', 2))} onChange={value => onSettingChange('attemptsAllowed', Number(value) || 0)} />
-            <TextArea label="Completion feedback" value={getString('completionFeedback')} onChange={value => onSettingChange('completionFeedback', value)} rows={2} />
-          </div>
-        )}
-
-        {component.type === 'assignment' && (
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={2} />
-            <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={2} />
-            <Field label="Due timing" value={getString('dueTiming', 'End of module')} onChange={value => onSettingChange('dueTiming', value)} />
-            <TextArea label="Marking rubric" value={getString('markingRubric')} onChange={value => onSettingChange('markingRubric', value)} rows={2} />
-          </div>
-        )}
-
       </div>
     </section>
   );
@@ -10571,45 +11495,6 @@ function ReviewKsbPreview({ mappings }: { mappings: ModuleComponent['ksbMappings
   );
 }
 
-function SummaryBlock({ icon, label, title, meta, color, compact = false }: { icon: string; label: string; title: string; meta: string; color?: string; compact?: boolean }) {
-  return (
-    <div className={`rounded-xl border border-background-200 bg-background-50 ${compact ? 'p-3' : 'p-4'}`}>
-      <div className="flex items-start gap-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white" style={{ backgroundColor: color || '#2563eb' }}>
-          <i className={icon}></i>
-        </span>
-        <div className="min-w-0">
-          <p className="text-[10px] font-bold uppercase text-foreground-400">{label}</p>
-          <p className="mt-0.5 truncate text-[13px] font-bold text-foreground-950">{title || 'Not set'}</p>
-          <p className="mt-0.5 truncate text-[11px] text-foreground-500">{meta || 'No details yet'}</p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ReviewCard({ icon, label, title, meta, color, badges = [] }: { icon: string; label: string; title: string; meta: string; color: string; badges?: string[] }) {
-  return (
-    <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm">
-      <div className="flex items-start gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-white shadow-sm" style={{ backgroundColor: color || '#2563eb' }}>
-          <i className={`${icon} text-base`}></i>
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-[10px] font-bold uppercase text-foreground-400">{label}</p>
-          <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{title || 'Not set'}</p>
-          <p className="mt-0.5 truncate text-[11px] text-foreground-500">{meta || 'No details'}</p>
-          {badges.length ? (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {badges.filter(Boolean).map(badge => <ReviewBadge key={badge}>{badge}</ReviewBadge>)}
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function Field({
   label,
   value,
@@ -10702,31 +11587,6 @@ function TextArea({ label, value, onChange, rows = 3, required = false }: { labe
     <label className="block">
       <span className="text-[10px] font-bold uppercase text-foreground-400">{label}{required ? ' *' : ''}</span>
       <textarea required={required} value={value} onChange={event => onChange(event.target.value)} rows={rows} className="mt-1 w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-[13px] font-medium text-foreground-900 outline-none transition-smooth focus:border-primary-300" />
-    </label>
-  );
-}
-
-function SelectNative({
-  label,
-  value,
-  onChange,
-  options,
-  labels,
-  required,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: string[];
-  labels?: Record<string, string>;
-  required?: boolean;
-}) {
-  return (
-    <label className="block">
-      <span className="text-[10px] font-bold uppercase text-foreground-400">{label}{required ? ' *' : ''}</span>
-      <select value={value} onChange={event => onChange(event.target.value)} required={required} className="mt-1 w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-[13px] font-semibold text-foreground-900 outline-none focus:border-primary-300">
-        {options.map(option => <option key={option} value={option}>{labels?.[option] || option}</option>)}
-      </select>
     </label>
   );
 }
@@ -10824,20 +11684,22 @@ function StaffSelect({
   );
 }
 
-function InfoStrip({ icon, text }: { icon: string; text: string }) {
-  return (
-    <div className="lg:col-span-full flex items-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-[12px] font-semibold text-primary-700">
-      <i className={`${icon} text-sm`}></i>
-      {text}
-    </div>
-  );
-}
-
 function EmptyState({ text }: { text: string }) {
   return (
     <div className="rounded-xl border border-dashed border-background-300 bg-background-100/40 px-4 py-6 text-center text-[12px] font-semibold text-foreground-400">
       {text}
     </div>
+  );
+}
+
+function CountSkeleton({ width = 'w-8', label = 'Loading count' }: { width?: string; label?: string }) {
+  return (
+    <span
+      role="status"
+      aria-label={label}
+      aria-live="polite"
+      className={`inline-block h-3 ${width} animate-pulse rounded-full bg-background-200 align-middle`}
+    />
   );
 }
 

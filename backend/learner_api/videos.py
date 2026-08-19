@@ -16,7 +16,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .active_users import save_progress_record
+from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
 from .components import component_ksb_codes
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
@@ -102,10 +102,17 @@ def submit_video_progress(request, component_id):
 
     try:
         active = learner_profile_for_source(source, learner_id, active_only=True)
+        if active is None:
+            active = sync_active_user(source)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
+    if active is None:
+        return _error(
+            "This learner does not have an active learner profile, so progress cannot be saved.",
+            409,
+        )
 
-    history = (active.training_plan_progress if active and isinstance(active.training_plan_progress, list) else [])
+    history = active.training_plan_progress if isinstance(active.training_plan_progress, list) else []
     # 1-based count of prior completions of THIS video component.
     attempt_number = sum(
         1 for r in history if r.get("kind") == "video" and r.get("componentId") == component_id
@@ -141,6 +148,8 @@ def submit_video_progress(request, component_id):
         }
         try:
             save_progress_record(active, record, activity)
+        except ComponentReferenceError as exc:
+            return _error(str(exc), 400)
         except DatabaseError as exc:
             return _error(f"Database error saving progress: {exc}", 502)
 

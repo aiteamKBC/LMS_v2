@@ -13,22 +13,30 @@ interface UseCurriculumDataOptions {
   compactModules?: boolean;
 }
 
+type LoadOptions = {
+  skipCache?: boolean;
+  // Keeps the previously loaded data on screen while refreshing in the background.
+  // Callers that refresh after a successful save use this so the page does not
+  // fall back to skeletons once the user has already seen the saved state.
+  silent?: boolean;
+};
+
 export function useCurriculumData({ autoLoad = true, compact = false, includeComponents = false, includeHolidays = false, refreshModules = false, compactModules = false }: UseCurriculumDataOptions = {}) {
   const [data, setData] = useState<CurriculumOverview | null>(null);
   const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
+  const load = useCallback(async (signal?: AbortSignal, options: LoadOptions = {}) => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    setLoading(true);
+    if (!options.silent) setLoading(true);
     try {
       const [overview, modules, components, holidays] = await Promise.all([
-        fetchCurriculumOverview(signal, { compact }),
-        refreshModules ? fetchCurriculumModules(signal, { compact: compactModules }).catch(() => []) : Promise.resolve([]),
-        includeComponents ? fetchCurriculumComponents(signal).catch(() => []) : Promise.resolve([]),
-        includeHolidays ? fetchCurriculumHolidays(signal).catch(() => []) : Promise.resolve([]),
+        fetchCurriculumOverview(signal, { compact, skipCache: options.skipCache }),
+        refreshModules ? fetchCurriculumModules(signal, { compact: compactModules, skipCache: options.skipCache }).catch(() => []) : Promise.resolve([]),
+        includeComponents ? fetchCurriculumComponents(signal, { skipCache: options.skipCache }).catch(() => []) : Promise.resolve([]),
+        includeHolidays ? fetchCurriculumHolidays(signal, { skipCache: options.skipCache }).catch(() => []) : Promise.resolve([]),
       ]);
       const result: CurriculumOverview = {
         ...overview,
@@ -45,7 +53,7 @@ export function useCurriculumData({ autoLoad = true, compact = false, includeCom
       setError(err instanceof Error ? err.message : 'Unable to load curriculum data');
       return null;
     } finally {
-      if (!signal?.aborted && requestId === requestIdRef.current) setLoading(false);
+      if (!options.silent && !signal?.aborted && requestId === requestIdRef.current) setLoading(false);
     }
   }, [compact, compactModules, includeComponents, includeHolidays, refreshModules]);
 
@@ -56,5 +64,5 @@ export function useCurriculumData({ autoLoad = true, compact = false, includeCom
     return () => controller.abort();
   }, [autoLoad, load]);
 
-  return { data, loading, error, reload: () => load() };
+  return { data, loading, error, reload: (options?: LoadOptions) => load(undefined, options) };
 }

@@ -196,7 +196,7 @@ export default function LearnerCaseFile() {
         <div className="w-full space-y-4">
           <button
             type="button"
-            onClick={() => navigate('/coach/caseload')}
+            onClick={() => navigate(-1)}
             className="inline-flex items-center gap-2 text-[11px] font-semibold text-foreground-400 transition hover:text-primary-700"
           >
             <AppIcon className="ri-arrow-left-line"></AppIcon>

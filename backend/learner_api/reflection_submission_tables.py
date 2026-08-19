@@ -87,6 +87,19 @@ def ensure_learning_reflection_submissions_table():
             'alter table "Learner"."learning_reflection_submissions" '
             'add column if not exists reviewed_at timestamptz'
         )
+        for column, ddl in (
+            ("progress_entry_id", "bigint"),
+            ("component_ref", "text"),
+            ("programme_ref", "text"),
+            ("cohort_ref", "text"),
+            ("group_ref", "text"),
+            ("module_ref", "text"),
+            ("week_ref", "text"),
+        ):
+            cur.execute(
+                f'alter table "Learner"."learning_reflection_submissions" '
+                f'add column if not exists {column} {ddl}'
+            )
         cur.execute(
             'create index if not exists idx_learning_reflections_learner '
             'on "Learner"."learning_reflection_submissions" (learner_kind, learner_id)'
@@ -103,6 +116,16 @@ def ensure_learning_reflection_submissions_table():
             'create unique index if not exists uq_learning_reflections_activity '
             'on "Learner"."learning_reflection_submissions" '
             '(learner_kind, learner_id, activity_type, activity_id)'
+        )
+        cur.execute(
+            'create index if not exists idx_learning_reflections_progress_entry '
+            'on "Learner"."learning_reflection_submissions" (progress_entry_id) '
+            'where progress_entry_id is not null'
+        )
+        cur.execute(
+            'create index if not exists idx_learning_reflections_component_ref '
+            'on "Learner"."learning_reflection_submissions" (component_ref) '
+            'where component_ref is not null'
         )
 
     _READY = True

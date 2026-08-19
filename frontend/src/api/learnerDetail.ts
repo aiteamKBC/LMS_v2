@@ -141,6 +141,9 @@ export interface LearnerComponentProgress {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
+  // Ungraded completions leave this absent — the row itself is the completion.
+  // An explicit false is a recorded failure and never counts as achievement.
+  passed?: boolean | null;
 }
 
 export interface LearnerActivityEntry {
@@ -167,6 +170,8 @@ export interface LearnerVideoProgress {
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
+  // See LearnerComponentProgress.passed.
+  passed?: boolean | null;
 }
 
 async function request<T>(url: string): Promise<T> {

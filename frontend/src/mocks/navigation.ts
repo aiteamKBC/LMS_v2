@@ -311,6 +311,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'curriculum-programmes', label: 'Programmes', icon: 'ri-stack-line', href: '/curriculum/programmes' },
+      { id: 'curriculum-free-courses', label: 'Free Courses', icon: 'ri-graduation-cap-line', href: '/curriculum/free-courses' },
       { id: 'curriculum-standards', label: 'Standards', icon: 'ri-file-list-3-line', href: '/curriculum/standards' },
       { id: 'curriculum-ksb-frameworks', label: 'KSB Frameworks', icon: 'ri-bar-chart-line', href: '/curriculum/ksb-frameworks' },
     ],
@@ -344,8 +345,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
     icon: 'ri-calendar-schedule-line',
     href: '',
     children: [
-      { id: 'curriculum-coach-profiles', label: 'Coach Profiles', icon: 'ri-user-star-line', href: '/curriculum/staff-profiles?role=coach' },
-      { id: 'curriculum-tutor-profiles', label: 'Tutor Profiles', icon: 'ri-presentation-line', href: '/curriculum/staff-profiles?role=tutor' },
+      { id: 'curriculum-staff-profiles', label: 'Profiles', icon: 'ri-team-line', href: '/curriculum/staff-profiles' },
       { id: 'curriculum-session-calendar', label: 'Session Calendar', icon: 'ri-calendar-schedule-line', href: '/curriculum/session-calendar' },
     ],
   },

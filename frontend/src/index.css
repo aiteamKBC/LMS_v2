@@ -2514,6 +2514,18 @@ table tbody td:last-child {
   color: white !important;
 }
 
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-open:hover,
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-open:focus-visible {
+  background: oklch(var(--primary-700)) !important;
+  color: white !important;
+}
+
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-open :is(i, span, svg),
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-open:hover :is(i, span, svg),
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-open:focus-visible :is(i, span, svg) {
+  color: white !important;
+}
+
 .dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-source {
   border-color: oklch(var(--primary-200)) !important;
   background: oklch(var(--primary-50)) !important;

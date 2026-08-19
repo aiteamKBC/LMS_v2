@@ -58,9 +58,19 @@ def ensure_evidence_tables():
             """
         )
         cur.execute('alter table "Learner"."evidence_files" add column if not exists "Training_plan_details" json')
+        cur.execute('alter table "Learner"."evidence_files" add column if not exists component_ref text')
+        cur.execute('alter table "Learner"."evidence_files" add column if not exists progress_entry_id bigint')
         cur.execute("create index if not exists idx_evidence_files_learner on \"Learner\".evidence_files (learner_kind, learner_id)")
         cur.execute("create index if not exists idx_evidence_files_section on \"Learner\".evidence_files (section_ref)")
         cur.execute("create index if not exists idx_evidence_files_status  on \"Learner\".evidence_files (status)")
+        cur.execute(
+            'create index if not exists idx_evidence_files_component_ref '
+            'on "Learner"."evidence_files" (component_ref) where component_ref is not null'
+        )
+        cur.execute(
+            'create index if not exists idx_evidence_files_progress_entry '
+            'on "Learner"."evidence_files" (progress_entry_id) where progress_entry_id is not null'
+        )
 
         # The requested approved-evidence index in the "Learner" schema.
         cur.execute('create schema if not exists "Learner"')

@@ -41,12 +41,14 @@ from learner_api.models import (
     LearnerAbsence,
     LearnerProfile,
     learner_activity_events_relation_exists,
+    learner_ksbs_relation_exists,
 )
 from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
 )
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
+from learner_api.progress_rules import progress_record_counts_as_achieved
 from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
@@ -909,15 +911,20 @@ def count_completed_components(progress_entries: list[dict]) -> int:
 
 
 def completed_ksb_codes(progress_entries: list[dict], activity_entries: list[dict]) -> set[str]:
+    """KSB codes evidenced by activity the learner actually completed.
+
+    A failed attempt is an attempt, not KSB evidence. Legacy failed quizzes can
+    carry an entire profile's codes, which previously made coach totals jump to
+    almost 100% while the learner page correctly showed only KSBs evidenced by
+    completed activities. The gate is ``learner_api.progress_rules`` — the same
+    rule Curriculum impact uses — so it holds for any kind, not just quizzes:
+    ``passed=False`` on a Component with real lineage is excluded too.
+    """
     completed: set[str] = set()
     for entry in [*progress_entries, *activity_entries]:
         if not isinstance(entry, dict):
             continue
-        # A failed quiz is an attempt, not KSB evidence.  Legacy failed
-        # attempts can carry an entire profile's codes, which previously made
-        # coach totals jump to almost 100% while the learner page correctly
-        # showed only KSBs evidenced by completed activities.
-        if clean_text(entry.get("kind")).lower() == "quiz" and entry.get("passed") is not True:
+        if not progress_record_counts_as_achieved(entry):
             continue
         completed.update(extract_ksb_codes(entry.get("ksbs")))
     return completed
@@ -1100,15 +1107,20 @@ def find_learner_absence_relation(connection) -> str | None:
 
 def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
     requested_owner = normalize_email(owner_email)
+    learner_alias = get_learner_db_alias()
     prefetches = [
-        "assigned_ksbs",
         "ksb_assignment__profile_version__definitions",
         "plan_modules__weeks__components",
         "progress_entries__ksb_links",
         "progress_entries__quiz_answers__correct_answers",
         "progress_entries__quiz_answers__chosen_answers",
     ]
-    if learner_activity_events_relation_exists(get_learner_db_alias()):
+    # Legacy relations are prefetched only where they still exist. A queryset
+    # prefetch of a dropped table raises before LearnerProfile's own tolerant
+    # accessors can fall back, which turned the whole caseload into a 500.
+    if learner_ksbs_relation_exists(learner_alias):
+        prefetches.insert(0, "assigned_ksbs")
+    if learner_activity_events_relation_exists(learner_alias):
         prefetches.append("activity_events")
     queryset = (
         LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
@@ -1854,7 +1866,14 @@ def curriculum_expected_otjh_by_component_id(component_ids: list[str]) -> dict[s
         return {}
 
 
-def component_expected_otjh_hours(component_id: str, component_meta: dict, expected_by_id: dict[str, float]) -> float | None:
+def component_expected_otjh_hours(component_id: str, component_meta: dict, expected_by_id: dict[str, float], progress_entry: dict | None = None) -> float | None:
+    if isinstance(progress_entry, dict):
+        snapshot_expected = progress_entry.get("expectedOtjh") or progress_entry.get("expected_otjh")
+        if snapshot_expected not in (None, ""):
+            try:
+                return float(snapshot_expected)
+            except (TypeError, ValueError):
+                pass
     if component_id in expected_by_id:
         return expected_by_id[component_id]
     expected = component_meta.get("expectedOtjh")
@@ -1902,7 +1921,7 @@ def build_otjh_completed_entries(
         quiz_id = clean_text(entry.get("quizId"))
         component_id = clean_text(entry.get("componentId"))
         component_meta = component_lookup.get(component_id, {})
-        expected_hours = component_expected_otjh_hours(component_id, component_meta, expected_by_id)
+        expected_hours = component_expected_otjh_hours(component_id, component_meta, expected_by_id, entry)
         minutes = expected_hours * 60 if expected_hours is not None else reported_minutes(entry.get("reportedTime"))
         if minutes <= 0:
             continue
@@ -2004,16 +2023,12 @@ def build_ksb_completed_details(
     source_entries = [
         ("progress", entry)
         for entry in dedupe_otjh_progress_records(progress_entries)
-        if isinstance(entry, dict)
-        and not (
-            clean_text(entry.get("kind")).lower() == "quiz"
-            and entry.get("passed") is not True
-        )
+        if isinstance(entry, dict) and progress_record_counts_as_achieved(entry)
     ]
     source_entries.extend(
         ("activity", entry)
         for entry in activity_entries
-        if isinstance(entry, dict)
+        if isinstance(entry, dict) and progress_record_counts_as_achieved(entry)
     )
 
     for index, (source_kind, entry) in enumerate(source_entries):

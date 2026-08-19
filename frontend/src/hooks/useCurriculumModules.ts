@@ -3,15 +3,18 @@ import { fetchCurriculumModules, type CurriculumModule } from '@/lib/curriculumA
 
 type LoadOptions = {
   silent?: boolean;
+  skipCache?: boolean;
 };
 
 const MODULE_LOAD_RETRY_DELAY_MS = 400;
 
 type UseCurriculumModulesOptions = {
   autoLoad?: boolean;
+  skipCache?: boolean;
+  compact?: boolean;
 };
 
-export function useCurriculumModules({ autoLoad = true }: UseCurriculumModulesOptions = {}) {
+export function useCurriculumModules({ autoLoad = true, skipCache = false, compact = false }: UseCurriculumModulesOptions = {}) {
   const [modules, setModules] = useState<CurriculumModule[]>([]);
   const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
@@ -26,13 +29,13 @@ export function useCurriculumModules({ autoLoad = true }: UseCurriculumModulesOp
       setError(null);
     }
 
-    const request = (retry: boolean): Promise<CurriculumModule[]> => fetchCurriculumModules(controller.signal)
+    const request = (retry: boolean): Promise<CurriculumModule[]> => fetchCurriculumModules(controller.signal, { compact, skipCache: options.skipCache ?? skipCache })
       .catch(error => {
         if (controller.signal.aborted || retry) throw error;
         return new Promise<CurriculumModule[]>((resolve, reject) => {
           retryTimer = setTimeout(() => {
             retryTimer = null;
-            fetchCurriculumModules(controller.signal).then(resolve, reject);
+            fetchCurriculumModules(controller.signal, { compact, skipCache: options.skipCache ?? skipCache }).then(resolve, reject);
           }, MODULE_LOAD_RETRY_DELAY_MS);
         });
       });
@@ -56,7 +59,7 @@ export function useCurriculumModules({ autoLoad = true }: UseCurriculumModulesOp
       if (retryTimer !== null) clearTimeout(retryTimer);
       controller.abort();
     };
-  }, []);
+  }, [compact, skipCache]);
 
   const reload = useCallback((options?: LoadOptions) => load(options), [load]);
 

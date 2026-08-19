@@ -62,15 +62,79 @@ def _active_profile_for_source(source, source_pk):
     # database round-trip per progress row/answer (and the OTJ calculation
     # reads the same graph again).  Load the complete graph in a fixed number
     # of queries so learner pages stay fast as their history grows.
-    prefetch_related_objects(
-        [profile],
-        "ksb_assignment__profile_version__definitions",
-        "assigned_ksbs",
-        "progress_entries__ksb_links",
-        "progress_entries__quiz_answers__chosen_answers",
-        "progress_entries__quiz_answers__correct_answers",
-    )
+    try:
+        prefetch_related_objects(
+            [profile],
+            "ksb_assignment__profile_version__definitions",
+            "assigned_ksbs",
+            "progress_entries__ksb_links",
+            "progress_entries__quiz_answers__chosen_answers",
+            "progress_entries__quiz_answers__correct_answers",
+        )
+    except DatabaseError:
+        logger.warning(
+            "Could not prefetch legacy assigned KSBs for profile %s; retrying current graph.",
+            source_pk,
+            exc_info=True,
+        )
+        prefetch_related_objects(
+            [profile],
+            "ksb_assignment__profile_version__definitions",
+            "progress_entries__ksb_links",
+            "progress_entries__quiz_answers__chosen_answers",
+            "progress_entries__quiz_answers__correct_answers",
+        )
+    except AttributeError:
+        logger.warning("Could not prefetch learner detail graph for profile %s.", source_pk, exc_info=True)
     return profile
+
+
+def _normalise_weight_class(value, classification=""):
+    raw = _s(value).lower()
+    if raw in {"hard", "soft", "possible"}:
+        return raw
+    classification = _s(classification).lower()
+    if classification == "main":
+        return "hard"
+    if classification == "possible":
+        return "possible"
+    return "soft"
+
+
+def _component_ksb_items(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value else []
+        except (TypeError, ValueError):
+            value = []
+    if not isinstance(value, list):
+        return []
+    items = []
+    seen = set()
+    for mapping in value:
+        if not isinstance(mapping, dict):
+            continue
+        code = _s(mapping.get("code") or mapping.get("ksbCode") or mapping.get("ksb_code")).upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        classification = _s(mapping.get("classification") or mapping.get("type")) or None
+        weight = mapping.get("weight")
+        try:
+            weight = float(weight or 0)
+        except (TypeError, ValueError):
+            weight = 0.0
+        items.append({
+            "code": code,
+            "description": _s(mapping.get("description") or mapping.get("ksbDescription") or mapping.get("ksb_description")) or None,
+            "classification": classification,
+            "weight": weight,
+            "weightClass": _normalise_weight_class(
+                mapping.get("weightClass") if "weightClass" in mapping else mapping.get("weight_class"),
+                classification,
+            ),
+        })
+    return items
 
 
 def _video_url_from_settings(settings):
@@ -902,7 +966,7 @@ def _resolve_from_master(modules, weeks, components):
 
             cur.execute(
                 "SELECT id, week_id, module_catalogue_id, type, title, description, settings_json, "
-                "live_sessions_link, display_order "
+                "live_sessions_link, display_order, ksb_mappings "
                 "FROM curriculum.components WHERE module_catalogue_id = ANY(%s) "
                 "ORDER BY week_id, display_order, id",
                 [module_ids],
@@ -915,7 +979,7 @@ def _resolve_from_master(modules, weeks, components):
             # of treating a linked quiz as an ordinary generic component.
             quiz_id_by_component = {}
             component_ids = [row[0] for row in master_components]
-            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, settings, _live_link, _order in master_components:
+            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, settings, _live_link, _order, _ksb_mappings in master_components:
                 if isinstance(settings, str):
                     try:
                         settings = json.loads(settings) if settings else {}
@@ -960,36 +1024,38 @@ def _resolve_from_master(modules, weeks, components):
 
             # Authored KSB weight per component. Used to calculate and display
             # weighted KSB progress; it does not block activity completion.
-            cur.execute(
-                "SELECT component_id, COALESCE(SUM(weight), 0), COUNT(*) "
-                "FROM curriculum.ksb_mappings "
-                "WHERE component_id IS NOT NULL AND module_catalogue_id = ANY(%s) "
-                "GROUP BY component_id",
-                [module_ids],
-            )
-            ksb_weight_by_component = {
-                row[0]: (float(row[1] or 0), int(row[2] or 0)) for row in cur.fetchall()
-            }
+            ksbs_by_component = {}
+            for comp_id, _week_id, _mid, _ctype, _ctitle, _cdesc, _settings, _live_link, _order, ksb_mappings in master_components:
+                items = _component_ksb_items(ksb_mappings)
+                if items:
+                    ksbs_by_component[comp_id] = items
 
             # The individual KSBs authored against each component. The learner
             # no longer picks KSBs by hand on completion — these are applied
             # automatically (see components.py), so the UI shows what will be
             # credited rather than asking.
-            cur.execute(
-                "SELECT component_id, ksb_code, ksb_description, classification, weight "
-                "FROM curriculum.ksb_mappings "
-                "WHERE component_id IS NOT NULL AND module_catalogue_id = ANY(%s) "
-                "ORDER BY component_id, ksb_code",
-                [module_ids],
-            )
-            ksbs_by_component = {}
-            for comp_id, code, description, classification, weight in cur.fetchall():
-                ksbs_by_component.setdefault(comp_id, []).append({
-                    "code": _s(code),
-                    "description": _s(description) or None,
-                    "classification": _s(classification) or None,
-                    "weight": float(weight or 0),
-                })
+            missing_ksb_component_ids = [component_id for component_id in component_ids if component_id not in ksbs_by_component]
+            if missing_ksb_component_ids:
+                cur.execute(
+                    "SELECT component_id, ksb_code, ksb_description, classification, weight, weight_class "
+                    "FROM curriculum.ksb_mappings "
+                    "WHERE component_id = ANY(%s) "
+                    "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
+                    "ORDER BY component_id, ksb_code",
+                    [missing_ksb_component_ids],
+                )
+                for comp_id, code, description, classification, weight, weight_class in cur.fetchall():
+                    ksbs_by_component.setdefault(comp_id, []).append({
+                        "code": _s(code),
+                        "description": _s(description) or None,
+                        "classification": _s(classification) or None,
+                        "weight": float(weight or 0),
+                        "weightClass": _normalise_weight_class(weight_class, classification),
+                    })
+            ksb_weight_by_component = {
+                component_id: (sum(float(item.get("weight") or 0) for item in items), len(items))
+                for component_id, items in ksbs_by_component.items()
+            }
     except DatabaseError as exc:
         logger.warning("Could not live-resolve training plan from master: %s", exc)
         return modules, weeks, components
@@ -1004,7 +1070,7 @@ def _resolve_from_master(modules, weeks, components):
         weeks_by_module.setdefault(mid, []).append((week_id, live_title))
 
     comps_by_week = {}
-    for comp_id, week_id, _mid, ctype, ctitle, cdesc, settings, stored_live_link, _order in master_components:
+    for comp_id, week_id, _mid, ctype, ctitle, cdesc, settings, stored_live_link, _order, _ksb_mappings in master_components:
         # settings_json comes back from the raw cursor as a JSON string (JSONField
         # auto-parsing only happens through the ORM), so parse it here.
         if isinstance(settings, str):

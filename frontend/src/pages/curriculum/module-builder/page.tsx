@@ -36,6 +36,7 @@ import {
   type CompletionCriteria,
   type KsbMapping,
   type KsbMappingType,
+  type KsbWeightClass,
   type KsbOption,
   type ModuleCatalogueItem,
   type ModuleComponent,
@@ -147,6 +148,7 @@ type QuizPackageSummary = {
 type WizardModuleDraftPayload = {
   programmeId?: string;
   programme?: string;
+  programmeStatus?: string;
   cohortId?: string;
   cohortName?: string;
   groupId?: string;
@@ -253,9 +255,9 @@ export default function ModuleBuilder() {
   const wizardDraftLocalIdRef = useRef('');
   const savedModuleSnapshotRef = useRef('');
   const saveRequestRef = useRef(0);
-  const { modules, loading, error, reload } = useCurriculumModules();
-  const { programmes: curriculumProgrammes } = useCurriculumProgrammes();
-  const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets();
+  const { modules, loading, error, reload } = useCurriculumModules({ compact: true, skipCache: true });
+  const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ skipCache: true, visibility: 'all' });
+  const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets({ all: true });
   const liveCurriculumProgrammes = curriculumProgrammes;
   const wizardModulePayload = useMemo(() => (
     typeof window === 'undefined' ? null : readWizardModuleDraft(new URLSearchParams(window.location.search))
@@ -285,8 +287,11 @@ export default function ModuleBuilder() {
     void storageVersion;
     const remoteModules = modules.map(module => curriculumModuleToCatalogue(module));
     return buildMasterModuleList(remoteModules, [])
-      .filter(module => !hiddenModuleIds.has(module.catalogueId));
-  }, [modules, storageVersion, hiddenModuleIds]);
+      .filter(module => (
+        !hiddenModuleIds.has(module.catalogueId)
+        && moduleBelongsToVisibleProgramme(module, curriculumProgrammes)
+      ));
+  }, [modules, storageVersion, hiddenModuleIds, curriculumProgrammes]);
 
   const programmeOptions = useMemo(() => {
     const byName = new Map<string, string>();
@@ -327,6 +332,21 @@ export default function ModuleBuilder() {
     };
   }, [programmeLookup]);
 
+  const wizardProgrammeKsbSourceId = useMemo(() => {
+    if (!wizardModulePayload) return '';
+    const candidates = [
+      wizardModulePayload.programmeId,
+      wizardModulePayload.programme,
+    ].map(normaliseDeepLinkValue).filter(Boolean);
+    if (!candidates.length) return '';
+    const programme = curriculumProgrammes.find(item => candidates.some(candidate => (
+      normaliseDeepLinkValue(item.id) === candidate
+      || normaliseDeepLinkValue(item.sourceId) === candidate
+      || normaliseDeepLinkValue(item.name) === candidate
+    )));
+    return cleanKsbSourceId(programme?.ksbProfileSourceId);
+  }, [curriculumProgrammes, wizardModulePayload]);
+
   const initialKsbSourceId = useMemo(() => {
     const selectedSource = cleanKsbSourceId(workingModule?.ksbProfileSourceId);
     if (selectedSource && ksbSourceMatchesModule(selectedSource, ksbSets, standards, workingModule, curriculumProgrammes)) return selectedSource;
@@ -342,7 +362,7 @@ export default function ModuleBuilder() {
     ksbSourceOptions(ksbSets, standards)
   ), [ksbSets, standards]);
   const workspaceKsbProfileValue = useMemo(() => {
-    const wizardSource = cleanKsbSourceId(wizardModulePayload?.ksbSourceId);
+    const wizardSource = wizardProgrammeKsbSourceId || cleanKsbSourceId(wizardModulePayload?.ksbSourceId);
     if (wizardSource) return wizardSource;
     const selectedSource = cleanKsbSourceId(workingModule?.ksbProfileSourceId);
     if (selectedSource && ksbSourceMatchesModule(selectedSource, ksbSets, standards, workingModule, curriculumProgrammes)) return selectedSource;
@@ -350,17 +370,22 @@ export default function ModuleBuilder() {
     if (matchingProfile) return ksbSetSourceId(matchingProfile);
     const matchingStandard = standardForModule(standards, workingModule, curriculumProgrammes);
     return matchingStandard ? ksbStandardSourceId(matchingStandard) : '';
-  }, [curriculumProgrammes, ksbSets, standards, wizardModulePayload?.ksbSourceId, workingModule]);
+  }, [curriculumProgrammes, ksbSets, standards, wizardModulePayload?.ksbSourceId, wizardProgrammeKsbSourceId, workingModule]);
 
   const resolveModuleScopeLock = useCallback((module: ModuleCatalogueItem | ModuleBuilderListItem): ModuleScopeLock => {
-    const wizardSource = cleanKsbSourceId(wizardModulePayload?.ksbSourceId);
+    const wizardSource = wizardProgrammeKsbSourceId || cleanKsbSourceId(wizardModulePayload?.ksbSourceId);
     if (wizardModulePayload && (wizardModulePayload.programmeId || wizardModulePayload.programme || wizardSource)) {
       const programmeIdentity = resolveProgrammeIdentity(wizardModulePayload.programme || module.programmeName || '', wizardModulePayload.programmeId || module.programmeId || '');
+      const wizardSourceLabel = ksbSourceLabels[wizardSource]
+        || ksbSourceLabels[`profile:${wizardSource}`]
+        || ksbSourceLabels[`standard:${wizardSource}`]
+        || (!wizardProgrammeKsbSourceId ? wizardModulePayload.ksbSourceLabel : '')
+        || wizardSource;
       return {
         programmeId: programmeIdentity.programmeId,
         programmeName: programmeIdentity.programmeName,
         ksbSourceId: wizardSource,
-        ksbSourceLabel: wizardModulePayload.ksbSourceLabel || ksbSourceLabels[wizardSource] || wizardSource,
+        ksbSourceLabel: wizardSourceLabel,
         locked: true,
       };
     }
@@ -389,7 +414,7 @@ export default function ModuleBuilder() {
       ksbSourceLabel,
       locked,
     };
-  }, [curriculumProgrammes, ksbSets, ksbSourceLabels, programmeFilter, resolveProgrammeIdentity, standards, wizardModulePayload]);
+  }, [curriculumProgrammes, ksbSets, ksbSourceLabels, programmeFilter, resolveProgrammeIdentity, standards, wizardModulePayload, wizardProgrammeKsbSourceId]);
 
   const workingModuleScopeLock = useMemo(
     () => (workingModule ? resolveModuleScopeLock(workingModule) : null),
@@ -546,6 +571,8 @@ export default function ModuleBuilder() {
         }
       }
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
+      const wizardPayload = readWizardModuleDraft(new URLSearchParams(window.location.search));
+      next = applyWizardSessionCount(next, wizardPayload?.sessionsNumber);
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
       setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
@@ -701,6 +728,7 @@ export default function ModuleBuilder() {
         setNoticeAlert(null);
         void createNewModule({
           programmeId: wizardPayload.programmeId || '',
+          programmeStatus: wizardPayload.programmeStatus || 'draft',
           programme: wizardPayload.programme || (programmeFilter !== 'All' ? programmeFilter : 'Unassigned programme'),
           cohortId: wizardPayload.cohortId || '',
           cohortName: wizardPayload.cohortName || '',
@@ -757,6 +785,7 @@ export default function ModuleBuilder() {
     deepLinkedModuleRef.current = requestedKey;
     const fallback = recalculateModule(createLocalModuleDraft({
       programmeId: wizardPayload.programmeId || '',
+      programmeStatus: wizardPayload.programmeStatus || 'draft',
       programme: wizardPayload.programme || (programmeFilter !== 'All' ? programmeFilter : 'Unassigned programme'),
       cohortId: wizardPayload.cohortId || '',
       cohortName: wizardPayload.cohortName || '',
@@ -1370,7 +1399,7 @@ export default function ModuleBuilder() {
               onAddKsb={target => setKsbTarget(target)}
               onRemoveKsb={(target, mappingId) => updateWorkingModule(module => removeKsbMapping(module, target, mappingId))}
               onUpdateKsbWeight={(target, mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, target, mappingId, weight))}
-              onUpdateKsbClassification={(target, mappingId, classification) => updateWorkingModule(module => updateKsbMappingClassification(module, target, mappingId, classification))}
+              onUpdateKsbWeightClass={(target, mappingId, weightClass) => updateWorkingModule(module => updateKsbMappingWeightClass(module, target, mappingId, weightClass))}
             />
           </div>
           <WorkspaceActionFooter
@@ -1398,7 +1427,7 @@ export default function ModuleBuilder() {
             onAddKsb={() => setKsbTarget({ scope: 'module' })}
             onRemoveKsb={mappingId => updateWorkingModule(module => removeKsbMapping(module, { scope: 'module' }, mappingId))}
             onUpdateKsbWeight={(mappingId, weight) => updateWorkingModule(module => updateKsbMappingWeight(module, { scope: 'module' }, mappingId, weight))}
-            onUpdateKsbClassification={(mappingId, classification) => updateWorkingModule(module => updateKsbMappingClassification(module, { scope: 'module' }, mappingId, classification))}
+            onUpdateKsbWeightClass={(mappingId, weightClass) => updateWorkingModule(module => updateKsbMappingWeightClass(module, { scope: 'module' }, mappingId, weightClass))}
           />
         )}
         {settingsWizardModule && (
@@ -1496,7 +1525,7 @@ export default function ModuleBuilder() {
             onClose={() => setKsbTarget(null)}
             onAddMany={(items) => {
               updateWorkingModule(module => items.reduce(
-                (current, item) => addKsbMapping(current, ksbTarget, item.option, item.weight, item.classification),
+                (current, item) => addKsbMapping(current, ksbTarget, item.option, item.weight, item.weightClass),
                 module,
               ));
               setKsbTarget(null);
@@ -3308,7 +3337,7 @@ function findModuleForDeliveryPath(
 }
 
 
-function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbClassification }: {
+function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbWeightClass }: {
   module: ModuleCatalogueItem;
   week: ModuleWeek | null;
   component: ModuleComponent | null;
@@ -3316,7 +3345,7 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAd
   onAddKsb: (target: KsbTarget) => void;
   onRemoveKsb: (target: KsbTarget, mappingId: string) => void;
   onUpdateKsbWeight: (target: KsbTarget, mappingId: string, weight: number) => void;
-  onUpdateKsbClassification: (target: KsbTarget, mappingId: string, classification: KsbMappingType) => void;
+  onUpdateKsbWeightClass: (target: KsbTarget, mappingId: string, weightClass: KsbWeightClass) => void;
 }) {
   if (!week) {
     return (
@@ -3438,14 +3467,14 @@ function ApprenticeshipSettings({ module, week, component, ksbSourceLabels, onAd
           sourceLabels={ksbSourceLabels}
           onRemove={mappingId => onRemoveKsb({ scope: 'component', weekId: week.id, componentId: component.id }, mappingId)}
           onWeightChange={(mappingId, weight) => onUpdateKsbWeight({ scope: 'component', weekId: week.id, componentId: component.id }, mappingId, weight)}
-          onClassificationChange={(mappingId, classification) => onUpdateKsbClassification({ scope: 'component', weekId: week.id, componentId: component.id }, mappingId, classification)}
+          onWeightClassChange={(mappingId, weightClass) => onUpdateKsbWeightClass({ scope: 'component', weekId: week.id, componentId: component.id }, mappingId, weightClass)}
         />
       </div>
     </aside>
   );
 }
 
-function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, onSave, onChange, onCompletionChange, onAdvancedChange, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbClassification }: {
+function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, onSave, onChange, onCompletionChange, onAdvancedChange, onAddKsb, onRemoveKsb, onUpdateKsbWeight, onUpdateKsbWeightClass }: {
   module: ModuleCatalogueItem;
   ksbSourceLabels: Record<string, string>;
   saving: boolean;
@@ -3458,7 +3487,7 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
   onAddKsb: () => void;
   onRemoveKsb: (mappingId: string) => void;
   onUpdateKsbWeight: (mappingId: string, weight: number) => void;
-  onUpdateKsbClassification: (mappingId: string, classification: KsbMappingType) => void;
+  onUpdateKsbWeightClass: (mappingId: string, weightClass: KsbWeightClass) => void;
 }) {
   const checklist = calculateQualityChecklist(module);
   const moduleWeightSummary = ksbWeightSummary(module.moduleKsbMappings);
@@ -3491,7 +3520,7 @@ function ModuleSettingsModal({ module, ksbSourceLabels, saving, saved, onClose, 
               <AppIcon className="ri-add-line"></AppIcon>
               Add KSBs
             </button>
-            <KsbCards title="KSBs" mappings={module.moduleKsbMappings} sourceLabels={ksbSourceLabels} onRemove={onRemoveKsb} onWeightChange={onUpdateKsbWeight} onClassificationChange={onUpdateKsbClassification} />
+            <KsbCards title="KSBs" mappings={module.moduleKsbMappings} sourceLabels={ksbSourceLabels} onRemove={onRemoveKsb} onWeightChange={onUpdateKsbWeight} onWeightClassChange={onUpdateKsbWeightClass} />
           </SettingsSection>
 
           <SettingsSection title="Compliance/context fields">
@@ -3738,11 +3767,12 @@ function ReviewKsbKindColumn({ kind, mappings, sourceLabels }: {
 function ReviewKsbChip({ mapping, sourceLabels }: { mapping: KsbMapping; sourceLabels: Record<string, string> }) {
   const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
   const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+  const weightClass = normaliseKsbWeightClass(mapping.weightClass || mapping.weight_class, classification);
   return (
     <div title={mapping.description || mapping.code} className={`rounded-md border px-2 py-1.5 ${ksbCodeChipClass(mapping.code)}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[10px] font-extrabold text-foreground-950">{mapping.code}</span>
-        <span className="rounded bg-white/70 px-1 py-0.5 text-[8px] font-bold">{ksbClassificationLabel(classification)}</span>
+        <span className="rounded bg-white/70 px-1 py-0.5 text-[8px] font-bold">{ksbWeightClassLabel(weightClass)}</span>
         <span className="rounded bg-white/70 px-1 py-0.5 text-[8px] font-bold">{clampKsbWeight(mapping.weight)}%</span>
       </div>
       {mapping.description && <p className="mt-1 line-clamp-2 text-[10px] font-semibold leading-relaxed text-foreground-700">{mapping.description}</p>}
@@ -3780,6 +3810,7 @@ function SessionKsbSummaryColumn({ kind, mappings, module, sourceLabels }: {
 
 function SessionKsbReadableCard({ mapping, module }: { mapping: KsbMapping; module: ModuleCatalogueItem }) {
   const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+  const weightClass = normaliseKsbWeightClass(mapping.weightClass || mapping.weight_class, classification);
   const placements = ksbMappingPlacements(module, mapping);
   return (
     <article
@@ -3788,7 +3819,7 @@ function SessionKsbReadableCard({ mapping, module }: { mapping: KsbMapping; modu
     >
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[12px] font-extrabold text-foreground-950">{mapping.code}</span>
-        <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{ksbClassificationLabel(classification)}</span>
+        <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{ksbWeightClassLabel(weightClass)}</span>
         <span className="rounded bg-white/70 px-1.5 py-0.5 text-[9px] font-bold">{clampKsbWeight(mapping.weight)}%</span>
       </div>
       {mapping.description && <p className="mt-2 text-[11px] font-semibold leading-relaxed text-foreground-700">{mapping.description}</p>}
@@ -3904,13 +3935,14 @@ function SessionKsbColumn({ kind, mappings, sourceLabels, onRemove }: {
 function SessionKsbChip({ mapping, sourceLabels, onRemove }: { mapping: KsbMapping; sourceLabels: Record<string, string>; onRemove: () => void }) {
   const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
   const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+  const weightClass = normaliseKsbWeightClass(mapping.weightClass || mapping.weight_class, classification);
   return (
     <span
       title={`${mapping.description || mapping.code} - ${sourceLabel}`}
       className={`inline-flex max-w-full items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-bold ${ksbCodeChipClass(mapping.code)}`}
     >
       <span>{mapping.code}</span>
-      <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{ksbClassificationLabel(classification)}</span>
+      <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{ksbWeightClassLabel(weightClass)}</span>
       <span className="rounded bg-white/70 px-1 text-[8px] font-semibold">{clampKsbWeight(mapping.weight)}%</span>
       <span className="max-w-[90px] truncate rounded bg-white/70 px-1 text-[8px] font-semibold">{sourceLabel}</span>
       <button type="button" onClick={onRemove} className="ml-0.5 flex h-4 w-4 items-center justify-center rounded text-red-500 transition-smooth hover:bg-red-50" aria-label={`Remove ${mapping.code}`}>
@@ -3946,10 +3978,10 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   initialSourceId: string;
   lockedSourceId?: string;
   onClose: () => void;
-  onAddMany: (items: Array<{ option: KsbOption; weight: number; classification: KsbMappingType }>) => void;
+  onAddMany: (items: Array<{ option: KsbOption; weight: number; weightClass: KsbWeightClass }>) => void;
 }) {
   const [weightsByKsbId, setWeightsByKsbId] = useState<Record<string, number>>({});
-  const [classificationsByKsbId, setClassificationsByKsbId] = useState<Record<string, KsbMappingType>>({});
+  const [weightClassesByKsbId, setWeightClassesByKsbId] = useState<Record<string, KsbWeightClass>>({});
   const [selectedKsbIds, setSelectedKsbIds] = useState<Set<string>>(new Set());
   const [selectedSourceId, setSelectedSourceId] = useState(initialSourceId);
   const [sourceMode, setSourceMode] = useState<'standard' | 'profile'>('profile');
@@ -3973,27 +4005,32 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   useEffect(() => {
     const preferredSourceId = lockedSourceId;
     if (sourceLocked && preferredSourceId) {
-      setSourceMode(preferredSourceId.startsWith('profile:') ? 'profile' : 'standard');
+      setSourceMode(preferredSourceId.startsWith('standard:') ? 'standard' : 'profile');
       setSelectedSourceId(preferredSourceId);
     }
   }, [lockedSourceId, sourceLocked]);
-  const selectedSource = sourceOptions.find(source => source.id === selectedSourceId) || null;
-  const selectedSourceValue = selectedSource || sourceLocked ? selectedSourceId : '';
+  const selectedSource = sourceOptions.find(source => ksbSourceIdsMatch(source.id, selectedSourceId)) || null;
+  const resolvedSelectedSource = selectedSource
+    || sourceOptions.find(source => ksbSourceIdsMatch(source.id, selectedSourceId))
+    || null;
+  const selectedSourceValue = resolvedSelectedSource?.id || (sourceLocked ? selectedSourceId : '');
   const sourceLabels = Object.fromEntries([
     [
       '',
       ksbSetsLoading || standardsLoading ? 'Loading KSB sources...' : 'No source selected',
     ],
-    ...sourceOptions.map(source => [source.id, source.label]),
+    ...sourceOptions.flatMap(source => ksbSourceIdAliases(source.id).map(alias => [alias, source.label])),
   ]);
-  const sourceKsbOptions = selectedSource?.options || [];
-  const weightForOption = (option: KsbOption) => weightsByKsbId[option.id] ?? defaultKsbWeight(classificationForOption(option));
+  const sourceKsbOptions = resolvedSelectedSource?.options || [];
+  const weightForOption = (option: KsbOption) => weightsByKsbId[option.id] ?? defaultKsbWeight(weightClassForOption(option));
   const updateOptionWeight = (option: KsbOption, value: number) => {
     setWeightsByKsbId(current => ({ ...current, [option.id]: clampKsbWeight(value) }));
   };
-  const classificationForOption = (option: KsbOption) => classificationsByKsbId[option.id] ?? DEFAULT_KSB_MAPPING_TYPE;
-  const updateOptionClassification = (option: KsbOption, value: string) => {
-    setClassificationsByKsbId(current => ({ ...current, [option.id]: normaliseKsbMappingType(value) }));
+  const weightClassForOption = (option: KsbOption) => weightClassesByKsbId[option.id] ?? DEFAULT_KSB_WEIGHT_CLASS;
+  const updateOptionWeightClass = (option: KsbOption, value: string) => {
+    const nextWeightClass = normaliseKsbWeightClass(value);
+    setWeightClassesByKsbId(current => ({ ...current, [option.id]: nextWeightClass }));
+    setWeightsByKsbId(current => ({ ...current, [option.id]: defaultKsbWeight(nextWeightClass) }));
   };
   const toggleOption = (option: KsbOption) => {
     setSelectedKsbIds(current => {
@@ -4006,8 +4043,8 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
   const selectedItems = sourceKsbOptions
     .filter(option => selectedKsbIds.has(option.id))
     .map(option => {
-      const classification = classificationForOption(option);
-      return { option, weight: clampPositiveKsbWeight(weightForOption(option), classification), classification };
+      const weightClass = weightClassForOption(option);
+      return { option, weight: clampPositiveKsbWeight(weightForOption(option), weightClass), weightClass };
     });
   const handleAddSelectedKsbs = () => {
     if (!selectedItems.length || addingKsbs) return;
@@ -4090,16 +4127,16 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                       <p className="mt-1 text-[11px] text-foreground-600 leading-relaxed">{option.description}</p>
                     </div>
                   </div>
-                  <div className="grid shrink-0 grid-cols-2 gap-2 sm:w-48">
+                  <div className="grid shrink-0 grid-cols-2 gap-2 sm:w-56">
                     <label className="block">
-                      <span className="text-[9px] font-semibold uppercase text-foreground-400">Class</span>
+                      <span className="text-[9px] font-semibold uppercase text-foreground-400">Weight class</span>
                       <select
-                        value={classificationForOption(option)}
-                        onChange={event => updateOptionClassification(option, event.target.value)}
+                        value={weightClassForOption(option)}
+                        onChange={event => updateOptionWeightClass(option, event.target.value)}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
                       >
-                        <option value="main">Hard</option>
-                        <option value="secondary">Soft</option>
+                        <option value="hard">Hard</option>
+                        <option value="soft">Soft</option>
                         <option value="possible">Possible</option>
                       </select>
                     </label>
@@ -4109,7 +4146,7 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
                         type="number"
                         min={1}
                         step={1}
-                        value={clampPositiveKsbWeight(weightForOption(option), classificationForOption(option))}
+                        value={clampPositiveKsbWeight(weightForOption(option), weightClassForOption(option))}
                         onChange={event => updateOptionWeight(option, Number(event.target.value))}
                         className="mt-1 h-8 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[12px] font-bold text-foreground-900 outline-none focus:border-primary-300"
                       />
@@ -4119,9 +4156,9 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
               </div>
               );
             })}
-            {!sourceLocked && !selectedSource && <EmptyState text="Choose a KSB Source from the module-level dropdown first." />}
-            {sourceLocked && !selectedSource && <EmptyState text="Loading the selected KSB Source, or it is no longer available." />}
-            {selectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
+            {!sourceLocked && !resolvedSelectedSource && <EmptyState text="Choose a KSB Source from the module-level dropdown first." />}
+            {sourceLocked && !resolvedSelectedSource && <EmptyState text="Loading the selected KSB Source, or it is no longer available." />}
+            {resolvedSelectedSource && !sourceKsbOptions.length && <EmptyState text="No KSBs are available for this selection." />}
           </div>
           <div className="flex items-center justify-between gap-3 border-t border-background-200 pt-3">
             <p className="text-[11px] font-semibold text-foreground-500">{selectedItems.length} KSB{selectedItems.length === 1 ? '' : 's'} selected</p>
@@ -4530,8 +4567,48 @@ function ksbStandardSourceId(standard: CurriculumStandard) {
 }
 
 function ksbSetSourceId(set: CurriculumKsbSet) {
-  const key = set.ksbProfileId || set.frameworkId || set.profileId || set.programmeId || set.programmeName || set.standard;
+  const key = set.frameworkId || set.ksbProfileId || set.profileId || set.programmeId || set.standard || set.programmeName;
   return String(key || 'ksb-set').trim();
+}
+
+function ksbSourceIdAliases(value?: string) {
+  const raw = String(value || '').trim();
+  const cleaned = cleanKsbSourceId(raw);
+  const aliases = new Set<string>();
+  [raw, cleaned].forEach(source => {
+    const id = String(source || '').trim();
+    if (!id) return;
+    aliases.add(id);
+    aliases.add(id.replace(/^profile:/, ''));
+    if (!id.startsWith('standard:')) aliases.add(`profile:${id.replace(/^profile:/, '')}`);
+    if (/^ksb-\d+$/i.test(id)) aliases.add(id.replace(/^ksb-/i, ''));
+    if (/^\d+$/.test(id)) {
+      aliases.add(`ksb-${id}`);
+      aliases.add(`KSBP-${id}`);
+      aliases.add(`profile:KSBP-${id}`);
+    }
+  });
+  return Array.from(aliases).filter(Boolean);
+}
+
+function ksbSourceIdsMatch(left?: string, right?: string) {
+  const leftAliases = ksbSourceIdAliases(left).map(normaliseDeepLinkValue).filter(Boolean);
+  const rightAliases = new Set(ksbSourceIdAliases(right).map(normaliseDeepLinkValue).filter(Boolean));
+  return leftAliases.some(alias => rightAliases.has(alias));
+}
+
+function ksbSetSourceAliases(set: CurriculumKsbSet) {
+  return [
+    ksbSetSourceId(set),
+    set.frameworkId,
+    set.ksbProfileId,
+    set.profileId,
+    set.profileId ? `KSBP-${set.profileId}` : '',
+    set.programmeId,
+    set.standard,
+    set.programmeName,
+    ...(set.programmeIds || []),
+  ].flatMap(value => ksbSourceIdAliases(String(value || '').trim())).filter(Boolean);
 }
 
 function cleanKsbSourceId(value?: string) {
@@ -4599,9 +4676,15 @@ function ksbMapSourceOptions(ksbSets: CurriculumKsbSet[], standards: CurriculumS
 function ksbSourceMatchesModule(sourceId: string, ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[], module: ModuleCatalogueItem | null, programmes: CurriculumProgramme[]) {
   const selectedSource = cleanKsbSourceId(sourceId);
   if (!selectedSource) return false;
-  if (ksbSourceOptions(ksbSets, standards).some(option => option.id === selectedSource)) return true;
+  if (ksbSourceOptions(ksbSets, standards).some(option => ksbSourceIdsMatch(option.id, selectedSource))) return true;
+  if (ksbSets.some(set => ksbSetSourceAliases(set).some(alias => ksbSourceIdsMatch(alias, selectedSource)))) return true;
   if (!module) return false;
-  return Boolean(ksbSetForModule(ksbSets, module, programmes)?.ksbProfileId === selectedSource || standardForModule(standards, module, programmes)?.id === selectedSource);
+  const matchedSet = ksbSetForModule(ksbSets, module, programmes);
+  const matchedStandard = standardForModule(standards, module, programmes);
+  return Boolean(
+    (matchedSet && ksbSetSourceAliases(matchedSet).some(alias => ksbSourceIdsMatch(alias, selectedSource)))
+    || (matchedStandard && ksbSourceIdsMatch(ksbStandardSourceId(matchedStandard), selectedSource))
+  );
 }
 
 function valuesMatchAny(values: unknown[] | undefined, candidates: unknown[]) {
@@ -4781,7 +4864,7 @@ function KsbWeightSummary({ summary }: { summary: ReturnType<typeof ksbWeightSum
   );
 }
 
-function KsbCards({ title, mappings, sourceLabels = {}, onAdd, onRemove, onWeightChange, onClassificationChange }: { title: string; mappings: KsbMapping[]; sourceLabels?: Record<string, string>; onAdd?: () => void; onRemove?: (mappingId: string) => void; onWeightChange?: (mappingId: string, weight: number) => void; onClassificationChange?: (mappingId: string, classification: KsbMappingType) => void }) {
+function KsbCards({ title, mappings, sourceLabels = {}, onAdd, onRemove, onWeightChange, onWeightClassChange }: { title: string; mappings: KsbMapping[]; sourceLabels?: Record<string, string>; onAdd?: () => void; onRemove?: (mappingId: string) => void; onWeightChange?: (mappingId: string, weight: number) => void; onWeightClassChange?: (mappingId: string, weightClass: KsbWeightClass) => void }) {
   const totalWeight = mappings.reduce((total, mapping) => total + Number(mapping.weight || 0), 0);
   return (
     <div className="space-y-2 rounded-xl border border-background-200 bg-background-100/35 p-3">
@@ -4805,7 +4888,7 @@ function KsbCards({ title, mappings, sourceLabels = {}, onAdd, onRemove, onWeigh
             sourceLabels={sourceLabels}
             onRemove={onRemove ? () => onRemove(mapping.id) : undefined}
             onWeightChange={onWeightChange ? weight => onWeightChange(mapping.id, weight) : undefined}
-            onClassificationChange={onClassificationChange ? classification => onClassificationChange(mapping.id, classification) : undefined}
+            onWeightClassChange={onWeightClassChange ? weightClass => onWeightClassChange(mapping.id, weightClass) : undefined}
           />
         ))}
         {!mappings.length && <p className="text-[11px] text-foreground-400">No KSBs mapped.</p>}
@@ -4814,9 +4897,10 @@ function KsbCards({ title, mappings, sourceLabels = {}, onAdd, onRemove, onWeigh
   );
 }
 
-function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onClassificationChange }: { mapping: KsbMapping; sourceLabels?: Record<string, string>; onRemove?: () => void; onWeightChange?: (weight: number) => void; onClassificationChange?: (classification: KsbMappingType) => void }) {
+function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onWeightClassChange }: { mapping: KsbMapping; sourceLabels?: Record<string, string>; onRemove?: () => void; onWeightChange?: (weight: number) => void; onWeightClassChange?: (weightClass: KsbWeightClass) => void }) {
   const tone = ksbVisualTone(mapping.code, mapping.type);
   const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+  const weightClass = normaliseKsbWeightClass(mapping.weightClass || mapping.weight_class, classification);
   const sourceLabel = ksbSourceLabel(mapping, sourceLabels);
   return (
     <div className={`rounded-lg border border-l-4 p-2 ${tone.row}`} title={mapping.description || `${mapping.code} applied`}>
@@ -4828,22 +4912,22 @@ function KsbCard({ mapping, sourceLabels = {}, onRemove, onWeightChange, onClass
           <div className="flex flex-wrap items-center gap-1.5 min-w-0">
             <p className="truncate text-[11px] font-bold text-foreground-900">{mapping.code} applied</p>
             <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
-            <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{ksbClassificationLabel(classification)}</span>
+            <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{ksbWeightClassLabel(weightClass)}</span>
             <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.weightClass}`}>{Number(mapping.weight || 0)}%</span>
           </div>
           <p className="mt-1 truncate text-[10px] font-semibold text-foreground-400">{sourceLabel}</p>
-          {(onWeightChange || onClassificationChange) && (
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_88px]">
-              {onClassificationChange && (
+          {(onWeightChange || onWeightClassChange) && (
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[112px_88px]">
+              {onWeightClassChange && (
                 <label className="text-[10px] font-semibold uppercase text-foreground-400">
-                  Classification
+                  Weight class
                   <select
-                    value={classification}
-                    onChange={event => onClassificationChange(normaliseKsbMappingType(event.target.value))}
+                    value={weightClass}
+                    onChange={event => onWeightClassChange(normaliseKsbWeightClass(event.target.value))}
                     className="mt-1 h-7 w-full rounded-md border border-foreground-200/60 bg-background-50 px-2 text-[11px] font-bold capitalize text-foreground-900 outline-none focus:border-primary-300"
                   >
-                    <option value="main">Hard</option>
-                    <option value="secondary">Soft</option>
+                    <option value="hard">Hard</option>
+                    <option value="soft">Soft</option>
                     <option value="possible">Possible</option>
                   </select>
                 </label>
@@ -5298,8 +5382,16 @@ type ModuleKsbMapRow = {
   sourceFull: string;
   weight: number;
   locations: string[];
+  placements: ModuleKsbPlacement[];
   applied: boolean;
   classificationLabels: string[];
+};
+
+type ModuleKsbPlacement = {
+  label: string;
+  scope: 'Module' | 'Week' | 'Component';
+  otjh: number;
+  points: number;
 };
 
 function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programmes, onClose, onBuild }: {
@@ -5357,15 +5449,18 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
     { key: 'S' as const, title: 'Skills', icon: 'ri-tools-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('S')) },
     { key: 'B' as const, title: 'Behaviours', icon: 'ri-user-heart-line', rows: filteredRows.filter(row => row.code.toUpperCase().startsWith('B')) },
   ];
+  const visiblePlacementCount = filteredRows.reduce((total, row) => total + row.placements.length, 0);
+  const visibleWeight = filteredRows.reduce((total, row) => total + row.weight, 0);
+  const visibleOtjh = uniquePlacementOtjh(filteredRows);
   return (
     <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+      <div className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
         <div className="border-b border-background-200 bg-primary-950 px-5 py-4 text-white">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">KSB Coverage</p>
               <h3 className="mt-1 truncate text-base font-heading font-bold text-white">{module.title}</h3>
-              <p className="mt-1 text-[11px] font-semibold text-white/70">Review applied KSBs from the selected source and where they are used across this module.</p>
+              <p className="mt-1 text-[11px] font-semibold text-white/70">Applied KSBs, placement, weight and OTJH for this module.</p>
             </div>
             <button onClick={onClose} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20">
               <AppIcon className="ri-close-line"></AppIcon>
@@ -5373,7 +5468,7 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
           </div>
         </div>
         <div className="border-b border-background-200 bg-background-50 px-5 py-3">
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[300px_minmax(260px,1fr)_auto] xl:items-end">
             <div className="block">
               <span className="mb-1 block text-[9px] font-bold uppercase tracking-wide text-foreground-400">KSB source</span>
               <div className="flex min-h-10 w-full items-center rounded-lg border border-background-200 bg-background-100 px-3 py-2">
@@ -5387,10 +5482,19 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
                 )}
               </div>
             </div>
-          <div className="relative lg:self-end">
-            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-            <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, source, description, week or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
+            <div className="relative">
+              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
+              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search code, description, week or component..." className="h-10 w-full rounded-lg border border-background-200 bg-background-100 pl-9 pr-3 text-[12px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 focus:bg-background-50" />
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <KsbCoverageMetric label="KSBs" value={String(filteredRows.length)} />
+              <KsbCoverageMetric label="Placements" value={String(visiblePlacementCount)} />
+              <KsbCoverageMetric label="OTJH" value={formatKsbOtjh(visibleOtjh)} />
+            </div>
           </div>
+          <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-bold text-foreground-500">
+            <span className="rounded-md border border-background-200 bg-background-100 px-2 py-1">Mapped weight: {formatKsbWeight(visibleWeight)}</span>
+            <span className="rounded-md border border-background-200 bg-background-100 px-2 py-1">Applied KSBs only</span>
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
@@ -5398,7 +5502,7 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
                 {groups.map(group => (
-                  <ModuleKsbGroupPanel key={group.key} group={group} totalRows={filteredRows.length} />
+                  <ModuleKsbGroupPanel key={group.key} group={group} />
                 ))}
               </div>
             </div>
@@ -5475,7 +5579,7 @@ function ProgrammeKsbMapModal({ programmeName, modules, sourceLabels, onClose }:
           {rows.length ? (
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
               {groups.map(group => (
-                <ModuleKsbGroupPanel key={group.key} group={group} totalRows={filteredRows.length} />
+                <ModuleKsbGroupPanel key={group.key} group={group} />
               ))}
             </div>
           ) : (
@@ -5496,14 +5600,14 @@ function ProgrammeKsbMapModal({ programmeName, modules, sourceLabels, onClose }:
   );
 }
 
-function ModuleKsbGroupPanel({ group, totalRows }: {
+function ModuleKsbGroupPanel({ group }: {
   group: { key: 'K' | 'S' | 'B'; title: string; icon: string; rows: ModuleKsbMapRow[] };
-  totalRows: number;
 }) {
   const tone = ksbVisualTone(group.key);
-  const percent = totalRows ? Math.round((group.rows.length / totalRows) * 100) : 0;
+  const placementCount = group.rows.reduce((total, row) => total + row.placements.length, 0);
+  const groupOtjh = uniquePlacementOtjh(group.rows);
   return (
-    <section className={`flex min-h-0 flex-col rounded-2xl border border-l-4 bg-background-100/35 ${tone.row}`}>
+    <section className={`flex min-h-0 flex-col rounded-xl border border-l-4 bg-background-100/35 ${tone.row}`}>
       <div className="border-b border-background-200 px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -5512,13 +5616,10 @@ function ModuleKsbGroupPanel({ group, totalRows }: {
             </span>
             <div>
               <h4 className="text-[12px] font-black uppercase text-foreground-800">{group.title}</h4>
-              <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">{percent}% of visible KSBs</p>
+              <p className="mt-0.5 text-[10px] font-semibold text-foreground-400">{placementCount} placement{placementCount === 1 ? '' : 's'} - {formatKsbOtjh(groupOtjh)} OTJH</p>
             </div>
           </div>
           <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${tone.badgeClass}`}>{group.rows.length}</span>
-        </div>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200">
-          <div className={`h-full rounded-full ${group.key === 'S' ? 'bg-amber-400' : group.key === 'B' ? 'bg-emerald-400' : 'bg-primary-500'}`} style={{ width: `${Math.max(percent, group.rows.length ? 8 : 0)}%` }} />
         </div>
       </div>
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
@@ -5534,38 +5635,43 @@ function ModuleKsbGroupPanel({ group, totalRows }: {
 function ModuleKsbMapCard({ row }: { row: ModuleKsbMapRow }) {
   const kind = row.code.toUpperCase().slice(0, 1);
   const tone = ksbVisualTone(kind);
-  const barColor = kind === 'S' ? 'bg-amber-400' : kind === 'B' ? 'bg-emerald-400' : 'bg-primary-500';
+  const totalOtjh = row.placements.reduce((total, placement) => total + Number(placement.otjh || 0), 0);
+  const totalPoints = row.placements.reduce((total, placement) => total + Number(placement.points || 0), 0);
   return (
     <article className={`rounded-xl border bg-background-50 p-3 shadow-sm transition-smooth hover:border-primary-200 hover:shadow-md ${tone.selectedRow}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className={`rounded-lg border px-2.5 py-1 text-[12px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
-            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${row.applied ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100' : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'}`}>{row.applied ? `${row.locations.length} place${row.locations.length === 1 ? '' : 's'}` : 'Not mapped'}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${row.applied ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100' : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'}`}>{row.applied ? `${row.placements.length} place${row.placements.length === 1 ? '' : 's'}` : 'Not mapped'}</span>
             {row.classificationLabels.map(label => <span key={label} className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{label}</span>)}
           </div>
         </div>
-        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${row.applied ? ksbCodeChipClass(row.code) : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'}`}>{row.applied ? `${row.weight}%` : '0%'}</span>
+        <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-black ${row.applied ? ksbCodeChipClass(row.code) : 'bg-slate-100 text-slate-500 ring-1 ring-slate-200'}`}>{formatKsbWeight(row.weight)}</span>
       </div>
       <p className="mt-2 line-clamp-3 text-[12px] font-medium leading-relaxed text-foreground-700">{row.description || 'No description available.'}</p>
-      <div className="mt-3 grid grid-cols-[1fr_auto] items-center gap-2">
-        <div className="h-2 overflow-hidden rounded-full bg-background-200">
-          <div className={`h-full rounded-full ${barColor}`} style={{ width: `${row.applied ? Math.min(Math.max(row.weight, 4), 100) : 0}%` }} />
-        </div>
-        <span className="text-[9px] font-black text-foreground-500">Weight</span>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <KsbCoverageMetric label="Weight" value={formatKsbWeight(row.weight)} compact />
+        <KsbCoverageMetric label="OTJH" value={formatKsbOtjh(totalOtjh)} compact />
+        <KsbCoverageMetric label="Points" value={String(totalPoints)} compact />
       </div>
       <div className="mt-3 space-y-2">
-        <ModuleKsbInfoBlock label="Source" value={row.source} title={row.sourceFull} icon="ri-database-2-line" />
         {row.applied ? <div>
           <p className="mb-1 flex items-center gap-1 text-[8px] font-black uppercase text-foreground-400">
             <AppIcon className="ri-map-pin-line text-[10px]"></AppIcon>
-            Used in
+            Applied in
           </p>
-          <div className="flex flex-wrap gap-1.5">
-            {row.locations.slice(0, 3).map(location => (
-              <span key={location} className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-bold text-foreground-600">{location}</span>
+          <div className="space-y-1.5">
+            {row.placements.map(placement => (
+              <div key={`${placement.scope}:${placement.label}`} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg border border-background-200 bg-background-100 px-2.5 py-2">
+                <div className="min-w-0">
+                  <p className="truncate text-[10px] font-black text-foreground-800">{placement.label}</p>
+                  <p className="mt-0.5 text-[8px] font-bold uppercase text-foreground-400">{placement.scope}</p>
+                </div>
+                <span className="rounded-md bg-background-50 px-2 py-1 text-[9px] font-black text-emerald-700">{formatKsbOtjh(placement.otjh)}</span>
+                <span className="rounded-md bg-background-50 px-2 py-1 text-[9px] font-black text-foreground-600">{placement.points} pts</span>
+              </div>
             ))}
-            {row.locations.length > 3 && <span className="rounded-md bg-background-100 px-2 py-1 text-[9px] font-black text-foreground-500">+{row.locations.length - 3}</span>}
           </div>
         </div> : (
           <div className="rounded-lg border border-dashed border-background-300 bg-background-50 px-2.5 py-2 text-[10px] font-bold text-foreground-400">
@@ -5577,14 +5683,11 @@ function ModuleKsbMapCard({ row }: { row: ModuleKsbMapRow }) {
   );
 }
 
-function ModuleKsbInfoBlock({ label, value, title, icon }: { label: string; value: string; title: string; icon: string }) {
+function KsbCoverageMetric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
   return (
-    <div className="rounded-lg bg-background-100 px-2.5 py-2" title={title}>
-      <p className="flex items-center gap-1 text-[8px] font-black uppercase text-foreground-400">
-        <AppIcon className={`${icon} text-[10px]`}></AppIcon>
-        {label}
-      </p>
-      <p className="mt-0.5 truncate text-[10px] font-bold text-foreground-700">{value || 'Not set'}</p>
+    <div className={`rounded-lg border border-background-200 bg-background-100 ${compact ? 'px-2 py-1.5' : 'min-w-20 px-3 py-2'}`}>
+      <p className="text-[8px] font-black uppercase text-foreground-400">{label}</p>
+      <p className={`${compact ? 'text-[11px]' : 'text-[13px]'} mt-0.5 font-black text-foreground-900`}>{value}</p>
     </div>
   );
 }
@@ -5706,6 +5809,26 @@ function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programme
     ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
   ].map(normaliseDeepLinkValue).filter(Boolean);
   return moduleKeys.some(key => selectedKeys.includes(key));
+}
+
+function moduleBelongsToVisibleProgramme(module: ModuleBuilderListItem, programmes: CurriculumProgramme[]) {
+  if (module.isProgrammeDeleted || module.sourceModule?.isProgrammeDeleted) return false;
+  if (!programmes.length) return true;
+  const visibleKeys = new Set(
+    programmes
+      .flatMap(programme => [programme.name, programme.id, programme.sourceId, programme.standard])
+      .map(normaliseDeepLinkValue)
+      .filter(Boolean),
+  );
+  const moduleKeys = [
+    module.programmeName,
+    module.programmeId,
+    module.sourceModule?.programme,
+    module.sourceModule?.programmeId,
+    ...(module.deliveryUsages || []).flatMap(usage => [usage.programme, usage.programmeId]),
+  ].map(normaliseDeepLinkValue).filter(Boolean);
+  if (!moduleKeys.length) return true;
+  return moduleKeys.some(key => visibleKeys.has(key));
 }
 
 function deliveryUsageForModuleScope(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
@@ -5857,6 +5980,7 @@ function readWizardModuleDraft(params: URLSearchParams): WizardModuleDraftPayloa
   return {
     programmeId: params.get('programmeId') || '',
     programme: params.get('programme') || '',
+    programmeStatus: params.get('programmeStatus') || '',
     cohortId: params.get('cohortId') || '',
     cohortName: params.get('cohortName') || '',
     groupId: params.get('groupId') || '',
@@ -5900,10 +6024,10 @@ function moduleBuilderDeepLinkTarget(module: ModuleCatalogueItem, params: URLSea
   const focus = String(params.get('focus') || '').trim();
   const weekId = String(params.get('week') || params.get('weekId') || '').trim();
   const componentId = String(params.get('component') || params.get('componentId') || '').trim();
-  const openSettings = focus === 'ksb-mapping' || Boolean(params.get('mapping') || params.get('mappingId') || params.get('ksb'));
+  const openSettings = focus === 'module-settings' || params.get('settings') === '1';
   if (componentId) {
     const week = module.weekStructure.find(item => item.components.some(component => component.id === componentId));
-    if (week) return { selection: { kind: 'component', weekId: week.id, componentId }, openSettings: true };
+    if (week) return { selection: { kind: 'component', weekId: week.id, componentId }, openSettings };
   }
   if (weekId && module.weekStructure.some(week => week.id === weekId)) {
     return { selection: { kind: 'week', weekId }, openSettings };
@@ -6068,14 +6192,15 @@ function ModuleListSkeleton() {
 }
 
 const DEFAULT_KSB_MAPPING_TYPE: KsbMappingType = 'main';
-const DEFAULT_KSB_WEIGHTS: Record<KsbMappingType, number> = {
-  main: 50,
-  secondary: 30,
+const DEFAULT_KSB_WEIGHT_CLASS: KsbWeightClass = 'hard';
+const DEFAULT_KSB_WEIGHTS: Record<KsbWeightClass, number> = {
+  hard: 50,
+  soft: 30,
   possible: 20,
 };
 
-function defaultKsbWeight(classification: KsbMappingType = DEFAULT_KSB_MAPPING_TYPE) {
-  return DEFAULT_KSB_WEIGHTS[normaliseKsbMappingType(classification)];
+function defaultKsbWeight(weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS) {
+  return DEFAULT_KSB_WEIGHTS[normaliseKsbWeightClass(weightClass)];
 }
 
 function clampKsbWeight(value: number) {
@@ -6084,9 +6209,9 @@ function clampKsbWeight(value: number) {
   return Math.max(0, Math.round(parsed * 100) / 100);
 }
 
-function clampPositiveKsbWeight(value: number, classification: KsbMappingType = DEFAULT_KSB_MAPPING_TYPE) {
+function clampPositiveKsbWeight(value: number, weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS) {
   const weight = clampKsbWeight(value);
-  return weight > 0 ? weight : defaultKsbWeight(classification);
+  return weight > 0 ? weight : defaultKsbWeight(weightClass);
 }
 
 function normaliseKsbMappingType(value?: string): KsbMappingType {
@@ -6096,10 +6221,19 @@ function normaliseKsbMappingType(value?: string): KsbMappingType {
   return 'secondary';
 }
 
-function ksbClassificationLabel(value?: string) {
-  const classification = normaliseKsbMappingType(value);
-  if (classification === 'main') return 'Hard';
-  if (classification === 'secondary') return 'Soft';
+function normaliseKsbWeightClass(value?: string, fallbackClassification?: KsbMappingType): KsbWeightClass {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'hard' || raw === 'soft' || raw === 'possible') return raw;
+  const legacy = normaliseKsbMappingType(fallbackClassification);
+  if (legacy === 'main') return 'hard';
+  if (legacy === 'possible') return 'possible';
+  return 'soft';
+}
+
+function ksbWeightClassLabel(value?: string) {
+  const weightClass = normaliseKsbWeightClass(value);
+  if (weightClass === 'hard') return 'Hard';
+  if (weightClass === 'soft') return 'Soft';
   return 'Possible';
 }
 
@@ -6119,7 +6253,7 @@ function mappingsForTarget(module: ModuleCatalogueItem, target: KsbTarget) {
   return week.components.find(component => component.id === target.componentId)?.ksbMappings || [];
 }
 
-function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight(), classification: KsbMappingType = DEFAULT_KSB_MAPPING_TYPE): ModuleCatalogueItem {
+function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: KsbOption, weight = defaultKsbWeight(), weightClass: KsbWeightClass = DEFAULT_KSB_WEIGHT_CLASS): ModuleCatalogueItem {
   const nextIdentity = ksbMappingIdentity(option);
   if (mappingsForTarget(module, target).some(mapping => ksbMappingIdentity(mapping) === nextIdentity)) return module;
   const mapping: KsbMapping = {
@@ -6129,9 +6263,11 @@ function addKsbMapping(module: ModuleCatalogueItem, target: KsbTarget, option: K
     description: option.description,
     sourceType: option.sourceType,
     sourceId: option.sourceId,
-    type: normaliseKsbMappingType(classification),
-    classification: normaliseKsbMappingType(classification),
+    type: DEFAULT_KSB_MAPPING_TYPE,
+    classification: DEFAULT_KSB_MAPPING_TYPE,
     weight: clampKsbWeight(weight),
+    weightClass: normaliseKsbWeightClass(weightClass),
+    weight_class: normaliseKsbWeightClass(weightClass),
   };
   if (target.scope === 'module') return { ...module, moduleKsbMappings: [...module.moduleKsbMappings, mapping] };
   return {
@@ -6159,9 +6295,17 @@ function updateKsbMappingWeight(module: ModuleCatalogueItem, target: KsbTarget, 
   };
 }
 
-function updateKsbMappingClassification(module: ModuleCatalogueItem, target: KsbTarget, mappingId: string, classification: KsbMappingType): ModuleCatalogueItem {
+function updateKsbMappingWeightClass(module: ModuleCatalogueItem, target: KsbTarget, mappingId: string, weightClass: KsbWeightClass): ModuleCatalogueItem {
+  const nextWeightClass = normaliseKsbWeightClass(weightClass);
   const updateMappings = (mappings: KsbMapping[]) => mappings.map(mapping => (
-    mapping.id === mappingId ? { ...mapping, type: normaliseKsbMappingType(classification), classification: normaliseKsbMappingType(classification) } : mapping
+    mapping.id === mappingId
+      ? {
+          ...mapping,
+          weight: defaultKsbWeight(nextWeightClass),
+          weightClass: nextWeightClass,
+          weight_class: nextWeightClass,
+        }
+      : mapping
   ));
   if (target.scope === 'module') return { ...module, moduleKsbMappings: updateMappings(module.moduleKsbMappings) };
   return {
@@ -6224,11 +6368,13 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
       sourceFull: fallbackSourceFull,
       weight: 0,
       locations: [],
+      placements: [],
       applied: false,
       classificationLabels: [],
     });
   });
-  const addMapping = (mapping: KsbMapping, location: string) => {
+  const addMapping = (mapping: KsbMapping, placement: ModuleKsbPlacement) => {
+    const location = placement.label;
     const code = String(mapping.code || '').trim().toUpperCase();
     if (!code) return;
     if (isLegacyModuleLevelKsbFallback(mapping, location)) return;
@@ -6258,25 +6404,45 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
       sourceFull: canUseSelectedSourceByCode ? fallbackSourceFull : sourceFull || fallbackSourceFull,
       weight: 0,
       locations: [],
+      placements: [],
       applied: false,
       classificationLabels: [],
     };
     current.weight += Number(mapping.weight || 0);
     current.applied = true;
-    const classification = ksbClassificationLabel(mapping.classification || mapping.type);
+    const classification = ksbWeightClassLabel(mapping.weightClass || mapping.weight_class);
     if (classification && !current.classificationLabels.includes(classification)) current.classificationLabels.push(classification);
     if (!current.description && mapping.description) current.description = mapping.description;
     if (!current.locations.includes(location)) current.locations.push(location);
+    if (!current.placements.some(item => item.label === placement.label && item.scope === placement.scope)) current.placements.push(placement);
     rows.set(rowKey, current);
   };
 
-  module.moduleKsbMappings.forEach(mapping => addMapping(mapping, 'Module'));
+  const modulePlacement = {
+    label: 'Module',
+    scope: 'Module' as const,
+    otjh: Number(module.declaredTotalOtjh ?? module.totalOtjh ?? 0) || 0,
+    points: module.weekStructure.reduce((total, week) => total + week.components.reduce((weekTotal, component) => weekTotal + Number(component.points || 0), 0), 0),
+  };
+  module.moduleKsbMappings.forEach(mapping => addMapping(mapping, modulePlacement));
   module.weekStructure.forEach(week => {
     const weekLabel = week.title || `Week ${week.weekNumber}`;
-    week.ksbMappings.forEach(mapping => addMapping(mapping, weekLabel));
+    const weekPlacement = {
+      label: weekLabel,
+      scope: 'Week' as const,
+      otjh: week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0),
+      points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
+    };
+    week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
     week.components.forEach(component => {
       const location = `${weekLabel} / ${readableComponentTitle(component.title) || 'Component'}`;
-      component.ksbMappings.forEach(mapping => addMapping(mapping, location));
+      const componentPlacement = {
+        label: location,
+        scope: 'Component' as const,
+        otjh: Number(component.expectedOtjh || 0),
+        points: Number(component.points || 0),
+      };
+      component.ksbMappings.forEach(mapping => addMapping(mapping, componentPlacement));
     });
   });
 
@@ -6289,7 +6455,8 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
 
 function programmeKsbMapRows(modules: ModuleCatalogueItem[], sourceLabels: Record<string, string>, programmeName = ''): ModuleKsbMapRow[] {
   const rows = new Map<string, ModuleKsbMapRow>();
-  const addMapping = (mapping: KsbMapping, location: string) => {
+  const addMapping = (mapping: KsbMapping, placement: ModuleKsbPlacement) => {
+    const location = placement.label;
     const code = String(mapping.code || '').trim().toUpperCase();
     if (!code) return;
     if (isLegacyModuleLevelKsbFallback(mapping, location)) return;
@@ -6303,26 +6470,46 @@ function programmeKsbMapRows(modules: ModuleCatalogueItem[], sourceLabels: Recor
       sourceFull,
       weight: 0,
       locations: [],
+      placements: [],
       applied: true,
       classificationLabels: [],
     };
     current.weight += Number(mapping.weight || 0);
-    const classification = ksbClassificationLabel(mapping.classification || mapping.type);
+    const classification = ksbWeightClassLabel(mapping.weightClass || mapping.weight_class);
     if (classification && !current.classificationLabels.includes(classification)) current.classificationLabels.push(classification);
     if (!current.description && mapping.description) current.description = mapping.description;
     if (!current.locations.includes(location)) current.locations.push(location);
+    if (!current.placements.some(item => item.label === placement.label && item.scope === placement.scope)) current.placements.push(placement);
     rows.set(key, current);
   };
 
   modules.forEach(module => {
     const moduleLabel = module.title || module.programmeName || 'Module';
-    module.moduleKsbMappings.forEach(mapping => addMapping(mapping, `${moduleLabel} / Module`));
+    const modulePlacement = {
+      label: `${moduleLabel} / Module`,
+      scope: 'Module' as const,
+      otjh: Number(module.declaredTotalOtjh ?? module.totalOtjh ?? 0) || 0,
+      points: module.weekStructure.reduce((total, week) => total + week.components.reduce((weekTotal, component) => weekTotal + Number(component.points || 0), 0), 0),
+    };
+    module.moduleKsbMappings.forEach(mapping => addMapping(mapping, modulePlacement));
     module.weekStructure.forEach(week => {
       const weekLabel = week.title || `Week ${week.weekNumber}`;
-      week.ksbMappings.forEach(mapping => addMapping(mapping, `${moduleLabel} / ${weekLabel}`));
+      const weekPlacement = {
+        label: `${moduleLabel} / ${weekLabel}`,
+        scope: 'Week' as const,
+        otjh: week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0),
+        points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
+      };
+      week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
       week.components.forEach(component => {
         const componentLabel = readableComponentTitle(component.title) || 'Component';
-        component.ksbMappings.forEach(mapping => addMapping(mapping, `${moduleLabel} / ${weekLabel} / ${componentLabel}`));
+        const componentPlacement = {
+          label: `${moduleLabel} / ${weekLabel} / ${componentLabel}`,
+          scope: 'Component' as const,
+          otjh: Number(component.expectedOtjh || 0),
+          points: Number(component.points || 0),
+        };
+        component.ksbMappings.forEach(mapping => addMapping(mapping, componentPlacement));
       });
     });
   });
@@ -6346,6 +6533,27 @@ function hasReadableKsbSource(row: Pick<ModuleKsbMapRow, 'source' | 'sourceFull'
   const sourceFull = String(row.sourceFull || '').trim().toLowerCase();
   if (!source || source === 'no source' || !sourceFull || sourceFull === 'no source') return false;
   return !/^profile\s*-\s*ksbp-/i.test(row.source) && !/^ksb profile:\s*ksbp-/i.test(row.sourceFull);
+}
+
+function uniquePlacementOtjh(rows: ModuleKsbMapRow[]) {
+  const placements = new Map<string, number>();
+  rows.forEach(row => {
+    row.placements.forEach(placement => {
+      const key = `${placement.scope}:${placement.label}`;
+      if (!placements.has(key)) placements.set(key, Number(placement.otjh || 0));
+    });
+  });
+  return Array.from(placements.values()).reduce((total, value) => total + value, 0);
+}
+
+function formatKsbOtjh(value: number) {
+  const amount = Number(value || 0);
+  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(1)}h`;
+}
+
+function formatKsbWeight(value: number) {
+  const amount = Number(value || 0);
+  return `${Number.isInteger(amount) ? amount.toFixed(0) : amount.toFixed(1)}%`;
 }
 
 function componentDisplayTitle(title: string) {
@@ -6373,6 +6581,42 @@ function normaliseComponentTitles(module: ModuleCatalogueItem): ModuleCatalogueI
       })),
     })),
   };
+}
+
+function weekHasAuthoredContent(week: ModuleWeek) {
+  return Boolean(
+    week.components.length
+    || (week.ksbMappings || []).length
+    || String(week.summary || '').trim()
+    || (week.learningOutcomes || []).length,
+  );
+}
+
+function applyWizardSessionCount(module: ModuleCatalogueItem, sessionsNumber?: number) {
+  const parsedCount = Math.round(Number(sessionsNumber));
+  if (!Number.isFinite(parsedCount) || parsedCount < 1) return module;
+  const requestedCount = Math.max(1, parsedCount);
+  const currentWeeks = module.weekStructure || [];
+  let weekStructure = currentWeeks;
+  if (requestedCount > currentWeeks.length) {
+    weekStructure = [
+      ...currentWeeks,
+      ...Array.from({ length: requestedCount - currentWeeks.length }, (_, index) => (
+        createEmptyWeek(module.id, currentWeeks.length + index + 1)
+      )),
+    ];
+  } else if (requestedCount < currentWeeks.length) {
+    const removedWeeks = currentWeeks.slice(requestedCount);
+    if (!removedWeeks.some(weekHasAuthoredContent)) {
+      weekStructure = currentWeeks.slice(0, requestedCount);
+    }
+  }
+  return recalculateModule({
+    ...module,
+    sessionsNumber: Math.max(requestedCount, weekStructure.length),
+    weeks: weekStructure.length,
+    weekStructure,
+  });
 }
 
 function resizeWeeks(module: ModuleCatalogueItem, count: number, onChange: (updates: Partial<ModuleCatalogueItem>) => void) {

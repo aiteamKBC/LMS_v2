@@ -52,7 +52,11 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
+from .db_source import cache_scope, resolve
 from .contract_documents import ensure_contract_archive_table
+from .evidence_documents import ensure_evidence_override_table
+from .learner_exclusions import is_excluded_learner
+from .profile_overrides import apply_break_overrides, apply_profile_overrides, get_profile_overrides
 
 try:
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
@@ -678,16 +682,18 @@ def _otjh_for_row(structure):
 # the UI fires several calls per page. Cache the flattened result briefly so the
 # repeated fetch+parse+flatten cost is paid once, not on every request.
 _CACHE_TTL_SECONDS = 20
-_cache = {"expires_at": 0.0, "rows": None}
+# Keyed by database source: the live workspace and the HOURS-TEST clone read
+# different rows, so they must never serve each other's cached copy.
+_cache = {}
 
 
 def _load_rows():
     now = time.monotonic()
-    if _cache["rows"] is not None and now < _cache["expires_at"]:
-        return _cache["rows"]
+    entry = _cache.get(cache_scope())
+    if entry and entry["rows"] is not None and now < entry["expires_at"]:
+        return entry["rows"]
     rows = _fetch_rows()
-    _cache["rows"] = rows
-    _cache["expires_at"] = now + _CACHE_TTL_SECONDS
+    _cache[cache_scope()] = {"rows": rows, "expires_at": now + _CACHE_TTL_SECONDS}
     return rows
 
 
@@ -695,7 +701,7 @@ def _fetch_rows():
     """Fetch the 6 exact-programme learners from Audit.learner_match and return
     one dict per learner: aptem_id, name, flattened activities, and the curated
     per-period hour totals."""
-    with connections[CONN].cursor() as cur:
+    with connections[resolve(CONN)].cursor() as cur:
         # The column is `json` (not jsonb). Using `->>` directly (no ::jsonb
         # cast) avoids converting every row's multi-MB blob to jsonb just to
         # read the programme name — roughly halves the query time.
@@ -733,6 +739,8 @@ def _fetch_rows():
         programme_name, program_status, break_in_learning, coach_name,
         coach_email,
     ) in rows:
+        if is_excluded_learner(aptem_id, learner_name):
+            continue
         # psycopg may hand json/jsonb back as a decoded dict or as raw text
         # depending on the configured loaders — normalise to a dict either way.
         if isinstance(structure, str):
@@ -783,7 +791,7 @@ def _fetch_profile_row(learner_key):
     cohort. Profile links now come from the live all-programme cohort feed, so a
     learner outside that subset still needs the same rich profile payload.
     """
-    with connections[CONN].cursor() as cur:
+    with connections[resolve(CONN)].cursor() as cur:
         cur.execute(
             '''
             select lm.aptem_id, lm.learner_name, lm.learner_email,
@@ -821,6 +829,8 @@ def _fetch_profile_row(learner_key):
         programme_name, program_status, break_in_learning, coach_name,
         coach_email,
     ) = row
+    if is_excluded_learner(aptem_id, learner_name):
+        return None
     if isinstance(structure, str):
         try:
             structure = json.loads(structure)
@@ -870,7 +880,7 @@ def _fetch_profile_source_row(learner_key):
     rich sections that are already keyed by aptem_id are still loaded below by
     _load_profile_sources.
     """
-    with connections[CONN].cursor() as cur:
+    with connections[resolve(CONN)].cursor() as cur:
         cur.execute(
             '''
             select contracts.learner_id, contracts.full_name, contracts.email,
@@ -897,6 +907,8 @@ def _fetch_profile_source_row(learner_key):
         return None
 
     aptem_id, learner_name, learner_email, programme_name, program_status, break_in_learning, coach_name, coach_email = row
+    if is_excluded_learner(aptem_id, learner_name):
+        return None
     if isinstance(break_in_learning, str):
         try:
             break_in_learning = json.loads(break_in_learning)
@@ -1141,7 +1153,7 @@ def _contract_signature_dates(azure_path, document_name):
 
 @require_GET
 def health(_request: HttpRequest) -> JsonResponse:
-    alias = CONN if CONN in connections.databases else "default"
+    alias = resolve(CONN)
     with connections[alias].cursor() as cursor:
         cursor.execute("SELECT current_database(), now()")
         database, timestamp = cursor.fetchone()
@@ -1262,6 +1274,8 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
     learner_key = request.GET.get("learner", "").strip().lower()
     if not learner_key or len(learner_key) > 200:
         return JsonResponse({"error": "A valid learner is required."}, status=400)
+    if is_excluded_learner(learner_key, learner_key):
+        return JsonResponse({"error": "Learner not found."}, status=404)
 
     try:
         learner = _load_profile_learner(learner_key)
@@ -1283,7 +1297,11 @@ def learner_profile(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Learner not found."}, status=404)
 
     try:
-        sources = _load_profile_sources(learner["aptem_id"], learner.get("email"))
+        sources = _load_profile_sources(
+            learner["aptem_id"],
+            learner.get("email"),
+            learner.get("name"),
+        )
     except DatabaseError as error:
         return JsonResponse(
             {"error": "Could not load the learner profile sources.", "details": str(error)},
@@ -1323,16 +1341,26 @@ def _load_profile_learner(learner_key):
     follows the deployed profile and is joined from
     ``Audit.learner_match.aptem_training_plan`` by Aptem ID.
     """
-    with connections[CONN].cursor() as cursor:
+    with connections[resolve(CONN)].cursor() as cursor:
         cursor.execute(
             '''
             select l.aptem_id, l.learner_name, l.learner_email,
-                   l.programme_name, l.programme_status,
-                   l.coach_name, l.coach_email,
+                   l.programme_name,
+                   coalesce(
+                       case
+                           when lower(btrim(coalesce(l.programme_status, ''))) in ('', 'unknown') then null
+                           else btrim(l.programme_status)
+                       end,
+                       nullif(btrim(aptem."Program-Status"), '')
+                   ) as programme_status,
+                   coalesce(nullif(btrim(l.coach_name), ''), nullif(btrim(aptem."OwnerName"), '')) as coach_name,
+                   coalesce(nullif(btrim(l.coach_email), ''), nullif(btrim(aptem."OwnerEmail"), '')) as coach_email,
                    lm.aptem_training_plan
             from "Last_audit".learners l
             left join "Audit".learner_match lm
               on lm.aptem_id = l.aptem_id
+            left join "LMS"."Aptem_users" aptem
+              on aptem."ID" = l.aptem_id
             where l.aptem_id::text = %s
                or lower(l.learner_name) = %s
             order by case when l.aptem_id::text = %s then 0 else 1 end
@@ -1343,12 +1371,59 @@ def _load_profile_learner(learner_key):
         row = cursor.fetchone()
 
     if row is None:
+        # Some valid Aptem learners (for example a withdrawn learner imported
+        # only through the ILR feed) have not yet reached
+        # ``Last_audit.learners``.  Keep the Aptem ID as the canonical identity
+        # and expose the learner only when an ILR delivery proves that the
+        # record belongs to the audit cohort.
+        with connections[CONN].cursor() as cursor:
+            cursor.execute(
+                '''
+                select aptem."ID", aptem."FullName", aptem."Email",
+                       coalesce(
+                           nullif(btrim(aptem."Program Name"), ''),
+                           nullif(btrim(aptem."Group"), '')
+                       ) as programme_name,
+                       nullif(btrim(aptem."Program-Status"), '') as programme_status,
+                       nullif(btrim(aptem."OwnerName"), '') as coach_name,
+                       nullif(btrim(aptem."OwnerEmail"), '') as coach_email,
+                       lm.aptem_training_plan
+                from "LMS"."Aptem_users" aptem
+                left join "Audit".learner_match lm
+                  on lm.aptem_id = aptem."ID"
+                where (
+                        aptem."ID"::text = %s
+                        or lower(btrim(aptem."FullName")) = %s
+                        or lower(btrim(aptem."Email")) = %s
+                      )
+                  and exists (
+                        select 1
+                        from "Audit".ilr_learning_deliveries ilr
+                        where (
+                            nullif(btrim(aptem."Email"), '') is not null
+                            and lower(btrim(ilr.email)) = lower(btrim(aptem."Email"))
+                        ) or (
+                            nullif(btrim(aptem."FullName"), '') is not null
+                            and lower(btrim(concat_ws(' ', ilr.given_names, ilr.family_name))) =
+                                lower(btrim(aptem."FullName"))
+                        )
+                  )
+                order by case when aptem."ID"::text = %s then 0 else 1 end
+                limit 1
+                ''',
+                [learner_key, learner_key, learner_key, learner_key],
+            )
+            row = cursor.fetchone()
+
+    if row is None:
         return None
 
     (
         aptem_id, learner_name, learner_email, programme_name,
         programme_status, coach_name, coach_email, training_plan,
     ) = row
+    if is_excluded_learner(aptem_id, learner_name):
+        return None
     return {
         "aptem_id": aptem_id,
         "name": learner_name,
@@ -1360,16 +1435,18 @@ def _load_profile_learner(learner_key):
     }
 
 
-def _load_profile_sources(aptem_id, learner_email):
+def _load_profile_sources(aptem_id, learner_email, learner_name=None):
     """Read the profile's external sources without retaining user selection.
 
     Every query is keyed by this request's learner id/email. The returned data
     is request-local and safe when different learners are viewed concurrently.
     """
+    profile_overrides = get_profile_overrides(aptem_id)
     contracts = []
-    skill_groups = {}
+    skill_entries = []
     certifications = []
     employment = None
+    cv_employment_candidates = []
     learning_delivery = {}
     programme_understanding = {
         "understanding_programme": None,
@@ -1385,11 +1462,11 @@ def _load_profile_sources(aptem_id, learner_email):
         "revised_learning_planned_end_date": None,
     }
 
-    with connections[CONN].cursor() as cursor:
+    with connections[resolve(CONN)].cursor() as cursor:
         ensure_contract_archive_table(cursor)
         cursor.execute(
             '''
-            select contracts.id, contracts.document_name, contracts.status, contracts.date,
+            select contracts.id, coalesce(nullif(archive.display_name, ''), contracts.document_name), contracts.status, contracts.date,
                    contracts.learner_signed_date, contracts.fully_signed_date,
                    contracts.requested_date, contracts.program_name,
                    contracts.program_start_date, contracts.planned_end_date,
@@ -1465,6 +1542,7 @@ def _load_profile_sources(aptem_id, learner_email):
                 }
             if str(programme_status).strip().lower() == "onbreak":
                 break_in_learning["has_break_in_learning"] = True
+        break_in_learning = apply_break_overrides(break_in_learning, profile_overrides)
 
         cursor.execute(
             '''
@@ -1494,23 +1572,52 @@ def _load_profile_sources(aptem_id, learner_email):
 
         cursor.execute(
             '''
-            select characteristic_name, assessed_level
+            select distinct on (lower(btrim(characteristic_name)))
+                   characteristic_name, assessed_level,
+                   raw -> 'score' ->> 'achieved',
+                   raw -> 'score' ->> 'maximum'
             from fetching_evidence.aptem_skills_radar_probe
-            where learner_id = %s and assessed_level is not null
-            order by characteristic_name
+            where learner_id = %s
+              and coalesce(raw -> 'score' ->> 'achieved', assessed_level::text) is not null
+            order by lower(btrim(characteristic_name)), fetched_at desc, id desc
             ''',
             [aptem_id],
         )
-        for characteristic, assessed_level in cursor.fetchall():
-            match = re.match(
-                r"Understanding of (.+?) \((Knowledge|Skill|Behaviour)\)",
-                characteristic or "",
+        for characteristic, assessed_level, achieved_value, maximum_value in cursor.fetchall():
+            # Aptem can return programme Duties in the same payload as the
+            # actual K/S/B characteristics. Duties have no KSB code and were
+            # previously inflating Skills (for example 11 skills became 33)
+            # and filling the radar with paragraph-length axis labels.
+            if re.match(r"^\s*duty\s+\d+\b", str(characteristic or ""), re.IGNORECASE):
+                continue
+            domain, field = _skill_radar_characteristic(characteristic)
+            score, maximum = _skill_radar_score_values(
+                assessed_level,
+                achieved_value,
+                maximum_value,
             )
-            domain = match.group(1).strip() if match else (characteristic or "Skill").split(" - ")[0].strip()
-            score = max(0, min(8, int(assessed_level)))
-            score_type = match.group(2).lower() if match else "skill"
-            field = {"knowledge": "knowledge", "skill": "skill_score", "behaviour": "behaviour"}[score_type]
-            skill_groups.setdefault(domain, {})[field] = score
+            characteristic_text = str(characteristic or "").strip()
+            skill_entries.append({
+                "skill": characteristic_text or domain,
+                "domain": domain,
+                "ksb_codes": _skill_radar_codes(characteristic_text),
+                "knowledge": score if field == "knowledge" else None,
+                "skill_score": score if field == "skill_score" else None,
+                "behaviour": score if field == "behaviour" else None,
+                "maximum": maximum,
+            })
+
+        if not skill_entries and str(programme_status).strip().lower() == "withdrawn":
+            cursor.execute(
+                '''
+                select category, code, title, level
+                from fetching_evidence.learner_ksbs
+                where learner_id = %s and level is not null
+                order by category, code
+                ''',
+                [aptem_id],
+            )
+            skill_entries.extend(_skill_radar_snapshot_entries(cursor.fetchall()))
 
         cursor.execute(
             '''
@@ -1528,11 +1635,6 @@ def _load_profile_sources(aptem_id, learner_email):
                     certification_value = json.loads(certification_value)
                 except ValueError:
                     certification_value = []
-            if isinstance(employment_value, str):
-                try:
-                    employment_value = json.loads(employment_value)
-                except ValueError:
-                    employment_value = []
             if isinstance(certification_value, list):
                 for certification in certification_value:
                     if not isinstance(certification, dict):
@@ -1545,14 +1647,51 @@ def _load_profile_sources(aptem_id, learner_email):
                         continue
                     seen_certifications.add(key)
                     certifications.append(certification)
-            if employment is None:
-                employment = _first_employment_details(employment_value)
+            cv_employment_terms = _cv_employment_terms(employment_value)
+            if cv_employment_terms:
+                cv_employment_candidates.append(cv_employment_terms)
 
-        if learner_email:
+        cursor.execute(
+            '''
+            select learner_employer_details
+            from fetching_evidence.aptem_cv_contracts_probe
+            where learner_id = %s
+              and learner_employer_details is not null
+              and learner_employer_details <> '{}'::jsonb
+            order by fetched_at desc nulls last, id desc
+            limit 1
+            ''',
+            [aptem_id],
+        )
+        employer_row = cursor.fetchone()
+        if employer_row:
+            employment = _employer_details_from_contract_profile(employer_row[0])
+        employment = _merge_matching_cv_employment_terms(employment, cv_employment_candidates)
+
+        cursor.execute(
+            '''
+            select "Levy or Not"
+            from "LMS"."Aptem_users"
+            where "ID" = %s
+            limit 1
+            ''',
+            [aptem_id],
+        )
+        levy_row = cursor.fetchone()
+        levy_status = _normalise_levy_status(levy_row[0] if levy_row else None)
+        if levy_status:
+            employment = dict(employment or {})
+            employment["levy_status"] = levy_status
+
+        if learner_email or learner_name:
+            learner_email = str(learner_email or "").strip()
+            learner_name = str(learner_name or "").strip()
             cursor.execute(
                 '''
                 select learn_ref_number, planned_hours, otj_actual_hours,
-                       learn_start_date, learn_plan_end_date, completion_status,
+                       min(learn_start_date) over () as original_programme_start_date,
+                       learn_plan_end_date, completion_status,
+                       max(learn_actual_end_date) over () as actual_end_date,
                        nullif(
                            concat_ws(', ',
                                nullif(btrim(address_line_1), ''),
@@ -1565,11 +1704,22 @@ def _load_profile_sources(aptem_id, learner_email):
                        nullif(btrim(postcode), '') as learner_postcode,
                        nullif(btrim(delivery_location_postcode), '') as employer_postcode
                 from "Audit".ilr_learning_deliveries
-                where lower(email) = lower(%s) and planned_hours is not null
-                order by aim_seq_number, updated_at desc nulls last, id desc
+                where planned_hours is not null
+                  and (
+                    (%s <> '' and lower(btrim(email)) = lower(%s))
+                    or
+                    (%s <> '' and lower(btrim(concat_ws(' ', given_names, family_name))) = lower(%s))
+                  )
+                order by
+                    case when %s <> '' and lower(btrim(email)) = lower(%s) then 0 else 1 end,
+                    aim_seq_number, updated_at desc nulls last, id desc
                 limit 1
                 ''',
-                [learner_email],
+                [
+                    learner_email, learner_email,
+                    learner_name, learner_name,
+                    learner_email, learner_email,
+                ],
             )
             delivery = cursor.fetchone()
             if delivery:
@@ -1580,12 +1730,18 @@ def _load_profile_sources(aptem_id, learner_email):
                     "start_date": delivery[3],
                     "planned_end_date": delivery[4],
                     "completion_status": delivery[5],
-                    "learner_address": delivery[6],
-                    "learner_postcode": delivery[7],
-                    "employer_postcode": delivery[8],
+                    "actual_end_date": delivery[6],
+                    "last_learning_evidence_date": break_in_learning.get("last_learning_date") or delivery[6],
+                    "learner_address": delivery[7],
+                    "learner_postcode": delivery[8],
+                    "employer_postcode": delivery[9],
                     "first_evidence_date": None,
                     "first_evidence_items": [],
+                    "archived_evidence_items": [],
+                    "last_learning_evidence_items": [],
+                    "break_evidence_items": [],
                 }
+                ensure_evidence_override_table(cursor)
                 cursor.execute(
                     '''
                     with raw_candidates as (
@@ -1618,41 +1774,82 @@ def _load_profile_sources(aptem_id, learner_email):
                         from raw_candidates
                         order by evidence_id, evidence_date
                     )
-                    select evidence_id, evidence_name, component_name, evidence_kind,
-                           evidence_status, evidence_file, evidence_content, evidence_date
+                    select candidates.evidence_id, candidates.evidence_name,
+                           candidates.component_name, candidates.evidence_kind,
+                           candidates.evidence_status, candidates.evidence_file,
+                           candidates.evidence_content,
+                           coalesce(overrides.evidence_date, candidates.evidence_date) as evidence_date,
+                           overrides.archived_at is not null as archived,
+                           overrides.deleted_at is not null as deleted,
+                           false as uploaded,
+                           null::bigint as source_activity_id,
+                           null::text as source_activity_month,
+                           null::text as source_activity_category
                     from candidates
-                    where evidence_date = (select min(evidence_date) from candidates)
-                    order by evidence_id
+                    left join "Audit".learner_evidence_overrides overrides
+                      on overrides.learner_id = %s
+                     and overrides.is_uploaded = false
+                     and overrides.source_evidence_id::text = candidates.evidence_id
+                    union all
+                    select uploads.evidence_id, uploads.document_name,
+                           uploads.component_name, uploads.evidence_kind,
+                           uploads.evidence_status, null, null, uploads.evidence_date,
+                           uploads.archived_at is not null as archived,
+                           uploads.deleted_at is not null as deleted,
+                           true as uploaded,
+                           uploads.source_activity_id,
+                           uploads.source_activity_month,
+                           uploads.source_activity_category
+                    from "Audit".learner_evidence_overrides uploads
+                    where uploads.learner_id = %s and uploads.is_uploaded = true
+                    order by evidence_date, evidence_id
                     ''',
-                    [aptem_id, delivery[3]],
+                    [aptem_id, delivery[3], aptem_id, aptem_id],
                 )
-                first_evidence_rows = cursor.fetchall()
-                if first_evidence_rows:
-                    learning_delivery["first_evidence_date"] = first_evidence_rows[0][7]
-                    learning_delivery["first_evidence_items"] = [
+                evidence_rows = cursor.fetchall()
+                if evidence_rows:
+                    evidence_items = [
                         {
                             "id": row[0],
                             "name": row[1] or "Untitled evidence",
                             "component_name": row[2] or "",
                             "kind": row[3] or "",
                             "status": row[4] or "",
-                            "file": row[5],
+                            "file": f"/audit_api/evidence/{quote(str(row[0]), safe='')}/open?learner_id={aptem_id}" if row[0] and row[11] is None else None,
                             "content": row[6],
                             "date": row[7],
+                            "archived": bool(row[8]),
+                            "deleted": bool(row[9]),
+                            "uploaded": bool(row[10]),
+                            "source_activity_id": row[11],
+                            "source_activity_month": row[12],
+                            "source_activity_category": row[13],
                         }
-                        for row in first_evidence_rows
+                        for row in evidence_rows
                     ]
+                    first_date, first_items, archived_items = _partition_evidence_items(evidence_items)
+                    learning_delivery["archived_evidence_items"] = archived_items
+                    learning_delivery["first_evidence_date"] = first_date
+                    learning_delivery["first_evidence_items"] = first_items
+                    learning_delivery["last_learning_evidence_items"] = _last_learning_evidence_items(
+                        evidence_items,
+                        learning_delivery.get("last_learning_evidence_date"),
+                    )
+                    learning_delivery["break_evidence_items"] = _break_evidence_items(
+                        evidence_items,
+                        break_in_learning.get("return_to_learning_date"),
+                    )
 
-    skills_radar = [
-        {
-            "skill": domain,
-            "knowledge": scores.get("knowledge"),
-            "skill_score": scores.get("skill_score"),
-            "behaviour": scores.get("behaviour"),
-            "maximum": 8,
-        }
-        for domain, scores in sorted(skill_groups.items())
-    ]
+    # Keep every assessed characteristic as its own radar axis. A programme can
+    # legitimately have two Knowledge rows in the same domain (for example
+    # Strategic Project Management K1 and K30); grouping by domain + dimension
+    # used to overwrite one of those rows.
+    skills_radar = sorted(skill_entries, key=_skill_radar_entry_sort_key)
+    employment, learning_delivery = apply_profile_overrides(
+        employment,
+        learning_delivery,
+        profile_overrides,
+    )
     return {
         "contracts": contracts,
         "skills_radar": skills_radar,
@@ -1665,19 +1862,420 @@ def _load_profile_sources(aptem_id, learner_email):
     }
 
 
-def _first_employment_details(value):
-    if isinstance(value, dict):
-        nested = value.get("employment_details")
-        if isinstance(nested, dict) and nested.get("section_found", True):
-            return nested
-        if value.get("employer_name") and value.get("section_found", True):
-            return value
+def _partition_evidence_items(evidence_items):
+    """Keep Aptem's original first evidence fixed; uploads may replace it.
+
+    Archiving the original source evidence must not promote Aptem's second
+    evidence. An auditor-uploaded item is the only replacement candidate.
+    """
+    archived_items = [
+        item for item in evidence_items if item["archived"] and not item["deleted"]
+    ]
+    source_items = [item for item in evidence_items if not item["uploaded"]]
+    original_source_date = min((item["date"] for item in source_items), default=None)
+    qualifying_items = [
+        item for item in evidence_items
+        if not item["archived"]
+        and not item["deleted"]
+        and (
+            (
+                item["uploaded"]
+                and item.get("component_name") not in {
+                    "Break in learning evidence",
+                    "Last date of learning evidence",
+                    "Return to learning evidence",
+                }
+            )
+            or (original_source_date is not None and item["date"] == original_source_date)
+        )
+    ]
+    first_date = min((item["date"] for item in qualifying_items), default=None)
+    first_items = [item for item in qualifying_items if item["date"] == first_date]
+    return first_date, first_items, archived_items
+
+
+def _break_evidence_items(evidence_items, evidence_date):
+    """Return active evidence recorded on one significant break date."""
+    target_date = _iso_date(evidence_date)
+    if target_date is None:
+        return []
+    return [
+        item for item in evidence_items
+        if not item["archived"]
+        and not item["deleted"]
+        and _iso_date(item["date"]) == target_date
+    ]
+
+
+def _last_learning_evidence_items(evidence_items, last_learning_date):
+    """Use same-day evidence, falling back to the latest earlier learning day."""
+    target_date = _iso_date(last_learning_date)
+    if target_date is None:
+        return []
+    dated_items = [
+        item for item in evidence_items
+        if _iso_date(item["date"]) is not None
+        and _iso_date(item["date"]) <= target_date
+    ]
+    matching_date = max(
+        (_iso_date(item["date"]) for item in dated_items),
+        default=None,
+    )
+    if matching_date is None:
+        return []
+    return [
+        item for item in dated_items
+        if _iso_date(item["date"]) == matching_date
+        and not item["archived"]
+        and not item["deleted"]
+    ]
+
+
+def _employer_details_from_contract_profile(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
+    if not isinstance(value, dict):
+        return None
+
+    employer = value.get("employer")
+    if not isinstance(employer, dict):
+        employer = {}
+    raw = value.get("raw")
+    if not isinstance(raw, dict):
+        raw = {}
+    manager = employer.get("manager")
+    if not isinstance(manager, dict):
+        manager = {}
+    address = employer.get("address")
+    if not isinstance(address, dict):
+        address = {}
+
+    employer_name = employer.get("name") or raw.get("UserEmployer_Organization")
+    job_title = employer.get("job_title") or raw.get("UserILRSummary_JobTitle")
+    workplace_address = address.get("formatted") or raw.get("UserEmployer_Address")
+    manager_name = manager.get("name") or raw.get("UserEmployer_ManagerName")
+    manager_email = manager.get("email") or raw.get("UserEmployer_ManagerEmail")
+    manager_phone = manager.get("phone_number") or raw.get("UserEmployer_ManagerPhone")
+    if not any((employer_name, job_title, workplace_address, manager_name, manager_email, manager_phone)):
+        return None
+    return {
+        "employer_name": employer_name or None,
+        "job_title": job_title or None,
+        "workplace_address": workplace_address or None,
+        "employment_start_date": None,
+        "contracted_hours_per_week": None,
+        "employment_type": None,
+        "working_pattern": None,
+        "line_manager": {
+            "name": manager_name or None,
+            "email": manager_email or None,
+            "phone": manager_phone or None,
+            "job_title": None,
+        },
+    }
+
+
+def _cv_employment_terms(value):
+    """Read the two contract terms that only exist in the extracted CV data."""
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except ValueError:
+            return None
+        if decoded == value:
+            return None
+        return _cv_employment_terms(decoded)
+
     if isinstance(value, list):
         for item in value:
-            details = _first_employment_details(item)
-            if details:
-                return details
+            terms = _cv_employment_terms(item)
+            if terms:
+                return terms
+        return None
+
+    if not isinstance(value, dict):
+        return None
+
+    if value.get("section_found", True):
+        employer_name = _cv_optional_text(value.get("employer_name"))
+        start_date = _cv_optional_text(value.get("employment_start_date"))
+        contracted_hours = _to_float(value.get("contracted_hours_per_week"))
+        if start_date is not None or contracted_hours is not None:
+            return {
+                "employer_name": employer_name,
+                "employment_start_date": start_date,
+                "contracted_hours_per_week": contracted_hours,
+            }
+
+    for nested in value.values():
+        terms = _cv_employment_terms(nested)
+        if terms:
+            return terms
     return None
+
+
+def _cv_optional_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text.lower() in {"", "none", "null", "n/a", "-"}:
+        return None
+    return text
+
+
+def _skill_radar_characteristic(value):
+    text = str(value or "").strip() or "Skill"
+    labelled_match = re.match(
+        r"Understanding of (.+?) \((Knowledge|Skill|Behaviour)\)",
+        text,
+        re.IGNORECASE,
+    )
+    if labelled_match:
+        score_type = labelled_match.group(2).lower()
+        field = {
+            "knowledge": "knowledge",
+            "skill": "skill_score",
+            "behaviour": "behaviour",
+        }[score_type]
+        return labelled_match.group(1).strip(), field
+
+    code_match = re.search(r"(?:^|[\s(:.\-])([KSB])\d+\b", text, re.IGNORECASE)
+    prefix = code_match.group(1).upper() if code_match else "S"
+    field = {
+        "K": "knowledge",
+        "S": "skill_score",
+        "B": "behaviour",
+    }[prefix]
+    # A number of Aptem standards use ``K01 Description`` rather than
+    # ``K01: Description``. Treat both forms identically so the full KSB text
+    # never becomes the chart's category label.
+    direct_code = re.match(
+        r"\s*[KSB]0*\d+\s*(?::|[.\-])?\s+(.+)",
+        text,
+        re.IGNORECASE,
+    )
+    return (_skill_radar_text_category(direct_code.group(1)) if direct_code else text), field
+
+
+_SKILL_RADAR_CATEGORY_RULES = (
+    (r"works flexibly|adapts? to circumstances", "Adaptability"),
+    (r"works collaboratively|builds strong relationships", "Collaboration"),
+    (r"accountability and ownership|ownership of (?:their|the) tasks", "Accountability"),
+    (r"operates professionally|integrity and confidentiality", "Professionalism"),
+    (r"learning opportunities|continuous professional development", "Continuous development"),
+    (r"differences between projects and business as usual|alignment between the project and organisational objectives|interdependencies between project, programme|project context|project governance structure|functional, matrix and project structures|roles and responsibilities within a project|life cycle approaches|business case|project management plan", "Project context & governance"),
+    (r"define,? record,? integrate,? deliver,? and manage scope|configuration management and change control|change control processes?|management of project scope", "Scope & change"),
+    (r"stakeholders?|communication techniques|managing conflict|working collaboratively|influence and negotiate|resolve conflict|adapt communications?|project vision", "Stakeholders & communication"),
+    (r"information management|technology and software|digital tools?|presentation tools", "Information & technology"),
+    (r"estimating methods?|earned value|project scheduling|schedule activities|integrated schedules|allocation and management of resources|project budgets?|resource management|manages resources|resources through the project|critical path|approved project budget", "Planning, cost & resources"),
+    (r"project risk and issue|risk management plan|project risks? and issues?|mitigate risks?", "Risk & issues"),
+    (r"procurement strategies|quality requirements|quality management plan|quality control", "Procurement & quality"),
+    (r"evaluating project success|lessons learned|continual improvement", "Evaluation & improvement"),
+    (r"regulations? and legislation|relevant legislation|sustainability|net carbon|ethical and inclusive|codes? of practice|ethical guidance", "Compliance & sustainability"),
+    (r"monitoring and reporting|track,? interpret and report|collate and analyse information|use data to inform|underpinning data", "Monitoring & reporting"),
+    (r"fundamentals of marketing theory|marketing process", "Marketing fundamentals"),
+    (r"brand positioning|corporate reputation", "Brand management"),
+    (r"customer relationship management|stakeholder management.*customer", "Stakeholder & CRM"),
+    (r"business and sector|vision and value", "Business & sector"),
+    (r"wider business objectives", "Business objectives"),
+    (r"target audience.*decision", "Customer behaviour"),
+    (r"legal.*regulatory|compliance frameworks?|data protection", "Legal & compliance"),
+    (r"principles of effective market research", "Market research"),
+    (r"product development|product/service portfolios?", "Product development"),
+    (r"routes? to market|marketing landscape", "Routes to market"),
+    (r"communications?\s+channels? and media", "Communication channels"),
+    (r"coordinate and maintain.*marketing channels", "Marketing channels"),
+    (r"tactical campaigns?|smart objectives?", "Campaign planning"),
+    (r"production and distribution.*marketing materials?", "Marketing materials"),
+    (r"creative and effective communications?|write and proofread", "Marketing communications"),
+    (r"engage and collaborate.*(?:clients?|stakeholders?)|across departments", "Stakeholder collaboration"),
+    (r"project and time management", "Project & time management"),
+    (r"coordinate several marketing campaigns", "Campaign coordination"),
+    (r"liaise with.*stakeholders?|manage.*stakeholders?.*suppliers?", "Stakeholder management"),
+    (r"project budgets?|budget", "Budget management"),
+    (r"assimilate and analyse data|data and information.*range of sources", "Data analysis"),
+    (r"effectiveness of marketing campaigns", "Campaign evaluation"),
+    (r"data and research.*derive insights|insights.*future campaigns", "Research insights"),
+    (r"business systems? and software", "Business systems"),
+    (r"appropriate technologies|web analytics|social media.*crm", "Marketing technology"),
+    (r"tenacious and driven|projects? through to completion", "Drive & resilience"),
+    (r"self.?starter|adaptable approach|changing work priorities", "Initiative & adaptability"),
+    (r"creative and analytical mind|new ways of doing", "Creative thinking"),
+    (r"ideas and solutions", "Problem solving"),
+    (r"learn from mistakes|improve.*performance", "Continuous improvement"),
+    (r"professionalism|reliability and dependability", "Professionalism"),
+    (r"collaborative approach|showing empathy", "Collaboration & empathy"),
+    (r"ethical behaviour|equality.*diversity", "Ethics & inclusion"),
+)
+
+
+def _skill_radar_text_category(value):
+    """Build a concise chart category when Aptem only supplies full KSB text."""
+    text = " ".join(str(value or "").split()).strip()
+    lowered = text.lower()
+    for pattern, category in _SKILL_RADAR_CATEGORY_RULES:
+        if re.search(pattern, lowered):
+            return category
+
+    concise = re.sub(
+        r"^(?:i\s+)?(?:can|understand|know|am able to|have|work with|demonstrate|come up with)\s+",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    words = concise.rstrip(" .").split()
+    if len(words) > 5:
+        concise = " ".join(words[:5])
+    return concise[:60].strip().capitalize() or "Competency"
+
+
+def _skill_radar_codes(value):
+    """Return each KSB code once, in the order Aptem supplied it."""
+    codes = []
+    seen = set()
+    for match in re.finditer(r"\b([KSB]\d+)\b", str(value or ""), re.IGNORECASE):
+        code = match.group(1).upper()
+        if code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
+
+
+def _skill_radar_score_values(assessed_level, achieved_value, maximum_value):
+    """Return the Aptem score using the maximum supplied for this characteristic."""
+    try:
+        maximum = float(maximum_value)
+    except (TypeError, ValueError):
+        maximum = 8.0
+    if maximum <= 0:
+        maximum = 8.0
+
+    try:
+        achieved = float(achieved_value)
+    except (TypeError, ValueError):
+        try:
+            achieved = float(assessed_level)
+        except (TypeError, ValueError):
+            achieved = 0.0
+
+    achieved = max(0.0, min(maximum, achieved))
+    return (
+        int(achieved) if achieved.is_integer() else achieved,
+        int(maximum) if maximum.is_integer() else maximum,
+    )
+
+
+def _skill_radar_snapshot_entries(rows):
+    """Normalise the retained KSB snapshot used when a withdrawn Aptem probe is absent."""
+    entries = []
+    for category, code, title, level in rows:
+        score = _skill_radar_level_score(level)
+        if score is None:
+            continue
+        code = str(code or "").strip().upper()
+        category_text = str(category or "").strip().lower()
+        prefix = code[:1]
+        if category_text.startswith("know") or prefix == "K":
+            field = "knowledge"
+        elif category_text.startswith("behav") or prefix == "B":
+            field = "behaviour"
+        else:
+            field = "skill_score"
+        title = str(title or "").strip()
+        entries.append({
+            "skill": f"{code}: {title}" if code and title else title or code,
+            "domain": _skill_radar_text_category(title),
+            "ksb_codes": [code] if re.fullmatch(r"[KSB]0*\d+", code) else [],
+            "knowledge": score if field == "knowledge" else None,
+            "skill_score": score if field == "skill_score" else None,
+            "behaviour": score if field == "behaviour" else None,
+            "maximum": 8,
+        })
+    return entries
+
+
+def _skill_radar_level_score(value):
+    text = str(value or "").strip().lower()
+    for label, score in (
+        ("mastery", 8), ("expert", 7), ("proficient", 6),
+        ("consistently", 5), ("frequently", 4), ("occasionally", 3),
+        ("rarely", 2), ("never", 1),
+    ):
+        if text.startswith(label):
+            return score
+    return None
+
+
+def _skill_radar_entry_sort_key(entry):
+    fields = {
+        "knowledge": 0 if entry.get("knowledge") is not None else None,
+        "skill_score": 1 if entry.get("skill_score") is not None else None,
+        "behaviour": 2 if entry.get("behaviour") is not None else None,
+    }
+    dimension = next((value for value in fields.values() if value is not None), 3)
+    first_code = (entry.get("ksb_codes") or [""])[0]
+    code_match = re.fullmatch(r"[KSB](\d+)", first_code)
+    return (
+        dimension,
+        int(code_match.group(1)) if code_match else 10**9,
+        str(entry.get("domain") or "").lower(),
+        str(entry.get("skill") or "").lower(),
+    )
+
+
+def _normalise_levy_status(value):
+    text = re.sub(r"[\s_-]+", "", str(value or "")).lower()
+    if text == "levy":
+        return "Levy"
+    if text in {"nonlevy", "notlevy"}:
+        return "Non-Levy"
+    return None
+
+
+def _skill_radar_sort_key(value):
+    text = str(value or "")
+    code_match = re.search(r"(?:^|[\s(:.\-])([KSB])(\d+)\b", text, re.IGNORECASE)
+    if not code_match:
+        return (3, 0, text.lower())
+    prefix_order = {"K": 0, "S": 1, "B": 2}
+    return (prefix_order[code_match.group(1).upper()], int(code_match.group(2)), text.lower())
+
+
+def _normalise_employer_name(value):
+    text = _cv_optional_text(value)
+    if text is None:
+        return None
+    words = re.findall(r"[a-z0-9]+", text.lower().replace("&", " and "))
+    suffixes = {"limited", "ltd"}
+    while words and words[-1] in suffixes:
+        words.pop()
+    return " ".join(words) or None
+
+
+def _merge_matching_cv_employment_terms(employment, candidates):
+    if not isinstance(employment, dict):
+        return employment
+    employer_name = employment.get("employer_name")
+    matching_terms = next(
+        (
+            candidate
+            for candidate in candidates
+            if _normalise_employer_name(candidate.get("employer_name"))
+            == _normalise_employer_name(employer_name)
+            and _normalise_employer_name(employer_name) is not None
+        ),
+        None,
+    )
+    if matching_terms is None:
+        return employment
+    if employment.get("employment_start_date") is None:
+        employment["employment_start_date"] = matching_terms.get("employment_start_date")
+    if employment.get("contracted_hours_per_week") is None:
+        employment["contracted_hours_per_week"] = matching_terms.get("contracted_hours_per_week")
+    return employment
 
 
 def _period_label(value):
@@ -1916,7 +2514,7 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
     if not learner or not component:
         return JsonResponse({"error": "learner and component are required"}, status=400)
     try:
-        with connections[CONN].cursor() as cur:
+        with connections[resolve(CONN)].cursor() as cur:
             cur.execute(
                 '''
                 select quiz_attempts -> %s
@@ -1982,7 +2580,7 @@ def activity_annotation(request: HttpRequest) -> JsonResponse:
     if not component:
         return JsonResponse({"error": "component is required"}, status=400)
     try:
-        with connections[CONN].cursor() as cur:
+        with connections[resolve(CONN)].cursor() as cur:
             _ensure_annotation_table(cur)
             cur.execute(
                 '''
@@ -2030,7 +2628,7 @@ def save_activity_annotation(request: HttpRequest) -> JsonResponse:
     updated_by = str(body.get("updated_by") or "").strip()[:200] or None
 
     try:
-        with connections[CONN].cursor() as cur:
+        with connections[resolve(CONN)].cursor() as cur:
             _ensure_annotation_table(cur)
             cur.execute(
                 '''
@@ -2192,7 +2790,7 @@ def _overlay_learner(aptem_id):
     report endpoints unchanged while allowing create/date-replace/delete for
     every learner that the expanded audit workspace can surface.
     """
-    with connections[CONN].cursor() as cur:
+    with connections[resolve(CONN)].cursor() as cur:
         cur.execute(
             '''
             select learner_name
@@ -2218,7 +2816,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
         except ValueError:
             return JsonResponse({"error": "aptem_id must be an integer"}, status=400)
         try:
-            with connections[CONN].cursor() as cur:
+            with connections[resolve(CONN)].cursor() as cur:
                 _ensure_activity_overlay_table(cur)
                 if aptem_id is None:
                     cur.execute('''select aptem_id, activity_id, operation, payload, source_payload, updated_by, updated_at from "Audit".activity_overrides order by updated_at''')
@@ -2260,7 +2858,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
         elif request.method == "PUT":
             if not activity_id:
                 raise ValueError("activity_id is required")
-            with connections[CONN].cursor() as cur:
+            with connections[resolve(CONN)].cursor() as cur:
                 _ensure_activity_overlay_table(cur)
                 cur.execute('''select source_payload from "Audit".activity_overrides where aptem_id = %s and activity_id = %s and operation = 'replaced' ''', [aptem_id, activity_id])
                 existing = cur.fetchone()
@@ -2280,7 +2878,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
         elif request.method == "PATCH":
             if not activity_id.startswith("audit:"):
                 return JsonResponse({"error": "Only audit-created activities can be patched here."}, status=400)
-            with connections[CONN].cursor() as cur:
+            with connections[resolve(CONN)].cursor() as cur:
                 _ensure_activity_overlay_table(cur)
                 cur.execute('''select payload from "Audit".activity_overrides where aptem_id = %s and activity_id = %s and operation = 'created' ''', [aptem_id, activity_id])
                 existing = cur.fetchone()
@@ -2296,7 +2894,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
             if not activity_id:
                 raise ValueError("activity_id is required")
             raw_snapshot = body.get("snapshot")
-            with connections[CONN].cursor() as cur:
+            with connections[resolve(CONN)].cursor() as cur:
                 _ensure_activity_overlay_table(cur)
                 cur.execute('''select source_payload from "Audit".activity_overrides where aptem_id = %s and activity_id = %s and operation = 'replaced' ''', [aptem_id, activity_id])
                 existing = cur.fetchone()
@@ -2313,7 +2911,7 @@ def activity_overrides(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": str(error)}, status=400)
 
     try:
-        with connections[CONN].cursor() as cur:
+        with connections[resolve(CONN)].cursor() as cur:
             _ensure_activity_overlay_table(cur)
             cur.execute(
                 '''

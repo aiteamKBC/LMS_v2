@@ -56,6 +56,23 @@ DB_CONN_HEALTH_CHECKS = os.environ.get('DB_CONN_HEALTH_CHECKS', 'true').lower() 
 # Seconds to wait for a database connection before giving up. Keeps a stalled DNS
 # resolver or unreachable Neon endpoint from hanging a request indefinitely.
 DB_CONNECT_TIMEOUT = int(os.environ.get('DB_CONNECT_TIMEOUT', '10'))
+# psycopg 3 connection pooling. Neon is remote, so a fresh connection costs a
+# ~1s TLS handshake; CONN_MAX_AGE alone cannot avoid that under the threaded
+# dev server (persistent connections are per-thread and runserver spawns a new
+# thread per request). A per-process pool is shared across threads instead.
+# Django requires CONN_MAX_AGE=0 when a pool is configured.
+DB_POOL = os.environ.get('DB_POOL', 'true').lower() != 'false'
+DB_POOL_OPTIONS = {
+    'min_size': 1,
+    'max_size': int(os.environ.get('DB_POOL_MAX_SIZE', '10')),
+    'timeout': DB_CONNECT_TIMEOUT,
+    # Neon closes idle server-side connections; retire pooled connections
+    # before that happens so requests never receive a dead socket. Django 6
+    # already installs psycopg_pool's check_connection on every pool it
+    # builds, so no explicit 'check' entry here (passing one crashes startup
+    # with a duplicate-keyword error).
+    'max_idle': int(os.environ.get('DB_POOL_MAX_IDLE', '180')),
+}
 
 
 def database_from_url(database_url):
@@ -81,6 +98,9 @@ def database_from_url(database_url):
     # Bound how long a connection attempt can hang. Without it a stalled DNS
     # resolver leaves requests waiting on the OS default instead of failing fast.
     options.setdefault('connect_timeout', DB_CONNECT_TIMEOUT)
+    pooled = DB_POOL and scheme == 'postgres'
+    if pooled:
+        options['pool'] = dict(DB_POOL_OPTIONS)
     return {
         'ENGINE': engine_by_scheme[scheme],
         'NAME': unquote(parsed.path.lstrip('/')),
@@ -89,8 +109,8 @@ def database_from_url(database_url):
         'HOST': parsed.hostname or '',
         'PORT': str(parsed.port or ''),
         'OPTIONS': options,
-        'CONN_MAX_AGE': DB_CONN_MAX_AGE,
-        'CONN_HEALTH_CHECKS': DB_CONN_HEALTH_CHECKS,
+        'CONN_MAX_AGE': 0 if pooled else DB_CONN_MAX_AGE,
+        'CONN_HEALTH_CHECKS': False if pooled else DB_CONN_HEALTH_CHECKS,
     }
 
 
@@ -100,6 +120,15 @@ def database_from_url(database_url):
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "true"
+
+# Curriculum schema is owned by migrations. When this is false (the production
+# default) request handlers only VERIFY that the expected tables exist and raise
+# a controlled configuration error if they do not — they never run CREATE/ALTER
+# or historical data backfills on the way to serving a request. Set to true only
+# for local Postgres development where running migrations by hand is a nuisance.
+CURRICULUM_ALLOW_RUNTIME_SCHEMA_BOOTSTRAP = (
+    os.environ.get("CURRICULUM_ALLOW_RUNTIME_SCHEMA_BOOTSTRAP", "false").lower() == "true"
+)
 
 # SECURITY WARNING: keep the secret key used in production secret!
 # Environment-driven, with the historical development key kept as the fallback so
@@ -172,6 +201,7 @@ INSTALLED_APPS = [
     'coach_api',
     'learner_api',
     'audit_api',
+    'manual_audit_api',
     'curriculum_api',
     'engagement_api',
     'enrolment_api',
@@ -201,6 +231,10 @@ MIDDLEWARE = [
     'login.middleware.LoginSessionMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Turns a missing Curriculum table into a 503 naming the absent relations,
+    # instead of an opaque 500. Schema is migration-owned; request handlers
+    # verify it rather than creating it.
+    'curriculum_api.middleware.SchemaNotProvisionedMiddleware',
 ]
 
 PERFORMANCE_DIAGNOSTICS = os.environ.get('PERFORMANCE_DIAGNOSTICS', 'false').lower() == 'true'
@@ -318,6 +352,8 @@ if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
     parsed_db = urlparse(DATABASE_URL)
     db_options = dict(parse_qsl(parsed_db.query))
     db_options.setdefault("connect_timeout", DB_CONNECT_TIMEOUT)
+    if DB_POOL:
+        db_options["pool"] = dict(DB_POOL_OPTIONS)
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -327,8 +363,8 @@ if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
             "HOST": parsed_db.hostname,
             "PORT": parsed_db.port or "5432",
             "OPTIONS": db_options,
-            "CONN_MAX_AGE": DB_CONN_MAX_AGE,
-            "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
+            "CONN_MAX_AGE": 0 if DB_POOL else DB_CONN_MAX_AGE,
+            "CONN_HEALTH_CHECKS": False if DB_POOL else DB_CONN_HEALTH_CHECKS,
         }
     }
 else:
@@ -363,6 +399,35 @@ if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
 _audit_database_url = os.environ.get('AUDIT_DATABASE_URL')
 if _audit_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['audit'] = database_from_url(_audit_database_url)
+
+
+def _dsn_from_shell_snippet(value):
+    """Accept a DSN pasted the way Neon offers it — ``psql 'postgresql://…'``
+    — as well as a bare URL. Returns '' when nothing usable is configured."""
+    value = (value or '').strip()
+    if value.lower().startswith('psql '):
+        value = value[5:].strip()
+    return value.strip('"').strip("'").strip()
+
+
+# HOURS-TEST workspace: a full clone of the audit Neon branch. Both the 'audit'
+# and 'enrolment' aliases point at the same physical database, and the clone
+# carries every one of their schemas, so the clone workspace remaps BOTH aliases
+# onto this one connection (see audit_api/db_source.py). Nothing written from
+# HOURS-TEST can reach the live audit data.
+_audit_clone_database_url = _dsn_from_shell_snippet(
+    os.environ.get('AUDIT_CLONE_DATABASE_URL')
+    or os.environ.get('LASR-ADUTIOD-CLNE')
+)
+if _audit_clone_database_url and not USE_SQLITE_FOR_TESTS:
+    DATABASES['audit_clone'] = database_from_url(_audit_clone_database_url)
+
+# Live attendance source (the KBC project's AiTeamKBC database,
+# public.kbc_attendance): the manual plan builder's attendance pickers read
+# the live table directly — it runs ahead of the Manual_audit mirror sync.
+_kbc_attendance_database_url = os.environ.get('KBC_ATTENDANCE_DATABASE_URL')
+if _kbc_attendance_database_url and not USE_SQLITE_FOR_TESTS:
+    DATABASES['kbc_attendance'] = database_from_url(_kbc_attendance_database_url)
 
 DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 

@@ -1,7 +1,10 @@
 from django.urls import path
 
-from .views import audit_blob, contract_file, learner_activity_stats, learner_audit, learner_audit_list, learner_signoff
-from .contract_documents import archive_contract, upload_contract
+from .views import audit_blob, contract_file, evidence_file, learner_activity_stats, learner_audit, learner_audit_list, learner_signoff
+from .actual_hours import views as journal_hours_views
+from .contract_documents import archive_contract, rename_contract, upload_contract
+from .evidence_documents import archive_evidence, select_activity_evidence, update_evidence_date, upload_evidence
+from .profile_overrides import update_profile_overrides
 from .learner_log_views import health, learner_activities, learner_summaries, mre_list, mre_summary
 from .last_audit_ledger_views import (
     activities as last_audit_activities,
@@ -10,6 +13,29 @@ from .last_audit_ledger_views import (
     cohort as last_audit_cohort,
     health as last_audit_health,
     quiz_attempt as last_audit_quiz_attempt,
+)
+from .evidence_explorer_views import (
+    evidence_edit,
+    evidence_list,
+    evidence_open,
+    evidence_replace,
+    evidence_review,
+    evidence_transfer,
+)
+from .manual_ledger_views import (
+    activity_ledger as manual_activity_ledger,
+    attendance_options as manual_attendance_options,
+    cohort_totals as manual_cohort_totals,
+    document_url as manual_document_url,
+    documents as manual_documents,
+    group_activities as manual_group_activities,
+    groups as manual_groups,
+    import_candidates as manual_import_candidates,
+    rows as manual_rows,
+    rows_auto_import as manual_rows_auto_import,
+    rows_bulk as manual_rows_bulk,
+    reading_quiz_pairs as manual_reading_quiz_pairs,
+    summary as manual_summary,
 )
 from .learner_match_ledger_views import (
     activity_annotation as match_activity_annotation,
@@ -35,6 +61,39 @@ urlpatterns = [
     path("last-audit/activity/", last_audit_activity, name="last-audit-activity"),
     path("last-audit/quiz-attempt/", last_audit_quiz_attempt, name="last-audit-quiz-attempt"),
     path("last-audit/attendance-sheet/", last_audit_attendance_sheet, name="last-audit-attendance-sheet"),
+    # Employee-arranged monthly ledger (structured_manual_activities schema).
+    # Additive: nothing above changes, the sibling learner-log-pro keeps working.
+    path("last-audit/manual/summary", manual_summary, name="last-audit-manual-summary"),
+    path("last-audit/manual/cohort-totals", manual_cohort_totals, name="last-audit-manual-cohort-totals"),
+    path("last-audit/manual/groups", manual_groups, name="last-audit-manual-groups"),
+    path("last-audit/manual/group-activities", manual_group_activities, name="last-audit-manual-group-activities"),
+    path("last-audit/manual/attendance-options", manual_attendance_options, name="last-audit-manual-attendance-options"),
+    path("last-audit/manual/rows", manual_rows, name="last-audit-manual-rows"),
+    path("last-audit/manual/rows/bulk", manual_rows_bulk, name="last-audit-manual-rows-bulk"),
+    path("last-audit/manual/rows/auto-import", manual_rows_auto_import, name="last-audit-manual-rows-auto-import"),
+    path("last-audit/manual/import-candidates", manual_import_candidates, name="last-audit-manual-import-candidates"),
+    path("last-audit/manual/reading-quiz-pairs", manual_reading_quiz_pairs, name="last-audit-manual-reading-quiz-pairs"),
+    path("last-audit/manual/documents", manual_documents, name="last-audit-manual-documents"),
+    path("last-audit/manual/document-url", manual_document_url, name="last-audit-manual-document-url"),
+    path("last-audit/evidence/list", evidence_list, name="last-audit-evidence-list"),
+    path("last-audit/evidence/open", evidence_open, name="last-audit-evidence-open"),
+    path("last-audit/evidence/review", evidence_review, name="last-audit-evidence-review"),
+    path("last-audit/evidence/edit", evidence_edit, name="last-audit-evidence-edit"),
+    path("last-audit/evidence/replace", evidence_replace, name="last-audit-evidence-replace"),
+    path("last-audit/evidence/transfer", evidence_transfer, name="last-audit-evidence-transfer"),
+    path("last-audit/manual/activity-ledger", manual_activity_ledger, name="last-audit-manual-activity-ledger"),
+    # Learner Journal Activity-log hours: calculate actual/planned as pending
+    # proposals, then apply them on approval. Same views as the HOURS-TEST
+    # mount; the alias they read and write is decided by the mount itself
+    # (audit_api -> the live audit branch, hours_test_api -> the clone).
+    path("last-audit/journal-hours/summary", journal_hours_views.journal_summary,
+         name="journal-hours-summary"),
+    path("last-audit/journal-hours/calculate", journal_hours_views.journal_calculate,
+         name="journal-hours-calculate"),
+    path("last-audit/journal-hours/approve", journal_hours_views.journal_approve,
+         name="journal-hours-approve"),
+    path("last-audit/journal-hours/reject", journal_hours_views.journal_reject,
+         name="journal-hours-reject"),
     path("ledger/health", health, name="learner-log-health"),
     path("ledger/mre", mre_list, name="learner-log-mre"),
     path("ledger/mre/summary", mre_summary, name="learner-log-mre-summary"),
@@ -51,12 +110,19 @@ urlpatterns = [
     path("match-ledger/activity-overrides", match_activity_overrides, name="match-ledger-activity-overrides"),
     path("match-ledger/learners", match_learner_summaries, name="match-ledger-learners"),
     path("match-ledger/learner-profile", match_learner_profile, name="match-ledger-learner-profile"),
+    path("match-ledger/learner-profile/overrides", update_profile_overrides, name="match-ledger-profile-overrides"),
     path("learners/", learner_audit_list, name="audit-learners"),
     path("learners/stats/", learner_activity_stats, name="audit-learner-activity-stats"),
     path("learners/<int:learner_id>/", learner_audit, name="audit-learner"),
     path("learners/<int:learner_id>/signoff/", learner_signoff, name="audit-learner-signoff"),
     path("contracts/<int:contract_id>/open", contract_file, name="audit-contract-file"),
+    path("evidence/<str:evidence_id>/open", evidence_file, name="audit-evidence-file"),
+    path("evidence/<str:evidence_id>/date", update_evidence_date, name="audit-evidence-date"),
+    path("evidence/<str:evidence_id>/archive", archive_evidence, name="audit-evidence-archive"),
+    path("evidence/upload", upload_evidence, name="audit-evidence-upload"),
+    path("evidence/select-activity", select_activity_evidence, name="audit-evidence-select-activity"),
     path("contracts/<int:contract_id>/archive", archive_contract, name="audit-contract-archive"),
+    path("contracts/<int:contract_id>/name", rename_contract, name="audit-contract-name"),
     path("contracts/upload", upload_contract, name="audit-contract-upload"),
     path("blob/", audit_blob, name="audit-blob"),
 ]

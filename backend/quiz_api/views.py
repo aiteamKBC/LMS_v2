@@ -15,6 +15,8 @@ from xml.etree import ElementTree
 
 from django.conf import settings
 from django.db import DatabaseError, connection, transaction
+
+from curriculum_api import schema_gate as curriculum_schema_gate
 from django.db.models import Max
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseRedirect, JsonResponse
 from django.utils import timezone
@@ -126,6 +128,29 @@ def _training_plan_table_exists():
 
 
 def _ensure_quiz_assessment_type_column():
+    """Verify the quiz schema; provision it only outside production.
+
+    This used to run on every quiz request — including plain GETs — issuing
+    ALTER TABLE plus several historical backfills that rewrote
+    ``curriculum.quizzes.programme_id``. That is schema management and data
+    migration inside a read path: it breaks on a read-only connection, and it is
+    how programme *names* ('MM LVL6 L6', 'PCP', 'Fouda-Programme') ended up
+    stored as programme *identifiers*.
+
+    All of its backfills are now inert in production (verified 2026-08-16):
+    ``curriculum."Training_plan"`` no longer exists, and 0 quiz rows carry a
+    numeric legacy ``programme_id``. Schema is migration-owned, so the DDL only
+    runs where a process is explicitly allowed to own schema (the test runner or
+    a local opt-in).
+    """
+    if not curriculum_schema_gate.runtime_bootstrap_allowed():
+        curriculum_schema_gate.require_tables('quizzes')
+        return
+    _provision_quiz_assessment_type_column()
+
+
+def _provision_quiz_assessment_type_column():
+    """Create/upgrade quiz schema and run legacy backfills. NOT for request paths."""
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -1060,6 +1085,15 @@ def _training_plan_programme_map(plan_ids):
 
 
 def _ensure_quiz_course_links_table():
+    """Verify the quiz->course link table; provision only outside production."""
+    if not curriculum_schema_gate.runtime_bootstrap_allowed():
+        curriculum_schema_gate.require_tables('quiz_course_links')
+        return
+    _provision_quiz_course_links_table()
+
+
+def _provision_quiz_course_links_table():
+    """Create/upgrade the quiz->course link table. NOT for request paths."""
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -1107,6 +1141,15 @@ def _ensure_quiz_course_links_table():
 
 
 def _ensure_quiz_component_links_table():
+    """Verify the quiz->component link table; provision only outside production."""
+    if not curriculum_schema_gate.runtime_bootstrap_allowed():
+        curriculum_schema_gate.require_tables('quiz_component_links')
+        return
+    _provision_quiz_component_links_table()
+
+
+def _provision_quiz_component_links_table():
+    """Create/upgrade the quiz->component link table. NOT for request paths."""
     with connection.cursor() as cursor:
         cursor.execute(
             """

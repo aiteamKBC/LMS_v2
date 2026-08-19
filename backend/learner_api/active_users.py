@@ -10,6 +10,7 @@ import json
 import logging
 import re
 from datetime import timedelta
+from decimal import Decimal, InvalidOperation
 
 from django.db import DatabaseError, connections, transaction
 from django.db.models import Max
@@ -43,6 +44,15 @@ def _number(value):
     try:
         return float(value) if value not in (None, "") else None
     except (TypeError, ValueError):
+        return None
+
+
+def _decimal(value):
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError):
         return None
 
 
@@ -161,6 +171,311 @@ def _component_expected_hours_lookup(components):
     return lookup
 
 
+class ComponentReferenceError(ValueError):
+    """A component-based write named a Component it may not be written against.
+
+    Base class for the two rejections below so callers can map both to one 4xx.
+    """
+
+
+class OrphanComponentReferenceError(ComponentReferenceError):
+    """A write named a Component id that does not exist in Curriculum.
+
+    Historically ``component_ref`` was persisted straight from the client, so a
+    stale or frontend-generated id produced a row that silently referred to
+    nothing while the request still returned success. Callers translate this
+    into a 4xx so the client learns the write was rejected instead of being
+    told it succeeded.
+    """
+
+    def __init__(self, component_id):
+        self.component_id = component_id
+        super().__init__(
+            f'Unknown component reference "{component_id}". '
+            'Component-based progress must reference an existing Curriculum component.'
+        )
+
+
+class DeletedComponentReferenceError(ComponentReferenceError):
+    """A write named a Component whose effective Curriculum lineage is deleted.
+
+    Distinct from an orphan: the Component exists and historical rows pointing
+    at it must keep resolving. It simply may not receive *new* learner activity,
+    because the curriculum it belongs to has been withdrawn. ``deleted_level``
+    names the level that withdrew it, which is what makes a parent-driven
+    deletion explainable to the client.
+    """
+
+    def __init__(self, component_id, deleted_level=""):
+        self.component_id = component_id
+        self.deleted_level = deleted_level or "curriculum"
+        super().__init__(
+            f'Component "{component_id}" belongs to deleted curriculum '
+            f'({self.deleted_level}). New progress cannot be recorded against it.'
+        )
+
+
+def component_reference_exists(component_id):
+    """Does this id resolve to a real Curriculum component?
+
+    This is the **historical** resolver. Soft-deleted components count: a
+    learner can legitimately have completed something that was archived
+    afterwards, and historical rows must stay joinable to it. This only rejects
+    ids that exist nowhere at all. Reporting and lineage reads use this;
+    ``component_reference_state`` is what gates a new write.
+
+    Raises DatabaseError if no alias could be reached. A lookup that could not
+    run is not evidence of absence, and answering "False" there would reject a
+    perfectly valid write as an unknown component.
+    """
+    component_id = _s(component_id)
+    if not component_id:
+        return False
+    last_error = None
+    reachable = False
+    for alias in ("default", "enrolment"):
+        try:
+            with connections[alias].cursor() as cursor:
+                cursor.execute(
+                    "select 1 from curriculum.components where id = %s limit 1",
+                    [component_id],
+                )
+                reachable = True
+                if cursor.fetchone():
+                    return True
+        except DatabaseError as exc:
+            last_error = exc
+            logger.debug("Could not verify component %s on %s", component_id, alias, exc_info=True)
+            continue
+    if not reachable:
+        raise last_error
+    return False
+
+
+# Effective soft-delete of a component, level by level, in the order a rejection
+# should name. Mirrors the ``is_deleted`` expression of the
+# curriculum.component_learning_lineage view (curriculum_api migration 0041):
+# deleted_at / is_programme_deleted at every level, and is_archived on
+# programmes, which carries no is_programme_deleted column.
+_COMPONENT_LINEAGE_DELETED_SQL = """
+    select
+        (c.deleted_at is not null or coalesce(c.is_programme_deleted, false)) as component_deleted,
+        (w.id is not null and (w.deleted_at is not null or coalesce(w.is_programme_deleted, false))) as week_deleted,
+        (m.module_catalogue_id is not null and (m.deleted_at is not null or coalesce(m.is_programme_deleted, false))) as module_deleted,
+        (g.group_id is not null and (g.deleted_at is not null or coalesce(g.is_programme_deleted, false))) as group_deleted,
+        (ch.cohort_id is not null and (ch.deleted_at is not null or coalesce(ch.is_programme_deleted, false))) as cohort_deleted,
+        (p.programme_id is not null and (p.deleted_at is not null or coalesce(p.is_archived, false))) as programme_deleted
+    from curriculum.components c
+    left join curriculum.weeks w on w.id = c.week_id
+    left join curriculum.modules m on m.module_catalogue_id = c.module_catalogue_id
+    left join curriculum.groups g on g.group_id = m.group_id
+    left join curriculum.cohorts ch on ch.cohort_id = m.cohort_id
+    left join curriculum.programmes p on p.programme_id = m.programme_id
+    where c.id = %s
+    limit 1
+"""
+
+_COMPONENT_LINEAGE_LEVELS = ("component", "week", "module", "group", "cohort", "programme")
+
+
+def component_reference_state(component_id):
+    """``("active"|"deleted"|"unknown", deleted_level)`` for a Component id.
+
+    ``"deleted"`` covers parent-driven deletion: a component that is itself
+    intact but whose week, module, group, cohort or programme has been
+    withdrawn is not valid for new activity. The distinction that matters is
+    read vs write, not existence — historical reads still resolve a deleted
+    component (see ``component_reference_exists``); only a new authoritative
+    write is refused.
+
+    Raises DatabaseError if no alias could answer, for the same reason
+    ``component_reference_exists`` does: an unanswered lookup is not evidence,
+    and treating it as "deleted" would turn a database hiccup into rejected
+    valid work.
+    """
+    component_id = _s(component_id)
+    if not component_id:
+        return "unknown", ""
+    last_error = None
+    reachable = False
+    for alias in ("default", "enrolment"):
+        try:
+            with connections[alias].cursor() as cursor:
+                cursor.execute(_COMPONENT_LINEAGE_DELETED_SQL, [component_id])
+                row = cursor.fetchone()
+        except DatabaseError as exc:
+            last_error = exc
+            logger.debug("Could not resolve component state for %s on %s", component_id, alias, exc_info=True)
+            continue
+        reachable = True
+        if not row:
+            # Answered, and this id is in no curriculum here. The two aliases can
+            # be split in production, so keep looking before concluding.
+            continue
+        for level, deleted in zip(_COMPONENT_LINEAGE_LEVELS, row):
+            if deleted:
+                return "deleted", level
+        return "active", ""
+    if not reachable:
+        raise last_error
+    return "unknown", ""
+
+
+def _component_learning_context(component_id):
+    component_id = _s(component_id)
+    if not component_id:
+        return {}
+
+    context = {}
+    for alias in ("default", "enrolment"):
+        try:
+            with connections[alias].cursor() as cursor:
+                cursor.execute(
+                    """
+                    select
+                        c.id,
+                        c.title,
+                        c.type,
+                        c.expected_otjh,
+                        c.points,
+                        c.ksb_mappings,
+                        w.id,
+                        w.title,
+                        m.module_catalogue_id,
+                        m.title,
+                        m.programme_id,
+                        coalesce(p.name, m.programme_name),
+                        m.cohort_id,
+                        m.cohort_name,
+                        m.group_id,
+                        m.group_name
+                    from curriculum.components c
+                    left join curriculum.weeks w on w.id = c.week_id
+                    left join curriculum.modules m on m.module_catalogue_id = c.module_catalogue_id
+                    left join curriculum.programmes p on p.programme_id = m.programme_id
+                    where c.id = %s
+                    limit 1
+                    """,
+                    [component_id],
+                )
+                row = cursor.fetchone()
+                if not row:
+                    return {}
+                (
+                    _component_ref,
+                    component_title,
+                    component_type,
+                    expected_otjh,
+                    points,
+                    canonical_mappings,
+                    week_ref,
+                    week_title,
+                    module_ref,
+                    module_title,
+                    programme_ref,
+                    programme_title,
+                    cohort_ref,
+                    cohort_title,
+                    group_ref,
+                    group_title,
+                ) = row
+                mappings = _normalise_component_ksb_mappings(canonical_mappings)
+                if not mappings:
+                    cursor.execute(
+                        """
+                        select ksb_code, ksb_description, source_type, source_id, classification, weight, weight_class
+                          from curriculum.ksb_mappings
+                         where component_id = %s
+                           and coalesce(ksb_code, '') <> ''
+                           and deleted_at is null
+                           and coalesce(is_programme_deleted, false) = false
+                         order by ksb_code, id
+                        """,
+                        [component_id],
+                    )
+                    mappings = [
+                        {
+                            "code": _s(code).upper(),
+                            "description": _s(description),
+                            "sourceType": _s(source_type),
+                            "sourceId": _s(source_id),
+                            "classification": _s(classification),
+                            "weight": _decimal(weight),
+                            "weightClass": _normalise_weight_class(weight_class, classification),
+                        }
+                        for code, description, source_type, source_id, classification, weight, weight_class in cursor.fetchall()
+                        if _s(code)
+                    ]
+                context = {
+                    "componentTitle": _s(component_title),
+                    "componentType": _s(component_type),
+                    "expectedOtjh": _decimal(expected_otjh),
+                    "points": int(points) if points not in (None, "") else None,
+                    "weekId": _s(week_ref),
+                    "weekTitle": _s(week_title),
+                    "moduleId": _s(module_ref),
+                    "moduleTitle": _s(module_title),
+                    "programmeId": _s(programme_ref),
+                    "programme": _s(programme_title),
+                    "cohortId": _s(cohort_ref),
+                    "cohort": _s(cohort_title),
+                    "groupId": _s(group_ref),
+                    "group": _s(group_title),
+                    "ksbMappings": mappings,
+                }
+                return context
+        except DatabaseError:
+            if alias == "enrolment":
+                logger.warning("Could not resolve curriculum context for component %s", component_id, exc_info=True)
+            continue
+    return context
+
+
+def _normalise_weight_class(value, classification=""):
+    raw = _s(value).lower()
+    if raw in {"hard", "soft", "possible"}:
+        return raw
+    classification = _s(classification).lower()
+    if classification == "main":
+        return "hard"
+    if classification == "possible":
+        return "possible"
+    return "soft"
+
+
+def _normalise_component_ksb_mappings(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value else []
+        except (TypeError, ValueError):
+            value = []
+    if not isinstance(value, list):
+        return []
+    mappings = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        code = _s(item.get("code") or item.get("ksbCode") or item.get("ksb_code")).upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        classification = _s(item.get("classification") or item.get("type"))
+        mappings.append({
+            "code": code,
+            "description": _s(item.get("description") or item.get("ksbDescription") or item.get("ksb_description")),
+            "sourceType": _s(item.get("sourceType") or item.get("source_type")),
+            "sourceId": _s(item.get("sourceId") or item.get("source_id")),
+            "classification": classification,
+            "weight": _decimal(item.get("weight")),
+            "weightClass": _normalise_weight_class(
+                item.get("weightClass") if "weightClass" in item else item.get("weight_class"),
+                classification,
+            ),
+        })
+    return mappings
+
+
 def completed_hours_from_progress(progress, components=None):
     if not isinstance(progress, list):
         return "0"
@@ -168,6 +483,10 @@ def completed_hours_from_progress(progress, components=None):
     hours = 0.0
     for record in dedupe_otjh_progress_records(progress):
         component_id = _s(record.get("componentId"))
+        record_expected = _number(record.get("expectedOtjh") or record.get("expected_otjh"))
+        if record_expected is not None:
+            hours += record_expected
+            continue
         expected_hours = expected_hours_by_component.get(component_id)
         if expected_hours is not None:
             hours += expected_hours
@@ -386,6 +705,41 @@ def save_progress_record(learner, record, activity=None):
     """Store progress, quiz detail, KSB links, and feed presentation atomically."""
     if learner is None:
         return None
+    # A NEW component-based write must name a Component that exists AND is still
+    # valid for new activity.
+    #
+    #   unknown -> a false success: the row is written, the client is told it
+    #              worked, and the activity is invisible to every
+    #              Curriculum/Coach report that joins on component_ref.
+    #   deleted -> the curriculum it belongs to has been withdrawn, so new
+    #              delivery cannot be recorded against it. This is the write
+    #              side only: historical rows already pointing at a deleted
+    #              Component keep resolving, which is why the read helpers
+    #              (component_reference_exists, _component_learning_context)
+    #              deliberately still return it.
+    #
+    # Activity that is genuinely not Component-based (a standalone quiz, for
+    # example) carries no componentId and is unaffected.
+    component_id = _s(record.get("componentId"))
+    if component_id:
+        state, deleted_level = component_reference_state(component_id)
+        if state == "unknown":
+            raise OrphanComponentReferenceError(component_id)
+        if state == "deleted":
+            raise DeletedComponentReferenceError(component_id, deleted_level)
+    component_context = _component_learning_context(record.get("componentId"))
+    ksb_mappings = component_context.get("ksbMappings") or record.get("ksbMappings") or []
+    if ksb_mappings:
+        ksb_items = [
+            item for item in ksb_mappings
+            if isinstance(item, dict) and _s(item.get("code") or item.get("ksbCode"))
+        ]
+    else:
+        ksb_items = [
+            {"code": code}
+            for code in (record.get("ksbs") or [])
+            if _s(code)
+        ]
     with transaction.atomic(using="enrolment"):
         # Serialize writes per learner so two simultaneous submissions cannot
         # claim the same entry/event order.
@@ -400,13 +754,21 @@ def save_progress_record(learner, record, activity=None):
             learner=learner,
             entry_order=next_order,
             kind=_s(record.get("kind")) or "quiz",
-            module_ref=_s(record.get("moduleId")) or None,
-            module_title=_s(record.get("moduleTitle") or record.get("module") or activity.get("module")),
-            week_ref=_s(record.get("weekId")) or None,
-            week_title=_s(record.get("weekTitle") or record.get("week") or activity.get("week")),
+            programme_ref=_s(record.get("programmeId") or component_context.get("programmeId")) or None,
+            programme_title=_s(record.get("programme") or component_context.get("programme")),
+            cohort_ref=_s(record.get("cohortId") or component_context.get("cohortId")) or None,
+            cohort_title=_s(record.get("cohort") or component_context.get("cohort")),
+            group_ref=_s(record.get("groupId") or component_context.get("groupId")) or None,
+            group_title=_s(record.get("group") or component_context.get("group")),
+            module_ref=_s(record.get("moduleId") or component_context.get("moduleId")) or None,
+            module_title=_s(record.get("moduleTitle") or record.get("module") or component_context.get("moduleTitle") or activity.get("module")),
+            week_ref=_s(record.get("weekId") or component_context.get("weekId")) or None,
+            week_title=_s(record.get("weekTitle") or record.get("week") or component_context.get("weekTitle") or activity.get("week")),
             component_ref=_s(record.get("componentId")) or None,
-            component_title=_s(record.get("componentTitle") or activity.get("title")),
-            component_type=_s(record.get("componentType") or activity.get("componentType")),
+            component_title=_s(record.get("componentTitle") or component_context.get("componentTitle") or activity.get("title")),
+            component_type=_s(record.get("componentType") or component_context.get("componentType") or activity.get("componentType")),
+            expected_otjh=_decimal(record.get("expectedOtjh") or component_context.get("expectedOtjh")),
+            points=record.get("points") if record.get("points") not in (None, "") else component_context.get("points"),
             quiz_ref=_s(record.get("quizId")) or None,
             attempt=record.get("attempt"),
             grade=_number(record.get("grade", record.get("Score"))),
@@ -423,11 +785,33 @@ def save_progress_record(learner, record, activity=None):
             feed_title=_s(activity.get("title") or record.get("componentTitle")),
             feed_detail=_s(activity.get("detail")),
             feed_occurred_at=_datetime(activity.get("at") or record.get("submittedAt")),
+            # Classified at write time so new rows never need a backfill to be
+            # explainable. The guard above has already proven the component
+            # resolves, so anything carrying a componentId is component-based.
+            component_link_status=(
+                "resolved_to_current_component" if component_id
+                else "valid_legacy_non_component_activity" if _s(record.get("quizId"))
+                else "non_component_activity"
+            ),
+            component_link_source="direct" if component_id else ("quiz_ref" if _s(record.get("quizId")) else "none"),
         )
         LearnerProgressKsb.objects.bulk_create(
             [
-                LearnerProgressKsb(progress=progress, position=position, ksb_code=_s(code))
-                for position, code in enumerate(record.get("ksbs") or [], 1)
+                LearnerProgressKsb(
+                    progress=progress,
+                    position=position,
+                    ksb_code=_s(item.get("code") or item.get("ksbCode")).upper(),
+                    ksb_description=_s(item.get("description") or item.get("ksbDescription")),
+                    source_type=_s(item.get("sourceType") or item.get("source_type")),
+                    source_id=_s(item.get("sourceId") or item.get("source_id")),
+                    classification=_s(item.get("classification") or item.get("type")),
+                    weight=_decimal(item.get("weight")),
+                    weight_class=_normalise_weight_class(
+                        item.get("weightClass") if "weightClass" in item else item.get("weight_class"),
+                        item.get("classification") or item.get("type"),
+                    ),
+                )
+                for position, item in enumerate(ksb_items, 1)
             ]
         )
         for position, answer in enumerate(record.get("questions") or [], 1):

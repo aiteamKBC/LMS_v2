@@ -5,6 +5,7 @@ import json
 
 SUPPORTED_CLASSIFICATIONS = {'main', 'secondary', 'possible'}
 LEGACY_CLASSIFICATION_MAP = {'practice': 'possible'}
+SUPPORTED_WEIGHT_CLASSES = {'hard', 'soft', 'possible'}
 
 
 def clean(value):
@@ -51,6 +52,18 @@ def normalise_classification(value):
     return raw if raw in SUPPORTED_CLASSIFICATIONS else 'secondary'
 
 
+def normalise_weight_class(value, classification=''):
+    raw = clean(value).lower()
+    if raw in SUPPORTED_WEIGHT_CLASSES:
+        return raw
+    classification = normalise_classification(classification)
+    if classification == 'main':
+        return 'hard'
+    if classification == 'possible':
+        return 'possible'
+    return 'soft'
+
+
 def decimal_weight(value):
     try:
         parsed = Decimal(str(value))
@@ -82,24 +95,16 @@ def ksb_type_from_value(value, code=''):
     return 'knowledge'
 
 
-def coverage_status(total_weight):
-    total = decimal_weight(total_weight)
-    if total <= 0:
-        return 'missing'
-    if total < 100:
-        return 'partial'
-    if total == 100:
-        return 'fully_covered'
-    return 'over_allocated'
-
-
 def default_summary_bucket():
+    # Coverage is reported as weight only. `mapped` counts the KSBs that carry
+    # any weight at all; `total_weight` is the sum across the bucket. There is
+    # deliberately no fully/partially-covered verdict: the weight is the fact,
+    # and any threshold on top of it would be an assumption.
     return {
         'required': 0,
-        'fully_covered': 0,
-        'partial': 0,
-        'missing': 0,
-        'over_allocated': 0,
+        'mapped': 0,
+        'unmapped': 0,
+        'total_weight': 0,
     }
 
 
@@ -150,6 +155,11 @@ def serialise_mapping(row, module=None, week=None, component=None):
         'componentName': clean(component.get('title')),
         'component_type': clean(component.get('type')),
         'componentType': clean(component.get('type')),
+        # The OTJH the component this mapping sits on is expected to take. Only
+        # component-level mappings carry it; week/module-level mappings are not
+        # attached to a single component, so they report 0.
+        'component_otjh': float_weight(component.get('expected_otjh')),
+        'componentOtjh': float_weight(component.get('expected_otjh')),
         'ksb_id': clean(row.get('ksb_id') or row.get('ksb_code')),
         'ksbId': clean(row.get('ksb_id') or row.get('ksb_code')),
         'code': normalise_code(row.get('ksb_code')),
@@ -159,6 +169,8 @@ def serialise_mapping(row, module=None, week=None, component=None):
         'source_id': clean(row.get('source_id')),
         'sourceId': clean(row.get('source_id')),
         'classification': normalise_classification(row.get('classification')),
+        'weight_class': normalise_weight_class(row.get('weight_class'), row.get('classification')),
+        'weightClass': normalise_weight_class(row.get('weight_class'), row.get('classification')),
         'mapping_level': mapping_level,
         'mappingLevel': mapping_level,
         'weight': float_weight(row.get('weight')),
@@ -254,7 +266,6 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
         definition = definitions_by_identity[identity]
         mappings = by_identity.get(identity, [])
         raw_total = sum(decimal_weight(mapping.get('weight')) for mapping in mappings)
-        status = coverage_status(raw_total)
         module_ids = {mapping.get('module_id') for mapping in mappings if mapping.get('module_id')}
         week_ids = {mapping.get('week_id') for mapping in mappings if mapping.get('week_id')}
         component_ids = {mapping.get('component_id') for mapping in mappings if mapping.get('component_id')}
@@ -270,7 +281,6 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
             'coveragePercentage': float_weight(raw_total),
             'progress_bar_percentage': min(float(raw_total), 100),
             'progressBarPercentage': min(float(raw_total), 100),
-            'status': status,
             'occurrence_count': occurrence_count,
             'occurrenceCount': occurrence_count,
             'mapping_count': len(mappings),
@@ -294,7 +304,13 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
         }.get(definition['ksb_type'], 'knowledge')
         for bucket in (summary['overall'], summary[bucket_name]):
             bucket['required'] += 1
-            bucket[status] += 1
+            if raw_total > 0:
+                bucket['mapped'] += 1
+            else:
+                bucket['unmapped'] += 1
+            bucket['total_weight'] = float_weight(
+                decimal_weight(bucket['total_weight']) + raw_total
+            )
 
     heatmap_modules = [
         {
@@ -328,7 +344,6 @@ def build_coverage(required_ksbs, mapping_rows, module_rows, week_rows, componen
             'sourceType': item['source_type'],
             'source_id': item['source_id'],
             'sourceId': item['source_id'],
-            'status': item['status'],
             'total': item['raw_total_weight'],
             'modules': [
                 {

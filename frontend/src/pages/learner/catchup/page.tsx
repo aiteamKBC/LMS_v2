@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { roleNavMap } from '@/mocks/navigation';
@@ -12,6 +13,7 @@ const learnerNav = roleNavMap.learner;
 type PanelView = 'recording' | null;
 
 export default function CatchUpPage() {
+  const navigate = useNavigate();
   const p = LEARNER_PROFILE;
   const s = ATTENDANCE_STATS;
   const [panelView, setPanelView] = useState<PanelView>(null);
@@ -163,9 +165,9 @@ export default function CatchUpPage() {
             <AppIcon className="ri-information-line text-secondary-400"></AppIcon>
             <span>Catch-up must be completed within 7 days. Evidence needs coach approval to restore attendance.</span>
           </div>
-          <a href="/learner/attendance" className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
+          <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
             <AppIcon className="ri-arrow-left-line"></AppIcon> Back to Attendance
-          </a>
+          </button>
         </div>
 
       </div>

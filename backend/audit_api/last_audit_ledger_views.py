@@ -11,14 +11,28 @@ deriving or inventing them from activity status or video duration.
 """
 
 import json
+import re
+import time
 from urllib.parse import parse_qs, urlparse
 
 from django.db import DatabaseError, connections
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.views.decorators.http import require_GET
+
+from .db_source import cache_scope, resolve
+from .learner_exclusions import is_excluded_learner
 
 
 CONNECTION_ALIAS = "audit"
+
+# The unfiltered cohort answer changes only when the mirror re-syncs, yet the
+# journal/search pages request it on every visit and Neon takes seconds to
+# aggregate it (~300k activity rows -> 1.3MB). Serve repeats from memory,
+# pre-serialized so the 1.3MB is not re-encoded on every hit.
+# Keyed by database source so the live workspace and the HOURS-TEST clone
+# never serve each other's cohort.
+_COHORT_CACHE_TTL_SECONDS = 300
+_cohort_cache = {}
 
 # Keep every mixed-case schema reference in one place.  The mirror is created
 # outside this Django project, so these are intentionally unmanaged SQL tables.
@@ -28,12 +42,29 @@ GROUP_LEARNERS = '"Last_audit"."group_learners"'
 ACTIVITIES = '"Last_audit"."activities"'
 ACTIVITY_RESULTS = '"Last_audit"."activity_results"'
 LEARNER_ATTENDANCE = '"Last_audit"."learner_attendance"'
+# Per-activity OTJH hours mapped by the fetch-evidence pipeline (planned + actual
+# with reporting method + timestamps). Keyed (learner_id, kind, ref); ref = the
+# LMS activity_id (video/audio/reading_quiz) or the attendance source_key.
+ACTIVITY_PLANNED_HOURS = '"Last_audit"."activity_planned_hours"'
+ACTIVITY_ACTUAL_HOURS = '"Last_audit"."activity_actual_hours"'
+
+# LEFT JOIN fragment shared by the per-learner feed and the cross-learner view,
+# so every learner's row carries their own planned / actual / method / timestamp.
+_OTJH_JOIN = f"""
+    LEFT JOIN {ACTIVITY_PLANNED_HOURS} ph
+           ON ph.learner_id = r.learner_id AND ph.ref = r.activity_id::text
+    LEFT JOIN {ACTIVITY_ACTUAL_HOURS} ah
+           ON ah.learner_id = r.learner_id AND ah.ref = r.activity_id::text
+"""
+_OTJH_COLS = ("ph.planned_hours AS otjh_planned, ah.actual_hours AS otjh_actual, "
+              "ah.reporting_method AS otjh_method, ah.timestamp_label AS otjh_timestamp, "
+              "ah.start_time AS otjh_from, ah.end_time AS otjh_to")
 
 
 def _connection():
-    """Use the dedicated audit alias, falling back for minimal test setups."""
-    alias = CONNECTION_ALIAS if CONNECTION_ALIAS in connections.databases else "default"
-    return connections[alias]
+    """The audit connection for this request — the live branch, or the clone
+    when the request came in under the HOURS-TEST mount."""
+    return connections[resolve(CONNECTION_ALIAS)]
 
 
 def _dict_rows(cursor):
@@ -51,6 +82,30 @@ def _json_list(value):
             return []
         return parsed if isinstance(parsed, list) else []
     return []
+
+
+_MONTH_KEY_RE = re.compile(r"^\d{4}-\d{2}$")
+
+
+def _month_number_map(value):
+    """A {"YYYY-MM": hours} JSON map as plain floats. Aptem's monthly plan
+    arrives as jsonb (Decimals) or as a JSON string depending on the driver."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for month, hours in value.items():
+        if not _MONTH_KEY_RE.match(str(month)):
+            continue
+        try:
+            result[str(month)] = round(float(hours), 2)
+        except (TypeError, ValueError):
+            continue
+    return result
 
 
 def _as_int(value, *, default=None, minimum=None, maximum=None):
@@ -78,10 +133,14 @@ def _string_list(value):
     return [str(value)]
 
 
-def _activity_content_url(video_url, reading_url, reading_type=None):
-    """Return browser-renderable content, unwrapping PDF-only Office URLs."""
+def _activity_content_url(video_url, reading_url, reading_type=None, audio_url=None):
+    """Return browser-renderable content, unwrapping PDF-only Office URLs.
+    Audio activities carry their player URL only inside raw->audio->iframe_url
+    — callers pass it as ``audio_url`` (all 702 audio rows have NO other URL)."""
     if video_url:
         return video_url
+    if audio_url and not reading_url:
+        return audio_url
     if not reading_url or str(reading_type or "").strip().lower() != "pdf":
         return reading_url
     try:
@@ -94,6 +153,19 @@ def _activity_content_url(video_url, reading_url, reading_type=None):
     except (TypeError, ValueError):
         pass
     return reading_url
+
+
+def _duration_min_sql(alias=""):
+    """SQL for configured_duration_min with the audio fallback.  The ingestion
+    pipeline stores audio durations only inside raw->audio, never on the
+    column, so the column alone is NULL for every audio activity.  The regex
+    guard keeps a malformed raw value from failing the whole query."""
+    prefix = f"{alias}." if alias else ""
+    json_path = f"{prefix}raw #>> '{{audio,configured_duration_min}}'"
+    return (
+        f"COALESCE({prefix}configured_duration_min, "
+        f"(CASE WHEN {json_path} ~ '^[0-9]+(\\.[0-9]+)?$' THEN {json_path} END)::numeric)"
+    )
 
 
 def _quiz_attempt_payload(row, component_id):
@@ -207,6 +279,10 @@ def _has_reading(row):
 
 
 def _activity_category(row):
+    # The source type/content is authoritative.  A recorded lesson can contain
+    # "PPT" or "PowerPoint" in its title while still being a real video (for
+    # example, a tutor presenting slides).  Inferring the category from that
+    # word made those lessons disappear from the media-duration workflow.
     category = _category(row.get("activity_type"))
     if category != "reading+quiz":
         return category
@@ -302,7 +378,19 @@ def _activity_payload(row):
     mapped_seconds = row.get("mapped_seconds")
     if mapped_seconds is None and row.get("mapped_hours") is not None:
         mapped_seconds = int(round(float(row["mapped_hours"]) * 3600))
-    hours_mapped = mapped_seconds is not None
+    # OTJH pipeline values (from activity_planned_hours / activity_actual_hours)
+    # take precedence over the reserved mapped_* columns when the join supplied
+    # them. Absent (other callers) -> fall back to the previous behaviour.
+    otjh_planned = row.get("otjh_planned")
+    otjh_actual = row.get("otjh_actual")
+    otjh_from = row.get("otjh_from")
+    otjh_to = row.get("otjh_to")
+    if otjh_actual is not None:
+        actual_hours = float(otjh_actual)
+        hours_mapped = True
+    else:
+        hours_mapped = mapped_seconds is not None
+        actual_hours = _hours(mapped_seconds) if hours_mapped else 0.0
     group_id = int(row["group_id"])
     activity_id = int(row["activity_id"])
     activity_date = row.get("activity_date")
@@ -321,13 +409,14 @@ def _activity_payload(row):
         "category": _activity_category(row),
         "activity": row.get("title") or f"Activity {activity_id}",
         "activity_subtitle": row.get("status"),
-        "planned": 0.0,
-        "actual": _hours(mapped_seconds) if hours_mapped else 0.0,
+        "planned": float(otjh_planned) if otjh_planned is not None else 0.0,
+        "actual": actual_hours,
         "mapped_seconds": mapped_seconds,
         "hours_mapped": hours_mapped,
-        "timestamp_from": None,
-        "timestamp_to": None,
-        "timestamp_display": "",
+        "reporting_method": row.get("otjh_method"),
+        "timestamp_from": otjh_from.strftime("%H:%M:%S") if otjh_from else None,
+        "timestamp_to": otjh_to.strftime("%H:%M:%S") if otjh_to else None,
+        "timestamp_display": row.get("otjh_timestamp") or "",
         "status": row.get("status"),
         "completed": _is_completed(row),
         "video_started": row.get("video_started"),
@@ -351,6 +440,7 @@ def _activity_payload(row):
             row.get("video_iframe_url"),
             row.get("reading_iframe_url"),
             row.get("reading_type"),
+            row.get("audio_iframe_url"),
         ),
         "source": "Last_audit",
     }
@@ -383,6 +473,12 @@ def cohort(request: HttpRequest) -> JsonResponse:
     """Return Aptem learners, enriched only by their verified LMS match."""
     search = (request.GET.get("search") or "").strip()
     programme = (request.GET.get("programme") or "").strip()
+    # Only the unfiltered call is cached: it is the hot path (every journal /
+    # search page load) and the only expensive one; filtered calls stay live.
+    cacheable = not search and not programme
+    cached = _cohort_cache.get(cache_scope())
+    if cacheable and cached and cached["expires_at"] > time.monotonic():
+        return HttpResponse(cached["body"], content_type="application/json")
     conditions = ["l.aptem_id IS NOT NULL"]
     params = []
     if search:
@@ -395,7 +491,49 @@ def cohort(request: HttpRequest) -> JsonResponse:
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
 
     sql = f"""
-        WITH learner_groups AS (
+        WITH learner_roster AS (
+            SELECT l.aptem_id, l.learner_name, l.learner_email,
+                   l.programme_name, l.programme_status,
+                   l.coach_name, l.coach_email,
+                   l.declared_lms_id, l.learner_id,
+                   l.planned_hours_total, l.planned_hours_monthly
+            FROM {LEARNERS} l
+
+            UNION ALL
+
+            SELECT aptem."ID" AS aptem_id,
+                   aptem."FullName" AS learner_name,
+                   aptem."Email" AS learner_email,
+                   COALESCE(
+                       NULLIF(btrim(aptem."Program Name"), ''),
+                       NULLIF(btrim(aptem."Group"), '')
+                   ) AS programme_name,
+                   NULLIF(btrim(aptem."Program-Status"), '') AS programme_status,
+                   NULLIF(btrim(aptem."OwnerName"), '') AS coach_name,
+                   NULLIF(btrim(aptem."OwnerEmail"), '') AS coach_email,
+                   NULL::bigint AS declared_lms_id,
+                   NULL::bigint AS learner_id,
+                   NULL::numeric AS planned_hours_total,
+                   '{{}}'::jsonb AS planned_hours_monthly
+            FROM "LMS"."Aptem_users" aptem
+            WHERE aptem."ID" IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM {LEARNERS} existing
+                  WHERE existing.aptem_id = aptem."ID"
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM "Audit".ilr_learning_deliveries ilr_delivery
+                  WHERE (
+                      NULLIF(btrim(aptem."Email"), '') IS NOT NULL
+                      AND lower(btrim(ilr_delivery.email)) = lower(btrim(aptem."Email"))
+                  ) OR (
+                      NULLIF(btrim(aptem."FullName"), '') IS NOT NULL
+                      AND lower(btrim(concat_ws(' ', ilr_delivery.given_names, ilr_delivery.family_name))) =
+                          lower(btrim(aptem."FullName"))
+                  )
+              )
+        ), learner_groups AS (
             SELECT gl.learner_id,
                    array_agg(DISTINCT g.group_name ORDER BY g.group_name)
                        FILTER (WHERE g.group_name IS NOT NULL) AS groups,
@@ -459,7 +597,15 @@ def cohort(request: HttpRequest) -> JsonResponse:
                      updated_at DESC NULLS LAST, id DESC
         )
         SELECT l.aptem_id, l.learner_name, l.learner_email, l.programme_name,
-               l.programme_status, l.coach_name, l.coach_email,
+               COALESCE(
+                   CASE
+                       WHEN lower(btrim(COALESCE(l.programme_status, ''))) IN ('', 'unknown') THEN NULL
+                       ELSE btrim(l.programme_status)
+                   END,
+                   NULLIF(btrim(aptem."Program-Status"), '')
+               ) AS programme_status,
+               COALESCE(NULLIF(btrim(l.coach_name), ''), NULLIF(btrim(aptem."OwnerName"), '')) AS coach_name,
+               COALESCE(NULLIF(btrim(l.coach_email), ''), NULLIF(btrim(aptem."OwnerEmail"), '')) AS coach_email,
                l.declared_lms_id,
                l.learner_id AS verified_lms_id,
                COALESCE(lg.groups, ARRAY[]::text[]) AS groups,
@@ -472,13 +618,19 @@ def cohort(request: HttpRequest) -> JsonResponse:
                COALESCE(rt.mapped_seconds, 0) AS lms_mapped_seconds,
                COALESCE(at.mapped_seconds, 0) AS attendance_seconds,
                ilr.planned_hours AS ilr_planned_hours,
+               -- Aptem's OWN plan (mirror of LMS."Aptem_users"."Planned" and
+               -- its monthly split) — what the learner's journal reports as the
+               -- programme/monthly plan, so both screens quote one number.
+               l.planned_hours_total AS aptem_planned_total,
+               l.planned_hours_monthly AS aptem_planned_monthly,
                COALESCE(am.months, '[]'::jsonb) AS months
-        FROM {LEARNERS} l
+        FROM learner_roster l
         LEFT JOIN learner_groups lg ON lg.learner_id = l.learner_id
         LEFT JOIN result_totals rt ON rt.learner_id = l.learner_id
         LEFT JOIN attendance_totals at ON at.aptem_id = l.aptem_id
         LEFT JOIN attendance_months am ON am.aptem_id = l.aptem_id
         LEFT JOIN ilr_profiles ilr ON ilr.email_key = lower(l.learner_email)
+        LEFT JOIN "LMS"."Aptem_users" aptem ON aptem."ID" = l.aptem_id
         {where}
         ORDER BY lower(COALESCE(l.learner_name, '')), l.aptem_id
     """
@@ -492,6 +644,10 @@ def cohort(request: HttpRequest) -> JsonResponse:
             status=503,
         )
 
+    rows = [
+        row for row in rows
+        if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+    ]
     all_programmes = sorted({row["programme_name"] for row in rows if row["programme_name"]})
     learners = []
     for row in rows:
@@ -523,6 +679,11 @@ def cohort(request: HttpRequest) -> JsonResponse:
             # A missing ILR row is unavailable data, not a real zero.
             "planned_total": float(row["ilr_planned_hours"]) if row["ilr_planned_hours"] is not None else 0.0,
             "planned_hours_available": row["ilr_planned_hours"] is not None,
+            # Aptem's own plan, kept beside the ILR figure rather than replacing
+            # it: the cohort table quotes Aptem (matching each learner's
+            # journal), while the ILR total stays available for funding views.
+            "aptem_planned_total": float(row["aptem_planned_total"]) if row["aptem_planned_total"] is not None else None,
+            "aptem_planned_monthly": _month_number_map(row["aptem_planned_monthly"]),
             # Attendance source hours are not the learner's approved OTJ actual
             # total. Keep Actual unavailable until every LMS activity has an
             # explicit mapped duration; do not surface the attendance sum as a
@@ -538,11 +699,17 @@ def cohort(request: HttpRequest) -> JsonResponse:
             "flags": flags,
             "months": _json_list(row["months"]),
         })
-    return JsonResponse({
+    response = JsonResponse({
         "source": "Last_audit",
         "programmes": all_programmes,
         "learners": learners,
     })
+    if cacheable:
+        _cohort_cache[cache_scope()] = {
+            "body": response.content,
+            "expires_at": time.monotonic() + _COHORT_CACHE_TTL_SECONDS,
+        }
+    return response
 
 
 @require_GET
@@ -570,6 +737,8 @@ def activities(request: HttpRequest) -> JsonResponse:
             if not learner:
                 return JsonResponse({"error": f"no Aptem learner {aptem_id}"}, status=404)
             learner_id, learner_name = learner
+            if is_excluded_learner(aptem_id, learner_name):
+                return JsonResponse({"error": "Learner not found."}, status=404)
 
             lms_rows = []
             if learner_id is not None and category.lower() != "attendance":
@@ -592,15 +761,18 @@ def activities(request: HttpRequest) -> JsonResponse:
                            COALESCE(a.activity_type, r.activity_type) AS activity_type,
                            a.title, a.activity_date,
                            a.video_iframe_url, a.reading_iframe_url,
+                           a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                            a.reading_type, a.quiz_id, a.quiz_questions,
-                           a.configured_duration_min, r.status,
+                           {_duration_min_sql('a')} AS configured_duration_min, r.status,
                            r.video_started, r.video_completed, r.reading_viewed,
                            r.quiz_attempted, r.quiz_passed, r.quiz_score,
-                           r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours
+                           r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,
+                           {_OTJH_COLS}
                     FROM {ACTIVITY_RESULTS} r
                     JOIN {LEARNERS} l ON l.learner_id = r.learner_id
                     JOIN {ACTIVITIES} a ON a.activity_id = r.activity_id
                     LEFT JOIN {GROUPS} g ON g.group_id = r.group_id
+                    {_OTJH_JOIN}
                     WHERE {' AND '.join(conditions)}
                 """, params)
                 lms_rows = _dict_rows(cursor)
@@ -654,30 +826,59 @@ def activities(request: HttpRequest) -> JsonResponse:
     })
 
 
+def _grouped(participants):
+    """Nest participants under their cohort so the UI can show them grouped."""
+    buckets, order = {}, []
+    for p in participants:
+        key = (p.get("group_id"), p.get("group_name"))
+        if key not in buckets:
+            buckets[key] = []
+            order.append(key)
+        buckets[key].append(p)
+    return [{"group_id": k[0], "group_name": k[1],
+             "participant_count": len(buckets[k]), "participants": buckets[k]}
+            for k in order]
+
+
 @require_GET
 def activity(request: HttpRequest) -> JsonResponse:
-    """Return a shared definition and all learner results for one activity."""
+    """Return a shared definition and all learner results for one activity.
+
+    Learners are grouped by their cohort (`groups[]`). For attendance the
+    activity is a live session: we match on the session key (the source_key with
+    the leading learner id removed = date + lecture), so every learner in that
+    session appears — attended or not — not just the one whose key was clicked.
+    """
     raw_id = request.GET.get("activity_id") or request.GET.get("component_id")
     if str(raw_id or "").startswith("att:"):
-        source_key = str(raw_id)[4:]
+        session_key = _session_key(raw_id)      # 'att:{id}_{date}_{slug}' -> '{date}_{slug}'
+        if not session_key:
+            return JsonResponse({"error": "invalid attendance key"}, status=400)
         try:
             with _connection().cursor() as cursor:
                 cursor.execute(f"""
                     SELECT la.*, l.learner_name
                     FROM {LEARNER_ATTENDANCE} la
                     JOIN {LEARNERS} l ON l.aptem_id = la.aptem_id
-                    WHERE la.source_key = %s
-                """, [source_key])
+                    WHERE substring(la.source_key from position('_' in la.source_key) + 1) = %s
+                    ORDER BY (la.attendance_value = 1) DESC,
+                             lower(COALESCE(l.learner_name, '')), la.aptem_id
+                """, [session_key])
                 rows = _dict_rows(cursor)
         except DatabaseError as error:
             return JsonResponse(
                 {"error": "Could not read Last_audit attendance.", "details": str(error)},
                 status=503,
             )
+        rows = [
+            row for row in rows
+            if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+        ]
         if not rows:
             return JsonResponse({"error": f"no Last_audit attendance {raw_id}"}, status=404)
-        item = _attendance_payload(rows[0])
-        participant = {
+        items = [_attendance_payload(row) for row in rows]
+        first = items[0]
+        participants = [{
             "learner_id": item["learner_id"],
             "learner_name": item["learner_name"],
             "found_as": "attendance",
@@ -688,6 +889,7 @@ def activity(request: HttpRequest) -> JsonResponse:
             "quiz_passed": False,
             "actual": item["actual"] if item["hours_mapped"] else None,
             "planned": None,
+            "reporting_method": "Attendance",
             "month": item["month"] or None,
             "date": item["date"],
             "timestamp_from": None,
@@ -695,23 +897,27 @@ def activity(request: HttpRequest) -> JsonResponse:
             "timestamp_display": item["timestamp_display"],
             "item_title": item.get("group_name"),
             "status": item["status"],
-        }
+            "group_id": None,
+            "group_name": item.get("group_name"),
+        } for item in items]
         return JsonResponse({
             "source": "Last_audit",
-            "component_id": item["activity_id"],
-            "source_activity_id": source_key,
-            "activity": item["activity"],
+            "component_id": first["activity_id"],
+            "source_activity_id": session_key,
+            "session_key": session_key,
+            "activity": first["activity"],
             "category": "attendance",
             "has_reading": False,
             "has_quiz": False,
-            "participant_count": 1,
-            "completed_count": 1 if item["completed"] else 0,
+            "participant_count": len(participants),
+            "completed_count": sum(1 for p in participants if p["completed"]),
             "reading_completed_count": 0,
             "quiz_attempted_count": 0,
             "quiz_completed_count": 0,
             "items": [],
             "item_count": 0,
-            "participants": [participant],
+            "participants": participants,
+            "groups": _grouped(participants),
         })
     try:
         group_id, activity_id = _parse_activity_ref(raw_id)
@@ -729,17 +935,21 @@ def activity(request: HttpRequest) -> JsonResponse:
                COALESCE(a.activity_type, r.activity_type) AS activity_type,
                a.title, a.activity_date,
                a.video_iframe_url, a.reading_iframe_url,
+               a.raw #>> '{{audio,iframe_url}}' AS audio_iframe_url,
                a.reading_type, a.quiz_id, a.quiz_questions,
-               a.configured_duration_min, r.status,
+               {_duration_min_sql('a')} AS configured_duration_min, r.status,
                r.video_started, r.video_completed, r.reading_viewed,
                r.quiz_attempted, r.quiz_passed, r.quiz_score,
-               r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours
+               r.quiz_maximum_score, r.mapped_seconds, r.mapped_hours,
+               {_OTJH_COLS}
         FROM {ACTIVITY_RESULTS} r
         JOIN {LEARNERS} l ON l.learner_id = r.learner_id
         JOIN {ACTIVITIES} a ON a.activity_id = r.activity_id
         LEFT JOIN {GROUPS} g ON g.group_id = r.group_id
+        {_OTJH_JOIN}
         WHERE {' AND '.join(conditions)}
-        ORDER BY lower(COALESCE(l.learner_name, '')), l.learner_id
+        ORDER BY lower(COALESCE(g.group_name, '')), r.group_id,
+                 lower(COALESCE(l.learner_name, '')), l.learner_id
     """
     try:
         with _connection().cursor() as cursor:
@@ -750,6 +960,10 @@ def activity(request: HttpRequest) -> JsonResponse:
             {"error": "Could not read Last_audit activity.", "details": str(error)},
             status=503,
         )
+    rows = [
+        row for row in rows
+        if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+    ]
     if not rows:
         return JsonResponse({"error": f"no Last_audit activity {raw_id}"}, status=404)
 
@@ -765,19 +979,23 @@ def activity(request: HttpRequest) -> JsonResponse:
         "quiz_attempted": item["quiz_attempted"] is True,
         "quiz_passed": item["quiz_passed"] is True,
         "actual": item["actual"] if item["hours_mapped"] else None,
-        "planned": None,
+        "planned": item["planned"] or None,
+        "reporting_method": item.get("reporting_method"),
         "month": item["month"] or None,
         "date": item["date"],
-        "timestamp_from": None,
-        "timestamp_to": None,
-        "timestamp_display": "",
+        "timestamp_from": item["timestamp_from"],
+        "timestamp_to": item["timestamp_to"],
+        "timestamp_display": item["timestamp_display"],
         "item_title": None,
         "status": item["status"],
+        "group_id": item["group_id"],
+        "group_name": item["group_name"],
     } for item in items]
     return JsonResponse({
         "source": "Last_audit",
         "component_id": first["activity_id"],
         "source_activity_id": activity_id,
+        "groups": _grouped(participants),
         "activity": first["activity"],
         "category": first["category"],
         "has_reading": first["has_reading"],
@@ -812,6 +1030,9 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
             status=400,
         )
 
+    if is_excluded_learner(aptem_id):
+        return JsonResponse({"error": "Learner not found."}, status=404)
+
     conditions = ["r.activity_id = %s", "l.aptem_id = %s"]
     params = [activity_id, aptem_id]
     if group_id is not None:
@@ -820,7 +1041,7 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
     try:
         with _connection().cursor() as cursor:
             cursor.execute(f"""
-                SELECT r.group_id, r.activity_id, l.aptem_id,
+                SELECT r.group_id, r.activity_id, l.aptem_id, l.learner_name,
                        a.title, a.quiz_id, a.quiz_body, a.quiz_questions,
                        r.quiz_attempted, r.quiz_passed, r.quiz_score,
                        r.quiz_maximum_score, r.quiz_attempt_number,
@@ -837,6 +1058,10 @@ def quiz_attempt(request: HttpRequest) -> JsonResponse:
             {"error": "Could not read Last_audit quiz attempt.", "details": str(error)},
             status=503,
         )
+    rows = [
+        row for row in rows
+        if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+    ]
     if not rows:
         return JsonResponse(
             {"error": "No matching Last_audit learner activity."},
@@ -930,6 +1155,10 @@ def attendance_sheet(request: HttpRequest) -> JsonResponse:
             {"error": "Could not read Last_audit attendance.", "details": str(error)},
             status=503,
         )
+    rows = [
+        row for row in rows
+        if not is_excluded_learner(row.get("aptem_id"), row.get("learner_name"))
+    ]
     if not rows:
         return JsonResponse(
             {"error": f"No attendance session for '{session_key}'."},
