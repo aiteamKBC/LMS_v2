@@ -158,15 +158,6 @@ export const coachNavItems: SidebarNavItem[] = [
       { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
     ],
   },
-  {
-    id: 'coach-group-employer',
-    label: 'Employer Engagement',
-    icon: 'ri-building-2-line',
-    href: '',
-    children: [
-      { id: 'coach-employer-actions', label: 'Employer Actions', icon: 'ri-building-2-line', href: '/coach/employer-actions' },
-    ],
-  },
 ];
 
 // ============================================================================
