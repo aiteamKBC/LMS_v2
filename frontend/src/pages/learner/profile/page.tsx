@@ -28,8 +28,10 @@ export default function LearnerProfilePage() {
   const [error, setError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Still enrolling? The wizard is the only thing this learner can act on.
-  useOnboardingRedirect(learner?.programmeStatus, !loading);
+  // Still enrolling? The wizard is the only thing this learner can act on. The
+  // profile body is held back while the redirect is in flight, so an onboarding
+  // learner never sees a frame of the delivery profile before the wizard opens.
+  const redirectingToOnboarding = useOnboardingRedirect(learner?.programmeStatus, !loading);
 
   useEffect(() => {
     let cancelled = false;
@@ -52,6 +54,14 @@ export default function LearnerProfilePage() {
     const reader = new FileReader();
     reader.onload = () => setPhotoUrl(String(reader.result));
     reader.readAsDataURL(file);
+  }
+
+  if (redirectingToOnboarding) {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-[13px] text-foreground-400">
+        <AppIcon className="ri-loader-4-line animate-spin mr-2"></AppIcon>Opening your enrolment…
+      </div>
+    );
   }
 
   return (

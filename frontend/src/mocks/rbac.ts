@@ -597,7 +597,7 @@ export const ROUTE_PERMISSIONS: RoutePermissionMap[] = [
   { path: '/workspace/admin', allowedRoles: ['tenant-admin', 'super-admin'] },
   { path: '/workspace/finance', allowedRoles: ['finance', 'tenant-admin', 'super-admin'] },
   { path: '/workspace/auditor', allowedRoles: ['auditor', 'tenant-admin', 'super-admin'] },
-  { path: '/admin/settings', allowedRoles: ['tenant-admin', 'super-admin'] },
+  { path: '/admin/system', allowedRoles: ['tenant-admin', 'super-admin'] },
   { path: '/learning', allowedRoles: ['learner', 'coach', 'tutor', 'tenant-admin', 'super-admin'] },
   { path: '/coaching', allowedRoles: ['learner', 'coach', 'tenant-admin', 'super-admin'] },
   { path: '/users', allowedRoles: ['compliance', 'qa', 'tenant-admin', 'super-admin'] },

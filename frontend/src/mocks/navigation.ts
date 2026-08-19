@@ -661,99 +661,41 @@ export const leadershipNavItems: SidebarNavItem[] = [
 // ============================================================================
 // SUPER ADMIN WORKSPACE — 8 grouped sections, 20 items, status dots only
 // ============================================================================
+// Every entry below points at a screen backed by a real table. Screens for
+// things this platform does not have — a tenant estate, a rules engine behind
+// "automations", a form builder, an AI mode store — were removed rather than
+// left rendering fixtures, so the sidebar is now a map of what exists.
 export const adminNavItems: SidebarNavItem[] = [
   // Dashboard
   { id: 'admin-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/admin' },
 
-  // User & Access Control
+  // User & Access Control — login."Login_accounts" and the four real roles
   {
     id: 'admin-group-users',
     label: 'User & Access Control',
     icon: 'ri-shield-user-line',
     children: [
-      { id: 'admin-users', label: 'Users', icon: 'ri-user-settings-line', href: '/admin/users' },
-      { id: 'admin-bulk-user-import', label: 'Bulk User Import', icon: 'ri-file-upload-line', href: '/admin/bulk-user-import', statusDot: 'blue' },
+      { id: 'admin-users', label: 'Accounts', icon: 'ri-user-settings-line', href: '/admin/users' },
       { id: 'admin-roles', label: 'Roles', icon: 'ri-shield-check-line', href: '/admin/roles' },
       { id: 'admin-permissions', label: 'Permissions', icon: 'ri-key-2-line', href: '/admin/permissions' },
+      { id: 'admin-access-logs', label: 'Access Logs', icon: 'ri-door-lock-line', href: '/admin/access-logs' },
     ],
   },
 
-  // Tenant Management
+  // Platform — documents, outbound email, subsystem readiness
   {
-    id: 'admin-group-tenants',
-    label: 'Tenant Management',
-    icon: 'ri-building-4-line',
-    children: [
-      { id: 'admin-tenants', label: 'Tenants', icon: 'ri-building-4-line', href: '/admin/tenants', statusDot: 'blue' },
-      { id: 'admin-tenant-onboarding', label: 'Tenant Onboarding', icon: 'ri-add-circle-line', href: '/admin/tenant-onboarding', statusDot: 'green' },
-      { id: 'admin-organisations', label: 'Organisations', icon: 'ri-building-line', href: '/admin/organisations' },
-      { id: 'admin-employers', label: 'Employers', icon: 'ri-building-2-line', href: '/admin/employers' },
-    ],
-  },
-
-  // Programme Setup
-  {
-    id: 'admin-group-programmes',
-    label: 'Programme Setup',
-    icon: 'ri-stack-line',
-    children: [
-      { id: 'admin-programmes', label: 'Programmes', icon: 'ri-stack-line', href: '/admin/programmes' },
-      { id: 'admin-cohorts', label: 'Cohorts', icon: 'ri-group-2-line', href: '/admin/cohorts' },
-    ],
-  },
-
-  // Platform Configuration
-  {
-    id: 'admin-group-config',
-    label: 'Platform Configuration',
+    id: 'admin-group-platform',
+    label: 'Platform',
     icon: 'ri-settings-4-line',
     children: [
-      { id: 'admin-forms', label: 'Forms', icon: 'ri-file-text-line', href: '/admin/forms', statusDot: 'amber' },
-      { id: 'admin-templates', label: 'Templates', icon: 'ri-layout-4-line', href: '/admin/templates' },
       { id: 'admin-documents', label: 'Documents', icon: 'ri-folder-line', href: '/admin/documents' },
-      { id: 'admin-automations', label: 'Automations', icon: 'ri-settings-4-line', href: '/admin/automations', statusDot: 'blue' },
-      { id: 'admin-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/admin/notifications' },
-      { id: 'admin-support-settings', label: 'Support Settings', icon: 'ri-customer-service-2-line', href: '/admin/support-settings', statusDot: 'blue' },
+      { id: 'admin-notifications', label: 'Email Delivery', icon: 'ri-mail-send-line', href: '/admin/notifications' },
+      { id: 'admin-system', label: 'System Status', icon: 'ri-pulse-line', href: '/admin/system' },
     ],
   },
 
-  // Communication
-  {
-    id: 'admin-group-communication',
-    label: 'Communication',
-    icon: 'ri-mail-line',
-    children: [
-      { id: 'admin-messages', label: 'Messages', icon: 'ri-mail-line', href: '/admin/messages', statusDot: 'blue' },
-      { id: 'admin-starred', label: 'Starred Messages', icon: 'ri-star-line', href: '/starred-messages' },
-    ],
-  },
-
-  // Integrations & AI
-  {
-    id: 'admin-group-integrations',
-    label: 'Integrations & AI',
-    icon: 'ri-robot-line',
-    children: [
-      { id: 'admin-integrations', label: 'Integrations', icon: 'ri-plug-2-line', href: '/admin/integrations', statusDot: 'amber' },
-      { id: 'admin-ai-settings', label: 'AI Settings', icon: 'ri-robot-line', href: '/admin/ai-settings' },
-      { id: 'admin-manual-mode', label: 'Manual Mode Settings', icon: 'ri-tools-line', href: '/admin/manual-mode' },
-    ],
-  },
-
-  // Governance & Audit
-  {
-    id: 'admin-group-governance',
-    label: 'Governance & Audit',
-    icon: 'ri-history-line',
-    children: [
-      { id: 'admin-audit-logs', label: 'Audit Logs', icon: 'ri-history-line', href: '/admin/audit-logs', statusDot: 'red' },
-      { id: 'admin-access-logs', label: 'Access Logs', icon: 'ri-door-lock-line', href: '/admin/access-logs', statusDot: 'blue' },
-      { id: 'admin-system', label: 'System Settings', icon: 'ri-settings-3-line', href: '/admin/system' },
-    ],
-  },
-
-  // Platform Reports
-  { id: 'admin-platform-report', label: 'Platform Reports', icon: 'ri-bar-chart-box-line', href: '/admin/platform-report', statusDot: 'blue' },
+  // Every headline count in one place, each row naming its source table.
+  { id: 'admin-platform-report', label: 'Platform Report', icon: 'ri-bar-chart-box-line', href: '/admin/platform-report' },
 ];
 
 // ============================================================================

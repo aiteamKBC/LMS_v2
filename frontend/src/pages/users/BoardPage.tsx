@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchEnrolmentBoard, updateEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
+import { fetchEnrolmentBoard, updateEnrolmentUser, deleteEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard } from '@/api/commercialUsers';
 import { fetchEnrolmentDocuments, getEnrolmentDocumentUrl, uploadEnrolmentDocument, DOC_SIGNING_PARTIES, type EnrolmentDocument, type EnrolmentDocType } from '@/api/enrolmentDocuments';
 import { fetchAgreement, issueAgreement, type Agreement } from '@/api/apprenticeshipAgreement';
@@ -61,8 +61,8 @@ import { SectionPanel, FieldRow, Table, EmptyState, ActionLink, StatusBadge, Fil
 
 const enrolmentNav = roleNavMap.apprentice;
 
-function Actions({ items }: { items: { label: string; icon?: string; onClick?: () => void }[] }) {
-  return <>{items.map((a, i) => <ActionLink key={i} label={a.label} icon={a.icon} onClick={a.onClick} />)}</>;
+function Actions({ items }: { items: { label: string; icon?: string; onClick?: () => void; danger?: boolean }[] }) {
+  return <>{items.map((a, i) => <ActionLink key={i} label={a.label} icon={a.icon} onClick={a.onClick} danger={a.danger} />)}</>;
 }
 
 /**
@@ -536,6 +536,14 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
   const [docs, setDocs] = useState<EnrolmentDocument[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [opening, setOpening] = useState<string | null>(null);
+  // `null` on each document below means two different things — still fetching, or
+  // fetched and not issued — and the "not issued yet" rows render on the latter.
+  // The five fetches settle independently, so gating those rows on their own
+  // value alone flashed every placeholder in the instant a fetch resolved, then
+  // swapped each to the real document as the rest landed. `loaded` holds the
+  // whole list behind the spinner until every fetch has settled, so the section
+  // goes straight from "Loading…" to its final state with no flicker.
+  const [loaded, setLoaded] = useState(false);
 
   // The Apprenticeship Agreement lives in its own table, so it is fetched
   // separately and shown alongside the generic documents as one list.
@@ -552,21 +560,29 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
 
   useEffect(() => {
     let cancelled = false;
-    fetchEnrolmentDocuments(kind, learnerId)
-      .then((r) => !cancelled && setDocs(r))
-      .catch((e: Error) => !cancelled && setErr(e.message));
-    fetchAgreement(learnerId)
-      .then((r) => !cancelled && setAgreement(r.agreement))
-      .catch(() => { /* No agreement yet is normal, not an error worth showing. */ });
-    fetchIlrDocument(learnerId)
-      .then((r) => !cancelled && setIlr(r.document))
-      .catch(() => { /* Likewise for the ILR. */ });
-    fetchTrainingPlanDocument(learnerId)
-      .then((r) => !cancelled && setPlan(r.document))
-      .catch(() => { /* And the Training Plan. */ });
-    fetchWrittenAgreement(learnerId)
-      .then((r) => !cancelled && setWritten(r.document))
-      .catch(() => { /* And the Written Agreement. */ });
+    // Re-fetching (learner switched): drop back to the spinner rather than
+    // showing the previous learner's documents while the new ones load.
+    setLoaded(false);
+    const all = [
+      fetchEnrolmentDocuments(kind, learnerId)
+        .then((r) => !cancelled && setDocs(r))
+        .catch((e: Error) => !cancelled && setErr(e.message)),
+      fetchAgreement(learnerId)
+        .then((r) => !cancelled && setAgreement(r.agreement))
+        .catch(() => { /* No agreement yet is normal, not an error worth showing. */ }),
+      fetchIlrDocument(learnerId)
+        .then((r) => !cancelled && setIlr(r.document))
+        .catch(() => { /* Likewise for the ILR. */ }),
+      fetchTrainingPlanDocument(learnerId)
+        .then((r) => !cancelled && setPlan(r.document))
+        .catch(() => { /* And the Training Plan. */ }),
+      fetchWrittenAgreement(learnerId)
+        .then((r) => !cancelled && setWritten(r.document))
+        .catch(() => { /* And the Written Agreement. */ }),
+    ];
+    // Every fetch settles its own state above; this only flips the gate once
+    // they all have, so the "not issued yet" placeholders never show mid-load.
+    Promise.all(all).then(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
   }, [kind, learnerId]);
 
@@ -675,11 +691,11 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
     <>
       <p className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider mb-2">{programme || 'Programme Name'}</p>
       {err && <p className="text-[12px] text-red-600 mb-2"><i className="ri-error-warning-line mr-1" />{err}</p>}
-      {docs === null && !err && <p className="text-[12px] text-foreground-400 py-2"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading documents…</p>}
-      {docs !== null && docs.length === 0 && !agreement && !ilr && !plan && !written && <EmptyState text="No documents" />}
+      {!loaded && !err && <p className="text-[12px] text-foreground-400 py-2"><i className="ri-loader-4-line animate-spin mr-1.5" />Loading documents…</p>}
+      {loaded && docs !== null && docs.length === 0 && !agreement && !ilr && !plan && !written && <EmptyState text="No documents" />}
       {/* Until the agreement is issued neither party can sign it, and it does
           not appear in the employer's portal — so offer it here. */}
-      {agreement === null && (
+      {loaded && agreement === null && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
           <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
             <i className="ri-file-add-line text-foreground-400 shrink-0" />
@@ -722,7 +738,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
       )}
       {/* The Individual Learner Record. Signed by the learner and the provider;
           the employer has no part in it and never sees it. */}
-      {ilr === null && (
+      {loaded && ilr === null && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
           <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
             <i className="ri-file-add-line text-foreground-400 shrink-0" />
@@ -782,7 +798,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
         </div>
       )}
       {/* The tripartite Training Plan: apprentice, employer and provider. */}
-      {plan === null && (
+      {loaded && plan === null && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
           <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
             <i className="ri-file-add-line text-foreground-400 shrink-0" />
@@ -839,7 +855,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
         </div>
       )}
       {/* The Written Agreement: learner, employer and provider all sign. */}
-      {written === null && (
+      {loaded && written === null && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 mb-2 border border-dashed border-foreground-200 rounded-lg">
           <span className="text-[12px] text-foreground-500 inline-flex items-center gap-1.5 min-w-0">
             <i className="ri-file-add-line text-foreground-400 shrink-0" />
@@ -1206,6 +1222,26 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
     }
   };
 
+  const [deleting, setDeleting] = useState(false);
+  const deleteUser = async () => {
+    if (deleting) return;
+    const ok = window.confirm(
+      `Delete ${board.user.name}'s user account?\n\n` +
+      'This permanently removes the enrolment record and sign-in access. This action cannot be undone.',
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await deleteEnrolmentUser(userId);
+      success('User account deleted', `${board.user.name}'s account has been permanently deleted.`);
+      navigate('/users');
+    } catch (e) {
+      error('Could not delete user account', e instanceof Error ? e.message : 'Unexpected error');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const onUploadPicked = async (file?: File) => {
     if (!file) return;
     if (file.type !== 'application/pdf') {
@@ -1261,8 +1297,8 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
           {/* 3.1 Contact details */}
           <SectionPanel title="Contact details" icon="ri-contacts-line" actions={<Actions items={[
             { label: 'view profile in console', onClick: () => navigate(`/workspace/learner/${kind}/${userId}`) },
-            { label: 'communication report', onClick: () => navigate('/admin/reports') },
             { label: 'edit users details', onClick: showWizard },
+            { label: deleting ? 'deleting account…' : 'delete user account', icon: 'ri-delete-bin-line', onClick: deleteUser, danger: true },
           ]} />}>
             <FieldRow readonly label="User email address" value={board.contact.email} />
             <FieldRow readonly label="Phone number" value={board.contact.phone} />
@@ -1287,7 +1323,6 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
 
           {/* 3.2 Activity Summary */}
           <SectionPanel title="Activity Summary (last 30 days)" icon="ri-pulse-line" actions={<Actions items={[
-            { label: 'usage report', onClick: () => navigate('/admin/reports') },
             { label: 'view activity list', onClick: () => navigate(`/workspace/learner/${kind}/${userId}`) },
             { label: 'view user tasks', onClick: () => navigate(`/learner/training-plan/${kind}/${userId}`) },
           ]} />}>
@@ -1362,7 +1397,6 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
 
           {/* 3.7 Managed jobs */}
           <SectionPanel title="Managed jobs and placements/workshops" icon="ri-briefcase-line" actions={<Actions items={[
-            { label: 'application report', onClick: () => navigate('/admin/reports') },
             { label: 'matching', onClick: () => notWritable('Vacancy matching', 'this learner’s placement comes from their onboarding employer details.') },
           ]} />}>
             <Table headers={['Employer', 'Title', 'Categories', 'From', 'To', 'Planned/Logged', 'Status', 'Date', 'Notes', 'Actions']}>
@@ -1470,17 +1504,22 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
           </SectionPanel>
 
           {/* 3.14 Compliance documents */}
-          <SectionPanel title="Compliance documents" icon="ri-shield-check-line">
-            <ComplianceDocuments kind={isCommercial ? 'commercial' : 'apprenticeship'} learnerId={userId} programme={board.programme.name} />
-          </SectionPanel>
+          {!isCommercial && (
+            <SectionPanel title="Compliance documents" icon="ri-shield-check-line">
+              <ComplianceDocuments kind="apprenticeship" learnerId={userId} programme={board.programme.name} />
+            </SectionPanel>
+          )}
 
           {/* 3.15 Review documents — the learner's started/finished enrolment
               reviews, replacing the placeholder list this panel used to render. */}
-          <SectionPanel title="Review documents" icon="ri-file-list-3-line">
-            <ReviewDocuments kind={isCommercial ? 'commercial' : 'apprenticeship'} learnerId={userId} programme={board.programme.name} />
-          </SectionPanel>
+          {!isCommercial && (
+            <SectionPanel title="Review documents" icon="ri-file-list-3-line">
+              <ReviewDocuments kind="apprenticeship" learnerId={userId} programme={board.programme.name} />
+            </SectionPanel>
+          )}
 
           {/* 3.16 Documents */}
+          {!isCommercial && (
           <SectionPanel
             title="Documents"
             icon="ri-folder-line"
@@ -1518,6 +1557,7 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
             </div>
             {board.documents.length === 0 ? <EmptyState text="No documents" /> : <Table headers={['Uploaded', 'Description', 'Edit', 'Delete']}>{board.documents.map((d) => <tr key={d.id} className="border-b border-foreground-100 last:border-0"><td className="py-2 px-3">{d.uploaded}</td><td className="py-2 px-3">{d.description}</td><td className="py-2 px-3" /><td className="py-2 px-3" /></tr>)}</Table>}
           </SectionPanel>
+          )}
 
           {/* 3.17 Competencies */}
           <SectionPanel

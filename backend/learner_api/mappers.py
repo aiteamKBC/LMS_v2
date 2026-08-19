@@ -9,6 +9,7 @@ And two inbound helpers:
   * validate_choices -> enforces the canonical option lists
 """
 from .constants import (
+    ACCESS_CHOICES,
     STATUS_CHOICES,
     TYPE_CHOICES,
     PROGRAMME_STATUS_CHOICES,
@@ -81,6 +82,13 @@ def to_list_row(u):
         # "Add" vs "Edit" without fetching every learner's plan.
         "hasLearningPlan": bool(u.learning_plan) or bool(u.training_plan),
         "programmeStatus": _s(u.programme_status),
+        # The programme itself, not just its status — the directory shows both.
+        # Staff and employer rows have no programme, so their mappers leave it
+        # absent and the table renders a dash.
+        "programme": _s(u.programme),
+        # The cohort too, so the directory can offer a programme -> cohort ->
+        # group filter cascade. Absent on staff/employer rows, like programme.
+        "cohort": _s(u.cohort),
         "notesCount": 0,
         "hasTasks": utype == "User",
         "reference": _s(u.organization),
@@ -355,6 +363,44 @@ WRITABLE_FIELDS = {
 }
 
 
+#: The only keys a **learner** may write about themselves, used when the
+#: onboarding wizard saves on their own behalf (see
+#: ``login.permissions.staff_only(allow_own_learner=...)``).
+#:
+#: An allowlist rather than a denylist, because WRITABLE_FIELDS above is where
+#: the danger is: it maps ``programmeStatus``, ``programme``, ``cohort``,
+#: ``employer`` and ``status``. A learner permitted to PATCH their own row
+#: unrestricted could send ``programmeStatus: "Active"`` and promote themselves
+#: straight past enrolment — skipping the wizard they are sitting in and the
+#: three countersigned reviews that are the only legitimate route to Delivery.
+#: Owning the record is not the same as being allowed to set every field on it.
+#:
+#: ``email`` is deliberately absent. It is the learner's sign-in identity —
+#: ``login.services.sync_account`` propagates a change to their login account —
+#: so a correction there is a staff action, not self-service.
+LEARNER_SELF_WRITABLE_KEYS = frozenset({
+    "username",
+    "phone",
+    "dob",
+    # 'Submitted', set by the wizard's Finish. Distinct from programmeStatus:
+    # it records that the learner handed their enrolment in, not that anyone
+    # has accepted it.
+    "onboardingStatus",
+})
+
+
+def restrict_to_self_writable(payload):
+    """Drop keys a learner may not write about themselves.
+
+    Returns ``(allowed_payload, rejected_keys)``. Stripping rather than
+    rejecting the request keeps the wizard working when it sends a field it has
+    always sent; the caller logs what was dropped.
+    """
+    allowed = {k: v for k, v in payload.items() if k in LEARNER_SELF_WRITABLE_KEYS}
+    rejected = sorted(k for k in payload if k not in LEARNER_SELF_WRITABLE_KEYS)
+    return allowed, rejected
+
+
 # --------------------------------------------------------------------------- #
 # structured training plan (shared by apprenticeship + delivery learners)     #
 # --------------------------------------------------------------------------- #
@@ -624,6 +670,10 @@ def write_commercial_fields(payload, *, require_create=False):
 # payload key -> model attribute
 STAFF_WRITABLE_FIELDS = {
     "username": "username",
+    # The access grant. Validated against ACCESS_CHOICES by validate_choices and
+    # again by a CHECK constraint on the column, because this value decides what
+    # the account can reach.
+    "access": "access",
     "email": "email",
     "phone": "phone_number",
     "dob": "date_of_birth",
@@ -658,6 +708,7 @@ def to_staff_row(u):
         "learningPlan": False,
         "programmeStatus": "",
         "position": _s(u.position),
+        "access": _s(u.access).lower(),
         "phone": _s(u.phone_number),
         "title": _s(u.title),
         "preferredName": _s(u.preferred_name),
@@ -687,11 +738,24 @@ def write_staff_fields(payload, *, require_create=False):
         val = payload.get(key)
         if val not in (None, "") and val not in allowed:
             raise ValidationError(f"Invalid {key}: {val!r}. Allowed: {', '.join(allowed)}")
+    # Access is matched case-insensitively — it is a slug, not a label, and the
+    # column's CHECK constraint compares lowercased too.
+    access = payload.get("access")
+    if access not in (None, "") and str(access).strip().lower() not in ACCESS_CHOICES:
+        raise ValidationError(
+            f"Invalid access: {access!r}. Allowed: {', '.join(ACCESS_CHOICES)}"
+        )
     fields = {}
     for key, attr in STAFF_WRITABLE_FIELDS.items():
         if key in payload:
             val = payload[key]
             fields[attr] = None if val is None else str(val).strip()
+    # Normalise after the generic pass so the stored value always matches the
+    # constraint and comparisons elsewhere never need to re-lower it. An empty
+    # string becomes NULL: the CHECK allows NULL or one of the four values, and
+    # "" is neither — clearing an access must revoke it, not 500.
+    if "access" in fields:
+        fields["access"] = fields["access"].lower() if fields["access"] else None
     for key, attr in APTEM_BOOL_FIELDS.items():
         if key in payload:
             fields[attr] = _bool_or_none(payload[key])
@@ -728,6 +792,9 @@ def to_learner_detail(source, learner_profile):
     })
     # Activity Feed is projected from the same normalized progress rows.
     activity_feed = learner_profile.activity_feed_entries(newest_first=True) if learner_profile else []
+    programme_start = getattr(source, "start_date", None)
+    if hasattr(programme_start, "isoformat"):
+        programme_start = programme_start.isoformat()
 
     return {
         "id": str(source.id),
@@ -735,7 +802,17 @@ def to_learner_detail(source, learner_profile):
         "email": _s(source.email),
         "phone": _s(source.phone_number),
         "programme": _s(source.programme),
-        "programmeStatus": _s(source.programme_status),
+        # Defaulted, not passed through raw: a never-set status *is* "Fresh
+        # user" (see DEFAULT_PROGRAMME_STATUS), and the console already displays
+        # it that way. Returning "" instead left the SPA unable to tell "nobody
+        # has started this enrolment" apart from "the status request failed",
+        # which the learner workspace has to distinguish — one shows a waiting
+        # page, the other must fall back to the full workspace rather than lock
+        # the learner out. Deciding it here, where that ambiguity does not
+        # exist, is the only place it can be decided correctly.
+        "programmeStatus": _s(source.programme_status) or DEFAULT_PROGRAMME_STATUS,
+        "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
+        "programmeStartDate": _s(programme_start),
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),

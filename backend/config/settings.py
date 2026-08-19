@@ -206,6 +206,9 @@ INSTALLED_APPS = [
     'engagement_api',
     'enrolment_api',
     'chat',
+    # Platform authentication (auth schema on the Neon enrolment database).
+    # Its tables are unmanaged and created by `manage.py apply_login_tables`.
+    'login',
 ]
 
 MIDDLEWARE = [
@@ -222,6 +225,10 @@ MIDDLEWARE = [
     'config.performance.PerformanceTimingMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    # Resolves the kbc_session cookie into request.login_account. Placed after
+    # Django's own AuthenticationMiddleware so both identities are available and
+    # neither shadows the other while the admin still uses django.contrib.auth.
+    'login.middleware.LoginSessionMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     # Turns a missing Curriculum table into a 503 naming the absent relations,
@@ -377,6 +384,14 @@ _enrolment_database_url = (
 )
 if _enrolment_database_url and not USE_SQLITE_FOR_TESTS:
     DATABASES['enrolment'] = database_from_url(_enrolment_database_url)
+    # `default` and `enrolment` are usually the same Neon database. Django treats
+    # a second alias with the same NAME as a mirror and leaves it pointing at the
+    # original during tests — which would aim the unmanaged-table DDL in
+    # login.test_runner at production. Naming its test database explicitly keeps
+    # the two apart. (login.test_runner refuses to run if this is ever undone.)
+    DATABASES['enrolment']['TEST'] = {
+        'NAME': os.environ.get('ENROLMENT_TEST_DB_NAME', 'test_neondb_enrolment'),
+    }
 
 # Learner Log Pro reads Audit.mre from its own Neon branch. Keeping it on a
 # separate alias prevents the imported audit workspace from changing the LMS's
@@ -498,6 +513,36 @@ AZURE_ENROLMENT_DOCS_CONTAINER = (
     or os.environ.get("AZURE_Enrolment_Docs_CONTAINER")
     or "enrolment-docs"
 )
+
+# --- Platform authentication (the `login` app) -------------------------------
+# Cookie flags for the kbc_session cookie. Secure is tied to DEBUG because a
+# Secure cookie is simply not stored over plain http, which would break local
+# development; every deployed environment runs DJANGO_DEBUG=false and so gets it.
+SESSION_COOKIE_SECURE = os.environ.get(
+    "SESSION_COOKIE_SECURE", "false" if DEBUG else "true"
+).lower() == "true"
+SESSION_COOKIE_SAMESITE = os.environ.get("SESSION_COOKIE_SAMESITE", "Lax")
+
+# Whether X-Forwarded-For may be believed when identifying the client. That value
+# feeds login throttling, and it is attacker-controlled unless a reverse proxy is
+# known to overwrite it — so it defaults to off and must be enabled deliberately
+# once the deployment is behind LiteSpeed/Cloudflare.
+TRUST_PROXY_IP_HEADER = os.environ.get("TRUST_PROXY_IP_HEADER", "false").lower() == "true"
+
+# Prefer Argon2 when the optional dependency is installed, otherwise Django's
+# PBKDF2 default. Both are acceptable; Argon2 is the stronger choice and is what
+# requirements.txt pins (argon2-cffi).
+try:  # pragma: no cover - depends on the installed environment
+    import argon2  # noqa: F401
+
+    PASSWORD_HASHERS = [
+        'django.contrib.auth.hashers.Argon2PasswordHasher',
+        'django.contrib.auth.hashers.PBKDF2PasswordHasher',
+        'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
+        'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',
+    ]
+except ImportError:
+    pass
 
 LOGGING = {
     'version': 1,

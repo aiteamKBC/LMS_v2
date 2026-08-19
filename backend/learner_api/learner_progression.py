@@ -43,6 +43,18 @@ logger = logging.getLogger(__name__)
 READY_TO_ENROL_STATUS = "Ready to enrol"
 ACTIVE_STATUS = "Active"
 
+# Commercial learners do not use the funded apprenticeship compliance path.
+# These are the statuses that can safely be normalised from the programme start
+# date; manual/terminal statuses are left untouched.
+COMMERCIAL_PRE_START_STATUSES = {
+    "",
+    "Fresh user",
+    "Onboarding",
+    DELIVERY_PROGRAMME_STATUS,
+    READY_TO_ENROL_STATUS,
+    ACTIVE_STATUS,
+}
+
 # The four compliance documents a learner must have fully signed before they are
 # ready to enrol. Each is its own table with its own signatories; `Fully_signed`
 # is only true once every party that document needs has signed.
@@ -56,6 +68,14 @@ COMPLIANCE_DOCUMENT_MODELS = (
 
 def _learner_kind(learner):
     return _s(getattr(learner, "learner_type", "")) or "apprenticeship"
+
+
+def _has_assigned_learning_plan(learner):
+    """Whether a learner has a saved plan assigned by the delivery team."""
+    return bool(
+        getattr(learner, "learning_plan", None)
+        or getattr(learner, "training_plan", None)
+    )
 
 
 def compliance_document_state(learner_kind, learner_id):
@@ -127,6 +147,29 @@ def advance_learner(learner):
     """
     try:
         changed = None
+
+        # Commercial delivery is date-driven. They have no ILR documents or
+        # onboarding reviews, so never make their activation depend on either.
+        if _learner_kind(learner).casefold() == "commercial":
+            current = _s(learner.programme_status)
+            if current in COMMERCIAL_PRE_START_STATUSES:
+                start = _programme_start_date(learner)
+                ready_to_start = (
+                    _has_assigned_learning_plan(learner)
+                    and start is not None
+                    and start <= timezone.localdate()
+                )
+                target = ACTIVE_STATUS if ready_to_start else DELIVERY_PROGRAMME_STATUS
+                if current != target:
+                    learner.programme_status = target
+                    learner.save(update_fields=["programme_status"])
+                    changed = target
+                if target == ACTIVE_STATUS:
+                    from .active_users import sync_active_user
+
+                    sync_active_user(learner)
+                return changed
+            return None
 
         # ---- Delivery -> Ready to enrol ----
         if _s(learner.programme_status) == DELIVERY_PROGRAMME_STATUS:

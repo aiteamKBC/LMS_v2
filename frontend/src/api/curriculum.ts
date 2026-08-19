@@ -4,6 +4,8 @@
 // Django backend.
 // ============================================================================
 
+import { createCachedResource } from './cachedRequest';
+
 const BASE = '/learner_api/curriculum';
 
 export interface CurriculumItem {
@@ -59,8 +61,42 @@ export interface KsbProfileResponse {
   results: { id: string; theme: string; kind: 'Knowledge' | 'Skill' | 'Behaviour'; codes: string[]; title: string }[];
 }
 
+/**
+ * Authored competencies change only when the curriculum is edited, and every
+ * learner on a programme gets the identical list — so this is cached for longer
+ * than the learner-specific payloads. The wizard asks for it on every mount to
+ * seed unrated rows, which was a request per visit for a list that had not moved.
+ */
+const ksbProfileResource = createCachedResource<KsbProfileResponse>(
+  'ksb-profile',
+  (programme) => request<KsbProfileResponse>(`${BASE}/ksb-profile/?${qs({ programme })}`),
+  5 * 60_000,
+);
+
 export async function fetchKsbProfile(programme: string): Promise<KsbProfileResponse> {
-  return request<KsbProfileResponse>(`${BASE}/ksb-profile/?${qs({ programme })}`);
+  return ksbProfileResource.read(programme);
+}
+
+/**
+ * Store a profile that another response already carried, so the next
+ * fetchKsbProfile resolves from memory instead of opening a request.
+ *
+ * The wizard bootstrap returns the learner's profile alongside their board (see
+ * fetchWizardBootstrap): the profile used to be fetched only after the saved
+ * answers had arrived, which put it third in a chain of round-trips and left the
+ * Skills Radar with no rows until it landed.
+ */
+export function primeKsbProfile(programme: string, data: KsbProfileResponse): void {
+  ksbProfileResource.prime(programme, data);
+}
+
+/**
+ * The profile already in memory, or undefined. Lets the Skills Radar step render
+ * its competencies on the first frame instead of flashing a spinner for a list it
+ * already has — the wizard bootstrap primes this before the step ever mounts.
+ */
+export function peekKsbProfile(programme: string): KsbProfileResponse | undefined {
+  return ksbProfileResource.peek(programme);
 }
 
 /** Modules for a programme (independent of cohort/group). */

@@ -9,20 +9,30 @@ Routes (mounted under /learner_api/ in config/urls.py):
     GET  /learner_api/staff-users/                -> {count, results:[staff rows]}
     POST /learner_api/staff-users/                -> create an admin/staff account
 
-CSRF is exempted: this is an internal same-origin dev API reached through the
-Vite proxy, with no cookie-based auth.
+Authentication: write methods require an authenticated staff or admin session —
+see ``@staff_only(writes_only=True)`` on each view and
+``login.permissions.staff_only`` for why the read paths are not gated yet.
+Django's CSRF middleware is exempted because these are JSON endpoints; the
+cross-site protection is the ``X-Requested-With`` header the login API also
+requires, plus the SameSite=Lax session cookie.
 """
 import json
 
-from django.db import DatabaseError
+import logging
+
+from django.db import DatabaseError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+
+from login.permissions import staff_only
+from login.models import Invitation, LoginAccount, LoginSession, PasswordReset
 
 from .active_users import cohort_dates, replace_training_plan, sync_active_user
 from .identity import learner_profile_for_source
 from .learner_progression import ACTIVE_STATUS, advance_learner
 from .constants import (
+    ACCESS_SUPER_ADMIN,
     STATUS_CHOICES,
     TYPE_CHOICES,
     PROGRAMME_STATUS_CHOICES,
@@ -32,6 +42,7 @@ from .constants import (
 )
 from .mappers import (
     ValidationError,
+    restrict_to_self_writable,
     to_board,
     to_commercial_row,
     to_list_row,
@@ -41,6 +52,8 @@ from .mappers import (
     write_staff_fields,
 )
 from .models import CommercialUser, Employer, EnrolmentUser, LearnerProfile, StaffUser
+
+logger = logging.getLogger(__name__)
 
 
 def _learner_profiles_with_plan():
@@ -63,6 +76,40 @@ def _error(message, status):
     return JsonResponse({"error": message}, status=status)
 
 
+def _send_platform_invitation(request, subject_type, subject_id, subject=None):
+    """Invite a just-created person to the platform, and describe the outcome.
+
+    Called from the create paths when the form's "Invite to platform" flag is
+    set. Imported lazily so learner_api keeps no import-time dependency on the
+    login app — the two are wired together at the URL layer, and a circular
+    import here would be easy to introduce and annoying to unpick.
+
+    Never raises: see login.services.invite_subject. The returned dict rides
+    along on the 201 so the console can say "created, but the invitation email
+    could not be sent" instead of silently doing nothing.
+
+    Authorisation matters here and is *not* assumed. These creation endpoints
+    carry no auth decorator of their own, so the signed-in account is passed
+    down and ``invite_subject`` refuses an anonymous or under-privileged caller.
+    Without that, an unauthenticated POST naming ``position: "Admin"`` would
+    mint an admin credential and email the set-password link to whatever address
+    the request supplied.
+    """
+    from login.services import invite_subject
+    from login.security import client_ip, user_agent
+
+    inviter = getattr(request, "login_account", None)
+    return invite_subject(
+        subject_type,
+        subject_id,
+        subject=subject,
+        inviter=inviter,
+        invited_by=inviter.email if inviter else None,
+        ip=client_ip(request),
+        user_agent=user_agent(request),
+    )
+
+
 def _check_employer_id(fields):
     """Reject an "Employer_id" that names no employer record.
 
@@ -78,6 +125,21 @@ def _check_employer_id(fields):
 
 
 def _profile_is_apprenticeship(profile):
+    """Whether this profile is an apprenticeship learner.
+
+    ``learner_type`` is the stored answer, copied from the enrolment record, and
+    is trusted whenever it is set.
+
+    The name-based guess below is the old rule, kept only for profiles that have
+    no enrolment record to read the type from (see apply_learner_type_column's
+    untyped list). It is a guess: a commercial learner on a programme called
+    "Apprenticeship Skills" would be misfiled by it, which is why the column
+    exists.
+    """
+    stored = str(getattr(profile, "learner_type", "") or "").strip().casefold()
+    if stored:
+        return stored == "apprenticeship"
+
     programme = str(profile.programme or "").strip().casefold()
     lifecycle = str(profile.lifecycle_status or "").strip().casefold()
     return "apprentice" in programme or programme.startswith("apm") or lifecycle == "onboarding"
@@ -117,6 +179,10 @@ def _profile_enrolment_row(profile):
         "subscriptionVerified": subscription_status.casefold() == "fulluser",
         "learningPlan": True,
         "programmeStatus": profile.programme_status or "",
+        # Kept in step with mappers.to_list_row, which the directory also reads
+        # from — a row missing the key would render blank instead of the name.
+        "programme": profile.programme or "",
+        "cohort": profile.cohort or "",
         "notesCount": 0,
         "hasTasks": True,
         "reference": "",
@@ -227,6 +293,11 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
         if requested_status in {"active", "fulluser"} or programme_status.casefold() == "active"
         else ("onboarding" if apprenticeship else "inactive")
     )
+    # enrolment_id is deliberately left null: this path creates a profile
+    # straight from a payload, with no enrolment."Created_users" row behind it,
+    # so there is no enrolment id to record. Inventing one would be worse than
+    # the honest null — apply_learner_enrolment_id reports these as unlinked.
+    #
     # email_normalized is GENERATED ALWAYS in Postgres and created_at/updated_at
     # are auto_now_add/auto_now — Django and the DB supply all three, so naming
     # them here would be rejected on insert.
@@ -243,6 +314,7 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def learner_coach(request, pk):
     """Read/update a learner's coach contact, stored on the "Learner"."Active_users"
     mirror (columns coach_name / coach_email). Set from the Delivery block of the
@@ -299,6 +371,7 @@ def learner_coach(request, pk):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def enrolment_users(request):
     """The single learner collection — both kinds live in one table.
 
@@ -355,7 +428,20 @@ def enrolment_users(request):
             user = EnrolmentUser.all_learners.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse(to_list_row(user), status=201)
+
+        # Commercial learners are date-driven from the moment they are
+        # created: before the start date they are Delivery, and on/after it
+        # they become Active. Apprenticeship learners keep the normal document
+        # and review progression.
+        advance_learner(user)
+        row = to_list_row(user)
+        # "Would you like to invite this user into the platform?" — send the
+        # set-your-password email. Reported alongside the created learner rather
+        # than raising: the learner exists either way, and a mail outage must not
+        # turn a successful enrolment into a 5xx.
+        if fields.get("invite_to_platform"):
+            row["invitation"] = _send_platform_invitation(request, "learner", user.id, subject=user)
+        return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
 
@@ -376,6 +462,10 @@ def enrolment_user_options(request):
 
 
 @csrf_exempt
+# allow_own_learner: the onboarding wizard submits on the learner's own behalf.
+# The payload is narrowed to LEARNER_SELF_WRITABLE_KEYS below — owning the row
+# is not permission to set programmeStatus on it.
+@staff_only(writes_only=True, allow_own_learner="pk")
 def enrolment_user_detail(request, pk):
     try:
         # all_learners, not objects: `objects` is scoped to apprenticeship rows, so
@@ -386,6 +476,28 @@ def enrolment_user_detail(request, pk):
         return _error(f"Database error: {exc}", 502)
     if user is None:
         return _error("User not found.", 404)
+    if request.method == "DELETE":
+        # The shared decorator allows a learner to PATCH their own wizard
+        # record. That exception must never extend to account deletion.
+        if getattr(request, "learner_self_write", False):
+            return _error("Only staff can delete a user account.", 403)
+
+        account = LoginAccount.objects.filter(
+            subject_type="learner", subject_id=user.pk
+        ).first()
+        try:
+            with transaction.atomic(using="enrolment"):
+                # These tables use deliberate non-cascading links so account
+                # removal is explicit and active sessions are revoked first.
+                if account is not None:
+                    LoginSession.objects.filter(account_id=account.pk).delete()
+                    Invitation.objects.filter(account_id=account.pk).delete()
+                    PasswordReset.objects.filter(account_id=account.pk).delete()
+                    account.delete()
+                user.delete()
+        except DatabaseError as exc:
+            return _error(f"Could not delete user account: {exc}", 502)
+        return JsonResponse({"deleted": True, "id": pk})
     if request.method == "GET":
         # Safety net: a learner whose onboarding reviews are all signed belongs in
         # Delivery. The sign endpoint normally moves them the moment the last
@@ -401,6 +513,18 @@ def enrolment_user_detail(request, pk):
     if request.method in ("PATCH", "PUT"):
         try:
             payload = _parse_body(request)
+            # A learner submitting their own wizard may only touch their own
+            # details — not programmeStatus, programme, cohort or employer,
+            # which WRITABLE_FIELDS otherwise accepts. Stripped rather than
+            # rejected so a wizard step that has always sent a field keeps
+            # working; what was dropped is logged, not silently forgotten.
+            if getattr(request, "learner_self_write", False):
+                payload, rejected = restrict_to_self_writable(payload)
+                if rejected:
+                    logger.warning(
+                        "Learner %s attempted to write fields they do not own: %s",
+                        pk, ", ".join(rejected),
+                    )
             fields = write_fields(payload)
             _check_employer_id(fields)
         except ValidationError as exc:
@@ -418,6 +542,8 @@ def enrolment_user_detail(request, pk):
 
 
 @csrf_exempt
+# Same reason as enrolment_user_detail: the learner presses Finish themselves.
+@staff_only(writes_only=True, allow_own_learner="pk")
 def enrolment_user_finish(request, pk):
     """Check whether an enrolled learner is ready for automatic activation.
 
@@ -453,6 +579,11 @@ def enrolment_user_finish(request, pk):
         # start date.
         advance_learner(user)
         if str(user.programme_status or "").strip() != ACTIVE_STATUS:
+            if str(getattr(user, "learner_type", "") or "").strip().casefold() == "commercial":
+                return _error(
+                    "This commercial learner becomes Active once a learning plan is assigned and the programme start date has arrived.",
+                    409,
+                )
             return _error(
                 "This learner becomes Active automatically once every compliance document is signed and the programme start date has arrived.",
                 409,
@@ -469,6 +600,7 @@ def enrolment_user_finish(request, pk):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def commercial_users(request):
     if request.method == "GET":
         try:
@@ -495,6 +627,7 @@ def commercial_users(request):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def staff_users(request):
     """Staff/admin accounts — enrolment."Staff_users".
 
@@ -522,12 +655,17 @@ def staff_users(request):
             user = StaffUser.objects.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse(to_staff_row(user), status=201)
+
+        row = to_staff_row(user)
+        if fields.get("invite_to_platform"):
+            row["invitation"] = _send_platform_invitation(request, "staff", user.id, subject=user)
+        return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def staff_user_detail(request, pk):
     try:
         user = StaffUser.objects.get(pk=pk)
@@ -545,6 +683,34 @@ def staff_user_detail(request, pk):
             fields = write_staff_fields(payload)
         except ValidationError as exc:
             return _error(str(exc), 400)
+
+        # Granting access is an admin-only act, even though editing a staff
+        # record is not. `staff_only` lets any staff account write any staff
+        # row, so without this a curriculum- or coach-access user could PATCH
+        # their own record to access='super-admin' and take the whole platform —
+        # the escalation this mechanism exists to prevent.
+        if "access" in fields:
+            actor = getattr(request, "login_account", None)
+            if actor is None or actor.role != "admin":
+                return _error(
+                    "Only an administrator can change an account's access.", 403
+                )
+            if actor.subject_type == "staff" and actor.subject_id == user.pk:
+                # Self-*demotion* is refused: it would strip the caller's own
+                # admin role mid-request and, with one administrator, could leave
+                # nobody able to grant access to anyone ever again.
+                #
+                # Self-promotion to super-admin is allowed, and has to be: the
+                # bootstrap administrator holds their role via Position with no
+                # Access recorded, so refusing every self-change would leave them
+                # permanently unable to record the access they already exercise.
+                # It grants nothing new either way — they are already an admin.
+                if fields["access"] != ACCESS_SUPER_ADMIN:
+                    return _error(
+                        "You cannot reduce your own access. Ask another administrator.",
+                        400,
+                    )
+
         if fields:
             for attr, value in fields.items():
                 setattr(user, attr, value)
@@ -559,6 +725,7 @@ def staff_user_detail(request, pk):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def commercial_user_detail(request, pk):
     try:
         profile = _learner_profiles_with_plan().filter(pk=pk).first()

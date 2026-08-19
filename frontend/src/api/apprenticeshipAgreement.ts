@@ -81,7 +81,7 @@ async function readJson<T>(res: Response): Promise<T> {
 }
 
 export async function fetchAgreement(learnerId: string | number): Promise<AgreementResponse> {
-  return readJson(await fetch(`${BASE}/${learnerId}/`));
+  return readJson(await fetch(`${BASE}/${learnerId}/`, { credentials: 'include' }));
 }
 
 /**
@@ -91,7 +91,7 @@ export async function fetchAgreement(learnerId: string | number): Promise<Agreem
  */
 export async function issueAgreement(learnerId: string | number): Promise<Agreement> {
   const data = await readJson<{ agreement: Agreement }>(
-    await fetch(`${BASE}/${learnerId}/issue/`, { method: 'POST' }),
+    await fetch(`${BASE}/${learnerId}/issue/`, { method: 'POST', credentials: 'include' }),
   );
   return data.agreement;
 }
@@ -106,6 +106,7 @@ export async function signAgreement(
   const data = await readJson<{ agreement: Agreement }>(
     await fetch(`${BASE}/${learnerId}/sign/`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ party, name, signature }),
     }),

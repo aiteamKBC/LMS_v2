@@ -1,6 +1,6 @@
-import { useState, type ReactNode, useEffect, useRef } from 'react';
+import { useState, type CSSProperties, type ReactNode, useEffect, useRef } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { Sidebar, type SidebarNavItem } from './Sidebar';
+import { Sidebar, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, type SidebarNavItem } from './Sidebar';
 import { Header } from './Header';
 import { GlobalSearch } from './GlobalSearch';
 import { useAuth } from '@/hooks/useAuth';
@@ -26,6 +26,22 @@ interface BreadcrumbItem {
 }
 
 const ROUTE_HISTORY_KEY = 'lmsRouteHistory';
+const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
+
+/**
+ * Whether the sidebar is pinned open.
+ *
+ * Held here rather than inside the sidebar because the shell has to reserve the
+ * matching width — a pinned sidebar pushes the content across, while the hover
+ * preview only floats above it.
+ */
+function readPinnedPreference() {
+  try {
+    return localStorage.getItem(SIDEBAR_PINNED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
 
 function readRouteHistory() {
   try {
@@ -137,6 +153,14 @@ export function WorkspaceShell({
   const prevPathRef = useRef(location.pathname);
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
+
+  const handlePinChange = (pinned: boolean) => {
+    setSidebarPinned(pinned);
+    try {
+      localStorage.setItem(SIDEBAR_PINNED_KEY, String(pinned));
+    } catch { /* Ignore unavailable browser storage. */ }
+  };
 
   const displayName = userName || auth.user?.fullName || 'User';
   const displayRole = userRole || auth.roles[0]?.name || roleLabel;
@@ -185,18 +209,31 @@ export function WorkspaceShell({
   };
 
   return (
-    <div className="dashboard-theme workspace-shell flex h-screen bg-background-200 overflow-hidden">
+    <div
+      className="dashboard-theme workspace-shell flex h-screen bg-background-200 overflow-hidden"
+      // The offset itself is applied under a `lg` media query in index.css —
+      // below that breakpoint the sidebar is an off-canvas drawer and must
+      // reserve nothing.
+      style={{ '--kbc-sidebar-width': `${sidebarPinned ? SIDEBAR_EXPANDED_WIDTH : SIDEBAR_RAIL_WIDTH}px` } as CSSProperties}
+    >
       <Sidebar
         role={role}
         roleLabel={roleLabel}
         navItems={navItems}
         userName={displayName}
         userRole={displayRole}
-        collapsed={true}
+        pinned={sidebarPinned}
+        onPinChange={handlePinChange}
         mobileOpen={mobileSidebarOpen}
         onCloseMobile={() => setMobileSidebarOpen(false)}
       />
-      <div className="workspace-viewport flex-1 flex flex-col min-w-0 ml-0 bg-background-200 lg:ml-[56px] transition-[margin] duration-[650ms] ease-out">
+      {/* Reserve exactly the sidebar's own width — the two numbers come from the
+          same constants, so the content can never sit under the rail. The hover
+          preview is deliberately not reserved: it floats above the page. */}
+      <div
+        className="workspace-content flex-1 flex flex-col min-w-0 bg-background-200 transition-[margin] duration-300 ease-out"
+        style={{ marginLeft: `var(--kbc-sidebar-offset, 0px)` }}
+      >
         <Header
           pageTitle={pageTitle}
           pageSubtitle={pageSubtitle}

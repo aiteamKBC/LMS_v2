@@ -1,184 +1,62 @@
-import { useState } from 'react';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { roleNavMap } from '@/mocks/navigation';
+// ============================================================================
+// Employers — enrolment."Employers"
+//
+// An employer here is a contact person, possibly associated with one or more
+// organisation profiles. Contracts and apprentice totals are not stored on this
+// table, so the old page's invented figures have been removed.
+// ============================================================================
+import { useCallback, useState } from 'react';
+import { listEmployers } from '@/api/employers';
+import { AdminPage, DataPanel, SourceNote } from '../_shared/AdminPage';
+import { useAdminData } from '../_shared/useAdminData';
 
-const adminNav = roleNavMap.admin;
-
-const EMPLOYERS_DATA = [
-  { id: 'e1', name: 'Tim Hortons UK', industry: 'Food & Beverage', size: '500+ employees', activeApprentices: 2, totalApprentices: 4, status: 'active' as const, contact: 'Lauren Mitchell', email: 'lauren.mitchell@timhortons.co.uk', phone: '+44 20 7946 0123', address: 'London, UK', contracts: ['2025-001', '2024-003'] },
-  { id: 'e2', name: 'Unilever UK', industry: 'Consumer Goods', size: '5000+ employees', activeApprentices: 1, totalApprentices: 8, status: 'active' as const, contact: 'Rebecca Okonkwo', email: 'rebecca.okonkwo@unilever.co.uk', phone: '+44 20 7822 5252', address: 'London, UK', contracts: ['2025-002'] },
-  { id: 'e3', name: 'Tesco PLC', industry: 'Retail', size: '10000+ employees', activeApprentices: 3, totalApprentices: 12, status: 'active' as const, contact: 'Sarah Chen', email: 'sarah.chen@tesco.co.uk', phone: '+44 800 505 555', address: 'Welwyn Garden City, UK', contracts: ['2024-001', '2025-004', '2025-005'] },
-  { id: 'e4', name: 'Kent County Council', industry: 'Public Sector', size: '5000+ employees', activeApprentices: 4, totalApprentices: 14, status: 'active' as const, contact: 'James Peterson', email: 'j.peterson@kent.gov.uk', phone: '+44 300 041 4141', address: 'Maidstone, UK', contracts: ['2023-002', '2024-005', '2025-006', '2025-007'] },
-  { id: 'e5', name: 'NHS Foundation Trust', industry: 'Healthcare', size: '2000+ employees', activeApprentices: 0, totalApprentices: 3, status: 'pending' as const, contact: 'Dr. Aisha Patel', email: 'a.patel@nhs.uk', phone: '+44 20 3456 7890', address: 'London, UK', contracts: [] },
-  { id: 'e6', name: 'British Telecom', industry: 'Telecommunications', size: '10000+ employees', activeApprentices: 0, totalApprentices: 0, status: 'draft' as const, contact: 'Mark Thompson', email: 'm.thompson@bt.com', phone: '+44 800 800 150', address: 'London, UK', contracts: [] },
-];
+function address(row: { townCity: string; county: string; country: string }): string {
+  return [row.townCity, row.county, row.country].filter(Boolean).join(', ') || '—';
+}
 
 export default function AdminEmployersPage() {
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [selectedEmployer, setSelectedEmployer] = useState<string | null>(null);
-
-  const activeCount = EMPLOYERS_DATA.filter(e => e.status === 'active').length;
-  const totalActiveApprentices = EMPLOYERS_DATA.reduce((a, b) => a + b.activeApprentices, 0);
-  const totalContracts = EMPLOYERS_DATA.reduce((a, b) => a + b.contracts.length, 0);
-
-  const filtered = EMPLOYERS_DATA.filter(e => {
-    const matchSearch = e.name.toLowerCase().includes(search.toLowerCase()) || e.industry.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = statusFilter === 'all' || e.status === statusFilter;
-    return matchSearch && matchStatus;
-  });
-
-  const emp = selectedEmployer ? EMPLOYERS_DATA.find(e => e.id === selectedEmployer) : null;
+  const { data, loading, error, reload } = useAdminData(
+    useCallback(() => listEmployers({ search: search || undefined }), [search]),
+    [search],
+  );
+  const employers = data?.results ?? [];
+  const withEmail = employers.filter(e => e.email).length;
+  const linked = employers.filter(e => e.employerGroupIds.length > 0).length;
 
   return (
-    <WorkspaceShell role="admin" roleLabel={adminNav.label} navItems={adminNav.items} workspaceLabel={adminNav.workspaceLabel} pageTitle="Employers" pageSubtitle="Employer directory — contracting, apprentices, and contacts" userName="Admin User" userRole="Tenant Administrator">
-      <div className="p-6 space-y-6">
-        {/* Hero Banner */}
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <AppIcon className="ri-building-2-line text-white text-2xl"></AppIcon>
-            </span>
-            <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Employer Directory</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{EMPLOYERS_DATA.length} employers</strong> — {activeCount} active. {totalActiveApprentices} active apprentices across {totalContracts} contracts.
-              </p>
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{EMPLOYERS_DATA.length}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Employers</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{totalActiveApprentices}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Apprentices</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{totalContracts}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Contracts</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
-          <div className="relative flex-1 w-full lg:w-auto">
-            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
-            <input type="text" placeholder="Search employers..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
-          </div>
-          <div className="flex items-center gap-2">
-            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="px-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 outline-none focus:border-primary-400 transition-smooth cursor-pointer">
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="pending">Pending</option>
-              <option value="draft">Draft</option>
-            </select>
-            <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <AppIcon className="ri-add-line mr-1.5"></AppIcon> Add Employer
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Employers List */}
-          <div className="lg:col-span-2 space-y-3">
-            {filtered.map(e => {
-              const statusColors = {
-                active: 'bg-emerald-50 text-emerald-700 border-emerald-200/50',
-                pending: 'bg-accent-50 text-accent-700 border-accent-200/50',
-                draft: 'bg-background-100 text-foreground-500 border-foreground-200/60',
-              };
-              return (
-                <div key={e.id} onClick={() => setSelectedEmployer(e.id)} className={`flex items-center gap-4 bg-background-50 rounded-xl border p-4 cursor-pointer transition-smooth ${selectedEmployer === e.id ? 'border-primary-300 ring-1 ring-primary-200/50' : 'border-foreground-200/60 hover:border-background-300/60'}`}>
-                  <div className="w-12 h-12 rounded-xl bg-accent-100 flex items-center justify-center shrink-0">
-                    <span className="text-accent-700 font-bold text-sm">{e.name.charAt(0)}</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold text-foreground-900">{e.name}</p>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusColors[e.status]}`}>{e.status}</span>
-                    </div>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">{e.industry} · {e.size} · {e.address}</p>
-                  </div>
-                  <div className="flex items-center gap-4 text-[12px] text-foreground-500 shrink-0">
-                    <span><AppIcon className="ri-graduation-cap-line mr-1"></AppIcon>{e.activeApprentices}/{e.totalApprentices}</span>
-                    <span><AppIcon className="ri-file-text-line mr-1"></AppIcon>{e.contracts.length}</span>
-                  </div>
-                  <AppIcon className={`ri-arrow-right-s-line text-foreground-300 ${selectedEmployer === e.id ? 'text-primary-500' : ''}`}></AppIcon>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Employer Detail */}
-          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 h-fit">
-            {emp ? (
-              <div className="space-y-5">
-                <div>
-                  <div className="w-14 h-14 rounded-xl bg-accent-100 flex items-center justify-center mb-3">
-                    <span className="text-accent-700 font-bold text-lg">{emp.name.charAt(0)}</span>
-                  </div>
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">{emp.name}</h3>
-                  <p className="text-[12px] text-foreground-500 mt-1">{emp.industry} · {emp.size}</p>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-[12px]">
-                    <AppIcon className="ri-user-line text-foreground-400 text-xs w-4"></AppIcon>
-                    <span className="text-foreground-600">{emp.contact}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[12px]">
-                    <AppIcon className="ri-mail-line text-foreground-400 text-xs w-4"></AppIcon>
-                    <span className="text-foreground-600">{emp.email}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[12px]">
-                    <AppIcon className="ri-phone-line text-foreground-400 text-xs w-4"></AppIcon>
-                    <span className="text-foreground-600">{emp.phone}</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-[12px]">
-                    <AppIcon className="ri-map-pin-line text-foreground-400 text-xs w-4"></AppIcon>
-                    <span className="text-foreground-600">{emp.address}</span>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-background-100 rounded-lg p-3 text-center">
-                    <p className="text-xl font-bold text-foreground-900">{emp.activeApprentices}</p>
-                    <p className="text-[10px] text-foreground-400 uppercase tracking-wide">Active</p>
-                  </div>
-                  <div className="bg-background-100 rounded-lg p-3 text-center">
-                    <p className="text-xl font-bold text-foreground-900">{emp.totalApprentices}</p>
-                    <p className="text-[10px] text-foreground-400 uppercase tracking-wide">Total</p>
-                  </div>
-                </div>
-                {emp.contracts.length > 0 && (
-                  <div>
-                    <h4 className="text-[12px] font-semibold text-foreground-700 mb-2">Contracts</h4>
-                    <div className="flex flex-wrap gap-1.5">
-                      {emp.contracts.map(c => (
-                        <span key={c} className="text-[10px] font-semibold px-2 py-1 rounded-full bg-primary-50 text-primary-700 border border-primary-200/50">{c}</span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="flex gap-2">
-                  <button className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Edit</button>
-                  <button className="flex-1 px-3 py-2 bg-background-100 border border-background-200 rounded-lg text-[12px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">View Apprentices</button>
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <AppIcon className="ri-building-2-line text-foreground-300 text-xl"></AppIcon>
-                </div>
-                <p className="text-sm text-foreground-500">Select an employer to view details</p>
-              </div>
-            )}
-          </div>
-        </div>
+    <AdminPage
+      title="Employers"
+      subtitle="Employer contacts and their organisation memberships"
+      icon="ri-building-2-line"
+      heroTitle="Employer contacts"
+      heroBlurb={<>Real contact profiles from <strong>enrolment.Employers</strong>. An employer can belong to more than one organisation.</>}
+      stats={[
+        { label: 'Contacts', value: loading && !data ? '—' : data?.count ?? 0 },
+        { label: 'With email', value: loading && !data ? '—' : withEmail },
+        { label: 'Linked to an org', value: loading && !data ? '—' : linked },
+      ]}
+    >
+      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4">
+        <label className="relative block max-w-xl"><AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or email" className="w-full pl-9 pr-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-200" /></label>
       </div>
-    </WorkspaceShell>
+
+      <DataPanel loading={loading && !data} error={error} empty={employers.length === 0}
+        emptyMessage={search ? 'No employer contacts match this search.' : 'No employer contacts have been created yet.'} onRetry={reload}>
+        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden"><div className="overflow-x-auto"><table className="w-full text-[13px]"><thead><tr className="border-b border-foreground-400/50">
+          <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Contact</th>
+          <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Email</th>
+          <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Mobile</th>
+          <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Organisation memberships</th>
+          <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Location</th>
+        </tr></thead><tbody>{employers.map(emp => <tr key={emp.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+          <td className="px-4 py-3"><div className="flex items-center gap-2.5"><span className="w-8 h-8 rounded-lg bg-accent-100 text-accent-700 flex items-center justify-center shrink-0 font-semibold">{(emp.name || '?').charAt(0).toUpperCase()}</span><p className="font-medium text-foreground-800">{emp.name || 'Unnamed contact'}</p></div></td>
+          <td className="px-4 py-3 text-foreground-600">{emp.email || '—'}</td><td className="px-4 py-3 text-foreground-600">{emp.mobile || '—'}</td>
+          <td className="px-4 py-3"><div className="flex flex-wrap gap-1">{emp.employerGroupNames.length ? emp.employerGroupNames.map((name, i) => <span key={`${emp.id}-${i}`} className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200/50">{name || 'Unnamed organisation'}</span>) : <span className="text-[11px] text-foreground-400">Not linked</span>}</div></td>
+          <td className="px-4 py-3 text-foreground-600">{address(emp)}</td>
+        </tr>)}</tbody></table></div></div>
+      </DataPanel>
+      <SourceNote>Employer profiles are contact people, not employer companies. Their organisation memberships are the stored relationship; contract and apprentice counts are not inferred from unrelated records.</SourceNote>
+    </AdminPage>
   );
 }

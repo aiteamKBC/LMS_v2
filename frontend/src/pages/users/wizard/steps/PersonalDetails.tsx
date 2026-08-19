@@ -1,4 +1,4 @@
-import { useWizard } from '../WizardContext';
+import { ageFromDob, useWizard } from '../WizardContext';
 import { SEX_OPTIONS } from '@/mocks/enrolment-console';
 import { LabeledInput, LabeledSelect, SignatureField, StepHeading } from './fields';
 
@@ -16,8 +16,18 @@ export default function PersonalDetails() {
         <LabeledInput label="Email" type="email" value={pd.email} onChange={(v) => set({ email: v })} />
         <LabeledInput label="Phone" type="tel" value={pd.phone} onChange={(v) => set({ phone: v })} />
         <LabeledInput label="Address" value={pd.address} onChange={(v) => set({ address: v })} />
-        <LabeledInput label="Date of Birth" type="date" value={pd.dob} onChange={(v) => set({ dob: v })} />
-        <LabeledInput label="Age" type="number" value={pd.age != null ? String(pd.age) : ''} onChange={(v) => set({ age: v ? Number(v) : undefined })} />
+        {/* Age is derived from the date of birth, never typed — the two can't
+            disagree, and there is nothing to keep in step by hand. */}
+        <LabeledInput label="Date of Birth" type="date" value={pd.dob} onChange={(v) => set({ dob: v, age: ageFromDob(v) })} />
+        <LabeledInput
+          label="Age"
+          type="number"
+          readOnly
+          value={pd.age != null ? String(pd.age) : ''}
+          onChange={() => {}}
+          placeholder="—"
+          helper="Calculated from your date of birth"
+        />
         <LabeledSelect label="Sex" value={pd.sex} options={SEX_OPTIONS} onChange={(v) => set({ sex: v })} />
 
         {/* Signature — the learner's own name in a script face; stored on

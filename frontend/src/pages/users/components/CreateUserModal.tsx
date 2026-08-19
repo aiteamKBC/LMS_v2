@@ -357,7 +357,28 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
       // learnerType/source.
       const row = await createEnrolmentUser({ ...shared, learnerType: kind });
       const label = kind === 'commercial' ? 'Commercial learner' : 'Apprenticeship learner';
-      success(`${label} created`, `${row.name || name} was saved to Enrolment_Users.`);
+
+      // The learner is saved whether or not the invitation email went out, so
+      // the two outcomes are reported separately — a silent mail failure would
+      // leave someone waiting for a link that never arrives.
+      const invite = row.invitation;
+      if (isOn('inviteToPlatform') && invite?.forbidden) {
+        success(`${label} created`, `${row.name || name} was saved to Enrolment_Users.`);
+        error(
+          'Not permitted to invite',
+          invite.error || 'You do not have permission to invite this person.',
+        );
+      } else if (isOn('inviteToPlatform') && invite && !invite.emailSent) {
+        success(`${label} created`, `${row.name || name} was saved to Enrolment_Users.`);
+        error(
+          'Invitation not sent',
+          invite.error || 'The learner was created but the invitation email could not be sent.',
+        );
+      } else if (isOn('inviteToPlatform')) {
+        success(`${label} created and invited`, `${row.name || name} was emailed a link to set their password.`);
+      } else {
+        success(`${label} created`, `${row.name || name} was saved to Enrolment_Users.`);
+      }
       onCreated(row);
       onClose();
     } catch (err) {

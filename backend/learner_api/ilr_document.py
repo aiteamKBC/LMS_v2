@@ -34,6 +34,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from enrolment_api.auth import enrolment_login_required
+
 from .learner_progression import advance_learner
 
 from .mappers import _s
@@ -193,12 +195,17 @@ def _document_json(document):
     }
 
 
-def _active_document(learner_kind, learner_id):
-    return IlrDocument.objects.filter(
+def _active_document(learner_kind, learner_id, lock=False):
+    """The learner's active ILR. `lock=True` takes a row lock for the caller's
+    transaction — only valid inside `transaction.atomic(using="enrolment")`."""
+    qs = IlrDocument.objects.filter(
         learner_kind=learner_kind,
         learner_id=learner_id,
         status=IlrDocument.STATUS_ACTIVE,
-    ).first()
+    )
+    if lock:
+        qs = qs.select_for_update()
+    return qs.first()
 
 
 def _learner_kind(learner):
@@ -208,6 +215,7 @@ def _learner_kind(learner):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@enrolment_login_required
 @csrf_exempt
 def ilr_document(request, pk):
     """The learner's ILR document, plus the details a new one would carry."""
@@ -239,6 +247,7 @@ def ilr_document(request, pk):
     })
 
 
+@enrolment_login_required
 @csrf_exempt
 def issue_ilr(request, pk):
     """Issue the ILR, snapshotting the current details and answers onto a row."""
@@ -254,8 +263,10 @@ def issue_ilr(request, pk):
         details = derive_learner_details(learner)
         answers = derive_answers(learner)
 
-        with transaction.atomic():
-            existing = _active_document(kind, learner.pk)
+        # `using="enrolment"` is required — a bare atomic() opens on `default`
+        # and leaves this supersede+create unprotected. See BE-1.
+        with transaction.atomic(using="enrolment"):
+            existing = _active_document(kind, learner.pk, lock=True)
             if existing is not None:
                 existing.status = IlrDocument.STATUS_SUPERSEDED
                 existing.save(update_fields=["status", "updated_at"])
@@ -273,6 +284,7 @@ def issue_ilr(request, pk):
     return JsonResponse({"document": _document_json(document)}, status=201)
 
 
+@enrolment_login_required
 @csrf_exempt
 def sign_ilr(request, pk):
     """Record the learner's or the provider's signature on the ILR.
@@ -309,22 +321,25 @@ def sign_ilr(request, pk):
         if learner is None:
             return _error("Learner not found.", 404)
 
-        document = _active_document(_learner_kind(learner), learner.pk)
-        if document is None:
-            return _error("No ILR has been issued for this learner yet.", 404)
+        # Lock the row for the read-modify-write so a concurrent learner/provider
+        # sign can't overwrite the other's signature. See BE-4.
+        with transaction.atomic(using="enrolment"):
+            document = _active_document(_learner_kind(learner), learner.pk, lock=True)
+            if document is None:
+                return _error("No ILR has been issued for this learner yet.", 404)
 
-        now = timezone.now() if signature else None
-        if party == "learner":
-            document.learner_signature = signature
-            document.learner_signed_name = name if signature else ""
-            document.learner_signed_at = now
-        else:
-            document.provider_signature = signature
-            document.provider_signed_name = name if signature else ""
-            document.provider_signed_at = now
+            now = timezone.now() if signature else None
+            if party == "learner":
+                document.learner_signature = signature
+                document.learner_signed_name = name if signature else ""
+                document.learner_signed_at = now
+            else:
+                document.provider_signature = signature
+                document.provider_signed_name = name if signature else ""
+                document.provider_signed_at = now
 
-        document.recalculate_signed()
-        document.save()
+            document.recalculate_signed()
+            document.save()
         promoted = advance_learner(learner)
     except DatabaseError as exc:
         logger.exception("sign_ilr: failed")

@@ -58,6 +58,41 @@ function Ring({ percent, colorClass, size = 64, stroke = 6 }: { percent: number;
 type Filter = 'all' | KsbStatus;
 
 export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loading: boolean }) {
+  return (
+    <WorkspaceShell
+      role="learner"
+      roleLabel={learnerNav.label}
+      navItems={learnerNav.items}
+      workspaceLabel={learnerNav.workspaceLabel}
+      pageTitle="KSB Progress"
+      pageSubtitle={real?.programme || 'Knowledge, Skills & Behaviours'}
+      userName={real?.name || 'Learner'}
+      userRole="Learner"
+    >
+      <KsbProgressBody real={real} loading={loading} />
+    </WorkspaceShell>
+  );
+}
+
+/**
+ * The weighted KSB breakdown, without page chrome — shared with the employer
+ * portal so an employer sees exactly the progress their apprentice sees, down to
+ * which activities still have to be done for each KSB.
+ *
+ * `audience` only swaps the second-person copy; the figures are the same.
+ */
+export function KsbProgressBody({
+  real,
+  loading,
+  showHero = true,
+  audience = 'learner',
+}: {
+  real: LearnerDetail | null;
+  loading: boolean;
+  showHero?: boolean;
+  audience?: 'learner' | 'observer';
+}) {
+  const isObserver = audience === 'observer';
   const [filter, setFilter] = useState<Filter>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -153,18 +188,9 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
   }, [progress, visible]);
 
   return (
-    <WorkspaceShell
-      role="learner"
-      roleLabel={learnerNav.label}
-      navItems={learnerNav.items}
-      workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="KSB Progress"
-      pageSubtitle={real?.programme || 'Knowledge, Skills & Behaviours'}
-      userName={real?.name || 'Learner'}
-      userRole="Learner"
-    >
-      <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+    <div className={showHero ? 'p-3 md:p-6 space-y-5 md:space-y-6' : 'space-y-4 md:space-y-5'}>
         {/* Hero */}
+        {showHero && (
         <section
           className="relative min-h-[150px] overflow-hidden rounded-3xl border border-primary-700/40 p-6 text-white shadow-[0_18px_45px_rgba(35,8,76,0.20)] md:p-7"
           style={{ background: 'linear-gradient(115deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 42%, oklch(var(--primary-700)) 100%)' }}
@@ -182,7 +208,9 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
                   <AppIcon className="ri-checkbox-circle-line" />KSB completion
                 </span>
                 <h1 className="text-2xl font-heading font-bold tracking-tight !text-white md:text-3xl">KSB Progress</h1>
-                <p className="mt-1 text-sm !text-white/65">Track the KSBs evidenced by completed activities in your training plan</p>
+                <p className="mt-1 text-sm !text-white/65">
+                  Track the KSBs evidenced by completed activities in {isObserver ? 'this' : 'your'} training plan
+                </p>
               </div>
             </div>
 
@@ -204,6 +232,7 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
             </div>
           </div>
         </section>
+        )}
 
         {/* Stat strip */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
@@ -266,6 +295,7 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
                     <KsbRow
                       key={k.code}
                       ksb={k}
+                      isObserver={isObserver}
                       open={expanded === k.code}
                       onToggle={() => setExpanded(expanded === k.code ? null : k.code)}
                     />
@@ -275,13 +305,12 @@ export function RealKsbView({ real, loading }: { real: LearnerDetail | null; loa
             ))}
           </div>
         )}
-      </div>
-    </WorkspaceShell>
+    </div>
   );
 }
 
 /* One KSB: collapsed shows weight + progress; expanded names the activities. */
-function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onToggle: () => void }) {
+function KsbRow({ ksb, open, onToggle, isObserver }: { ksb: KsbProgress; open: boolean; onToggle: () => void; isObserver?: boolean }) {
   const st = STATUS_META[ksb.status];
   const hasContributors = ksb.contributors.length > 0;
 
@@ -332,8 +361,18 @@ function KsbRow({ ksb, open, onToggle }: { ksb: KsbProgress; open: boolean; onTo
             </p>
             <p className="text-[11px] text-foreground-700 leading-relaxed">
               {ksb.status === 'complete' ? (
-                <>You have completed all {ksb.totalCount} {ksb.totalCount === 1 ? 'activity' : 'activities'} that develop
-                  this KSB, earning the full {w(ksb.availableWeight)} weight.</>
+                isObserver ? (
+                  <>All {ksb.totalCount} {ksb.totalCount === 1 ? 'activity' : 'activities'} that develop this KSB are
+                    complete, earning the full {w(ksb.availableWeight)} weight.</>
+                ) : (
+                  <>You have completed all {ksb.totalCount} {ksb.totalCount === 1 ? 'activity' : 'activities'} that develop
+                    this KSB, earning the full {w(ksb.availableWeight)} weight.</>
+                )
+              ) : isObserver ? (
+                <>{ksb.totalCount - ksb.doneCount} of {ksb.totalCount}{' '}
+                  {ksb.totalCount === 1 ? 'activity' : 'activities'} below still to do, worth the last{' '}
+                  <span className="font-semibold">{w(ksb.remainingWeight)}</span> weight
+                  ({w(ksb.earnedWeight)} of {w(ksb.availableWeight)} so far).</>
               ) : (
                 <>Complete the remaining {ksb.totalCount - ksb.doneCount} of {ksb.totalCount}{' '}
                   {ksb.totalCount === 1 ? 'activity' : 'activities'} below to earn the last{' '}

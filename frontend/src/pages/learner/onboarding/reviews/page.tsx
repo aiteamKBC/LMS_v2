@@ -287,6 +287,7 @@ function ReviewCard({
  */
 export default function OnboardingReviewsPage() {
   const { kind, id } = useMyLearner();
+  const isCommercial = kind === 'commercial';
   const [data, setData] = useState<OnboardingReviewsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -294,11 +295,15 @@ export default function OnboardingReviewsPage() {
   const load = useCallback(() => {
     setLoading(true);
     setError(null);
+    if (isCommercial) {
+      setLoading(false);
+      return;
+    }
     fetchOnboardingReviews(kind, id)
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [kind, id]);
+  }, [kind, id, isCommercial]);
 
   useEffect(load, [load]);
 
@@ -307,6 +312,29 @@ export default function OnboardingReviewsPage() {
   // Bookings whose invite never sent aren't really done -- surface them so the
   // learner isn't left thinking all three meetings are confirmed.
   const notInvitedCount = data?.reviews.filter((r) => r.booked && r.event?.invited === false).length ?? 0;
+
+  if (isCommercial) {
+    return (
+      <WorkspaceShell
+        role="learner"
+        roleLabel={learnerNav.label}
+        navItems={learnerNav.items}
+        workspaceLabel={learnerNav.workspaceLabel}
+        pageTitle="Reviews"
+        pageSubtitle="Not required for commercial delivery"
+        userName="Learner"
+        userRole="Learner"
+      >
+        <main className="p-4 md:p-6">
+          <div className="mx-auto max-w-2xl rounded-2xl border border-primary-200 bg-primary-50/40 p-8 text-center">
+            <i className="ri-information-line text-3xl text-primary-600" />
+            <h2 className="mt-3 text-lg font-heading font-semibold text-foreground-900">No onboarding reviews are required</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-foreground-600">Commercial learners go straight to programme delivery without apprenticeship onboarding reviews.</p>
+          </div>
+        </main>
+      </WorkspaceShell>
+    );
+  }
 
   return (
     <WorkspaceShell

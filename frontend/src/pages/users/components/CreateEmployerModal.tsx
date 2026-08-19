@@ -261,6 +261,9 @@ export function CreateEmployerModal({
   // drop the existing groups on save — so saving is blocked while it loads.
   const [groupsReady, setGroupsReady] = useState(!editing);
   const [submitting, setSubmitting] = useState(false);
+  // Off by default: emailing someone a credential-setting link is an action
+  // with a real-world effect, so it should be chosen rather than defaulted in.
+  const [inviteToPlatform, setInviteToPlatform] = useState(false);
 
   useEffect(() => {
     if (!row) return;
@@ -305,14 +308,36 @@ export function CreateEmployerModal({
         ...form,
         // Ids only — the backend resolves the names and rejects unknown ids.
         employerGroupIds: groups.map((g) => g.id),
+        // Ignored on the update path; only the create endpoint acts on it.
+        ...(editing ? {} : { inviteToPlatform }),
       };
       const saved = row
         ? await updateEmployer(row.id, payload)
         : await createEmployer(payload);
-      success(
-        row ? 'Changes saved' : 'Employer created',
-        `${saved.name} was ${row ? 'updated' : 'saved'}.`,
-      );
+
+      // The employer is saved whether or not the invitation email went out, so
+      // report the two outcomes separately rather than implying both worked.
+      const invite = saved.invitation;
+      if (!editing && inviteToPlatform && invite?.forbidden) {
+        success('Employer created', `${saved.name} was saved.`);
+        error(
+          'Not permitted to invite',
+          invite.error || 'You do not have permission to invite this person.',
+        );
+      } else if (!editing && inviteToPlatform && invite && !invite.emailSent) {
+        success('Employer created', `${saved.name} was saved.`);
+        error(
+          'Invitation not sent',
+          invite.error || 'The employer was created but the invitation email could not be sent.',
+        );
+      } else if (!editing && inviteToPlatform) {
+        success('Employer created and invited', `${saved.name} was emailed a link to set their password.`);
+      } else {
+        success(
+          row ? 'Changes saved' : 'Employer created',
+          `${saved.name} was ${row ? 'updated' : 'saved'}.`,
+        );
+      }
       onCreated(saved);
       onClose();
     } catch (err) {
@@ -426,6 +451,39 @@ export function CreateEmployerModal({
             <EmployerGroupPicker selected={groups} onToggle={toggleGroup} />
           </div>
         </section>
+
+        {/* Invitation — create only. On edit the person may already have an
+            account, and re-inviting is a deliberate action from the account
+            list, not a side effect of correcting their address. */}
+        {!editing && (
+          <section className="rounded-xl border border-foreground-200/70 overflow-hidden">
+            <header className="flex items-center gap-2 px-4 py-2.5 bg-background-100/70 border-b border-foreground-200/60">
+              <i className="ri-mail-send-line text-primary-500" />
+              <h3 className="text-[12px] font-semibold uppercase tracking-wider text-foreground-600">
+                Invitation
+              </h3>
+            </header>
+            <div className="p-4">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={inviteToPlatform}
+                  onChange={(e) => setInviteToPlatform(e.target.checked)}
+                  className="accent-primary-500 mt-0.5"
+                />
+                <span>
+                  <span className="block text-[13px] font-medium text-foreground-800">
+                    Invite this employer to the platform
+                  </span>
+                  <span className="block text-[12px] text-foreground-500 mt-0.5">
+                    Emails them a single-use link to set their own password, giving them access
+                    to the employer portal and the documents they need to sign.
+                  </span>
+                </span>
+              </label>
+            </div>
+          </section>
+        )}
 
         {/* allow Enter-to-submit without a visible duplicate button */}
         <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />

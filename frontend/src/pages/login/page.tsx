@@ -1,77 +1,79 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
+import { AuthError, type Role } from '@/api/auth';
 
-const DEMO_PASSWORD = 'Password123';
-
-interface DemoAccount {
-  slug: string;
-  email: string;
-  workspacePath: string;
+/** Where each backend role lands after signing in. */
+/**
+ * Where an account lands, in preference order.
+ *
+ * A staff account's `accessHome` wins: the backend derives it from the access
+ * grant (ACCESS_HOME_ROUTES), so an enrolment officer opens the enrolment
+ * console and a coach their own workspace, rather than every non-admin landing
+ * on the user directory. Falls back to the coarse role for accounts with no
+ * access recorded, and for learners and employers, which have no grant.
+ */
+function homeFor(account: { role: Role; accessHome?: string | null }): string {
+  return account.accessHome || HOME_BY_ROLE[account.role];
 }
 
-const DEMO_ACCOUNTS: DemoAccount[] = [
-  { slug: 'learner', email: 'learner@kbc.test', workspacePath: '/workspace/learner' },
-  { slug: 'coach', email: 'coach@kbc.test', workspacePath: '/workspace/coach' },
-  { slug: 'tutor', email: 'tutor@kbc.test', workspacePath: '/workspace/tutor' },
-  { slug: 'employer', email: 'employer@kbc.test', workspacePath: '/workspace/employer' },
-  { slug: 'compliance', email: 'compliance@kbc.test', workspacePath: '/workspace/compliance' },
-  { slug: 'qa', email: 'qa@kbc.test', workspacePath: '/workspace/qa' },
-  { slug: 'mis', email: 'mis@kbc.test', workspacePath: '/workspace/mis' },
-  { slug: 'admin', email: 'admin@kbc.test', workspacePath: '/workspace/admin' },
-  { slug: 'leadership', email: 'leadership@kbc.test', workspacePath: '/workspace/leadership' },
-  { slug: 'finance', email: 'finance@kbc.test', workspacePath: '/workspace/finance' },
-  { slug: 'auditor', email: 'auditor@kbc.test', workspacePath: '/workspace/auditor' },
-];
+const HOME_BY_ROLE: Record<Role, string> = {
+  admin: '/workspace/admin',
+  staff: '/users',
+  employer: '/workspace/employer',
+  learner: '/workspace/learner',
+};
 
 export default function LoginPage() {
-  const { login, auth } = useAuth();
+  const { login, auth, isInitialized } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
 
-  // Redirect already authenticated users via useEffect (not during render)
-  useEffect(() => {
-    if (auth.isAuthenticated) {
-      const roleSlug = auth.roles[0]?.slug || 'learner';
-      const account = DEMO_ACCOUNTS.find(a => a.slug === roleSlug);
-      if (account) {
-        navigate(account.workspacePath, { replace: true });
-      }
-    }
-  }, [auth.isAuthenticated, auth.roles, navigate]);
+  // Where the user was heading before RequireAuth sent them here.
+  const from = (location.state as { from?: string } | null)?.from;
 
-  const handleLogin = (e: React.FormEvent) => {
+  // Bounce an already-signed-in visitor to their console. Waits for
+  // isInitialized so it does not fire before the session has been resolved.
+  useEffect(() => {
+    if (!isInitialized || !auth.isAuthenticated) return;
+    // Never fall back to '/': this page *is* '/', so an authenticated session
+    // with no resolved account would bounce here forever. /home is the public
+    // launcher and always renders.
+    const home = auth.account ? homeFor(auth.account) : '/home';
+    navigate(from || home, { replace: true });
+  }, [isInitialized, auth.isAuthenticated, auth.account, from, navigate]);
+
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setIsLoading(true);
 
     if (!email.trim()) {
       setError('Please enter your email address');
-      setIsLoading(false);
       return;
     }
 
-    if (password !== DEMO_PASSWORD) {
-      setError('Invalid password');
+    setIsLoading(true);
+    try {
+      const account = await login(email.trim(), password, rememberMe);
+      // Navigate straight away rather than relying on the effect above, so a
+      // slow re-render cannot leave the form looking unresponsive.
+      navigate(from || homeFor(account), { replace: true });
+    } catch (err) {
+      // The server owns the wording — it distinguishes a bad password from a
+      // locked account and from being rate-limited.
+      setError(
+        err instanceof AuthError
+          ? err.message
+          : 'Something went wrong signing in. Please try again.',
+      );
       setIsLoading(false);
-      return;
     }
-
-    const matchedAccount = DEMO_ACCOUNTS.find(a => a.email === email.trim());
-    if (!matchedAccount) {
-      setError('Account not found. Please use a valid demo email address.');
-      setIsLoading(false);
-      return;
-    }
-
-    // login persists to localStorage and sets auth state
-    // the useEffect above will handle navigation automatically
-    login(matchedAccount.email);
   };
 
   return (
@@ -143,7 +145,9 @@ export default function LoginPage() {
                   required
                 />
               </div>
-              <p className="text-[11px] text-foreground-300 mt-1.5">Demo password: <span className="font-mono text-foreground-500 font-semibold">Password123</span></p>
+              <p className="text-[11px] text-foreground-300 mt-1.5">
+                First time here? Use the link in your invitation email to set a password.
+              </p>
             </div>
 
             {/* Remember me */}
@@ -184,36 +188,20 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Divider */}
-          <div className="flex items-center gap-3 my-8 animate-login-slide-up" style={{ animationDelay: '400ms' }}>
-            <div className="flex-1 h-px bg-background-200"></div>
-            <span className="text-[11px] text-foreground-400 font-medium">or continue with</span>
-            <div className="flex-1 h-px bg-background-200"></div>
-          </div>
-
-          {/* Social / Demo hint */}
-          <div className="flex items-center justify-center gap-3 animate-login-slide-up" style={{ animationDelay: '500ms' }}>
-            <button type="button" className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-background-200 text-[13px] text-foreground-600 hover:bg-background-100 hover:border-background-300 transition-all duration-200 cursor-pointer">
-              <AppIcon className="ri-google-fill text-[16px] text-foreground-500"></AppIcon>
-              <span className="hidden sm:inline">Google</span>
-            </button>
-            <button type="button" className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-background-200 text-[13px] text-foreground-600 hover:bg-background-100 hover:border-background-300 transition-all duration-200 cursor-pointer">
-              <AppIcon className="ri-microsoft-fill text-[16px] text-foreground-500"></AppIcon>
-              <span className="hidden sm:inline">Microsoft</span>
-            </button>
-          </div>
-
-          {/* Footer */}
+          {/* Footer.
+              The Google/Microsoft buttons that used to sit here were removed:
+              no SSO provider is wired up, and a sign-in button that does
+              nothing is worse than no button. Add them back alongside the
+              provider. */}
           <div className="mt-8 pt-6 border-t border-background-200 animate-login-slide-up" style={{ animationDelay: '600ms' }}>
             <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
               <span className="inline-flex items-center gap-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium border border-emerald-200/50">
                 <AppIcon className="ri-shield-check-line text-[10px]"></AppIcon>
-                Full RBAC Enabled
+                Secure sign-in
               </span>
-              <span className="text-[10px] text-foreground-300">&middot; 11 roles &middot; 65+ permissions</span>
             </div>
             <p className="text-[11px] text-center text-foreground-300">
-              KBC LearningOS v1.0 &middot; Kent Business College &middot; Demo Environment
+              KBC LearningOS &middot; Kent Business College
             </p>
           </div>
         </div>

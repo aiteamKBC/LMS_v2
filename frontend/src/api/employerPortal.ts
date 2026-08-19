@@ -11,6 +11,8 @@
 //  - PDFs     -> /enrolment_api/documents/<kind>/<id>/<docId>/sign/
 // ============================================================================
 
+import type { LearnerDetail } from '@/api/learnerDetail';
+
 const BASE = '/learner_api/employer-portal';
 
 export interface EmployerLearnerCard {
@@ -149,6 +151,21 @@ export function fetchEmployerLearner(
   learnerId: string,
 ): Promise<EmployerLearnerDetail> {
   return request<EmployerLearnerDetail>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/`);
+}
+
+/**
+ * The learner's own training plan, hours and KSBs.
+ *
+ * Deliberately the same payload the learner's workspace reads (LearnerDetail),
+ * so the employer sees the identical weeks, components and KSB mappings instead
+ * of a second summary that could drift. The employer UI renders it read-only.
+ */
+export function fetchEmployerLearnerPlan(
+  employerId: string,
+  kind: string,
+  learnerId: string,
+): Promise<LearnerDetail> {
+  return request<LearnerDetail>(`${BASE}/${employerId}/learner/${kind}/${learnerId}/plan/`);
 }
 
 

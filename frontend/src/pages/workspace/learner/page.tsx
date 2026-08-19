@@ -12,7 +12,8 @@ import { learningReflectionStatusKey, loadLearningReflectionStatuses, type Learn
 import { EmptyState } from '@/pages/users/components/ui';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
 import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
-import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
+import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
+import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
@@ -56,6 +57,14 @@ const REFLECTION_STATUS: Record<string, { label: string; style: string; icon: st
   reject: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
   rejected: { label: 'Reflection needs changes', style: 'bg-amber-100 text-amber-700', icon: 'ri-arrow-go-back-line' },
 };
+
+function formatProgrammeStartDate(value?: string | null): string {
+  if (!value) return '';
+  const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+}
 
 /** One component row inside the current-week card. */
 function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
@@ -765,6 +774,10 @@ export default function LearnerOverview() {
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
+  const isCommercialPreStart = isRealMode
+    && kind === 'commercial'
+    && real?.programmeStatus?.trim().toLowerCase() === 'delivery';
+  const skipPreStartData = isRealMode && (real == null || isCommercialPreStart);
   const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
   const [attendanceLoading, setAttendanceLoading] = useState(isRealMode);
   const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
@@ -772,7 +785,7 @@ export default function LearnerOverview() {
   const [reflectionStatuses, setReflectionStatuses] = useState<LearningReflectionStatusMap>({});
 
   useEffect(() => {
-    if (!isRealMode || !kind || !id) {
+    if (!isRealMode || !kind || !id || skipPreStartData) {
       setAttendance(null);
       setAttendanceLoading(false);
       return;
@@ -795,10 +808,10 @@ export default function LearnerOverview() {
     return () => {
       cancelled = true;
     };
-  }, [isRealMode, kind, id]);
+  }, [isRealMode, kind, id, skipPreStartData]);
 
   useEffect(() => {
-    if (!isRealMode || !kind || !id) {
+    if (!isRealMode || !kind || !id || skipPreStartData) {
       setReflectionStatuses({});
       return;
     }
@@ -814,10 +827,10 @@ export default function LearnerOverview() {
     return () => {
       cancelled = true;
     };
-  }, [isRealMode, kind, id]);
+  }, [isRealMode, kind, id, skipPreStartData]);
 
   useEffect(() => {
-    if (!isRealMode || !kind || !id) {
+    if (!isRealMode || !kind || !id || skipPreStartData) {
       setEvidence([]);
       setEvidenceLoading(false);
       return;
@@ -840,7 +853,7 @@ export default function LearnerOverview() {
     return () => {
       cancelled = true;
     };
-  }, [isRealMode, kind, id]);
+  }, [isRealMode, kind, id, skipPreStartData]);
 
   const evidenceStats = useMemo(() => {
     const approved = evidence.filter((record) => record.status === 'approved').length;
@@ -852,7 +865,22 @@ export default function LearnerOverview() {
 
   /* ── Onboarding learners land on their enrolment wizard, not the overview ──
      Gated on `!loading` so a not-yet-loaded status never reads as "not onboarding". */
-  const redirectingToOnboarding = useOnboardingRedirect(real?.programmeStatus, isRealMode && !loading);
+  const redirectingToOnboarding = useOnboardingRedirect(real?.programmeStatus, isRealMode && !loading, kind);
+
+  /* ── A learner whose enrolment hasn't been started yet gets the waiting page ──
+     Same gating as above: `!loading` so an unresolved status never reads as fresh. */
+  const isFreshUser = useFreshUserRedirect(real?.programmeStatus, isRealMode && !loading);
+  const isCommercialWaiting = isCommercialPreStart && !loading;
+
+  /* The sidebar caches the programme status for the whole browser session and
+     never expires it. This page has just fetched the real record, so it hands
+     the live value back — otherwise a learner whose status staff changed today
+     would keep the menu (and, at 'Fresh user', the waiting page) they had when
+     the session started. */
+  useEffect(() => {
+    if (!isRealMode || loading) return;
+    syncLearnerStatus(kind, id, real?.programmeStatus);
+  }, [isRealMode, loading, kind, id, real?.programmeStatus]);
 
   const heroName = isRealMode ? ((real?.name.split(' ')[0]) || real?.name || 'Learner') : p.firstName;
   const heroFullName = isRealMode ? (real?.name || 'Learner') : p.fullName;
@@ -966,12 +994,110 @@ export default function LearnerOverview() {
     { icon: 'ri-medal-line', label: 'Top Performer', color: 'amber' as const },
   ];
 
-  // Redirect is in flight — don't flash the overview on the way to the wizard.
-  if (redirectingToOnboarding) {
+  // Nothing of the overview is rendered until the learner's programme status is
+  // known. The onboarding redirect can only decide once the detail has loaded,
+  // so painting the overview while the fetch is in flight showed an onboarding
+  // learner the full delivery page for a moment before bouncing them to their
+  // wizard. Waiting here is the whole fix — the redirect itself was correct.
+  if (isRealMode && (loading || redirectingToOnboarding)) {
     return (
       <div className="min-h-screen flex items-center justify-center text-[13px] text-foreground-400">
-        <AppIcon className="ri-loader-4-line animate-spin mr-2" />Opening your enrolment…
+        <AppIcon className="ri-loader-4-line animate-spin mr-2" />
+        {redirectingToOnboarding ? 'Opening your enrolment…' : 'Loading your workspace…'}
       </div>
+    );
+  }
+
+  /* ================================================================
+     Enrolment not started — the whole overview is replaced.
+     ================================================================
+     Everything below this point reads a training plan, KSB profile, evidence
+     and attendance record that are only created once enrolment runs. For a
+     fresh learner those queries return nothing (or, as the KSB one did, a raw
+     "relation does not exist" error rendered into the page header), so the
+     dashboard is not merely empty — it is misleading: 100% attendance from
+     0 sessions, "1 Submitted" evidence belonging to nobody. One honest
+     message beats a wall of figures that mean nothing yet. */
+  if (isFreshUser || isCommercialWaiting) {
+    const commercialWaiting = isCommercialWaiting;
+    const startDate = formatProgrammeStartDate(real?.programmeStartDate);
+    return (
+      <WorkspaceShell
+        role="learner"
+        roleLabel={learnerNav.label}
+        navItems={learnerNav.items}
+        workspaceLabel={learnerNav.workspaceLabel}
+        pageTitle={`Welcome, ${heroName}`}
+        pageSubtitle={commercialWaiting ? 'Your programme has not started yet' : "Your enrolment hasn't started yet"}
+        userName={heroFullName}
+        userRole="Learner"
+      >
+        <div className="p-3 md:p-6">
+          <div className="max-w-2xl mx-auto mt-6 md:mt-16">
+            <div className="bg-background-50 rounded-2xl border border-foreground-200/60 overflow-hidden">
+              <div className="px-6 md:px-10 pt-10 pb-8 text-center">
+                <span className="w-16 h-16 rounded-2xl bg-primary-100 text-primary-600 flex items-center justify-center mx-auto mb-5">
+                  <AppIcon className="ri-time-line text-3xl"></AppIcon>
+                </span>
+                <h2 className="text-xl md:text-2xl font-heading font-bold text-foreground-900 mb-3">
+                  {commercialWaiting ? 'Your programme starts soon' : <>Your enrolment hasn&apos;t started yet</>}
+                </h2>
+                <p className={commercialWaiting ? 'hidden' : 'text-[14px] text-foreground-500 leading-relaxed max-w-lg mx-auto'}>
+                  Your account is set up and ready. The enrolment team will be in touch to begin
+                  your enrolment — there is nothing you need to do right now.
+                </p>
+                <p className={commercialWaiting ? 'hidden' : 'text-[13px] text-foreground-400 leading-relaxed max-w-lg mx-auto mt-3'}>
+                  Once they start the process, your training plan, learning materials and progress
+                  will appear here automatically.
+                </p>
+                {commercialWaiting && (
+                  <>
+                    <p className="text-[14px] text-foreground-500 leading-relaxed max-w-lg mx-auto">
+                      {startDate
+                        ? <>Your programme is scheduled to start on <strong className="text-foreground-700">{startDate}</strong>.</>
+                        : 'Your programme start date has not been set yet.'}
+                    </p>
+                    <p className="text-[13px] text-foreground-400 leading-relaxed max-w-lg mx-auto mt-3">
+                      You will wait until the starting date of the programme to start. Your learning access will become active automatically when the programme begins.
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <div className="px-6 md:px-10 py-5 bg-background-100/60 border-t border-foreground-200/60">
+                <p className="text-[11px] font-semibold text-foreground-400 uppercase tracking-wider mb-3">
+                  What happens next
+                </p>
+                <ol className="space-y-2.5">
+                  {[
+                    ...(commercialWaiting ? [
+                      startDate ? `Your programme starts on ${startDate}.` : 'Your programme start date is confirmed by your programme team.',
+                      'You will wait until the programme start date before beginning delivery.',
+                      'Your commercial learning access will activate automatically when it starts.',
+                    ] : [
+                      'The enrolment team reviews your details and starts your enrolment.',
+                      'You complete your enrolment form and book your onboarding reviews.',
+                      'Your training plan is built and your programme begins.',
+                    ]),
+                  ].map((step, i) => (
+                    <li key={i} className="flex items-start gap-3">
+                      <span className="w-5 h-5 rounded-full bg-primary-100 text-primary-700 text-[11px] font-semibold flex items-center justify-center shrink-0 mt-0.5">
+                        {i + 1}
+                      </span>
+                      <span className="text-[13px] text-foreground-600 leading-relaxed">{step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </div>
+
+            <p className="text-[12px] text-foreground-400 text-center mt-5">
+              Need help in the meantime? Use <strong className="text-foreground-500">Contact Support</strong> at
+              the bottom of the sidebar.
+            </p>
+          </div>
+        </div>
+      </WorkspaceShell>
     );
   }
 

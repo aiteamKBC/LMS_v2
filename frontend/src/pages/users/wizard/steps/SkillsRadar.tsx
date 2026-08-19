@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useWizard } from '../WizardContext';
 import { COMPETENCE_LEVELS, competenceMeta, competenceScore } from '@/mocks/enrolment-console';
-import { fetchKsbProfile } from '@/api/curriculum';
+import { fetchKsbProfile, peekKsbProfile } from '@/api/curriculum';
 import type { Ksb, KsbAssessment, RagLevel } from '../../types';
 import { Modal } from '../../components/Modal';
 import { FileList, inputClass, btnPrimary, btnSecondary, EmptyState } from '../../components/ui';
@@ -39,8 +39,14 @@ export default function SkillsRadar() {
   // (curriculum.ksb_profiles), not a fixed standard — a learner must only ever
   // self-assess against their own programme's competencies.
   const programme = board.programme.name || '';
-  const [ksbs, setKsbs] = useState<Ksb[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Seeded from the cache the wizard bootstrap primed, so a step the learner has
+  // already visited (or one opened after the bootstrap) renders its competencies
+  // on the first frame. Starting empty-and-loading meant a spinner flashed on
+  // every mount for a list that was already in memory — effects run after paint,
+  // so even an instantly-resolving promise costs one visible frame.
+  const cached = peekKsbProfile(programme);
+  const [ksbs, setKsbs] = useState<Ksb[]>(() => (cached?.results as Ksb[]) ?? []);
+  const [loading, setLoading] = useState(!cached && Boolean(programme));
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -50,6 +56,14 @@ export default function SkillsRadar() {
       return;
     }
     let cancelled = false;
+    // A cache hit is served synchronously above; re-reading it here would only
+    // re-set identical state. A miss still shows the spinner it always did.
+    const hit = peekKsbProfile(programme);
+    if (hit) {
+      setKsbs(hit.results as Ksb[]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setLoadError(null);
     fetchKsbProfile(programme)
@@ -61,6 +75,10 @@ export default function SkillsRadar() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [programme]);
+
+  // An unrated row per competency is seeded by WizardProvider rather than here:
+  // completeness is judged for every step at once, so a learner who never opens
+  // this one must still show it as outstanding.
 
   // Index of the question open in the modal; null when closed.
   const [openIndex, setOpenIndex] = useState<number | null>(null);

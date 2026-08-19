@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BrandLockup } from '@/components/BrandLockup';
+import { AuthError, apiForgotPassword } from '@/api/auth';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
+  const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
@@ -17,7 +20,19 @@ export default function ForgotPasswordPage() {
       return;
     }
 
-    setSubmitted(true);
+    setSending(true);
+    try {
+      // Succeeds whether or not the address has an account — the backend does
+      // not disclose which, so this screen must not either.
+      setMessage(await apiForgotPassword(email.trim()));
+      setSubmitted(true);
+    } catch (err) {
+      setError(
+        err instanceof AuthError ? err.message : 'Could not send the reset email. Please try again.',
+      );
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -48,12 +63,13 @@ export default function ForgotPasswordPage() {
 
           {submitted ? (
             <div className="space-y-6">
-              <div className="flex items-center gap-2 px-3.5 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-[13px] text-emerald-700">
-                <AppIcon className="ri-checkbox-circle-line text-sm shrink-0" />
-                <span>Reset link sent to your email address</span>
+              <div className="flex items-start gap-2 px-3.5 py-3 rounded-xl bg-emerald-50 border border-emerald-200 text-[13px] text-emerald-700">
+                <AppIcon className="ri-checkbox-circle-line text-sm shrink-0 mt-0.5" />
+                <span>{message || 'If that address has an account, a reset link has been sent to it.'}</span>
               </div>
               <p className="text-[13px] text-foreground-400 leading-relaxed">
-                If an account exists with that email, you will receive instructions to reset your password shortly.
+                The link can be used once and expires in an hour. Check your spam folder if it
+                does not arrive within a few minutes.
               </p>
               <button
                 onClick={() => navigate('/login')}
@@ -93,10 +109,17 @@ export default function ForgotPasswordPage() {
 
               <button
                 type="submit"
-                disabled={!email}
+                disabled={!email || sending}
                 className="w-full py-3.5 rounded-xl bg-primary-500 text-white text-[14px] font-semibold hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 whitespace-nowrap shadow-md shadow-primary-500/15 cursor-pointer"
               >
-                Send Reset Link
+                {sending ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <AppIcon className="ri-loader-4-line animate-spin" />
+                    Sending…
+                  </span>
+                ) : (
+                  'Send Reset Link'
+                )}
               </button>
             </form>
           )}

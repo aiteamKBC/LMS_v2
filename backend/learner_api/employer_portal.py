@@ -422,6 +422,47 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
     })
 
 
+@csrf_exempt
+def employer_portal_learner_plan(request, employer_id, kind, learner_id):
+    """The learner's own training plan, hours and KSBs — for their employer.
+
+    Returns exactly the payload the learner's own workspace reads, so the
+    employer sees the same weeks, components, OTJ hours and KSB mappings rather
+    than a second, divergent summary. Read-only by construction: this is a GET,
+    and the employer UI renders it without the learner's start/open actions.
+
+    The employer-owns-this-learner check is the same one employer_portal_learner
+    makes — the payload is richer, so the guard matters more, not less.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return _error(f"Unknown kind: {kind!r}.", 404)
+
+    try:
+        learner = model.all_learners.get(pk=learner_id)
+    except model.DoesNotExist:
+        return _error("Learner not found.", 404)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    if learner.employer_id != employer.pk:
+        return _error("That learner does not belong to this employer.", 403)
+
+    from .learner_detail import build_learner_detail
+
+    try:
+        return JsonResponse(build_learner_detail(learner, learner.pk))
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+
 def _performance(kind, learner):
     """A progress summary for the employer.
 

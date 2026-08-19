@@ -4,12 +4,14 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from '@/hooks/useToast';
 import { useMyLearner } from '@/hooks/useMyLearner';
-import { fetchEnrolmentBoard, updateEnrolmentUser } from '@/api/enrolmentUsers';
-import { fetchCommercialBoard, updateCommercialBoard } from '@/api/commercialUsers';
+import { updateEnrolmentUser } from '@/api/enrolmentUsers';
+import { updateCommercialBoard } from '@/api/commercialUsers';
+import { fetchWizardBootstrap } from '@/api/extendedIlr';
 import { WIZARD_STEPS, type EnrolmentBoard } from '@/pages/users/types';
 import { btnSecondary } from '@/pages/users/components/ui';
 import { WizardProvider, useWizard } from '@/pages/users/wizard/WizardContext';
 import { WizardShell } from '@/pages/users/wizard/WizardShell';
+import { maxReachableStep, missingAcrossWizard } from '@/pages/users/wizard/validation';
 import { ONBOARDING_REVIEWS_ROUTE } from '@/hooks/useOnboardingRedirect';
 
 const learnerNav = roleNavMap.learner;
@@ -25,19 +27,44 @@ const learnerNav = roleNavMap.learner;
  * instead of complete (staff still verify evidence and countersign).
  */
 function LearnerWizard({ currentIndex, onDone }: { currentIndex: number; onDone: () => void }) {
-  const { userId, isCommercial, board, draft, saveIlr } = useWizard();
+  const { userId, isCommercial, board, draft, ready, saveIlr } = useWizard();
   const navigate = useNavigate();
   const { success, error } = useToast();
 
   const goTo = (i: number) => navigate(`/learner/onboarding/${WIZARD_STEPS[i].slug}`);
 
+  // The step tabs are gated, but the URL is not — typing a later step's slug
+  // would otherwise walk straight past the steps in between. Held until the
+  // draft is worth measuring (`ready`, not just `hydrated` — the competencies
+  // land in a second request), or a returning learner is bounced to step one on
+  // answers that hadn't loaded yet.
+  const reachable = maxReachableStep(draft, WIZARD_STEPS.length);
+  useEffect(() => {
+    if (ready && currentIndex > reachable) {
+      navigate(`/learner/onboarding/${WIZARD_STEPS[reachable].slug}`, { replace: true });
+    }
+  }, [ready, currentIndex, reachable, navigate]);
+
   const finish = async () => {
+    // Backstop to the step gating: completeness is judged live, so the whole
+    // form is re-checked before anything is marked submitted.
+    const gaps = missingAcrossWizard(draft, WIZARD_STEPS.length);
+    if (gaps.length > 0) {
+      const first = gaps[0];
+      error(
+        'Your enrolment isn’t complete',
+        `${gaps.length} ${gaps.length === 1 ? 'answer is' : 'answers are'} still outstanding, starting with “${first.label}” on ${WIZARD_STEPS[first.stepIndex].label}.`
+      );
+      goTo(first.stepIndex);
+      return;
+    }
+
     const pd = draft.personalDetails;
     const name = `${pd.firstName} ${pd.lastName}`.trim();
     try {
       // The ILR lives in its own table — save it before touching the learner row
       // so a learner who never pressed Save on that step doesn't lose it.
-      await saveIlr();
+      if (!isCommercial) await saveIlr();
 
       if (isCommercial) {
         await updateCommercialBoard(userId, {
@@ -71,11 +98,22 @@ function LearnerWizard({ currentIndex, onDone }: { currentIndex: number; onDone:
       onFinish={finish}
       finishLabel="Submit enrolment"
       header={
-        <div className="mb-4 rounded-2xl border border-foreground-200/60 bg-background-50 p-4 shadow-sm sm:p-5">
-          <p className="text-sm leading-relaxed text-foreground-700">
-            Please complete every step and sign where asked. Your answers save as you go, and the enrolment team will
-            review them once you submit.
-          </p>
+        <div className="mb-4 overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm">
+          {/* Tinted band so the instruction reads as a welcome rather than as an
+              alert — the flat grey panel it replaces was the least legible thing
+              on the page. */}
+          <div className="flex items-start gap-4 bg-primary-50/60 p-5 sm:items-center sm:p-6">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-primary-200/70 bg-background-50">
+              <AppIcon className="ri-file-list-3-line text-xl text-primary-600" />
+            </span>
+            <div className="min-w-0">
+              <h2 className="font-heading text-base font-bold text-foreground-950 sm:text-lg">Your enrolment</h2>
+              <p className="mt-1 text-[13px] leading-relaxed text-foreground-600">
+                Please complete every step and sign where asked. Your answers save as you go, and the enrolment team
+                will review them once you submit.
+              </p>
+            </div>
+          </div>
         </div>
       }
     />
@@ -98,19 +136,37 @@ export default function LearnerOnboardingPage() {
   const [reloadToken, setReloadToken] = useState(0);
   const reload = () => setReloadToken((n) => n + 1);
 
+  // Commercial learners do not have an apprenticeship onboarding flow. This
+  // also clears an old bookmarked/sidebar URL once the account type is known.
   useEffect(() => {
+    if (isCommercial) navigate('/workspace/learner', { replace: true });
+  }, [isCommercial, navigate]);
+
+  useEffect(() => {
+    if (isCommercial) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-    (isCommercial ? fetchCommercialBoard(learnerId) : fetchEnrolmentBoard(learnerId))
-      .then((b) => { if (!cancelled) setBoard(b); })
+    // One request for the board *and* the saved ILR, cached per learner: the
+    // wizard used to fetch them separately (and StrictMode doubled each), so a
+    // single open cost four round-trips. Retry forces a fresh read.
+    fetchWizardBootstrap(isCommercial ? 'commercial' : 'apprenticeship', learnerId, {
+      force: reloadToken > 0,
+    })
+      .then((data) => { if (!cancelled) setBoard(data.board); })
       .catch((e: Error) => { if (!cancelled) setLoadError(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [learnerId, isCommercial, reloadToken]);
 
-  const idx = WIZARD_STEPS.findIndex((s) => s.slug === stepSlug);
+  const resolvedStepSlug = isCommercial && stepSlug === 'ilr' ? 'plr' : stepSlug;
+  const idx = WIZARD_STEPS.findIndex((s) => s.slug === resolvedStepSlug);
   const currentIndex = idx === -1 ? 0 : idx;
+
+  if (isCommercial) return null;
 
   return (
     <WorkspaceShell

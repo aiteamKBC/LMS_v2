@@ -52,15 +52,6 @@ export function RealLearnerPlanView({
   kind?: string;
   learnerId?: string;
 }) {
-  const journey = buildLearnerJourney(real);
-  // Component ids the learner has already completed (videos + generic components).
-  const completedIds = new Set<string>([
-    ...(real?.videoProgress || []).map((v) => v.componentId),
-    ...(real?.componentProgress || []).map((c) => c.componentId),
-  ]);
-  const totalOtjh = real?.totalExpectedOtjh ?? 0;
-  const totalWeeks = journey.reduce((n, m) => n + m.weeks.length, 0);
-  const totalComponents = journey.reduce((n, m) => n + m.weeks.reduce((k, w) => k + w.components.length, 0), 0);
   const subtitle = real
     ? [real.programme, real.employer, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
     : '';
@@ -76,8 +67,64 @@ export function RealLearnerPlanView({
       userName={real?.name || 'Learner'}
       userRole={real?.programme ? `${real.programme} Learner` : 'Learner'}
     >
-      <div className="w-full space-y-5 p-3 sm:p-4 md:space-y-6 md:p-6 lg:p-8">
+      <LearnerPlanBody
+        real={real}
+        loading={loading}
+        loadError={loadError}
+        pageLabel={pageLabel}
+        note={note}
+        kind={kind}
+        learnerId={learnerId}
+      />
+    </WorkspaceShell>
+  );
+}
+
+/**
+ * The plan itself, without any page chrome.
+ *
+ * Split out of RealLearnerPlanView so the employer portal can show an employer
+ * the very same weeks and components their apprentice sees. Omitting `kind`/
+ * `learnerId` makes it read-only for free: every start/open/upload affordance
+ * below is gated on having both, so an employer gets the plan and the recorded
+ * outcomes but none of the learner's actions.
+ */
+export function LearnerPlanBody({
+  real,
+  loading,
+  loadError,
+  pageLabel,
+  note,
+  kind,
+  learnerId,
+  showHero = true,
+}: {
+  real: LearnerDetail | null;
+  loading: boolean;
+  loadError: string | null;
+  pageLabel: string;
+  note?: string;
+  kind?: string;
+  learnerId?: string;
+  showHero?: boolean;
+}) {
+  const journey = buildLearnerJourney(real);
+  // Component ids the learner has already completed (videos + generic components).
+  const completedIds = new Set<string>([
+    ...(real?.videoProgress || []).map((v) => v.componentId),
+    ...(real?.componentProgress || []).map((c) => c.componentId),
+  ]);
+  const totalOtjh = real?.totalExpectedOtjh ?? 0;
+  const totalWeeks = journey.reduce((n, m) => n + m.weeks.length, 0);
+  const totalComponents = journey.reduce((n, m) => n + m.weeks.reduce((k, w) => k + w.components.length, 0), 0);
+  const subtitle = real
+    ? [real.programme, real.employer, real.cohort ? `Cohort ${real.cohort}` : ''].filter(Boolean).join(' · ')
+    : '';
+
+  return (
+    <div className={showHero ? 'w-full space-y-5 p-3 sm:p-4 md:space-y-6 md:p-6 lg:p-8' : 'w-full space-y-4'}>
         {/* ═══════════ HERO ═══════════ */}
+        {showHero && (
         <section className="relative overflow-hidden rounded-2xl border border-white/10 shadow-[0_18px_45px_-28px_rgba(32,4,75,0.9)] animate-in fade-in duration-300 sm:rounded-3xl" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
@@ -107,8 +154,25 @@ export function RealLearnerPlanView({
             )}
           </div>
         </section>
+        )}
 
-        {note && <p className="text-xs text-foreground-400 -mt-2">{note}</p>}
+        {/* Without the hero, the same headline counts still need somewhere to live. */}
+        {!showHero && (
+          <div className="flex flex-wrap items-center gap-2">
+            {[
+              { icon: 'ri-book-2-line', value: `${journey.length} ${journey.length === 1 ? 'module' : 'modules'}` },
+              { icon: 'ri-calendar-line', value: `${totalWeeks} ${totalWeeks === 1 ? 'week' : 'weeks'}` },
+              { icon: 'ri-stack-line', value: `${totalComponents} ${totalComponents === 1 ? 'component' : 'components'}` },
+              ...(totalOtjh > 0 ? [{ icon: 'ri-time-line', value: `${totalOtjh}h planned OTJH` }] : []),
+            ].map((s) => (
+              <span key={s.icon} className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-100 bg-background-50 px-3 py-1.5 text-xs font-semibold text-foreground-600">
+                <AppIcon className={`${s.icon} text-[13px] text-primary-500`} />{s.value}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {note && <p className={`text-xs text-foreground-400 ${showHero ? '-mt-2' : ''}`}>{note}</p>}
 
         {/* ═══════════ MODULE GROUPS — TIMELINE ═══════════ */}
         {loading ? (
@@ -141,8 +205,7 @@ export function RealLearnerPlanView({
             </div>
           </div>
         )}
-      </div>
-    </WorkspaceShell>
+    </div>
   );
 }
 

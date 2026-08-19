@@ -215,10 +215,75 @@ const ALPHABETICAL = [
   'Zimbabwe',
 ];
 
+// ISO 3166-1 also includes the smaller island nations and dependent
+// territories below. They are kept here so country and nationality fields
+// accept the same complete set of places.
+const ADDITIONAL_COUNTRIES = [
+  'Åland Islands',
+  'American Samoa',
+  'Anguilla',
+  'Antarctica',
+  'Aruba',
+  'Bermuda',
+  'Bonaire, Sint Eustatius and Saba',
+  'Bouvet Island',
+  'British Indian Ocean Territory',
+  'British Virgin Islands',
+  'Cayman Islands',
+  'Christmas Island',
+  'Cocos (Keeling) Islands',
+  'Cook Islands',
+  'Curaçao',
+  'Falkland Islands',
+  'Faroe Islands',
+  'French Guiana',
+  'French Polynesia',
+  'French Southern Territories',
+  'Gibraltar',
+  'Greenland',
+  'Guadeloupe',
+  'Guam',
+  'Guernsey',
+  'Heard Island and McDonald Islands',
+  'Isle of Man',
+  'Jersey',
+  'Martinique',
+  'Mayotte',
+  'Montserrat',
+  'New Caledonia',
+  'Niue',
+  'Norfolk Island',
+  'Northern Mariana Islands',
+  'Pitcairn',
+  'Puerto Rico',
+  'Réunion',
+  'Saint Barthélemy',
+  'Saint Helena, Ascension and Tristan da Cunha',
+  'Saint Martin (French part)',
+  'Saint Pierre and Miquelon',
+  'Sint Maarten (Dutch part)',
+  'South Georgia and the South Sandwich Islands',
+  'Svalbard and Jan Mayen',
+  'Tokelau',
+  'Turks and Caicos Islands',
+  'United States Minor Outlying Islands',
+  'United States Virgin Islands',
+  'Wallis and Futuna',
+  'Western Sahara',
+];
+
 /**
  * Every country, UK first then alphabetical.
  *
  * The UK is excluded from ALPHABETICAL above so it can't appear twice — a
  * duplicate would give two <option>s the same key and value.
  */
-export const COUNTRY_OPTIONS: string[] = [DEFAULT_COUNTRY, ...ALPHABETICAL];
+export const COUNTRY_OPTIONS: string[] = [
+  DEFAULT_COUNTRY,
+  ...[...ALPHABETICAL, ...ADDITIONAL_COUNTRIES]
+    .filter((country) => country !== DEFAULT_COUNTRY)
+    .sort((a, b) => a.localeCompare(b, 'en')),
+];
+
+/** Nationality is collected using the same complete country set. */
+export const NATIONALITY_OPTIONS = COUNTRY_OPTIONS;

@@ -149,51 +149,60 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
   const displayName = auth.user?.fullName || userName;
   const roleSlug = auth.roles[0]?.slug || 'learner';
-  const roleMessagesPath = roleSlug === 'learner' ? '/learner/messages' : roleSlug === 'coach' ? '/coach/messages' : roleSlug === 'admin' ? '/admin/messages' : '/messages';
+  const roleMessagesPath = roleSlug === 'learner' ? '/learner/messages' : roleSlug === 'coach' ? '/coach/messages' : '/messages';
 
   return (
     <>
-    <header className="workspace-topbar flex h-14 shrink-0 items-center gap-1.5 border-b border-background-300/70 bg-background-200 px-2 shadow-sm shadow-foreground-950/5 sm:px-3 md:gap-3 md:px-4">
+    {/* Height and border deliberately match the sidebar's brand row, so the two
+        read as one continuous bar across the top of the workspace. */}
+    <header className="workspace-topbar flex h-14 shrink-0 items-center gap-2 border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4">
       {/* Hamburger — mobile only */}
       <button
         onClick={onToggleMobileSidebar}
-        className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-700 lg:hidden"
+        className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-primary-50/70 hover:text-primary-700 lg:hidden"
         title="Toggle menu"
+        aria-label="Toggle menu"
       >
         <AppIcon className="ri-menu-line text-lg"></AppIcon>
       </button>
 
-      {/* Provider Logo */}
-      <a href="/" className="hidden shrink-0 sm:flex">
-        <BrandLockup size="compact" className="!h-16 !w-32" />
+      {/* Provider logo — below lg only. From lg up the sidebar carries the
+          brand, and showing it twice was the duplication that read as clutter. */}
+      <a href="/" className="flex shrink-0 lg:hidden" aria-label="Kent Business College home">
+        <BrandLockup size="compact" />
       </a>
 
-      {/* Spacer */}
-      <div className="flex-1 min-w-0"></div>
+      {/* Where the page says what it is. These props were being passed by every
+          page and thrown away, which is what left the bar looking empty. */}
+      <div className="hidden min-w-0 flex-1 lg:block">
+        <p className="truncate font-heading text-[14px] font-bold leading-tight text-foreground-900">{pageTitle}</p>
+        {pageSubtitle && (
+          <p className="truncate text-[11.5px] leading-tight text-foreground-400">{pageSubtitle}</p>
+        )}
+      </div>
+
+      {/* Below lg the title has no room, so the actions simply push right. */}
+      <div className="flex-1 lg:hidden"></div>
 
       {/* Global Search trigger */}
       <button
         onClick={onOpenSearch}
-        className="hidden md:flex items-center gap-2.5 px-3.5 py-2 rounded-xl border border-foreground-200 bg-background-100/80 hover:border-primary-300/50 hover:bg-primary-50/40 hover:shadow-sm hover:shadow-primary-500/5 transition-smooth min-w-[200px] lg:min-w-[280px] max-w-[400px] cursor-pointer group"
+        className="group hidden shrink-0 cursor-pointer items-center gap-2.5 rounded-xl border border-foreground-100 bg-background-100/70 px-3 py-2 transition-smooth hover:border-primary-200 hover:bg-primary-50/50 md:flex md:w-[200px] lg:w-[260px]"
       >
-        <span className="w-6 h-6 rounded-md bg-primary-100 flex items-center justify-center">
-          <AppIcon className="ri-search-line text-sm text-primary-600"></AppIcon>
-        </span>
-        <span className="flex-1 text-left text-sm text-foreground-400 group-hover:text-foreground-600 transition-smooth">Search anything...</span>
-        <span className="text-xs text-foreground-300 bg-background-200/60 px-1.5 py-0.5 rounded font-medium whitespace-nowrap">⌘K</span>
+        <AppIcon className="ri-search-line text-[15px] text-foreground-400 transition-smooth group-hover:text-primary-600"></AppIcon>
+        <span className="flex-1 text-left text-[13px] text-foreground-400 transition-smooth group-hover:text-foreground-600">Search anything…</span>
+        <span className="whitespace-nowrap rounded border border-foreground-100 bg-background-50 px-1.5 py-0.5 text-[10px] font-semibold text-foreground-300">⌘K</span>
       </button>
 
       {/* Mobile search icon */}
       <button
         onClick={onOpenSearch}
-        className="md:hidden w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer shrink-0"
+        className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700 md:hidden"
         title="Search"
+        aria-label="Search"
       >
         <AppIcon className="ri-search-line text-lg"></AppIcon>
       </button>
-
-      {/* Spacer */}
-      <div className="w-4 hidden lg:block"></div>
 
       {/* Action icons */}
       <div className="flex items-center gap-0.5">
@@ -201,8 +210,8 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         <div className="relative" ref={messagesRef}>
           <button
             onClick={() => { closeOthers('messages'); setMessagesOpen(!messagesOpen); }}
-            className={`relative w-9 h-9 rounded-lg flex items-center justify-center transition-smooth cursor-pointer ${
-              newMsgFlashed ? 'text-primary-500 bg-primary-50/60' : 'text-foreground-400 hover:text-foreground-700 hover:bg-background-100'
+            className={`relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg transition-smooth ${
+              newMsgFlashed ? 'bg-primary-50 text-primary-600' : 'text-foreground-400 hover:bg-primary-50/70 hover:text-primary-700'
             }`}
             title="Messages"
           >
@@ -214,7 +223,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
           {messagesOpen && (
             <DropdownPanel title="Messages" count={unreadMessages} countLabel="unread" viewAllHref={roleMessagesPath}>
               {messages_data.map(m => (
-                <a key={m.id} href={m.href} className="block px-4 py-2.5 hover:bg-background-50 transition-smooth border-b border-background-100 last:border-0">
+                <a key={m.id} href={m.href} className="block px-4 py-2.5 hover:bg-primary-50/60 transition-smooth border-b border-background-100 last:border-0">
                   <div className="flex items-start gap-2.5">
                     <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${m.unread ? 'bg-primary-500' : 'bg-transparent'}`}></span>
                     <div className="min-w-0">
@@ -236,7 +245,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         <div className="relative hidden sm:block" ref={tasksRef}>
           <button
             onClick={() => { closeOthers('tasks'); setTasksOpen(!tasksOpen); }}
-            className="relative w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
+            className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
             title="Tasks"
           >
             <ClipboardList size={18} strokeWidth={1.8} />
@@ -247,7 +256,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
           {tasksOpen && (
             <DropdownPanel title="Tasks" count={tasks.length} countLabel="total" viewAllHref="/tasks">
               {tasks.map(t => (
-                <a key={t.id} href={`/tasks/${t.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-background-50 transition-smooth border-b border-background-100 last:border-0">
+                <a key={t.id} href={`/tasks/${t.id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-primary-50/60 transition-smooth border-b border-background-100 last:border-0">
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     t.priority === 'high' ? 'bg-red-500' : t.priority === 'medium' ? 'bg-amber-500' : 'bg-foreground-300'
                   }`}></span>
@@ -268,7 +277,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         <div className="relative" ref={notifRef}>
           <button
             onClick={() => { closeOthers('notif'); setNotificationsOpen(!notificationsOpen); }}
-            className="relative w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
+            className="relative flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
             title="Notifications"
           >
             <Bell size={18} strokeWidth={1.8} />
@@ -282,7 +291,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
                 <a
                   key={n.id}
                   href={`/notifications/${n.id}`}
-                  className={`flex items-start gap-3 px-4 py-2.5 hover:bg-background-50 transition-smooth border-b border-background-100 last:border-0 ${
+                  className={`flex items-start gap-3 px-4 py-2.5 hover:bg-primary-50/60 transition-smooth border-b border-background-100 last:border-0 ${
                     n.unread ? 'bg-primary-50/30' : ''
                   }`}
                 >
@@ -300,19 +309,19 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         </div>
 
         {/* Divider */}
-        <div className="mx-1 hidden h-5 w-px bg-background-200/60 sm:block"></div>
+        <div className="mx-1 hidden h-5 w-px bg-foreground-100 sm:block"></div>
 
         {/* Quick Create */}
         <div className="relative hidden md:block" ref={createRef}>
           <button
             onClick={() => { closeOthers('create'); setQuickCreateOpen(!quickCreateOpen); }}
-            className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-primary-600 hover:bg-primary-50 transition-smooth cursor-pointer"
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
             title="Quick Create"
           >
             <CirclePlus size={18} strokeWidth={1.8} />
           </button>
           {quickCreateOpen && (
-            <div className="absolute right-0 top-full mt-1.5 w-56 bg-background-50 rounded-xl border border-background-200 shadow-lg shadow-foreground-950/5 z-50 py-1 overflow-hidden">
+            <div className="absolute right-0 top-full mt-1.5 w-56 bg-background-50 rounded-xl border border-foreground-100 shadow-xl shadow-foreground-950/5 z-50 py-1 overflow-hidden">
               <div className="px-4 py-2 border-b border-background-100">
                 <span className="text-xs font-semibold text-foreground-400 uppercase tracking-wider">Quick Create</span>
               </div>
@@ -320,7 +329,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
                 <a
                   key={i}
                   href="#"
-                  className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth cursor-pointer"
+                  className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth cursor-pointer"
                   onClick={e => { e.preventDefault(); setQuickCreateOpen(false); }}
                 >
                   <AppIcon className={`${item.icon} text-foreground-400`}></AppIcon>
@@ -335,24 +344,24 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         <div className="relative hidden md:block" ref={helpRef}>
           <button
             onClick={() => { closeOthers('help'); setHelpOpen(!helpOpen); }}
-            className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
             title="Help & Support"
           >
             <AppIcon className="ri-question-line text-lg"></AppIcon>
           </button>
           {helpOpen && (
-            <div className="absolute right-0 top-full mt-1.5 w-48 bg-background-50 rounded-xl border border-background-200 shadow-lg shadow-foreground-950/5 z-50 py-1 overflow-hidden">
-              <a href="/help" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
+            <div className="absolute right-0 top-full mt-1.5 w-48 bg-background-50 rounded-xl border border-foreground-100 shadow-xl shadow-foreground-950/5 z-50 py-1 overflow-hidden">
+              <a href="/help" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
                 <AppIcon className="ri-book-open-line text-foreground-400"></AppIcon> Knowledge Base
               </a>
-              <a href="/help/guides" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
+              <a href="/help/guides" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
                 <AppIcon className="ri-guide-line text-foreground-400"></AppIcon> User Guides
               </a>
-              <a href="/help/support" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
+              <a href="/help/support" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
                 <AppIcon className="ri-customer-service-line text-foreground-400"></AppIcon> Contact Support
               </a>
               <div className="border-t border-background-100 my-1"></div>
-              <a href="/help/release-notes" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
+              <a href="/help/release-notes" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
                 <AppIcon className="ri-rocket-line text-foreground-400"></AppIcon> What's New
               </a>
             </div>
@@ -362,8 +371,8 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         {/* Settings (permission-based) */}
         {canAccessSettings && (
           <a
-            href="/admin/settings"
-            className="w-9 h-9 rounded-lg flex items-center justify-center text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
+            href="/admin/system"
+            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
             title="Settings"
           >
             <AppIcon className="ri-settings-3-line text-lg"></AppIcon>
@@ -374,7 +383,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         <div className="relative" ref={profileRef}>
           <button
             onClick={() => { closeOthers('profile'); setProfileOpen(!profileOpen); }}
-            className="flex cursor-pointer items-center gap-1 rounded-lg p-1 transition-smooth hover:bg-background-100 sm:gap-2 sm:pl-2"
+            className="flex cursor-pointer items-center gap-1 rounded-lg p-1 transition-smooth hover:bg-primary-50/70 sm:gap-2 sm:pl-2"
           >
             <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center ring-1 ring-primary-200/50">
               <span className="text-primary-700 text-xs font-semibold">{displayName.charAt(0)}</span>
@@ -382,15 +391,15 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
             <AppIcon className="ri-arrow-down-s-line hidden text-xs text-foreground-300 sm:inline"></AppIcon>
           </button>
           {profileOpen && (
-            <div className="absolute right-0 top-full mt-1.5 w-52 bg-background-50 rounded-xl border border-background-200 shadow-lg shadow-foreground-950/5 z-50 py-1 overflow-hidden">
+            <div className="absolute right-0 top-full mt-1.5 w-52 bg-background-50 rounded-xl border border-foreground-100 shadow-xl shadow-foreground-950/5 z-50 py-1 overflow-hidden">
               <div className="px-4 py-2.5 border-b border-background-100">
                 <p className="text-sm font-semibold text-foreground-900">{displayName}</p>
                 <p className="text-xs text-foreground-400">{auth.user?.email || 'User'}</p>
               </div>
-              <a href="/profile" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
+              <a href="/profile" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
                 <AppIcon className="ri-user-line text-foreground-400"></AppIcon> My Profile
               </a>
-              <a href="/profile/preferences" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-background-50 transition-smooth">
+              <a href="/profile/preferences" className="flex items-center gap-3 px-4 py-2.5 text-sm text-foreground-700 hover:bg-primary-50/60 transition-smooth">
                 <AppIcon className="ri-equalizer-line text-foreground-400"></AppIcon> Preferences
               </a>
               <div className="border-t border-background-100 my-1"></div>
@@ -434,7 +443,7 @@ function DropdownPanel({
   children: React.ReactNode;
 }) {
   return (
-    <div className="absolute right-0 top-full z-50 mt-1.5 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-background-200 bg-background-50 shadow-lg shadow-foreground-950/5">
+    <div className="absolute right-0 top-full z-50 mt-1.5 w-[min(20rem,calc(100vw-1rem))] overflow-hidden rounded-xl border border-foreground-100 bg-background-50 shadow-xl shadow-foreground-950/5">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-background-100">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-foreground-900 font-heading">{title}</span>

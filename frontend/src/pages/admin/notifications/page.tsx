@@ -1,180 +1,191 @@
-import { useState } from 'react';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { roleNavMap } from '@/mocks/navigation';
+// ============================================================================
+// Email delivery — login."Invitations" and login."Password_resets"
+//
+// The platform sends exactly two kinds of transactional email, and both tables
+// record when it was sent and what went wrong. That is the entire delivery
+// story, so this page shows it.
+//
+// The screen this replaces reported SMS and WhatsApp delivery counts alongside
+// email. No SMS or WhatsApp transport exists in this codebase — those figures
+// were fixtures, and a delivery dashboard that invents channels is worse than
+// no dashboard.
+// ============================================================================
+import { useCallback, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
+import { useAdminData } from '../_shared/useAdminData';
+import { fetchEmailLog, type EmailLogRow } from '@/api/platformAdmin';
 
-const adminNav = roleNavMap.admin;
+const PAGE_SIZE = 25;
 
-const NOTIFICATIONS_DATA = [
-  { id: 'n1', name: 'New Evidence Submitted', channel: 'In-app', recipients: 'Coach, Tutor', sent: 210, openRate: 78, status: 'active' as const, category: 'Evidence' },
-  { id: 'n2', name: 'Monthly Coaching Due', channel: 'Email + In-app', recipients: 'Coach, Learner', sent: 86, openRate: 92, status: 'active' as const, category: 'Coaching' },
-  { id: 'n3', name: 'Progress Review Signed', channel: 'Email', recipients: 'Learner, Employer', sent: 42, openRate: 85, status: 'active' as const, category: 'Reviews' },
-  { id: 'n4', name: 'Absence Reported', channel: 'In-app + WhatsApp', recipients: 'Coach, Engagement', sent: 34, openRate: 95, status: 'active' as const, category: 'Attendance' },
-  { id: 'n5', name: 'OTJH Claim Validated', channel: 'Email', recipients: 'Learner', sent: 156, openRate: 72, status: 'active' as const, category: 'OTJH' },
-  { id: 'n6', name: 'KSB Status Change', channel: 'In-app', recipients: 'Learner, Coach', sent: 67, openRate: 65, status: 'active' as const, category: 'KSB' },
-  { id: 'n7', name: 'Gateway Milestone', channel: 'Email + In-app', recipients: 'Learner, Coach, Employer', sent: 12, openRate: 88, status: 'active' as const, category: 'Gateway' },
-  { id: 'n8', name: 'New Course Content', channel: 'In-app', recipients: 'Learner', sent: 340, openRate: 45, status: 'active' as const, category: 'Learning' },
-  { id: 'n9', name: 'Employer Action Required', channel: 'Email', recipients: 'Employer', sent: 28, openRate: 80, status: 'active' as const, category: 'Employer' },
-  { id: 'n10', name: 'System Maintenance', channel: 'Email + In-app', recipients: 'All Users', sent: 2, openRate: 60, status: 'active' as const, category: 'System' },
-];
+const STATUS_TONE: Record<EmailLogRow['status'], 'ok' | 'bad' | 'warn' | 'neutral'> = {
+  accepted: 'ok',
+  delivered: 'ok',
+  failed: 'bad',
+  queued: 'warn',
+};
 
-export default function AdminNotificationsPage() {
-  const [search, setSearch] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [selectedNotification, setSelectedNotification] = useState<string | null>(null);
+const STATUS_LABEL: Record<EmailLogRow['status'], string> = {
+  accepted: 'accepted',
+  delivered: 'sent',
+  failed: 'failed',
+  queued: 'not sent',
+};
 
-  const activeCount = NOTIFICATIONS_DATA.filter(n => n.status === 'active').length;
-  const totalSent = NOTIFICATIONS_DATA.reduce((a, b) => a + b.sent, 0);
-  const avgOpenRate = Math.round(NOTIFICATIONS_DATA.reduce((a, b) => a + b.openRate, 0) / NOTIFICATIONS_DATA.length);
+function fmtDateTime(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
 
-  const filtered = NOTIFICATIONS_DATA.filter(n => {
-    const matchSearch = n.name.toLowerCase().includes(search.toLowerCase());
-    const matchCategory = categoryFilter === 'all' || n.category === categoryFilter;
-    return matchSearch && matchCategory;
-  });
+export default function AdminEmailDeliveryPage() {
+  const [params, setParams] = useSearchParams();
+  const status = params.get('status') || '';
+  const [kind, setKind] = useState('');
+  const [page, setPage] = useState(1);
 
-  const notif = selectedNotification ? NOTIFICATIONS_DATA.find(n => n.id === selectedNotification) : null;
+  const { data, loading, error, reload } = useAdminData(
+    useCallback(() => fetchEmailLog({ status, kind, page, pageSize: PAGE_SIZE }), [status, kind, page]),
+    [status, kind, page],
+  );
+
+  const rows = data?.results ?? [];
+  const stats = data?.stats;
+  const transport = data?.transport;
 
   return (
-    <WorkspaceShell role="admin" roleLabel={adminNav.label} navItems={adminNav.items} workspaceLabel={adminNav.workspaceLabel} pageTitle="Notifications" pageSubtitle="Notification rules, channels, delivery metrics" userName="Admin User" userRole="Tenant Administrator">
-      <div className="p-6 space-y-6">
-        {/* Hero Banner */}
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <AppIcon className="ri-notification-3-line text-white text-2xl"></AppIcon>
-            </span>
-            <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Notification Centre</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{NOTIFICATIONS_DATA.length} rules</strong> — {activeCount} active. {totalSent} notifications sent. {avgOpenRate}% avg open rate.
-              </p>
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{NOTIFICATIONS_DATA.length}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Rules</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{totalSent}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Sent</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{avgOpenRate}%</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Open Rate</p>
-              </div>
-            </div>
+    <AdminPage
+      title="Email Delivery"
+      subtitle="Invitations and password resets, and whether they were delivered"
+      icon="ri-mail-send-line"
+      heroTitle="Transactional email"
+      heroBlurb={
+        <>The platform sends invitations and password resets. Both are recorded with their send result, so an email that never left is visible here.</>
+      }
+      stats={[
+        { label: 'Sent', value: loading && !data ? '—' : (stats?.sent ?? 0) },
+        { label: 'Failed', value: loading && !data ? '—' : (stats?.failed ?? 0) },
+        { label: 'Delivery', value: loading && !data ? '—' : (stats?.deliveryRate == null ? '—' : `${stats.deliveryRate}%`) },
+      ]}
+    >
+      {/* Transport readiness — the cause of most "nothing was sent" reports */}
+      {transport && !transport.configured && (
+        <div className="bg-amber-50 border border-amber-200/60 rounded-xl p-4 flex items-start gap-3">
+          <span className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+            <AppIcon className="ri-alert-line text-amber-600 text-sm"></AppIcon>
+          </span>
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-amber-900">Email transport is not configured</p>
+            <p className="text-[12px] text-amber-700 mt-1">
+              Invitations and resets cannot be delivered until these settings are present:{' '}
+              <span className="font-mono">{transport.missing.join(', ')}</span>.
+              Accounts can still be created — the person just will not receive their link.
+            </p>
           </div>
         </div>
+      )}
 
-        {/* Filters */}
-        <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
-          <div className="relative flex-1 w-full lg:w-auto">
-            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
-            <input type="text" placeholder="Search notifications..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
-          </div>
-          <div className="flex items-center gap-2">
-            <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="px-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 outline-none focus:border-primary-400 transition-smooth cursor-pointer">
-              <option value="all">All Categories</option>
-              <option value="Evidence">Evidence</option>
-              <option value="Coaching">Coaching</option>
-              <option value="Reviews">Reviews</option>
-              <option value="Attendance">Attendance</option>
-              <option value="OTJH">OTJH</option>
-              <option value="KSB">KSB</option>
-              <option value="Gateway">Gateway</option>
-              <option value="Learning">Learning</option>
-              <option value="Employer">Employer</option>
-              <option value="System">System</option>
-            </select>
-            <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <AppIcon className="ri-add-line mr-1.5"></AppIcon> New Rule
-            </button>
-          </div>
+      {/* Real figures */}
+      {stats && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+          <Tile label="Invitations sent" value={stats.invitations} icon="ri-mail-send-line" tone="neutral" />
+          <Tile label="Resets sent" value={stats.resets} icon="ri-lock-password-line" tone="neutral" />
+          <Tile label="Failed to send" value={stats.failed} icon="ri-mail-close-line" tone={stats.failed > 0 ? 'bad' : 'ok'} />
+          <Tile label="Last 30 days" value={stats.last30d} icon="ri-calendar-line" tone="neutral" />
         </div>
+      )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Notifications List */}
-          <div className="lg:col-span-2 space-y-3">
-            {filtered.map(n => {
-              const statusColors = {
-                active: 'bg-emerald-50 text-emerald-700 border-emerald-200/50',
-                paused: 'bg-accent-50 text-accent-700 border-accent-200/50',
-                draft: 'bg-background-100 text-foreground-500 border-foreground-200/60',
-              };
-              return (
-                <div key={n.id} onClick={() => setSelectedNotification(n.id)} className={`flex items-center gap-4 bg-background-50 rounded-xl border p-4 cursor-pointer transition-smooth ${selectedNotification === n.id ? 'border-primary-300 ring-1 ring-primary-200/50' : 'border-foreground-200/60 hover:border-background-300/60'}`}>
-                  <div className="w-10 h-10 rounded-lg bg-secondary-100 flex items-center justify-center shrink-0">
-                    <AppIcon className="ri-notification-3-line text-secondary-600 text-sm"></AppIcon>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold text-foreground-900">{n.name}</p>
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-secondary-100 text-secondary-700 border border-secondary-200/50">{n.category}</span>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusColors[n.status]}`}>{n.status}</span>
-                    </div>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">{n.channel} · {n.recipients}</p>
-                  </div>
-                  <div className="flex items-center gap-3 text-[12px] text-foreground-500 shrink-0">
-                    <span><AppIcon className="ri-send-plane-line mr-1"></AppIcon>{n.sent}</span>
-                    <div className="flex items-center gap-1">
-                      <div className="w-10 h-1.5 bg-background-200 rounded-full overflow-hidden">
-                        <div className="h-full bg-accent-500 rounded-full" style={{ width: `${n.openRate}%` }}></div>
-                      </div>
-                      <span className="text-[10px]">{n.openRate}%</span>
-                    </div>
-                  </div>
-                  <AppIcon className={`ri-arrow-right-s-line text-foreground-300 ${selectedNotification === n.id ? 'text-primary-500' : ''}`}></AppIcon>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Notification Detail */}
-          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 h-fit">
-            {notif ? (
-              <div className="space-y-5">
-                <div>
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">{notif.name}</h3>
-                  <p className="text-[12px] text-foreground-500 mt-1">{notif.category} · {notif.channel}</p>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-background-100 rounded-lg p-3 text-center">
-                    <p className="text-xl font-bold text-foreground-900">{notif.sent}</p>
-                    <p className="text-[10px] text-foreground-400 uppercase tracking-wide">Sent</p>
-                  </div>
-                  <div className="bg-background-100 rounded-lg p-3 text-center">
-                    <p className="text-xl font-bold text-foreground-900">{notif.openRate}%</p>
-                    <p className="text-[10px] text-foreground-400 uppercase tracking-wide">Open Rate</p>
-                  </div>
-                </div>
-                <div className="space-y-2 pt-2 border-t border-foreground-200/60">
-                  <div className="flex items-center justify-between text-[12px]">
-                    <span className="text-foreground-500">Recipients</span>
-                    <span className="text-foreground-700 font-medium">{notif.recipients}</span>
-                  </div>
-                  <div className="flex items-center justify-between text-[12px]">
-                    <span className="text-foreground-500">Status</span>
-                    <span className="text-foreground-700 font-medium capitalize">{notif.status}</span>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">Edit Rule</button>
-                  <button className="flex-1 px-3 py-2 bg-background-100 border border-background-200 rounded-lg text-[12px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">Test Send</button>
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                  <AppIcon className="ri-notification-3-line text-foreground-300 text-xl"></AppIcon>
-                </div>
-                <p className="text-sm text-foreground-500">Select a notification rule to view details</p>
-              </div>
-            )}
-          </div>
-        </div>
+      {/* Filters */}
+      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 flex flex-col md:flex-row gap-3 md:items-center">
+        <select
+          value={kind}
+          onChange={e => { setKind(e.target.value); setPage(1); }}
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+        >
+          <option value="">Both kinds</option>
+          <option value="invitation">Invitations</option>
+          <option value="reset">Password resets</option>
+        </select>
+        <select
+          value={status}
+          onChange={e => {
+            const next = new URLSearchParams(params);
+            if (e.target.value) next.set('status', e.target.value); else next.delete('status');
+            setParams(next, { replace: true });
+            setPage(1);
+          }}
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+        >
+          <option value="">Any status</option>
+          <option value="delivered">Sent</option>
+          <option value="failed">Failed</option>
+          <option value="pending">Not yet used</option>
+        </select>
       </div>
-    </WorkspaceShell>
+
+      <DataPanel
+        loading={loading && !data}
+        error={error}
+        empty={rows.length === 0}
+        emptyMessage={status || kind ? 'No emails match these filters.' : 'No invitations or resets have been issued yet.'}
+        onRetry={reload}
+      >
+        <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead>
+                <tr className="border-b border-foreground-400/50">
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Recipient</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Kind</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Status</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Sent</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Used</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Expires</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(row => (
+                  <tr key={row.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                    <td className="px-4 py-2.5">
+                      <p className="font-medium text-foreground-800 truncate max-w-[240px]">{row.email}</p>
+                      {row.error && <p className="text-[10px] text-red-600 mt-0.5 truncate max-w-[240px]">{row.error}</p>}
+                    </td>
+                    <td className="px-4 py-2.5 text-[11px] text-foreground-600">
+                      {row.kind === 'reset' ? 'Password reset' : 'Invitation'}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <StatusBadge status={STATUS_LABEL[row.status]} tone={STATUS_TONE[row.status]} />
+                    </td>
+                    <td className="px-4 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{fmtDateTime(row.sentAt)}</td>
+                    <td className="px-4 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{fmtDateTime(row.usedAt)}</td>
+                    <td className="px-4 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{fmtDateTime(row.expiresAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pager page={page} pageSize={PAGE_SIZE} count={data?.count ?? 0} onPage={setPage} />
+        </div>
+      </DataPanel>
+
+      <SourceNote>
+        Only the hash of each emailed link is stored, so a link cannot be recovered from here — re-issue
+        the invitation from the account instead. &ldquo;Accepted&rdquo; means the recipient used the link.
+      </SourceNote>
+    </AdminPage>
+  );
+}
+
+function Tile({ label, value, icon, tone }: { label: string; value: number; icon: string; tone: 'ok' | 'bad' | 'neutral' }) {
+  const map = { ok: 'bg-emerald-100 text-emerald-600', bad: 'bg-red-100 text-red-600', neutral: 'bg-primary-100 text-primary-600' };
+  return (
+    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 card-premium">
+      <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${map[tone]} mb-3`}>
+        <AppIcon className={`${icon} text-sm`}></AppIcon>
+      </span>
+      <p className="text-2xl font-heading font-semibold text-foreground-900">{value}</p>
+      <p className="text-[11px] text-foreground-400 mt-1">{label}</p>
+    </div>
   );
 }

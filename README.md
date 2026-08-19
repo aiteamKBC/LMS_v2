@@ -333,6 +333,10 @@ Run these commands from `backend/`:
 | `python manage.py migrate` | Apply database migrations |
 | `python manage.py createsuperuser` | Create a Django administrator |
 | `python manage.py test` | Run the backend test suite |
+| `python manage.py test_login --fast` | Run the authentication unit tests that need no database (~0.5s) |
+| `python manage.py test_login` | Run the full authentication suite, 125 tests (provisions the unmanaged Neon test tables) |
+| `python manage.py apply_login_tables` | Create the `login` schema and its authentication tables |
+| `python manage.py seed_demo_admin` | Create or reset the demo administrator account |
 | `python manage.py create_calendar_busy_slots_table` | Create the learner personal-calendar busy-slot cache |
 | `python manage.py sync_calendar_busy_slots` | Refresh connected learner calendars (defaults to the next 90 days) |
 
@@ -385,7 +389,72 @@ unless they send pagination parameters.
 | `/api/calendar/` | Learner personal-calendar integration |
 | `/api/batch/` | Batched GET requests for reduced round-trips |
 | `/ws/chat/<conversation_id>/` | Real-time conversation channel |
+| `/login_api/` | Sign-in, sessions, invitations, and password resets |
 | `/admin/` | Django administration |
+
+## Authentication
+
+Platform sign-in lives in the `login` app. Credentials are stored in a dedicated
+`login` schema on the Neon database, beside the people they identify — learners
+in `enrolment."Created_users"`, employers in `enrolment."Employers"`, and staff
+in `enrolment."Staff_users"`. An account is linked to its person by
+`(Subject_type, Subject_id)` and carries one of four roles: `admin`, `staff`,
+`employer`, `learner`.
+
+Install it on a new environment:
+
+```bash
+python manage.py apply_login_tables   # create the login schema and its tables
+python manage.py seed_demo_admin      # optional: a known admin credential
+```
+
+How it works:
+
+- **Sessions** are server-side. The browser holds an `HttpOnly`, `SameSite=Lax`
+  cookie containing a random token; the database stores only its SHA-256, so a
+  database dump yields no usable cookies and sign-out takes effect immediately.
+- **Passwords** are hashed with Argon2id (`argon2-cffi`), falling back to
+  Django's PBKDF2 if it is not installed. Policy is length-led, and rejects
+  common passwords and anything containing the user's own name or address.
+- **Invitations** are how everyone gets their first password. Ticking "Invite to
+  platform" on any of the three creation forms emails a single-use link; the
+  account cannot be signed into until that link is used.
+- **Who may invite** is enforced in `login/services.py`, at the point the
+  credential is minted rather than only on the endpoint: anonymous callers are
+  refused, only staff and admins can invite at all, and **only an admin can
+  create another admin**. This matters because the three `learner_api` creation
+  endpoints are `@csrf_exempt` with no auth decorator of their own — without the
+  check, an unauthenticated POST naming `position: "Admin"` would mint an admin
+  credential and email the set-password link to any address it chose.
+- **Resets** work the same way and revoke every existing session on completion.
+- Both token types are stored only as a SHA-256, are single-use, expire (7 days
+  for invitations, 1 hour for resets), and are superseded when re-issued.
+- **Brute force** is bounded twice: per-account lockout with escalating backoff,
+  and a per-IP sliding window that catches a spray across many accounts.
+- Sign-in failures are deliberately indistinguishable — a wrong password and an
+  unknown address return the same response, so the endpoint cannot be used to
+  enumerate who has an account.
+- Every attempt, invitation, and reset is recorded in `login."Login_audit"`.
+
+- **Console writes require a session.** The `learner_api` creation and edit
+  endpoints are gated by `login.permissions.staff_only(writes_only=True)`:
+  POST/PATCH require an authenticated staff or admin account. Reads are still open
+  while the remaining unauthenticated frontend fetches are migrated. Set
+  `LEARNER_API_REQUIRE_AUTH=0` for local development only.
+
+The suite is 132 backend tests plus 63 frontend tests covering the credential,
+session, invitation and reset paths; [backend/LOGIN_TESTS.md](backend/LOGIN_TESTS.md)
+documents what each one pins down and what is deliberately not covered.
+
+Outbound email goes through Microsoft Graph. **Until an Azure app registration
+is configured, links are logged to the Django console instead of being sent** —
+the flows are fully usable, but nothing is delivered. See
+[backend/AZURE_SETUP.md](backend/AZURE_SETUP.md) for exactly what to create and
+which `.env` keys to add. Check readiness at any time with:
+
+```bash
+curl http://localhost:8000/login_api/health/
+```
 
 ## Quality and Security
 

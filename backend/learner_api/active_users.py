@@ -1037,25 +1037,35 @@ def _resolve_programme_id(programme="", training_plan=None):
     return _s(row[0]) if row else ""
 
 
+# The three KSB lookups below each run their query inside its own savepoint.
+# They already caught DatabaseError and degraded to "no KSBs", which is the right
+# behaviour — but catching an error does not un-abort a Postgres transaction, and
+# these are called from inside sync_active_user's atomic block. Without the
+# savepoint one failed lookup made every subsequent statement fail with "current
+# transaction is aborted", so a whole batch of profile writes was silently lost.
 def _fetch_ksb_items_for_programme(programme_id, programme):
     try:
         with connections["enrolment"].cursor() as cursor:
+            # curriculum.ksb_profiles links to programmes through a single
+            # jsonb array, programme_ids, which holds programme ids AND
+            # programme names side by side. This query used to read
+            # `programme_id = %s OR programme_name = %s` — neither column
+            # exists, so it raised every time, was swallowed as a warning, and
+            # silently returned no KSBs while leaving the caller's transaction
+            # aborted.
             cursor.execute(
                 "SELECT ksb_items FROM curriculum.ksb_profiles "
-                "WHERE is_active AND EXISTS ("
-                "    SELECT 1 "
-                "    FROM jsonb_array_elements_text(COALESCE(programme_ids::jsonb, '[]'::jsonb)) value(programme_ref) "
-                "    WHERE (%s <> '' AND lower(value.programme_ref) = lower(%s)) "
-                "       OR (%s <> '' AND (lower(value.programme_ref) = lower(%s) OR lower(%s) LIKE lower(value.programme_ref) || ' %%'))"
+                "WHERE COALESCE(is_active, true) AND ("
+                "      (%s <> '' AND programme_ids @> to_jsonb(%s::text)) "
+                "   OR (%s <> '' AND programme_ids @> to_jsonb(%s::text))"
                 ") "
+                # An id match beats a name match: names are not unique.
                 "ORDER BY CASE "
-                "    WHEN %s <> '' AND EXISTS ("
-                "        SELECT 1 FROM jsonb_array_elements_text(COALESCE(programme_ids::jsonb, '[]'::jsonb)) value(programme_ref) "
-                "        WHERE lower(value.programme_ref) = lower(%s)"
-                "    ) THEN 0 "
-                "    ELSE 2 "
+                "    WHEN %s <> '' AND programme_ids @> to_jsonb(%s::text) THEN 0 "
+                "    ELSE 1 "
                 "END, updated_at DESC NULLS LAST LIMIT 1",
-                [programme_id, programme_id, programme, programme, programme, programme_id, programme_id],
+                [programme_id, programme_id, programme, programme,
+                 programme_id, programme_id],
             )
             row = cursor.fetchone()
     except DatabaseError as exc:
@@ -1069,7 +1079,9 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
     if not module_ids:
         return []
     try:
-        with connections["enrolment"].cursor() as cursor:
+        # Savepointed for the same reason: a failure here must not abort the
+        # caller's transaction, only this query.
+        with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
             cursor.execute(
                 "SELECT DISTINCT ON (upper(mapping.ksb_code)) "
                 "       upper(mapping.ksb_code) AS code, "
@@ -1116,7 +1128,8 @@ def _fetch_ksb_items_from_plan_mappings(programme_id="", programme="", training_
 def _resolve_ksb_profile_source_id(programme_id="", programme="", training_plan=None):
     module_ids = _plan_module_ids(training_plan)
     try:
-        with connections["enrolment"].cursor() as cursor:
+        # Savepointed for the same reason as the two helpers above.
+        with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
             cursor.execute(
                 "SELECT COALESCE(NULLIF(ksb_profile_source_id, ''), '') "
                 "FROM curriculum.programmes "
@@ -1159,7 +1172,8 @@ def _fetch_ksb_items_from_profile_source(profile_source_id):
     if not profile_source_id:
         return []
     try:
-        with connections["enrolment"].cursor() as cursor:
+        # Savepointed: see the note above _fetch_ksb_items_for_programme.
+        with transaction.atomic(using="enrolment"), connections["enrolment"].cursor() as cursor:
             cursor.execute(
                 "SELECT ksb_items FROM curriculum.ksb_profiles "
                 "WHERE is_active AND (id = %s OR ksb_profile_id = %s) "
@@ -1244,10 +1258,21 @@ def sync_active_user(source):
     try:
         with transaction.atomic(using="enrolment"):
             source_email = _s(getattr(source, "email", "")).strip()
-            learner = (
-                LearnerProfile.objects.filter(email__iexact=source_email).first()
-                if source_email
-                else LearnerProfile.objects.filter(pk=source.id).first()
+            # Prefer the explicit link; fall back to email for profiles created
+            # before enrolment_id existed (see identity.learner_profile_for_source).
+            learner = LearnerProfile.objects.filter(enrolment_id=source.id).first()
+            if learner is None:
+                learner = (
+                    LearnerProfile.objects.filter(email__iexact=source_email).first()
+                    if source_email
+                    else LearnerProfile.objects.filter(pk=source.id).first()
+                )
+            # Whether found or about to be created, it belongs to this source row.
+            defaults["enrolment_id"] = source.id
+            # Carried across on every upsert so the profile never has to guess
+            # which kind of learner it belongs to.
+            defaults["learner_type"] = (
+                _s(getattr(source, "learner_type", "")).lower() or None
             )
             if learner is None:
                 # Never force the Created_users primary key into this table:

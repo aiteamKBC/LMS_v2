@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from 'react';
 import { useWizard } from '../WizardContext';
 import { useToast } from '@/hooks/useToast';
-import { COUNTRY_OPTIONS, NATIONALITY_OPTIONS, WAGE_BAND_OPTIONS } from '@/mocks/enrolment-console';
+import { COUNTRY_OPTIONS, NATIONALITY_OPTIONS } from '@/lib/countries';
+import { WAGE_BAND_OPTIONS } from '@/mocks/enrolment-console';
 import { YesNoRadio, FileList, inputClass, btnPrimary, btnSecondary } from '../../components/ui';
 import { LabeledInput, LabeledSelect, LabeledTextarea, SignatureField, StepHeading } from './fields';
 import { downloadIlrDocument } from './ilrDocument';
@@ -225,8 +226,9 @@ export default function Ilr() {
           <button className={btnPrimary} onClick={() => downloadIlrDocument(ilr, board)}>
             <AppIcon className="ri-file-download-line" />Download ILR document
           </button>
-          {/* Plain "Save progress" lives in the wizard footer on every step; this
-              one additionally files the PDF into Compliance documents. */}
+          {/* A plain save is the wizard footer's job — Next on the learner side,
+              "Save progress" on the staff side; this one additionally files the
+              PDF into Compliance documents. */}
           <button className={btnSecondary} onClick={saveAndFile} disabled={ilrSaving || ilrFiling}>
             {ilrFiling ? <><AppIcon className="ri-loader-4-line animate-spin" />Filing…</> : <><AppIcon className="ri-folder-upload-line" />Save &amp; file document</>}
           </button>

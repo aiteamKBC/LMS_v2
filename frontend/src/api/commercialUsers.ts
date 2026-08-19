@@ -7,6 +7,8 @@
 import type { TrainingPlan } from './trainingPlan';
 import type { EnrolmentBoard } from '@/pages/users/types';
 import type { AptemUserFields } from './enrolmentUsers';
+import { invalidateWizardCacheById } from './extendedIlr';
+import { invalidateLearnerDetailCache } from './learnerDetail';
 
 const BASE = '/learner_api/commercial-users';
 const UNIFIED_ENROLMENT_BASE = '/learner_api/enrolment-users';
@@ -64,8 +66,18 @@ async function request<T>(url: string, init?: Parameters<typeof fetch>[1]): Prom
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
+      // Sends the kbc_session cookie — writes require an authenticated staff
+      // session (see login.permissions.staff_only).
+      credentials: 'include',
       ...init,
+      // Spread last: with `...init` after it, a caller passing any headers at
+      // all would silently drop these two, failing the Content-Type parse and
+      // the CSRF check.
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(init?.headers || {}),
+      },
     });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
@@ -117,11 +129,15 @@ export function fetchCommercialBoard(id: string): Promise<EnrolmentBoard> {
 }
 
 /** Save wizard edits for a commercial learner (flat columns + training plan). */
-export function updateCommercialBoard(id: string, patch: Record<string, unknown>): Promise<EnrolmentBoard> {
-  return request<EnrolmentBoard>(`${UNIFIED_ENROLMENT_BASE}/${id}/`, {
+export async function updateCommercialBoard(id: string, patch: Record<string, unknown>): Promise<EnrolmentBoard> {
+  const board = await request<EnrolmentBoard>(`${UNIFIED_ENROLMENT_BASE}/${id}/`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
+  // Same row the cached wizard bootstrap carries — see updateEnrolmentUser.
+  invalidateWizardCacheById(id);
+  invalidateLearnerDetailCache();
+  return board;
 }
 
 /** Patch any writable commercial-user fields (e.g. status). */

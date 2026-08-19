@@ -11,6 +11,10 @@ const BASE = '/learner_api/staff-users';
 /**
  * Staff positions. Mirrors POSITION_CHOICES in backend/learner_api/constants.py,
  * which validates writes — a value missing there is rejected on save.
+ *
+ * Position is a job title only. It no longer decides what an account can do —
+ * that is `ACCESS_OPTIONS` below. Kept because existing rows carry these values
+ * and the edit form still shows them.
  */
 export const POSITION_OPTIONS = [
   'Caseowner',
@@ -20,11 +24,72 @@ export const POSITION_OPTIONS = [
   'Operations team',
 ];
 
+/**
+ * The position every account created from the console gets. The create form no
+ * longer asks: it sends this, and access is granted separately afterwards.
+ */
+export const ADMIN_POSITION = 'Admin';
+
+/** The four access grants. Mirrors ACCESS_CHOICES in learner_api/constants.py. */
+export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'super-admin';
+
+/**
+ * What each access permits, and where it lands on sign-in.
+ *
+ * The backend is the authority on all of this — it sends `access`, `accessHome`
+ * and `accessNavRole` on the account payload, and enforces the permission with
+ * `require_access`. This table exists so the console can *describe* the choices
+ * it offers; it grants nothing on its own.
+ */
+export const ACCESS_OPTIONS: {
+  id: StaffAccess;
+  label: string;
+  description: string;
+  home: string;
+  icon: string;
+}[] = [
+  {
+    id: 'enrolment',
+    label: 'Enrolment access',
+    description:
+      'The enrolment workspace and every learner record. With Super Admin, the only access that can change enrolment data.',
+    home: '/users',
+    icon: 'ri-user-add-line',
+  },
+  {
+    id: 'curriculum',
+    label: 'Curriculum access',
+    description: 'The curriculum workspace — programmes, modules and their content.',
+    home: '/workspace/curriculum',
+    icon: 'ri-book-open-line',
+  },
+  {
+    id: 'coach',
+    label: 'Coach access',
+    description: 'The coach workspace — their caseload, reviews and evidence validation.',
+    home: '/workspace/coach',
+    icon: 'ri-user-star-line',
+  },
+  {
+    id: 'super-admin',
+    label: 'Super Admin access',
+    description: 'Everything, including this console. Can edit any data on the platform.',
+    home: '/workspace/admin',
+    icon: 'ri-shield-star-line',
+  },
+];
+
+export function accessLabel(access: string | null | undefined): string {
+  return ACCESS_OPTIONS.find((o) => o.id === access)?.label || 'No access set';
+}
+
 export interface CreateStaffUserInput {
   username: string;
   email: string;
   /** Required — one of POSITION_OPTIONS. */
   position: string;
+  /** One of ACCESS_OPTIONS. Omitted on create; granted from the Accounts page. */
+  access?: StaffAccess;
   type?: string;
   status?: string;
   phone?: string;
@@ -48,6 +113,8 @@ export interface CreateStaffUserInput {
  */
 export interface StaffUserRow extends UserListRow {
   position: string;
+  /** The access grant — '' when nobody has set one yet. */
+  access: StaffAccess | '';
   phone: string;
   organization: string;
   title: string;
@@ -57,14 +124,26 @@ export interface StaffUserRow extends UserListRow {
   caseOwner: string;
   learningProvider: string;
   referenceNumber: string;
+  // `invitation` is inherited from UserListRow — present on create when the
+  // form asked for one.
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
+      // Sends the kbc_session cookie — writes to this endpoint now require an
+      // authenticated staff session (see login.permissions.staff_only).
+      credentials: 'include',
       ...init,
+      // Spread last: with `...init` after it, a caller passing any headers at
+      // all would silently drop these two and the request would fail the
+      // Content-Type parse and the CSRF check.
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest',
+        ...(init?.headers || {}),
+      },
     });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');

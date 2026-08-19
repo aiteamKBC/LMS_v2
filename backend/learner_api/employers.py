@@ -15,8 +15,10 @@ An organisation is a company; an employer is a person at one or more of them. Th
 employer form's "Employer Group" control picks organisations, which is why the
 organisation list supports the ?search=/?page= the picker needs.
 
-CSRF is exempted for the same reason as views.py: an internal same-origin dev API
-reached through the Vite proxy, with no cookie-based auth.
+Authentication follows views.py: write methods require an authenticated staff
+or admin session (``@staff_only(writes_only=True)``). Django's CSRF middleware
+is exempted because these are JSON endpoints; cross-site protection is the
+``X-Requested-With`` header plus the SameSite=Lax session cookie.
 """
 from django.db import DatabaseError
 from django.views.decorators.csrf import csrf_exempt
@@ -35,8 +37,21 @@ from .mappers import (
     write_employer_fields,
     write_organisation_fields,
 )
+from login.permissions import staff_only
+
 from .models import Employer, Organisation, StaffUser
-from .views import _error, _parse_body
+from .views import _error, _parse_body, _send_platform_invitation
+
+#: Values the invite flag may arrive as. The form sends a real boolean, but the
+#: radio-based learner form sends the strings "true"/"false", so both are handled
+#: here to keep the three creation paths consistent.
+_TRUTHY = {True, "true", "True", "yes", "on", "1", 1}
+
+
+def _wants_invite(payload):
+    if not isinstance(payload, dict):
+        return False
+    return payload.get("inviteToPlatform") in _TRUTHY
 
 # The picker in the reference UI pages ten rows at a time.
 PAGE_SIZE = 10
@@ -55,6 +70,7 @@ def _resolve_groups(ids):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def organisations(request):
     """Organisation profiles — enrolment."Organisations".
 
@@ -113,6 +129,7 @@ def organisations(request):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def organisation_detail(request, pk):
     try:
         org = Organisation.objects.get(pk=pk)
@@ -165,6 +182,7 @@ def _resync_group_names(org):
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def employers(request):
     """Employer profiles — enrolment."Employers".
 
@@ -206,12 +224,24 @@ def employers(request):
             emp = Employer.objects.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
-        return JsonResponse(to_employer_row(emp), status=201)
+
+        row = to_employer_row(emp)
+        # Read straight off the payload rather than from `fields`: unlike the
+        # learner and staff tables, enrolment."Employers" has no
+        # "Invite_to_platform" column, and adding one would store a transient
+        # action as though it were a property of the person. Whether they were
+        # invited is answered by login."Invitations".
+        if _wants_invite(payload):
+            row["invitation"] = _send_platform_invitation(
+                request, "employer", emp.id, subject=emp
+            )
+        return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
 
 
 @csrf_exempt
+@staff_only(writes_only=True)
 def employer_detail(request, pk):
     try:
         emp = Employer.objects.get(pk=pk)

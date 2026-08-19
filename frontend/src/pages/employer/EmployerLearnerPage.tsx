@@ -5,6 +5,7 @@ import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import {
   fetchEmployerLearner,
+  fetchEmployerLearnerPlan,
   signDocumentAsEmployer,
   signAgreementAsEmployer,
   signTrainingPlanAsEmployer,
@@ -20,6 +21,10 @@ import { downloadReviewPdf } from '@/pages/learner/onboarding/reviews/reviewDocu
 import { REVIEW_QUESTION_LABELS } from '@/pages/learner/onboarding/reviews/questions';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { Hero, SectionPanel, FieldRow, StatCard, btnPrimary, btnSecondary } from '@/pages/users/components/ui';
+import type { LearnerDetail } from '@/api/learnerDetail';
+import { LearnerPlanBody } from '@/components/feature/RealLearnerPlanView';
+import { OtjhBody } from '@/components/feature/RealOtjhView';
+import { KsbProgressBody } from '@/components/feature/RealKsbView';
 
 // ============================================================================
 // One learner, as their employer sees them.
@@ -242,6 +247,21 @@ function DocumentRow({
   );
 }
 
+/**
+ * The page is one learner seen four ways. Overview is the employer's own
+ * business — details and the signing queue; the other three are the learner's
+ * workspace shown read-only, so employer and apprentice discuss the same plan,
+ * the same hours and the same KSBs rather than two different pictures of them.
+ */
+type TabKey = 'overview' | 'plan' | 'otjh' | 'ksbs';
+
+const TABS: { key: TabKey; label: string; icon: string }[] = [
+  { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
+  { key: 'plan', label: 'Learning plan', icon: 'ri-calendar-check-line' },
+  { key: 'otjh', label: 'Off-the-job hours', icon: 'ri-time-line' },
+  { key: 'ksbs', label: 'KSB progress', icon: 'ri-award-line' },
+];
+
 export default function EmployerLearnerPage() {
   const { employerId = '', kind: kindParam = 'apprenticeship', learnerId = '' } = useParams();
   // The URL segment is a plain string; the document APIs want the narrowed union.
@@ -252,6 +272,13 @@ export default function EmployerLearnerPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [signing, setSigning] = useState<SignableItem | null>(null);
+  const [tab, setTab] = useState<TabKey>('overview');
+  // The learner's own workspace payload, behind the three progress tabs. Fetched
+  // once, on first use: an employer who only came to sign a document never pays
+  // for it, and all three tabs read the same object afterwards.
+  const [plan, setPlan] = useState<LearnerDetail | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
   // Which row is mid-open, so its button can show progress. Reviews are keyed by
   // event key and documents by id — they never collide.
   const [opening, setOpening] = useState<string | null>(null);
@@ -266,6 +293,28 @@ export default function EmployerLearnerPage() {
   };
 
   useEffect(load, [employerId, kind, learnerId]);
+
+  const loadPlan = () => {
+    setPlanLoading(true);
+    setPlanError(null);
+    fetchEmployerLearnerPlan(employerId, kind, learnerId)
+      .then(setPlan)
+      .catch((e: Error) => setPlanError(e.message))
+      .finally(() => setPlanLoading(false));
+  };
+
+  // Only when a progress tab is actually opened, and only once per learner.
+  useEffect(() => {
+    if (tab === 'overview' || plan || planLoading || planError) return;
+    loadPlan();
+  }, [tab, plan, planLoading, planError]);
+
+  // A different learner invalidates whatever plan is held.
+  useEffect(() => {
+    setPlan(null);
+    setPlanError(null);
+    setTab('overview');
+  }, [employerId, kind, learnerId]);
 
   const handleSign = async (name: string, signature: string) => {
     if (!signing) return;
@@ -320,6 +369,10 @@ export default function EmployerLearnerPage() {
     if (a.signable !== b.signable) return a.signable ? -1 : 1;
     return a.label.localeCompare(b.label);
   });
+  // The fetch is kicked off by an effect, so the first render after a tab switch
+  // has neither data nor an in-flight flag yet. Treat that frame as loading too,
+  // or the panels flash "nothing here" before the request has even started.
+  const planPending = !plan && !planError;
   const outstanding = data?.outstandingCount ?? 0;
   // Active learners lead with performance; anyone still being set up leads with
   // the paperwork. Both panels always render.
@@ -394,7 +447,9 @@ export default function EmployerLearnerPage() {
       userName="Enrolment Officer"
       userRole="Enrolment Officer"
     >
-      <div className="p-6 max-w-5xl mx-auto space-y-6">
+      {/* The progress tabs render the learner's own multi-column layouts, which
+          need more room than the signing queue does. */}
+      <div className={`p-6 mx-auto space-y-6 ${tab === 'overview' ? 'max-w-5xl' : 'max-w-7xl'}`}>
         <div className="animate-fade-in-up">
           <Hero
             icon="ri-user-3-line"
@@ -442,9 +497,56 @@ export default function EmployerLearnerPage() {
                 </p>
               </div>
             )}
-            {documentsFirst
+
+            <nav className="flex flex-wrap items-center gap-1.5 border-b border-foreground-100 pb-2" aria-label="Learner sections">
+              {TABS.map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setTab(t.key)}
+                  aria-current={tab === t.key ? 'page' : undefined}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-semibold transition-smooth cursor-pointer ${
+                    tab === t.key
+                      ? 'bg-primary-600 text-white'
+                      : 'text-foreground-500 hover:bg-background-100 hover:text-foreground-700'
+                  }`}
+                >
+                  <i className={`${t.icon} text-[14px]`} />{t.label}
+                </button>
+              ))}
+            </nav>
+
+            {tab === 'overview' && (documentsFirst
               ? <>{documentsPanel}{performancePanel}</>
-              : <>{performancePanel}{documentsPanel}</>}
+              : <>{performancePanel}{documentsPanel}</>)}
+
+            {tab !== 'overview' && planError && (
+              <div className="py-16 text-center">
+                <p className="text-red-600 text-[13px] mb-3"><i className="ri-error-warning-line mr-1.5" />{planError}</p>
+                <button className={btnSecondary} onClick={loadPlan}><i className="ri-refresh-line" />Retry</button>
+              </div>
+            )}
+
+            {/* No kind/learnerId is passed on purpose: every start/open/upload
+                action in the learner's plan is gated on them, so the employer
+                gets the plan and its recorded outcomes but none of the actions. */}
+            {tab === 'plan' && !planError && (
+              <LearnerPlanBody
+                real={plan}
+                loading={planPending}
+                loadError={null}
+                pageLabel="Learning plan"
+                showHero={false}
+                note={`${learner?.name || 'This learner'}'s training plan as they see it — modules, weeks and every component, with recorded quiz results.`}
+              />
+            )}
+
+            {tab === 'otjh' && !planError && (
+              <OtjhBody real={plan} loading={planPending} showHero={false} audience="observer" />
+            )}
+
+            {tab === 'ksbs' && !planError && (
+              <KsbProgressBody real={plan} loading={planPending} showHero={false} audience="observer" />
+            )}
           </div>
         )}
       </div>

@@ -52,7 +52,7 @@ export async function fetchEnrolmentDocuments(kind: LearnerKind, learnerId: stri
   const qs = docType ? `?doc_type=${encodeURIComponent(docType)}` : '';
   let res: Response;
   try {
-    res = await fetch(`${BASE}/documents/${kind}/${learnerId}/${qs}`);
+    res = await fetch(`${BASE}/documents/${kind}/${learnerId}/${qs}`, { credentials: 'include' });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
@@ -81,7 +81,7 @@ export async function uploadEnrolmentDocument(
   let res: Response;
   try {
     // No Content-Type header: the browser must set the multipart boundary.
-    res = await fetch(`${BASE}/documents/${kind}/${learnerId}/`, { method: 'POST', body });
+    res = await fetch(`${BASE}/documents/${kind}/${learnerId}/`, { method: 'POST', credentials: 'include', body });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
@@ -92,7 +92,7 @@ export async function uploadEnrolmentDocument(
 export async function getEnrolmentDocumentUrl(kind: LearnerKind, learnerId: string, docId: string): Promise<string> {
   let res: Response;
   try {
-    res = await fetch(`${BASE}/documents/${kind}/${learnerId}/${docId}/download/`);
+    res = await fetch(`${BASE}/documents/${kind}/${learnerId}/${docId}/download/`, { credentials: 'include' });
   } catch {
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }

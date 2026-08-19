@@ -393,8 +393,15 @@ class StaffUser(models.Model):
     phone_number = models.TextField(db_column="Phone_number", null=True, blank=True)
     type = models.TextField(db_column="Type", null=True, blank=True)
     status = models.TextField(db_column=" Status", null=True, blank=True)  # NB: leading space, matches the learner tables
-    # One of constants.POSITION_CHOICES.
+    # One of constants.POSITION_CHOICES. A job title only — it no longer decides
+    # what the account may do; see `access` below.
     position = models.TextField(db_column="Position", null=True, blank=True)
+
+    # One of constants.ACCESS_CHOICES: what this account may actually reach.
+    # Null on rows created before the column existed, which resolves to the
+    # least-privileged role rather than a guess (login.identity.role_for_staff).
+    # Added by the apply_staff_access_column management command.
+    access = models.TextField(db_column="Access", null=True, blank=True)
 
     title = models.TextField(db_column="Title", null=True, blank=True)
     preferred_name = models.TextField(db_column="Preferred_name", null=True, blank=True)
@@ -440,8 +447,31 @@ class LearnerProfile(models.Model):
         db_persist=True,
     )
     phone_number = models.TextField(blank=True)
+
+    # The learner's id in enrolment."Created_users" — the one identifier that
+    # exists for them from the moment they are created, long before this profile
+    # row does. Added by apply_learner_enrolment_id.
+    #
+    # The two tables have independent primary-key sequences (their ids are
+    # disjoint), so before this column the only bridge between the schemas was an
+    # email match — which breaks the moment an address is corrected. Null only
+    # for profiles whose enrolment record has since been deleted.
+    enrolment_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+
     lifecycle_status = models.CharField(max_length=50, db_index=True)
+
+    # 'apprenticeship' or 'commercial', copied from the enrolment record rather
+    # than guessed. The commercial listing used to infer it from the programme
+    # name ("apprentice" in it, or starting "apm"), which only held while no
+    # programme was named something that collided. Null only for profiles with
+    # no enrolment record to read it from.
+    learner_type = models.CharField(max_length=32, blank=True, null=True, db_index=True)
+
     programme = models.TextField(blank=True)
+    # curriculum.programmes.programme_id for `programme`. The name is what the
+    # enrolment form captures; this is the stable key it resolves to, so a
+    # renamed programme does not orphan the learner.
+    programme_id = models.CharField(max_length=64, blank=True, null=True)
     programme_status = models.CharField(max_length=100, blank=True)
     cohort = models.TextField(blank=True)
     group_name = models.TextField(blank=True)
