@@ -61,17 +61,45 @@ interface CurriculumRequestInit {
   skipCache?: boolean;
 }
 
+export class CurriculumApiError extends Error {
+  status: number;
+  path: string;
+  data: unknown;
+
+  constructor(message: string, status: number, path: string, data?: unknown) {
+    super(message);
+    this.name = 'CurriculumApiError';
+    this.status = status;
+    this.path = path;
+    this.data = data;
+    Object.setPrototypeOf(this, CurriculumApiError.prototype);
+  }
+}
+
 export interface CurriculumProgramme {
   id: string;
   sourceId: string;
   name: string;
   standard: string;
   level: string;
+  status?: 'active' | 'draft' | 'archived' | string;
+  isArchived?: boolean;
   modules: number;
   freeComponents?: number;
   weeks: number;
   ksbMapped: number;
   ksbTotal: number;
+  // Learner-consumed KSB progress across the whole programme, from the Component
+  // Progress snapshot (`learner_progress_ksbs`). This answers "what have the
+  // learners evidenced", which is a different question from ksbMapped/ksbTotal
+  // above — that pair is how much of the standard the design maps.
+  learnerKsbProgressPercentage?: number;
+  learnerKsbConsumedWeight?: number;
+  learnerKsbExpectedWeight?: number;
+  learnerKsbLearnerCount?: number;
+  learnerKsbCodesStarted?: number;
+  learnerKsbCodesComplete?: number;
+  learnerKsbCodesTotal?: number;
   learners: number;
   cohorts: number;
   groups?: number;
@@ -104,6 +132,7 @@ export interface CurriculumModule {
   cohort?: string;
   groupId?: string;
   group?: string;
+  isProgrammeDeleted?: boolean;
   weeks: number;
   weekStructure?: Array<{
     id: string;
@@ -164,6 +193,8 @@ export interface CurriculumComponent {
     type: string;
     classification?: string;
     weight: number;
+    weightClass: 'hard' | 'soft' | 'possible' | string;
+    weight_class?: 'hard' | 'soft' | 'possible' | string;
   }>;
   status: 'published' | 'draft' | 'review';
   lastEdited: string;
@@ -172,6 +203,9 @@ export interface CurriculumComponent {
   hasResources: boolean;
   description?: string;
   points?: number;
+  isDeleted?: boolean;
+  deletedAt?: string | null;
+  deletedViaParent?: string;
   settings?: Record<string, unknown>;
 }
 
@@ -279,8 +313,6 @@ export interface CurriculumStandard {
   ksbs?: CurriculumStandardKsb[];
 }
 
-export type CurriculumKsbCoverageStatus = 'missing' | 'partial' | 'fully_covered' | 'over_allocated';
-
 export interface CurriculumKsbTraceMapping {
   mapping_id: string;
   mappingId: string;
@@ -308,6 +340,10 @@ export interface CurriculumKsbTraceMapping {
   componentName: string;
   component_type: string;
   componentType: string;
+  // Expected OTJH of the component this mapping sits on. Week/module-level
+  // mappings are not attached to a single component and report 0.
+  component_otjh?: number;
+  componentOtjh?: number;
   ksb_id: string;
   ksbId: string;
   code: string;
@@ -321,6 +357,8 @@ export interface CurriculumKsbTraceMapping {
   source_label?: string;
   sourceLabel?: string;
   classification: 'main' | 'secondary' | 'possible' | string;
+  weight_class?: 'hard' | 'soft' | 'possible' | string;
+  weightClass?: 'hard' | 'soft' | 'possible' | string;
   mapping_level?: 'module' | 'week' | 'component' | string;
   mappingLevel?: 'module' | 'week' | 'component' | string;
   weight: number;
@@ -350,7 +388,6 @@ export interface CurriculumKsbCoverageItem {
   coveragePercentage: number;
   progress_bar_percentage: number;
   progressBarPercentage: number;
-  status: CurriculumKsbCoverageStatus;
   occurrence_count: number;
   occurrenceCount: number;
   mapping_count: number;
@@ -368,10 +405,11 @@ export interface CurriculumKsbCoverageItem {
 
 export interface CurriculumKsbCoverageSummaryBucket {
   required: number;
-  fully_covered: number;
-  partial: number;
-  missing: number;
-  over_allocated: number;
+  // KSBs carrying any weight at all, and the weight summed across the bucket.
+  // There is no fully/partially-covered verdict: the weight is the fact.
+  mapped: number;
+  unmapped: number;
+  total_weight: number;
 }
 
 export interface CurriculumKsbCoverageResponse {
@@ -403,7 +441,6 @@ export interface CurriculumKsbCoverageResponse {
       sourceName?: string;
       source_label?: string;
       sourceLabel?: string;
-      status: CurriculumKsbCoverageStatus;
       total: number;
       modules: Array<{ module_id: string; moduleId: string; module_name: string; moduleName: string; weight: number; mappings: CurriculumKsbTraceMapping[] }>;
     }>;
@@ -427,6 +464,11 @@ export interface CurriculumProgrammeAssignedLearner {
   progressHours?: number;
   progressVariance?: string | number | null;
   otjhStatus?: string;
+  // Reflection-declared OTJH, reported as its own fields. They do not replace
+  // `completedHours` / `plannedHours`, which cover the whole programme.
+  reflectionActualOtjh?: number | null;
+  reflectionExpectedOtjh?: number | null;
+  reflectionCount?: number;
 }
 
 export interface CurriculumLearnerKsbConsumptionItem {
@@ -434,6 +476,9 @@ export interface CurriculumLearnerKsbConsumptionItem {
   expectedWeight: number;
   consumedWeight: number;
   cappedConsumedWeight: number;
+  // What the learner's reflection declared for the same activity. Supplementary
+  // evidence, reported next to `consumedWeight` and never inside it.
+  declaredReflectionWeight?: number;
   progressPercentage: number;
   rawProgressPercentage: number;
   status: 'complete' | 'in_progress' | 'not_started' | string;
@@ -446,10 +491,95 @@ export interface CurriculumLearnerKsbConsumption {
   cohort: string;
   group: string;
   consumedWeightTotal: number;
+  consumedWeightSource?: string;
+  declaredReflectionWeightTotal?: number;
   expectedWeightTotal: number;
   cappedConsumedWeightTotal: number;
   progressPercentage: number;
   ksbs: CurriculumLearnerKsbConsumptionItem[];
+}
+
+export interface CurriculumLearnerActivityKsb {
+  code: string;
+  weight: number;
+  weightClass?: string;
+  countsTowardAchievement: boolean;
+}
+
+export interface CurriculumLearnerActivityReflection {
+  submissionId: string | null;
+  status: string;
+  submittedAt: string;
+  dateCompleted: string;
+  text: string;
+  qualityScore: number | null;
+  actualOtjh: number | null;
+  actualOtjhSource: string;
+  declaredPlannedOtjh: number | null;
+  progressLinkStatus: 'linked' | 'unlinked' | string;
+  learnerResolution: string;
+  submissionLearnerId: string;
+  ksbRole: string;
+  countsTowardAchievement: false;
+}
+
+export interface CurriculumLearnerActivityEvidence {
+  evidenceId: string;
+  fileName: string;
+  status: string;
+  scanResult: string;
+  sectionRef: string;
+  componentId: string;
+  contentType: string;
+  sizeBytes: number | null;
+  uploadedAt: string;
+}
+
+/** One Progress activity, keyed on `learner_progress_entries.id`.
+ *
+ * The single identifier Learner, Coach and Curriculum share, so the same
+ * activity can be looked up in each layer instead of matched on titles, emails
+ * or enrolment source ids. `ksbSnapshot` is the canonical achieved weight;
+ * `declaredReflectionKsbs` is what the reflection claimed for the same activity.
+ * They are separate lists on purpose — summing both double-counts the activity.
+ */
+export interface CurriculumLearnerActivity {
+  progressId: number;
+  learnerId: number | string | null;
+  kind: string;
+  componentId: string;
+  componentTitle: string;
+  componentType: string;
+  module: string;
+  week: string;
+  submittedAt: string;
+  progressStatus: 'achieved' | 'failed' | 'incomplete' | string;
+  passed: boolean | null;
+  countsTowardAchievement: boolean | null;
+  expectedOtjh: number | null;
+  expectedOtjhSource: string;
+  actualOtjh: number | null;
+  actualOtjhSource: string;
+  ksbSnapshot: CurriculumLearnerActivityKsb[];
+  achievedKsbWeightTotal: number;
+  declaredReflectionKsbs: CurriculumLearnerActivityKsb[];
+  declaredReflectionKsbWeightTotal: number;
+  reflection: CurriculumLearnerActivityReflection | null;
+  evidence: CurriculumLearnerActivityEvidence[];
+  evidenceCount: number;
+}
+
+// Learner placements are owned by the enrolment team. Curriculum reads this
+// roster to show who is arriving in a cohort/group and never writes to it.
+export interface CurriculumProgrammeLearnerRosterResponse {
+  scope: 'programme';
+  identifier: string;
+  source: string;
+  editable: boolean;
+  assignedLearnerCount: number;
+  assignedLearners: CurriculumProgrammeAssignedLearner[];
+  countsByCohort: Record<string, number>;
+  countsByGroup: Record<string, number>;
 }
 
 export interface CurriculumProgrammeLearnerKsbImpactResponse {
@@ -459,16 +589,37 @@ export interface CurriculumProgrammeLearnerKsbImpactResponse {
   assignedLearners: CurriculumProgrammeAssignedLearner[];
   programmeCoverage: CurriculumKsbCoverageResponse;
   learnerKsbConsumption: CurriculumLearnerKsbConsumption[];
+  learnerActivities?: CurriculumLearnerActivity[];
+  learnerActivityCount?: number;
+  ksbAchievementPolicy?: {
+    achievedWeightSource: string;
+    reflectionKsbRole: string;
+    reflectionKsbCountsTowardAchievedWeight: boolean;
+    reflectionLearnerResolution: string;
+    expectedOtjhSource: string;
+    actualOtjhSource: string;
+  };
   consumptionSources: {
+    // Achieved delivery only. Failed activity and unresolved graded attempts are
+    // reported separately below so they stay visible without being summed as
+    // achievement — see backend learner_api/progress_rules.py.
     progress: Array<Record<string, unknown>>;
+    // Resolved through `progress_entry_id`. Every row carries
+    // `countsTowardAchievement: false`: a reflection is evidence about an
+    // activity, not a second source of achieved KSB weight.
     learningReflectionSubmissions: Array<Record<string, unknown>>;
+    excludedProgress?: Array<Record<string, unknown>>;
+    excludedLearningReflectionSubmissions?: Array<Record<string, unknown>>;
+    // Reflections on a component in this programme with no progress link, so no
+    // learner can be resolved without guessing. Reported as a visible gap.
+    unlinkedLearningReflectionSubmissions?: Array<Record<string, unknown>>;
+    evidenceByProgressEntry?: Record<string, CurriculumLearnerActivityEvidence[]>;
   };
 }
 
 export interface CurriculumReadinessIssue {
   severity: 'warning' | 'error' | string;
   code: string;
-  status: CurriculumKsbCoverageStatus | string;
   raw_weight: number;
   rawWeight: number;
   message: string;
@@ -491,6 +642,8 @@ export type CurriculumKsbMappingInput = {
   classification: 'main' | 'secondary' | 'possible' | string;
   type?: 'main' | 'secondary' | 'possible' | string;
   weight: number;
+  weightClass: 'hard' | 'soft' | 'possible' | string;
+  weight_class?: 'hard' | 'soft' | 'possible' | string;
 };
 
 export interface CurriculumComponentKsbMappingsResponse {
@@ -734,6 +887,7 @@ export interface CurriculumProgrammeDetail {
     modules: CurriculumModule[];
     sessions: CurriculumSession[];
     components?: CurriculumComponent[];
+    weekTemplates?: unknown[];
   };
 }
 
@@ -797,6 +951,7 @@ interface CacheStats {
 class MultiTierCache {
   private caches = new Map<keyof typeof CACHE_TIERS, Map<string, CacheEntry<unknown>>>();
   private inFlightRequests = new Map<string, Promise<unknown>>();
+  private inFlightEpochs = new Map<string, number>();
   private stats = new Map<keyof typeof CACHE_TIERS, CacheStats>();
 
   constructor() {
@@ -946,6 +1101,7 @@ class MultiTierCache {
       cache.clear();
     }
     this.inFlightRequests.clear();
+    this.inFlightEpochs.clear();
     for (const stats of this.stats.values()) {
       stats.hits = 0;
       stats.misses = 0;
@@ -959,12 +1115,22 @@ class MultiTierCache {
     return this.inFlightRequests.get(key);
   }
 
-  setInFlight(key: string, promise: Promise<unknown>): void {
+  // The mutation epoch a still-running GET was started in. A skipCache caller
+  // uses this to tell "already in flight, but started before my write landed"
+  // (must not be reused) from "in flight right now, after the write" (safe to
+  // share).
+  getInFlightEpoch(key: string): number | undefined {
+    return this.inFlightEpochs.get(key);
+  }
+
+  setInFlight(key: string, promise: Promise<unknown>, epoch: number): void {
     this.inFlightRequests.set(key, promise);
+    this.inFlightEpochs.set(key, epoch);
   }
 
   clearInFlight(key: string): void {
     this.inFlightRequests.delete(key);
+    this.inFlightEpochs.delete(key);
   }
 
   getStats() {
@@ -995,6 +1161,11 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
   return controller.signal;
 }
 
+// Incremented on every mutation. GETs record the epoch they started in so a
+// skipCache caller can tell whether an in-flight request already reflects the
+// most recent write (see fetchJson).
+let mutationEpoch = 0;
+
 // Shares an in-flight GET between concurrent callers. GETs are intentionally
 // not tied to component cleanup signals: React StrictMode can unmount/remount
 // immediately in development, and aborting those requests fills DevTools with
@@ -1020,13 +1191,24 @@ export function getCurriculumCacheStats() {
 async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   if (method !== 'GET') {
+    // Any GET started before this point predates the write, so skipCache callers
+    // must not reuse it.
+    mutationEpoch += 1;
     // For mutations, invalidate cache selectively based on the endpoint
     if (path.includes('/programmes/tree/')) {
       // Tree save: invalidate all programme trees and related data
+      multiTierCache.invalidateByPattern(/\/overview\//);
       multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
       multiTierCache.invalidateByEntity('programme');
+      multiTierCache.invalidateByEntity('cohort');
+      multiTierCache.invalidateByEntity('group');
+      multiTierCache.invalidateByEntity('module');
     } else if (path.includes('/programmes/')) {
+      multiTierCache.invalidateByPattern(/\/overview\//);
       multiTierCache.invalidateByEntity('programme');
+      multiTierCache.invalidateByEntity('cohort');
+      multiTierCache.invalidateByEntity('group');
+      multiTierCache.invalidateByEntity('module');
     } else if (path.includes('/cohorts/')) {
       multiTierCache.invalidateByEntity('cohort');
     } else if (path.includes('/groups/')) {
@@ -1050,11 +1232,22 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
     }
   }
 
-  // Check in-flight deduplication. skipCache must bypass this too: callers use
-  // it when they need a fresh network request, or when a previous shared GET may
-  // be stuck and should not capture the next attempt.
+  // Check in-flight deduplication. skipCache means "do not read a stale cached
+  // value", not "do not share a request that is already going to the network
+  // right now": a fresh in-flight GET satisfies the caller's freshness need just
+  // as well as a new one. Several independent hooks refresh the same endpoints
+  // concurrently after a save (tutors/coaches/programme detail), and giving each
+  // its own request produced 5-6 duplicate calls per endpoint.
+  //
+  // The one case skipCache must still bypass is an in-flight request that was
+  // started *before* this caller's mutation landed, since that response predates
+  // the write. Requests are therefore tagged with the epoch they began in, and a
+  // skipCache caller only joins an in-flight GET from the current epoch.
   const sharedInit = init?.signal ? { ...init, signal: undefined } : init;
-  const existing = init?.skipCache ? undefined : multiTierCache.getInFlight(path) as Promise<T> | undefined;
+  const inFlight = multiTierCache.getInFlight(path) as Promise<T> | undefined;
+  const inFlightIsFresh = inFlight !== undefined
+    && (!init?.skipCache || multiTierCache.getInFlightEpoch(path) === mutationEpoch);
+  const existing = inFlightIsFresh ? inFlight : undefined;
 
   const pending = existing || fetchJsonUncached<T>(path, sharedInit).then(value => {
     if (!init?.skipCache) {
@@ -1065,6 +1258,8 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
         entityType = 'programme';
         const match = path.match(/\/programmes\/([^/]+)\/detail/);
         entityId = match ? decodeURIComponent(match[1]) : undefined;
+      } else if (path.includes('/programmes/')) {
+        entityType = 'programme';
       } else if (path.includes('/cohorts/')) {
         entityType = 'cohort';
       } else if (path.includes('/groups/')) {
@@ -1079,8 +1274,11 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
     return value;
   });
 
-  if (!existing && !init?.skipCache) {
-    multiTierCache.setInFlight(path, pending as Promise<unknown>);
+  // Register even skipCache requests so concurrent refreshes of the same endpoint
+  // collapse onto one network call. The cache *write* above still respects
+  // skipCache, so nothing stale is stored.
+  if (!existing) {
+    multiTierCache.setInFlight(path, pending as Promise<unknown>, mutationEpoch);
     const clearInFlight = () => {
       if (multiTierCache.getInFlight(path) === (pending as Promise<unknown>)) {
         multiTierCache.clearInFlight(path);
@@ -1104,24 +1302,33 @@ async function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit):
   try {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...fetchInit,
+    ...(init?.skipCache ? { cache: 'no-store' as const } : {}),
     signal,
     headers: {
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(init?.skipCache ? { 'Cache-Control': 'no-cache' } : {}),
       ...(init?.headers || {}),
     },
   });
   if (!response.ok) {
     let detail = '';
+    let payload: unknown;
     try {
-      const payload = await response.json();
-      const validation = Array.isArray(payload?.validationErrors)
-        ? payload.validationErrors.map((item: { message?: string }) => item.message).filter(Boolean).join('; ')
+      payload = await response.json();
+      const payloadRecord = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+      const validationErrors = Array.isArray(payloadRecord.validationErrors) ? payloadRecord.validationErrors : [];
+      const validation = validationErrors
+        .map((item: unknown) => item && typeof item === 'object' ? (item as { message?: string }).message : '')
+        .filter(Boolean)
+        .join('; ');
+      const errorText = typeof payloadRecord.error === 'string' ? payloadRecord.error : '';
+      detail = errorText
+        ? `: ${errorText}${validation ? ` - ${validation}` : ''}`
         : '';
-      detail = payload?.error ? `: ${payload.error}${validation ? ` - ${validation}` : ''}` : '';
     } catch {
       detail = '';
     }
-    throw new Error(`Curriculum API returned ${response.status} for ${path}${detail}`);
+    throw new CurriculumApiError(`Curriculum API returned ${response.status} for ${path}${detail}`, response.status, path, payload);
   }
   return response.json();
   } catch (error) {
@@ -1169,6 +1376,7 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   status?: string;
   page?: number;
   pageSize?: number;
+  skipCache?: boolean;
 } = {}): Promise<CurriculumModule[]> {
   const query = new URLSearchParams();
   if (options.compact) query.set('compact', 'true');
@@ -1179,25 +1387,28 @@ export function fetchCurriculumModules(signal?: AbortSignal, options: {
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal });
+  return fetchCollection<CurriculumModule>(`/curriculum/modules/${suffix}`, { signal, skipCache: options.skipCache });
 }
 
-export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number } = {}): Promise<CurriculumComponent[]> {
+export function fetchCurriculumComponents(signal?: AbortSignal, options: { moduleCatalogueIds?: string[]; page?: number; pageSize?: number; skipCache?: boolean } = {}): Promise<CurriculumComponent[]> {
   const query = new URLSearchParams();
   const moduleCatalogueIds = (options.moduleCatalogueIds || []).filter(Boolean);
   if (moduleCatalogueIds.length) query.set('module_catalogue_ids', moduleCatalogueIds.join(','));
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<CurriculumComponent>(`/curriculum/components/${suffix}`, { signal });
+  return fetchCollection<CurriculumComponent>(`/curriculum/components/${suffix}`, { signal, skipCache: options.skipCache });
 }
 
 export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOverview['stats']> {
   return fetchJson<CurriculumOverview['stats']>('/curriculum/stats/', { signal });
 }
 
-export function fetchCurriculumProgrammes(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumProgramme[]> {
-  return fetchCollection<CurriculumProgramme>('/curriculum/programmes/', { signal, skipCache: options.skipCache });
+export function fetchCurriculumProgrammes(signal?: AbortSignal, options: { skipCache?: boolean; visibility?: 'all' | 'operational' } = {}): Promise<CurriculumProgramme[]> {
+  const query = new URLSearchParams();
+  if (options.visibility === 'all') query.set('visibility', 'all');
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchCollection<CurriculumProgramme>(`/curriculum/programmes/${suffix}`, { signal, skipCache: options.skipCache });
 }
 
 export function fetchCurriculumGroups(signal?: AbortSignal): Promise<CurriculumGroup[]> {
@@ -1208,8 +1419,11 @@ export function fetchCurriculumKsbFrameworks(signal?: AbortSignal): Promise<Curr
   return fetchCollection<CurriculumKsbFramework>('/curriculum/ksb-frameworks/', { signal });
 }
 
-export function fetchCurriculumKsbSets(signal?: AbortSignal): Promise<CurriculumKsbSet[]> {
-  return fetchCollection<CurriculumKsbSet>('/curriculum/ksb-sets/', { signal });
+export function fetchCurriculumKsbSets(signal?: AbortSignal, options: { all?: boolean } = {}): Promise<CurriculumKsbSet[]> {
+  const query = new URLSearchParams();
+  if (options.all) query.set('visibility', 'all');
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchCollection<CurriculumKsbSet>(`/curriculum/ksb-sets/${suffix}`, { signal });
 }
 
 export function fetchCurriculumStandards(signal?: AbortSignal): Promise<CurriculumStandard[]> {
@@ -1244,6 +1458,15 @@ export function fetchCurriculumProgrammeLearnerKsbImpact(programmeId: string, pa
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumProgrammeLearnerKsbImpactResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/learner-ksb-impact/${suffix}`, { signal });
+}
+
+export function fetchCurriculumProgrammeLearnerRoster(programmeId: string, params: { cohort?: string; group?: string; learnerStatus?: string } = {}, signal?: AbortSignal): Promise<CurriculumProgrammeLearnerRosterResponse> {
+  const query = new URLSearchParams();
+  if (params.cohort) query.set('cohort', params.cohort);
+  if (params.group) query.set('group', params.group);
+  if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumProgrammeLearnerRosterResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/learner-roster/${suffix}`, { signal });
 }
 
 export function fetchCurriculumModuleKsbCoverage(moduleId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
@@ -1347,16 +1570,19 @@ export type CurriculumStaffProfileCreateResponse = {
   profile: CurriculumStaffProfile;
 };
 
-export function fetchCurriculumHolidays(signal?: AbortSignal): Promise<CurriculumHoliday[]> {
-  return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal });
+export function fetchCurriculumHolidays(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumHoliday[]> {
+  return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal, skipCache: options.skipCache });
 }
 
 export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact?: boolean; skipCache?: boolean; timeoutMs?: number } = {}): Promise<CurriculumOverview> {
   return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, timeoutMs: options.timeoutMs });
 }
 
-export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal): Promise<CurriculumProgrammeDetail> {
-  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/`, { signal });
+export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; skipCache?: boolean } = {}): Promise<CurriculumProgrammeDetail> {
+  const query = new URLSearchParams();
+  if (options.visibility === 'all') query.set('visibility', 'all');
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };
@@ -1373,7 +1599,7 @@ function deleteJson<T>(path: string): Promise<T> {
   return fetchJson<T>(path, { method: 'DELETE' });
 }
 
-export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description' | 'structureType' | 'ksbProfileSourceId'>>;
+export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description' | 'structureType' | 'ksbProfileSourceId' | 'status'>>;
 export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes'>> & {
   programmeId?: string;
   programmeName?: string;
@@ -1475,8 +1701,40 @@ export function saveCurriculumProgrammeTree(input: CurriculumProgrammeTreeInput)
   }>('/curriculum/programmes/tree/', input);
 }
 
+export type CurriculumProgrammeDeleteResult = {
+  deleted: boolean;
+  permanent: boolean;
+  archived?: boolean;
+  reason?: string;
+  message?: string;
+  id: string;
+};
+
+export type CurriculumProgrammeDependencyReport = {
+  blocked: boolean;
+  counts: Record<string, number>;
+  total: number;
+  programme?: {
+    id?: string;
+    sourceId?: string;
+    name?: string;
+  };
+  cleanupStartStep?: string;
+  message?: string;
+};
+
+export type CurriculumProgrammeDependencyError = {
+  error?: string;
+  reason?: 'programme-has-dependencies' | string;
+  deleted?: false;
+  permanent?: false;
+  id?: string;
+  dependencyReport?: CurriculumProgrammeDependencyReport;
+  message?: string;
+};
+
 export function deleteCurriculumProgramme(id: string) {
-  return fetchJson<{ deleted: boolean; permanent: boolean; id: string }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, { method: 'DELETE', timeoutMs: 60000 });
+  return fetchJson<CurriculumProgrammeDeleteResult>(`/curriculum/programmes/${encodeURIComponent(id)}/`, { method: 'DELETE', timeoutMs: 60000 });
 }
 
 export const archiveCurriculumProgramme = deleteCurriculumProgramme;

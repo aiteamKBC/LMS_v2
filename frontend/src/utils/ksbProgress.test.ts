@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildKsbProgress, completedComponentIds, ksbParentCode, ksbTypeCode, recordedKsbEvidenceCodes } from './learnerJourney';
+import { buildKsbProgress, completedComponentIds, ksbParentCode, ksbTypeCode, progressCountsAsAchieved, recordedKsbEvidenceCodes } from './learnerJourney';
 import fixture from './ksbProgress.fixture.json';
 
 /* Real learner payload (commercial/2): 62 programme KSBs (31 K / 26 S / 5 B),
@@ -52,6 +52,70 @@ describe('recordedKsbEvidenceCodes', () => {
     } as never);
 
     expect(Array.from(codes).sort()).toEqual(['B3', 'K2', 'S1']);
+  });
+
+  /* The rule is the outcome, not the kind. A component or video recorded as
+     not passed carries a real componentId and real authored KSB codes, so a
+     check that only special-cases quizzes credits it in full. Mirrors backend
+     learner_api/progress_rules.py. */
+  it('ignores a failed component or video even with a valid componentId', () => {
+    const codes = recordedKsbEvidenceCodes({
+      quizAttempts: [],
+      videoProgress: [
+        { kind: 'video', componentId: 'video-1', passed: false, ksbs: ['S1.2'] },
+        { kind: 'video', componentId: 'video-2', ksbs: ['S4'] },
+      ],
+      componentProgress: [
+        { kind: 'component', componentId: 'component-1', passed: false, ksbs: ['B3.1'] },
+        { kind: 'component', componentId: 'component-2', passed: true, ksbs: ['K7'] },
+      ],
+    } as never);
+
+    expect(Array.from(codes).sort()).toEqual(['K7', 'S4']);
+  });
+
+  it('ignores a quiz attempt with no recorded outcome', () => {
+    const codes = recordedKsbEvidenceCodes({
+      quizAttempts: [{ ksbs: ['K1'] }],
+      videoProgress: [],
+      componentProgress: [],
+    } as never);
+
+    expect(Array.from(codes)).toEqual([]);
+  });
+});
+
+describe('progressCountsAsAchieved', () => {
+  it('treats an ungraded completion as achieved', () => {
+    expect(progressCountsAsAchieved({ kind: 'component' })).toBe(true);
+    expect(progressCountsAsAchieved({ kind: 'video', passed: null })).toBe(true);
+  });
+  it('never counts an explicit failure, whatever the kind', () => {
+    for (const kind of ['component', 'video', 'quiz', 'live_session', '']) {
+      expect(progressCountsAsAchieved({ kind, passed: false })).toBe(false);
+    }
+  });
+  it('requires an explicit pass for a graded kind', () => {
+    expect(progressCountsAsAchieved({ kind: 'quiz', passed: true })).toBe(true);
+    expect(progressCountsAsAchieved({ kind: 'quiz' })).toBe(false);
+    expect(progressCountsAsAchieved({ kind: 'QUIZ' })).toBe(false);
+  });
+});
+
+describe('completedComponentIds', () => {
+  it('excludes a failed attempt so it cannot mark a component delivered', () => {
+    const ids = completedComponentIds({
+      videoProgress: [
+        { kind: 'video', componentId: 'video-1', passed: false },
+        { kind: 'video', componentId: 'video-2' },
+      ],
+      componentProgress: [
+        { kind: 'component', componentId: 'component-1', passed: false },
+        { kind: 'component', componentId: 'component-2' },
+      ],
+    } as never);
+
+    expect(Array.from(ids).sort()).toEqual(['component-2', 'video-2']);
   });
 });
 

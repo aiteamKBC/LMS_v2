@@ -6,15 +6,31 @@ from unittest.mock import MagicMock, Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase, override_settings
 
+from django.db import DatabaseError
+
 from .active_users import (
+    ComponentReferenceError,
+    DeletedComponentReferenceError,
+    OrphanComponentReferenceError,
     _canonical_ksb_items,
     _coerce_ksb_items,
     _fetch_ksb_items,
     _ksb_version_hash,
     _reported_minutes,
     completed_hours_from_progress,
+    component_reference_exists,
+    component_reference_state,
     refresh_learner_ksb_snapshot,
     hydrate_training_plan,
+    save_progress_record,
+)
+from .active_users import connections as active_users_connections
+from .components import submit_component_progress
+from . import progress_rules
+from .progress_rules import (
+    progress_achievement_status,
+    progress_counts_as_achieved,
+    progress_record_counts_as_achieved,
 )
 from .attendance import _summarize_attendance
 from .evidence_storage import (
@@ -370,6 +386,9 @@ class ScriptedCursor:
 
     def fetchall(self):
         return list(self._current)
+
+    def fetchone(self):
+        return self._current[0] if self._current else None
 
 
 class ScriptedConnection:
@@ -785,4 +804,260 @@ class EvidenceStorageUrlTests(SimpleTestCase):
                 "/media/absence-evidence/legacy.pdf",
                 {"evidence-approved"},
             ),
+        )
+
+
+class OrphanComponentReferenceTests(SimpleTestCase):
+    """component_ref must resolve, or the write is rejected outright.
+
+    These pin the fix for the defect that produced the historical orphan set:
+    component_ref was persisted straight from the client, so a stale or
+    frontend-generated id created a row referring to nothing while the request
+    still reported success. Curriculum, Coach and reporting all join on
+    component_ref, so such a row is invisible everywhere it matters.
+    """
+
+    def _connections(self, cursor):
+        return {"default": ScriptedConnection(cursor), "enrolment": ScriptedConnection(cursor)}
+
+    def test_known_component_resolves(self):
+        cursor = ScriptedCursor([[(1,)]])
+        with patch.dict(active_users_connections, self._connections(cursor), clear=False):
+            self.assertTrue(component_reference_exists("COMP-REAL"))
+
+    def test_unknown_component_does_not_resolve(self):
+        cursor = ScriptedCursor([[], []])
+        with patch.dict(active_users_connections, self._connections(cursor), clear=False):
+            self.assertFalse(component_reference_exists("COMP-GHOST"))
+
+    def test_blank_component_id_never_resolves(self):
+        self.assertFalse(component_reference_exists(""))
+        self.assertFalse(component_reference_exists(None))
+
+    def test_unreachable_database_is_not_reported_as_a_missing_component(self):
+        """A lookup that could not run is not evidence of absence.
+
+        Answering "does not exist" here would reject a perfectly valid write
+        whenever the database hiccuped, turning an outage into data loss.
+        """
+        class ExplodingConnection:
+            def cursor(self):
+                raise DatabaseError("connection refused")
+
+        exploding = {"default": ExplodingConnection(), "enrolment": ExplodingConnection()}
+        with patch.dict(active_users_connections, exploding, clear=False):
+            with self.assertRaises(DatabaseError):
+                component_reference_exists("COMP-REAL")
+
+    def test_save_progress_record_rejects_an_unknown_component(self):
+        learner = SimpleNamespace(pk=1)
+        with patch("learner_api.active_users.component_reference_state", return_value=("unknown", "")):
+            with self.assertRaises(OrphanComponentReferenceError) as raised:
+                save_progress_record(learner, {"kind": "component", "componentId": "COMP-GHOST"})
+        self.assertIn("COMP-GHOST", str(raised.exception))
+
+    def test_non_component_activity_is_not_rejected(self):
+        """A standalone quiz carries no componentId and must still be storable.
+
+        The guard exists to stop fake component links, not to force every
+        activity to be component-based.
+        """
+        learner = SimpleNamespace(pk=1)
+        with patch("learner_api.active_users.component_reference_state") as state:
+            with patch("learner_api.active_users.transaction.atomic", side_effect=RuntimeError("reached the write")):
+                with self.assertRaises(RuntimeError):
+                    save_progress_record(learner, {"kind": "quiz", "quizId": "64"})
+        state.assert_not_called()
+
+
+class ComponentWriteSoftDeleteTests(SimpleTestCase):
+    """New activity may not target deleted curriculum; history still resolves.
+
+    Two different questions are asked of the same ``component_ref``:
+
+    * *historical read* — does this id name a Component at all? Soft-deleted
+      counts, because a learner legitimately completed something that was
+      archived afterwards and every report joins on that id.
+    * *new authoritative write* — may new delivery be recorded against it? A
+      withdrawn Component may not, including when the withdrawal came from an
+      ancestor (week / module / group / cohort / programme).
+    """
+
+    # Column order of _COMPONENT_LINEAGE_DELETED_SQL.
+    LEVELS = ("component", "week", "module", "group", "cohort", "programme")
+
+    def _connections(self, cursor):
+        return {"default": ScriptedConnection(cursor), "enrolment": ScriptedConnection(cursor)}
+
+    def _lineage_row(self, *deleted_levels):
+        return tuple(level in set(deleted_levels) for level in self.LEVELS)
+
+    def _state(self, *deleted_levels):
+        cursor = ScriptedCursor([[self._lineage_row(*deleted_levels)]])
+        with patch.dict(active_users_connections, self._connections(cursor), clear=False):
+            return component_reference_state("COMP-UNDER-TEST")
+
+    def test_component_with_clean_lineage_is_valid_for_new_activity(self):
+        self.assertEqual(self._state(), ("active", ""))
+
+    def test_unknown_component_reports_unknown_not_deleted(self):
+        cursor = ScriptedCursor([[], []])
+        with patch.dict(active_users_connections, self._connections(cursor), clear=False):
+            self.assertEqual(component_reference_state("COMP-GHOST"), ("unknown", ""))
+
+    def test_blank_component_id_is_unknown(self):
+        self.assertEqual(component_reference_state(""), ("unknown", ""))
+        self.assertEqual(component_reference_state(None), ("unknown", ""))
+
+    def test_directly_deleted_component_is_rejected_for_new_activity(self):
+        self.assertEqual(self._state("component"), ("deleted", "component"))
+
+    def test_deletion_through_each_ancestor_is_detected_and_named(self):
+        """Parent-driven deletion is the case a component-only check misses."""
+        for level in ("week", "module", "group", "cohort", "programme"):
+            with self.subTest(deleted_level=level):
+                self.assertEqual(self._state(level), ("deleted", level))
+
+    def test_unreachable_database_is_not_reported_as_deleted(self):
+        """Same principle as the orphan check: no answer is not an answer.
+
+        Treating an unreachable lookup as "deleted" would reject valid learner
+        work for the duration of a database hiccup.
+        """
+        class ExplodingConnection:
+            def cursor(self):
+                raise DatabaseError("connection refused")
+
+        exploding = {"default": ExplodingConnection(), "enrolment": ExplodingConnection()}
+        with patch.dict(active_users_connections, exploding, clear=False):
+            with self.assertRaises(DatabaseError):
+                component_reference_state("COMP-REAL")
+
+    def test_historical_read_still_resolves_a_soft_deleted_component(self):
+        """The read helper must NOT inherit the write restriction.
+
+        Progress rows already pointing at an archived Component have to stay
+        traceable, so existence is all this asks.
+        """
+        cursor = ScriptedCursor([[(1,)]])
+        with patch.dict(active_users_connections, self._connections(cursor), clear=False):
+            self.assertTrue(component_reference_exists("COMP-20260719113158962888"))
+
+    def test_save_progress_record_rejects_a_soft_deleted_component(self):
+        learner = SimpleNamespace(pk=1)
+        with patch("learner_api.active_users.component_reference_state", return_value=("deleted", "component")):
+            with patch("learner_api.active_users.transaction.atomic", side_effect=AssertionError("must not write")):
+                with self.assertRaises(DeletedComponentReferenceError) as raised:
+                    save_progress_record(learner, {"kind": "component", "componentId": "COMP-DEAD"})
+        self.assertIn("COMP-DEAD", str(raised.exception))
+        self.assertIn("component", str(raised.exception))
+
+    def test_save_progress_record_rejects_a_component_deleted_through_its_parent(self):
+        learner = SimpleNamespace(pk=1)
+        with patch("learner_api.active_users.component_reference_state", return_value=("deleted", "module")):
+            with patch("learner_api.active_users.transaction.atomic", side_effect=AssertionError("must not write")):
+                with self.assertRaises(DeletedComponentReferenceError) as raised:
+                    save_progress_record(learner, {"kind": "component", "componentId": "COMP-ORPHANED-MODULE"})
+        self.assertIn("module", str(raised.exception))
+
+    def test_save_progress_record_accepts_an_active_component(self):
+        learner = SimpleNamespace(pk=1)
+        with patch("learner_api.active_users.component_reference_state", return_value=("active", "")):
+            with patch("learner_api.active_users._component_learning_context", return_value={}):
+                with patch("learner_api.active_users.transaction.atomic", side_effect=RuntimeError("reached the write")):
+                    with self.assertRaises(RuntimeError):
+                        save_progress_record(learner, {"kind": "component", "componentId": "COMP-LIVE"})
+
+    def test_both_rejections_share_one_base_so_callers_map_them_to_one_status(self):
+        self.assertTrue(issubclass(OrphanComponentReferenceError, ComponentReferenceError))
+        self.assertTrue(issubclass(DeletedComponentReferenceError, ComponentReferenceError))
+
+
+class ComponentWriteEndpointRejectionTests(SimpleTestCase):
+    """The service-layer rejections must surface as a client error, not a 200."""
+
+    def _post(self, component_id):
+        request = RequestFactory().post(
+            f"/learner_api/components/{component_id}/complete/?kind=apprenticeship&learnerId=19",
+            data=json.dumps({}),
+            content_type="application/json",
+        )
+        return submit_component_progress(request, component_id)
+
+    def _run(self, save_side_effect):
+        profile = SimpleNamespace(training_plan_progress=[])
+        with patch("learner_api.components.SOURCE_MODELS", {"apprenticeship": Mock()}) as models:
+            models["apprenticeship"].objects.get.return_value = SimpleNamespace(id=19)
+            with patch("learner_api.components._component_meta", return_value=("podcast", "Podcast")):
+                with patch("learner_api.components.component_ksb_codes", return_value=["K1"]):
+                    with patch("learner_api.components._completion_criteria", return_value=(True, None)):
+                        with patch("learner_api.components.learner_profile_for_source", return_value=profile):
+                            with patch(
+                                "learner_api.components.save_progress_record",
+                                side_effect=save_side_effect,
+                            ):
+                                return self._post("COMP-UNDER-TEST")
+
+    def test_unknown_component_write_returns_400(self):
+        response = self._run(OrphanComponentReferenceError("COMP-GHOST"))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("COMP-GHOST", json.loads(response.content)["error"])
+
+    def test_soft_deleted_component_write_returns_400(self):
+        response = self._run(DeletedComponentReferenceError("COMP-DEAD", "week"))
+        self.assertEqual(response.status_code, 400)
+        payload = json.loads(response.content)
+        self.assertIn("COMP-DEAD", payload["error"])
+        self.assertIn("week", payload["error"])
+
+
+class ProgressAchievementRuleTests(SimpleTestCase):
+    """Failed / unresolved activity can never count as achieved KSB delivery.
+
+    The rule used to be applied only to ``kind == 'quiz'``, and was safe purely
+    because no failed row happened to carry Component lineage. These pin the
+    rule itself, so a graded Component with a valid ``component_ref``, valid
+    lineage and a valid KSB snapshot still cannot claim its KSBs on a failure.
+    """
+
+    def test_an_ungraded_completion_counts(self):
+        self.assertTrue(progress_counts_as_achieved(kind="component", passed=None))
+        self.assertTrue(progress_counts_as_achieved(kind="video", passed=None))
+
+    def test_an_explicit_failure_never_counts_whatever_the_kind(self):
+        for kind in ("component", "video", "quiz", "live_session", ""):
+            with self.subTest(kind=kind):
+                self.assertFalse(progress_counts_as_achieved(kind=kind, passed=False))
+
+    def test_a_graded_kind_needs_an_explicit_pass(self):
+        self.assertTrue(progress_counts_as_achieved(kind="quiz", passed=True))
+        self.assertFalse(progress_counts_as_achieved(kind="quiz", passed=None))
+        self.assertFalse(progress_counts_as_achieved(kind="QUIZ", passed=None))
+
+    def test_a_passed_flag_on_an_ungraded_kind_is_honoured(self):
+        self.assertTrue(progress_counts_as_achieved(kind="component", passed=True))
+
+    def test_status_explains_why_a_row_was_excluded(self):
+        self.assertEqual(progress_achievement_status(kind="component", passed=None), "achieved")
+        self.assertEqual(progress_achievement_status(kind="component", passed=False), "failed")
+        self.assertEqual(progress_achievement_status(kind="quiz", passed=None), "incomplete")
+        self.assertEqual(progress_achievement_status(kind="quiz", passed=False), "failed")
+
+    def test_record_form_reads_the_serialised_progress_shape(self):
+        failed = {
+            "kind": "component",
+            "componentId": "COMP-20260816E2E",
+            "ksbs": ["K1"],
+            "passed": False,
+        }
+        self.assertFalse(progress_record_counts_as_achieved(failed))
+        self.assertTrue(progress_record_counts_as_achieved({**failed, "passed": True}))
+        self.assertFalse(progress_record_counts_as_achieved(None))
+        self.assertFalse(progress_record_counts_as_achieved("not a record"))
+
+    def test_the_rule_has_exactly_one_implementation(self):
+        """No SQL twin to drift from this one — see the module docstring."""
+        self.assertFalse(
+            [name for name in dir(progress_rules) if "sql" in name.lower()],
+            "a SQL variant of the completion rule would be a second implementation",
         )

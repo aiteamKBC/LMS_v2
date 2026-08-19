@@ -19,7 +19,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .active_users import save_progress_record
+from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
 
@@ -90,6 +90,47 @@ def component_requires_evidence(component_type):
     return normalise_component_type(component_type) in EVIDENCE_COMPONENT_TYPES
 
 
+def _component_ksb_mappings(component_id):
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                "SELECT ksb_mappings FROM curriculum.components WHERE id = %s LIMIT 1",
+                [component_id],
+            )
+            row = cur.fetchone()
+            canonical = row[0] if row else []
+            if isinstance(canonical, str):
+                try:
+                    canonical = json.loads(canonical) if canonical else []
+                except (TypeError, ValueError):
+                    canonical = []
+            mappings = []
+            if isinstance(canonical, list):
+                for item in canonical:
+                    if not isinstance(item, dict):
+                        continue
+                    code = str(item.get("code") or item.get("ksbCode") or item.get("ksb_code") or "").strip()
+                    if code:
+                        mappings.append({
+                            "code": code,
+                            "weight": item.get("weight") or 0,
+                        })
+            if mappings:
+                return mappings
+
+            cur.execute(
+                "SELECT ksb_code, weight FROM curriculum.ksb_mappings "
+                "WHERE component_id = %s AND ksb_code IS NOT NULL AND ksb_code <> '' "
+                "AND deleted_at IS NULL AND COALESCE(is_programme_deleted, false) = false "
+                "ORDER BY ksb_code",
+                [component_id],
+            )
+            return [{"code": row[0], "weight": row[1] or 0} for row in cur.fetchall()]
+    except DatabaseError as exc:
+        logger.warning("Could not resolve KSB mappings for component %s: %s", component_id, exc)
+        return []
+
+
 def component_ksb_codes(component_id):
     """The KSB codes authored against a component, in a stable order.
 
@@ -98,18 +139,14 @@ def component_ksb_codes(component_id):
     the component itself. Resolved server-side so the credited KSBs always match
     the curriculum rather than whatever a client happens to post.
     """
-    try:
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                "SELECT DISTINCT ksb_code FROM curriculum.ksb_mappings "
-                "WHERE component_id = %s AND ksb_code IS NOT NULL AND ksb_code <> '' "
-                "ORDER BY ksb_code",
-                [component_id],
-            )
-            return [row[0] for row in cur.fetchall()]
-    except DatabaseError as exc:
-        logger.warning("Could not resolve KSBs for component %s: %s", component_id, exc)
-        return []
+    seen = set()
+    codes = []
+    for mapping in _component_ksb_mappings(component_id):
+        code = str(mapping.get("code") or "").strip()
+        if code and code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return codes
 
 
 def _completion_criteria(component_id, kind, learner_id, component_type=None):
@@ -126,14 +163,9 @@ def _completion_criteria(component_id, kind, learner_id, component_type=None):
         return True, None
     try:
         with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                "SELECT COALESCE(SUM(weight), 0), COUNT(*) FROM curriculum.ksb_mappings "
-                "WHERE component_id = %s",
-                [component_id],
-            )
-            row = cur.fetchone()
-            if row:
-                ksb_weight, ksb_count = float(row[0] or 0), int(row[1] or 0)
+            mappings = _component_ksb_mappings(component_id)
+            ksb_weight = sum(float(item.get("weight") or 0) for item in mappings)
+            ksb_count = len(mappings)
 
             if needs_evidence:
                 # Only approved uploads count — a quarantined or rejected file
@@ -232,8 +264,15 @@ def submit_component_progress(request, component_id):
 
     try:
         active = learner_profile_for_source(source, learner_id, active_only=True)
+        if active is None:
+            active = sync_active_user(source)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
+    if active is None:
+        return _error(
+            "This learner does not have an active learner profile, so progress cannot be saved.",
+            409,
+        )
 
     history = (active.training_plan_progress if active and isinstance(active.training_plan_progress, list) else [])
     # 1-based count of prior completions of THIS component.
@@ -257,23 +296,24 @@ def submit_component_progress(request, component_id):
         "timeTaken": time_taken,
     }
 
-    if active is not None:
-        action, _noun = TYPE_ACTIONS.get(component_type, ("Completed activity", "Activity"))
-        activity = {
-            "kind": "component",
-            "componentType": component_type,
-            "action": action,
-            "title": component_title or "Activity",
-            "detail": (f"{reported_time}" if reported_time else "").strip(),
-            "componentId": component_id,
-            "week": week_title,
-            "module": module_title,
-            "at": submitted_at,
-        }
-        try:
-            save_progress_record(active, record, activity)
-        except DatabaseError as exc:
-            return _error(f"Database error saving progress: {exc}", 502)
+    action, _noun = TYPE_ACTIONS.get(component_type, ("Completed activity", "Activity"))
+    activity = {
+        "kind": "component",
+        "componentType": component_type,
+        "action": action,
+        "title": component_title or "Activity",
+        "detail": (f"{reported_time}" if reported_time else "").strip(),
+        "componentId": component_id,
+        "week": week_title,
+        "module": module_title,
+        "at": submitted_at,
+    }
+    try:
+        save_progress_record(active, record, activity)
+    except ComponentReferenceError as exc:
+        return _error(str(exc), 400)
+    except DatabaseError as exc:
+        return _error(f"Database error saving progress: {exc}", 502)
 
     return JsonResponse({
         "record": record,

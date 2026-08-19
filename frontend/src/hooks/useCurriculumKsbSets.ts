@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchCurriculumKsbSets, type CurriculumKsbSet } from '@/lib/curriculumApi';
 
-export function useCurriculumKsbSets() {
+export function useCurriculumKsbSets({ all = false }: { all?: boolean } = {}) {
   const [ksbSets, setKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -11,7 +11,7 @@ export function useCurriculumKsbSets() {
     let mounted = true;
 
     setLoading(true);
-    fetchCurriculumKsbSets(controller.signal)
+    fetchCurriculumKsbSets(controller.signal, { all })
       .then(result => {
         if (!mounted) return;
         setKsbSets(result);
@@ -29,7 +29,7 @@ export function useCurriculumKsbSets() {
       mounted = false;
       controller.abort();
     };
-  }, []);
+  }, [all]);
 
   useEffect(() => load(), [load]);
 

@@ -121,6 +121,15 @@ def database_from_url(database_url):
 DEBUG = os.environ.get("DJANGO_DEBUG", "true").lower() == "true"
 USE_SQLITE_FOR_TESTS = os.environ.get("DJANGO_USE_SQLITE", "false").lower() == "true"
 
+# Curriculum schema is owned by migrations. When this is false (the production
+# default) request handlers only VERIFY that the expected tables exist and raise
+# a controlled configuration error if they do not — they never run CREATE/ALTER
+# or historical data backfills on the way to serving a request. Set to true only
+# for local Postgres development where running migrations by hand is a nuisance.
+CURRICULUM_ALLOW_RUNTIME_SCHEMA_BOOTSTRAP = (
+    os.environ.get("CURRICULUM_ALLOW_RUNTIME_SCHEMA_BOOTSTRAP", "false").lower() == "true"
+)
+
 # SECURITY WARNING: keep the secret key used in production secret!
 # Environment-driven, with the historical development key kept as the fallback so
 # local runs need no setup. When DEBUG is off there is no fallback: a production
@@ -215,6 +224,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # Turns a missing Curriculum table into a 503 naming the absent relations,
+    # instead of an opaque 500. Schema is migration-owned; request handlers
+    # verify it rather than creating it.
+    'curriculum_api.middleware.SchemaNotProvisionedMiddleware',
 ]
 
 PERFORMANCE_DIAGNOSTICS = os.environ.get('PERFORMANCE_DIAGNOSTICS', 'false').lower() == 'true'

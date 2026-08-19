@@ -2181,7 +2181,7 @@ function KsbMappingEditor({ mappings, onChange }: { mappings: KsbMapping[]; onCh
   const add = () => {
     const trimmed = code.trim().toUpperCase();
     if (!trimmed) return;
-    onChange([...mappings, { id: makeAuthoringId('ksb'), ksbId: '', code: trimmed, description: '', type: 'main', classification: 'main', weight: 40 }]);
+    onChange([...mappings, { id: makeAuthoringId('ksb'), ksbId: '', code: trimmed, description: '', type: 'main', classification: 'main', weight: 40, weightClass: 'hard' }]);
     setCode('');
   };
   const patch = (id: string, next: Partial<KsbMapping>) => onChange(mappings.map(m => (m.id === id ? { ...m, ...next } : m)));

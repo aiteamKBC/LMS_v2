@@ -71,6 +71,66 @@ def _record_approved_evidence(cur, blob_name, original_filename, approved_path):
     )
 
 
+def _learner_profile_ids_for_source(cur, learner_id):
+    learner_id = str(learner_id or "").strip()
+    if not learner_id:
+        return []
+
+    ids = {learner_id}
+    email = ""
+    cur.execute('select "Email" from enrolment."Created_users" where id::text = %s limit 1', [learner_id])
+    row = cur.fetchone()
+    if row:
+        email = str(row[0] or "").strip()
+
+    if email:
+        cur.execute(
+            """
+            select id::text
+              from "Learner".learners
+             where id::text = %s
+                or lower(email) = lower(%s)
+            """,
+            [learner_id, email],
+        )
+    else:
+        cur.execute('select id::text from "Learner".learners where id::text = %s', [learner_id])
+    ids.update(str(row[0] or "").strip() for row in cur.fetchall() if row and str(row[0] or "").strip())
+    return sorted(ids)
+
+
+def _evidence_lineage(kind, learner_id, section_ref):
+    section_ref = str(section_ref or "").strip()
+    lineage = {"component_ref": None, "progress_entry_id": None}
+    if not section_ref:
+        return lineage
+    try:
+        with _conn().cursor() as cur:
+            cur.execute("select id from curriculum.components where id = %s limit 1", [section_ref])
+            if cur.fetchone():
+                lineage["component_ref"] = section_ref
+            learner_ids = _learner_profile_ids_for_source(cur, learner_id)
+            if not learner_ids:
+                return lineage
+            cur.execute(
+                """
+                select p.id
+                  from "Learner"."learner_progress_entries" p
+                 where p.component_ref = %s
+                   and p.learner_id::text = any(%s)
+                 order by p.submitted_at desc nulls last, p.id desc
+                 limit 1
+                """,
+                [section_ref, learner_ids],
+            )
+            row = cur.fetchone()
+            if row:
+                lineage["progress_entry_id"] = row[0]
+    except DatabaseError:
+        return lineage
+    return lineage
+
+
 @csrf_exempt
 def upload_evidence(request, kind, pk):
     """Multipart upload -> quarantine -> (scan) -> promote to approved.
@@ -101,6 +161,7 @@ def upload_evidence(request, kind, pk):
             training_plan_details = json.loads(raw_details)
         except ValueError:
             return _error("training_plan_details must be valid JSON.", 400)
+    lineage = _evidence_lineage(kind, pk, section_ref)
 
     ensure_evidence_tables()
 
@@ -123,12 +184,13 @@ def upload_evidence(request, kind, pk):
                 insert into "Learner"."evidence_files"
                   (id, learner_kind, learner_id, section_ref, container, blob_name,
                    original_filename, content_type, size_bytes, status, uploaded_by, uploaded_at,
-                   "Training_plan_details")
-                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s)
+                   "Training_plan_details", component_ref, progress_entry_id)
+                values (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s)
                 """,
                 [str(file_id), kind, str(pk), section_ref, quarantine, blob_name,
                  f.name, f.content_type, f.size, str(pk), timezone.now(),
-                 json.dumps(training_plan_details) if training_plan_details is not None else None],
+                 json.dumps(training_plan_details) if training_plan_details is not None else None,
+                 lineage.get("component_ref"), lineage.get("progress_entry_id")],
             )
     except DatabaseError as exc:
         logger.warning("Could not record evidence_files row: %s", exc)
@@ -191,7 +253,7 @@ def list_evidence(request, kind, pk):
         with _conn().cursor() as cur:
             cur.execute(
                 "select id, original_filename, content_type, size_bytes, status, "
-                'scan_result, section_ref, uploaded_at, "Training_plan_details" '
+                'scan_result, section_ref, uploaded_at, "Training_plan_details", component_ref, progress_entry_id '
                 'from "Learner"."evidence_files" '
                 f"where {' and '.join(where)} "
                 "order by uploaded_at desc",
@@ -208,6 +270,8 @@ def list_evidence(request, kind, pk):
             "status": r[4], "scanResult": r[5], "sectionRef": r[6],
             "uploadedAt": r[7].isoformat() if r[7] else None,
             "trainingPlanDetails": r[8],
+            "componentRef": r[9],
+            "progressEntryId": r[10],
         }
         for r in rows
     ]})

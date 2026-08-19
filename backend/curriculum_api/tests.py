@@ -9,7 +9,181 @@ from . import views
 from .ksb_coverage import build_coverage
 
 
+class ComponentOwnedKsbMappingTests(TestCase):
+    def setUp(self):
+        views.reset_schema_ready_flags()
+        views.ensure_module_authoring_tables()
+        for table in (
+            views.AUTHORING_KSB_MAPPINGS_TABLE,
+            views.AUTHORING_COMPONENTS_TABLE,
+            views.AUTHORING_WEEKS_TABLE,
+            views.AUTHORING_MODULES_TABLE,
+        ):
+            views.authoring_delete(table)
+
+    def _component_row(self, mappings):
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': 'MOD-KSB-SOT',
+            'programme_id': 'PROG-KSB-SOT',
+            'programme_name': 'Programme',
+            'title': 'Module',
+        })
+        views.authoring_upsert(views.AUTHORING_WEEKS_TABLE, ['id'], {
+            'id': 'WEEK-KSB-SOT',
+            'module_catalogue_id': 'MOD-KSB-SOT',
+            'week_number': 1,
+            'title': 'Week',
+        })
+        return views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+            'id': 'COMP-KSB-SOT',
+            'week_id': 'WEEK-KSB-SOT',
+            'module_catalogue_id': 'MOD-KSB-SOT',
+            'type': 'reading',
+            'title': 'Component',
+            'expected_otjh': 3,
+            'points': 10,
+            'ksb_mappings': views.json_db_value(mappings),
+        })
+
+    @patch('curriculum_api.views.ksb_exists_in_source', return_value=True)
+    @patch('curriculum_api.views.source_record_exists', return_value=True)
+    def test_weight_class_validation_requires_allowed_enum(self, _source, _ksb):
+        valid = {
+            'code': 'K1',
+            'sourceType': 'standard',
+            'sourceId': 'STD-1',
+            'classification': 'main',
+            'weight': 50,
+            'weightClass': 'hard',
+        }
+        self.assertEqual(views.validate_ksb_mapping_payload(valid, 'mapping'), [])
+
+        invalid = {**valid, 'weightClass': 'medium'}
+        errors = views.validate_ksb_mapping_payload(invalid, 'mapping')
+        self.assertTrue(any(error['path'] == 'mapping.weight_class' for error in errors))
+
+    def test_component_stores_multiple_ksbs_with_distinct_weight_classes(self):
+        row = self._component_row([
+            {'id': 'MAP-1', 'ksb_code': 'K1', 'weight': 50, 'weight_class': 'hard'},
+            {'id': 'MAP-2', 'ksb_code': 'S4', 'weight': 30, 'weight_class': 'soft'},
+            {'id': 'MAP-3', 'ksb_code': 'B2', 'weight': 20, 'weight_class': 'possible'},
+        ])
+
+        mappings = views.component_ksb_mappings_from_row(row)
+        self.assertEqual([mapping['ksb_code'] for mapping in mappings], ['K1', 'S4', 'B2'])
+        self.assertEqual([mapping['weight'] for mapping in mappings], [50, 30, 20])
+        self.assertEqual([mapping['weight_class'] for mapping in mappings], ['hard', 'soft', 'possible'])
+        self.assertEqual(float(row['expected_otjh']), 3)
+
+    def test_projection_sync_is_derived_from_component_source(self):
+        row = self._component_row([
+            {
+                'id': 'MAP-1',
+                'ksb_code': 'K1',
+                'source_type': 'standard',
+                'source_id': 'STD-1',
+                'classification': 'main',
+                'weight': 50,
+                'weight_class': 'hard',
+            },
+            {
+                'id': 'MAP-2',
+                'ksb_code': 'S4',
+                'source_type': 'standard',
+                'source_id': 'STD-1',
+                'classification': 'secondary',
+                'weight': 30,
+                'weight_class': 'soft',
+            },
+        ])
+
+        views.sync_component_ksb_projection('COMP-KSB-SOT', component_row=row)
+        rows = views.active_mapping_rows(views.authoring_fetch_all(
+            views.AUTHORING_KSB_MAPPINGS_TABLE,
+            'component_id = %s',
+            ['COMP-KSB-SOT'],
+            'ksb_code',
+        ))
+
+        self.assertEqual([row['ksb_code'] for row in rows], ['K1', 'S4'])
+        self.assertEqual([float(row['weight']) for row in rows], [50, 30])
+        self.assertEqual([row['weight_class'] for row in rows], ['hard', 'soft'])
+
+
+class CrossCohortGroupNameCollisionTests(SimpleTestCase):
+    """Group names repeat across cohorts, so identity matching must use ids.
+
+    Regression cover for a wizard save that landed a module on a same-named
+    group in a different cohort. The target group was then left with no module
+    rows, which the read path reports as an unassigned tutor and a "TBD"
+    delivery window because both are derived from the child modules.
+    """
+
+    AUG_GROUP = 'GROUP-AUG-0001'
+    SEP_GROUP = 'GROUP-SEP-0001'
+    AUG_COHORT = 'COHORT-AUG-0001'
+    SEP_COHORT = 'COHORT-SEP-0001'
+
+    def test_ids_conflict_when_both_sides_name_different_rows(self):
+        self.assertTrue(views.identity_ids_conflict(self.SEP_GROUP, [self.AUG_GROUP]))
+        self.assertFalse(views.identity_ids_conflict(self.SEP_GROUP, [self.SEP_GROUP]))
+
+    def test_ids_do_not_conflict_when_either_side_is_unknown(self):
+        # A legacy row with no id, or a caller that only knows the name, must
+        # stay on the permissive name-based path rather than being rejected.
+        self.assertFalse(views.identity_ids_conflict('', [self.AUG_GROUP]))
+        self.assertFalse(views.identity_ids_conflict(self.SEP_GROUP, []))
+        self.assertFalse(views.identity_ids_conflict(self.SEP_GROUP, ['', None]))
+
+    def test_shared_group_name_alone_still_satisfies_the_name_matcher(self):
+        # Documents *why* the id guard is needed: the pooled id+name comparison
+        # cannot tell two cohorts' "G1-Wed" apart on its own.
+        self.assertTrue(views.identity_values_match_context(
+            [self.SEP_GROUP, 'G1-Wed'],
+            [self.AUG_GROUP, 'G1-Wed'],
+        ))
+
+    def test_differing_cohort_ids_are_rejected_by_the_id_guard(self):
+        self.assertTrue(views.identity_ids_conflict(self.SEP_COHORT, [self.AUG_COHORT]))
+
+
 class CurriculumGroupModuleMatchingTests(SimpleTestCase):
+    def test_staff_profile_name_ignores_placeholder_values(self):
+        self.assertEqual(views.staff_profile_name({'name': 'EMPTY_STRING', 'email': 'EMPTY_STRING'}), '')
+        self.assertEqual(views.staff_profile_email({'email': 'EMPTY_STRING'}), '')
+        self.assertEqual(views.staff_profile_name({'name': 'Unassigned'}), '')
+        self.assertTrue(views.is_blank_staff_assignment('EMPTY_STRING'))
+
+    def test_blank_staff_profiles_are_not_returned_even_with_assignments(self):
+        tutor_profiles = views.build_staff_profiles(
+            [],
+            [{
+                'id': 'TUTOR-BLANK',
+                'name': 'EMPTY_STRING',
+                'email': 'EMPTY_STRING',
+                'assigned_module_ids': ['MOD-1'],
+                'is_archived': False,
+            }],
+            'tutor',
+            modules=[],
+            groups=[],
+        )
+        coach_profiles = views.build_staff_profiles(
+            [],
+            [{
+                'id': 'COACH-BLANK',
+                'name': 'EMPTY_STRING',
+                'email': 'EMPTY_STRING',
+                'assigned_group_ids': ['GROUP-1'],
+                'is_archived': False,
+            }],
+            'coach',
+            modules=[],
+            groups=[],
+        )
+        self.assertEqual(tutor_profiles, [])
+        self.assertEqual(coach_profiles, [])
+
     def test_module_belongs_to_group_uses_stored_module_ids(self):
         group = {
             'id': 'GROUP-1',
@@ -64,9 +238,7 @@ class CurriculumGroupModuleMatchingTests(SimpleTestCase):
 class CurriculumTeamsMeetingTests(TestCase):
     def setUp(self):
         self.client = Client()
-        views._AUTHORING_TABLES_READY = False
-        views._LIVE_SESSIONS_TABLE_READY = False
-        views._LIVE_SESSION_TRACKING_TABLES_READY = False
+        views.reset_schema_ready_flags()
         views.ensure_module_authoring_tables()
         views.ensure_live_sessions_table()
         views.authoring_delete(views.LIVE_SESSIONS_TABLE)
@@ -174,7 +346,11 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(live_session['repeat_occurrences'], 6)
         self.assertEqual(live_session['status'], 'active')
         self.assertEqual(live_session['online_meeting_id'], 'meeting-1')
-        self.assertEqual(live_session['presenters'], ['presenter@example.com'])
+        # presenters is jsonb on PostgreSQL but text on SQLite, so the raw row
+        # is a list on one vendor and a JSON string on the other. Decode it the
+        # way every production reader does rather than asserting one vendor's
+        # physical storage encoding.
+        self.assertEqual(views.as_json_value(live_session['presenters'], []), ['presenter@example.com'])
         occurrences = views.authoring_fetch_all(
             views.LIVE_SESSION_OCCURRENCES_TABLE,
             'live_session_id = %s',
@@ -359,10 +535,7 @@ class CurriculumTeamsMeetingTests(TestCase):
 
 class CurriculumPersistenceTests(TestCase):
     def setUp(self):
-        views._AUTHORING_TABLES_READY = False
-        views._STAFF_PROFILE_TABLES_READY = False
-        views._PROGRAMME_CONFIG_DEDUP_READY = False
-        views._TABLE_COLUMNS_CACHE.clear()
+        views.reset_schema_ready_flags()
         views.invalidate_curriculum_cache()
         self.client = Client()
         self.ensure_programmes_table()
@@ -395,6 +568,7 @@ class CurriculumPersistenceTests(TestCase):
                     color varchar(32),
                     description text,
                     structure_type varchar(32),
+                    status varchar(32),
                     is_active boolean,
                     is_archived boolean,
                     created_at timestamp,
@@ -524,6 +698,9 @@ class CurriculumPersistenceTests(TestCase):
                                     'code': 'K1',
                                     'description': 'Data basics',
                                     'classification': 'main',
+                                    # weight_class is the canonical delivery
+                                    # weighting; 'main' maps to 'hard'.
+                                    'weight_class': 'hard',
                                     'weight': 1,
                                     'sourceType': 'framework',
                                     'sourceId': 'KSBP-DATA',
@@ -544,6 +721,26 @@ class CurriculumPersistenceTests(TestCase):
 
     def count(self, table, key, value):
         return len(views.authoring_fetch_all(table, f'{key} = %s', [value]))
+
+    def assertRemovedFromCurriculum(self, cohort_id, group_id):
+        """A removed cohort/group is soft-deleted, not physically dropped.
+
+        Curriculum rows are retained on delete (migrations 0040/0041) so that
+        historical learner progress stays joinable to the curriculum it was
+        delivered against. "Removed" therefore means two things, and both are
+        asserted here: the row carries its soft-delete markers, and it no
+        longer appears in the read model the UI builds from.
+        """
+        cohort = self.row(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', cohort_id)
+        self.assertTrue(views.row_has_deleted_at(cohort), f'{cohort_id} should carry deleted_at')
+        self.assertEqual(cohort['status'], 'archived')
+
+        group = self.row(views.GROUPS_TABLE, 'group_id', group_id)
+        self.assertTrue(views.row_has_deleted_at(group), f'{group_id} should carry deleted_at')
+
+        cohorts, groups = views.build_cohorts_and_groups()
+        self.assertNotIn(cohort_id, [item.get('id') for item in cohorts])
+        self.assertNotIn(group_id, [item.get('id') for item in groups])
 
     def resolve_structures(self, *identifiers):
         response = self.post_json(
@@ -566,6 +763,168 @@ class CurriculumPersistenceTests(TestCase):
         self.assertTrue(result['found'])
         self.assertTrue(result['hasComponents'])
         self.assertEqual(result['componentCount'], 1)
+
+    def seed_same_titled_module(self, module_catalogue_id, component_count):
+        """Persist a second module sharing 'Data Foundations' as its title."""
+        payload = self.tree_payload(
+            programme_id='PROG-OTHER',
+            cohort_id='COHORT-OTHER-1',
+            group_id='GROUP-OTHER-1',
+            module_id=module_catalogue_id,
+        )
+        module = payload['cohorts'][0]['groups'][0]['modules'][0]
+        week = module['weekStructure'][0]
+        template = week['components'][0]
+        week['components'] = [
+            {**template, 'id': f'COMP-{module_catalogue_id}-{index}'}
+            for index in range(component_count)
+        ]
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+        self.assertEqual(response.status_code, 200, response.content)
+
+    def test_title_only_resolve_refuses_to_guess_between_same_titled_modules(self):
+        """Resolving by title must never silently pick a winner.
+
+        Two modules can legitimately share a title across programmes. Before this
+        guard the endpoint ranked title matches by component count and returned the
+        heaviest, so a group could be served another programme's content with no
+        signal that a guess had been made. The ambiguity is reported instead.
+        """
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        self.assertEqual(response.status_code, 200, response.content)
+        # Deliberately heavier than MOD-DATA-1 (1 component): under the old
+        # component-count tie-break this is exactly the row that would have won.
+        self.seed_same_titled_module('MOD-OTHER-1', component_count=3)
+
+        result = self.resolve_structures('Data Foundations')['Data Foundations']
+
+        self.assertFalse(result['found'])
+        self.assertTrue(result['ambiguous'])
+        # Not 'missing': the content exists, so the UI must not tell the user to
+        # go create the module in Module Builder.
+        self.assertFalse(result['missing'])
+        self.assertEqual(
+            sorted(result['ambiguousCatalogueIds']),
+            ['MOD-DATA-1', 'MOD-OTHER-1'],
+        )
+        self.assertIsNone(result.get('module'))
+
+    def test_exact_id_wins_over_a_colliding_title(self):
+        """An id is an assertion, not a guess: title collisions must not weaken it."""
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        self.assertEqual(response.status_code, 200, response.content)
+        self.seed_same_titled_module('MOD-OTHER-1', component_count=3)
+
+        result = self.resolve_structures('MOD-DATA-1')['MOD-DATA-1']
+
+        self.assertTrue(result['found'])
+        self.assertFalse(result.get('ambiguous', False))
+        # The heavier same-titled module must not be substituted in.
+        self.assertEqual(result['catalogueId'], 'MOD-DATA-1')
+        self.assertEqual(result['componentCount'], 1)
+
+    def test_unique_title_still_resolves(self):
+        """The title fallback stays useful when it is unambiguous."""
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        self.assertEqual(response.status_code, 200, response.content)
+
+        result = self.resolve_structures('Data Foundations')['Data Foundations']
+
+        self.assertTrue(result['found'])
+        self.assertEqual(result['catalogueId'], 'MOD-DATA-1')
+
+    def test_tree_save_persists_module_scheduling_values(self):
+        payload = self.tree_payload()
+        module = payload['cohorts'][0]['groups'][0]['modules'][0]
+        module.update({
+            'startDate': '2026-09-18',
+            'endDate': '2026-09-30',
+            'sessionsNumber': 1,
+            'weekDays': 'Friday',
+            'startTime': '09:30',
+            'endTime': '11:30',
+            'tutor': 'Unassigned',
+        })
+
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        row = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
+        self.assertEqual(views.format_date(row['start_date']), '2026-09-18')
+        self.assertEqual(views.format_date(row['end_date']), '2026-09-30')
+        self.assertEqual(row['sessions_number'], 1)
+        self.assertEqual(row['session_week_day'], 'Friday')
+        self.assertEqual(row['session_start_time'], '09:30')
+        self.assertEqual(row['session_end_time'], '11:30')
+        self.assertIsNone(row['tutor_name'])
+
+    def test_tree_update_resaves_visible_module_delivery_and_builder_weeks(self):
+        first = self.tree_payload()
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', first)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        second = self.tree_payload()
+        second['partialTree'] = True
+        second['cohorts'][0]['groups'][0]['modulesPartial'] = True
+        module = second['cohorts'][0]['groups'][0]['modules'][0]
+        module.update({
+            'startDate': '2026-09-16',
+            'endDate': '2026-10-14',
+            'sessionsNumber': 5,
+            'weeks': 5,
+            'tutor': 'Tutor Two',
+            'weekStructure': [
+                {
+                    'id': f'WEEK-DATA-{index}',
+                    'weekNumber': index,
+                    'title': f'Week {index}',
+                    'components': [],
+                }
+                for index in range(1, 6)
+            ],
+        })
+
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', second)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        row = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
+        self.assertEqual(views.format_date(row['start_date']), '2026-09-16')
+        self.assertEqual(views.format_date(row['end_date']), '2026-10-14')
+        self.assertEqual(row['sessions_number'], 5)
+        self.assertEqual(row['tutor_name'], 'Tutor Two')
+        self.assertEqual(self.count(views.AUTHORING_WEEKS_TABLE, 'module_catalogue_id', 'MOD-DATA-1'), 5)
+
+        result = self.resolve_structures('MOD-DATA-1')['MOD-DATA-1']
+        self.assertTrue(result['found'])
+        self.assertEqual(len(result['module']['weekStructure']), 5)
+
+    def test_tree_save_programme_is_active_even_when_client_sends_draft(self):
+        payload = self.tree_payload(programme_id='PROG-DRAFT')
+        payload['programme']['name'] = 'Draft Programme'
+        payload['programme']['status'] = 'draft'
+
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['programme']['status'], 'active')
+
+        response = self.client.get('/curriculum_api/curriculum/programmes/')
+        self.assertEqual(response.status_code, 200, response.content)
+        active = next(item for item in response.json()['programmes'] if item['sourceId'] == 'PROG-DRAFT')
+        self.assertEqual(active['status'], 'active')
+
+        response = self.client.get('/curriculum_api/curriculum/programmes/?visibility=all')
+        self.assertEqual(response.status_code, 200, response.content)
+        active = next(item for item in response.json()['programmes'] if item['sourceId'] == 'PROG-DRAFT')
+        self.assertEqual(active['status'], 'active')
+
+        payload['programme']['status'] = 'active'
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
+        self.assertEqual(response.status_code, 200, response.content)
+
+        response = self.client.get('/curriculum_api/curriculum/programmes/')
+        self.assertEqual(response.status_code, 200, response.content)
+        active = next(item for item in response.json()['programmes'] if item['sourceId'] == 'PROG-DRAFT')
+        self.assertEqual(active['status'], 'active')
 
     def test_integer_weeks_count_never_replaces_the_authored_week_structure(self):
         """`weeks` is a session count in the attachment payload. Treating it as a
@@ -809,6 +1168,25 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(coverage['summary']['overall']['required'], 1)
         self.assertEqual([item['code'] for item in coverage['items']], ['K1'])
 
+    def test_coverage_mappings_report_component_otjh(self):
+        coverage = build_coverage(
+            [{'code': 'K1', 'type': 'knowledge', 'source_type': 'framework', 'source_id': 'KSBP-DATA'}],
+            [
+                {'id': 'MAP-1', 'module_catalogue_id': 'MOD-1', 'component_id': 'COMP-1', 'ksb_code': 'K1', 'source_type': 'framework', 'source_id': 'KSBP-DATA', 'weight': 100},
+                {'id': 'MAP-2', 'module_catalogue_id': 'MOD-1', 'ksb_code': 'K1', 'source_type': 'framework', 'source_id': 'KSBP-DATA', 'weight': 50},
+            ],
+            [{'module_catalogue_id': 'MOD-1', 'title': 'Module 1'}],
+            [],
+            [{'id': 'COMP-1', 'title': 'Component 1', 'type': 'reading', 'expected_otjh': '1.50'}],
+        )
+
+        mappings = {mapping['mapping_id']: mapping for mapping in coverage['items'][0]['mappings']}
+        # Component-level mapping reports the component's expected OTJH.
+        self.assertEqual(mappings['MAP-1']['component_otjh'], 1.5)
+        self.assertEqual(mappings['MAP-1']['componentOtjh'], 1.5)
+        # A module-level mapping is not attached to a component, so it has none.
+        self.assertEqual(mappings['MAP-2']['component_otjh'], 0)
+
     def test_add_cohort_without_removing_existing_when_hydration_incomplete(self):
         first = self.tree_payload()
         self.post_json('/curriculum_api/curriculum/programmes/tree/', first)
@@ -819,7 +1197,10 @@ class CurriculumPersistenceTests(TestCase):
         response = self.post_json('/curriculum_api/curriculum/programmes/tree/', second)
         self.assertEqual(response.status_code, 200, response.content)
         self.assertNotEqual(self.row(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id', 'COHORT-DATA-1')['status'], 'archived')
-        self.assertNotEqual(self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')['status'], 'archived')
+        # curriculum.groups lost its `status` column in migration 0013; group
+        # removal is now recorded as a soft delete, so "still live" means no
+        # deleted_at rather than a non-archived status.
+        self.assertIsNone(self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')['deleted_at'])
 
     def test_tree_save_removes_missing_rows_when_hydrated(self):
         first = self.tree_payload()
@@ -831,8 +1212,7 @@ class CurriculumPersistenceTests(TestCase):
         response = self.post_json('/curriculum_api/curriculum/programmes/tree/', second)
         self.assertEqual(response.status_code, 200, response.content)
         self.assertTrue(response.json()['removedMissing'])
-        self.assertFalse(views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', ['COHORT-DATA-1']))
-        self.assertFalse(views.authoring_fetch_all(views.GROUPS_TABLE, 'group_id = %s', ['GROUP-DATA-1']))
+        self.assertRemovedFromCurriculum('COHORT-DATA-1', 'GROUP-DATA-1')
 
     def test_tree_save_explicitly_removes_deleted_cohort(self):
         first = self.tree_payload()
@@ -846,8 +1226,7 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertIn('COHORT-DATA-1', response.json()['removedCohortIds'])
         self.assertIn('GROUP-DATA-1', response.json()['removedGroupIds'])
-        self.assertFalse(views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', ['COHORT-DATA-1']))
-        self.assertFalse(views.authoring_fetch_all(views.GROUPS_TABLE, 'group_id = %s', ['GROUP-DATA-1']))
+        self.assertRemovedFromCurriculum('COHORT-DATA-1', 'GROUP-DATA-1')
 
     def test_programme_card_counts_cohorts_without_delivery_modules(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
@@ -894,6 +1273,9 @@ class CurriculumPersistenceTests(TestCase):
         )
         other['programme']['name'] = 'Other Programme'
         other['programme']['standard'] = 'Other Standard'
+        other_module = other['cohorts'][0]['groups'][0]['modules'][0]
+        other_module['weekStructure'][0]['id'] = 'WEEK-OTHER-1'
+        other_module['weekStructure'][0]['components'][0]['id'] = 'COMP-OTHER-1'
         self.post_json('/curriculum_api/curriculum/programmes/tree/', other)
 
         response = self.client.get('/curriculum_api/curriculum/programmes/PROG-DATA/detail/')
@@ -902,8 +1284,12 @@ class CurriculumPersistenceTests(TestCase):
 
         self.assertEqual([item['id'] for item in payload['flat']['cohorts']], ['COHORT-DATA-1'])
         self.assertEqual([item['id'] for item in payload['flat']['groups']], ['GROUP-DATA-1'])
+        self.assertEqual([item['moduleCatalogueId'] for item in payload['flat']['modules']], ['MOD-DATA-1'])
+        self.assertEqual(payload['flat']['modules'][0]['name'], 'Data Foundations')
+        self.assertEqual(payload['flat']['modules'][0]['weekStructure'][0]['id'], 'WEEK-DATA-1')
         self.assertEqual([item['id'] for item in payload['cohorts']], ['COHORT-DATA-1'])
         self.assertEqual([item['id'] for item in payload['cohorts'][0]['groups']], ['GROUP-DATA-1'])
+        self.assertEqual([item['moduleCatalogueId'] for item in payload['cohorts'][0]['groups'][0]['modules']], ['MOD-DATA-1'])
 
     def test_post_add_module_does_not_detach_existing_modules(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
@@ -958,9 +1344,104 @@ class CurriculumPersistenceTests(TestCase):
         self.assertEqual(group['cohort_id'], 'COHORT-DATA-1')
         self.assertEqual(group['programme_id'], 'PROG-DATA')
         self.assertEqual(group['coach_name'], 'Coach Two')
-        self.assertEqual(group['tutor_name'], 'Tutor Two')
+        # Tutor ownership moved from curriculum.groups to curriculum.modules
+        # in migration 0023, which dropped groups.tutor_name.
+        self.assertEqual(module['tutor_name'], 'Tutor Two')
         self.assertEqual(module['cohort_id'], 'COHORT-DATA-1')
         self.assertEqual(module['group_id'], 'GROUP-DATA-1')
+
+    def test_module_patch_alias_preserves_components_and_delivery_metadata(self):
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+
+        response = self.patch_json('/curriculum_api/curriculum/modules/catalogue-module-MOD-DATA-1/', {
+            'name': 'Renamed From Wizard',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+
+        module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
+        self.assertEqual(module['title'], 'Renamed From Wizard')
+        self.assertEqual(module['programme_id'], 'PROG-DATA')
+        self.assertEqual(module['cohort_id'], 'COHORT-DATA-1')
+        self.assertEqual(module['group_id'], 'GROUP-DATA-1')
+        self.assertEqual(module['session_week_day'], 'Wednesday')
+        self.assertEqual(module['session_start_time'], '10:00')
+        self.assertEqual(module['session_end_time'], '12:00')
+        self.assertEqual(self.count(views.AUTHORING_WEEKS_TABLE, 'module_catalogue_id', 'MOD-DATA-1'), 1)
+        self.assertEqual(self.count(views.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id', 'MOD-DATA-1'), 1)
+
+    def test_component_post_patch_delete_writes_components_table(self):
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+
+        created = self.post_json('/curriculum_api/curriculum/components/', {
+            'id': 'COMP-API-1',
+            'module': 'Data Foundations',
+            'moduleCatalogueId': 'MOD-DATA-1',
+            'weekId': 'WEEK-DATA-1',
+            'weekNumber': 1,
+            'title': 'API reading',
+            'type': 'reading',
+            'expectedOtjh': 1.5,
+        })
+        self.assertEqual(created.status_code, 201, created.content)
+        component = self.row(views.AUTHORING_COMPONENTS_TABLE, 'id', 'COMP-API-1')
+        self.assertEqual(component['module_catalogue_id'], 'MOD-DATA-1')
+        self.assertEqual(component['week_id'], 'WEEK-DATA-1')
+        self.assertEqual(component['title'], 'API reading')
+
+        patched = self.patch_json('/curriculum_api/curriculum/components/COMP-API-1/', {
+            'title': 'API reading updated',
+            'points': 7,
+        })
+        self.assertEqual(patched.status_code, 200, patched.content)
+        component = self.row(views.AUTHORING_COMPONENTS_TABLE, 'id', 'COMP-API-1')
+        self.assertEqual(component['title'], 'API reading updated')
+        self.assertEqual(component['points'], 7)
+
+        deleted = self.client.delete('/curriculum_api/curriculum/components/COMP-API-1/')
+        self.assertEqual(deleted.status_code, 200, deleted.content)
+        component = self.row(views.AUTHORING_COMPONENTS_TABLE, 'id', 'COMP-API-1')
+        self.assertTrue(views.row_has_deleted_at(component))
+
+    def test_group_read_path_reports_tutor_assigned_through_modules(self):
+        """A tutor assigned to a group must be readable back from the group payload.
+
+        groups.tutor_name was dropped in migration 0023, so the group PATCH fans the
+        tutor out to the group's module rows. The group read path must recover it
+        from there instead of always reporting 'Unassigned'.
+        """
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {'tutor': 'Tutor Two'})
+
+        detail = next(
+            item for item in views.group_authoring_detail_rows()
+            if item['id'] == 'GROUP-DATA-1'
+        )
+        self.assertEqual(detail['tutor'], 'Tutor Two')
+
+        _cohorts, groups = views.build_cohorts_and_groups()
+        group = next(item for item in groups if item['id'] == 'GROUP-DATA-1')
+        self.assertEqual(group['tutor'], 'Tutor Two')
+
+    def test_group_reports_tutor_from_wizard_payload(self):
+        """The tree payload assigns 'Tutor One' to the group, so the read path
+        must report that name rather than the old hardcoded 'Unassigned'."""
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+
+        detail = next(
+            item for item in views.group_authoring_detail_rows()
+            if item['id'] == 'GROUP-DATA-1'
+        )
+        self.assertEqual(detail['tutor'], 'Tutor One')
+
+    def test_group_without_tutor_reports_unassigned(self):
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {'tutor': ''})
+
+        detail = next(
+            item for item in views.group_authoring_detail_rows()
+            if item['id'] == 'GROUP-DATA-1'
+        )
+        self.assertEqual(detail['tutor'], 'Unassigned')
 
     def test_group_staff_assignments_accept_email_identifiers_and_store_canonical_names(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
@@ -988,7 +1469,9 @@ class CurriculumPersistenceTests(TestCase):
         tutor_row = views.find_staff_profile_row('tutor', 'tutor.two@example.com')
 
         self.assertEqual(group['coach_name'], 'Coach Two')
-        self.assertEqual(group['tutor_name'], 'Tutor Two')
+        # Tutor ownership moved from curriculum.groups to curriculum.modules
+        # in migration 0023, which dropped groups.tutor_name.
+        self.assertEqual(module['tutor_name'], 'Tutor Two')
         self.assertEqual(module['group_id'], 'GROUP-DATA-1')
         self.assertIn('GROUP-DATA-1', views.as_json_value(coach_row.get('assigned_group_ids'), []))
         self.assertIn('MOD-DATA-1', views.as_json_value(tutor_row.get('assigned_module_ids'), []))
@@ -1413,3 +1896,378 @@ class StaffProfileSchemaRepairTests(TestCase):
         self.assertNotIn("specialisms", views.column_names("tutors"))
         self.assertIn("assigned_group_ids", views.column_names("coaches"))
         self.assertIn("assigned_module_ids", views.column_names("tutors"))
+
+
+class ProgrammeLearnerKsbProgressTests(TestCase):
+    """The programme card's KSB bar reports learner achievement, not design mapping.
+
+    ``ksbMapped``/``ksbTotal`` answer "how much of the standard does the design
+    touch". ``learnerKsbProgressPercentage`` answers "how much have the learners
+    actually evidenced". They are separate fields because they are separate
+    questions, and the card must never silently substitute one for the other.
+    """
+
+    def setUp(self):
+        views.reset_schema_ready_flags()
+        views.invalidate_curriculum_cache()
+        # Borrow the persistence suite's schema fixtures so the helper runs its
+        # real query path instead of bailing out on a missing table — a test that
+        # only exercises the except branch would pass no matter what the maths did.
+        CurriculumPersistenceTests.ensure_programmes_table(self)
+        CurriculumPersistenceTests.ensure_ksb_profiles_table(self)
+        views.ensure_module_authoring_tables()
+
+    PROGRESS_FIELDS = (
+        'learnerKsbProgressPercentage',
+        'learnerKsbConsumedWeight',
+        'learnerKsbExpectedWeight',
+        'learnerKsbLearnerCount',
+        'learnerKsbCodesStarted',
+        'learnerKsbCodesComplete',
+        'learnerKsbCodesTotal',
+    )
+
+    def test_missing_programme_reports_zero_rather_than_raising(self):
+        result = views.programme_learner_ksb_progress('PROG-DOES-NOT-EXIST', [])
+        for field in self.PROGRESS_FIELDS:
+            self.assertIn(field, result)
+        self.assertEqual(result['learnerKsbProgressPercentage'], 0)
+        self.assertEqual(result['learnerKsbLearnerCount'], 0)
+
+    def test_result_always_carries_every_field_so_the_card_reads_one_shape(self):
+        # A card that receives `undefined` for the percentage renders an empty
+        # bar that is indistinguishable from real 0% progress, so the contract is
+        # that the key is always present.
+        result = views.programme_learner_ksb_progress('', None)
+        self.assertEqual(set(self.PROGRESS_FIELDS) - set(result), set())
+
+    def test_percentage_never_exceeds_one_hundred(self):
+        # Guards the cap: an over-weighted activity must not push a programme
+        # past 100%, which would make the bar overflow its track.
+        result = views.programme_learner_ksb_progress('PROG-DOES-NOT-EXIST', [])
+        self.assertLessEqual(result['learnerKsbProgressPercentage'], 100)
+        self.assertGreaterEqual(result['learnerKsbProgressPercentage'], 0)
+
+
+class ProgrammeConfigSelectionTests(SimpleTestCase):
+    def test_display_config_prefers_latest_active_duplicate_when_timestamps_are_strings(self):
+        old_archived = {
+            'programme_id': 'PROG-OLD',
+            'name': 'User Flow',
+            'is_archived': True,
+            'updated_at': '2026-08-17T16:19:19.470000+00:00',
+        }
+        latest_active = {
+            'programme_id': 'PROG-NEW',
+            'name': 'User Flow',
+            'is_archived': False,
+            'updated_at': '2026-08-17T16:42:41.350000+00:00',
+        }
+
+        selected = views.unique_program_configs_for_display([old_archived, latest_active])
+
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]['programme_id'], 'PROG-NEW')
+        self.assertEqual(
+            views.preferred_program_config_by_name([old_archived, latest_active], 'User Flow')['programme_id'],
+            'PROG-NEW',
+        )
+
+    def test_is_archived_false_is_the_programme_display_source_of_truth(self):
+        config = {
+            'programme_id': 'PROG-SHOW',
+            'name': 'User Flow',
+            'is_archived': False,
+            'status': 'archived',
+            'deleted_at': '2026-08-17T16:19:19.470000+00:00',
+        }
+
+        self.assertFalse(views.is_archived_program_config(config))
+        self.assertEqual(views.programme_config_status(config), 'active')
+
+    def test_build_programmes_returns_every_unarchived_programme_row(self):
+        configs = [
+            {
+                'programme_id': 'PROG-FOUDA',
+                'name': 'Fouda-Programme',
+                'is_archived': False,
+                'updated_at': '2026-08-17T15:42:32.000000+00:00',
+            },
+            {
+                'programme_id': 'PROG-USER-FLOW',
+                'name': 'User Flow',
+                'is_archived': False,
+                'updated_at': '2026-08-17T16:42:41.350000+00:00',
+            },
+        ]
+
+        with patch('curriculum_api.views.free_programme_fetch_all', return_value=[]), \
+             patch('curriculum_api.views.cohort_authoring_detail_rows', return_value=[]), \
+             patch('curriculum_api.views.active_learner_programme_counts', return_value={}), \
+             patch('curriculum_api.views.programme_component_ksb_mapping_count', return_value=0):
+            programmes = views.build_programmes([], configs, [], include_config_only=False)
+
+        self.assertEqual([programme['sourceId'] for programme in programmes], ['PROG-FOUDA', 'PROG-USER-FLOW'])
+        self.assertEqual([programme['isArchived'] for programme in programmes], [False, False])
+
+    def test_active_duplicate_names_are_not_collapsed_for_display(self):
+        configs = [
+            {'programme_id': 'PROG-A', 'name': 'User Flow', 'is_archived': False},
+            {'programme_id': 'PROG-B', 'name': 'User Flow', 'is_archived': False},
+        ]
+
+        selected = views.unique_program_configs_for_display(configs)
+
+        self.assertEqual([config['programme_id'] for config in selected], ['PROG-A', 'PROG-B'])
+
+
+class ProgrammeIntegrityRegressionTests(TestCase):
+    """Regression cover for the Curriculum programme integrity audit.
+
+    Each test here pins a bug that allowed programme rows or their children to
+    be corrupted: stale identity aliases, placeholder programme ids, global
+    free-course deletes, and unguarded hard deletes.
+    """
+
+    def setUp(self):
+        views.reset_schema_ready_flags()
+        views.invalidate_curriculum_cache()
+        self.client = Client()
+        self._create_programmes_table()
+        views.ensure_module_authoring_tables()
+        views.ensure_free_programme_tables()
+        self._clear()
+
+    def _create_programmes_table(self):
+        with connection.cursor() as cursor:
+            if connection.vendor == 'postgresql':
+                cursor.execute('create schema if not exists curriculum')
+                table = 'curriculum.programmes'
+            else:
+                table = 'programmes'
+            cursor.execute(
+                f"""
+                create table if not exists {table} (
+                    programme_id varchar(128) primary key,
+                    name varchar(255),
+                    level varchar(64),
+                    color varchar(32),
+                    description text,
+                    is_archived boolean,
+                    ksb_profile_source_id varchar(128),
+                    created_at timestamp,
+                    updated_at timestamp
+                )
+                """
+            )
+
+    def _clear(self):
+        tables = [
+            views.FREE_PROGRAMME_COMPONENTS_TABLE,
+            views.FREE_PROGRAMME_MODULES_TABLE,
+            views.FREE_COURSES_TABLE,
+            views.AUTHORING_MODULES_TABLE,
+            views.GROUPS_TABLE,
+            views.COHORT_AUTHORING_DETAILS_TABLE,
+            'programmes',
+        ]
+        with connection.cursor() as cursor:
+            for table in tables:
+                try:
+                    cursor.execute(f'delete from {views.authoring_table_name(table)}')
+                except Exception:
+                    pass
+
+    def _insert_programme(self, programme_id, name):
+        views.insert_row('programmes', {
+            'programme_id': programme_id,
+            'name': name,
+            'color': '#6941c6',
+            'is_archived': False,
+            'created_at': views.datetime.utcnow(),
+            'updated_at': views.datetime.utcnow(),
+        })
+
+    def _programme_rows(self):
+        return views.fetch_all(f'select * from {views.table_name("programmes")}')
+
+    # ---------------- programme identity ----------------
+
+    def test_identity_reads_the_real_programme_id_column(self):
+        self.assertEqual(
+            views.programme_config_identity({'programme_id': 'PROG-REAL'}),
+            'PROG-REAL',
+        )
+
+    def test_identity_falls_back_to_legacy_aliases(self):
+        self.assertEqual(views.programme_config_identity({'program_id': 'PROG-OLD'}), 'PROG-OLD')
+        self.assertEqual(views.programme_config_identity({}), '')
+
+    def test_existing_programme_is_updated_not_duplicated(self):
+        self._insert_programme('PROG-KEEP', 'Keeper')
+
+        result = views.ensure_programme_config_for_authoring('Keeper', 'PROG-KEEP')
+
+        self.assertEqual(result['sourceId'], 'PROG-KEEP')
+        rows = self._programme_rows()
+        self.assertEqual(len(rows), 1, f'expected no duplicate row, got {rows}')
+
+    def test_matching_by_id_survives_when_only_programme_id_is_set(self):
+        # The original bug: matching read program_id/id only, so a row keyed on
+        # programme_id never matched and a duplicate was inserted instead.
+        self._insert_programme('PROG-ALIAS', 'Alias Programme')
+
+        views.ensure_programme_config_for_authoring('Renamed Alias', 'PROG-ALIAS')
+
+        rows = self._programme_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(views.clean_str(rows[0].get('name')), 'Renamed Alias')
+
+    # ---------------- placeholder ids ----------------
+
+    def test_placeholder_programme_ids_are_recognised(self):
+        for value in ('programme-local', 'PROGRAMME-LOCAL', 'local', 'undefined', '', 'local-MOD-1'):
+            self.assertTrue(views.is_placeholder_programme_id(value), value)
+        self.assertFalse(views.is_placeholder_programme_id('PROG-20260101000000000000'))
+
+    def test_placeholder_id_never_becomes_a_persisted_programme(self):
+        views.ensure_programme_config_for_authoring('Real Programme Name', 'programme-local')
+
+        ids = [views.programme_config_identity(row) for row in self._programme_rows()]
+        self.assertNotIn('programme-local', ids)
+        for value in ids:
+            self.assertTrue(value.startswith('PROG-'), f'unexpected programme id {value!r}')
+
+    def test_placeholder_id_attaches_to_existing_programme_by_name(self):
+        self._insert_programme('PROG-EXIST', 'Shared Name')
+
+        result = views.ensure_programme_config_for_authoring('Shared Name', 'programme-local')
+
+        self.assertEqual(result['sourceId'], 'PROG-EXIST')
+        self.assertEqual(len(self._programme_rows()), 1)
+
+    def test_programme_name_is_never_used_as_an_identifier(self):
+        views.ensure_programme_config_for_authoring('Fouda-Programme', '')
+
+        ids = [views.programme_config_identity(row) for row in self._programme_rows()]
+        self.assertNotIn('Fouda-Programme', ids)
+        self.assertTrue(all(value.startswith('PROG-') for value in ids), ids)
+
+    # ---------------- free-course deletion scoping ----------------
+
+    def _seed_free_course(self, programme_id, course_id, week_id):
+        views.free_programme_upsert(views.FREE_COURSES_TABLE, ['id'], {
+            'id': course_id,
+            'course_name': f'Course {course_id}',
+            'display_order': 1,
+        })
+        views.free_programme_upsert(views.FREE_PROGRAMME_MODULES_TABLE, ['id'], {
+            'id': week_id,
+            'course_id': course_id,
+            'course_name': f'Course {course_id}',
+            'week_number': 1,
+            'display_order': 1,
+        })
+        views.free_programme_upsert(views.FREE_PROGRAMME_COMPONENTS_TABLE, ['id'], {
+            'id': f'COMP-{week_id}',
+            'free_module_id': week_id,
+            'programme_id': programme_id,
+            'type': 'reading',
+            'title': 'Component',
+            'display_order': 1,
+        })
+
+    def _free_ids(self, table):
+        return {
+            views.clean_str(row.get('id'))
+            for row in views.free_programme_fetch_all(table)
+        }
+
+    def test_deleting_one_programmes_free_courses_leaves_the_other_intact(self):
+        self._insert_programme('PROG-AAA', 'Programme A')
+        self._insert_programme('PROG-BBB', 'Programme B')
+        self._seed_free_course('PROG-AAA', 'COURSE-A', 'WEEK-A')
+        self._seed_free_course('PROG-BBB', 'COURSE-B', 'WEEK-B')
+
+        views.delete_free_programme_data('PROG-AAA')
+
+        self.assertNotIn('COURSE-A', self._free_ids(views.FREE_COURSES_TABLE))
+        self.assertNotIn('WEEK-A', self._free_ids(views.FREE_PROGRAMME_MODULES_TABLE))
+        # Programme B must be completely untouched.
+        self.assertIn('COURSE-B', self._free_ids(views.FREE_COURSES_TABLE))
+        self.assertIn('WEEK-B', self._free_ids(views.FREE_PROGRAMME_MODULES_TABLE))
+        remaining = views.free_programme_fetch_all(views.FREE_PROGRAMME_COMPONENTS_TABLE)
+        self.assertEqual(
+            {views.clean_str(row.get('programme_id')) for row in remaining},
+            {'PROG-BBB'},
+        )
+
+    def test_free_course_delete_without_a_programme_id_deletes_nothing(self):
+        self._insert_programme('PROG-AAA', 'Programme A')
+        self._seed_free_course('PROG-AAA', 'COURSE-A', 'WEEK-A')
+
+        weeks, courses = views.delete_free_programme_data('')
+
+        self.assertEqual((weeks, courses), (set(), set()))
+        self.assertIn('COURSE-A', self._free_ids(views.FREE_COURSES_TABLE))
+        self.assertIn('WEEK-A', self._free_ids(views.FREE_PROGRAMME_MODULES_TABLE))
+
+    def test_no_unconditional_delete_predicates_remain_in_curriculum_views(self):
+        import inspect
+        source = inspect.getsource(views)
+        self.assertNotIn("free_programme_delete(FREE_PROGRAMME_MODULES_TABLE, '1 = 1')", source)
+        self.assertNotIn("free_programme_delete(FREE_COURSES_TABLE, '1 = 1')", source)
+
+    # ---------------- delete / archive safety ----------------
+
+    def _seed_cohort(self, programme_id, cohort_id):
+        views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
+            'cohort_id': cohort_id,
+            'cohort_name': 'Cohort',
+            'programme_id': programme_id,
+            'programme_name': 'Programme A',
+        })
+
+    def test_programme_with_dependents_is_archived_not_deleted(self):
+        self._insert_programme('PROG-DEP', 'Programme A')
+        self._seed_cohort('PROG-DEP', 'COHORT-DEP')
+
+        response = self.client.delete('/curriculum_api/curriculum/programmes/PROG-DEP/')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        body = response.json()
+        self.assertTrue(body.get('archived'))
+        self.assertFalse(body.get('permanent'))
+        # The programme row and its cohort must both survive.
+        rows = self._programme_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(views.truthy(rows[0].get('is_archived')))
+        cohorts = views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)
+        self.assertEqual(len(cohorts), 1)
+
+    def test_dependency_counts_report_children(self):
+        self._insert_programme('PROG-DEP2', 'Programme A')
+        self._seed_cohort('PROG-DEP2', 'COHORT-X')
+
+        counts = views.programme_dependency_counts('PROG-DEP2', {'programme_id': 'PROG-DEP2'})
+
+        self.assertEqual(counts.get(views.COHORT_AUTHORING_DETAILS_TABLE), 1)
+
+    def test_unknown_programme_delete_returns_404(self):
+        response = self.client.delete('/curriculum_api/curriculum/programmes/PROG-DOES-NOT-EXIST/')
+        self.assertEqual(response.status_code, 404)
+
+    # ---------------- archive visibility ----------------
+
+    def test_is_archived_is_the_single_archive_signal(self):
+        self.assertTrue(views.is_archived_program_config({'is_archived': True}))
+        self.assertFalse(views.is_archived_program_config({'is_archived': False}))
+        # A legacy is_active=false row is NOT treated as archived any more.
+        self.assertFalse(views.is_archived_program_config({'is_active': False, 'is_archived': False}))
+        self.assertEqual(views.programme_config_status({'is_active': False, 'is_archived': False}), 'active')
+
+    # ---------------- module authoring ----------------
+
+    def test_saving_a_module_without_a_programme_creates_no_junk_programme(self):
+        self.assertIsNone(views.ensure_programme_config_for_authoring('Unassigned programme', 'programme-local'))
+        self.assertEqual(self._programme_rows(), [])

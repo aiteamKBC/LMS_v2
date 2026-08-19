@@ -32,6 +32,113 @@ def _list(value):
     return value if isinstance(value, list) else []
 
 
+def _component_ksb_weights(component_ref):
+    component_ref = _text(component_ref)
+    if not component_ref:
+        return {}
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute("select ksb_mappings from curriculum.components where id = %s limit 1", [component_ref])
+            row = cur.fetchone()
+    except DatabaseError:
+        return {}
+    mappings = row[0] if row else []
+    if isinstance(mappings, str):
+        try:
+            mappings = json.loads(mappings) if mappings else []
+        except (TypeError, ValueError):
+            mappings = []
+    weights = {}
+    if isinstance(mappings, list):
+        for item in mappings:
+            if not isinstance(item, dict):
+                continue
+            code = _text(item.get("code") or item.get("ksbCode") or item.get("ksb_code")).upper()
+            if not code:
+                continue
+            try:
+                weights[code] = float(item.get("weight") or 0)
+            except (TypeError, ValueError):
+                weights[code] = 0
+    return weights
+
+
+def _learner_profile_ids_for_source(cur, learner_id):
+    learner_id = _text(learner_id)
+    if not learner_id:
+        return []
+
+    ids = {learner_id}
+    email = ""
+    cur.execute('select "Email" from enrolment."Created_users" where id::text = %s limit 1', [learner_id])
+    row = cur.fetchone()
+    if row:
+        email = _text(row[0])
+
+    if email:
+        cur.execute(
+            """
+            select id::text
+              from "Learner".learners
+             where id::text = %s
+                or lower(email) = lower(%s)
+            """,
+            [learner_id, email],
+        )
+    else:
+        cur.execute('select id::text from "Learner".learners where id::text = %s', [learner_id])
+    ids.update(_text(row[0]) for row in cur.fetchall() if row and _text(row[0]))
+    return sorted(ids)
+
+
+def _reflection_lineage(learner_id, activity_id):
+    component_ref = _text(activity_id)
+    lineage = {
+        "progress_entry_id": None,
+        "component_ref": "",
+        "programme_ref": "",
+        "cohort_ref": "",
+        "group_ref": "",
+        "module_ref": "",
+        "week_ref": "",
+    }
+    if not component_ref:
+        return lineage
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute("select id from curriculum.components where id = %s limit 1", [component_ref])
+            if cur.fetchone():
+                lineage["component_ref"] = component_ref
+            learner_ids = _learner_profile_ids_for_source(cur, learner_id)
+            if not learner_ids:
+                return lineage
+            cur.execute(
+                """
+                select id, component_ref, programme_ref, cohort_ref, group_ref, module_ref, week_ref
+                  from "Learner"."learner_progress_entries"
+                 where learner_id::text = any(%s)
+                   and component_ref = %s
+                 order by submitted_at desc nulls last, id desc
+                 limit 1
+                """,
+                [learner_ids, component_ref],
+            )
+            row = cur.fetchone()
+    except DatabaseError:
+        return lineage
+    if row:
+        lineage.update({
+            "progress_entry_id": row[0],
+            "component_ref": _text(row[1]) or lineage["component_ref"],
+            "programme_ref": _text(row[2]),
+            "cohort_ref": _text(row[3]),
+            "group_ref": _text(row[4]),
+            "module_ref": _text(row[5]),
+            "week_ref": _text(row[6]),
+        })
+    return lineage
+
+
 @csrf_exempt
 def create_reflection_submission(request):
     if request.method == "GET":
@@ -73,6 +180,11 @@ def create_reflection_submission(request):
 
     submission_id = uuid.uuid4()
     full_submission = dict(payload)
+    lineage = _reflection_lineage(learner_id, activity_id)
+    ksb_weights = _dict(payload.get("ksbWeights"))
+    if not ksb_weights and lineage.get("component_ref"):
+        ksb_weights = _component_ksb_weights(lineage["component_ref"])
+    full_submission["ksbWeights"] = ksb_weights
 
     try:
         ensure_learning_reflection_submissions_table()
@@ -108,7 +220,9 @@ def create_reflection_submission(request):
                     evidence_consent_confirmed, selected_benefits,
                     benefit_explanation, actual_time_hours,
                     completed_during_paid_hours, date_completed, otjh_confirmed,
-                    signed_declaration, quality_score, full_submission
+                    signed_declaration, quality_score, full_submission,
+                    progress_entry_id, component_ref, programme_ref, cohort_ref,
+                    group_ref, module_ref, week_ref
                 ) values (
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
@@ -118,7 +232,9 @@ def create_reflection_submission(request):
                     %s, %s::jsonb,
                     %s, %s,
                     %s, %s, %s,
-                    %s, %s, %s::jsonb
+                    %s, %s, %s::jsonb,
+                    %s, %s, %s, %s,
+                    %s, %s, %s
                 )
                 on conflict (learner_kind, learner_id, activity_type, activity_id)
                 do update set
@@ -148,6 +264,13 @@ def create_reflection_submission(request):
                     signed_declaration = excluded.signed_declaration,
                     quality_score = excluded.quality_score,
                     full_submission = excluded.full_submission,
+                    progress_entry_id = excluded.progress_entry_id,
+                    component_ref = excluded.component_ref,
+                    programme_ref = excluded.programme_ref,
+                    cohort_ref = excluded.cohort_ref,
+                    group_ref = excluded.group_ref,
+                    module_ref = excluded.module_ref,
+                    week_ref = excluded.week_ref,
                     submitted_at = now()
                 returning id
                 """,
@@ -165,7 +288,7 @@ def create_reflection_submission(request):
                     _text(payload.get("plannedOtjh")),
                     learning_reflection,
                     json.dumps(_list(payload.get("ksbCodes"))),
-                    json.dumps(_dict(payload.get("ksbWeights"))),
+                    json.dumps(ksb_weights),
                     json.dumps(_dict(payload.get("ksbExplanations"))),
                     json.dumps(_dict(payload.get("confidenceBefore"))),
                     json.dumps(_dict(payload.get("confidenceAfter"))),
@@ -182,6 +305,13 @@ def create_reflection_submission(request):
                     bool(payload.get("signedDeclaration")),
                     quality_score,
                     json.dumps(full_submission),
+                    lineage.get("progress_entry_id"),
+                    lineage.get("component_ref") or None,
+                    lineage.get("programme_ref") or None,
+                    lineage.get("cohort_ref") or None,
+                    lineage.get("group_ref") or None,
+                    lineage.get("module_ref") or None,
+                    lineage.get("week_ref") or None,
                     ],
                 )
                 stored_id = cur.fetchone()[0]

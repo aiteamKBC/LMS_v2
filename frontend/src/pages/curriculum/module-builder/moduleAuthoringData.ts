@@ -15,6 +15,8 @@ import {
 export { componentTypeGroups, componentTypes, getDefaultComponentSettings };
 export type { ComponentSettings, KsbMappingType, ModuleComponentType, ModuleStatus };
 
+export type KsbWeightClass = 'hard' | 'soft' | 'possible';
+
 export interface KsbMapping {
   id: string;
   ksbId: string;
@@ -25,6 +27,8 @@ export interface KsbMapping {
   type: KsbMappingType;
   classification?: KsbMappingType;
   weight: number;
+  weightClass: KsbWeightClass;
+  weight_class?: KsbWeightClass;
 }
 
 export interface CompletionCriteria {
@@ -77,10 +81,12 @@ export interface ModuleCatalogueItem {
   catalogueId: string;
   programmeId: string;
   programmeName: string;
+  programmeStatus?: 'active' | 'draft' | string;
   cohortId?: string;
   cohort?: string;
   groupId?: string;
   group?: string;
+  isProgrammeDeleted?: boolean;
   title: string;
   description: string;
   color?: string;
@@ -221,7 +227,7 @@ function isGeneratedWeekPlaceholderComponent(component: ModuleComponent, week: P
   return !hasKsbMappings && weekKeys.includes(titleKey) && (typeKey.includes('live') || typeKey.includes('session'));
 }
 
-export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }): ModuleCatalogueItem {
+export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }): ModuleCatalogueItem {
   const catalogueId = input.catalogueId || makeAuthoringId('MOD');
   const id = `local-${catalogueId}`;
   const weekCount = Math.max(0, Math.round(Number(input.weeks) || 0));
@@ -229,8 +235,13 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   return recalculateModule({
     id,
     catalogueId,
-    programmeId: input.programmeId || input.programme || 'programme-local',
+    // An unassigned draft carries an EMPTY programmeId, never a placeholder
+    // string. 'programme-local' used to be sent here and the backend accepted
+    // it as a real identifier, creating junk programme rows. A programme NAME
+    // is not an id either, so it is no longer used as a fallback.
+    programmeId: input.programmeId || '',
     programmeName: input.programme || 'Unassigned programme',
+    programmeStatus: input.programmeStatus || '',
     cohortId: input.cohortId || '',
     cohort: input.cohortName || '',
     groupId: input.groupId || '',
@@ -264,7 +275,7 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   });
 }
 
-export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }) {
+export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string }) {
   const draft = createLocalModuleDraft(input);
   try {
     const response = await apiJson<{ created: boolean; moduleCatalogueId?: string; module?: ModuleCatalogueItem }>('/curriculum/modules/', {
@@ -275,6 +286,7 @@ export async function createNewModule(input: { programme: string; title: string;
         sourceType: 'authoring',
         description: draft.description,
         programmeId: draft.programmeId,
+        programmeStatus: draft.programmeStatus,
         programme: draft.programmeName,
         programmeName: draft.programmeName,
         cohortId: input.cohortId || '',
@@ -382,6 +394,11 @@ export interface ModuleStructureResolveResult {
   catalogueId: string;
   found: boolean;
   missing?: boolean;
+  // Set when several Module Builder modules share the linked title and no id
+  // identified which one. Distinct from `missing`: the content exists but cannot
+  // be attributed, so it must never be rendered as an empty module.
+  ambiguous?: boolean;
+  ambiguousCatalogueIds?: string[];
   componentCount?: number;
   hasComponents?: boolean;
   message?: string;
@@ -392,6 +409,7 @@ export async function loadModuleStructuresBatch(modules: ModuleStructureResolveR
   const response = await apiJson<{ results: ModuleStructureResolveResult[] }>('/curriculum/modules/resolve-structures/', {
     method: 'POST',
     body: JSON.stringify({ modules }),
+    timeoutMs: 8000,
   });
   return response.results.map(result => ({
     ...result,
@@ -418,7 +436,9 @@ export function createLegacyLocalModule(input: { programme: string; title: strin
   return recalculateModule({
     id,
     catalogueId,
-    programmeId: input.programme || 'programme-local',
+    // Never derive an id from the programme NAME, and never persist a
+    // placeholder. An unassigned legacy draft has no programme id.
+    programmeId: '',
     programmeName: input.programme || 'Unassigned programme',
     title: input.title,
     description: input.description,
@@ -469,7 +489,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
         title: component.title || `Component ${componentIndex + 1}`,
         description: '',
         expectedOtjh: Number(component.expectedOtjh ?? component.duration ?? 0) || 0,
-        points: 0,
+        points: Number(component.points ?? 0) || 0,
         reflectionRequired: Boolean(component.reflectionRequired),
         workplaceEvidenceRequired: Boolean(component.workplaceEvidenceRequired),
         tutorValidationRequired: Boolean(component.tutorValidationRequired),
@@ -484,6 +504,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     catalogueId,
     programmeId: module.programmeId || module.programme || 'programme',
     programmeName: module.programme || 'Unassigned programme',
+    isProgrammeDeleted: Boolean(module.isProgrammeDeleted),
     title,
     description,
     status: module.status || 'draft',
@@ -518,6 +539,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
       description: `Mapped KSB ${code}`,
       type: index < 3 ? 'main' : 'secondary',
       weight: index < 3 ? 40 : 20,
+      weightClass: index < 3 ? 'hard' : 'soft',
     })),
     completionCriteria: emptyCompletionCriteria(),
     advancedDetails: emptyAdvancedDetails(),
@@ -602,6 +624,7 @@ function normaliseKsbMappings(mappings: KsbMapping[], fallbackSource?: Pick<KsbM
   return mappings.map(mapping => {
     const type = normaliseKsbMappingType(mapping.type || mapping.classification);
     const classification = normaliseKsbMappingType(mapping.classification || mapping.type);
+    const weightClass = normaliseKsbWeightClass(mapping.weightClass || mapping.weight_class, classification);
     const weight = clampKsbWeight(mapping.weight);
     return {
       ...mapping,
@@ -609,6 +632,8 @@ function normaliseKsbMappings(mappings: KsbMapping[], fallbackSource?: Pick<KsbM
       sourceId: mapping.sourceId || fallbackSource?.sourceId,
       type,
       classification,
+      weightClass,
+      weight_class: weightClass,
       weight: weight > 0 ? weight : defaultKsbWeight(classification),
     };
   });
@@ -640,6 +665,15 @@ function normaliseKsbMappingType(value?: string): KsbMappingType {
   if (raw === 'main' || raw === 'secondary' || raw === 'possible') return raw;
   if (raw === 'practice') return 'possible';
   return 'secondary';
+}
+
+function normaliseKsbWeightClass(value?: string, fallbackClassification?: KsbMappingType): KsbWeightClass {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'hard' || raw === 'soft' || raw === 'possible') return raw;
+  const legacy = normaliseKsbMappingType(fallbackClassification);
+  if (legacy === 'main') return 'hard';
+  if (legacy === 'possible') return 'possible';
+  return 'soft';
 }
 
 export function calculateQualityChecklist(module: ModuleCatalogueItem) {

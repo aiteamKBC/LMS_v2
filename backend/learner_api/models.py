@@ -44,6 +44,7 @@ class SafeJSONField(models.JSONField):
 
 
 LEARNER_ACTIVITY_EVENTS_RELATION = '"Learner"."learner_activity_events"'
+LEARNER_KSBS_RELATION = '"Learner"."learner_ksbs"'
 
 
 @lru_cache(maxsize=None)
@@ -56,6 +57,28 @@ def learner_activity_events_relation_exists(using: str) -> bool:
     try:
         with connections[using].cursor() as cursor:
             cursor.execute("select to_regclass(%s)", [LEARNER_ACTIVITY_EVENTS_RELATION])
+            result = cursor.fetchone()
+    except DatabaseError:
+        return False
+    return bool(result and result[0])
+
+
+@lru_cache(maxsize=None)
+def learner_ksbs_relation_exists(using: str) -> bool:
+    """Is the legacy per-learner KSB snapshot table still present?
+
+    ``LearnerKsb`` / ``LearnerProfile.assigned_ksbs`` map the pre-normalisation
+    snapshot, kept as a read/rollback fallback. It is absent from the current
+    database, where the authoritative source is the shared, immutable
+    ``learner_ksb_assignments`` -> ``ksb_profile_versions`` graph.
+
+    ``LearnerProfile.ksbs`` already tolerates its absence, but a queryset-level
+    ``prefetch_related("assigned_ksbs")`` raises before any of that runs, so
+    callers probe here first — same shape as the activity-events check above.
+    """
+    try:
+        with connections[using].cursor() as cursor:
+            cursor.execute("select to_regclass(%s)", [LEARNER_KSBS_RELATION])
             result = cursor.fetchone()
     except DatabaseError:
         return False
@@ -113,7 +136,7 @@ def _progress_entry_activity(entry):
         detail = str(getattr(entry, "reported_time", "") or "").strip()
 
     occurred_at = getattr(entry, "feed_occurred_at", None) or getattr(entry, "submitted_at", None)
-    return {
+    item = {
         "kind": kind,
         "action": action,
         "title": title,
@@ -126,6 +149,17 @@ def _progress_entry_activity(entry):
         "passed": getattr(entry, "passed", None),
         "at": occurred_at.isoformat() if occurred_at else "",
     }
+    for key, value in (
+        ("programmeId", getattr(entry, "programme_ref", None)),
+        ("programme", str(getattr(entry, "programme_title", "") or "")),
+        ("cohortId", getattr(entry, "cohort_ref", None)),
+        ("cohort", str(getattr(entry, "cohort_title", "") or "")),
+        ("groupId", getattr(entry, "group_ref", None)),
+        ("group", str(getattr(entry, "group_title", "") or "")),
+    ):
+        if value not in (None, ""):
+            item[key] = value
+    return item
 
 
 class LearnerTypeQuerySet(models.QuerySet):
@@ -471,15 +505,18 @@ class LearnerProfile(models.Model):
             ]
 
         # Compatibility fallback while existing environments are migrated.
-        return [
-            {
-                "code": item.code,
-                "number": item.number,
-                "type": item.ksb_type,
-                "description": item.description,
-            }
-            for item in self.assigned_ksbs.all()
-        ]
+        try:
+            return [
+                {
+                    "code": item.code,
+                    "number": item.number,
+                    "type": item.ksb_type,
+                    "description": item.description,
+                }
+                for item in self.assigned_ksbs.all()
+            ]
+        except DatabaseError:
+            return []
 
     @property
     def training_plan(self):
@@ -520,11 +557,19 @@ class LearnerProfile(models.Model):
                 "kind": entry.kind,
                 "moduleId": entry.module_ref,
                 "moduleTitle": entry.module_title,
+                "programmeId": entry.programme_ref,
+                "programme": entry.programme_title,
+                "cohortId": entry.cohort_ref,
+                "cohort": entry.cohort_title,
+                "groupId": entry.group_ref,
+                "group": entry.group_title,
                 "weekId": entry.week_ref,
                 "weekTitle": entry.week_title,
                 "componentId": entry.component_ref,
                 "componentTitle": entry.component_title,
                 "componentType": entry.component_type,
+                "expectedOtjh": float(entry.expected_otjh) if entry.expected_otjh is not None else None,
+                "points": entry.points,
                 "quizId": _serialise_quiz_ref(entry.quiz_ref),
                 "attempt": entry.attempt,
                 "grade": float(entry.grade) if entry.grade is not None else None,
@@ -538,6 +583,19 @@ class LearnerProfile(models.Model):
                 "timeTaken": entry.time_taken,
                 "ksbs": [
                     row.ksb_code
+                    for row in entry.ksb_links.all()
+                ],
+                "ksbMappings": [
+                    {
+                        "code": row.ksb_code,
+                        "description": row.ksb_description,
+                        "sourceType": row.source_type,
+                        "sourceId": row.source_id,
+                        "classification": row.classification,
+                        "weight": float(row.weight) if row.weight is not None else 0,
+                        "weightClass": row.weight_class,
+                        "weight_class": row.weight_class,
+                    }
                     for row in entry.ksb_links.all()
                 ],
             }
@@ -710,6 +768,12 @@ class LearnerProgressEntry(models.Model):
     learner = models.ForeignKey(LearnerProfile, on_delete=models.CASCADE, related_name="progress_entries")
     entry_order = models.PositiveIntegerField()
     kind = models.CharField(max_length=30)
+    programme_ref = models.TextField(null=True, blank=True)
+    programme_title = models.TextField(blank=True, default='')
+    cohort_ref = models.TextField(null=True, blank=True)
+    cohort_title = models.TextField(blank=True, default='')
+    group_ref = models.TextField(null=True, blank=True)
+    group_title = models.TextField(blank=True, default='')
     module_ref = models.TextField(null=True, blank=True)
     module_title = models.TextField(blank=True)
     week_ref = models.TextField(null=True, blank=True)
@@ -717,6 +781,8 @@ class LearnerProgressEntry(models.Model):
     component_ref = models.TextField(null=True, blank=True)
     component_title = models.TextField(blank=True)
     component_type = models.CharField(max_length=100, blank=True)
+    expected_otjh = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    points = models.IntegerField(null=True, blank=True)
     quiz_ref = models.TextField(null=True, blank=True)
     attempt = models.PositiveIntegerField(null=True, blank=True)
     grade = models.DecimalField(max_digits=10, decimal_places=4, null=True, blank=True)
@@ -733,6 +799,13 @@ class LearnerProgressEntry(models.Model):
     feed_title = models.TextField(blank=True)
     feed_detail = models.TextField(blank=True)
     feed_occurred_at = models.DateTimeField(null=True, blank=True)
+    # How this row's activity is tied to Curriculum. Set on every write and
+    # backfilled for history by learner_api.0007; see that migration for the
+    # full vocabulary. `legacy_component_ref` keeps the pre-repair identifier
+    # so a repaired row never loses what it originally pointed at.
+    component_link_status = models.TextField(blank=True, default='')
+    legacy_component_ref = models.TextField(null=True, blank=True)
+    component_link_source = models.TextField(blank=True, default='')
 
     class Meta:
         managed = False
@@ -745,6 +818,12 @@ class LearnerProgressKsb(models.Model):
     progress = models.ForeignKey(LearnerProgressEntry, on_delete=models.CASCADE, related_name="ksb_links")
     position = models.PositiveIntegerField()
     ksb_code = models.CharField(max_length=100)
+    ksb_description = models.TextField(blank=True, default='')
+    source_type = models.CharField(max_length=32, blank=True, default='')
+    source_id = models.TextField(blank=True, default='')
+    classification = models.CharField(max_length=32, blank=True, default='')
+    weight = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    weight_class = models.CharField(max_length=32, blank=True, default='')
 
     class Meta:
         managed = False

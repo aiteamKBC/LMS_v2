@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculumStructureWizard';
@@ -13,11 +13,12 @@ import type {
   CurriculumProgramme,
   CurriculumProgrammeDetail,
   CurriculumProgrammeInput,
+  CurriculumProgrammeLearnerKsbImpactResponse,
+  CurriculumProgrammeLearnerRosterResponse,
   CurriculumSession,
   CurriculumStaffProfile,
   CurriculumHoliday,
   CurriculumKsbCoverageResponse,
-  CurriculumKsbCoverageStatus,
   CurriculumKsbSet,
   CurriculumStandard,
 } from '@/lib/curriculumApi';
@@ -26,12 +27,15 @@ import {
   fetchCurriculumProgrammes,
   fetchCurriculumProgrammeDetail,
   fetchCurriculumProgrammeKsbCoverage,
+  fetchCurriculumProgrammeLearnerKsbImpact,
+  fetchCurriculumProgrammeLearnerRoster,
   fetchCurriculumKsbSets,
   fetchCurriculumKsbFrameworks,
   fetchCurriculumCoaches,
   fetchCurriculumHolidays,
   fetchCurriculumStandards,
   fetchCurriculumTutors,
+  updateCurriculumGroup,
   updateCurriculumProgramme,
 } from '@/lib/curriculumApi';
 import {
@@ -43,9 +47,9 @@ import {
   teamsMeetingArtifactContentUrl,
 } from '../module-builder/moduleAuthoringData';
 
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-// Types Ã¢â‚¬â€ Full Programme Hierarchy
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// ============================================================
+// Types — Full Programme Hierarchy
+// ============================================================
 
 interface Session {
   id: string;
@@ -108,7 +112,6 @@ type KsbHeatmapRow = {
   evidence?: Record<string, KsbEvidenceItem[]>;
   totalOccurrences?: number;
   totalWeight?: number;
-  status?: CurriculumKsbCoverageStatus | string;
   sourceType?: string;
   sourceId?: string;
   sourceName?: string;
@@ -195,6 +198,7 @@ interface Programme {
   id: string;
   sourceId?: string;
   ksbProfileSourceId?: string;
+  structureType?: 'scheduled' | 'free' | string;
   name: string;
   standard: string;
   level: string;
@@ -233,9 +237,9 @@ interface DeliverySession {
 }
 
 // Classify a component as a Live session or a Recorded video. NOTE: the
-// `/curriculum/components/` list endpoint returns a *display* type Ã¢â‚¬â€ live-session
+// `/curriculum/components/` list endpoint returns a *display* type — live-session
 // becomes "Live Session" but video/podcast/reading/powerpoint all collapse to
-// "Self-study" Ã¢â‚¬â€ so `type` alone can't isolate video. We match on the tolerant
+// "Self-study" — so `type` alone can't isolate video. We match on the tolerant
 // type string first, then fall back to the component's own authoring settings
 // keys (which stay type-specific), so this works whichever endpoint fed us.
 function deliveryKindForComponent(component: { type?: string; settings?: Record<string, unknown> }): DeliverySessionKind | null {
@@ -250,9 +254,9 @@ function deliveryKindForComponent(component: { type?: string; settings?: Record<
   return null;
 }
 
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// ============================================================
 // Type badge colours
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// ============================================================
 
 const componentStatusColors: Record<string, string> = {
   published: 'bg-emerald-50 text-emerald-700 border-emerald-200/60',
@@ -690,6 +694,27 @@ function sessionStatus(status: string): Session['status'] {
   return 'scheduled';
 }
 
+// Some programme rows were saved with UTF-8 text that had been decoded as
+// cp1252 ("1 Sept 2026 \u00e2\u20ac\u201c 11 Nov 2027"), so the stored description
+// carries mojibake. Repair the known sequences at display time rather than
+// rewriting historic rows, which keeps the fix reversible and avoids a bulk
+// UPDATE over live data.
+const MOJIBAKE_REPAIRS: Array<[RegExp, string]> = [
+  [/\u00e2\u20ac\u201c/g, '\u2013'],
+  [/\u00e2\u20ac\u201d/g, '\u2014'],
+  [/\u00e2\u20ac\u2122/g, '\u2019'],
+  [/\u00e2\u20ac\u0153/g, '\u201c'],
+  [/\u00e2\u20ac\u009d/g, '\u201d'],
+  [/\u00e2\u20ac\u00a6/g, '\u2026'],
+  [/\u00c2\u00b7/g, '\u00b7'],
+  [/\u00c2\u00a0/g, ' '],
+];
+
+function repairMojibake(value: string) {
+  if (!value) return value;
+  return MOJIBAKE_REPAIRS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value);
+}
+
 function formatDateLabel(value: string) {
   if (!value) return 'TBD';
   const date = new Date(value);
@@ -794,7 +819,10 @@ function useProgrammeDetailData(programmeId: string) {
     }
     setLoading(true);
     try {
-      const detail = await fetchCurriculumProgrammeDetail(programmeId, signal);
+      // Archived cohorts/groups are fetched so the status filter can reach them.
+      // The default view still hides them (see filteredCohorts), but "All statuses"
+      // would otherwise silently omit rows that exist in the database.
+      const detail = await fetchCurriculumProgrammeDetail(programmeId, signal, { visibility: 'all' });
       if (signal?.aborted) return null;
       const overview = programmeDetailToOverview(detail);
       setData(overview);
@@ -847,29 +875,6 @@ function programmeCoverageIdCandidates(programme: Programme, routeId: string) {
     seen.add(key);
     return true;
   });
-}
-
-function findLinkedSkillsStandard(programme: Programme, standards: CurriculumStandard[]) {
-  const candidateValues = [
-    programme.standard,
-    programme.sourceId,
-    programme.id,
-    programme.name,
-  ].map(value => clean(value)).filter(Boolean);
-  const candidateKeys = new Set(candidateValues.map(normalise).filter(Boolean));
-  if (!candidateKeys.size) return null;
-  return standards.find(standard => {
-    const standardValues = [
-      standard.id,
-      standard.code,
-      standard.standardRef,
-      standard.name,
-      standard.larsCode,
-      `${standard.code} v${standard.version}`,
-      `${standard.standardRef} v${standard.version}`,
-    ];
-    return standardValues.some(value => candidateKeys.has(normalise(value)));
-  }) ?? null;
 }
 
 function rawSkillsStandardIdentifier(programme: Programme) {
@@ -1236,7 +1241,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   const deliveryWindow = [
     deliveryStart ? formatDateLabel(deliveryStart) : '',
     deliveryEnd ? formatDateLabel(deliveryEnd) : '',
-  ].filter(Boolean).join(' â€“ ');
+  ].filter(Boolean).join(' – ');
 
   const programmeSourceIds = [source.id, source.sourceId, source.name].map(normalise).filter(Boolean);
   const ksbSet = data.ksbSets.find(set => {
@@ -1324,12 +1329,13 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       id: source.id,
       sourceId: String(source.sourceId || ''),
       ksbProfileSourceId: clean(source.ksbProfileSourceId),
+      structureType: source.structureType,
       name: source.name,
       standard: source.standard,
       level: source.level || 'Level not set',
       owner: source.owner || '',
       color: source.color || '#6941c6',
-      description: source.description || `${deliveryWindow || source.standard} curriculum plan.`,
+      description: repairMojibake(source.description || `${deliveryWindow || source.standard} curriculum plan.`),
       duration: deliveryWindow || 'Live curriculum',
       cohorts: allCohorts,
       modules,
@@ -1347,9 +1353,346 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   };
 }
 
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// ============================================================
+// Shared tab UI
+// ============================================================
+
+// Curriculum treats 'Unassigned' as a sentinel rather than a real staff name, so
+// every staffing read goes through here instead of comparing strings ad hoc.
+const UNASSIGNED_STAFF = 'Unassigned';
+
+function isStaffAssigned(value?: string) {
+  const name = clean(value);
+  return Boolean(name) && normalise(name) !== normalise(UNASSIGNED_STAFF);
+}
+
+// One consistent filter/search shell for every tab. Previously each tab
+// hand-rolled this markup, which is why the toolbars drifted apart visually.
+function TabToolbar({
+  search,
+  onSearch,
+  placeholder,
+  selects = [],
+  onReset,
+  resetDisabled,
+  summary,
+  actions,
+}: {
+  search: string;
+  onSearch: (value: string) => void;
+  placeholder: string;
+  selects?: Array<{ value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }>; label: string }>;
+  onReset: () => void;
+  resetDisabled: boolean;
+  summary: string;
+  actions?: ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative flex-1 min-w-0">
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
+          <input
+            value={search}
+            onChange={event => onSearch(event.target.value)}
+            placeholder={placeholder}
+            aria-label={placeholder}
+            className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+          />
+        </div>
+        {selects.map(select => (
+          <select
+            key={select.label}
+            value={select.value}
+            onChange={event => select.onChange(event.target.value)}
+            aria-label={select.label}
+            className="h-10 cursor-pointer rounded-lg border border-background-200 bg-background-50 px-3 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100 lg:w-[190px]"
+          >
+            {select.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        ))}
+        <button
+          onClick={onReset}
+          disabled={resetDisabled}
+          className="h-10 whitespace-nowrap rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Reset
+        </button>
+        {actions}
+      </div>
+      <p className="mt-3 text-[12px] text-foreground-500">{summary}</p>
+    </div>
+  );
+}
+
+// Shared empty state. Every tab previously ended at a bare "no match" line with
+// no way forward; this always offers the next action when one exists.
+function TabEmptyState({
+  icon,
+  title,
+  message,
+  actionLabel,
+  onAction,
+}: {
+  icon: string;
+  title: string;
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50 p-10 text-center shadow-sm">
+      <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-background-100">
+        <AppIcon className={`${icon} text-xl text-foreground-400`}></AppIcon>
+      </span>
+      <p className="mt-3 text-sm font-bold text-foreground-800">{title}</p>
+      <p className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-foreground-500">{message}</p>
+      {actionLabel && onAction && (
+        <button
+          onClick={onAction}
+          className="mt-4 inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+        >
+          <AppIcon className="ri-add-line"></AppIcon> {actionLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TabLoadingRows({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="space-y-3" aria-busy="true" aria-live="polite">
+      <span className="sr-only">Loading</span>
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className="animate-pulse rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="h-10 w-10 rounded-xl bg-background-200"></div>
+            <div className="flex-1 space-y-2">
+              <div className="h-3 w-1/3 rounded bg-background-200"></div>
+              <div className="h-2.5 w-1/2 rounded bg-background-200"></div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// A staffing slot that shows the assigned person, or an explicit "needs a tutor"
+// affordance that assigns one in place. Reading 'Unassigned' as plain body text
+// was the main complaint: it looked like data rather than a gap to fix.
+function StaffSlot({
+  role,
+  icon,
+  name,
+  options,
+  onAssign,
+  saving,
+}: {
+  role: string;
+  icon: string;
+  name: string;
+  options: CurriculumStaffProfile[];
+  onAssign?: (value: string) => void | Promise<void>;
+  saving?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const assigned = isStaffAssigned(name);
+  const canEdit = Boolean(onAssign);
+
+  if (editing && canEdit) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <select
+          autoFocus
+          defaultValue=""
+          disabled={saving}
+          aria-label={`Assign ${role}`}
+          onChange={async event => {
+            const value = event.target.value;
+            if (!value) return;
+            await onAssign?.(value);
+            setEditing(false);
+          }}
+          className="h-8 min-w-0 flex-1 rounded-lg border border-primary-300 bg-background-50 px-2 text-[11px] font-semibold text-foreground-900 outline-none focus:ring-2 focus:ring-primary-100"
+        >
+          <option value="">{saving ? 'Saving...' : `Select ${role.toLowerCase()}...`}</option>
+          {options.map(option => {
+            const label = clean(option.name) || clean(option.email) || String(option.id);
+            return <option key={String(option.id)} value={label}>{label}</option>;
+          })}
+        </select>
+        <button
+          onClick={() => setEditing(false)}
+          disabled={saving}
+          aria-label="Cancel"
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-background-200 text-foreground-500 transition-smooth hover:bg-background-100 disabled:opacity-40"
+        >
+          <AppIcon className="ri-close-line text-[13px]"></AppIcon>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="group/staff flex min-w-0 items-center gap-2">
+      <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${assigned ? 'bg-primary-50 text-primary-600' : 'bg-amber-50 text-amber-600'}`}>
+        <AppIcon className={`${icon} text-[11px]`}></AppIcon>
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">{role}</span>
+        {assigned ? (
+          <span className="block truncate text-[12px] font-semibold text-foreground-800">{clean(name)}</span>
+        ) : canEdit ? (
+          <button
+            onClick={() => setEditing(true)}
+            className="inline-flex items-center gap-1 text-[12px] font-bold text-amber-700 transition-smooth hover:text-amber-800 hover:underline"
+          >
+            <AppIcon className="ri-add-circle-line text-[11px]"></AppIcon> Assign {role.toLowerCase()}
+          </button>
+        ) : (
+          <span className="block text-[12px] font-semibold text-amber-700">Not assigned</span>
+        )}
+      </span>
+      {assigned && canEdit && (
+        <button
+          onClick={() => setEditing(true)}
+          aria-label={`Change ${role}`}
+          title={`Change ${role.toLowerCase()}`}
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-foreground-400 opacity-0 transition-smooth hover:bg-background-100 hover:text-foreground-700 focus:opacity-100 group-hover/staff:opacity-100"
+        >
+          <AppIcon className="ri-pencil-line text-[11px]"></AppIcon>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// Compact staffing progress used on cohort headers.
+function StaffingMeter({ staffed, total }: { staffed: number; total: number }) {
+  if (total === 0) return null;
+  const pct = Math.round((staffed / total) * 100);
+  const complete = staffed === total;
+  return (
+    <div className="flex items-center gap-2" title={`${staffed} of ${total} groups have both a tutor and a coach`}>
+      <div className="h-1.5 w-20 overflow-hidden rounded-full bg-background-200">
+        <div className={`h-full rounded-full ${complete ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }}></div>
+      </div>
+      <span className={`text-[11px] font-bold ${complete ? 'text-emerald-700' : 'text-amber-700'}`}>{staffed}/{total} staffed</span>
+    </div>
+  );
+}
+
+function StatusChip({ status }: { status: string }) {
+  const key = normalise(status);
+  const tone = key === 'active'
+    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    : key === 'planned'
+      ? 'bg-accent-50 text-accent-700 border-accent-200'
+      : key === 'completed'
+        ? 'bg-foreground-100 text-foreground-600 border-foreground-200'
+        // Archived is a retired state, not a problem: keep it muted and dashed so
+        // it never reads as the amber "needs attention" tone.
+        : key === 'archived'
+          ? 'bg-background-100 text-foreground-500 border-dashed border-foreground-300'
+          : 'bg-amber-50 text-amber-700 border-amber-200';
+  return <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold capitalize ${tone}`}>{clean(status) || 'unknown'}</span>;
+}
+
+function MetaItem({ icon, children }: { icon: string; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[12px] text-foreground-600">
+      <AppIcon className={`${icon} text-[12px] text-foreground-400`}></AppIcon>
+      {children}
+    </span>
+  );
+}
+
+// ============================================================
 // Component
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// ============================================================
+
+// Read-only view of the learners the enrolment team placed into a cohort (and
+// optionally a single group). Curriculum owns the delivery structure, not the
+// placements, so this panel deliberately offers no allocation controls.
+function EnrolledLearnersPanel({
+  roster,
+  loading,
+  error,
+  cohortName,
+  groupName,
+  emptyHint,
+}: {
+  roster: CurriculumProgrammeLearnerRosterResponse | null;
+  loading: boolean;
+  error: string | null;
+  cohortName: string;
+  groupName?: string;
+  emptyHint?: string;
+}) {
+  const learners = useMemo(() => {
+    const cohortKey = normalise(cohortName);
+    const groupKey = normalise(groupName);
+    return (roster?.assignedLearners || []).filter(learner => {
+      if (cohortKey && normalise(learner.cohort) !== cohortKey) return false;
+      if (groupKey && normalise(learner.group) !== groupKey) return false;
+      return true;
+    });
+  }, [cohortName, groupName, roster]);
+
+  return (
+    <div className="rounded-xl border border-background-200/80 bg-background-50 p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div>
+          <p className="text-[12px] font-semibold text-foreground-900">
+            <AppIcon className="ri-graduation-cap-line mr-1.5 text-foreground-500"></AppIcon>
+            Learners assigned by enrolment
+          </p>
+          <p className="text-[10px] text-foreground-500 mt-0.5">
+            Placements are managed by the enrolment team
+          </p>
+        </div>
+        <span className="text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-background-200/60 text-foreground-500 border border-background-200">
+          Read only
+        </span>
+      </div>
+
+      {loading && <p className="text-[11px] text-foreground-500">Loading assigned learners…</p>}
+
+      {!loading && error && (
+        <p className="rounded-lg border border-amber-200/60 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">{error}</p>
+      )}
+
+      {!loading && !error && learners.length === 0 && (
+        <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[11px] text-foreground-500">
+          {emptyHint || 'No learners have been assigned here by the enrolment team yet.'}
+        </p>
+      )}
+
+      {!loading && !error && learners.length > 0 && (
+        <div className="space-y-2">
+          {learners.map(learner => (
+            <div key={String(learner.id)} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-100 px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold text-foreground-900 truncate">{learner.name || learner.email || `Learner ${learner.id}`}</p>
+                <p className="text-[10px] text-foreground-500 truncate">
+                  {learner.email || 'No email on record'}
+                  {learner.group ? ` · ${learner.group}` : ''}
+                  {learner.coachName ? ` · Coach: ${learner.coachName}` : ''}
+                </p>
+              </div>
+              {learner.lifecycleStatus && (
+                <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${normalise(learner.lifecycleStatus) === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>
+                  {learner.lifecycleStatus}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProgrammeDetailPage() {
   const { id } = useParams();
@@ -1360,10 +1703,16 @@ export default function ProgrammeDetailPage() {
   const [backendCoverage, setBackendCoverage] = useState<CurriculumKsbCoverageResponse | null>(null);
   const [backendCoverageLoading, setBackendCoverageLoading] = useState(false);
   const [backendCoverageError, setBackendCoverageError] = useState<string | null>(null);
+  // Learner placements come from the enrolment team's records. Curriculum
+  // displays them read-only and never writes an allocation of its own.
+  const [learnerRoster, setLearnerRoster] = useState<CurriculumProgrammeLearnerRosterResponse | null>(null);
+  const [learnerRosterLoading, setLearnerRosterLoading] = useState(false);
+  const [learnerRosterError, setLearnerRosterError] = useState<string | null>(null);
   const [programmeKsbSets, setProgrammeKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
   const [skillsStandardsLoading, setSkillsStandardsLoading] = useState(false);
   const coverageRequestKeyRef = useRef('');
+  const rosterRequestKeyRef = useRef('');
   const componentsRequestKeyRef = useRef('');
   const PROGRAMME = useMemo(() => {
     const sourceLabels = buildKsbSourceLabelMap(data);
@@ -1401,6 +1750,9 @@ export default function ProgrammeDetailPage() {
   const [expandedCohort, setExpandedCohort] = useState<string | null>(null);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   const [expandedModuleWeek, setExpandedModuleWeek] = useState<string | null>(null);
+  // Which component's KSB chip was clicked. Holds the codes plus the component
+  // name so the popup can say where the mapping was made.
+  const [ksbInspector, setKsbInspector] = useState<{ codes: string[]; componentTitle: string } | null>(null);
   const [programmeFormOpen, setProgrammeFormOpen] = useState(false);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardContext, setWizardContext] = useState<{ cohortId?: string; groupId?: string; startStep?: 'programme' | 'cohort' | 'group' | 'modules' | 'review' }>({});
@@ -1468,7 +1820,9 @@ export default function ProgrammeDetailPage() {
   }, [coverageKsbSource, coverageProgrammeIds]);
 
   useEffect(() => {
-    if (tab !== 'ksb' && !ksbTraceOpen) return;
+    // The modules tab needs this too: its per-component KSB chips open an
+    // inspector that reads definitions and placements from the coverage rows.
+    if (tab !== 'ksb' && tab !== 'modules' && !ksbTraceOpen) return;
     const coverageKey = [coverageProgrammeIds.join('|'), coverageKsbSource.sourceType || '', coverageKsbSource.sourceId || ''].join('::');
     if (!coverageKey || coverageRequestKeyRef.current === coverageKey) return;
     coverageRequestKeyRef.current = coverageKey;
@@ -1480,10 +1834,59 @@ export default function ProgrammeDetailPage() {
     };
   }, [coverageKsbSource.sourceId, coverageKsbSource.sourceType, coverageProgrammeIds, ksbTraceOpen, loadBackendCoverage, tab]);
 
+  // The roster is only needed by the cohort/group views, so it loads lazily and
+  // walks the same programme-id candidates the coverage call uses.
+  const loadLearnerRoster = useCallback((signal?: AbortSignal) => {
+    if (!coverageProgrammeIds.length) return Promise.resolve();
+    setLearnerRosterLoading(true);
+    setLearnerRosterError(null);
+    return (async () => {
+      let lastError: unknown = null;
+      for (const programmeId of coverageProgrammeIds) {
+        try {
+          return await fetchCurriculumProgrammeLearnerRoster(programmeId, {}, signal);
+        } catch (error) {
+          if (signal?.aborted) throw error;
+          lastError = error;
+        }
+      }
+      throw lastError || new Error('Unable to load the enrolment learner roster.');
+    })()
+      .then(result => {
+        setLearnerRoster(result || null);
+        setLearnerRosterError(null);
+      })
+      .catch(error => {
+        if (signal?.aborted) return;
+        console.warn('Unable to load the enrolment learner roster.', error);
+        setLearnerRoster(null);
+        setLearnerRosterError(error instanceof Error ? error.message : 'Unable to load learners assigned by enrolment.');
+      })
+      .finally(() => {
+        if (!signal?.aborted) setLearnerRosterLoading(false);
+      });
+  }, [coverageProgrammeIds]);
+
+  useEffect(() => {
+    if (tab !== 'cohorts' && tab !== 'groups') return;
+    const rosterKey = coverageProgrammeIds.join('|');
+    if (!rosterKey || rosterRequestKeyRef.current === rosterKey) return;
+    rosterRequestKeyRef.current = rosterKey;
+    const controller = new AbortController();
+    void loadLearnerRoster(controller.signal);
+    return () => {
+      controller.abort();
+      if (rosterRequestKeyRef.current === rosterKey) rosterRequestKeyRef.current = '';
+    };
+  }, [coverageProgrammeIds, loadLearnerRoster, tab]);
+
   useEffect(() => {
     setDetailComponents([]);
     componentsRequestKeyRef.current = '';
     coverageRequestKeyRef.current = '';
+    rosterRequestKeyRef.current = '';
+    setLearnerRoster(null);
+    setLearnerRosterError(null);
   }, [id]);
 
   useEffect(() => {
@@ -1565,11 +1968,25 @@ export default function ProgrammeDetailPage() {
   const allGroups = useMemo(() => PROGRAMME.cohorts.flatMap(cohortItem => (
     cohortItem.groups.map(group => ({ cohort: cohortItem, group }))
   )), [PROGRAMME.cohorts]);
+  // Archived cohorts are loaded but treated as opt-in: they stay out of the
+  // default list (and out of "All statuses", which means "all live statuses")
+  // so day-to-day delivery views are not padded with retired cohorts. Choosing
+  // "Archived" explicitly is the only way to surface them.
+  const archivedCohortCount = useMemo(
+    () => PROGRAMME.cohorts.filter(cohortItem => normalise(cohortItem.status) === 'archived').length,
+    [PROGRAMME.cohorts],
+  );
+  // Headline counts must keep meaning "cohorts you are delivering". Now that
+  // archived rows are fetched, every stat/tab counter reads this instead of the
+  // raw array length, so loading them cannot inflate the programme's numbers.
+  const liveCohortCount = PROGRAMME.cohorts.length - archivedCohortCount;
   const filteredCohorts = useMemo(() => {
     const query = normalise(cohortSearch);
     return PROGRAMME.cohorts.filter(cohortItem => {
+      const isArchived = normalise(cohortItem.status) === 'archived';
+      if (cohortStatusFilter === 'archived' ? !isArchived : isArchived) return false;
       const matchesSearch = !query || [cohortItem.name, cohortItem.status, cohortItem.startDate, cohortItem.endDate].some(value => normalise(value).includes(query));
-      const matchesStatus = cohortStatusFilter === 'all' || cohortItem.status === cohortStatusFilter;
+      const matchesStatus = cohortStatusFilter === 'all' || cohortStatusFilter === 'archived' || cohortItem.status === cohortStatusFilter;
       return matchesSearch && matchesStatus;
     });
   }, [PROGRAMME.cohorts, cohortSearch, cohortStatusFilter]);
@@ -1663,24 +2080,26 @@ export default function ProgrammeDetailPage() {
   const totalOtjh = PROGRAMME.modules.reduce((a, m) => a + m.otjh, 0);
   const totalLearners = PROGRAMME.cohorts.reduce((a, c) => a + c.learners, 0);
   const totalGroups = PROGRAMME.cohorts.reduce((a, c) => a + c.groups.length, 0);
+  // Surfaced in the Groups toolbar so an unstaffed group is visible without
+  // expanding every cohort.
+  const unstaffedGroupCount = PROGRAMME.cohorts.reduce(
+    (total, cohortItem) => total + cohortItem.groups.filter(g => !isStaffAssigned(g.tutor) || !isStaffAssigned(g.coach)).length,
+    0,
+  );
   const totalWeeks = PROGRAMME.modules.reduce((a, m) => a + m.weeksData.length, 0);
-  const fullyCoveredKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'fully_covered').length;
-  const partialKsbCount = PROGRAMME.ksbHeatmap.filter(row => ['partial', 'over_allocated'].includes(ksbCoverageState(row))).length;
-  const mappedNoWeightKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'mapped').length;
+  const mappedKsbCount = PROGRAMME.ksbHeatmap.filter(ksbRowIsMapped).length;
+  const totalKsbWeight = PROGRAMME.ksbHeatmap.reduce((total, row) => total + ksbRowWeight(row), 0);
+  // Percentage of required KSBs that are placed somewhere - not a judgement on
+  // how much weight each one carries.
   const ksbCoverage = PROGRAMME.ksbHeatmap.length
-    ? Math.round(((fullyCoveredKsbCount + partialKsbCount + mappedNoWeightKsbCount) / PROGRAMME.ksbHeatmap.length) * 100)
+    ? Math.round((mappedKsbCount / PROGRAMME.ksbHeatmap.length) * 100)
     : 0;
-  const missingKsbCount = PROGRAMME.ksbHeatmap.filter(row => ksbCoverageState(row) === 'missing').length;
+  const missingKsbCount = PROGRAMME.ksbHeatmap.length - mappedKsbCount;
   const totalKsbOccurrences = PROGRAMME.ksbHeatmap.reduce((total, row) => total + Number(row.totalOccurrences || 0), 0);
   const programmeHealth = Math.round((ksbCoverage + contentReadiness) / 2);
   const openKsbTrace = (initialTab: 'map' | 'coverage' | 'trace') => {
     setKsbTraceInitialTab(initialTab);
     setKsbTraceOpen(true);
-  };
-  const linkedSkillsStandard = useMemo(() => findLinkedSkillsStandard(PROGRAMME, skillsStandards), [PROGRAMME, skillsStandards]);
-  const skillsStandardTarget = linkedSkillsStandard?.id || rawSkillsStandardIdentifier(PROGRAMME);
-  const openSkillsStandard = () => {
-    window.REACT_APP_NAVIGATE(skillsStandardTarget ? `/curriculum/standards/${encodeURIComponent(skillsStandardTarget)}` : '/curriculum/standards');
   };
   const wizardProgramme = useMemo<CurriculumProgramme>(() => ({
     id: PROGRAMME.id,
@@ -1690,17 +2109,41 @@ export default function ProgrammeDetailPage() {
     level: PROGRAMME.level,
     modules: PROGRAMME.modules.length,
     weeks: totalWeeks,
-    ksbMapped: fullyCoveredKsbCount + partialKsbCount + mappedNoWeightKsbCount,
+    ksbMapped: mappedKsbCount,
     ksbTotal: PROGRAMME.ksbHeatmap.length,
     learners: totalLearners,
-    cohorts: PROGRAMME.cohorts.length,
+    cohorts: liveCohortCount,
     groups: totalGroups,
     lastUpdated: '',
     owner: PROGRAMME.owner,
     color: PROGRAMME.color,
     description: PROGRAMME.description,
     ksbProfileSourceId: PROGRAMME.ksbProfileSourceId,
-  }), [PROGRAMME, fullyCoveredKsbCount, mappedNoWeightKsbCount, partialKsbCount, totalGroups, totalLearners, totalWeeks]);
+    // Omitting this let the wizard read structureType as undefined until its own
+    // fetch landed, which flipped isFreeProgramme mid-edit and bounced the user
+    // back to the first step.
+    structureType: PROGRAMME.structureType,
+  }), [PROGRAMME, liveCohortCount, mappedKsbCount, totalGroups, totalLearners, totalWeeks]);
+
+  // Assign a tutor/coach straight from the Cohorts and Groups tabs. The group
+  // PATCH is the same endpoint the structure wizard uses, so the tutor lands on
+  // the group's module rows and is read back by the group payload.
+  const assignGroupStaff = async (groupId: string, role: 'tutor' | 'coach', value: string) => {
+    const actionKey = `${role}:${groupId}`;
+    setSavingAction(actionKey);
+    try {
+      await updateCurriculumGroup(groupId, { [role]: value });
+      await reload();
+    } catch (updateError) {
+      await showCurriculumAlert({
+        title: `Could not assign ${role}`,
+        text: updateError instanceof Error ? updateError.message : `The ${role} could not be saved. Please try again.`,
+        icon: 'error',
+      });
+    } finally {
+      setSavingAction(null);
+    }
+  };
 
   const openProgrammeForm = () => {
     setProgrammeForm({
@@ -1836,7 +2279,7 @@ export default function ProgrammeDetailPage() {
   }
 
   return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.duration} Â· ${PROGRAMME.cohorts.length} cohorts Â· ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
+    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="min-h-screen space-y-5 bg-[linear-gradient(180deg,#fbfcff_0%,#f7f8fb_46%,#f3f5f8_100%)] p-5 sm:p-6">
         <section className="relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
           {/* Signature: an accent bar tinted with this programme's own colour identity */}
@@ -1860,29 +2303,25 @@ export default function ProgrammeDetailPage() {
                   <HealthRing value={programmeHealth} color={PROGRAMME.color} />
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Programme health</p>
-                    <p className="text-[12px] text-foreground-500">KSB {ksbCoverage}% Â· Content {contentReadiness}%</p>
+                    <p className="text-[12px] text-foreground-500">KSB {ksbCoverage}% · Content {contentReadiness}%</p>
                   </div>
                 </div>
+                {/* One entry point into the structure wizard. Editing the
+                    programme, adding a cohort, a group or a module are all steps
+                    of the same wizard, so three separate buttons only made the
+                    user choose a door before knowing which room they wanted. */}
                 <div className="flex flex-wrap gap-2 xl:justify-end">
-                  <button onClick={() => openStructureWizard({ startStep: 'cohort' })} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
-                    <AppIcon className="ri-add-line text-sm"></AppIcon>
-                    Add structure
-                  </button>
                   <button onClick={() => openStructureWizard({ startStep: 'programme' })} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-                    <AppIcon className="ri-edit-line text-sm"></AppIcon>
-                    Edit programme
-                  </button>
-                  <button onClick={openSkillsStandard} disabled={skillsStandardsLoading && !skillsStandardTarget} title={skillsStandardTarget ? 'Open the linked Skills England standard' : 'No linked Skills England standard found for this programme'} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-wait disabled:opacity-60">
-                    <AppIcon className="ri-file-list-3-line text-sm"></AppIcon>
-                    {skillsStandardTarget ? 'View Standard' : skillsStandardsLoading ? 'Checking Standard' : 'Browse Standards'}
+                    <AppIcon className="ri-layout-grid-line text-sm"></AppIcon>
+                    Manage structure
                   </button>
                 </div>
               </div>
             </div>
 
-            {/* Live KPI rail Ã¢â‚¬â€ every value computed from the fetched programme data */}
+            {/* Live KPI rail — every value computed from the fetched programme data */}
             <div className="mt-5 grid grid-cols-2 gap-3 border-t border-foreground-200/60 pt-4 sm:grid-cols-3 xl:grid-cols-6">
-              <StatPill icon="ri-group-line" value={PROGRAMME.cohorts.length} label="Cohorts" />
+              <StatPill icon="ri-group-line" value={liveCohortCount} label="Cohorts" />
               <StatPill icon="ri-team-line" value={totalGroups} label="Groups" />
               <StatPill icon="ri-graduation-cap-line" value={totalLearners} label="Learners" />
               <StatPill icon="ri-stack-line" value={PROGRAMME.modules.length} label="Modules" />
@@ -1893,8 +2332,8 @@ export default function ProgrammeDetailPage() {
         </section>
 
         {/* Programme Navigation */}
-        <div className="sticky top-0 z-20 flex items-center gap-2 overflow-x-auto rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
-          <div className="flex items-center gap-1.5">
+        <div className="sticky top-0 z-20 flex items-center gap-2 rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
             {tabs.map(t => (
               <button key={t.key} onClick={() => setTab(t.key)} className={`group inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-1.5 text-[12px] font-bold transition-smooth whitespace-nowrap cursor-pointer ${tab === t.key ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100 hover:text-foreground-900'}`}>
                 <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tab === t.key ? 'bg-white/[0.16] text-white' : 'bg-background-100 text-foreground-500 group-hover:bg-background-50'}`}>
@@ -1902,7 +2341,7 @@ export default function ProgrammeDetailPage() {
                 </span>
                 <span>{t.label}</span>
                 {t.key === 'modules' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.modules.length}</span>}
-                {t.key === 'cohorts' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.cohorts.length}</span>}
+                {t.key === 'cohorts' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{liveCohortCount}</span>}
                 {t.key === 'groups' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalGroups}</span>}
                 {t.key === 'weeks' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalWeeks}</span>}
                 {t.key === 'sessions' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalSessions}</span>}
@@ -1910,288 +2349,404 @@ export default function ProgrammeDetailPage() {
               </button>
             ))}
           </div>
-          <div className="ml-auto flex items-center gap-2 border-l border-background-200 pl-2">
-            <button onClick={() => openKsbTrace('coverage')} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
+          <div className="flex shrink-0 items-center gap-2 border-l border-background-200 pl-2">
+            <button onClick={() => openKsbTrace('coverage')} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
               <AppIcon className="ri-bar-chart-box-line text-sm"></AppIcon>
               View KSB coverage details
             </button>
           </div>
         </div>
 
-        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+        {/* ═══════════════════════════════════════════════════════════════════════
             TAB: Cohorts
-        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
+        ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'cohorts' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3 items-center">
-                <div className="relative">
-                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                  <input value={cohortSearch} onChange={event => setCohortSearch(event.target.value)} placeholder="Search cohorts, dates, status..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
-                </div>
-                <select value={cohortStatusFilter} onChange={event => setCohortStatusFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
-                  <option value="all">All statuses</option>
-                  <option value="planned">Planned</option>
-                  <option value="active">Active</option>
-                  <option value="completed">Completed</option>
-                </select>
-                <button onClick={() => { setCohortSearch(''); setCohortStatusFilter('all'); }} disabled={!cohortSearch && cohortStatusFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
-              </div>
-              <p className="text-[11px] text-foreground-400 mt-3">{filteredCohorts.length} of {PROGRAMME.cohorts.length} cohorts</p>
-            </div>
+            <TabToolbar
+              search={cohortSearch}
+              onSearch={setCohortSearch}
+              placeholder="Search cohorts, dates, status..."
+              selects={[{
+                label: 'Filter by status',
+                value: cohortStatusFilter,
+                onChange: setCohortStatusFilter,
+                options: [
+                  { value: 'all', label: 'All statuses' },
+                  { value: 'planned', label: 'Planned' },
+                  { value: 'active', label: 'Active' },
+                  { value: 'completed', label: 'Completed' },
+                  // Surfaced with its count so an archived cohort is discoverable
+                  // instead of looking like missing data.
+                  ...(archivedCohortCount > 0 ? [{ value: 'archived', label: `Archived (${archivedCohortCount})` }] : []),
+                ],
+              }]}
+              onReset={() => { setCohortSearch(''); setCohortStatusFilter('all'); }}
+              resetDisabled={!cohortSearch && cohortStatusFilter === 'all'}
+              summary={cohortStatusFilter === 'archived'
+                ? `Showing ${filteredCohorts.length} of ${archivedCohortCount} archived cohorts`
+                : `Showing ${filteredCohorts.length} of ${liveCohortCount} cohorts${archivedCohortCount > 0 ? ` · ${archivedCohortCount} archived` : ''}`}
+            />
 
-            {filteredCohorts.length === 0 && (
-              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-8 text-center shadow-sm">
-                <AppIcon className="ri-filter-off-line text-2xl text-foreground-300"></AppIcon>
-                <p className="text-sm font-semibold text-foreground-700 mt-2">No cohorts match these filters</p>
-              </div>
+            {loading && PROGRAMME.cohorts.length === 0 && <TabLoadingRows />}
+
+            {!loading && PROGRAMME.cohorts.length === 0 && (
+              <TabEmptyState
+                icon="ri-group-line"
+                title="No cohorts yet"
+                message="Cohorts define when a group of learners starts and finishes this programme. Add the first one to begin planning delivery."
+                actionLabel="Add structure"
+                onAction={() => openStructureWizard({ startStep: 'cohort' })}
+              />
             )}
 
-            {filteredCohorts.map(c => (
-              <div key={c.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-                {/* Cohort Header Ã¢â‚¬â€ Clickable */}
-                <button onClick={() => setExpandedCohort(expandedCohort === c.id ? null : c.id)} className="w-full flex items-center gap-4 p-4 text-left cursor-pointer hover:bg-background-100/30 transition-smooth">
-                  <span className="w-10 h-10 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
-                    <AppIcon className={`ri-arrow-down-s-line text-secondary-700 transition-smooth ${expandedCohort === c.id ? 'rotate-180' : ''}`}></AppIcon>
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold text-foreground-900">{c.name}</p>
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${c.status === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/50' : c.status === 'planned' ? 'bg-accent-50 text-accent-700 border-accent-200/50' : 'bg-foreground-100 text-foreground-500 border-foreground-200/50'}`}>{c.status}</span>
+            {!loading && PROGRAMME.cohorts.length > 0 && filteredCohorts.length === 0 && (
+              <TabEmptyState
+                icon="ri-filter-off-line"
+                title="No cohorts match these filters"
+                message="Try a different search term, or reset the filters to see every cohort on this programme."
+              />
+            )}
+
+            {filteredCohorts.map(c => {
+              const staffedGroups = c.groups.filter(g => isStaffAssigned(g.coach) && isStaffAssigned(g.tutor)).length;
+              const expanded = expandedCohort === c.id;
+              return (
+                <div key={c.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
+                  <button
+                    onClick={() => setExpandedCohort(expanded ? null : c.id)}
+                    aria-expanded={expanded}
+                    className="flex w-full cursor-pointer items-center gap-4 p-4 text-left transition-smooth hover:bg-background-100/40"
+                  >
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary-100">
+                      <AppIcon className={`ri-arrow-down-s-line text-secondary-700 transition-smooth ${expanded ? 'rotate-180' : ''}`}></AppIcon>
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-bold text-foreground-900">{c.name}</p>
+                        <StatusChip status={c.status} />
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
+                        <MetaItem icon="ri-calendar-line">{c.startDate} &ndash; {c.endDate}</MetaItem>
+                        <MetaItem icon="ri-graduation-cap-line">{c.learners} learners</MetaItem>
+                        <MetaItem icon="ri-team-line">{c.groups.length} {c.groups.length === 1 ? 'group' : 'groups'}</MetaItem>
+                      </div>
                     </div>
-                    <p className="text-[11px] text-foreground-400 mt-0.5">{c.startDate} â€” {c.endDate} Â· {c.learners} learners Â· {c.groups.length} groups</p>
-                  </div>
-                  <div className="hidden items-center gap-4 text-[12px] text-foreground-500 shrink-0 sm:flex">
-                    {c.groups.length > 0 && (() => {
-                      const staffed = c.groups.filter(g => g.coach !== 'Unassigned' && g.tutor !== 'Unassigned').length;
-                      const pct = Math.round((staffed / c.groups.length) * 100);
-                      return (
-                        <div className="flex items-center gap-2" title="Groups with both a coach and a tutor assigned">
-                          <div className="w-20 h-1.5 bg-background-200 rounded-full overflow-hidden">
-                            <div className="h-full bg-primary-500 rounded-full" style={{ width: `${pct}%` }}></div>
-                          </div>
-                          <span className="text-[10px] font-semibold">{staffed}/{c.groups.length} staffed</span>
+                    <div className="hidden shrink-0 items-center gap-4 sm:flex">
+                      <StaffingMeter staffed={staffedGroups} total={c.groups.length} />
+                    </div>
+                  </button>
+
+                  {expanded && (
+                    <div className="border-t border-background-200/60 px-4 pb-4">
+                      {c.groups.length === 0 ? (
+                        <div className="mt-3">
+                          <TabEmptyState
+                            icon="ri-team-line"
+                            title="This cohort has no groups"
+                            message="Groups hold the weekly timetable and the tutor and coach who deliver it. Add one to start scheduling."
+                            actionLabel="New group"
+                            onAction={() => openStructureWizard({ cohortId: c.id, startStep: 'group' })}
+                          />
                         </div>
-                      );
-                    })()}
-                    <span className="text-[12px]"><AppIcon className="ri-graduation-cap-line mr-1"></AppIcon>{c.learners}</span>
-                  </div>
-                </button>
+                      ) : (
+                        <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                          {c.groups.map(g => {
+                            const groupExpanded = expandedGroup === g.id;
+                            const needsStaff = !isStaffAssigned(g.tutor) || !isStaffAssigned(g.coach);
+                            return (
+                              <div key={g.id} className={`rounded-2xl border bg-background-100 p-4 shadow-sm transition-smooth ${needsStaff ? 'border-amber-200' : 'border-background-200/80'}`}>
+                                <div className="mb-3 flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <p className="truncate text-[13px] font-bold text-foreground-900">{g.name}</p>
+                                    <p className="mt-0.5 text-[11px] text-foreground-500">{g.startDate} &ndash; {g.endDate}</p>
+                                  </div>
+                                  <div className="flex shrink-0 items-center gap-1.5">
+                                    <span className="rounded-md bg-background-200/70 px-2 py-0.5 text-[10px] font-semibold text-foreground-600">{g.mode}</span>
+                                  </div>
+                                </div>
 
-                {/* Expanded Groups */}
-                {expandedCohort === c.id && (
-                  <div className="px-4 pb-4 border-t border-background-200/30">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                      {c.groups.map(g => (
-                        <div key={g.id} className="rounded-2xl border border-background-200/80 bg-background-100 p-4 shadow-sm">
-                          <div className="flex items-center justify-between mb-2">
-                            <p className="text-[13px] font-semibold text-foreground-900">{g.name}</p>
-                            <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 mb-3">
-                            <div className="text-[11px] text-foreground-500"><AppIcon className="ri-graduation-cap-line mr-1 text-[10px]"></AppIcon>{g.learners} learners</div>
-                            <div className="text-[11px] text-foreground-500"><AppIcon className="ri-heart-line mr-1 text-[10px]"></AppIcon>Coach: {g.coach}</div>
-                            <div className="text-[11px] text-foreground-500"><AppIcon className="ri-user-settings-line mr-1 text-[10px]"></AppIcon>Tutor: {g.tutor}</div>
-                            <div className="text-[11px] text-foreground-500"><AppIcon className="ri-calendar-line mr-1 text-[10px]"></AppIcon>{g.schedule}</div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[10px] text-foreground-400 bg-background-200/50 px-2 py-0.5 rounded">{g.mode}</span>
-                            <span className="text-[10px] text-foreground-400">{g.startDate} â€” {g.endDate}</span>
-                          </div>
-                          <div className="flex items-center gap-2 mt-3">
-                            <button onClick={() => setExpandedGroup(expandedGroup === g.id ? null : g.id)} className="px-2.5 py-1 bg-primary-500 text-white rounded-md text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                              {expandedGroup === g.id ? 'Hide Details' : 'View Full Details'}
-                            </button>
-                          </div>
+                                <div className="mb-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                                  <StaffSlot
+                                    role="Tutor"
+                                    icon="ri-user-settings-line"
+                                    name={g.tutor}
+                                    options={data?.tutors || []}
+                                    saving={savingAction === `tutor:${g.id}`}
+                                    onAssign={value => assignGroupStaff(g.id, 'tutor', value)}
+                                  />
+                                  <StaffSlot
+                                    role="Coach"
+                                    icon="ri-heart-line"
+                                    name={g.coach}
+                                    options={data?.coaches || []}
+                                    saving={savingAction === `coach:${g.id}`}
+                                    onAssign={value => assignGroupStaff(g.id, 'coach', value)}
+                                  />
+                                </div>
 
-                          {expandedGroup === g.id && (
-                            <div className="mt-4 rounded-xl border border-primary-200/50 bg-background-50 p-4 shadow-sm">
-                              <div className="flex items-start justify-between gap-3 mb-3">
-                                <div>
-                                  <p className="text-[12px] font-semibold text-foreground-900">{g.name} full details</p>
-                                  <p className="text-[11px] text-foreground-500 mt-0.5">{c.name} Â· {g.startDate} â€” {g.endDate}</p>
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-background-200/70 pt-3">
+                                  <MetaItem icon="ri-graduation-cap-line">{g.learners} learners</MetaItem>
+                                  <MetaItem icon="ri-calendar-line">{g.schedule}</MetaItem>
+                                  <MetaItem icon="ri-stack-line">{g.modules.length} {g.modules.length === 1 ? 'module' : 'modules'}</MetaItem>
                                 </div>
-                                <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
-                              </div>
 
-                              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
-                                <div className="rounded-lg border border-background-200 bg-background-100 p-2">
-                                  <p className="text-[9px] font-semibold uppercase text-foreground-400">Coach</p>
-                                  <p className="text-[11px] font-semibold text-foreground-800 truncate">{g.coach}</p>
+                                <div className="mt-3 flex items-center gap-2">
+                                  <button
+                                    onClick={() => setExpandedGroup(groupExpanded ? null : g.id)}
+                                    aria-expanded={groupExpanded}
+                                    className="inline-flex h-8 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+                                  >
+                                    <AppIcon className={`ri-arrow-down-s-line text-[12px] transition-smooth ${groupExpanded ? 'rotate-180' : ''}`}></AppIcon>
+                                    {groupExpanded ? 'Hide details' : 'View full details'}
+                                  </button>
                                 </div>
-                                <div className="rounded-lg border border-background-200 bg-background-100 p-2">
-                                  <p className="text-[9px] font-semibold uppercase text-foreground-400">Tutor</p>
-                                  <p className="text-[11px] font-semibold text-foreground-800 truncate">{g.tutor}</p>
-                                </div>
-                                <div className="rounded-lg border border-background-200 bg-background-100 p-2">
-                                  <p className="text-[9px] font-semibold uppercase text-foreground-400">Schedule</p>
-                                  <p className="text-[11px] font-semibold text-foreground-800 truncate">{g.schedule}</p>
-                                </div>
-                                <div className="rounded-lg border border-background-200 bg-background-100 p-2">
-                                  <p className="text-[9px] font-semibold uppercase text-foreground-400">Modules</p>
-                                  <p className="text-[11px] font-semibold text-foreground-800">{g.modules.length}</p>
-                                </div>
-                              </div>
 
-                              {g.modules.length > 0 ? (
-                                <div className="space-y-2">
-                                  {g.modules.map(moduleItem => (
-                                    <div key={moduleItem.id} className="flex items-center justify-between gap-3 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
-                                      <div className="min-w-0">
-                                        <p className="text-[11px] font-semibold text-foreground-900 truncate">{moduleItem.name}</p>
-                                        <p className="text-[10px] text-foreground-500">{moduleItem.weeks} weeks Â· {moduleItem.otjh}h OTJH Â· {moduleItem.weeksData.reduce((sum, weekItem) => sum + (weekItem.components?.length || 0), 0)} components</p>
+                                {groupExpanded && (
+                                  <div className="mt-4 rounded-xl border border-primary-200/60 bg-background-50 p-4 shadow-sm">
+                                    {g.modules.length > 0 ? (
+                                      <div className="space-y-2">
+                                        {g.modules.map(moduleItem => (
+                                          <div key={moduleItem.id} className="flex items-center justify-between gap-3 rounded-lg border border-background-200 bg-background-100/60 px-3 py-2">
+                                            <div className="min-w-0">
+                                              <p className="truncate text-[12px] font-semibold text-foreground-900">{moduleItem.name}</p>
+                                              <p className="mt-0.5 text-[11px] text-foreground-500">
+                                                {moduleItem.weeks} weeks &middot; {moduleItem.otjh}h OTJH &middot; {moduleItem.weeksData.reduce((sum, weekItem) => sum + (weekItem.components?.length || 0), 0)} components
+                                              </p>
+                                            </div>
+                                            <button
+                                              onClick={() => { setTab('weeks'); setSelectedModule(moduleItem.id); setSelectedWeek(moduleItem.weeksData[0]?.id || ''); }}
+                                              className="whitespace-nowrap rounded-lg border border-background-200 bg-background-50 px-2.5 py-1.5 text-[11px] font-semibold text-foreground-700 transition-smooth hover:bg-background-200"
+                                            >
+                                              Open weeks
+                                            </button>
+                                          </div>
+                                        ))}
                                       </div>
-                                      <button onClick={() => { setTab('weeks'); setSelectedModule(moduleItem.id); setSelectedWeek(moduleItem.weeksData[0]?.id || ''); }} className="px-2.5 py-1 rounded-md border border-background-200 bg-background-100 text-[10px] font-semibold text-foreground-700 hover:bg-background-200 transition-smooth whitespace-nowrap">
-                                        Open Weeks
-                                      </button>
+                                    ) : (
+                                      <p className="rounded-lg border border-dashed border-background-200 bg-background-100/60 px-3 py-3 text-[11px] text-foreground-500">
+                                        No modules are linked to this group yet.
+                                      </p>
+                                    )}
+
+                                    <div className="mt-3">
+                                      <EnrolledLearnersPanel
+                                        roster={learnerRoster}
+                                        loading={learnerRosterLoading}
+                                        error={learnerRosterError}
+                                        cohortName={c.name}
+                                        groupName={g.name}
+                                        emptyHint={`No learners have been assigned to ${g.name} by the enrolment team yet.`}
+                                      />
                                     </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[11px] text-foreground-500">No modules are linked to this group yet.</p>
-                              )}
-                            </div>
-                          )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                      ))}
+                      )}
+
+                      {/* Learners are always placed into a group, so the group panels
+                          already account for every one of them. A cohort-level roster
+                          alongside them would repeat the same list, so it only appears
+                          when there is no group to hold it. */}
+                      {c.groups.length === 0 && (
+                        <div className="mt-3">
+                          <EnrolledLearnersPanel
+                            roster={learnerRoster}
+                            loading={learnerRosterLoading}
+                            error={learnerRosterError}
+                            cohortName={c.name}
+                            emptyHint={`No learners have been assigned to ${c.name} by the enrolment team yet.`}
+                          />
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2 mt-3">
-                      <button onClick={() => showCurriculumAlert({ title: 'Learner allocation is resource-scoped', text: `${c.name} is live in this programme view. Learner allocation should use the live MIS workflow instead of the legacy mock page.`, icon: 'info' })} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                        <AppIcon className="ri-user-add-line mr-1"></AppIcon> Allocate Learners
-                      </button>
-                      <button onClick={() => openStructureWizard({ cohortId: c.id, startStep: 'group' })} className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                        <AppIcon className="ri-add-line mr-1"></AppIcon> New Group
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+        {/* ═══════════════════════════════════════════════════════════════════════
             TAB: Groups
-        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
+        ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'groups' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-              <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
-                <div className="relative">
-                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                  <input value={groupSearch} onChange={event => setGroupSearch(event.target.value)} placeholder="Search groups, coach, tutor, schedule..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
-                </div>
-                <select value={groupCohortFilter} onChange={event => setGroupCohortFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
-                  <option value="all">All cohorts</option>
-                  {PROGRAMME.cohorts.map(cohortItem => <option key={cohortItem.id} value={cohortItem.id}>{cohortItem.name}</option>)}
-                </select>
-                <select value={groupStatusFilter} onChange={event => setGroupStatusFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
-                  <option value="all">All statuses</option>
-                  <option value="planned">Planned</option>
-                  <option value="active">Active</option>
-                  <option value="completed">Completed</option>
-                </select>
-                <button onClick={() => { setGroupSearch(''); setGroupCohortFilter('all'); setGroupStatusFilter('all'); }} disabled={!groupSearch && groupCohortFilter === 'all' && groupStatusFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
-              </div>
-              <p className="text-[11px] text-foreground-400 mt-3">{filteredGroups.length} of {totalGroups} groups</p>
-            </div>
+            <TabToolbar
+              search={groupSearch}
+              onSearch={setGroupSearch}
+              placeholder="Search groups, coach, tutor, schedule..."
+              selects={[
+                {
+                  label: 'Filter by cohort',
+                  value: groupCohortFilter,
+                  onChange: setGroupCohortFilter,
+                  options: [
+                    { value: 'all', label: 'All cohorts' },
+                    ...PROGRAMME.cohorts.map(cohortItem => ({ value: cohortItem.id, label: cohortItem.name })),
+                  ],
+                },
+                {
+                  label: 'Filter by status',
+                  value: groupStatusFilter,
+                  onChange: setGroupStatusFilter,
+                  options: [
+                    { value: 'all', label: 'All statuses' },
+                    { value: 'planned', label: 'Planned' },
+                    { value: 'active', label: 'Active' },
+                    { value: 'completed', label: 'Completed' },
+                  ],
+                },
+              ]}
+              onReset={() => { setGroupSearch(''); setGroupCohortFilter('all'); setGroupStatusFilter('all'); }}
+              resetDisabled={!groupSearch && groupCohortFilter === 'all' && groupStatusFilter === 'all'}
+              summary={`Showing ${filteredGroups.length} of ${totalGroups} groups${unstaffedGroupCount > 0 ? ` · ${unstaffedGroupCount} still need a tutor or coach` : ''}`}
+            />
 
-            {filteredGroups.length === 0 && (
-              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-8 text-center shadow-sm">
-                <AppIcon className="ri-filter-off-line text-2xl text-foreground-300"></AppIcon>
-                <p className="text-sm font-semibold text-foreground-700 mt-2">No groups match these filters</p>
-              </div>
+            {loading && totalGroups === 0 && <TabLoadingRows />}
+
+            {!loading && totalGroups === 0 && (
+              <TabEmptyState
+                icon="ri-team-line"
+                title="No groups yet"
+                message="A group is the timetabled class that learners attend: it carries the weekly schedule and the tutor and coach who deliver it."
+                actionLabel="Add structure"
+                onAction={() => openStructureWizard({ startStep: 'group' })}
+              />
             )}
 
-            {PROGRAMME.cohorts.filter(c => c.groups.some(g => filteredGroups.some(item => item.group.id === g.id))).map(c => (
-              <div key={c.id} className="space-y-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-[12px] font-semibold text-foreground-700">{c.name}</span>
-                  <span className="text-[10px] text-foreground-400">{c.groups.length} groups Â· {c.learners} learners</span>
-                </div>
-                {c.groups.filter(g => filteredGroups.some(item => item.group.id === g.id)).map(g => (
-                  <div key={g.id} className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-                    <div className="flex flex-col lg:flex-row items-start lg:items-center gap-4">
-                      <div className="w-12 h-12 rounded-xl bg-secondary-100 flex items-center justify-center shrink-0">
-                        <AppIcon className="ri-team-line text-secondary-700 text-lg"></AppIcon>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-semibold text-foreground-900">{g.name}</p>
-                          <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-secondary-100 text-secondary-700">{c.name}</span>
-                          <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${g.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{g.status}</span>
-                        </div>
-                        <div className="flex items-center gap-4 text-[11px] text-foreground-500 mt-1 flex-wrap">
-                          <span><AppIcon className="ri-graduation-cap-line mr-1 text-[10px]"></AppIcon>{g.learners} learners</span>
-                          <span><AppIcon className="ri-heart-line mr-1 text-[10px]"></AppIcon>Coach: <strong className="text-foreground-700">{g.coach}</strong></span>
-                          <span><AppIcon className="ri-user-settings-line mr-1 text-[10px]"></AppIcon>Tutor: <strong className="text-foreground-700">{g.tutor}</strong></span>
-                          <span><AppIcon className="ri-calendar-line mr-1 text-[10px]"></AppIcon>{g.schedule}</span>
-                          <span><AppIcon className="ri-map-pin-line mr-1 text-[10px]"></AppIcon>{g.mode}</span>
-                        </div>
-                      </div>
-                    </div>
+            {!loading && totalGroups > 0 && filteredGroups.length === 0 && (
+              <TabEmptyState
+                icon="ri-filter-off-line"
+                title="No groups match these filters"
+                message="Try a different search term, or reset the filters to see every group on this programme."
+              />
+            )}
+
+            {PROGRAMME.cohorts.filter(c => c.groups.some(g => filteredGroups.some(item => item.group.id === g.id))).map(c => {
+              const visibleGroups = c.groups.filter(g => filteredGroups.some(item => item.group.id === g.id));
+              return (
+                <div key={c.id} className="space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-secondary-100 px-2.5 py-1 text-[12px] font-bold text-secondary-700">
+                      <AppIcon className="ri-group-line text-[12px]"></AppIcon>
+                      {c.name}
+                    </span>
+                    <span className="text-[11px] text-foreground-500">
+                      {visibleGroups.length} of {c.groups.length} {c.groups.length === 1 ? 'group' : 'groups'} &middot; {c.learners} learners
+                    </span>
                   </div>
-                ))}
-              </div>
-            ))}
+
+                  {visibleGroups.map(g => {
+                    const needsStaff = !isStaffAssigned(g.tutor) || !isStaffAssigned(g.coach);
+                    return (
+                      <div key={g.id} className={`rounded-2xl border bg-background-50 p-4 shadow-sm ${needsStaff ? 'border-amber-200' : 'border-foreground-200/70'}`}>
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+                          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary-100">
+                            <AppIcon className="ri-team-line text-lg text-secondary-700"></AppIcon>
+                          </span>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-sm font-bold text-foreground-900">{g.name}</p>
+                              <StatusChip status={g.status} />
+                              {needsStaff && (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+                                  <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon> Needs staffing
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                              <MetaItem icon="ri-graduation-cap-line">{g.learners} learners</MetaItem>
+                              <MetaItem icon="ri-calendar-line">{g.schedule}</MetaItem>
+                              <MetaItem icon="ri-map-pin-line">{g.mode}</MetaItem>
+                              <MetaItem icon="ri-stack-line">{g.modules.length} {g.modules.length === 1 ? 'module' : 'modules'}</MetaItem>
+                            </div>
+                          </div>
+
+                          <div className="grid w-full shrink-0 grid-cols-1 gap-2.5 border-t border-background-200/70 pt-3 sm:grid-cols-2 lg:w-[380px] lg:border-t-0 lg:pt-0">
+                            <StaffSlot
+                              role="Tutor"
+                              icon="ri-user-settings-line"
+                              name={g.tutor}
+                              options={data?.tutors || []}
+                              saving={savingAction === `tutor:${g.id}`}
+                              onAssign={value => assignGroupStaff(g.id, 'tutor', value)}
+                            />
+                            <StaffSlot
+                              role="Coach"
+                              icon="ri-heart-line"
+                              name={g.coach}
+                              options={data?.coaches || []}
+                              saving={savingAction === `coach:${g.id}`}
+                              onAssign={value => assignGroupStaff(g.id, 'coach', value)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
         )}
 
-        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+        {/* ═══════════════════════════════════════════════════════════════════════
             TAB: Modules
-        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
+        ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'modules' && (
           <div className="space-y-4">
-            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_220px_180px_auto] gap-3 items-center">
-                <div className="relative">
-                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                  <input
-                    value={moduleSearch}
-                    onChange={event => setModuleSearch(event.target.value)}
-                    placeholder="Search modules, cohort, group, KSB..."
-                    className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
-                  />
-                </div>
-                <select
-                  value={moduleCohortFilter}
-                  onChange={event => setModuleCohortFilter(event.target.value)}
-                  className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer"
-                >
-                  <option value="all">All cohorts</option>
-                  {moduleCohorts.map(cohortName => (
-                    <option key={cohortName} value={cohortName}>{cohortName}</option>
-                  ))}
-                </select>
-                <select
-                  value={moduleGroupFilter}
-                  onChange={event => setModuleGroupFilter(event.target.value)}
-                  className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer"
-                >
-                  <option value="all">All groups</option>
-                  {moduleGroups.map(groupName => (
-                    <option key={groupName} value={groupName}>{groupName}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => { setModuleSearch(''); setModuleCohortFilter('all'); setModuleGroupFilter('all'); }}
-                  disabled={!moduleSearch && moduleCohortFilter === 'all' && moduleGroupFilter === 'all'}
-                  className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap"
-                >
-                  Reset
-                </button>
-              </div>
-              <p className="text-[11px] text-foreground-400 mt-3">{filteredModules.length} of {PROGRAMME.modules.length} modules</p>
-            </div>
+            <TabToolbar
+              search={moduleSearch}
+              onSearch={setModuleSearch}
+              placeholder="Search modules, cohort, group, KSB..."
+              selects={[
+                {
+                  label: 'Filter by cohort',
+                  value: moduleCohortFilter,
+                  onChange: setModuleCohortFilter,
+                  options: [
+                    { value: 'all', label: 'All cohorts' },
+                    ...moduleCohorts.map(cohortName => ({ value: cohortName, label: cohortName })),
+                  ],
+                },
+                {
+                  label: 'Filter by group',
+                  value: moduleGroupFilter,
+                  onChange: setModuleGroupFilter,
+                  options: [
+                    { value: 'all', label: 'All groups' },
+                    ...moduleGroups.map(groupName => ({ value: groupName, label: groupName })),
+                  ],
+                },
+              ]}
+              onReset={() => { setModuleSearch(''); setModuleCohortFilter('all'); setModuleGroupFilter('all'); }}
+              resetDisabled={!moduleSearch && moduleCohortFilter === 'all' && moduleGroupFilter === 'all'}
+              summary={`Showing ${filteredModules.length} of ${PROGRAMME.modules.length} modules`}
+            />
 
-            {filteredModules.length === 0 && (
-              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-8 text-center shadow-sm">
-                <AppIcon className="ri-filter-off-line text-2xl text-foreground-300"></AppIcon>
-                <p className="text-sm font-semibold text-foreground-700 mt-2">No modules match these filters</p>
-                <button onClick={() => { setModuleSearch(''); setModuleCohortFilter('all'); setModuleGroupFilter('all'); }} className="mt-3 px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth">
-                  Clear filters
-                </button>
-              </div>
+            {loading && PROGRAMME.modules.length === 0 && <TabLoadingRows />}
+
+            {!loading && PROGRAMME.modules.length === 0 && (
+              <TabEmptyState
+                icon="ri-stack-line"
+                title="No modules yet"
+                message="Modules carry the weekly content, sessions and OTJH for this programme. Add the first one to start building the curriculum."
+                actionLabel="Add structure"
+                onAction={() => openStructureWizard({ startStep: 'modules' })}
+              />
+            )}
+
+            {!loading && PROGRAMME.modules.length > 0 && filteredModules.length === 0 && (
+              <TabEmptyState
+                icon="ri-filter-off-line"
+                title="No modules match these filters"
+                message="Try a different search term, or reset the filters to see every module on this programme."
+              />
             )}
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -2255,7 +2810,7 @@ export default function ProgrammeDetailPage() {
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <ModuleDetailLine icon="ri-calendar-event-line" label="Delivery window" value={[deliveryStart, deliveryEnd].filter(Boolean).join(' - ') || 'Not scheduled'} />
                   <ModuleDetailLine icon="ri-group-line" label="Cohort / Group" value={[mod.cohort || 'No cohort', mod.group || 'No group'].join(' / ')} />
-                  <ModuleDetailLine icon="ri-user-settings-line" label="Tutor" value={mod.tutor || 'Unassigned'} />
+                  <ModuleDetailLine icon="ri-user-settings-line" label="Tutor" value={mod.tutor || 'Unassigned'} warnWhenUnassigned />
                 </div>
                 </div>
 
@@ -2406,10 +2961,17 @@ export default function ProgrammeDetailPage() {
                                     <div className="min-w-0 flex-1">
                                       <p className="truncate text-[12px] font-black text-foreground-900">{component.title || 'Untitled component'}</p>
                                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${componentTypeTone(component.type)}`}>{componentTypeLabel(component.type)}</span>
                                         <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(Number(component.expectedOtjh ?? 0))}h OTJH</span>
                                         {component.duration ? <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{component.duration} min</span> : null}
-                                        {component.ksbRefs?.length ? <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">{component.ksbRefs.length} KSBs</span> : null}
+                                        {component.ksbRefs?.length ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => setKsbInspector({ codes: component.ksbRefs || [], componentTitle: component.title || 'Untitled component' })}
+                                            className="cursor-pointer rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 transition-smooth hover:bg-amber-100"
+                                          >
+                                            {component.ksbRefs.length} KSBs
+                                          </button>
+                                        ) : null}
                                       </div>
                                     </div>
                                   </div>
@@ -2436,10 +2998,22 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
-        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+        {/* ═══════════════════════════════════════════════════════════════════════
             TAB: Weeks
-        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
-{tab === 'weeks' && (
+        ═══════════════════════════════════════════════════════════════════════ */}
+{tab === 'weeks' && PROGRAMME.modules.length === 0 && (
+          loading ? <TabLoadingRows /> : (
+            <TabEmptyState
+              icon="ri-calendar-line"
+              title="No weeks to show yet"
+              message="Weeks belong to a module. Add a module to this programme and its weekly plan will appear here."
+              actionLabel="Add structure"
+              onAction={() => openStructureWizard({ startStep: 'modules' })}
+            />
+          )
+        )}
+
+        {tab === 'weeks' && PROGRAMME.modules.length > 0 && (
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
             <aside className="space-y-4">
               <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
@@ -2532,7 +3106,7 @@ export default function ProgrammeDetailPage() {
               <div className="border-b border-background-200 bg-background-50 p-5">
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                   <ModuleDetailLine icon="ri-group-line" label="Cohort / Group" value={[module.cohort || 'No cohort', module.group || 'No group'].join(' / ')} />
-                  <ModuleDetailLine icon="ri-user-settings-line" label="Tutor" value={module.tutor || 'Unassigned'} />
+                  <ModuleDetailLine icon="ri-user-settings-line" label="Tutor" value={module.tutor || 'Unassigned'} warnWhenUnassigned />
                 </div>
               </div>
 
@@ -2588,10 +3162,17 @@ export default function ProgrammeDetailPage() {
                                     <div className="min-w-0 flex-1">
                                       <p className="truncate text-[12px] font-black text-foreground-900">{component.title || 'Untitled component'}</p>
                                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                        <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${componentTypeTone(component.type)}`}>{componentTypeLabel(component.type)}</span>
                                         <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(Number(component.expectedOtjh ?? 0))}h OTJH</span>
                                         {component.duration ? <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{component.duration} min</span> : null}
-                                        {component.ksbRefs?.length ? <span className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">{component.ksbRefs.length} KSBs</span> : null}
+                                        {component.ksbRefs?.length ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => setKsbInspector({ codes: component.ksbRefs || [], componentTitle: component.title || 'Untitled component' })}
+                                            className="cursor-pointer rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 transition-smooth hover:bg-amber-100"
+                                          >
+                                            {component.ksbRefs.length} KSBs
+                                          </button>
+                                        ) : null}
                                       </div>
                                       {componentTeamsUrl && (
                                         <a href={componentTeamsUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-lg bg-primary-600 px-2.5 text-[10px] font-bold text-white hover:bg-primary-700">
@@ -2621,9 +3202,9 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
-        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+        {/* ═══════════════════════════════════════════════════════════════════════
             TAB: Sessions
-        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
+        ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'sessions' && (
           <div className="space-y-4">
             {/* Live / Recorded toggle */}
@@ -2647,27 +3228,36 @@ export default function ProgrammeDetailPage() {
               </p>
             </div>
 
-            {/* Search + module filter */}
-            <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-[1fr_220px_auto_auto] md:items-center">
-                <div className="relative">
-                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                  <input value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups or KSBs...' : 'Search videos, providers, modules or KSBs...'} className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
-                </div>
-                <select value={sessionModuleFilter} onChange={event => setSessionModuleFilter(event.target.value)} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none cursor-pointer">
-                  <option value="all">All modules</option>
-                  {sessionModules.map(name => <option key={name} value={name}>{name}</option>)}
-                </select>
-                <button onClick={() => { setSessionSearch(''); setSessionModuleFilter('all'); }} disabled={!sessionSearch && sessionModuleFilter === 'all'} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
-                <div className="flex items-center gap-2 md:justify-end">
-                  <span className="text-[11px] font-semibold text-foreground-400 uppercase">Show</span>
-                  <select value={sessionPageSize} onChange={event => setSessionPageSize(Number(event.target.value))} className="h-10 px-2 rounded-lg border border-background-200 bg-background-50 text-[12px] text-foreground-900 outline-none cursor-pointer">
+            <TabToolbar
+              search={sessionSearch}
+              onSearch={setSessionSearch}
+              placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups or KSBs...' : 'Search videos, providers, modules or KSBs...'}
+              selects={[{
+                label: 'Filter by module',
+                value: sessionModuleFilter,
+                onChange: setSessionModuleFilter,
+                options: [
+                  { value: 'all', label: 'All modules' },
+                  ...sessionModules.map(name => ({ value: name, label: name })),
+                ],
+              }]}
+              onReset={() => { setSessionSearch(''); setSessionModuleFilter('all'); }}
+              resetDisabled={!sessionSearch && sessionModuleFilter === 'all'}
+              summary={`Showing ${filteredSessions.length} of ${activeSessions.length} ${sessionKind === 'live' ? 'live sessions' : 'recorded videos'}`}
+              actions={(
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase text-foreground-400">Show</span>
+                  <select
+                    value={sessionPageSize}
+                    onChange={event => setSessionPageSize(Number(event.target.value))}
+                    aria-label="Rows per page"
+                    className="h-10 cursor-pointer rounded-lg border border-background-200 bg-background-50 px-2 text-[12px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                  >
                     {[25, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
                   </select>
                 </div>
-              </div>
-              <p className="mt-3 text-[11px] text-foreground-400">{filteredSessions.length} of {activeSessions.length} {sessionKind === 'live' ? 'live sessions' : 'recorded videos'}</p>
-            </div>
+              )}
+            />
 
             {activeSessions.length === 0 ? (
               <EmptyPanel
@@ -2717,7 +3307,7 @@ export default function ProgrammeDetailPage() {
 
                       <div className="min-w-0">
                         <p className="truncate text-[11px] font-bold text-foreground-800">{session.module}</p>
-                        <p className="mt-1 text-[10px] font-semibold text-foreground-400">Week {session.week} Â· {session.weekTitle || `Week ${session.week}`}</p>
+                        <p className="mt-1 text-[10px] font-semibold text-foreground-400">Week {session.week} · {session.weekTitle || `Week ${session.week}`}</p>
                         <p className="mt-1 truncate text-[10px] text-foreground-500">
                           <AppIcon className="ri-group-line mr-1 text-primary-500"></AppIcon>
                           {session.groups.length ? session.groups.join(', ') : 'All assigned groups'}
@@ -2779,9 +3369,9 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
-        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+        {/* ═══════════════════════════════════════════════════════════════════════
             TAB: KSB Heatmap
-        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
+        ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'ksb' && (
           <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -2828,22 +3418,18 @@ export default function ProgrammeDetailPage() {
               </div>
             ) : (
               <>
-            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-5">
+            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
               <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase text-emerald-700">Fully covered</p>
-                <p className="mt-1 text-lg font-heading font-bold text-emerald-900">{fullyCoveredKsbCount}</p>
-              </div>
-              <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase text-sky-700">Partial KSBs</p>
-                <p className="mt-1 text-lg font-heading font-bold text-sky-900">{partialKsbCount}</p>
-              </div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase text-slate-700">No weight</p>
-                <p className="mt-1 text-lg font-heading font-bold text-slate-900">{mappedNoWeightKsbCount}</p>
+                <p className="text-[10px] font-bold uppercase text-emerald-700">Mapped KSBs</p>
+                <p className="mt-1 text-lg font-heading font-bold text-emerald-900">{mappedKsbCount}</p>
               </div>
               <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase text-amber-700">Missing KSBs</p>
+                <p className="text-[10px] font-bold uppercase text-amber-700">Not mapped</p>
                 <p className="mt-1 text-lg font-heading font-bold text-amber-900">{missingKsbCount}</p>
+              </div>
+              <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3">
+                <p className="text-[10px] font-bold uppercase text-sky-700">Total weight</p>
+                <p className="mt-1 text-lg font-heading font-bold text-sky-900">{formatHours(totalKsbWeight)}%</p>
               </div>
               <div className="rounded-xl border border-primary-100 bg-primary-50 px-4 py-3">
                 <p className="text-[10px] font-bold uppercase text-primary-700">Total occurrences</p>
@@ -2871,16 +3457,16 @@ export default function ProgrammeDetailPage() {
                       <th key={mn} className="text-center py-2 px-3 font-semibold text-foreground-400">{mn}</th>
                     ))}
                     <th className="text-center py-2 px-3 font-semibold text-foreground-400">Times</th>
-                    <th className="text-center py-2 px-3 font-semibold text-foreground-400">Status</th>
+                    <th className="text-center py-2 px-3 font-semibold text-foreground-400">Weight</th>
                     <th className="text-left py-2 px-3 font-semibold text-foreground-400">Evidence</th>
                     <th className="text-left py-2 px-3 font-semibold text-foreground-400">Title</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-background-200/30">
                   {filteredKsbHeatmap.map((row, i) => {
-                    const state = ksbCoverageState(row);
+                    const rowWeight = ksbRowWeight(row);
                     return (
-                    <tr key={ksbRowId(row) || i} className={`transition-smooth ${state === 'missing' ? 'bg-amber-50/30 hover:bg-amber-50/50' : 'hover:bg-background-100/30'}`}>
+                    <tr key={ksbRowId(row) || i} className={`transition-smooth ${ksbRowIsMapped(row) ? 'hover:bg-background-100/30' : 'bg-amber-50/30 hover:bg-amber-50/50'}`}>
                       <td className="py-2.5 px-3 font-semibold text-foreground-700">
                         <KsbBadge code={row.ksb} />
                       </td>
@@ -2895,15 +3481,13 @@ export default function ProgrammeDetailPage() {
                                 <span className="mt-0.5 text-[9px] font-semibold leading-none">x{count || 1}</span>
                               </span>
                             ) : (
-                              <span className="text-foreground-300">â€”</span>
+                              <span className="text-foreground-300">—</span>
                             )}
                           </td>
                         );
                       })}
                       <td className="py-2.5 px-3 text-center text-[11px] font-bold text-foreground-700">{row.totalOccurrences || 0}</td>
-                      <td className="py-2.5 px-3 text-center">
-                        <CoverageStateBadge state={state} />
-                      </td>
+                      <td className="py-2.5 px-3 text-center text-[11px] font-bold text-foreground-700">{formatHours(rowWeight)}%</td>
                       <td className="py-2.5 px-3">
                         <KsbEvidenceList evidence={row.evidence || {}} />
                       </td>
@@ -2919,9 +3503,9 @@ export default function ProgrammeDetailPage() {
           </div>
         )}
 
-        {/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
+        {/* ═══════════════════════════════════════════════════════════════════════
             TAB: Staffing
-        Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */}
+        ═══════════════════════════════════════════════════════════════════════ */}
         {tab === 'review' && (
           <div className="space-y-4">
             <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
@@ -2942,7 +3526,7 @@ export default function ProgrammeDetailPage() {
                     <span className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">KSB source: {coverageKsbSourceLabel || 'No source applied'}</span>
                   </div>
                   <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <ReviewMetric icon="ri-group-line" label="Cohorts" value={PROGRAMME.cohorts.length} tone="purple" />
+                    <ReviewMetric icon="ri-group-line" label="Cohorts" value={liveCohortCount} tone="purple" />
                     <ReviewMetric icon="ri-team-line" label="Groups" value={totalGroups} tone="blue" />
                     <ReviewMetric icon="ri-stack-line" label="Modules" value={PROGRAMME.modules.length} tone="slate" />
                     <ReviewMetric icon="ri-time-line" label="OTJH" value={`${formatHours(totalOtjh)}h`} tone="emerald" />
@@ -2994,7 +3578,7 @@ export default function ProgrammeDetailPage() {
                         </span>
                         {cohortItem.holidays?.length ? cohortItem.holidays.map(holiday => (
                           <span key={String(holiday.id)} className="rounded-full border border-amber-200 bg-background-50 px-2.5 py-1 text-[10px] font-bold text-amber-800">
-                            {holiday.label || 'Holiday'}{holiday.startDate ? ` Â· ${formatDateLabel(holiday.startDate)}` : ''}
+                            {holiday.label || 'Holiday'}{holiday.startDate ? ` · ${formatDateLabel(holiday.startDate)}` : ''}
                           </span>
                         )) : (
                           <span className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500">No holidays applied</span>
@@ -3156,8 +3740,18 @@ onSaved={async () => {
         {ksbTraceOpen && (
           <KsbTraceModal
             programme={PROGRAMME}
+            programmeId={coverageProgrammeIds[0] || PROGRAMME.sourceId || PROGRAMME.id}
             initialTab={ksbTraceInitialTab}
             onClose={() => setKsbTraceOpen(false)}
+          />
+        )}
+
+        {ksbInspector && (
+          <KsbInspectorModal
+            codes={ksbInspector.codes}
+            componentTitle={ksbInspector.componentTitle}
+            rows={PROGRAMME.ksbHeatmap}
+            onClose={() => setKsbInspector(null)}
           />
         )}
       </div>
@@ -3165,9 +3759,121 @@ onSaved={async () => {
   );
 }
 
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// ============================================================
 // Helper Components
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+// ============================================================
+
+// Answers "what is this KSB and where else is it taught?" for the codes on one
+// component. Definitions and placements both come from the programme's KSB
+// heatmap, which is already loaded for the coverage tab, so opening this costs
+// no extra request.
+function KsbInspectorModal({
+  codes,
+  componentTitle,
+  rows,
+  onClose,
+}: {
+  codes: string[];
+  componentTitle: string;
+  rows: KsbHeatmapRow[];
+  onClose: () => void;
+}) {
+  const entries = useMemo(() => {
+    const wanted = [...new Set(codes.map(code => clean(code)).filter(Boolean))].sort(sortKsbCodes);
+    return wanted.map(code => {
+      // The same code can appear on more than one heatmap row when a mapping was
+      // made against a different KSB source than the programme profile. Those
+      // extra rows carry no definition text, so prefer a row that actually has
+      // one and only fall back to the first match for weights and placements.
+      const matches = rows.filter(item => normalise(formatKsbCode(item.ksb)) === normalise(formatKsbCode(code)));
+      const row = matches.find(item => clean(item.description)) || matches[0];
+      // Placements are grouped per module in `evidence`; flatten them so the
+      // popup can list every place this KSB is taught, not only this component.
+      const placements = row?.evidence
+        ? Object.values(row.evidence).flat().filter(Boolean)
+        : [];
+      return { code, row, placements };
+    });
+  }, [codes, rows]);
+
+  return (
+    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 border-b border-background-200 px-5 py-4">
+          <div className="min-w-0">
+            <h3 className="truncate text-base font-heading font-bold text-foreground-950">
+              {entries.length === 1 ? formatKsbCode(entries[0].code) : `${entries.length} KSBs`}
+            </h3>
+            <p className="mt-0.5 truncate text-[12px] font-semibold text-foreground-500">Mapped on {componentTitle}</p>
+          </div>
+          <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-600 transition-smooth hover:bg-background-200">
+            <AppIcon className="ri-close-line"></AppIcon>
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
+          {entries.map(({ code, row, placements }) => (
+            <section key={code} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <KsbBadge code={code} />
+                {row && !ksbRowIsMapped(row) && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">Not mapped</span>
+                )}
+                {typeof row?.totalWeight === 'number' && row.totalWeight > 0 && (
+                  <span className="rounded-full bg-background-200/70 px-2 py-0.5 text-[10px] font-bold text-foreground-600">
+                    {row.totalWeight}% total weight
+                  </span>
+                )}
+              </div>
+
+              {/* title and description usually carry the same sentence, so only
+                  print the title when it genuinely differs from the description. */}
+              {row?.title && normalise(row.title) !== normalise(row.description || '') && (
+                <p className="mt-2 text-[12px] font-semibold text-foreground-900">{row.title}</p>
+              )}
+              {row?.description && <p className="mt-2 text-[11px] leading-5 text-foreground-700">{row.description}</p>}
+              {row && !row.description && !row.title && (
+                <p className="mt-2 text-[11px] text-foreground-500">No description recorded for this KSB.</p>
+              )}
+              {!row && (
+                <p className="mt-1 text-[11px] text-foreground-500">
+                  This code is mapped on the component but is not part of the programme's KSB profile, so no definition is available.
+                </p>
+              )}
+
+              <p className="mt-3 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
+                Taught in {placements.length} {placements.length === 1 ? 'place' : 'places'}
+              </p>
+              {placements.length ? (
+                <div className="mt-1.5 space-y-1.5">
+                  {placements.map((placement, index) => (
+                    <div key={`${code}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-[11px] font-semibold text-foreground-900">
+                          {placement.component || placement.week || placement.module || 'Module-level mapping'}
+                        </p>
+                        <p className="truncate text-[10px] text-foreground-500">
+                          {[placement.module, placement.week].filter(Boolean).join(' - ') || placement.scope}
+                        </p>
+                      </div>
+                      {placement.weight > 0 && (
+                        <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{placement.weight}%</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-1.5 rounded-lg border border-dashed border-background-300 px-3 py-2 text-[11px] text-foreground-500">
+                  No placement detail was returned for this KSB.
+                </p>
+              )}
+            </section>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function StatPill({ icon, value, label }: { icon: string; value: number | string; label: string }) {
   return (
@@ -3240,7 +3946,7 @@ function ReviewInfo({ icon, label, value }: { icon: string; label: string; value
         <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <span className="text-[9px] font-black uppercase tracking-wide text-foreground-400">{label}</span>
-      <span className="min-w-0 truncate text-[11px] font-black text-foreground-900">{value || 'Not set'}</span>
+      <span className={`min-w-0 truncate text-[11px] font-black ${isStaffAssigned(value) ? 'text-foreground-900' : 'text-amber-700'}`}>{value || 'Not set'}</span>
     </div>
   );
 }
@@ -3344,7 +4050,7 @@ function TeamsResultsDetails({ liveSessionId, data }: { liveSessionId: string; d
       const parsed = new Date(value);
       return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     };
-    return [firstJoin ? `Joined ${time(firstJoin)}` : '', lastLeave ? `Left ${time(lastLeave)}` : ''].filter(Boolean).join(' Â· ');
+    return [firstJoin ? `Joined ${time(firstJoin)}` : '', lastLeave ? `Left ${time(lastLeave)}` : ''].filter(Boolean).join(' · ');
   };
 
   return (
@@ -3352,7 +4058,7 @@ function TeamsResultsDetails({ liveSessionId, data }: { liveSessionId: string; d
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-[10px] font-black uppercase tracking-wide text-primary-700">Verified Teams attendance</p>
-          <p className="mt-0.5 text-[9px] font-semibold text-foreground-500">Only people recorded in Microsoft Teams attendance reports are shownâ€”not the invitation list.</p>
+          <p className="mt-0.5 text-[9px] font-semibold text-foreground-500">Only people recorded in Microsoft Teams attendance reports are shown—not the invitation list.</p>
         </div>
         <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-foreground-600">
           {completed.length} session{completed.length === 1 ? '' : 's'} with results
@@ -3487,14 +4193,16 @@ function ModuleCardMetric({ icon, label, value, tone = 'purple' }: { icon: strin
   );
 }
 
-function ModuleDetailLine({ icon, label, value }: { icon: string; label: string; value: number | string }) {
+function ModuleDetailLine({ icon, label, value, warnWhenUnassigned = false }: { icon: string; label: string; value: number | string; warnWhenUnassigned?: boolean }) {
+  const isGap = warnWhenUnassigned && !isStaffAssigned(String(value));
   return (
     <div className="grid min-w-0 grid-cols-[24px_112px_minmax(0,1fr)] items-center gap-2 rounded-lg bg-background-50 px-2 py-1.5 text-[11px]">
       <span className="grid h-6 w-6 place-items-center rounded-md bg-background-100 text-primary-600">
         <AppIcon className={`${icon} text-xs`}></AppIcon>
       </span>
       <span className="font-black uppercase tracking-wide text-foreground-400">{label}</span>
-      <span className="w-fit max-w-full min-w-0 truncate rounded-md border border-background-200 bg-white px-2 py-1 text-left font-black text-foreground-950 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.65)]">{value}</span>
+      {/* An unassigned slot is a gap to fill, so it is toned differently from real data. */}
+      <span className={`w-fit max-w-full min-w-0 truncate rounded-md border px-2 py-1 text-left font-black shadow-[inset_0_0_0_1px_rgba(255,255,255,0.65)] ${isGap ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-background-200 bg-white text-foreground-950'}`}>{value}</span>
     </div>
   );
 }
@@ -3854,7 +4562,6 @@ function backendCoverageToProgrammeHeatmap(
       evidence,
       totalOccurrences,
       totalWeight,
-      status: row.status,
       sourceType,
       sourceId,
       sourceName,
@@ -3904,16 +4611,16 @@ function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; module
           {moduleNames.map(moduleName => (
             <span key={moduleName} className="text-center text-[10px] font-bold uppercase text-foreground-400">{moduleName}</span>
           ))}
-          <span className="text-center text-[10px] font-bold uppercase text-foreground-400">Status</span>
+          <span className="text-center text-[10px] font-bold uppercase text-foreground-400">Weight</span>
           <span className="text-[10px] font-bold uppercase text-foreground-400">Evidence trail</span>
         </div>
         <div className="divide-y divide-background-200">
           {rows.map(row => {
             const kind = ksbKind(row.ksb);
-            const state = ksbCoverageState(row);
+            const rowWeight = ksbRowWeight(row);
             const rowId = ksbRowId(row);
             return (
-              <div key={rowId} className={`grid items-stretch gap-3 px-4 py-3 transition-smooth ${state === 'missing' ? 'bg-amber-50/30 hover:bg-amber-50/60' : 'hover:bg-background-100/60'}`} style={{ gridTemplateColumns }}>
+              <div key={rowId} className={`grid items-stretch gap-3 px-4 py-3 transition-smooth ${ksbRowIsMapped(row) ? 'hover:bg-background-100/60' : 'bg-amber-50/30 hover:bg-amber-50/60'}`} style={{ gridTemplateColumns }}>
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
                     <KsbBadge code={row.ksb} />
@@ -3931,7 +4638,7 @@ function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; module
                   />
                 ))}
                 <div className="flex flex-col items-center justify-center gap-1">
-                  <CoverageStateBadge state={state} size="md" />
+                  <KsbWeightTotal weight={rowWeight} />
                   <span className="text-[10px] font-semibold text-foreground-400">{row.totalOccurrences || 0} time{Number(row.totalOccurrences || 0) === 1 ? '' : 's'}</span>
                 </div>
                 <KsbEvidenceList evidence={row.evidence || {}} />
@@ -4023,21 +4730,99 @@ function KsbEvidenceList({ evidence }: { evidence: Record<string, KsbEvidenceIte
 }
 
 type KsbTraceTab = 'map' | 'coverage' | 'trace';
-type KsbCoverageState = 'fully_covered' | 'partial' | 'over_allocated' | 'mapped' | 'missing';
+// Coverage is reported by weight, so the only filter left is whether a KSB is
+// placed in the curriculum at all.
+type KsbMappedFilter = 'all' | 'mapped' | 'unmapped';
 type KsbTraceEvidence = KsbEvidenceItem & { moduleLabel: string; groups: string[] };
+
+// Learner-side achievement for one KSB, aggregated across the programme's
+// assigned learners. This is a different question from the curriculum mapping
+// above: mapping says "the design places this KSB in these components", whereas
+// this says "this many learners have actually evidenced it".
+type KsbLearnerAchievement = {
+  learnersAchieved: number;
+  occurrences: number;
+  achievedWeight: number;
+};
+
+// Build a per-KSB learner rollup from the learner-ksb-impact payload. Achieved
+// weight comes from `consumptionSources.progress` only — a reflection's KSB
+// declaration is supplementary evidence about the same activity, so counting it
+// here would double-count one piece of work (see ksbAchievementPolicy).
+function buildKsbLearnerAchievement(impact: CurriculumProgrammeLearnerKsbImpactResponse | null) {
+  const byCode = new Map<string, KsbLearnerAchievement>();
+  if (!impact) return byCode;
+  const learnersByCode = new Map<string, Set<string>>();
+
+  (impact.consumptionSources?.progress || []).forEach(source => {
+    const meta = source as Record<string, unknown>;
+    const code = normalise(meta.code);
+    if (!code) return;
+    const learnerKey = String(meta.learnerId ?? '').trim();
+    const weight = Number(meta.weight || 0);
+    const row = byCode.get(code) || { learnersAchieved: 0, occurrences: 0, achievedWeight: 0 };
+    row.occurrences += 1;
+    row.achievedWeight += Number.isFinite(weight) ? weight : 0;
+    byCode.set(code, row);
+    if (learnerKey) {
+      const seen = learnersByCode.get(code) || new Set<string>();
+      seen.add(learnerKey);
+      learnersByCode.set(code, seen);
+    }
+  });
+
+  learnersByCode.forEach((learners, code) => {
+    const row = byCode.get(code);
+    if (row) row.learnersAchieved = learners.size;
+  });
+  return byCode;
+}
+
+function ksbLearnerAchievementFor(row: KsbHeatmapRow, achievement: Map<string, KsbLearnerAchievement>) {
+  return achievement.get(normalise(row.ksb)) || null;
+}
+
 
 function ksbRowId(row: Pick<KsbHeatmapRow, 'id' | 'ksb' | 'sourceType' | 'sourceId'>) {
   return clean(row.id) || [row.sourceType, row.sourceId, row.ksb].map(normalise).join('|') || row.ksb;
 }
 
-function KsbTraceModal({ programme, onClose }: { programme: Programme; initialTab: KsbTraceTab; onClose: () => void }) {
+function KsbTraceModal({ programme, programmeId, onClose }: { programme: Programme; programmeId: string; initialTab: KsbTraceTab; onClose: () => void }) {
   const [search, setSearch] = useState('');
+  // Learner achievement is a separate read from the curriculum mapping: the
+  // coverage payload has no learner join at all.
+  const [learnerImpact, setLearnerImpact] = useState<CurriculumProgrammeLearnerKsbImpactResponse | null>(null);
+  const [learnerImpactLoading, setLearnerImpactLoading] = useState(false);
+  const [learnerImpactError, setLearnerImpactError] = useState<string | null>(null);
   const [kindFilter, setKindFilter] = useState<'all' | KsbKind>('all');
-  const [statusFilter, setStatusFilter] = useState<'all' | KsbCoverageState>('all');
+  const [statusFilter, setStatusFilter] = useState<KsbMappedFilter>('all');
   const [moduleFilter, setModuleFilter] = useState('all');
   const [weekFilter, setWeekFilter] = useState('all');
   const [componentFilter, setComponentFilter] = useState('all');
   const [groupFilter, setGroupFilter] = useState('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
+
+  useEffect(() => {
+    const identifier = clean(programmeId);
+    if (!identifier) return;
+    let cancelled = false;
+    setLearnerImpactLoading(true);
+    setLearnerImpactError(null);
+    fetchCurriculumProgrammeLearnerKsbImpact(identifier, { learnerStatus: 'all' })
+      .then(response => { if (!cancelled) setLearnerImpact(response); })
+      .catch(fetchError => {
+        if (!cancelled) setLearnerImpactError(fetchError instanceof Error ? fetchError.message : 'Unable to load learner KSB achievement.');
+      })
+      .finally(() => { if (!cancelled) setLearnerImpactLoading(false); });
+    return () => { cancelled = true; };
+  }, [programmeId]);
+
+  const learnerAchievement = useMemo(() => buildKsbLearnerAchievement(learnerImpact), [learnerImpact]);
+  const assignedLearnerCount = learnerImpact?.assignedLearnerCount ?? 0;
+  const achievedKsbCount = useMemo(
+    () => programme.ksbHeatmap.filter(row => (ksbLearnerAchievementFor(row, learnerAchievement)?.learnersAchieved || 0) > 0).length,
+    [programme.ksbHeatmap, learnerAchievement],
+  );
 
   const evidenceByCode = useMemo(() => {
     const map = new Map<string, KsbTraceEvidence[]>();
@@ -4054,7 +4839,7 @@ function KsbTraceModal({ programme, onClose }: { programme: Programme; initialTa
     const query = normalise(search);
     return programme.ksbHeatmap.filter(row => {
       const evidence = evidenceByCode.get(ksbRowId(row)) || [];
-      const state = ksbCoverageState(row);
+      const isMapped = ksbRowIsMapped(row);
       const matchesSearch = !query || [
         row.ksb,
         formatKsbCode(row.ksb),
@@ -4063,7 +4848,7 @@ function KsbTraceModal({ programme, onClose }: { programme: Programme; initialTa
         ...evidence.flatMap(item => [item.module, item.week, item.component, item.componentType, ...item.groups]),
       ].some(value => normalise(value).includes(query));
       const matchesKind = kindFilter === 'all' || ksbKind(row.ksb) === kindFilter;
-      const matchesStatus = statusFilter === 'all' || state === statusFilter;
+      const matchesStatus = statusFilter === 'all' || (statusFilter === 'mapped' ? isMapped : !isMapped);
       const matchesModule = moduleFilter === 'all' || evidence.some(item => normalise(item.module) === normalise(moduleFilter)) || Number(row.coverage[moduleFilter] || 0) > 0;
       const matchesWeek = weekFilter === 'all' || evidence.some(item => normalise(item.week) === normalise(weekFilter));
       const matchesComponent = componentFilter === 'all' || evidence.some(item => normalise(item.component) === normalise(componentFilter));
@@ -4073,67 +4858,196 @@ function KsbTraceModal({ programme, onClose }: { programme: Programme; initialTa
   }, [programme.ksbHeatmap, evidenceByCode, search, kindFilter, statusFilter, moduleFilter, weekFilter, componentFilter, groupFilter]);
 
   const summary = ksbTraceSummary(programme.ksbHeatmap);
+  const mappedCount = Math.max(0, summary.total - summary.missing);
+  const mappedPct = summary.total ? Math.round((mappedCount / summary.total) * 100) : 0;
+  const activeFilterCount = [
+    kindFilter !== 'all',
+    statusFilter !== 'all',
+    moduleFilter !== 'all',
+    weekFilter !== 'all',
+    componentFilter !== 'all',
+    groupFilter !== 'all',
+  ].filter(Boolean).length;
+  const resetFilters = () => {
+    setKindFilter('all');
+    setStatusFilter('all');
+    setModuleFilter('all');
+    setWeekFilter('all');
+    setComponentFilter('all');
+    setGroupFilter('all');
+    setSearch('');
+  };
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="flex max-h-[90vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="bg-primary-950 px-5 py-4 text-white">
-          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wide text-white/60">Curriculum KSB Coverage</p>
-              <h3 className="mt-0.5 text-base font-heading font-bold text-white">{programme.name}</h3>
-              <p className="mt-1 text-[12px] font-semibold text-white/70">{programme.standard || 'Selected KSB profile'}</p>
-            </div>
-            <button onClick={onClose} className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-white transition-smooth hover:bg-white/20 lg:self-start">
-              <AppIcon className="ri-close-line"></AppIcon>
-            </button>
+        <div className="flex items-start justify-between gap-3 border-b border-background-200 bg-background-50 px-5 py-4">
+          <div className="min-w-0">
+            <h3 className="truncate text-base font-heading font-bold text-foreground-950">KSB coverage</h3>
+            <p className="mt-0.5 truncate text-[12px] font-semibold text-foreground-500">
+              {programme.name}
+              {programme.standard ? ` · ${programme.standard}` : ''}
+            </p>
           </div>
+          <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-600 transition-smooth hover:bg-background-200">
+            <AppIcon className="ri-close-line"></AppIcon>
+          </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
-          <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <KsbTraceStat label="Profile KSBs" value={summary.total} tone="primary" />
-            <KsbTraceStat label="Fully covered" value={summary.fullyCovered} tone="emerald" />
-            <KsbTraceStat label="Partial" value={summary.partial} tone="primary" />
-            <KsbTraceStat label="Missing" value={summary.missing} tone="amber" />
-            <KsbTraceStat label="No weight" value={summary.mappedNoWeight} tone="slate" />
-          </div>
+          {/* One headline answer instead of nine competing tiles: how much of the
+              profile the curriculum actually places. The breakdown behind it stays
+              available as chips that double as status filters. */}
+          <section className="mb-4 rounded-2xl border border-background-200 bg-background-100/50 p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex items-center gap-4">
+                <CoverageDial percent={mappedPct} />
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-foreground-500">Mapped in the curriculum</p>
+                  <p className="mt-0.5 text-2xl font-heading font-black leading-none text-foreground-950">
+                    {mappedCount}<span className="text-base font-bold text-foreground-400">/{summary.total}</span>
+                  </p>
+                  {/* Scoped to the KSB profile resolved for this programme, which
+                      may be narrower than the full standard. The wording says
+                      "in scope" rather than claiming whole-profile coverage. */}
+                  <p className="mt-1 text-[11px] font-semibold text-foreground-500">
+                    {summary.missing
+                      ? `${summary.missing} KSB${summary.missing === 1 ? '' : 's'} still have nowhere to be taught`
+                      : `Every KSB in scope is placed (${summary.total} in this profile)`}
+                  </p>
+                </div>
+              </div>
 
-          <div className="mb-4 rounded-2xl border border-background-200 bg-background-100/60 p-4">
-            <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1.2fr_repeat(6,minmax(120px,0.6fr))]">
-              <div className="relative">
+              <div className="flex flex-wrap gap-1.5">
+                <CoverageChip label="Mapped" value={summary.mapped} tone="emerald" active={statusFilter === 'mapped'} onClick={() => setStatusFilter(statusFilter === 'mapped' ? 'all' : 'mapped')} />
+                <CoverageChip label="Not mapped" value={summary.missing} tone="amber" active={statusFilter === 'unmapped'} onClick={() => setStatusFilter(statusFilter === 'unmapped' ? 'all' : 'unmapped')} />
+              </div>
+            </div>
+
+            {/* Learner achievement is a different question, so it stays one quiet
+                line here rather than a second wall of tiles competing with the
+                design figures above. */}
+            <div className="mt-4 border-t border-background-200 pt-3">
+              {learnerImpactLoading ? (
+                <p className="text-[11px] font-semibold text-foreground-500">
+                  <AppIcon className="ri-loader-4-line mr-1.5 animate-spin"></AppIcon>
+                  Loading learner achievement...
+                </p>
+              ) : learnerImpactError ? (
+                <p className="text-[11px] font-semibold text-red-700">{learnerImpactError}</p>
+              ) : assignedLearnerCount === 0 ? (
+                <p className="flex items-center gap-1.5 text-[11px] font-semibold text-foreground-500">
+                  <AppIcon className="ri-graduation-cap-line text-foreground-400"></AppIcon>
+                  No learners assigned yet — everything below is curriculum design only.
+                </p>
+              ) : (
+                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-semibold text-foreground-600">
+                  <AppIcon className="ri-graduation-cap-line text-emerald-600"></AppIcon>
+                  <span><span className="font-black text-foreground-900">{assignedLearnerCount}</span> learner{assignedLearnerCount === 1 ? '' : 's'} assigned</span>
+                  <span className="text-foreground-300">·</span>
+                  <span><span className="font-black text-emerald-700">{achievedKsbCount}</span> of {summary.total} KSBs evidenced</span>
+                  <span className="text-foreground-300">·</span>
+                  <span><span className="font-black text-foreground-900">{learnerImpact?.learnerActivityCount ?? 0}</span> recorded activities</span>
+                </p>
+              )}
+            </div>
+          </section>
+
+          {/* Search stays visible; the five structural dropdowns are collapsed
+              behind a toggle because most visits never need them. */}
+          <div className="mb-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-0 flex-1">
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
                 <input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search KSB, module, week, component, group..." className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[12px] text-foreground-900 outline-none focus:border-primary-300" />
               </div>
-              <KsbTraceSelect value={kindFilter} onChange={value => setKindFilter(value as 'all' | KsbKind)} options={['all', 'knowledge', 'skill', 'behaviour']} labels={{ all: 'All types', knowledge: 'Knowledge', skill: 'Skills', behaviour: 'Behaviours' }} />
-              <KsbTraceSelect value={statusFilter} onChange={value => setStatusFilter(value as 'all' | KsbCoverageState)} options={['all', 'fully_covered', 'partial', 'over_allocated', 'mapped', 'missing']} labels={{ all: 'All status', fully_covered: 'Fully covered', partial: 'Partial', over_allocated: 'Over allocated', mapped: 'No weight', missing: 'Missing' }} />
-              <KsbTraceSelect value={moduleFilter} onChange={setModuleFilter} options={['all', ...moduleOptions]} labels={{ all: 'All modules' }} />
-              <KsbTraceSelect value={weekFilter} onChange={setWeekFilter} options={['all', ...weekOptions]} labels={{ all: 'All weeks' }} />
-              <KsbTraceSelect value={componentFilter} onChange={setComponentFilter} options={['all', ...componentOptions]} labels={{ all: 'All components' }} />
-              <KsbTraceSelect value={groupFilter} onChange={setGroupFilter} options={['all', ...groupOptions]} labels={{ all: 'All groups' }} />
+              <div className="flex items-center gap-1 rounded-lg border border-background-200 bg-background-50 p-0.5">
+                {(['all', 'knowledge', 'skill', 'behaviour'] as const).map(kind => (
+                  <button
+                    key={kind}
+                    type="button"
+                    onClick={() => setKindFilter(kind)}
+                    className={`rounded-md px-2.5 py-1.5 text-[11px] font-bold transition-smooth ${kindFilter === kind ? 'bg-primary-100 text-primary-700' : 'text-foreground-500 hover:bg-background-100'}`}
+                  >
+                    {kind === 'all' ? 'All' : ksbKindLabel(kind)}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={() => setFiltersOpen(open => !open)}
+                className={`flex h-10 items-center gap-1.5 rounded-lg border px-3 text-[11px] font-bold transition-smooth ${activeFilterCount ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'}`}
+              >
+                <AppIcon className="ri-equalizer-line"></AppIcon>
+                Filters
+                {activeFilterCount > 0 && <span className="rounded-full bg-primary-600 px-1.5 text-[9px] font-black text-white">{activeFilterCount}</span>}
+              </button>
+              {(activeFilterCount > 0 || search) && (
+                <button type="button" onClick={resetFilters} className="h-10 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-500 transition-smooth hover:bg-background-100">
+                  Reset
+                </button>
+              )}
             </div>
-            <p className="mt-3 text-[11px] font-semibold text-foreground-400">{filteredRows.length} of {programme.ksbHeatmap.length} KSBs shown</p>
+
+            {filtersOpen && (
+              <div className="mt-2 grid grid-cols-1 gap-2 rounded-xl border border-background-200 bg-background-100/60 p-3 sm:grid-cols-2 lg:grid-cols-5">
+                <KsbTraceSelect value={statusFilter} onChange={value => setStatusFilter(value as KsbMappedFilter)} options={['all', 'mapped', 'unmapped']} labels={{ all: 'All KSBs', mapped: 'Mapped', unmapped: 'Not mapped' }} />
+                <KsbTraceSelect value={moduleFilter} onChange={setModuleFilter} options={['all', ...moduleOptions]} labels={{ all: 'All modules' }} />
+                <KsbTraceSelect value={weekFilter} onChange={setWeekFilter} options={['all', ...weekOptions]} labels={{ all: 'All weeks' }} />
+                <KsbTraceSelect value={componentFilter} onChange={setComponentFilter} options={['all', ...componentOptions]} labels={{ all: 'All components' }} />
+                <KsbTraceSelect value={groupFilter} onChange={setGroupFilter} options={['all', ...groupOptions]} labels={{ all: 'All groups' }} />
+              </div>
+            )}
+
+            <p className="mt-2 text-[11px] font-semibold text-foreground-400">
+              Showing {filteredRows.length} of {programme.ksbHeatmap.length} KSBs
+            </p>
           </div>
 
-          <KsbCoverageSummaryView rows={filteredRows} evidenceByCode={evidenceByCode} />
+          <KsbCoverageSummaryView rows={filteredRows} evidenceByCode={evidenceByCode} learnerAchievement={learnerAchievement} hasLearners={assignedLearnerCount > 0} />
         </div>
       </div>
     </div>
   );
 }
 
-function KsbTraceStat({ label, value, tone }: { label: string; value: number | string; tone: 'primary' | 'emerald' | 'amber' | 'slate' }) {
+// A compact ring: the coverage number is the one thing worth seeing instantly.
+function CoverageDial({ percent }: { percent: number }) {
+  const safe = Math.max(0, Math.min(100, percent));
+  const tone = safe >= 80 ? 'var(--color-emerald-500, #10b981)' : safe >= 40 ? 'var(--color-primary-500, #6941c6)' : 'var(--color-amber-500, #f59e0b)';
+  return (
+    <div
+      className="relative flex h-16 w-16 shrink-0 items-center justify-center rounded-full"
+      style={{ background: `conic-gradient(${tone} ${safe * 3.6}deg, var(--color-background-200, #e5e5e5) 0deg)` }}
+      role="img"
+      aria-label={`${safe}% of KSBs mapped`}
+    >
+      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-background-50">
+        <span className="text-[13px] font-heading font-black text-foreground-950">{safe}%</span>
+      </div>
+    </div>
+  );
+}
+
+// The breakdown doubles as a filter, so reading a number and acting on it are
+// the same gesture rather than two separate controls.
+function CoverageChip({ label, value, tone, active, onClick }: { label: string; value: number; tone: 'emerald' | 'primary' | 'amber' | 'slate'; active: boolean; onClick: () => void }) {
   const tones = {
-    primary: 'border-primary-100 bg-primary-50 text-primary-900',
-    emerald: 'border-emerald-100 bg-emerald-50 text-emerald-900',
-    amber: 'border-amber-100 bg-amber-50 text-amber-900',
-    slate: 'border-background-200 bg-background-100 text-foreground-900',
+    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    primary: 'border-primary-200 bg-primary-50 text-primary-800',
+    amber: 'border-amber-200 bg-amber-50 text-amber-800',
+    slate: 'border-background-300 bg-background-100 text-foreground-700',
   };
   return (
-    <div className={`rounded-xl border px-4 py-3 ${tones[tone]}`}>
-      <p className="text-[10px] font-bold uppercase opacity-70">{label}</p>
-      <p className="mt-1 text-xl font-heading font-black">{value}</p>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded-xl border px-3 py-2 text-left transition-smooth hover:brightness-95 ${tones[tone]} ${active ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
+    >
+      <span className="block text-lg font-heading font-black leading-none">{value}</span>
+      <span className="mt-1 block text-[9px] font-bold uppercase tracking-wide opacity-75">{label}</span>
+    </button>
   );
 }
 
@@ -4145,7 +5059,7 @@ function KsbTraceSelect({ value, onChange, options, labels = {} }: { value: stri
   );
 }
 
-function KsbCoverageSummaryView({ rows, evidenceByCode }: { rows: KsbHeatmapRow[]; evidenceByCode: Map<string, KsbTraceEvidence[]> }) {
+function KsbCoverageSummaryView({ rows, evidenceByCode, learnerAchievement, hasLearners }: { rows: KsbHeatmapRow[]; evidenceByCode: Map<string, KsbTraceEvidence[]>; learnerAchievement: Map<string, KsbLearnerAchievement>; hasLearners: boolean }) {
   if (!rows.length) return <EmptyPanel title="No KSB coverage" message="No KSBs match the current filters." />;
   return (
     <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
@@ -4155,31 +5069,45 @@ function KsbCoverageSummaryView({ rows, evidenceByCode }: { rows: KsbHeatmapRow[
           <section key={kind} className="rounded-2xl border border-background-200 bg-background-50 p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h4 className="text-[12px] font-heading font-bold text-foreground-900">{ksbKindLabel(kind)} Points</h4>
-              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{kindRows.filter(row => ksbCoverageState(row) !== 'missing').length}/{kindRows.length} addressed</span>
+              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500" title="KSBs mapped somewhere in the curriculum design">{kindRows.filter(ksbRowIsMapped).length}/{kindRows.length} mapped</span>
             </div>
             <div className="space-y-2">
               {kindRows.map(row => {
                 const rowId = ksbRowId(row);
                 const evidence = evidenceByCode.get(rowId) || [];
-                const state = ksbCoverageState(row);
+                const rowWeight = ksbRowWeight(row);
+                const rowMapped = ksbRowIsMapped(row);
                 const description = ksbDescriptionText(row);
+                const learnerRow = ksbLearnerAchievementFor(row, learnerAchievement);
                 return (
-                  <article key={rowId} className={`w-full rounded-xl border p-3 text-left ${state === 'missing' ? 'border-red-100 bg-red-50/35' : state === 'mapped' ? 'border-slate-200 bg-slate-50/60' : 'border-emerald-100 bg-emerald-50/35'}`}>
+                  <article key={rowId} className={`w-full rounded-xl border p-3 text-left ${rowMapped ? 'border-emerald-100 bg-emerald-50/35' : 'border-amber-100 bg-amber-50/35'}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <KsbBadge code={row.ksb} />
-                          <CoverageStateBadge state={state} />
+                          <KsbWeightTotal weight={rowWeight} mapped={rowMapped} />
                           {ksbSourceLabel(row) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{ksbSourceLabel(row)}</span>}
                         </div>
                         <p className="mt-2 line-clamp-4 text-[11px] leading-relaxed text-foreground-700">{description}</p>
                       </div>
-                      <span className="rounded-lg bg-background-50 px-2 py-1 text-center text-[10px] font-bold text-foreground-600">
-                        <span className="block text-[9px] uppercase text-foreground-400">Times</span>
-                        {evidence.length}
-                      </span>
+                      {/* Two separate facts, never merged into one number: how
+                          many places the design maps this KSB, and how many
+                          learners have evidenced it. */}
+                      <div className="flex shrink-0 flex-col gap-1">
+                        <span className="rounded-lg border border-background-200 bg-background-50 px-2 py-1 text-center text-[10px] font-bold text-foreground-700" title="Times this KSB is mapped across modules, weeks and components">
+                          <span className="block text-[9px] font-black uppercase leading-tight text-foreground-400">Mapped</span>
+                          {evidence.length}&times;
+                        </span>
+                        <span
+                          className={`rounded-lg border px-2 py-1 text-center text-[10px] font-bold ${learnerRow && learnerRow.learnersAchieved > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-background-200 bg-background-100 text-foreground-400'}`}
+                          title={hasLearners ? 'Learners who have evidenced this KSB through completed activity' : 'No learners are assigned to this programme yet'}
+                        >
+                          <span className="block text-[9px] font-black uppercase leading-tight opacity-70">Learners</span>
+                          {hasLearners ? (learnerRow?.learnersAchieved || 0) : '\u2014'}
+                        </span>
+                      </div>
                     </div>
-                    <KsbTraceMiniMeta evidence={evidence} />
+                    <KsbTraceMiniMeta evidence={evidence} learnerRow={learnerRow} hasLearners={hasLearners} />
                   </article>
                 );
               })}
@@ -4208,7 +5136,7 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
                 <span className="block truncate text-[11px] font-bold">{formatKsbCode(row.ksb)}</span>
                 {ksbSourceLabel(row) && <span className="block truncate text-[9px] font-semibold text-foreground-400">{ksbSourceLabel(row)}</span>}
               </span>
-              <CoverageStateBadge state={ksbCoverageState(row)} />
+              <KsbWeightTotal weight={ksbRowWeight(row)} mapped={ksbRowIsMapped(row)} />
             </button>
             );
           })}
@@ -4219,7 +5147,7 @@ function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { row
         <div className="mb-4">
           <div className="flex flex-wrap items-center gap-2">
             <KsbBadge code={selectedRow.ksb} />
-            <CoverageStateBadge state={ksbCoverageState(selectedRow)} />
+            <KsbWeightTotal weight={ksbRowWeight(selectedRow)} mapped={ksbRowIsMapped(selectedRow)} />
             <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{evidence.length} occurrence{evidence.length === 1 ? '' : 's'}</span>
             {ksbSourceLabel(selectedRow) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{ksbSourceLabel(selectedRow)}</span>}
           </div>
@@ -4274,35 +5202,49 @@ function ksbDescriptionText(row: KsbHeatmapRow) {
   return 'No KSB description supplied.';
 }
 
-function KsbTraceMiniMeta({ evidence }: { evidence: KsbTraceEvidence[] }) {
-  if (!evidence.length) return <p className="mt-2 text-[10px] font-semibold text-foreground-400">No mapped modules, weeks, components, or groups.</p>;
+function KsbTraceMiniMeta({ evidence, learnerRow, hasLearners }: { evidence: KsbTraceEvidence[]; learnerRow: KsbLearnerAchievement | null; hasLearners: boolean }) {
+  // Learner achievement is reported on its own line so it is never read as part
+  // of the curriculum placement list above it.
+  const learnerLine = !hasLearners
+    ? 'No learners assigned yet'
+    : learnerRow && learnerRow.learnersAchieved > 0
+      ? `${learnerRow.learnersAchieved} ${learnerRow.learnersAchieved === 1 ? 'learner has' : 'learners have'} evidenced this (${learnerRow.occurrences} ${learnerRow.occurrences === 1 ? 'activity' : 'activities'})`
+      : 'Not yet evidenced by any learner';
+
   return (
-    <div className="mt-3 space-y-1 text-[10px] font-semibold text-foreground-500">
-      <p>Modules: {uniqueCleanValues(evidence.map(item => item.module)).slice(0, 3).join(', ') || 'None'}</p>
-      <p>Weeks: {uniqueCleanValues(evidence.map(item => item.week)).slice(0, 3).join(', ') || 'None'}</p>
-      <p>Components: {uniqueCleanValues(evidence.map(item => item.component)).slice(0, 3).join(', ') || 'None'}</p>
-      <p>Groups: {uniqueCleanValues(evidence.flatMap(item => item.groups)).slice(0, 3).join(', ') || 'None'}</p>
+    <div className="mt-3 space-y-2">
+      {evidence.length === 0 ? (
+        <p className="text-[10px] font-semibold text-foreground-400">Not mapped to any module, week or component in the curriculum design.</p>
+      ) : (
+        <div className="space-y-1 text-[10px] font-semibold text-foreground-500">
+          <p className="text-[9px] font-black uppercase tracking-wide text-foreground-400">Mapped in design</p>
+          <p>Modules: {uniqueCleanValues(evidence.map(item => item.module)).slice(0, 3).join(', ') || 'None'}</p>
+          <p>Weeks: {uniqueCleanValues(evidence.map(item => item.week)).slice(0, 3).join(', ') || 'None'}</p>
+          <p>Components: {uniqueCleanValues(evidence.map(item => item.component)).slice(0, 3).join(', ') || 'None'}</p>
+          <p>Groups: {uniqueCleanValues(evidence.flatMap(item => item.groups)).slice(0, 3).join(', ') || 'None'}</p>
+        </div>
+      )}
+      <p className={`flex items-center gap-1.5 border-t border-background-200/70 pt-2 text-[10px] font-bold ${learnerRow && learnerRow.learnersAchieved > 0 ? 'text-emerald-700' : 'text-foreground-400'}`}>
+        <AppIcon className="ri-graduation-cap-line text-[11px]"></AppIcon>
+        {learnerLine}
+      </p>
     </div>
   );
 }
 
-function CoverageStateBadge({ state, size = 'sm' }: { state: KsbCoverageState; size?: 'sm' | 'md' }) {
+// Reports the weight a KSB carries, with no verdict attached. A KSB with no
+// weight and no placement is called out as unmapped, because that is a fact
+// about the design rather than a judgement about sufficiency.
+function KsbWeightTotal({ weight, mapped = true, size = 'sm' }: { weight: number; mapped?: boolean; size?: 'sm' | 'md' }) {
   const sizeClass = size === 'md' ? 'px-2.5 py-1 text-[10px]' : 'px-2 py-0.5 text-[9px]';
-  const labels: Record<KsbCoverageState, string> = {
-    fully_covered: 'Fully covered',
-    partial: 'Partial',
-    over_allocated: 'Over allocated',
-    mapped: 'No weight',
-    missing: 'Missing',
-  };
-  const classes: Record<KsbCoverageState, string> = {
-    fully_covered: 'bg-emerald-100 text-emerald-700',
-    partial: 'bg-sky-100 text-sky-700',
-    over_allocated: 'bg-violet-100 text-violet-700',
-    mapped: 'bg-slate-100 text-slate-600',
-    missing: 'bg-red-100 text-red-700',
-  };
-  return <span className={`rounded-full font-bold ${sizeClass} ${classes[state]}`}>{labels[state]}</span>;
+  if (!mapped && weight <= 0) {
+    return <span className={`rounded-full font-bold bg-amber-100 text-amber-700 ${sizeClass}`}>Not mapped</span>;
+  }
+  return (
+    <span className={`rounded-full font-bold bg-background-200/70 text-foreground-700 ${sizeClass}`}>
+      {formatHours(weight)}%
+    </span>
+  );
 }
 
 function EmptyPanel({ title, message, compact = false }: { title: string; message: string; compact?: boolean }) {
@@ -4314,35 +5256,36 @@ function EmptyPanel({ title, message, compact = false }: { title: string; messag
   );
 }
 
-function ksbCoverageState(row: KsbHeatmapRow): KsbCoverageState {
-  const occurrences = Number(row.totalOccurrences || 0) || Object.values(row.evidence || {}).reduce((total, entries) => total + entries.length, 0);
-  const backendStatus = clean(row.status).toLowerCase();
-  if (backendStatus === 'fully_covered') return 'fully_covered';
-  if (backendStatus === 'partial') return 'partial';
-  if (backendStatus === 'over_allocated') return 'over_allocated';
-  if (backendStatus === 'missing' && occurrences > 0) return 'mapped';
-  if (backendStatus === 'missing') return 'missing';
-  const totalWeight = Number(row.totalWeight || 0) || Object.values(row.coverage || {}).reduce((total, value) => total + Number(value || 0), 0);
-  if (totalWeight > 100 && occurrences > 0) return 'over_allocated';
-  if (totalWeight >= 100 && occurrences > 0) return 'fully_covered';
-  if (totalWeight > 0 && occurrences > 0) return 'partial';
-  if (occurrences > 0) return 'mapped';
-  return 'missing';
+// Total weight placed on a KSB across the curriculum. This is the only coverage
+// signal: there is no fully/partially-covered grading, because no target weight
+// is defined anywhere for a KSB to be measured against.
+function ksbRowWeight(row: KsbHeatmapRow): number {
+  return Number(row.totalWeight || 0)
+    || Object.values(row.coverage || {}).reduce((total, value) => total + Number(value || 0), 0);
+}
+
+function ksbRowOccurrences(row: KsbHeatmapRow): number {
+  return Number(row.totalOccurrences || 0)
+    || Object.values(row.evidence || {}).reduce((total, entries) => total + entries.length, 0);
+}
+
+// "Mapped" means the KSB is placed on at least one component, whether or not a
+// weight was set on that placement.
+function ksbRowIsMapped(row: KsbHeatmapRow): boolean {
+  return ksbRowWeight(row) > 0 || ksbRowOccurrences(row) > 0;
 }
 
 function ksbTraceSummary(rows: KsbHeatmapRow[]) {
-  const fullyCovered = rows.filter(row => ksbCoverageState(row) === 'fully_covered').length;
-  const partial = rows.filter(row => ['partial', 'over_allocated'].includes(ksbCoverageState(row))).length;
-  const missing = rows.filter(row => ksbCoverageState(row) === 'missing').length;
-  const mappedNoWeight = rows.filter(row => ksbCoverageState(row) === 'mapped').length;
-  const addressed = fullyCovered + partial + mappedNoWeight;
+  const mapped = rows.filter(ksbRowIsMapped).length;
+  const missing = rows.length - mapped;
+  const totalWeight = rows.reduce((total, row) => total + ksbRowWeight(row), 0);
   return {
     total: rows.length,
-    fullyCovered,
-    partial,
+    mapped,
     missing,
-    mappedNoWeight,
-    coveragePercent: rows.length ? Math.round((addressed / rows.length) * 100) : 0,
+    totalWeight,
+    // Share of required KSBs placed somewhere, not a grading of their weights.
+    coveragePercent: rows.length ? Math.round((mapped / rows.length) * 100) : 0,
   };
 }
 

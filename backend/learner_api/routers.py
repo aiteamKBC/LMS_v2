@@ -29,6 +29,8 @@ class EnrolmentRouter:
         return None
 
     def allow_migrate(self, db, app_label, model_name=None, **hints):
+        if app_label in APP_LABELS and hints.get("learner_schema_migration"):
+            return db == "default"
         # These apps' models are unmanaged (managed=False) — never migrate them.
         if app_label in APP_LABELS:
             return False

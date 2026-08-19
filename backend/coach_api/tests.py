@@ -8,6 +8,7 @@ from django.test import RequestFactory, SimpleTestCase, override_settings
 
 from coach_api.models import CoachAbsenceReport
 from coach_api.views import (
+    build_ksb_completed_details,
     build_otjh_completed_entries,
     build_monthly_activity_learner,
     coach_caseload,
@@ -17,6 +18,7 @@ from coach_api.views import (
     coach_timetable_schedule_event,
     collect_generated_timetable,
     completed_ksb_codes,
+    fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
     fetch_source_schedule_rows,
     iterate_generated_schedule_dates,
@@ -60,6 +62,129 @@ class CoachKsbEvidenceTests(SimpleTestCase):
         )
 
         self.assertEqual(completed, {"K3", "B2"})
+
+    def test_failed_component_activity_does_not_count_even_with_valid_lineage(self):
+        """The gate is the completion rule, not the kind.
+
+        A Component recorded as not passed carries a real componentId, real
+        curriculum lineage and a real authored KSB mapping — everything that
+        makes it look legitimate to a report that only special-cases quizzes.
+        """
+        completed = completed_ksb_codes(
+            [
+                {
+                    "kind": "component",
+                    "componentId": "COMP-20260816E2E",
+                    "componentType": "assignment",
+                    "moduleId": "MOD-E2E",
+                    "weekId": "WEEK-E2E",
+                    "passed": False,
+                    "ksbs": ["K1"],
+                },
+                {"kind": "component", "componentId": "COMP-OTHER", "passed": True, "ksbs": ["S2"]},
+            ],
+            [],
+        )
+
+        self.assertEqual(completed, {"S2"})
+
+    def test_an_unresolved_quiz_attempt_does_not_count(self):
+        self.assertEqual(completed_ksb_codes([{"kind": "quiz", "ksbs": ["K1"]}], []), set())
+
+    def test_a_failed_activity_feed_entry_does_not_count(self):
+        """Activity-feed rows carry `passed` too, and were never gated at all."""
+        completed = completed_ksb_codes(
+            [],
+            [{"kind": "component", "componentId": "COMP-X", "passed": False, "ksbs": ["B1"]}],
+        )
+
+        self.assertEqual(completed, set())
+
+    def test_ksb_completed_details_omit_a_failed_component(self):
+        target = [{"code": "K1", "type": "Knowledge", "description": "Knowledge 1"}]
+        failed = {
+            "kind": "component",
+            "componentId": "COMP-20260816E2E",
+            "componentTitle": "E2E activity",
+            "passed": False,
+            "ksbs": ["K1"],
+            "submittedAt": "2026-08-17T09:00:00Z",
+        }
+
+        # As the coach payload actually assembles it: the completed set comes
+        # from completed_ksb_codes, so a failed-only K1 never becomes a row.
+        self.assertEqual(
+            build_ksb_completed_details(target, completed_ksb_codes([failed], []), [failed], [], []),
+            [],
+        )
+        # And even when a code is completed by other evidence, the failed
+        # attempt is not offered as the evidence for it.
+        self.assertEqual(
+            build_ksb_completed_details(target, {"K1"}, [failed], [], [])[0]["sources"], [],
+        )
+
+        succeeded = {**failed, "passed": True}
+        passed_details = build_ksb_completed_details(
+            target, completed_ksb_codes([succeeded], []), [succeeded], [], [],
+        )
+        self.assertEqual([item["code"] for item in passed_details], ["K1"])
+        self.assertEqual(len(passed_details[0]["sources"]), 1)
+
+
+class CoachCaseloadLegacyRelationTests(SimpleTestCase):
+    """The caseload must not prefetch a relation the database no longer has.
+
+    ``LearnerProfile.assigned_ksbs`` maps the pre-normalisation
+    ``Learner.learner_ksbs`` snapshot, which is absent from the current
+    database. ``LearnerProfile.ksbs`` tolerates that, but a queryset-level
+    ``prefetch_related`` raises first, which turned the entire coach caseload
+    into a 500 against the live schema. Probe, then prefetch — the same shape
+    already used for the retired activity-events relation.
+    """
+
+    def _prefetches(self, *, ksbs_exists, events_exist):
+        captured = {}
+
+        class Queryset:
+            def annotate(self, **kwargs):
+                return self
+
+            def filter(self, **kwargs):
+                return self
+
+            def prefetch_related(self, *names):
+                captured['names'] = list(names)
+                return self
+
+            def order_by(self, *args):
+                return self
+
+            def __iter__(self):
+                return iter(())
+
+        with patch("coach_api.views.LearnerProfile") as profile:
+            profile.objects = Queryset()
+            with patch("coach_api.views.get_learner_db_alias", return_value="enrolment"):
+                with patch("coach_api.views.learner_ksbs_relation_exists", return_value=ksbs_exists):
+                    with patch("coach_api.views.learner_activity_events_relation_exists", return_value=events_exist):
+                        with patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {})):
+                            fetch_caseload_learner_profiles("coach@example.com")
+        return captured.get('names', [])
+
+    def test_dropped_legacy_ksb_relation_is_not_prefetched(self):
+        names = self._prefetches(ksbs_exists=False, events_exist=False)
+
+        self.assertNotIn("assigned_ksbs", names)
+        self.assertNotIn("activity_events", names)
+        # The current, authoritative KSB graph is still loaded.
+        self.assertIn("ksb_assignment__profile_version__definitions", names)
+        self.assertIn("progress_entries__ksb_links", names)
+
+    def test_legacy_relations_are_prefetched_where_they_still_exist(self):
+        names = self._prefetches(ksbs_exists=True, events_exist=True)
+
+        self.assertIn("assigned_ksbs", names)
+        self.assertIn("activity_events", names)
 
 
 class CoachCaseloadViewTests(SimpleTestCase):

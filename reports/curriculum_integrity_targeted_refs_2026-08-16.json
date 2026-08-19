@@ -1,0 +1,132 @@
+{
+  "MOD-20260726120103175778": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "groups",
+      "column_name": "module_ids",
+      "count": 1
+    }
+  ],
+  "MOD-20260726151613519352": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "groups",
+      "column_name": "module_ids",
+      "count": 1
+    }
+  ],
+  "MOD-20260727085127725869": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "groups",
+      "column_name": "module_ids",
+      "count": 1
+    }
+  ],
+  "MOD-20260730131218654198": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "groups",
+      "column_name": "module_ids",
+      "count": 1
+    }
+  ],
+  "group-1785067026147-p0iiej6rsv": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "groups",
+      "column_name": "group_id",
+      "count": 1
+    }
+  ],
+  "group-1785077671935-htfnll5z2dk": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "groups",
+      "column_name": "group_id",
+      "count": 1
+    }
+  ],
+  "group-1785142003866-xhh3evojcy": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "groups",
+      "column_name": "group_id",
+      "count": 1
+    }
+  ],
+  "group-1785416805427-2baovfjwidb": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "groups",
+      "column_name": "group_id",
+      "count": 1
+    }
+  ],
+  "PROG-20260603132344761805": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "cohorts",
+      "column_name": "notes",
+      "count": 8
+    },
+    {
+      "table_schema": "curriculum",
+      "table_name": "components",
+      "column_name": "description",
+      "count": 119
+    },
+    {
+      "table_schema": "curriculum",
+      "table_name": "modules",
+      "column_name": "description",
+      "count": 5
+    },
+    {
+      "table_schema": "curriculum",
+      "table_name": "quizzes",
+      "column_name": "programme_id",
+      "count": 10
+    },
+    {
+      "table_schema": "curriculum",
+      "table_name": "week_templates",
+      "column_name": "programme_id",
+      "count": 1
+    }
+  ],
+  "PROG-20260603132344790094": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "quizzes",
+      "column_name": "programme_id",
+      "count": 8
+    },
+    {
+      "table_schema": "curriculum",
+      "table_name": "week_templates",
+      "column_name": "programme_id",
+      "count": 1
+    }
+  ],
+  "PROG-20260719080415142493": [
+    {
+      "table_schema": "curriculum",
+      "table_name": "cohorts",
+      "column_name": "notes",
+      "count": 1
+    },
+    {
+      "table_schema": "curriculum",
+      "table_name": "cohorts",
+      "column_name": "programme_id",
+      "count": 1
+    },
+    {
+      "table_schema": "curriculum",
+      "table_name": "groups",
+      "column_name": "programme_id",
+      "count": 2
+    }
+  ]
+}

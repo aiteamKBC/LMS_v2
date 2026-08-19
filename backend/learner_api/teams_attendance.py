@@ -197,9 +197,13 @@ def sync_verified_teams_attendance_reporting(
         module_refs,
         all_learners=all_learners,
     )
-    ensure_teams_attendance_reporting_columns(database)
     if not rows:
         return 0
+    # Provision only when there is something to write. The DDL exists to make
+    # the upsert below valid, so running it first made a pure no-op take a hard
+    # dependency on the enrolment alias and issue four DDL statements against
+    # the live reporting table on every sync that had nothing to store.
+    ensure_teams_attendance_reporting_columns(database)
 
     query = f"""
         INSERT INTO {ATTENDANCE_REPORTING_TABLE} (
