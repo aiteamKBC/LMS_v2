@@ -165,6 +165,13 @@ export async function updateEnrolmentUser(id: string, patch: Partial<CreateEnrol
   return board;
 }
 
+/** Permanently delete the enrolment record and its linked sign-in account. */
+export async function deleteEnrolmentUser(id: string): Promise<void> {
+  await request<{ deleted: boolean }>(`${BASE}/${id}/`, { method: 'DELETE' });
+  invalidateWizardCacheById(id);
+  invalidateLearnerDetailCache();
+}
+
 /**
  * Check and complete an eligible learner's automatic activation. The server
  * only makes a learner Active after all compliance documents are signed and

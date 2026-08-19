@@ -45,6 +45,33 @@ export function getRememberedLearner(): { kind: LearnerKind; id: string } | null
   return readOverride() || MY_LEARNER;
 }
 
+/**
+ * Pin the *signed-in* learner as the active one.
+ *
+ * Called from the auth layer for every sign-in, session restore and refresh.
+ * Without it, a learner opening /workspace/learner resolved to whatever was
+ * last in localStorage — or, on a fresh browser, the hardcoded MY_LEARNER demo
+ * record — so they were shown a different learner's dashboard entirely. That is
+ * the "swap MY_LEARNER for a real session→learner lookup" note above: the
+ * account now carries the real subject id, so this is that lookup.
+ *
+ * Only learner accounts are pinned. Staff and admins keep the
+ * remembered-by-URL behaviour, which is what lets them page through learners.
+ *
+ * The kind is nominal: ids are unique across the single Created_users table and
+ * every learner-scoped endpoint maps both kinds to the same model (see
+ * learner_detail.SOURCE_MODELS), so it only has to be a valid value. A later
+ * navigation carrying the real kind in the URL overwrites it anyway.
+ */
+export function rememberSignedInLearner(
+  subjectType: string | undefined,
+  subjectId: number | string | undefined,
+  learnerType?: string | null,
+): void {
+  if (subjectType !== 'learner' || subjectId == null || subjectId === '') return;
+  rememberLearner(learnerType === 'commercial' ? 'commercial' : 'apprenticeship', String(subjectId));
+}
+
 /** Persist the active learner so paramless /learner/* pages resolve to it. */
 export function rememberLearner(kind: string | undefined, id: string | undefined): void {
   if (!isKind(kind) || !id) return;

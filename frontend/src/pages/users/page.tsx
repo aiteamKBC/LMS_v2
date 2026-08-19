@@ -6,6 +6,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { CASE_OWNER_OPTIONS } from '@/mocks/enrolment-console';
 import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
+import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
 import { listEmployers, type EmployerRow } from '@/api/employers';
 import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, Hero, StatCard, inputClass, btnPrimary, btnSecondary } from './components/ui';
@@ -58,7 +59,7 @@ function employerToRow(e: EmployerRow): DirectoryRow {
 }
 
 const EMPTY_FILTER: UsersFilter = {
-  userName: '', groups: [], email: '', statuses: [], type: 'all', programme: '',
+  userName: '', groups: [], email: '', statuses: [], type: 'all', programme: '', cohort: '',
   programmeStatus: '', niNumber: '', caseOwner: 'any', referenceNumber: '', page: 1, pageSize: PAGE_SIZE,
 };
 
@@ -107,24 +108,40 @@ function TextFilter({ label, value, onChange }: { label: string; value: string; 
   );
 }
 
-function SelectFilter({ label, value, options, onChange }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void }) {
+function SelectFilter({ label, value, options, onChange, disabled = false }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <div>
       <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">{label}</label>
-      <select className={`${inputClass} cursor-pointer`} value={value} onChange={(e) => onChange(e.target.value)}>
+      <select className={`${inputClass} ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`} disabled={disabled} value={value} onChange={(e) => onChange(e.target.value)}>
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
     </div>
   );
 }
 
+/** True when a row value doesn't match a chosen filter value, ignoring case/padding. */
+function differs(rowValue: string | undefined, filterValue: string): boolean {
+  return (rowValue ?? '').trim().toLowerCase() !== filterValue.trim().toLowerCase();
+}
+
+/** Distinct non-empty values of one row column, sorted. */
+function distinct(from: DirectoryRow[], pick: (r: DirectoryRow) => string | undefined): string[] {
+  return Array.from(new Set(from.map(pick).filter(Boolean) as string[])).sort();
+}
+
 function matches(row: DirectoryRow, f: UsersFilter): boolean {
   if (f.userName && !row.name.toLowerCase().includes(f.userName.toLowerCase())) return false;
   if (f.email && !row.email.toLowerCase().includes(f.email.toLowerCase())) return false;
-  if (f.groups && f.groups.length > 0 && !f.groups.includes(row.group)) return false;
+  // Folded like programme/cohort below: group names can now come from the
+  // curriculum lookup rather than only from the rows themselves.
+  if (f.groups && f.groups.length > 0 && !f.groups.some((g) => !differs(row.group, g))) return false;
   if (f.statuses && f.statuses.length > 0 && !f.statuses.includes(row.subscriptionStatus)) return false;
   if (f.type && f.type !== 'all' && row.type !== f.type) return false;
-  if (f.programme && !(row.programmeStatus ?? '').toLowerCase().includes(f.programme.toLowerCase()) && !(row.group ?? '').toLowerCase().includes(f.programme.toLowerCase())) return false;
+  // Programme and cohort are picked from the curriculum lists, but the values on
+  // the row were written as free text at create time, so both sides are folded
+  // before comparing — casing drift on an older row shouldn't empty the results.
+  if (f.programme && differs(row.programme, f.programme)) return false;
+  if (f.cohort && differs(row.cohort, f.cohort)) return false;
   if (f.programmeStatus && (row.programmeStatus ?? '') !== f.programmeStatus) return false;
   if (f.referenceNumber && !(row.reference ?? '').toLowerCase().includes(f.referenceNumber.toLowerCase())) return false;
   return true;
@@ -147,6 +164,12 @@ export default function UsersListPage() {
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const [rows, setRows] = useState<DirectoryRow[]>([]);
+  // The curriculum lookups behind the programme -> cohort -> group filters. They
+  // come from curriculum.cohort_authoring_details, the same source the create
+  // form picks from, so a filter can only offer combinations that really exist.
+  const [programmes, setProgrammes] = useState<string[]>([]);
+  const [cohorts, setCohorts] = useState<string[]>([]);
+  const [cascadeGroups, setCascadeGroups] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // The staff row currently being edited, if any.
@@ -187,6 +210,39 @@ export default function UsersListPage() {
 
   useEffect(load, []);
 
+  // A failed lookup isn't worth an error banner over the whole directory: the
+  // dropdown falls back to the programmes/cohorts the loaded rows already carry.
+  useEffect(() => {
+    let cancelled = false;
+    fetchProgrammes()
+      .then((rows) => { if (!cancelled) setProgrammes(rows); })
+      .catch(() => { if (!cancelled) setProgrammes([]); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Cohorts belong to a programme and groups to a cohort, so each level is
+  // refetched when its parent changes — and cleared first, so the list can never
+  // show a moment of the previous programme's cohorts.
+  useEffect(() => {
+    let cancelled = false;
+    setCohorts([]);
+    if (!draft.programme) return;
+    fetchCohorts(draft.programme)
+      .then((rows) => { if (!cancelled) setCohorts(rows); })
+      .catch(() => { if (!cancelled) setCohorts([]); });
+    return () => { cancelled = true; };
+  }, [draft.programme]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCascadeGroups([]);
+    if (!draft.programme || !draft.cohort) return;
+    fetchGroups(draft.programme, draft.cohort)
+      .then((rows) => { if (!cancelled) setCascadeGroups(rows); })
+      .catch(() => { if (!cancelled) setCascadeGroups([]); });
+    return () => { cancelled = true; };
+  }, [draft.programme, draft.cohort]);
+
   // The menu lives in a portal, so an outside-click test has to exempt it too.
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -215,7 +271,29 @@ export default function UsersListPage() {
     };
   }, [createOpen]);
 
-  const groupOptions = useMemo(() => Array.from(new Set(rows.map((r) => r.group).filter(Boolean))).sort(), [rows]);
+  // The curriculum list is the source of truth, but rows created before a
+  // programme was renamed (or imported from elsewhere) can carry a name that
+  // isn't in it — union so those learners stay reachable from the filter.
+  const programmeOptions = useMemo(
+    () => Array.from(new Set([...programmes, ...distinct(rows, (r) => r.programme)])).sort(),
+    [programmes, rows],
+  );
+  const cohortOptions = useMemo(
+    () => Array.from(new Set([
+      ...cohorts,
+      ...distinct(draft.programme ? rows.filter((r) => !differs(r.programme, draft.programme!)) : [], (r) => r.cohort),
+    ])).sort(),
+    [cohorts, rows, draft.programme],
+  );
+  // Groups narrow with whatever has been chosen above them: the curriculum list
+  // once a cohort is picked, otherwise the groups of the rows still in scope.
+  const groupOptions = useMemo(() => {
+    const inScope = rows.filter(
+      (r) => (!draft.programme || !differs(r.programme, draft.programme))
+        && (!draft.cohort || !differs(r.cohort, draft.cohort)),
+    );
+    return Array.from(new Set([...cascadeGroups, ...distinct(inScope, (r) => r.group)])).sort();
+  }, [cascadeGroups, rows, draft.programme, draft.cohort]);
   // Staff rows report their position (Curriculum team, Operations team, ...) as
   // their type, so the filter list is derived from the loaded rows rather than
   // the fixed TYPE_OPTIONS — otherwise staff would be unfilterable.
@@ -235,7 +313,15 @@ export default function UsersListPage() {
   const employerCount = rows.filter((r) => r.source === 'employer').length;
   const active = rows.filter((r) => r.programmeStatus === 'Active').length;
 
-  const set = (patch: Partial<UsersFilter>) => setDraft((d) => ({ ...d, ...patch }));
+  // Choosing a programme or cohort invalidates the levels below it, so a stale
+  // cohort/group can't survive into a search for a different programme.
+  const set = (patch: Partial<UsersFilter>) =>
+    setDraft((d) => ({
+      ...d,
+      ...('programme' in patch ? { cohort: '', groups: [] } : {}),
+      ...('cohort' in patch ? { groups: [] } : {}),
+      ...patch,
+    }));
   const search = () => { setApplied(draft); setPage(1); };
   const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setPage(1); };
   // Commercial and apprenticeship ids come from different tables and overlap,
@@ -313,7 +399,6 @@ export default function UsersListPage() {
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><i className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateEmployerOpen(true); }}><i className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateOrgOpen(true); }}><i className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
-                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => navigate('/admin/bulk-user-import')}><i className="ri-upload-2-line mr-2 text-foreground-400" />Import users</button>
                   </div>,
                   document.body
                 )}
@@ -335,11 +420,22 @@ export default function UsersListPage() {
         <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 card-premium">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <TextFilter label="User name" value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
-            <MultiSelect label="Group" placeholder="Select groups" options={groupOptions} selected={draft.groups ?? []} onChange={(v) => set({ groups: v })} />
+            <MultiSelect label="Group" placeholder={draft.cohort ? 'Select groups in this cohort' : 'Select groups'} options={groupOptions} selected={draft.groups ?? []} onChange={(v) => set({ groups: v })} />
             <TextFilter label="Email" value={draft.email ?? ''} onChange={(v) => set({ email: v })} />
             <MultiSelect label="Status" placeholder="Select statuses" options={STATUS_OPTIONS} selected={draft.statuses ?? []} onChange={(v) => set({ statuses: v })} />
             <SelectFilter label="Type" value={draft.type ?? 'all'} onChange={(v) => set({ type: v as UsersFilter['type'] })} options={[{ value: 'all', label: '--All--' }, ...typeOptions.map((t) => ({ value: t, label: t }))]} />
-            <TextFilter label="Programme" value={draft.programme ?? ''} onChange={(v) => set({ programme: v })} />
+            <SelectFilter label="Programme" value={draft.programme ?? ''} onChange={(v) => set({ programme: v })} options={[{ value: '', label: '--All--' }, ...programmeOptions.map((p) => ({ value: p, label: p }))]} />
+            {/* Single-select on purpose: the group lookup takes one programme and
+                one cohort, so this is what narrows the Group list below. */}
+            <SelectFilter
+              label="Cohort"
+              value={draft.cohort ?? ''}
+              onChange={(v) => set({ cohort: v })}
+              disabled={!draft.programme}
+              options={draft.programme
+                ? [{ value: '', label: '--All--' }, ...cohortOptions.map((c) => ({ value: c, label: c }))]
+                : [{ value: '', label: 'Select a programme first' }]}
+            />
             <SelectFilter label="Programme status" value={draft.programmeStatus ?? ''} onChange={(v) => set({ programmeStatus: v })} options={[{ value: '', label: '--All--' }, ...PROGRAMME_STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} />
             <TextFilter label="NI number" value={draft.niNumber ?? ''} onChange={(v) => set({ niNumber: v })} />
             <SelectFilter label="Case owner" value={draft.caseOwner ?? 'any'} onChange={(v) => set({ caseOwner: v })} options={[{ value: 'any', label: 'Any' }, ...CASE_OWNER_OPTIONS.map((c) => ({ value: c, label: c }))]} />
@@ -357,15 +453,15 @@ export default function UsersListPage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-foreground-200/70 bg-background-100/50">
-                  {['User', 'Type', 'Email', 'Group', 'Subscription status', 'Learning plan', 'Programme status', 'Actions'].map((h) => (
+                  {['User', 'Type', 'Email', 'Group', 'Programme', 'Subscription status', 'Learning plan', 'Programme status', 'Actions'].map((h) => (
                     <th key={h} className="text-left py-3 px-3 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={8} className="py-10 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading users…</td></tr>}
+                {loading && <tr><td colSpan={9} className="py-10 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading users…</td></tr>}
                 {!loading && error && (
-                  <tr><td colSpan={8} className="py-10 text-center text-[13px]">
+                  <tr><td colSpan={9} className="py-10 text-center text-[13px]">
                     <p className="text-red-600 mb-2"><i className="ri-error-warning-line mr-1.5" />{error}</p>
                     <button className={btnSecondary} onClick={load}><i className="ri-refresh-line" />Retry</button>
                   </td></tr>
@@ -403,6 +499,13 @@ export default function UsersListPage() {
                     </td>
                     <td className="py-2.5 px-3 text-foreground-600 max-w-[220px] break-words">{row.email}</td>
                     <td className="py-2.5 px-3 text-foreground-600">{row.group}</td>
+                    {/* Learners only: staff, admins and employers have no
+                        programme, so a dash is more honest than an empty cell. */}
+                    <td className="py-2.5 px-3 text-foreground-600 max-w-[180px] break-words">
+                      {isLearner && row.programme
+                        ? row.programme
+                        : <span className="text-foreground-300">—</span>}
+                    </td>
                     <td className="py-2.5 px-3 whitespace-nowrap">
                       <span className="text-foreground-700">{row.subscriptionStatus}</span>
                       {row.subscriptionStatus ? (row.subscriptionVerified ? <i className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <i className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
@@ -460,7 +563,7 @@ export default function UsersListPage() {
                   </tr>
                   );
                 })}
-                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={8} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
+                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={9} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
               </tbody>
             </table>
           </div>

@@ -14,6 +14,13 @@ from __future__ import annotations
 
 from django.db import transaction
 
+from learner_api.constants import (
+    ACCESS_CHOICES,
+    ACCESS_HOME_ROUTES,
+    ACCESS_NAV_ROLES,
+    ACCESS_SUPER_ADMIN,
+    NO_ACCESS_ROUTE,
+)
 from learner_api.models import Employer, EnrolmentUser, StaffUser
 
 from .models import (
@@ -38,11 +45,41 @@ from .security import normalize_email
 ADMIN_POSITION = "admin"
 
 
-def role_for_staff(position):
-    """Map a Staff_users."Position" onto a login role."""
-    if (position or "").strip().lower() == ADMIN_POSITION:
+def role_for_staff(position, access=None):
+    """Map a staff row's Position/Access onto a login role.
+
+    ``Access`` is the authority when set: it is the deliberate permission grant
+    (see ``learner_api.constants.ACCESS_CHOICES``), and only ``super-admin``
+    carries the platform-wide ``admin`` role. Every other access is staff-level;
+    what it additionally *permits* is enforced by
+    ``login.permissions.require_access``, not by this coarse role.
+
+    ``Position`` no longer grants anything. It briefly remained a fallback so the
+    administrator who predated the Access column was not locked out of the very
+    console that assigns access — that account now holds ``super-admin``
+    explicitly, so the fallback is gone. Keeping it would have meant every
+    account the console creates (all of which are ``Position='Admin'``) silently
+    arriving as a full platform administrator, which is the opposite of what the
+    access grant is for.
+
+    An account with no access recorded is therefore staff-level and, having no
+    grant, is refused everywhere access is checked. The SPA lands it on
+    ``/access-required`` so the person is told to ask for one rather than
+    dropped into a workspace they cannot use.
+    """
+    resolved = (access or "").strip().lower()
+    if resolved == ACCESS_SUPER_ADMIN:
         return ROLE_ADMIN
     return ROLE_STAFF
+
+
+def access_for_staff(subject):
+    """The staff row's recorded access, or "" when none has been set.
+
+    Normalised to lower case so a value typed with different capitalisation
+    still matches ``ACCESS_CHOICES``.
+    """
+    return (getattr(subject, "access", "") or "").strip().lower()
 
 
 def subject_model(subject_type):
@@ -92,7 +129,7 @@ def describe_subject(subject_type, subject):
     if subject_type == SUBJECT_STAFF:
         email = normalize_email(subject.email)
         name = (subject.username or "").strip() or (subject.preferred_name or "").strip()
-        return email or None, name or None, role_for_staff(subject.position)
+        return email or None, name or None, role_for_staff(subject.position, subject.access)
 
     raise ValueError(f"Unknown subject_type: {subject_type!r}")
 
@@ -218,6 +255,15 @@ def account_payload(account, *, subject=None):
     if subject is not None:
         if account.subject_type == SUBJECT_STAFF:
             payload["position"] = subject.position
+            # The access grant, plus where it lands and which sidebar it gets.
+            # Sent from here rather than duplicated in the SPA so the landing
+            # route and the permission it reflects change in one place.
+            access = access_for_staff(subject)
+            payload["access"] = access
+            # No grant: land them on the page that explains why and lets them
+            # ask, rather than on a workspace that would refuse them anyway.
+            payload["accessHome"] = ACCESS_HOME_ROUTES.get(access) or NO_ACCESS_ROUTE
+            payload["accessNavRole"] = ACCESS_NAV_ROLES.get(access)
         elif account.subject_type == SUBJECT_LEARNER:
             payload["learnerType"] = subject.learner_type
             payload["programme"] = subject.programme

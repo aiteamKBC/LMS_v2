@@ -23,6 +23,7 @@ from .evidence_storage import (
     resolve_read_url,
     upload_to_quarantine,
 )
+from .identity import learner_profile_for_source
 from .learner_detail import (
     _active_profile_for_source,
     _append_week_quizzes,
@@ -106,12 +107,14 @@ class LearnerReflectionStatusTests(SimpleTestCase):
 
 
 class LearnerProgressionTests(SimpleTestCase):
-    def _learner(self, status, start_date="2026-09-01"):
+    def _learner(self, status, start_date="2026-09-01", learner_type="apprenticeship", plan=None):
         return SimpleNamespace(
             pk=19,
-            learner_type="apprenticeship",
+            learner_type=learner_type,
             programme_status=status,
             start_date=start_date,
+            learning_plan=plan,
+            training_plan=None,
             save=Mock(),
         )
 
@@ -140,6 +143,26 @@ class LearnerProgressionTests(SimpleTestCase):
     def test_parses_legacy_text_start_dates(self):
         self.assertEqual(_as_date("2026-08-08"), date(2026, 8, 8))
         self.assertEqual(_as_date("2026-08-08T09:30:00Z"), date(2026, 8, 8))
+
+    @patch("learner_api.active_users.sync_active_user")
+    @patch("learner_api.learner_progression._programme_start_date", return_value=date(2026, 8, 8))
+    @patch("learner_api.learner_progression.timezone.localdate", return_value=date(2026, 8, 8))
+    def test_commercial_waits_for_an_assigned_plan_even_after_start_date(self, _today, _start, sync):
+        learner = self._learner("Delivery", learner_type="commercial")
+
+        self.assertIsNone(advance_learner(learner))
+        self.assertEqual(learner.programme_status, "Delivery")
+        sync.assert_not_called()
+
+    @patch("learner_api.active_users.sync_active_user")
+    @patch("learner_api.learner_progression._programme_start_date", return_value=date(2026, 8, 8))
+    @patch("learner_api.learner_progression.timezone.localdate", return_value=date(2026, 8, 8))
+    def test_commercial_becomes_active_after_start_date_with_assigned_plan(self, _today, _start, sync):
+        learner = self._learner("Delivery", learner_type="commercial", plan=[{"moduleId": "mod-1"}])
+
+        self.assertEqual(advance_learner(learner), "Active")
+        self.assertEqual(learner.programme_status, "Active")
+        sync.assert_called_once_with(learner)
 
 
 class TrainingPlanHydrationTests(SimpleTestCase):
@@ -235,49 +258,112 @@ class ProgressActivityProjectionTests(SimpleTestCase):
 
 
 class LearnerProfileResolutionTests(SimpleTestCase):
-    @patch("learner_api.identity.LearnerProfile.objects.filter")
-    def test_resolves_active_profile_by_email_before_source_id(self, profile_filter):
-        expected = SimpleNamespace(id=2)
-        profile_filter.return_value.first.return_value = expected
+    """How a Created_users row is matched to its "Learner".learners profile.
 
-        result = _active_profile_for_source(
-            SimpleNamespace(email=" Learner@Example.com "),
-            source_pk=19,
+    ``enrolment_id`` is the real link and is tried first. Email is only a
+    fallback for profiles that predate that column — it is a poor key, because a
+    corrected address breaks it and two people sharing one collide, which is
+    exactly why the explicit column exists.
+    """
+
+    @staticmethod
+    def _returns(*results):
+        """Make ``LearnerProfile.objects.filter(...).first()`` yield each result
+        in turn, so the *order* of the lookups can be asserted."""
+        calls = []
+
+        def fake_filter(**kwargs):
+            calls.append(kwargs)
+            outcome = results[len(calls) - 1] if len(calls) <= len(results) else None
+            return SimpleNamespace(first=lambda: outcome)
+
+        return fake_filter, calls
+
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
+    def test_prefers_the_explicit_enrolment_link(self, profile_filter):
+        expected = SimpleNamespace(id=2, enrolment_id=19)
+        fake, calls = self._returns(expected)
+        profile_filter.side_effect = fake
+
+        result = learner_profile_for_source(
+            SimpleNamespace(email=" Learner@Example.com "), 19, active_only=True,
         )
 
         self.assertIs(result, expected)
-        profile_filter.assert_called_once_with(
-            email__iexact="Learner@Example.com",
-            lifecycle_status="active",
+        # One lookup, on the link — email is never consulted when it resolves.
+        self.assertEqual(calls, [{"enrolment_id": 19, "lifecycle_status": "active"}])
+
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
+    def test_falls_back_to_email_when_the_link_is_not_set(self, profile_filter):
+        """Profiles created before enrolment_id existed still resolve."""
+        expected = SimpleNamespace(id=2, enrolment_id=None, save=lambda **kw: None)
+        fake, calls = self._returns(None, expected)
+        profile_filter.side_effect = fake
+
+        result = learner_profile_for_source(
+            SimpleNamespace(email=" Learner@Example.com "), 19, active_only=True,
         )
+
+        self.assertIs(result, expected)
+        self.assertEqual(calls, [
+            {"enrolment_id": 19, "lifecycle_status": "active"},
+            {"email__iexact": "Learner@Example.com", "lifecycle_status": "active"},
+        ])
+
+    @patch("learner_api.identity.LearnerProfile.objects.filter")
+    def test_an_email_match_repairs_the_missing_link(self, profile_filter):
+        """Self-healing: the inferred link is written back, so the fallback
+        empties itself instead of being consulted forever."""
+        saved = {}
+        expected = SimpleNamespace(
+            id=2, enrolment_id=None,
+            save=lambda **kwargs: saved.update(kwargs),
+        )
+        fake, _calls = self._returns(None, expected)
+        profile_filter.side_effect = fake
+
+        learner_profile_for_source(
+            SimpleNamespace(email="learner@example.com"), 19, active_only=True,
+        )
+
+        self.assertEqual(expected.enrolment_id, 19)
+        self.assertEqual(saved, {"update_fields": ["enrolment_id"]})
 
     @patch("learner_api.identity.LearnerProfile.objects.filter")
     def test_falls_back_to_source_id_only_when_source_has_no_email(self, profile_filter):
         expected = SimpleNamespace(id=19)
-        profile_filter.return_value.first.return_value = expected
+        fake, calls = self._returns(None, expected)
+        profile_filter.side_effect = fake
 
-        result = _active_profile_for_source(
-            SimpleNamespace(email="  "),
-            source_pk=19,
+        result = learner_profile_for_source(
+            SimpleNamespace(email="  "), 19, active_only=True,
         )
 
         self.assertIs(result, expected)
-        profile_filter.assert_called_once_with(pk=19, lifecycle_status="active")
+        self.assertEqual(calls, [
+            {"enrolment_id": 19, "lifecycle_status": "active"},
+            {"pk": 19, "lifecycle_status": "active"},
+        ])
 
     @patch("learner_api.identity.LearnerProfile.objects.filter")
     def test_does_not_cross_link_an_unmatched_email_by_source_id(self, profile_filter):
-        profile_filter.return_value.first.return_value = None
+        """The safety property: when a learner HAS an email and it matches
+        nobody, resolution stops. Falling through to the primary key would hand
+        back whichever unrelated profile happened to share that number — the two
+        tables' id sequences are independent."""
+        fake, calls = self._returns(None, None)
+        profile_filter.side_effect = fake
 
-        result = _active_profile_for_source(
-            SimpleNamespace(email="missing@example.com"),
-            source_pk=19,
+        result = learner_profile_for_source(
+            SimpleNamespace(email="missing@example.com"), 19, active_only=True,
         )
 
         self.assertIsNone(result)
-        profile_filter.assert_called_once_with(
-            email__iexact="missing@example.com",
-            lifecycle_status="active",
-        )
+        # Never a third, pk-based lookup.
+        self.assertEqual(calls, [
+            {"enrolment_id": 19, "lifecycle_status": "active"},
+            {"email__iexact": "missing@example.com", "lifecycle_status": "active"},
+        ])
 
 
 class AttendanceSummaryTests(SimpleTestCase):

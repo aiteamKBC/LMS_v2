@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchEnrolmentBoard, updateEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
+import { fetchEnrolmentBoard, updateEnrolmentUser, deleteEnrolmentUser, finishEnrolment, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard } from '@/api/commercialUsers';
 import { fetchEnrolmentDocuments, getEnrolmentDocumentUrl, uploadEnrolmentDocument, DOC_SIGNING_PARTIES, type EnrolmentDocument, type EnrolmentDocType } from '@/api/enrolmentDocuments';
 import { fetchAgreement, issueAgreement, type Agreement } from '@/api/apprenticeshipAgreement';
@@ -61,8 +61,8 @@ import { SectionPanel, FieldRow, Table, EmptyState, ActionLink, StatusBadge, Fil
 
 const enrolmentNav = roleNavMap.apprentice;
 
-function Actions({ items }: { items: { label: string; icon?: string; onClick?: () => void }[] }) {
-  return <>{items.map((a, i) => <ActionLink key={i} label={a.label} icon={a.icon} onClick={a.onClick} />)}</>;
+function Actions({ items }: { items: { label: string; icon?: string; onClick?: () => void; danger?: boolean }[] }) {
+  return <>{items.map((a, i) => <ActionLink key={i} label={a.label} icon={a.icon} onClick={a.onClick} danger={a.danger} />)}</>;
 }
 
 /**
@@ -1222,6 +1222,26 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
     }
   };
 
+  const [deleting, setDeleting] = useState(false);
+  const deleteUser = async () => {
+    if (deleting) return;
+    const ok = window.confirm(
+      `Delete ${board.user.name}'s user account?\n\n` +
+      'This permanently removes the enrolment record and sign-in access. This action cannot be undone.',
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await deleteEnrolmentUser(userId);
+      success('User account deleted', `${board.user.name}'s account has been permanently deleted.`);
+      navigate('/users');
+    } catch (e) {
+      error('Could not delete user account', e instanceof Error ? e.message : 'Unexpected error');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const onUploadPicked = async (file?: File) => {
     if (!file) return;
     if (file.type !== 'application/pdf') {
@@ -1277,8 +1297,8 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
           {/* 3.1 Contact details */}
           <SectionPanel title="Contact details" icon="ri-contacts-line" actions={<Actions items={[
             { label: 'view profile in console', onClick: () => navigate(`/workspace/learner/${kind}/${userId}`) },
-            { label: 'communication report', onClick: () => navigate('/admin/reports') },
             { label: 'edit users details', onClick: showWizard },
+            { label: deleting ? 'deleting account…' : 'delete user account', icon: 'ri-delete-bin-line', onClick: deleteUser, danger: true },
           ]} />}>
             <FieldRow readonly label="User email address" value={board.contact.email} />
             <FieldRow readonly label="Phone number" value={board.contact.phone} />
@@ -1303,7 +1323,6 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
 
           {/* 3.2 Activity Summary */}
           <SectionPanel title="Activity Summary (last 30 days)" icon="ri-pulse-line" actions={<Actions items={[
-            { label: 'usage report', onClick: () => navigate('/admin/reports') },
             { label: 'view activity list', onClick: () => navigate(`/workspace/learner/${kind}/${userId}`) },
             { label: 'view user tasks', onClick: () => navigate(`/learner/training-plan/${kind}/${userId}`) },
           ]} />}>
@@ -1378,7 +1397,6 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
 
           {/* 3.7 Managed jobs */}
           <SectionPanel title="Managed jobs and placements/workshops" icon="ri-briefcase-line" actions={<Actions items={[
-            { label: 'application report', onClick: () => navigate('/admin/reports') },
             { label: 'matching', onClick: () => notWritable('Vacancy matching', 'this learner’s placement comes from their onboarding employer details.') },
           ]} />}>
             <Table headers={['Employer', 'Title', 'Categories', 'From', 'To', 'Planned/Logged', 'Status', 'Date', 'Notes', 'Actions']}>
@@ -1486,17 +1504,22 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
           </SectionPanel>
 
           {/* 3.14 Compliance documents */}
-          <SectionPanel title="Compliance documents" icon="ri-shield-check-line">
-            <ComplianceDocuments kind={isCommercial ? 'commercial' : 'apprenticeship'} learnerId={userId} programme={board.programme.name} />
-          </SectionPanel>
+          {!isCommercial && (
+            <SectionPanel title="Compliance documents" icon="ri-shield-check-line">
+              <ComplianceDocuments kind="apprenticeship" learnerId={userId} programme={board.programme.name} />
+            </SectionPanel>
+          )}
 
           {/* 3.15 Review documents — the learner's started/finished enrolment
               reviews, replacing the placeholder list this panel used to render. */}
-          <SectionPanel title="Review documents" icon="ri-file-list-3-line">
-            <ReviewDocuments kind={isCommercial ? 'commercial' : 'apprenticeship'} learnerId={userId} programme={board.programme.name} />
-          </SectionPanel>
+          {!isCommercial && (
+            <SectionPanel title="Review documents" icon="ri-file-list-3-line">
+              <ReviewDocuments kind="apprenticeship" learnerId={userId} programme={board.programme.name} />
+            </SectionPanel>
+          )}
 
           {/* 3.16 Documents */}
+          {!isCommercial && (
           <SectionPanel
             title="Documents"
             icon="ri-folder-line"
@@ -1534,6 +1557,7 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
             </div>
             {board.documents.length === 0 ? <EmptyState text="No documents" /> : <Table headers={['Uploaded', 'Description', 'Edit', 'Delete']}>{board.documents.map((d) => <tr key={d.id} className="border-b border-foreground-100 last:border-0"><td className="py-2 px-3">{d.uploaded}</td><td className="py-2 px-3">{d.description}</td><td className="py-2 px-3" /><td className="py-2 px-3" /></tr>)}</Table>}
           </SectionPanel>
+          )}
 
           {/* 3.17 Competencies */}
           <SectionPanel

@@ -104,6 +104,8 @@ export interface LearnerDetail {
   phone: string;
   programme: string;
   programmeStatus: string;
+  learnerType?: LearnerKind;
+  programmeStartDate?: string;
   cohort: string;
   group: string;
   employer: string;

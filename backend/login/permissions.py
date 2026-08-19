@@ -82,7 +82,7 @@ _DISABLED_VALUES = {"0", "false", "no", "off"}
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
-def staff_only(*, writes_only=False):
+def staff_only(*, writes_only=False, allow_own_learner=None):
     """Gate a staff-facing endpoint on an authenticated staff or admin session.
 
     Built for the pre-existing ``learner_api`` views, which are ``@csrf_exempt``
@@ -95,6 +95,21 @@ def staff_only(*, writes_only=False):
     session yet — closing the write path is the urgent half, since that is what
     mutates records and issues invitations.
 
+    ``allow_own_learner="pk"`` additionally lets a **learner** write, but only to
+    the record named by that URL kwarg — i.e. their own. The onboarding wizard
+    is the reason: a learner at the 'Onboarding' status fills it in themselves,
+    so refusing every learner write means the wizard loads and then cannot be
+    submitted, which loses their answers at the last step.
+
+    Two things this does **not** grant. A learner naming somebody else's id gets
+    **404**, not 403 — a 403 would confirm the id exists, matching how
+    ``login.invitations._load_token`` collapses its failure modes. And owning the
+    record is not permission to set every field on it: the view is told via
+    ``request.learner_self_write`` so it can restrict the payload (see
+    ``learner_api.mappers.restrict_to_self_writable``), because the write mapping
+    includes ``programmeStatus`` and a learner who could set it would promote
+    themselves straight past the enrolment flow.
+
     Set ``LEARNER_API_REQUIRE_AUTH=0`` to disable the gate entirely. That exists
     for local development and for the migration window while the frontend's
     remaining unauthenticated fetches are moved over; it must never be set in a
@@ -106,6 +121,10 @@ def staff_only(*, writes_only=False):
         @functools.wraps(view)
         def wrapped(request, *args, **kwargs):
             import os
+
+            # Default: the view is not serving a learner acting on themselves.
+            # Set on every path so a view can read it without a getattr default.
+            request.learner_self_write = False
 
             enabled = os.environ.get(
                 "LEARNER_API_REQUIRE_AUTH", "1"
@@ -124,13 +143,97 @@ def staff_only(*, writes_only=False):
             account = authenticate_request(request)
             if account is None:
                 return _unauthenticated()
-            if account.role not in allowed:
-                return _forbidden(allowed)
-            return view(request, *args, **kwargs)
+
+            if account.role in allowed:
+                return view(request, *args, **kwargs)
+
+            if allow_own_learner and account.role == "learner":
+                try:
+                    target_id = int(kwargs.get(allow_own_learner))
+                except (TypeError, ValueError):
+                    return _forbidden(allowed)
+                # Matched on id alone: ids are unique across the single
+                # Created_users table, so the learner kind is not part of it.
+                if target_id != account.subject_id:
+                    return JsonResponse({"error": "Not found."}, status=404)
+                request.learner_self_write = True
+                return view(request, *args, **kwargs)
+
+            return _forbidden(allowed)
 
         return wrapped
 
     return decorator
+
+
+def require_access(*accesses):
+    """Gate an endpoint on the caller's staff **access** grant.
+
+    Roles are too coarse for this. Every account the console creates carries
+    ``Position = 'Admin'``, and an account whose access is ``super-admin`` gets
+    ``role='admin'`` while the other three get ``role='staff'`` — so
+    ``staff_only`` cannot tell an enrolment officer from a curriculum designer.
+    The access grant is what distinguishes them, and this is where it is enforced.
+
+    ``super-admin`` always passes: it means "everything" by definition, so it
+    never has to be listed at a call site.
+
+    Learners and employers are refused outright — these are staff areas, and
+    their own surfaces are gated by ``require_role``/``enrolment_api.auth``.
+
+    An account with **no** access recorded is refused. That is the whole point:
+    "unset" means nobody has decided yet, and defaulting an undecided account
+    into an area would hand out exactly the access this mechanism exists to
+    control. The SPA sends such an account to ``/access-required``, where it can
+    ask an administrator for one.
+
+    Refusals are 403 with the required list, matching ``require_role``: unlike the
+    per-learner scoping in ``enrolment_api.auth``, no record id is being probed
+    here, so there is nothing to leak by being explicit.
+    """
+    required = frozenset(accesses)
+
+    def decorator(view):
+        @functools.wraps(view)
+        def wrapped(request, *args, **kwargs):
+            from learner_api.constants import ACCESS_SUPER_ADMIN
+
+            account = authenticate_request(request)
+            if account is None:
+                return _unauthenticated()
+            if account.role not in {"admin", "staff"}:
+                return _forbidden(required)
+
+            access = _access_of(account)
+            if access == ACCESS_SUPER_ADMIN or access in required:
+                return view(request, *args, **kwargs)
+
+            return _forbidden(required)
+
+        return wrapped
+
+    return decorator
+
+
+def _access_of(account):
+    """The access grant on a staff account, or "" for anyone else.
+
+    Read from the staff row rather than cached on the account, for the same
+    reason ``role`` is recomputed per request: an access changed in the console
+    must take effect on the account's next request, not their next sign-in.
+    """
+    if account.subject_type != "staff":
+        return ""
+    from django.db import DatabaseError
+
+    from learner_api.models import StaffUser
+
+    try:
+        row = StaffUser.objects.filter(pk=account.subject_id).only("access").first()
+    except DatabaseError:
+        # Fail closed: an unreadable grant is not a grant.
+        return ""
+    return (getattr(row, "access", "") or "").strip().lower() if row else ""
 
 
 def require_permission(*permissions):

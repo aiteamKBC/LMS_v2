@@ -7,6 +7,7 @@ import { kbcUsers } from '@/mocks/users';
 import { kbcTenant, demoProviderTenant, type Tenant } from '@/mocks/tenant';
 import { clearChatSession } from '@/api/chat';
 import { apiLogin, apiLogout, apiMe, type AuthUser, type Role } from '@/api/auth';
+import { rememberSignedInLearner } from '@/hooks/useMyLearner';
 
 // ============================================================
 // Types
@@ -88,6 +89,13 @@ const ROLE_TO_RBAC_IDS: Record<Role, string[]> = {
 
 /** Build the local AuthState from a server account record. */
 function stateFromAccount(account: AuthUser): AuthState {
+  // A learner's own pages (/workspace/learner and the paramless /learner/*
+  // routes) resolve through the "remembered learner". Pin it to the account
+  // that just signed in — otherwise a learner is shown whichever record was
+  // last in localStorage, or the hardcoded demo learner on a fresh browser.
+  // Single funnel: every sign-in, session restore and refresh lands here.
+  rememberSignedInLearner(account.subjectType, account.subjectId, account.learnerType);
+
   const roles = (ROLE_TO_RBAC_IDS[account.role] ?? [])
     .map(id => ALL_ROLES.find(r => r.id === id))
     .filter((r): r is RoleDef => r !== undefined);

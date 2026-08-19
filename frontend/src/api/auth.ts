@@ -30,6 +30,16 @@ export interface AuthUser {
   permissions: string[];
   /** Staff only — the Position column, e.g. "Caseowner". */
   position?: string | null;
+  /**
+   * Staff access grant — one of ACCESS_OPTIONS in `staffUsers.ts`, or '' when
+   * none is recorded. Decides where the account lands and which sidebar it
+   * gets; the server enforces what it may actually reach.
+   */
+  access?: string | null;
+  /** Landing route for `access`, chosen server-side (ACCESS_HOME_ROUTES). */
+  accessHome?: string | null;
+  /** `roleNavMap` key for `access`, chosen server-side (ACCESS_NAV_ROLES). */
+  accessNavRole?: string | null;
   /** Learners only. */
   learnerType?: string | null;
   programme?: string | null;

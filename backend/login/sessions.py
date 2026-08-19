@@ -149,5 +149,54 @@ def authenticate_request(request):
 
     if session is not None:
         touch_session(session)
+        _refresh_staff_role(request.login_account)
 
     return request.login_account
+
+
+def _refresh_staff_role(account):
+    """Re-derive a staff account's role from its current access grant.
+
+    ``require_role`` has always documented that a demotion "takes effect on their
+    next request, not only when they next sign in" — but nothing actually
+    recomputed it, so the ``Role`` column stayed at whatever it was when the
+    account was minted. That was harmless while Position decided the role and
+    Position rarely changed. It stopped being harmless once access became the
+    grant: an account created as Position='Admin' kept ``role='admin'`` in the
+    database even after the derivation stopped awarding it, so the super-admin
+    console still let it in.
+
+    Only staff accounts are affected — a learner's or employer's role comes from
+    which table they live in and cannot drift. Writes only when the value really
+    changed, so this costs one indexed read per authenticated staff request and
+    no write on the overwhelming majority of them.
+
+    Never raises: a failure here must not sign somebody out. The stale role is
+    then still in force for that request, which is the pre-existing behaviour.
+    """
+    if account is None or account.subject_type != "staff":
+        return
+    try:
+        from django.db import DatabaseError
+
+        from learner_api.models import StaffUser
+
+        from .identity import role_for_staff
+
+        row = (
+            StaffUser.objects.filter(pk=account.subject_id)
+            .only("position", "access")
+            .first()
+        )
+        if row is None:
+            return
+        derived = role_for_staff(row.position, row.access)
+        if derived != account.role:
+            account.role = derived
+            account.save(update_fields=["role", "updated_at"])
+    except DatabaseError:
+        pass
+    except Exception:  # noqa: BLE001 - never break authentication over this
+        import logging
+
+        logging.getLogger("login").exception("Could not refresh staff role")

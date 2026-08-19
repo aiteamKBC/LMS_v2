@@ -26,7 +26,7 @@ function WizardInner({ currentIndex }: { currentIndex: number }) {
     try {
       // Persist the Extended ILR first: it lives in its own table, so a learner
       // who filled it in but never pressed Save would otherwise lose it here.
-      await saveIlr();
+      if (!isCommercial) await saveIlr();
 
       // Persist the fields this table can hold, and mark onboarding complete.
       // The commercial table has no dob/onboarding columns, so its board
@@ -107,7 +107,10 @@ export default function WizardPage() {
   }, [userId, isCommercial, reloadToken]);
 
   if (!stepSlug) return <Navigate to={`/users/${userId}/wizard/introduction${suffix}`} replace />;
-  const idx = WIZARD_STEPS.findIndex((s) => s.slug === stepSlug);
+  // Commercial delivery has no funded ILR trail. If an old bookmark or a
+  // generic next-step link reaches the ILR route, land on the next real step.
+  const resolvedStepSlug = isCommercial && stepSlug === 'ilr' ? 'plr' : stepSlug;
+  const idx = WIZARD_STEPS.findIndex((s) => s.slug === resolvedStepSlug);
   const currentIndex = idx === -1 ? 0 : idx;
 
   if (loading || loadError || !board) {

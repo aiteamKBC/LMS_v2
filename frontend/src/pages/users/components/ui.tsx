@@ -15,11 +15,11 @@ export const iconBtn =
   'w-8 h-8 rounded-lg hover:bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer';
 
 // ---- Action link (right-aligned section actions) ----
-export function ActionLink({ label, onClick, icon }: { label: string; onClick?: () => void; icon?: string }) {
+export function ActionLink({ label, onClick, icon, danger = false }: { label: string; onClick?: () => void; icon?: string; danger?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className="text-[12px] text-primary-600 hover:text-primary-700 hover:underline transition-smooth cursor-pointer inline-flex items-center gap-1 whitespace-nowrap"
+      className={`text-[12px] ${danger ? 'text-red-600 hover:text-red-700' : 'text-primary-600 hover:text-primary-700'} hover:underline transition-smooth cursor-pointer inline-flex items-center gap-1 whitespace-nowrap`}
     >
       {icon && <AppIcon className={icon} />}
       {label}

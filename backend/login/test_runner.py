@@ -34,6 +34,9 @@ SETUP_COMMANDS = (
     # database needs both, in this order.
     "apply_created_users_table",
     "apply_created_users_employer_id",
+    # Staff_users."Access" — the staff access grant. Added after the base table
+    # command, which does not know about it.
+    "apply_staff_access_column",
     "apply_login_tables",
 )
 
@@ -43,6 +46,25 @@ TEST_DATABASE_PREFIX = "test_"
 
 
 class EnrolmentTestRunner(DiscoverRunner):
+    def setup_test_environment(self, **kwargs):
+        """Force the mail kill switch off for the whole run.
+
+        The integration tests exercise the real invitation and reset flows
+        against ``qa-…@kbc.invalid`` addresses, and ``email_azure.send_mail``
+        reads ``os.environ`` at call time — so once this deployment's mail app is
+        configured, an unguarded run would fire a live Graph ``sendMail`` from
+        the real ``lms@`` mailbox for every one of those tests.
+
+        Setting the documented kill switch here is better than mocking each call
+        site: it cannot be forgotten by a test added later, and the tests that
+        deliberately assert transport behaviour set their own environment with
+        ``mock.patch.dict``, which overrides this.
+        """
+        import os
+
+        os.environ["AZURE_MAIL_ENABLED"] = "false"
+        super().setup_test_environment(**kwargs)
+
     def setup_databases(self, **kwargs):
         old_config = super().setup_databases(**kwargs)
 

@@ -10,6 +10,7 @@ so those sections come back empty rather than 404, and wizard-only sections that
 have nowhere to persist are rejected explicitly instead of being silently dropped.
 """
 import json
+import logging
 
 from django.db import DatabaseError
 from django.http import JsonResponse
@@ -17,9 +18,12 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
 from learner_api.constants import DEFAULT_PROGRAMME_STATUS
+from learner_api.mappers import restrict_to_self_writable
 from learner_api.models import CommercialUser
 
 from .auth import enrolment_login_required
+
+logger = logging.getLogger(__name__)
 
 
 def _error(message, status):
@@ -161,6 +165,20 @@ def commercial_board(request, pk):
             payload = _parse_body(request)
         except ValueError as exc:
             return _error(str(exc), 400)
+
+        # A learner reaches this endpoint only for their own board (the gate in
+        # enrolment_api.auth scopes them by id), but owning the row is not
+        # permission to set every field on it — WRITABLE_FIELDS includes
+        # programmeStatus, which would let them promote themselves past
+        # enrolment. Same allowlist the apprenticeship wizard's PATCH uses.
+        account = getattr(request, "login_account", None)
+        if account is not None and account.role == "learner":
+            payload, rejected = restrict_to_self_writable(payload)
+            if rejected:
+                logger.warning(
+                    "Learner %s attempted to write board fields they do not own: %s",
+                    pk, ", ".join(rejected),
+                )
 
         fields = {}
         for key, value in payload.items():

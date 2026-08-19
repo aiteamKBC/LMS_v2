@@ -40,6 +40,80 @@ POSITION_CHOICES = [
     "Operations team",
 ]
 
+# --------------------------------------------------------------------------- #
+# staff access levels                                                          #
+# --------------------------------------------------------------------------- #
+# What a staff account may reach. Stored in enrolment."Staff_users"."Access"
+# (see apply_staff_access_column) and enforced by
+# ``login.permissions.require_access`` — not merely used to pick a landing page.
+#
+# This exists because Position no longer decides permissions. Every account the
+# console creates is Position='Admin', so without a separate grant every staff
+# member would hold full platform access. Access is that grant, and it is the
+# only thing narrowing what an account can do.
+#
+# Exactly one per account: 'super-admin' already means "everything", which is the
+# only case combining values would serve.
+ACCESS_ENROLMENT = "enrolment"
+ACCESS_CURRICULUM = "curriculum"
+ACCESS_COACH = "coach"
+ACCESS_SUPER_ADMIN = "super-admin"
+
+#: Canonical order — also the order the console offers them in.
+ACCESS_CHOICES = [
+    ACCESS_ENROLMENT,
+    ACCESS_CURRICULUM,
+    ACCESS_COACH,
+    ACCESS_SUPER_ADMIN,
+]
+
+#: Human labels for the console. Kept beside the values so the two cannot drift.
+ACCESS_LABELS = {
+    ACCESS_ENROLMENT: "Enrolment access",
+    ACCESS_CURRICULUM: "Curriculum access",
+    ACCESS_COACH: "Coach access",
+    ACCESS_SUPER_ADMIN: "Super Admin access",
+}
+
+#: What each access is for, shown in the console's access picker.
+ACCESS_DESCRIPTIONS = {
+    ACCESS_ENROLMENT: (
+        "The enrolment workspace and every learner record. Together with Super "
+        "Admin, the only access that can change enrolment data."
+    ),
+    ACCESS_CURRICULUM: "The curriculum workspace — programmes, modules and their content.",
+    ACCESS_COACH: "The coach workspace — their caseload, reviews and evidence validation.",
+    ACCESS_SUPER_ADMIN: "Everything, including this console. Can edit any data on the platform.",
+}
+
+#: Where each access lands after signing in. The SPA reads this from the account
+#: payload rather than keeping its own copy, so one edit here moves the landing
+#: page and the permission together.
+#:
+#: Enrolment lands on /users, not a /workspace/* route: the enrolment console is
+#: the user directory (its whole sidebar is the single "Users" item), so that
+#: page *is* the workspace.
+#: Where a staff account with **no** access lands. Not a workspace: it explains
+#: that an administrator has to grant them one, and offers a button that asks.
+NO_ACCESS_ROUTE = "/access-required"
+
+ACCESS_HOME_ROUTES = {
+    ACCESS_ENROLMENT: "/users",
+    ACCESS_CURRICULUM: "/workspace/curriculum",
+    ACCESS_COACH: "/workspace/coach",
+    ACCESS_SUPER_ADMIN: "/workspace/admin",
+}
+
+#: Which SPA sidebar (``roleNavMap`` key) each access gets. 'compliance' is the
+#: enrolment officer's nav — the key predates the rename and is what the map
+#: still uses.
+ACCESS_NAV_ROLES = {
+    ACCESS_ENROLMENT: "compliance",
+    ACCESS_CURRICULUM: "curriculum",
+    ACCESS_COACH: "coach",
+    ACCESS_SUPER_ADMIN: "admin",
+}
+
 # Organisation record status, from the organisation form's Status dropdown.
 # Validated in the API rather than by a DB check constraint, as above.
 ORGANISATION_STATUS_CHOICES = [

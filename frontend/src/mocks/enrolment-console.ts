@@ -155,8 +155,9 @@ export const ETHNICITY_OPTIONS = [
   '98 - Any other ethnic group',
 ];
 
-export const COUNTRY_OPTIONS = ['United Kingdom', 'Ireland', 'France', 'Germany', 'Spain', 'Italy', 'Poland', 'Romania', 'Egypt', 'India', 'Nigeria', 'Other'];
-export const NATIONALITY_OPTIONS = ['British', 'Irish', 'French', 'German', 'Spanish', 'Italian', 'Polish', 'Romanian', 'Egyptian', 'Indian', 'Nigerian', 'Other'];
+// Keep the mock/export surface compatible with existing imports while using
+// the same complete list as every country field in the application.
+export { COUNTRY_OPTIONS, NATIONALITY_OPTIONS } from '@/lib/countries';
 export const SEX_OPTIONS = ['Male', 'Female', 'Prefer not to say'];
 export const GENDER_IDENTITY_OPTIONS = ['Man', 'Woman', 'Non-binary', 'Prefer to self-describe', 'Prefer not to say'];
 export const WAGE_BAND_OPTIONS = [

@@ -7,27 +7,14 @@ import { Navigate } from "react-router-dom";
 // globally by unplugin-auto-import (see vite.config.ts), and router/index.ts
 // already wraps every element in a <Suspense> boundary.
 const AdminAccessLogsPage = lazy(() => import("../pages/admin/access-logs/page"));
-const AdminAtRiskPage = lazy(() => import("../pages/admin/at-risk/page"));
-const AdminAuditLogsPage = lazy(() => import("../pages/admin/audit-logs/page"));
-const AdminAutomationsPage = lazy(() => import("../pages/admin/automations/page"));
-const AdminCohortsPage = lazy(() => import("../pages/admin/cohorts/page"));
 const AdminDashboard = lazy(() => import("../pages/workspace/admin/page"));
 const AdminDocumentsPage = lazy(() => import("../pages/admin/documents/page"));
-const AdminEmployersPage = lazy(() => import("../pages/admin/employers/page"));
-const AdminFormsPage = lazy(() => import("../pages/admin/forms/page"));
-const AdminIntegrationsPage = lazy(() => import("../pages/admin/integrations/page"));
-const AdminMessagesPage = lazy(() => import("../pages/admin/messages/page"));
 const AdminNotificationsPage = lazy(() => import("../pages/admin/notifications/page"));
-const AdminOrganisationsPage = lazy(() => import("../pages/admin/organisations/page"));
 const AdminPermissionsPage = lazy(() => import("../pages/admin/permissions/page"));
-const AdminProgrammesPage = lazy(() => import("../pages/admin/programmes/page"));
-const AdminReportsPage = lazy(() => import("../pages/admin/reports/page"));
 const AdminRolesPage = lazy(() => import("../pages/admin/roles/page"));
-const AdminSupportSettingsPage = lazy(() => import("@/pages/admin/support-settings/page"));
 const AdminSystemSettingsPage = lazy(() => import("../pages/admin/system/page"));
-const AdminTemplatesPage = lazy(() => import("../pages/admin/templates/page"));
-const AdminTenantsPage = lazy(() => import("../pages/admin/tenants/page"));
 const AdminUsersPage = lazy(() => import("../pages/admin/users/page"));
+const PlatformReportPage = lazy(() => import("../pages/admin/platform-report/page"));
 const AttendancePage = lazy(() => import("../pages/learner/attendance/page"));
 const AttendanceRiskPage = lazy(() => import("../pages/engagement/attendance-risk/page"));
 const AuditorWorkspace = lazy(() => import("../pages/workspace/auditor/page"));
@@ -37,7 +24,6 @@ const BoardPage = lazy(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazy(() => import("../pages/employer/EmployerPortalPage"));
 const EmployerLearnerPage = lazy(() => import("../pages/employer/EmployerLearnerPage"));
 const BudgetsPage = lazy(() => import("../pages/finance/budgets/page"));
-const BulkUserImportPage = lazy(() => import("@/pages/admin/bulk-user-import/page"));
 const CallLogsPage = lazy(() => import("../pages/engagement/call-logs/page"));
 const CatchUpPage = lazy(() => import("../pages/learner/catchup/page"));
 const CheckpointsPage = lazy(() => import("../pages/curriculum/checkpoints/page"));
@@ -106,6 +92,7 @@ const FinanceWorkspace = lazy(() => import("../pages/workspace/finance/page"));
 const FlashCardsPage = lazy(() => import("../pages/engagement/flash-cards/page"));
 const ForgotPasswordPage = lazy(() => import("../pages/forgot-password/page"));
 const LoginPage = lazy(() => import("../pages/login/page"));
+const AccessRequiredPage = lazy(() => import("../pages/access-required/page"));
 // Serves both emailed-token flows; `mode` picks which.
 const SetPasswordPage = lazy(() => import("../pages/set-password/page"));
 const FundingOverviewPage = lazy(() => import("../pages/finance/funding/page"));
@@ -155,7 +142,6 @@ const MonthlyCoachingPage = lazy(() => import("../pages/learner/monthly-coaching
 const MonthlyCoachingListPage = lazy(() => import("../pages/learner/monthly-coaching/page").then(m => ({ default: m.MonthlyCoachingListPage })));
 const ProgressReviewsPage = lazy(() => import("../pages/learner/progress-reviews/page"));
 const ProgressReviewsListPage = lazy(() => import("../pages/learner/progress-reviews/page").then(m => ({ default: m.ProgressReviewsListPage })));
-const ManualModeSettings = lazy(() => import("../pages/admin/manual-mode/page"));
 const ManualQuizPage = lazy(() => import("../pages/curriculum/quiz-xml/manual/page"));
 const MessagesPage = lazy(() => import("../pages/learner/messages/page"));
 const MisAttendanceModesPage = lazy(() => import("../pages/mis/attendance-modes/page"));
@@ -179,7 +165,6 @@ const MySchedulePage = lazy(() => import("../pages/learner/clubs/events/schedule
 const NotFound = lazy(() => import("../pages/NotFound"));
 const OTJHPage = lazy(() => import("../pages/learner/otjh/page"));
 const PaymentsPage = lazy(() => import("../pages/finance/payments/page"));
-const PlatformReportPage = lazy(() => import("@/pages/admin/platform-report/page"));
 const PointsRulesPage = lazy(() => import("../pages/engagement/points-rules/page"));
 const ProgrammeDetailPage = lazy(() => import("../pages/curriculum/programme-detail/page"));
 const QADashboard = lazy(() => import("../pages/workspace/qa/page"));
@@ -222,9 +207,7 @@ const SafeguardingQAAudit = lazy(() => import("@/pages/safeguarding/qa-audit/pag
 const SafeguardingReferrals = lazy(() => import("@/pages/safeguarding/referrals/page"));
 const SafeguardingReports = lazy(() => import("@/pages/safeguarding/reports/page"));
 const SessionCalendarPage = lazy(() => import("../pages/curriculum/session-calendar/page"));
-const SettingsHub = lazy(() => import("../pages/admin/settings/page"));
 const StaffProfilesPage = lazy(() => import("../pages/curriculum/staff-profiles/page"));
-const StandaloneAiSettings = lazy(() => import("../pages/admin/ai-settings/page"));
 const StarredMessagesPage = lazy(() => import("../pages/starred-messages/page"));
 const SupportDashboard = lazy(() => import("@/pages/workspace/support/page"));
 const SupportEscalations = lazy(() => import("@/pages/support/escalations/page"));
@@ -234,7 +217,6 @@ const SupportPage = lazy(() => import("../pages/learner/support/page"));
 const SupportReports = lazy(() => import("@/pages/support/reports/page"));
 const SupportResolved = lazy(() => import("@/pages/support/resolved/page"));
 const SupportTicketQueue = lazy(() => import("@/pages/support/ticket-queue/page"));
-const TenantOnboardingWizard = lazy(() => import("@/pages/admin/tenant-onboarding/page"));
 const TrainingPlanBuilderPage = lazy(() => import("../pages/delivery/TrainingPlanPage"));
 const TrainingPlanPage = lazy(() => import("../pages/learner/training-plan/page"));
 const TutorAiMarkingPage = lazy(() => import("../pages/tutor/ai-marking/page"));
@@ -259,7 +241,18 @@ const WizardPage = lazy(() => import("../pages/users/wizard/WizardPage"));
 
 const routes: RouteObject[] = [
   {
+    // Sign-in is the front door. LoginPage bounces an already-signed-in visitor
+    // to their own workspace (see homeFor there), so "/" is the login form for a
+    // stranger and a redirect to your console when you have a session — which is
+    // also what makes the logo and the breadcrumb home icon do the right thing.
     path: "/",
+    element: <LoginPage />,
+  },
+  {
+    // The public launcher that used to be at "/". Kept reachable: it is the
+    // "explore this section" demo entry point, which is not the same thing as
+    // the way in for a real account.
+    path: "/home",
     element: <Home />,
   },
   {
@@ -271,6 +264,12 @@ const routes: RouteObject[] = [
     // remains a public launcher; this is the way in for an actual account.
     path: "/login",
     element: <LoginPage />,
+  },
+  {
+    // Where a signed-in staff account with no access grant lands. Deliberately
+    // outside any workspace shell — there is no workspace they can open yet.
+    path: "/access-required",
+    element: <AccessRequiredPage />,
   },
   {
     path: "/forgot-password",
@@ -344,60 +343,12 @@ const routes: RouteObject[] = [
     element: <AdminPermissionsPage />,
   },
   {
-    path: "/admin/tenants",
-    element: <AdminTenantsPage />,
-  },
-  {
-    path: "/admin/organisations",
-    element: <AdminOrganisationsPage />,
-  },
-  {
-    path: "/admin/employers",
-    element: <AdminEmployersPage />,
-  },
-  {
-    path: "/admin/programmes",
-    element: <AdminProgrammesPage />,
-  },
-  {
-    path: "/admin/cohorts",
-    element: <AdminCohortsPage />,
-  },
-  {
-    path: "/admin/forms",
-    element: <AdminFormsPage />,
-  },
-  {
-    path: "/admin/templates",
-    element: <AdminTemplatesPage />,
-  },
-  {
     path: "/admin/documents",
     element: <AdminDocumentsPage />,
   },
   {
-    path: "/admin/automations",
-    element: <AdminAutomationsPage />,
-  },
-  {
     path: "/admin/notifications",
     element: <AdminNotificationsPage />,
-  },
-  {
-    path: "/admin/messages",
-    element: <AdminMessagesPage />,
-  },
-  {
-    path: "/admin/reports",
-    element: <AdminReportsPage />,
-  },
-  {
-    path: "/admin/at-risk",
-    element: <AdminAtRiskPage />,
-  },
-  {
-    path: "/admin/settings",
-    element: <SettingsHub />,
   },
   {
     path: "/users",
@@ -698,16 +649,8 @@ const routes: RouteObject[] = [
     element: <CoachEmployerActions />,
   },
   {
-    path: "/admin/audit-logs",
-    element: <AdminAuditLogsPage />,
-  },
-  {
     path: "/admin/access-logs",
     element: <AdminAccessLogsPage />,
-  },
-  {
-    path: "/admin/integrations",
-    element: <AdminIntegrationsPage />,
   },
   {
     path: "/admin/system",
@@ -716,22 +659,6 @@ const routes: RouteObject[] = [
   {
     path: "/admin/platform-report",
     element: <PlatformReportPage />,
-  },
-  {
-    path: "/admin/tenant-onboarding",
-    element: <TenantOnboardingWizard />,
-  },
-  {
-    path: "/admin/bulk-user-import",
-    element: <BulkUserImportPage />,
-  },
-  {
-    path: "/admin/manual-mode",
-    element: <ManualModeSettings />,
-  },
-  {
-    path: "/admin/ai-settings",
-    element: <StandaloneAiSettings />,
   },
   {
     path: "/employer/apprentices",
@@ -1271,10 +1198,6 @@ const routes: RouteObject[] = [
   {
     path: "/support/knowledge-base",
     element: <SupportKnowledgeBase />,
-  },
-  {
-    path: "/admin/support-settings",
-    element: <AdminSupportSettingsPage />,
   },
   {
     path: "/workspace/safeguarding",

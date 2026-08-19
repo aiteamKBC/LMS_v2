@@ -59,7 +59,8 @@ import { DocumentCard, Field } from './DocumentCard';
 const learnerNav = roleNavMap.learner;
 
 export default function LearnerCompliancePage() {
-  const { id } = useMyLearner();
+  const { kind, id } = useMyLearner();
+  const isCommercial = kind === 'commercial';
   const toast = useToast();
 
   const [agreementData, setAgreementData] = useState<AgreementResponse | null>(null);
@@ -73,6 +74,10 @@ export default function LearnerCompliancePage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
+    if (isCommercial) {
+      setLoading(false);
+      return;
+    }
     try {
       const [agreement, ilr, plan, written] = await Promise.all([
         fetchAgreement(id),
@@ -89,7 +94,7 @@ export default function LearnerCompliancePage() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, isCommercial]);
 
   useEffect(() => {
     void load();
@@ -151,6 +156,29 @@ export default function LearnerCompliancePage() {
   const openPdf = (doc: ReturnType<typeof agreementPdf>) => {
     if (doc) window.open(doc.output('bloburl'), '_blank', 'noopener');
   };
+
+  if (isCommercial) {
+    return (
+      <WorkspaceShell
+        role="learner"
+        roleLabel={learnerNav.label}
+        navItems={learnerNav.items}
+        workspaceLabel={learnerNav.workspaceLabel}
+        pageTitle="Compliance documents"
+        pageSubtitle="Not required for commercial delivery"
+        userName="Learner"
+        userRole="Learner"
+      >
+        <main className="p-4 md:p-6">
+          <div className="mx-auto max-w-2xl rounded-2xl border border-primary-200 bg-primary-50/40 p-8 text-center">
+            <i className="ri-information-line text-3xl text-primary-600" />
+            <h2 className="mt-3 text-lg font-heading font-semibold text-foreground-900">No compliance documents are required</h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-foreground-600">Commercial learners follow a delivery-only programme and do not complete apprenticeship compliance documents.</p>
+          </div>
+        </main>
+      </WorkspaceShell>
+    );
+  }
 
   const sign = async (
     kind: 'agreement' | 'ilr' | 'plan' | 'written',

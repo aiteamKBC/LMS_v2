@@ -64,7 +64,7 @@ function LearnerWizard({ currentIndex, onDone }: { currentIndex: number; onDone:
     try {
       // The ILR lives in its own table — save it before touching the learner row
       // so a learner who never pressed Save on that step doesn't lose it.
-      await saveIlr();
+      if (!isCommercial) await saveIlr();
 
       if (isCommercial) {
         await updateCommercialBoard(userId, {
@@ -136,7 +136,17 @@ export default function LearnerOnboardingPage() {
   const [reloadToken, setReloadToken] = useState(0);
   const reload = () => setReloadToken((n) => n + 1);
 
+  // Commercial learners do not have an apprenticeship onboarding flow. This
+  // also clears an old bookmarked/sidebar URL once the account type is known.
   useEffect(() => {
+    if (isCommercial) navigate('/workspace/learner', { replace: true });
+  }, [isCommercial, navigate]);
+
+  useEffect(() => {
+    if (isCommercial) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
@@ -152,8 +162,11 @@ export default function LearnerOnboardingPage() {
     return () => { cancelled = true; };
   }, [learnerId, isCommercial, reloadToken]);
 
-  const idx = WIZARD_STEPS.findIndex((s) => s.slug === stepSlug);
+  const resolvedStepSlug = isCommercial && stepSlug === 'ilr' ? 'plr' : stepSlug;
+  const idx = WIZARD_STEPS.findIndex((s) => s.slug === resolvedStepSlug);
   const currentIndex = idx === -1 ? 0 : idx;
+
+  if (isCommercial) return null;
 
   return (
     <WorkspaceShell

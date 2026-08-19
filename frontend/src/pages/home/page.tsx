@@ -3,6 +3,7 @@ import { BrandLockup } from '@/components/BrandLockup';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { PORTAL_WORKSPACES } from '@/lib/portalWorkspaces';
 
 // ── Workspaces shown as launch buttons on the home page ──
 // Each maps to a demo account so entering a section signs you in as the
@@ -18,24 +19,16 @@ interface WorkspaceSection {
   highlighted?: boolean;
 }
 
-const WORKSPACE_SECTIONS: WorkspaceSection[] = [
-  //{ slug: 'learner', label: 'Learner', icon: 'ri-user-line', email: 'learner@kbc.test', workspacePath: '/workspace/learner', highlighted: true },
-  { slug: 'coach', label: 'Coach', icon: 'ri-user-heart-line', email: 'coach@kbc.test', workspacePath: '/workspace/coach', highlighted: true },
-  // { slug: 'tutor', label: 'Tutor', icon: 'ri-presentation-line', email: 'tutor@kbc.test', workspacePath: '/workspace/tutor' },
-  // { slug: 'employer', label: 'Employer', icon: 'ri-building-2-line', email: 'employer@kbc.test', workspacePath: '/workspace/employer' },
-  { slug: 'enrolment', label: 'Enrolment', icon: 'ri-user-add-line', email: 'compliance@kbc.test', workspacePath: '/users', highlighted: true },
-  // { slug: 'qa', label: 'QA Officer', icon: 'ri-search-eye-line', email: 'qa@kbc.test', workspacePath: '/workspace/qa' },
-  // { slug: 'mis', label: 'MIS User', icon: 'ri-database-2-line', email: 'mis@kbc.test', workspacePath: '/workspace/mis' },
-  { slug: 'curriculum', label: 'Curriculum', icon: 'ri-book-open-line', email: 'tutor@kbc.test', workspacePath: '/workspace/curriculum', highlighted: true },
-  { slug: 'engagement', label: 'Engagement', icon: 'ri-megaphone-line', email: 'compliance@kbc.test', workspacePath: '/workspace/engagement', highlighted: true },
-  { slug: 'audit-copy', label: 'AUDIT', icon: 'ri-file-search-line', email: 'auditor@kbc.test', workspacePath: '/workspace/auditor-copy', highlighted: true },
-  // { slug: 'leadership', label: 'Leadership', icon: 'ri-vip-crown-line', email: 'leadership@kbc.test', workspacePath: '/workspace/leadership' },
-  //{ slug: 'admin', label: 'Admin', icon: 'ri-settings-3-line', email: 'admin@kbc.test', workspacePath: '/workspace/admin', highlighted: true },
-  // { slug: 'finance', label: 'Finance', icon: 'ri-money-pound-circle-line', email: 'finance@kbc.test', workspacePath: '/workspace/finance' },
-  // { slug: 'auditor', label: 'Auditor', icon: 'ri-history-line', email: 'auditor@kbc.test', workspacePath: '/workspace/auditor' },
-  // { slug: 'support', label: 'Support', icon: 'ri-customer-service-2-line', email: 'admin@kbc.test', workspacePath: '/workspace/support' },
-  // { slug: 'safeguarding', label: 'Safeguarding', icon: 'ri-shield-line', email: 'compliance@kbc.test', workspacePath: '/workspace/safeguarding' },
-];
+// Built from the shared list so the launcher and the Super Admin dashboard's
+// Workspaces card always offer the same five sections.
+const WORKSPACE_SECTIONS: WorkspaceSection[] = PORTAL_WORKSPACES.map((w) => ({
+  slug: w.slug,
+  label: w.label,
+  icon: w.icon,
+  email: w.demoEmail,
+  workspacePath: w.path,
+  highlighted: true,
+}));
 
 function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: { end: number; suffix?: string; prefix?: string; duration?: number; label: string }) {
   const { ref, isInView } = useInView();

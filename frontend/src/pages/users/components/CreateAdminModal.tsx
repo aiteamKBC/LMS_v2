@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useToast } from '@/hooks/useToast';
-import { createStaffUser, POSITION_OPTIONS } from '@/api/staffUsers';
+import { ADMIN_POSITION, createStaffUser } from '@/api/staffUsers';
 import type { StaffUserRow } from '@/api/staffUsers';
 import { Modal } from './Modal';
 import { inputClass, btnPrimary, btnSecondary } from './ui';
@@ -48,7 +48,10 @@ const FIELDS: FieldDef[] = [
 export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; onCreated: (row: StaffUserRow) => void }) {
   const { success, error } = useToast();
   const [formData, setFormData] = useState<Record<string, string>>({});
-  const [position, setPosition] = useState('');
+  // Every account created here is an Admin. What the account may actually reach
+  // is its Access grant, set from the Accounts page after creation — a position
+  // chooser here only ever produced a job title that no longer decides anything.
+  const position = ADMIN_POSITION;
   const [submitting, setSubmitting] = useState(false);
   // Off by default: sending someone a credential-setting email is an action
   // with a real-world effect, so it should be chosen, not defaulted into.
@@ -68,10 +71,6 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
     const email = (formData.email ?? '').trim();
     if (email.toLowerCase() !== (formData.confirmEmail ?? '').trim().toLowerCase()) {
       error('Emails do not match', 'Please check the email and confirmation match.');
-      return;
-    }
-    if (!position) {
-      error('Position required', 'Please choose the position for this admin.');
       return;
     }
 
@@ -100,13 +99,13 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
       if (inviteToPlatform && invite?.forbidden) {
         // No login account exists. Say so plainly rather than implying a
         // transient mail problem — somebody with the right role must re-invite.
-        success('Admin created', `${row.name || name} was saved as ${position}.`);
+        success('Admin created', `${row.name || name} was created as an Admin.`);
         error(
           'Not permitted to invite',
           invite.error || 'You do not have permission to invite this person.',
         );
       } else if (inviteToPlatform && invite && !invite.emailSent) {
-        success('Admin created', `${row.name || name} was saved as ${position}.`);
+        success('Admin created', `${row.name || name} was created as an Admin.`);
         error(
           'Invitation not sent',
           invite.error || 'The account was created but the invitation email could not be sent.',
@@ -114,7 +113,7 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
       } else if (inviteToPlatform) {
         success('Admin created and invited', `${row.name || name} was emailed a link to set their password.`);
       } else {
-        success('Admin created', `${row.name || name} was saved as ${position}.`);
+        success('Admin created', `${row.name || name} was created as an Admin.`);
       }
       onCreated(row);
       onClose();
@@ -197,40 +196,6 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
               <p className="text-[13px] font-semibold text-primary-700 sm:py-2">Admin</p>
             </div>
             {FIELDS.map(renderField)}
-          </div>
-        </section>
-
-        {/* Position — asked for at the end of the form, as requested. */}
-        <section className="rounded-xl border-2 border-primary-200 overflow-hidden">
-          <header className="flex items-center gap-2 px-4 py-2.5 bg-primary-50 border-b border-primary-200/60">
-            <AppIcon className="ri-briefcase-line text-primary-500" />
-            <h3 className="text-[12px] font-semibold uppercase tracking-wider text-primary-700">
-              Position<span className="text-red-500 ml-0.5">*</span>
-            </h3>
-          </header>
-          <div className="p-4 space-y-2.5">
-            <p className="text-[12px] text-foreground-500">Choose this admin’s position.</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {POSITION_OPTIONS.map((opt) => (
-                <label
-                  key={opt}
-                  className={`flex items-center gap-2.5 p-3 rounded-lg border cursor-pointer transition-smooth ${
-                    position === opt
-                      ? 'border-primary-400 bg-primary-50/60'
-                      : 'border-foreground-200 hover:bg-background-100/60'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="ca-position"
-                    checked={position === opt}
-                    onChange={() => setPosition(opt)}
-                    className="accent-primary-500"
-                  />
-                  <span className="text-[13px] font-medium text-foreground-800">{opt}</span>
-                </label>
-              ))}
-            </div>
           </div>
         </section>
 

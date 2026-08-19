@@ -22,8 +22,25 @@ Set in ``backend/.env``. See ``AZURE_SETUP.md`` for how to obtain them.
     AZURE_MAIL_SENDER          # the mailbox to send as, e.g. noreply@…
     AZURE_MAIL_ENABLED         # "false" to force console fallback
 
+This deployment registered its mail app under different names, so each setting
+also accepts the ``AZURE_LOGIN_APP_*`` / ``AZURE_EMAIL`` spelling actually
+present in ``.env`` (app ``LMS_Email_login_and_Invitations``):
+
+    AZURE_LOGIN_APP_TENANT_ID      -> AZURE_MAIL_TENANT_ID
+    AZURE_LOGIN_APP_CLIENT_ID      -> AZURE_MAIL_CLIENT_ID
+    AZURE_LOGIN_APP_CLIENT_SECRET  -> AZURE_MAIL_CLIENT_SECRET
+    AZURE_EMAIL                    -> AZURE_MAIL_SENDER
+
 The app registration needs the **application** permission ``Mail.Send``
-(not delegated), with admin consent granted.
+(not delegated), with admin consent granted. Confirm with a client-credentials
+token: its ``roles`` claim must contain ``Mail.Send``. An app registered only for
+interactive sign-in (one with a redirect URI) will not have it by default, and
+the failure surfaces as a Graph 403 at send time rather than at startup.
+
+There is deliberately **no** fallback to the tenant-wide ``MICROSOFT_*``
+credentials. Those belong to the calendar app, which has no ``Mail.Send``; with a
+sender configured, falling back to them would flip ``is_configured()`` to True
+and turn an honest "not configured" into an opaque 403 on every send.
 
 Falls back to logging when it is not configured, so the whole invitation and
 reset flow is exercisable end-to-end before Azure exists. The full link — which
@@ -70,22 +87,37 @@ def _setting(name, default=""):
     return (os.environ.get(name) or default).strip()
 
 
-def mail_config():
-    """Current mail settings, with the shared Microsoft credentials as a fallback.
+#: Each mail setting and the env names it accepts, most-preferred first. The
+#: ``AZURE_LOGIN_APP_*`` / ``AZURE_EMAIL`` spellings are what this deployment's
+#: .env actually uses; the ``AZURE_MAIL_*`` names stay primary because they are
+#: what AZURE_SETUP.md documents and what a fresh deployment would copy.
+#:
+#: Note what is absent: ``MICROSOFT_*``. See the module docstring — reusing the
+#: calendar app's credentials here produces a confident 403, not a working send.
+_SETTING_SOURCES = {
+    "tenant_id": ("AZURE_MAIL_TENANT_ID", "AZURE_LOGIN_APP_TENANT_ID"),
+    "client_id": ("AZURE_MAIL_CLIENT_ID", "AZURE_LOGIN_APP_CLIENT_ID"),
+    "client_secret": ("AZURE_MAIL_CLIENT_SECRET", "AZURE_LOGIN_APP_CLIENT_SECRET"),
+    "sender": ("AZURE_MAIL_SENDER", "AZURE_EMAIL"),
+}
 
-    The dedicated ``AZURE_MAIL_*`` names win. If they are absent we fall back to
-    the tenant-wide ``MICROSOFT_*`` app registration that already exists for the
-    calendar integration — but only if it has been granted ``Mail.Send``, which
-    it has not by default. The fallback exists so a deployment that chooses to
-    reuse one app registration can, not because it will work untouched.
-    """
-    return {
-        "tenant_id": _setting("AZURE_MAIL_TENANT_ID") or _setting("MICROSOFT_TENANT_ID"),
-        "client_id": _setting("AZURE_MAIL_CLIENT_ID") or _setting("MICROSOFT_CLIENT_ID"),
-        "client_secret": _setting("AZURE_MAIL_CLIENT_SECRET") or _setting("MICROSOFT_CLIENT_SECRET"),
-        "sender": _setting("AZURE_MAIL_SENDER"),
-        "enabled": _setting("AZURE_MAIL_ENABLED", "true").lower() not in {"0", "false", "no", "off"},
-    }
+
+def _first_set(names):
+    """First non-empty value among ``names``, else ""."""
+    for name in names:
+        value = _setting(name)
+        if value:
+            return value
+    return ""
+
+
+def mail_config():
+    """Current mail settings, resolved across the accepted env spellings."""
+    config = {key: _first_set(names) for key, names in _SETTING_SOURCES.items()}
+    config["enabled"] = (
+        _setting("AZURE_MAIL_ENABLED", "true").lower() not in {"0", "false", "no", "off"}
+    )
+    return config
 
 
 def is_configured():
@@ -101,15 +133,18 @@ def is_configured():
 
 
 def missing_settings():
-    """Which required settings are absent — surfaced by the health endpoint."""
+    """Which required settings are absent — surfaced by the health endpoint.
+
+    Names both accepted spellings, so an operator reading the system-status page
+    can set either without having to consult the source to learn the other
+    exists. Values are never included: this list is published by an endpoint.
+    """
     cfg = mail_config()
-    required = {
-        "AZURE_MAIL_TENANT_ID": cfg["tenant_id"],
-        "AZURE_MAIL_CLIENT_ID": cfg["client_id"],
-        "AZURE_MAIL_CLIENT_SECRET": cfg["client_secret"],
-        "AZURE_MAIL_SENDER": cfg["sender"],
-    }
-    return [name for name, value in required.items() if not value]
+    return [
+        " or ".join(names)
+        for key, names in _SETTING_SOURCES.items()
+        if not cfg[key]
+    ]
 
 
 def _access_token(force_refresh=False):
@@ -309,5 +344,37 @@ def reset_message(*, display_name, link, expires_hours):
         f"Reset it here:\n{link}\n\n"
         f"This link can be used once and expires in {expires_hours} hour(s).\n"
         "If you did not request this, ignore this email.\n"
+    )
+    return subject, html, text
+
+
+def access_request_message(*, requester_name, requester_email, console_url):
+    """Mail an administrator that somebody is waiting for an access grant.
+
+    Sent by the person themselves from the /access-required page, so the body
+    carries only what the administrator needs to act: who is asking, and a link
+    to the Accounts screen where the grant is made. No token, nothing secret —
+    unlike the invitation and reset mails, this one is safe in a shared inbox.
+    """
+    who = requester_name or requester_email
+    subject = f"Access request — {who}"
+    html = _shell(
+        heading="Someone is waiting for access",
+        intro=(
+            f"<strong>{who}</strong> ({requester_email}) has signed in to the "
+            f"{_BRAND} platform but has no access level yet, so there is nothing "
+            "they can open. Grant them one from the Accounts screen."
+        ),
+        button_label="Open Accounts",
+        link=console_url,
+        footer=(
+            "Click their name on that screen to choose an access level. They will "
+            "be able to use the platform on their next request — they do not need "
+            "to sign in again."
+        ),
+    )
+    text = (
+        f"{who} ({requester_email}) has signed in but has no access level yet.\n\n"
+        f"Grant one here:\n{console_url}\n"
     )
     return subject, html, text

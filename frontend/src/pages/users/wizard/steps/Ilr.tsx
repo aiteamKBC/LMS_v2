@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from 'react';
 import { useWizard } from '../WizardContext';
 import { useToast } from '@/hooks/useToast';
-import { COUNTRY_OPTIONS, NATIONALITY_OPTIONS, WAGE_BAND_OPTIONS } from '@/mocks/enrolment-console';
+import { COUNTRY_OPTIONS, NATIONALITY_OPTIONS } from '@/lib/countries';
+import { WAGE_BAND_OPTIONS } from '@/mocks/enrolment-console';
 import { YesNoRadio, FileList, inputClass, btnPrimary, btnSecondary } from '../../components/ui';
 import { LabeledInput, LabeledSelect, LabeledTextarea, SignatureField, StepHeading } from './fields';
 import { downloadIlrDocument } from './ilrDocument';

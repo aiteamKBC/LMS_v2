@@ -31,6 +31,16 @@ export interface UserListRow {
   /** Whether a learning plan has actually been saved — drives Add vs Edit. */
   hasLearningPlan?: boolean;
   programmeStatus?: ProgrammeStatus;
+  /**
+   * The programme the learner is on. Absent for staff, admin and employer rows,
+   * which have no programme — the directory lists all four kinds in one table.
+   */
+  programme?: string;
+  /**
+   * The cohort within that programme. Absent for staff, admin and employer
+   * rows, same as `programme`.
+   */
+  cohort?: string;
   notesCount?: number;
   hasTasks?: boolean;
   reference?: string;
@@ -75,6 +85,12 @@ export interface UsersFilter {
   statuses?: string[]; // FullUser, Invited, Prospect...
   type?: UserType | 'all';
   programme?: string;
+  /**
+   * A single cohort, not a list: the curriculum group lookup takes one
+   * programme + one cohort, so a multi-select here would have nothing to
+   * narrow the group options with.
+   */
+  cohort?: string;
   programmeStatus?: string;
   niNumber?: string;
   caseOwner?: string | 'any';

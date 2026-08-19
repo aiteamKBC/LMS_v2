@@ -149,7 +149,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
   const displayName = auth.user?.fullName || userName;
   const roleSlug = auth.roles[0]?.slug || 'learner';
-  const roleMessagesPath = roleSlug === 'learner' ? '/learner/messages' : roleSlug === 'coach' ? '/coach/messages' : roleSlug === 'admin' ? '/admin/messages' : '/messages';
+  const roleMessagesPath = roleSlug === 'learner' ? '/learner/messages' : roleSlug === 'coach' ? '/coach/messages' : '/messages';
 
   return (
     <>
@@ -371,7 +371,7 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
         {/* Settings (permission-based) */}
         {canAccessSettings && (
           <a
-            href="/admin/settings"
+            href="/admin/system"
             className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-primary-50/70 hover:text-primary-700"
             title="Settings"
           >

@@ -1,177 +1,245 @@
-import { useState } from 'react';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { roleNavMap } from '@/mocks/navigation';
-import { kbcUsers } from '@/mocks/users';
-import { allRoles } from '@/mocks/users';
+// ============================================================================
+// Accounts — login."Login_accounts"
+//
+// This is the sign-in register, which is a narrower set than the user directory
+// at /users: that lists *people* (every learner, employer and staff row), while
+// a person only appears here once they have been invited to the platform. The
+// page says so, because the two counts differing is otherwise alarming.
+//
+// The three actions are the ones the backend actually supports. Role is not
+// editable: identity.ensure_account recomputes it from the person's enrolment
+// row on every request, so an edit here would be reverted within a request.
+// ============================================================================
+import { useCallback, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
+import { useAdminData } from '../_shared/useAdminData';
+import { accountAction, fetchAccounts, type AccountStatus, type PlatformAccount } from '@/api/platformAdmin';
+import { accessLabel } from '@/api/staffUsers';
+import { useAuth } from '@/hooks/useAuth';
+import { AccessPanel } from './AccessPanel';
 
-const adminNav = roleNavMap.admin;
-
-const USER_DATA = [
-  { id: 'u1', name: 'Sophie Williams', email: 'sophie.williams@kbc.ac.uk', roles: ['Apprentice Learner'], status: 'active', lastActive: 'Today, 10:23', programme: 'Business Admin L3', cohort: 'Cohort C' },
-  { id: 'u2', name: 'James Okonkwo', email: 'james.okonkwo@kbc.ac.uk', roles: ['Apprentice Learner'], status: 'active', lastActive: 'Today, 09:15', programme: 'Digital Marketing L3', cohort: 'Cohort B' },
-  { id: 'u3', name: 'Emily Watson', email: 'emily.watson@kbc.ac.uk', roles: ['Apprentice Learner'], status: 'active', lastActive: 'Yesterday', programme: 'Business Admin L3', cohort: 'Cohort A' },
-  { id: 'u4', name: 'Med Maher', email: 'med.maher@kbc.ac.uk', roles: ['Progress Coach'], status: 'active', lastActive: 'Today, 11:45', programme: '-', cohort: '-' },
-  { id: 'u5', name: 'Crispin Jones', email: 'crispin.jones@kbc.ac.uk', roles: ['Curriculum Tutor'], status: 'active', lastActive: 'Today, 08:30', programme: '-', cohort: '-' },
-  { id: 'u6', name: 'Lauren Mitchell', email: 'lauren.mitchell@timhortons.co.uk', roles: ['Employer / Line Manager'], status: 'active', lastActive: 'Yesterday', programme: '-', cohort: '-' },
-  { id: 'u7', name: 'Sarah Mitchell', email: 'sarah.mitchell@kbc.ac.uk', roles: ['QA Officer'], status: 'active', lastActive: 'Today, 07:50', programme: '-', cohort: '-' },
-  { id: 'u8', name: 'David Chen', email: 'david.chen@kbc.ac.uk', roles: ['Apprentice Learner'], status: 'active', lastActive: '2 days ago', programme: 'Software Dev L4', cohort: 'Cohort D' },
-  { id: 'u9', name: 'Liam Foster', email: 'liam.foster@kbc.ac.uk', roles: ['Apprentice Learner'], status: 'inactive', lastActive: '14 days ago', programme: 'Data Analyst L4', cohort: 'Cohort B' },
-  { id: 'u10', name: 'Maya Kapoor', email: 'maya.kapoor@kbc.ac.uk', roles: ['Apprentice Learner'], status: 'active', lastActive: 'Today, 12:00', programme: 'Project Manager L4', cohort: 'Cohort E' },
-  { id: 'u11', name: 'Rebecca Okonkwo', email: 'rebecca.okonkwo@unilever.co.uk', roles: ['Employer / Line Manager'], status: 'active', lastActive: '3 days ago', programme: '-', cohort: '-' },
-  { id: 'u12', name: 'Admin User', email: 'admin@kbc.ac.uk', roles: ['Tenant Admin'], status: 'active', lastActive: 'Today, 13:10', programme: '-', cohort: '-' },
+const ROLE_FILTERS = [
+  { id: '', label: 'All roles' },
+  { id: 'admin', label: 'Admin' },
+  { id: 'staff', label: 'Staff' },
+  { id: 'employer', label: 'Employer' },
+  { id: 'learner', label: 'Learner' },
 ];
 
-export default function AdminUsersPage() {
+const STATUS_FILTERS = [
+  { id: '', label: 'All statuses' },
+  { id: 'active', label: 'Active' },
+  { id: 'invited', label: 'Awaiting first sign-in' },
+  { id: 'suspended', label: 'Suspended' },
+  { id: 'locked', label: 'Locked' },
+];
+
+const STATUS_TONE: Record<AccountStatus, 'ok' | 'bad' | 'warn' | 'neutral'> = {
+  active: 'ok',
+  suspended: 'bad',
+  locked: 'warn',
+  invited: 'neutral',
+};
+
+const PAGE_SIZE = 25;
+
+function fmtDate(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+export default function AdminAccountsPage() {
+  // Deep links from the dashboard land here pre-filtered (?status=locked etc).
+  const [params, setParams] = useSearchParams();
+  const role = params.get('role') || '';
+  const status = params.get('status') || '';
   const [search, setSearch] = useState('');
-  const [roleFilter, setRoleFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
+  const [term, setTerm] = useState('');
+  const [page, setPage] = useState(1);
+  const [busy, setBusy] = useState<number | null>(null);
+  // The account whose access panel is open, from clicking their name.
+  const [editingAccess, setEditingAccess] = useState<PlatformAccount | null>(null);
+  const { auth } = useAuth();
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const activeCount = USER_DATA.filter(u => u.status === 'active').length;
-  const inactiveCount = USER_DATA.filter(u => u.status === 'inactive').length;
-  const learnerCount = USER_DATA.filter(u => u.roles.includes('Apprentice Learner')).length;
-  const staffCount = USER_DATA.filter(u => !u.roles.includes('Apprentice Learner')).length;
+  const { data, loading, error, reload, setData } = useAdminData(
+    useCallback(
+      () => fetchAccounts({ role, status, q: term, page, pageSize: PAGE_SIZE }),
+      [role, status, term, page],
+    ),
+    [role, status, term, page],
+  );
 
-  const filtered = USER_DATA.filter(u => {
-    const matchSearch = u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase());
-    const matchRole = roleFilter === 'all' || u.roles.some(r => r.toLowerCase().includes(roleFilter.toLowerCase()));
-    const matchStatus = statusFilter === 'all' || u.status === statusFilter;
-    return matchSearch && matchRole && matchStatus;
-  });
+  function setFilter(key: string, value: string) {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value); else next.delete(key);
+    setParams(next, { replace: true });
+    setPage(1);
+  }
 
-  const toggleSelect = (id: string) => {
-    setSelectedUsers(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  async function runAction(account: PlatformAccount, action: 'suspend' | 'restore' | 'unlock') {
+    setBusy(account.id);
+    setActionError(null);
+    try {
+      const { account: updated } = await accountAction(account.id, action);
+      // Patch in place so the row updates without losing the current page.
+      setData(prev => prev && ({
+        ...prev,
+        results: prev.results.map(r => (r.id === updated.id ? updated : r)),
+      }));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Action failed.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const rows = data?.results ?? [];
+  const count = data?.count ?? 0;
 
   return (
-    <WorkspaceShell role="admin" roleLabel={adminNav.label} navItems={adminNav.items} workspaceLabel={adminNav.workspaceLabel} pageTitle="Users" pageSubtitle="Manage all users across your tenant — learners, staff, and employers" userName="Admin User" userRole="Tenant Administrator">
-      <div className="p-6 space-y-6">
-        {/* Hero Banner */}
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <AppIcon className="ri-user-settings-line text-white text-2xl"></AppIcon>
-            </span>
-            <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">User Directory</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{USER_DATA.length} total users</strong> — {activeCount} active, {inactiveCount} inactive. {learnerCount} learners, {staffCount} staff & employers.
-              </p>
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{USER_DATA.length}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Total</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{activeCount}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Active</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{learnerCount}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Learners</p>
-              </div>
-            </div>
-          </div>
+    <AdminPage
+      title="Accounts"
+      subtitle="Sign-in accounts, their role and their access state"
+      icon="ri-shield-user-line"
+      heroTitle="Platform accounts"
+      heroBlurb={
+        <>Every identity that can sign in, sourced from <strong>login.Login_accounts</strong>. People who have not been invited yet appear in the <a href="/users" className="underline hover:text-white">user directory</a>, not here.</>
+      }
+      stats={[{ label: 'Accounts', value: loading && !data ? '—' : count }]}
+    >
+      {/* Filters */}
+      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 flex flex-col md:flex-row gap-3 md:items-center">
+        <div className="relative flex-1 min-w-0">
+          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { setTerm(search); setPage(1); } }}
+            onBlur={() => { setTerm(search); setPage(1); }}
+            placeholder="Search email or name, then press Enter"
+            className="w-full pl-9 pr-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-800 placeholder:text-foreground-300 focus:outline-none focus:ring-2 focus:ring-primary-200"
+          />
         </div>
+        <select
+          value={role}
+          onChange={e => setFilter('role', e.target.value)}
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+        >
+          {ROLE_FILTERS.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
+        </select>
+        <select
+          value={status}
+          onChange={e => setFilter('status', e.target.value)}
+          className="px-3 py-2 rounded-xl border border-foreground-200/60 bg-background-50 text-[13px] text-foreground-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200"
+        >
+          {STATUS_FILTERS.map(s => <option key={s.id} value={s.id}>{s.label}</option>)}
+        </select>
+      </div>
 
-        {/* Filters + Actions */}
-        <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
-          <div className="relative flex-1 w-full lg:w-auto">
-            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
-            <input type="text" placeholder="Search users by name or email..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
-          </div>
-          <div className="flex items-center gap-2">
-            <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="px-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 outline-none focus:border-primary-400 transition-smooth cursor-pointer">
-              <option value="all">All Roles</option>
-              <option value="learner">Learners</option>
-              <option value="coach">Coaches</option>
-              <option value="tutor">Tutors</option>
-              <option value="employer">Employers</option>
-              <option value="admin">Admins</option>
-            </select>
-            <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} className="px-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 outline-none focus:border-primary-400 transition-smooth cursor-pointer">
-              <option value="all">All Status</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
-            <button className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-              <AppIcon className="ri-user-add-line mr-1.5"></AppIcon> Invite User
-            </button>
-          </div>
+      {actionError && (
+        <div className="bg-red-50 border border-red-200/60 rounded-xl p-3 flex items-center gap-2.5">
+          <AppIcon className="ri-error-warning-line text-red-600 text-sm"></AppIcon>
+          <p className="text-[12px] text-red-800 flex-1">{actionError}</p>
+          <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600 cursor-pointer">
+            <AppIcon className="ri-close-line"></AppIcon>
+          </button>
         </div>
+      )}
 
-        {/* Users Table */}
+      <DataPanel
+        loading={loading && !data}
+        error={error}
+        empty={rows.length === 0}
+        emptyMessage={term || role || status ? 'No accounts match these filters.' : 'No accounts have been created yet.'}
+        onRetry={reload}
+      >
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-[13px]">
               <thead>
-                <tr className="border-b border-foreground-400/50 bg-background-100/50">
-                  <th className="text-left py-3 px-4 w-10">
-                    <input type="checkbox" className="rounded border-background-300" onChange={e => {
-                      if (e.target.checked) setSelectedUsers(new Set(filtered.map(u => u.id)));
-                      else setSelectedUsers(new Set());
-                    }} checked={filtered.length > 0 && selectedUsers.size === filtered.length} />
-                  </th>
-                  <th className="text-left py-3 px-4 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">User</th>
-                  <th className="text-left py-3 px-4 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Roles</th>
-                  <th className="text-left py-3 px-4 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Programme</th>
-                  <th className="text-left py-3 px-4 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Cohort</th>
-                  <th className="text-left py-3 px-4 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Status</th>
-                  <th className="text-left py-3 px-4 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Last Active</th>
-                  <th className="text-right py-3 px-4 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">Actions</th>
+                <tr className="border-b border-foreground-400/50">
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Account</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Role</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Access</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Status</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Last sign-in</th>
+                  <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Created</th>
+                  <th className="text-right px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(user => (
-                  <tr key={user.id} className="border-b border-background-100 hover:bg-background-50 transition-smooth">
-                    <td className="py-3 px-4">
-                      <input type="checkbox" className="rounded border-background-300" checked={selectedUsers.has(user.id)} onChange={() => toggleSelect(user.id)} />
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-primary-100 flex items-center justify-center shrink-0 ring-1 ring-primary-200/50">
-                          <span className="text-primary-700 text-xs font-semibold">{user.name.charAt(0)}</span>
+                {rows.map(account => (
+                  <tr key={account.id} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center shrink-0 ring-1 ring-primary-200/50">
+                          <span className="text-primary-700 text-[10px] font-semibold">
+                            {(account.displayName || account.email).charAt(0).toUpperCase()}
+                          </span>
                         </div>
-                        <div>
-                          <p className="text-sm font-medium text-foreground-900">{user.name}</p>
-                          <p className="text-[11px] text-foreground-400">{user.email}</p>
+                        <div className="min-w-0">
+                          {/* Clicking the name opens the access editor. Staff only:
+                              a learner or employer has no grant to edit. */}
+                          {account.subjectType === 'staff' ? (
+                            <button
+                              onClick={() => setEditingAccess(account)}
+                              className="font-medium text-primary-600 hover:text-primary-700 hover:underline truncate cursor-pointer text-left block max-w-full"
+                              title="Set this account's access"
+                            >
+                              {account.displayName || account.email}
+                            </button>
+                          ) : (
+                            <p className="font-medium text-foreground-800 truncate">{account.displayName || '—'}</p>
+                          )}
+                          <p className="text-[11px] text-foreground-400 truncate">{account.email}</p>
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap gap-1">
-                        {user.roles.map(role => (
-                          <span key={role} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-secondary-100 text-secondary-700 border border-secondary-200/50">{role}</span>
-                        ))}
-                      </div>
+                    <td className="px-4 py-2.5">
+                      <span className="text-[11px] text-foreground-600 capitalize">{account.role}</span>
+                      <p className="text-[10px] text-foreground-300 capitalize">via {account.subjectType}</p>
                     </td>
-                    <td className="py-3 px-4 text-[13px] text-foreground-700">{user.programme !== '-' ? user.programme : <span className="text-foreground-300">—</span>}</td>
-                    <td className="py-3 px-4 text-[13px] text-foreground-700">{user.cohort !== '-' ? user.cohort : <span className="text-foreground-300">—</span>}</td>
-                    <td className="py-3 px-4">
-                      <span className={`text-[10px] font-semibold px-2.5 py-1 rounded-full border ${user.status === 'active' ? 'bg-emerald-50 text-emerald-700 border-emerald-200/50' : 'bg-background-100 text-foreground-500 border-foreground-200/60'}`}>
-                        {user.status}
-                      </span>
+                    <td className="px-4 py-2.5">
+                      {account.subjectType !== 'staff' ? (
+                        <span className="text-[11px] text-foreground-300">n/a</span>
+                      ) : account.access ? (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200/50 whitespace-nowrap">
+                          {accessLabel(account.access)}
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => setEditingAccess(account)}
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200/50 whitespace-nowrap cursor-pointer hover:bg-amber-100"
+                        >
+                          Set access
+                        </button>
+                      )}
                     </td>
-                    <td className="py-3 px-4 text-[13px] text-foreground-500">{user.lastActive}</td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button className="w-8 h-8 rounded-lg hover:bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer" title="Edit">
-                          <AppIcon className="ri-pencil-line text-sm"></AppIcon>
-                        </button>
-                        <button className="w-8 h-8 rounded-lg hover:bg-background-100 flex items-center justify-center text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer" title="View Profile">
-                          <AppIcon className="ri-eye-line text-sm"></AppIcon>
-                        </button>
-                        <button className="w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center text-foreground-400 hover:text-red-500 transition-smooth cursor-pointer" title="Deactivate">
-                          <AppIcon className="ri-forbid-line text-sm"></AppIcon>
-                        </button>
+                    <td className="px-4 py-2.5">
+                      <StatusBadge status={account.status === 'invited' ? 'awaiting sign-in' : account.status} tone={STATUS_TONE[account.status]} />
+                      {account.failedAttempts > 0 && (
+                        <p className="text-[10px] text-amber-600 mt-0.5">{account.failedAttempts} failed attempts</p>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">
+                      {fmtDate(account.lastLoginAt)}
+                      {account.lastLoginIp && <p className="text-[10px] text-foreground-300">{account.lastLoginIp}</p>}
+                    </td>
+                    <td className="px-4 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{fmtDate(account.createdAt)}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1.5 justify-end">
+                        {account.locked && (
+                          <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'unlock')} tone="warn" icon="ri-lock-unlock-line" label="Unlock" />
+                        )}
+                        {account.isActive ? (
+                          <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'suspend')} tone="bad" icon="ri-forbid-line" label="Suspend" />
+                        ) : (
+                          <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'restore')} tone="ok" icon="ri-refresh-line" label="Restore" />
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -179,23 +247,50 @@ export default function AdminUsersPage() {
               </tbody>
             </table>
           </div>
-          {filtered.length === 0 && (
-            <div className="p-8 text-center">
-              <div className="w-12 h-12 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-3">
-                <AppIcon className="ri-search-line text-foreground-300 text-xl"></AppIcon>
-              </div>
-              <p className="text-sm text-foreground-500">No users match your filters</p>
-            </div>
-          )}
-          <div className="flex items-center justify-between px-4 py-3 border-t border-foreground-200/60">
-            <p className="text-[12px] text-foreground-400">{filtered.length} of {USER_DATA.length} users</p>
-            <div className="flex items-center gap-2">
-              <button className="px-3 py-1.5 rounded-lg border border-background-200 text-[12px] text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer">Previous</button>
-              <button className="px-3 py-1.5 rounded-lg border border-background-200 text-[12px] text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer">Next</button>
-            </div>
-          </div>
+          <Pager page={page} pageSize={PAGE_SIZE} count={count} onPage={setPage} />
         </div>
-      </div>
-    </WorkspaceShell>
+      </DataPanel>
+
+      {editingAccess && (
+        <AccessPanel
+          account={editingAccess}
+          isSelf={auth.account?.id === editingAccess.id}
+          onClose={() => setEditingAccess(null)}
+          onSaved={(access) =>
+            // Patch the row in place so the new grant shows without a refetch.
+            setData(prev => prev && ({
+              ...prev,
+              results: prev.results.map(r =>
+                r.id === editingAccess.id ? { ...r, access } : r),
+            }))
+          }
+        />
+      )}
+
+      <SourceNote>
+        Suspending an account revokes its live sessions immediately and is recorded in the access log.
+        A role cannot be changed here — it is derived from the person&apos;s enrolment record each request,
+        so change their position in the staff form instead.
+      </SourceNote>
+    </AdminPage>
+  );
+}
+
+function ActionButton({ onClick, tone, icon, label, busy }: {
+  onClick: () => void; tone: 'ok' | 'bad' | 'warn'; icon: string; label: string; busy: boolean;
+}) {
+  const map = {
+    ok: 'text-emerald-700 border-emerald-200/60 hover:bg-emerald-50',
+    bad: 'text-red-700 border-red-200/60 hover:bg-red-50',
+    warn: 'text-amber-700 border-amber-200/60 hover:bg-amber-50',
+  };
+  return (
+    <button
+      onClick={onClick}
+      disabled={busy}
+      className={`px-2.5 py-1.5 rounded-lg border text-[11px] font-medium transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed ${map[tone]}`}
+    >
+      <AppIcon className={`${busy ? 'ri-loader-4-line animate-spin' : icon} mr-1`}></AppIcon>{label}
+    </button>
   );
 }

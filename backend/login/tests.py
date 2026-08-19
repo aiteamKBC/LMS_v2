@@ -43,6 +43,10 @@ from .security import (
 
 XHR = {"HTTP_X_REQUESTED_WITH": "XMLHttpRequest"}
 
+#: Distinguishes "caller did not say" from "caller wants no access at all",
+#: which is a meaningful state now that access decides the role.
+_UNSET = object()
+
 
 class LoginTestBase(TestCase):
     # These models live on the Neon connection, not `default`.
@@ -71,10 +75,20 @@ class LoginTestBase(TestCase):
             StaffUser.objects.filter(pk=self._staff.id).delete()
         super().tearDown()
 
-    def make_account(self, *, position="Admin", with_password=True, active=True):
+    def make_account(self, *, position="Admin", access=_UNSET, with_password=True, active=True):
+        """Create a staff row and its login account.
+
+        ``access`` is what decides the role now — Position is only a job title
+        (see identity.role_for_staff). It defaults so that the historic
+        ``position="Admin"`` still yields an administrator and every other
+        position yields staff, which is what each caller means; pass ``access``
+        explicitly to test a particular grant.
+        """
+        if access is _UNSET:
+            access = "super-admin" if (position or "").strip().lower() == "admin" else "enrolment"
         self._staff = StaffUser.objects.create(
             username="Test Person", email=self.email, position=position,
-            type="Admin", status="FullUser",
+            access=access, type="Admin", status="FullUser",
         )
         account, _ = identity.ensure_account("staff", self._staff.id, subject=self._staff)
         if with_password:
@@ -231,20 +245,36 @@ class LoginEndpointTests(LoginTestBase):
 
 
 class RoleTests(LoginTestBase):
-    def test_admin_position_grants_admin_role(self):
-        account = self.make_account(position="Admin")
+    def test_super_admin_access_grants_admin_role(self):
+        account = self.make_account(access="super-admin")
         self.assertEqual(account.role, "admin")
 
-    def test_other_positions_are_staff_not_admin(self):
-        account = self.make_account(position="Enrolment")
-        self.assertEqual(account.role, "staff")
-        self.assertNotIn("accounts.manage", identity.permissions_for(account.role))
+    def test_other_accesses_are_staff_not_admin(self):
+        for access in ("enrolment", "curriculum", "coach"):
+            with self.subTest(access=access):
+                account = self.make_account(access=access)
+                self.assertEqual(account.role, "staff")
+                self.assertNotIn("accounts.manage", identity.permissions_for(account.role))
+                self.tearDown()
+                self.setUp()
 
-    def test_role_follows_a_position_change(self):
-        """Demotion must take effect without the account being recreated."""
-        account = self.make_account(position="Admin")
-        self._staff.position = "Enrolment"
-        self._staff.save(update_fields=["position"])
+    def test_position_admin_without_access_is_not_an_administrator(self):
+        """Every account the console creates is Position='Admin'. If that alone
+        granted the role, all of them would arrive as platform administrators —
+        which is exactly what the access grant exists to prevent."""
+        account = self.make_account(position="Admin", access=None)
+        self.assertEqual(account.role, "staff")
+
+    def test_role_follows_an_access_change(self):
+        """Demotion must take effect without the account being recreated.
+
+        Keyed on Access, not Position: Position is a job title now and changing
+        it must NOT move anybody's role.
+        """
+        account = self.make_account(position="Admin", access="super-admin")
+        self.assertEqual(account.role, "admin")
+        self._staff.access = "enrolment"
+        self._staff.save(update_fields=["access"])
 
         refreshed, created = identity.ensure_account("staff", self._staff.id)
         self.assertFalse(created)
@@ -428,16 +458,25 @@ class InvitePrivilegeTests(LoginTestBase):
     authorisation that closes that.
     """
 
-    def _create_staff(self, email, position, client=None, invite=True):
+    def _create_staff(self, email, position, client=None, invite=True, access=None):
+        """POST the staff creation form.
+
+        ``access`` is what decides the resulting role — Position is only a job
+        title now — so a test that means "create an administrator" passes
+        access='super-admin'.
+        """
+        payload = {
+            "username": "Created Person",
+            "email": email,
+            "position": position,
+            "inviteToPlatform": invite,
+        }
+        if access is not None:
+            payload["access"] = access
         client = client or Client(SERVER_NAME="localhost")
         return client.post(
             "/learner_api/staff-users/",
-            data=json.dumps({
-                "username": "Created Person",
-                "email": email,
-                "position": position,
-                "inviteToPlatform": invite,
-            }),
+            data=json.dumps(payload),
             content_type="application/json",
         )
 
@@ -469,7 +508,7 @@ class InvitePrivilegeTests(LoginTestBase):
 
         target = f"esc-{uuid.uuid4().hex[:10]}@kbc.invalid"
         try:
-            response = self._create_staff(target, "Admin", client=self.client)
+            response = self._create_staff(target, "Admin", client=self.client, access="super-admin")
             invitation = response.json().get("invitation")
 
             self.assertTrue(invitation["forbidden"])
@@ -501,7 +540,7 @@ class InvitePrivilegeTests(LoginTestBase):
 
         target = f"adm-{uuid.uuid4().hex[:10]}@kbc.invalid"
         try:
-            response = self._create_staff(target, "Admin", client=self.client)
+            response = self._create_staff(target, "Admin", client=self.client, access="super-admin")
             invitation = response.json().get("invitation")
 
             self.assertFalse(invitation["forbidden"])
@@ -517,7 +556,8 @@ class InvitePrivilegeTests(LoginTestBase):
         admin_target = StaffUser.objects.create(
             username="Some Admin",
             email=f"tgt-{uuid.uuid4().hex[:10]}@kbc.invalid",
-            position="Admin", type="Admin", status="FullUser",
+            # Access is what makes them an administrator now; Position is a title.
+            position="Admin", access="super-admin", type="Admin", status="FullUser",
         )
         self.make_account(position="Enrolment")
         self.post("/login_api/login/", {"email": self.email, "password": self.password})
@@ -608,10 +648,26 @@ class LearnerApiGateTests(LoginTestBase):
         self.assertEqual(LoginAccount.objects.count(), before["accounts"])
 
     def test_a_learner_session_cannot_write(self):
-        """Being signed in is not enough — the role has to be staff or admin."""
-        account = self.make_account(position="Enrolment")
-        account.role = "learner"
-        account.save(update_fields=["role"])
+        """Being signed in is not enough — the role has to be staff or admin.
+
+        Uses a real learner subject rather than forcing role='learner' onto a
+        staff row: a staff account's role is re-derived from its Access grant on
+        every request (sessions._refresh_staff_role), so a hand-edited value
+        would be corrected before the assertion ran.
+        """
+        from learner_api.models import EnrolmentUser
+
+        learner = EnrolmentUser.objects.create(
+            username="Gate Learner", email=self.email, learner_type="apprenticeship",
+        )
+        self.addCleanup(lambda: EnrolmentUser.all_learners.filter(pk=learner.pk).delete())
+        account, _ = identity.ensure_account("learner", learner.id, subject=learner)
+        account.password_hash = hash_password(self.password)
+        account.password_set_at = timezone.now()
+        account.save()
+        self._accounts.append(account)
+        self.assertEqual(account.role, "learner")
+
         self.post("/login_api/login/", {"email": self.email, "password": self.password})
 
         for label, url, payload in self.WRITE_PATHS:
@@ -694,12 +750,27 @@ class PermissionTests(LoginTestBase):
 
     def test_invite_endpoint_rejects_a_learner_session(self):
         """Role enforcement is server-side, not just hidden in the UI."""
-        account = self.make_account(position="Enrolment")
-        account.role = "learner"
-        account.save(update_fields=["role"])
+        # A real learner: a staff account's role is re-derived from its Access on
+        # every request, so a hand-set role would be corrected before the check.
+        from learner_api.models import EnrolmentUser
+
+        staff_target = StaffUser.objects.create(
+            username="Target", email=f"tgt-{uuid.uuid4().hex[:10]}@kbc.invalid",
+            position="Enrolment", access="enrolment", type="Admin", status="FullUser",
+        )
+        self.addCleanup(lambda: StaffUser.objects.filter(pk=staff_target.pk).delete())
+        learner = EnrolmentUser.objects.create(
+            username="Gate Learner", email=self.email, learner_type="apprenticeship",
+        )
+        self.addCleanup(lambda: EnrolmentUser.all_learners.filter(pk=learner.pk).delete())
+        account, _ = identity.ensure_account("learner", learner.id, subject=learner)
+        account.password_hash = hash_password(self.password)
+        account.password_set_at = timezone.now()
+        account.save()
+        self._accounts.append(account)
 
         self.post("/login_api/login/", {"email": self.email, "password": self.password})
         response = self.post(
-            "/login_api/accounts/invite/", {"subjectType": "staff", "subjectId": self._staff.id}
+            "/login_api/accounts/invite/", {"subjectType": "staff", "subjectId": staff_target.id}
         )
         self.assertEqual(response.status_code, 403)

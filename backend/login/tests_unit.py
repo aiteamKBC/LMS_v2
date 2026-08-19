@@ -284,19 +284,26 @@ class ClientIpTests(SimpleTestCase):
 # ---------------------------------------------------------------------------
 
 class RoleMappingTests(SimpleTestCase):
-    def test_only_the_admin_position_grants_admin(self):
-        self.assertEqual(identity.role_for_staff("Admin"), ROLE_ADMIN)
-        for position in ("Caseowner", "Enrolment", "Curriculum team", "Operations team"):
-            self.assertEqual(identity.role_for_staff(position), ROLE_STAFF, position)
+    def test_only_super_admin_access_grants_admin(self):
+        self.assertEqual(identity.role_for_staff("Admin", "super-admin"), ROLE_ADMIN)
+        for access in ("enrolment", "curriculum", "coach"):
+            self.assertEqual(identity.role_for_staff("Admin", access), ROLE_STAFF, access)
 
-    def test_admin_match_is_case_and_whitespace_insensitive(self):
-        for spelling in ("admin", "ADMIN", "  Admin  "):
-            self.assertEqual(identity.role_for_staff(spelling), ROLE_ADMIN, spelling)
+    def test_access_match_is_case_and_whitespace_insensitive(self):
+        for spelling in ("super-admin", "SUPER-ADMIN", "  Super-Admin  "):
+            self.assertEqual(identity.role_for_staff("Caseowner", spelling), ROLE_ADMIN, spelling)
 
-    def test_missing_position_is_staff_not_admin(self):
-        """Fail closed: an unset Position must never mean administrator."""
-        for value in (None, "", "   ", "Unknown Role"):
-            self.assertEqual(identity.role_for_staff(value), ROLE_STAFF, repr(value))
+    def test_position_alone_never_grants_admin(self):
+        """The heart of the access model: every account the console creates is
+        Position='Admin', so a Position-based grant would make all of them
+        platform administrators. Only an explicit access does that."""
+        for position in ("Admin", "admin", "  Admin  ", "Caseowner", None, ""):
+            self.assertEqual(identity.role_for_staff(position), ROLE_STAFF, repr(position))
+
+    def test_missing_access_is_staff_not_admin(self):
+        """Fail closed: an unset Access must never mean administrator."""
+        for value in (None, "", "   ", "wizard"):
+            self.assertEqual(identity.role_for_staff("Admin", value), ROLE_STAFF, repr(value))
 
     def test_admin_holds_every_other_role_permission(self):
         admin = set(identity.permissions_for(ROLE_ADMIN))
@@ -370,6 +377,17 @@ _MAIL_ENV = {
     "AZURE_MAIL_ENABLED": "true",
 }
 
+#: The alternate spellings each setting also accepts. Blanked in tests that
+#: assert a setting is *missing* — this project's real .env defines them, and
+#: os.environ is not cleared, so an unblanked alternate silently satisfies the
+#: setting under test.
+_BLANKED_ALTERNATES = {
+    "AZURE_LOGIN_APP_TENANT_ID": "",
+    "AZURE_LOGIN_APP_CLIENT_ID": "",
+    "AZURE_LOGIN_APP_CLIENT_SECRET": "",
+    "AZURE_EMAIL": "",
+}
+
 
 class MailConfigurationTests(SimpleTestCase):
     def test_fully_configured_is_reported_ready(self):
@@ -378,44 +396,81 @@ class MailConfigurationTests(SimpleTestCase):
             self.assertEqual(email_azure.missing_settings(), [])
 
     def test_each_missing_setting_is_named(self):
-        # The tenant and client id fall back to the shared MICROSOFT_* app
-        # registration (see mail_config), which this project's .env defines —
-        # blank those too, or the fallback masks the missing setting.
-        blanked_fallbacks = {
-            "MICROSOFT_TENANT_ID": "",
-            "MICROSOFT_CLIENT_ID": "",
-            "MICROSOFT_CLIENT_SECRET": "",
-        }
+        # Every setting accepts a second spelling (see _SETTING_SOURCES), and
+        # this project's .env defines those — blank them too, or the alternate
+        # masks the missing setting and the assertion passes for the wrong
+        # reason.
         for key in _MAIL_ENV:
             if key == "AZURE_MAIL_ENABLED":
                 continue
-            env = dict(_MAIL_ENV, **blanked_fallbacks, **{key: ""})
+            env = dict(_MAIL_ENV, **_BLANKED_ALTERNATES, **{key: ""})
             with mock.patch.dict("os.environ", env, clear=False):
                 self.assertFalse(email_azure.is_configured(), key)
-                self.assertIn(key, email_azure.missing_settings(), key)
+                # The report names both accepted spellings for the setting.
+                self.assertTrue(
+                    any(key in entry for entry in email_azure.missing_settings()), key
+                )
 
-    def test_falls_back_to_the_shared_microsoft_registration(self):
-        """Documented behaviour: reuse the calendar app's tenant/client if the
-        dedicated AZURE_MAIL_* names are absent. It still needs Mail.Send
-        granted, which is why AZURE_SETUP.md recommends a separate app."""
+    def test_accepts_the_azure_login_app_spelling(self):
+        """This deployment's .env names the mail app AZURE_LOGIN_APP_* and its
+        sender AZURE_EMAIL. Both must resolve without the AZURE_MAIL_* names."""
         env = {
             "AZURE_MAIL_TENANT_ID": "", "AZURE_MAIL_CLIENT_ID": "",
-            "AZURE_MAIL_CLIENT_SECRET": "",
-            "MICROSOFT_TENANT_ID": "shared-tenant",
-            "MICROSOFT_CLIENT_ID": "shared-client",
-            "MICROSOFT_CLIENT_SECRET": "shared-secret",
+            "AZURE_MAIL_CLIENT_SECRET": "", "AZURE_MAIL_SENDER": "",
+            "AZURE_LOGIN_APP_TENANT_ID": "login-tenant",
+            "AZURE_LOGIN_APP_CLIENT_ID": "login-client",
+            "AZURE_LOGIN_APP_CLIENT_SECRET": "login-secret",
+            "AZURE_EMAIL": "lms@kbc.test",
+            "AZURE_MAIL_ENABLED": "true",
         }
         with mock.patch.dict("os.environ", env, clear=False):
             config = email_azure.mail_config()
-        self.assertEqual(config["tenant_id"], "shared-tenant")
-        self.assertEqual(config["client_id"], "shared-client")
+            self.assertTrue(email_azure.is_configured())
+        self.assertEqual(config["tenant_id"], "login-tenant")
+        self.assertEqual(config["client_id"], "login-client")
+        self.assertEqual(config["client_secret"], "login-secret")
+        self.assertEqual(config["sender"], "lms@kbc.test")
 
-    def test_sender_has_no_fallback(self):
+    def test_azure_mail_names_win_over_the_login_app_names(self):
+        """AZURE_MAIL_* is the documented primary; the alternate is a fallback."""
+        env = dict(
+            _MAIL_ENV,
+            AZURE_LOGIN_APP_TENANT_ID="ignored",
+            AZURE_LOGIN_APP_CLIENT_ID="ignored",
+            AZURE_LOGIN_APP_CLIENT_SECRET="ignored",
+            AZURE_EMAIL="ignored@kbc.test",
+        )
+        with mock.patch.dict("os.environ", env, clear=False):
+            config = email_azure.mail_config()
+        self.assertEqual(config["tenant_id"], "tenant-id")
+        self.assertEqual(config["sender"], "noreply@kbc.test")
+
+    def test_never_falls_back_to_the_calendar_app_credentials(self):
+        """MICROSOFT_* belongs to the calendar app, which has no Mail.Send.
+        Using it would report configured and then 403 on every send."""
+        env = {
+            "AZURE_MAIL_TENANT_ID": "", "AZURE_MAIL_CLIENT_ID": "",
+            "AZURE_MAIL_CLIENT_SECRET": "", "AZURE_MAIL_SENDER": "",
+            "AZURE_LOGIN_APP_TENANT_ID": "", "AZURE_LOGIN_APP_CLIENT_ID": "",
+            "AZURE_LOGIN_APP_CLIENT_SECRET": "", "AZURE_EMAIL": "",
+            "MICROSOFT_TENANT_ID": "calendar-tenant",
+            "MICROSOFT_CLIENT_ID": "calendar-client",
+            "MICROSOFT_CLIENT_SECRET": "calendar-secret",
+        }
+        with mock.patch.dict("os.environ", env, clear=False):
+            config = email_azure.mail_config()
+            self.assertFalse(email_azure.is_configured())
+        self.assertEqual(config["tenant_id"], "")
+        self.assertEqual(config["client_id"], "")
+
+    def test_sender_has_no_implicit_default(self):
         """There is no sensible default mailbox to send as."""
-        env = dict(_MAIL_ENV, AZURE_MAIL_SENDER="")
+        env = dict(_MAIL_ENV, AZURE_MAIL_SENDER="", AZURE_EMAIL="")
         with mock.patch.dict("os.environ", env, clear=False):
             self.assertEqual(email_azure.mail_config()["sender"], "")
-            self.assertIn("AZURE_MAIL_SENDER", email_azure.missing_settings())
+            self.assertTrue(
+                any("AZURE_MAIL_SENDER" in e for e in email_azure.missing_settings())
+            )
 
     def test_explicitly_disabled_reports_not_configured(self):
         env = dict(_MAIL_ENV, AZURE_MAIL_ENABLED="false")

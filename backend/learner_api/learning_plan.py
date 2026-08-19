@@ -303,6 +303,9 @@ def promote_learner_if_ready(learner_kind, learner_id):
     Returns the new status when it changed, else None. Never raises.
     """
     try:
+        # Commercial learners deliberately have no onboarding-review gate.
+        if _s(learner_kind).casefold() == "commercial":
+            return None
         if not onboarding_complete(learner_kind, learner_id):
             return None
 
@@ -331,6 +334,9 @@ def promote_to_delivery_if_ready(review):
     here must not fail the signature that triggered it.
     """
     try:
+        # Commercial learners deliberately have no onboarding-review gate.
+        if _s(getattr(review, "learner_kind", "")).casefold() == "commercial":
+            return None
         if _s(review.review_type) not in ONBOARDING_REVIEW_TYPES:
             return None
         if not onboarding_complete(review.learner_kind, review.learner_id):

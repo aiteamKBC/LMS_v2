@@ -1,156 +1,123 @@
-import { useState } from 'react';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { roleNavMap } from '@/mocks/navigation';
+// ============================================================================
+// Permissions — the role/permission matrix as the server enforces it
+//
+// Read-only by design. The grid is rendered from the same `_PERMISSIONS` map
+// that `require_permission` checks at request time, so what is shown here is
+// what the API will actually allow — not a parallel copy that can drift.
+// ============================================================================
+import { Fragment, useCallback } from 'react';
+import { AdminPage, DataPanel, SourceNote } from '../_shared/AdminPage';
+import { useAdminData } from '../_shared/useAdminData';
+import { fetchRoles } from '@/api/platformAdmin';
 
-const adminNav = roleNavMap.admin;
+/** Group permissions by their dotted prefix so the matrix has sections. */
+function groupPermissions(permissions: string[]): { area: string; items: string[] }[] {
+  const groups = new Map<string, string[]>();
+  for (const p of permissions) {
+    const area = p.includes('.') ? p.split('.')[0] : 'general';
+    if (!groups.has(area)) groups.set(area, []);
+    groups.get(area)!.push(p);
+  }
+  return [...groups.entries()]
+    .map(([area, items]) => ({ area, items: items.sort() }))
+    .sort((a, b) => a.area.localeCompare(b.area));
+}
 
-const PERMISSION_CATEGORIES = [
-  { id: 'dashboard', label: 'Dashboard' },
-  { id: 'learning', label: 'Learning' },
-  { id: 'evidence', label: 'Evidence' },
-  { id: 'otjh', label: 'OTJH' },
-  { id: 'ksb', label: 'KSB' },
-  { id: 'coaching', label: 'Coaching' },
-  { id: 'reviews', label: 'Reviews' },
-  { id: 'attendance', label: 'Attendance' },
-  { id: 'compliance', label: 'Compliance' },
-  { id: 'qa', label: 'QA' },
-  { id: 'reports', label: 'Reports' },
-  { id: 'users', label: 'Users' },
-  { id: 'programmes', label: 'Programmes' },
-  { id: 'curriculum', label: 'Curriculum' },
-  { id: 'settings', label: 'Settings' },
-  { id: 'finance', label: 'Finance' },
-  { id: 'employer', label: 'Employer' },
-  { id: 'ai', label: 'AI' },
-  { id: 'admin', label: 'Admin' },
-  { id: 'notifications', label: 'Notifications' },
-];
-
-const ROLES = ['Learner', 'Coach', 'Tutor', 'Employer', 'Admin', 'Compliance', 'QA', 'MIS', 'Engagement', 'Curriculum', 'Leadership', 'Finance', 'Auditor'];
-
-const PERMISSION_MATRIX: Record<string, Record<string, boolean>> = {
-  'View Dashboard': { Learner: true, Coach: true, Tutor: true, Employer: true, Admin: true, Compliance: true, QA: true, MIS: true, Engagement: true, Curriculum: true, Leadership: true, Finance: true, Auditor: true },
-  'Create Evidence': { Learner: true, Coach: false, Tutor: false, Employer: false, Admin: false, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Validate Evidence': { Learner: false, Coach: true, Tutor: true, Employer: false, Admin: true, Compliance: false, QA: true, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Claim OTJH': { Learner: true, Coach: false, Tutor: false, Employer: false, Admin: false, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Validate OTJH': { Learner: false, Coach: true, Tutor: false, Employer: false, Admin: true, Compliance: true, QA: true, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Assess KSB': { Learner: false, Coach: true, Tutor: true, Employer: false, Admin: true, Compliance: false, QA: true, MIS: false, Engagement: false, Curriculum: true, Leadership: false, Finance: false, Auditor: false },
-  'Manage Coaching': { Learner: false, Coach: true, Tutor: false, Employer: false, Admin: true, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Sign Reviews': { Learner: false, Coach: true, Tutor: false, Employer: true, Admin: true, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Manage Attendance': { Learner: false, Coach: false, Tutor: true, Employer: false, Admin: true, Compliance: false, QA: false, MIS: true, Engagement: true, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'QA Review': { Learner: false, Coach: false, Tutor: false, Employer: false, Admin: true, Compliance: false, QA: true, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'View Audit Trail': { Learner: false, Coach: false, Tutor: false, Employer: false, Admin: true, Compliance: true, QA: true, MIS: false, Engagement: false, Curriculum: false, Leadership: true, Finance: false, Auditor: true },
-  'Create Reports': { Learner: false, Coach: false, Tutor: true, Employer: false, Admin: true, Compliance: true, QA: true, MIS: true, Engagement: true, Curriculum: false, Leadership: true, Finance: true, Auditor: true },
-  'Manage Users': { Learner: false, Coach: false, Tutor: false, Employer: false, Admin: true, Compliance: false, QA: false, MIS: true, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Manage Roles': { Learner: false, Coach: false, Tutor: false, Employer: false, Admin: true, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Manage Settings': { Learner: false, Coach: false, Tutor: false, Employer: false, Admin: true, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Manage Programmes': { Learner: false, Coach: false, Tutor: true, Employer: false, Admin: true, Compliance: false, QA: false, MIS: true, Engagement: false, Curriculum: true, Leadership: true, Finance: false, Auditor: false },
-  'Manage Finance': { Learner: false, Coach: false, Tutor: false, Employer: false, Admin: true, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: true, Finance: true, Auditor: true },
-  'Use AI Features': { Learner: true, Coach: true, Tutor: true, Employer: false, Admin: true, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Manage AI Settings': { Learner: false, Coach: false, Tutor: false, Employer: false, Admin: true, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
-  'Full Admin Access': { Learner: false, Coach: false, Tutor: false, Employer: false, Admin: true, Compliance: false, QA: false, MIS: false, Engagement: false, Curriculum: false, Leadership: false, Finance: false, Auditor: false },
+const AREA_LABELS: Record<string, string> = {
+  accounts: 'Account management',
+  documents: 'Documents',
+  enrolment: 'Enrolment',
+  employers: 'Employers',
+  learners: 'Learners',
+  staff: 'Staff',
+  self: 'Own record',
+  'employer-portal': 'Employer portal',
 };
 
 export default function AdminPermissionsPage() {
-  const [activeCategory, setActiveCategory] = useState('dashboard');
-  const [search, setSearch] = useState('');
-  const [editing, setEditing] = useState(false);
+  const { data, loading, error, reload } = useAdminData(useCallback(() => fetchRoles(), []));
 
-  const totalPerms = Object.keys(PERMISSION_MATRIX).length;
-  const totalGrants = Object.values(PERMISSION_MATRIX).reduce((acc, row) => acc + Object.values(row).filter(Boolean).length, 0);
-
-  const filteredPerms = Object.entries(PERMISSION_MATRIX).filter(([perm]) => perm.toLowerCase().includes(search.toLowerCase()));
+  const roles = data?.results ?? [];
+  const permissions = data?.permissions ?? [];
+  const groups = groupPermissions(permissions);
 
   return (
-    <WorkspaceShell role="admin" roleLabel={adminNav.label} navItems={adminNav.items} workspaceLabel={adminNav.workspaceLabel} pageTitle="Permissions" pageSubtitle="Granular permission matrix across all roles and features" userName="Admin User" userRole="Tenant Administrator">
-      <div className="p-6 space-y-6">
-        {/* Hero Banner */}
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
-          <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
-          <div className="relative p-6 sm:p-8 flex flex-col sm:flex-row items-start sm:items-center gap-5">
-            <span className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center shrink-0">
-              <AppIcon className="ri-key-2-line text-white text-2xl"></AppIcon>
-            </span>
-            <div className="flex-1">
-              <h2 className="text-lg font-heading font-bold text-white mb-1">Permission Matrix</h2>
-              <p className="text-[13px] text-white/80 leading-relaxed">
-                <strong>{totalPerms} permissions</strong> mapped across {ROLES.length} roles. {totalGrants} total grants configured.
-              </p>
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{totalPerms}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Permissions</p>
-              </div>
-              <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{ROLES.length}</p>
-                <p className="text-[10px] text-white/70 uppercase tracking-wide">Roles</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Toolbar */}
-        <div className="flex flex-col lg:flex-row items-start lg:items-center gap-3">
-          <div className="relative flex-1 w-full lg:w-auto">
-            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
-            <input type="text" placeholder="Search permissions..." value={search} onChange={e => setSearch(e.target.value)} className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-background-200 bg-background-50 text-sm text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 outline-none transition-smooth" />
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={() => setEditing(!editing)} className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap ${editing ? 'bg-accent-500 text-white hover:bg-accent-600' : 'bg-primary-500 text-white hover:bg-primary-600'}`}>
-              <AppIcon className={`${editing ? 'ri-save-line' : 'ri-pencil-line'} mr-1.5`}></AppIcon> {editing ? 'Save Changes' : 'Edit Matrix'}
-            </button>
-            <button className="px-4 py-2.5 bg-background-100 border border-background-200 rounded-xl text-sm font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
-              <AppIcon className="ri-download-line mr-1.5"></AppIcon> Export
-            </button>
-          </div>
-        </div>
-
-        {/* Category Tabs */}
-        <div className="flex items-center gap-1 overflow-x-auto pb-1">
-          {PERMISSION_CATEGORIES.map(cat => (
-            <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={`px-3 py-1.5 rounded-full text-[12px] font-medium whitespace-nowrap transition-smooth cursor-pointer ${activeCategory === cat.id ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-500 hover:bg-background-200'}`}>
-              {cat.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Permission Matrix Table */}
+    <AdminPage
+      title="Permissions"
+      subtitle="What each role is allowed to do, as enforced by the API"
+      icon="ri-key-2-line"
+      heroTitle="Permission matrix"
+      heroBlurb={
+        <>Rendered from the same map the server checks on every request, so this grid cannot drift from what the API actually permits.</>
+      }
+      stats={[
+        { label: 'Permissions', value: loading && !data ? '—' : permissions.length },
+        { label: 'Roles', value: loading && !data ? '—' : roles.length },
+      ]}
+    >
+      <DataPanel loading={loading && !data} error={error} empty={permissions.length === 0} onRetry={reload}>
         <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="w-full text-[13px]">
               <thead>
-                <tr className="border-b border-foreground-400/50 bg-background-100/50">
-                  <th className="text-left py-3 px-4 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider w-[220px] sticky left-0 bg-background-100/50 z-10">Permission</th>
-                  {ROLES.map(role => (
-                    <th key={role} className="text-center py-3 px-2 text-[10px] font-semibold text-foreground-500 uppercase tracking-wider min-w-[60px]">{role}</th>
+                <tr className="border-b border-foreground-400/50">
+                  <th className="text-left px-4 py-3 text-foreground-400 font-medium text-[10px] uppercase tracking-wider sticky left-0 bg-background-50">
+                    Permission
+                  </th>
+                  {roles.map(role => (
+                    <th key={role.id} className="px-4 py-3 text-foreground-400 font-medium text-[10px] uppercase tracking-wider text-center whitespace-nowrap">
+                      {role.name}
+                      <span className="block text-[9px] text-foreground-300 font-normal normal-case mt-0.5">
+                        {role.counts.total ?? 0} account{(role.counts.total ?? 0) === 1 ? '' : 's'}
+                      </span>
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {filteredPerms.map(([perm, grants]) => (
-                  <tr key={perm} className="border-b border-background-100 hover:bg-background-50 transition-smooth">
-                    <td className="py-2.5 px-4 text-[12px] font-medium text-foreground-700 sticky left-0 bg-background-50 z-10">{perm}</td>
-                    {ROLES.map(role => (
-                      <td key={role} className="text-center py-2.5 px-2">
-                        <button
-                          disabled={!editing}
-                          onClick={() => {}}
-                          className={`inline-flex items-center justify-center w-6 h-6 rounded transition-smooth cursor-pointer ${grants[role] ? 'bg-emerald-100 text-emerald-600' : 'bg-background-100 text-foreground-300'} ${editing ? 'hover:ring-2 hover:ring-primary-300/50' : ''}`}
-                        >
-                          <AppIcon className={`${grants[role] ? 'ri-check-line' : 'ri-subtract-line'} text-[10px]`}></AppIcon>
-                        </button>
+                {groups.map(group => (
+                  <Fragment key={group.area}>
+                    <tr className="bg-background-100/60">
+                      <td colSpan={roles.length + 1} className="px-4 py-1.5 text-[10px] font-semibold text-foreground-500 uppercase tracking-wider">
+                        {AREA_LABELS[group.area] || group.area}
                       </td>
+                    </tr>
+                    {group.items.map(permission => (
+                      <tr key={permission} className="border-b border-background-100/50 hover:bg-background-100/40 transition-smooth">
+                        <td className="px-4 py-2.5 sticky left-0 bg-background-50">
+                          <span className="font-mono text-[11px] text-foreground-700">{permission}</span>
+                        </td>
+                        {roles.map(role => {
+                          const granted = role.permissions.includes(permission);
+                          return (
+                            <td key={role.id} className="px-4 py-2.5 text-center">
+                              {granted ? (
+                                <span className="inline-flex w-6 h-6 rounded-full bg-emerald-100 items-center justify-center">
+                                  <AppIcon className="ri-check-line text-emerald-600 text-xs"></AppIcon>
+                                </span>
+                              ) : (
+                                <span className="inline-flex w-6 h-6 rounded-full bg-background-100 items-center justify-center">
+                                  <AppIcon className="ri-subtract-line text-foreground-300 text-xs"></AppIcon>
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
                     ))}
-                  </tr>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
-      </div>
-    </WorkspaceShell>
+      </DataPanel>
+
+      <SourceNote>
+        This matrix is read-only. Permissions are defined in code (<span className="font-mono">login/identity.py</span>)
+        rather than stored per-tenant, so there is nothing here to save — changing a grant is a code change,
+        which keeps the check and its definition in one place.
+      </SourceNote>
+    </AdminPage>
   );
 }

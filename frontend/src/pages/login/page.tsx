@@ -5,6 +5,19 @@ import { BrandLockup } from '@/components/BrandLockup';
 import { AuthError, type Role } from '@/api/auth';
 
 /** Where each backend role lands after signing in. */
+/**
+ * Where an account lands, in preference order.
+ *
+ * A staff account's `accessHome` wins: the backend derives it from the access
+ * grant (ACCESS_HOME_ROUTES), so an enrolment officer opens the enrolment
+ * console and a coach their own workspace, rather than every non-admin landing
+ * on the user directory. Falls back to the coarse role for accounts with no
+ * access recorded, and for learners and employers, which have no grant.
+ */
+function homeFor(account: { role: Role; accessHome?: string | null }): string {
+  return account.accessHome || HOME_BY_ROLE[account.role];
+}
+
 const HOME_BY_ROLE: Record<Role, string> = {
   admin: '/workspace/admin',
   staff: '/users',
@@ -29,7 +42,10 @@ export default function LoginPage() {
   // isInitialized so it does not fire before the session has been resolved.
   useEffect(() => {
     if (!isInitialized || !auth.isAuthenticated) return;
-    const home = auth.account ? HOME_BY_ROLE[auth.account.role] : '/';
+    // Never fall back to '/': this page *is* '/', so an authenticated session
+    // with no resolved account would bounce here forever. /home is the public
+    // launcher and always renders.
+    const home = auth.account ? homeFor(auth.account) : '/home';
     navigate(from || home, { replace: true });
   }, [isInitialized, auth.isAuthenticated, auth.account, from, navigate]);
 
@@ -47,7 +63,7 @@ export default function LoginPage() {
       const account = await login(email.trim(), password, rememberMe);
       // Navigate straight away rather than relying on the effect above, so a
       // slow re-render cannot leave the form looking unresponsive.
-      navigate(from || HOME_BY_ROLE[account.role], { replace: true });
+      navigate(from || homeFor(account), { replace: true });
     } catch (err) {
       // The server owns the wording — it distinguishes a bad password from a
       // locked account and from being rate-limited.
