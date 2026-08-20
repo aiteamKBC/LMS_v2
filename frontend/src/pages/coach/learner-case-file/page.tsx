@@ -5,6 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { fetchKsbProfile } from '@/api/curriculum';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import OTJHTab from './components/OTJHTab';
 import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
@@ -104,7 +105,6 @@ export default function LearnerCaseFile() {
     learnerId,
     learnerName,
     kind: explicitKind,
-    ownerEmail: coach.email,
     enabled: coach.isInitialized && coach.hasCoachAccess,
   });
 
@@ -159,7 +159,7 @@ export default function LearnerCaseFile() {
       case 'progress':
         return <ReferenceProgressContent data={data} />;
       case 'attendance':
-        return <ReferenceAttendanceContent data={data} ownerEmail={coach.email} />;
+        return <ReferenceAttendanceContent data={data} />;
       case 'reviews':
         return <ReferenceReviewsContent data={data} />;
       case 'coach-notes':
@@ -1134,7 +1134,7 @@ function KsbOverviewCard({
   );
 }
 
-function ReferenceAttendanceContent({ data, ownerEmail }: { data: CoachLearnerCaseFileData; ownerEmail: string }) {
+function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }) {
   const attendance = data.attendance;
   const [attendanceSessions, setAttendanceSessions] = useState<AttendanceDetailSession[]>([]);
   const [detailsLoading, setDetailsLoading] = useState(false);
@@ -1159,11 +1159,8 @@ function ReferenceAttendanceContent({ data, ownerEmail }: { data: CoachLearnerCa
         if (learnerEmail) {
           params.set('learner_email', learnerEmail);
         }
-        if (ownerEmail) {
-          params.set('owner_email', ownerEmail);
-        }
 
-        const response = await fetch(`${ATTENDANCE_DETAILS_ENDPOINT}?${params.toString()}`, {
+        const response = await coachFetch(`${ATTENDANCE_DETAILS_ENDPOINT}?${params.toString()}`, {
           headers: { 'Content-Type': 'application/json' },
         });
         const payload = await response.json().catch(() => null) as unknown;
@@ -1196,7 +1193,7 @@ function ReferenceAttendanceContent({ data, ownerEmail }: { data: CoachLearnerCa
     return () => {
       cancelled = true;
     };
-  }, [attendance?.id, attendance?.email, attendance?.hasAttendance, data.email, ownerEmail]);
+  }, [attendance?.id, attendance?.email, attendance?.hasAttendance, data.email]);
 
   if (!attendance || !attendance.hasAttendance) return <ReferencePanel title="Attendance" icon="ri-calendar-check-line" tone="primary"><ProfileEmpty text="Live attendance data is not available for this learner." /></ReferencePanel>;
   const sessions = attendance.sessions || 0;

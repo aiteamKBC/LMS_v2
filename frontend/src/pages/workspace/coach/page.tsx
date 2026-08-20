@@ -31,8 +31,8 @@ const EMPTY_VALUE = '--';
 const AT_RISK_SCROLL_THRESHOLD = 8;
 const COACHING_CALENDAR_WINDOW_DAYS = 7;
 
-function coachDashboardEndpoint(ownerEmail: string) {
-  return `/coach_api/coach/dashboard?owner_email=${encodeURIComponent(ownerEmail)}`;
+function coachDashboardEndpoint() {
+  return '/coach_api/coach/dashboard';
 }
 
 function toIsoDate(value: Date) {
@@ -810,8 +810,8 @@ export default function CoachDashboard() {
 
       try {
         const dashboard = await fetchSharedJsonGet<CoachDashboardApiResponse>(
-          coachDashboardEndpoint(authenticatedCoachEmail),
-          { signal: controller.signal },
+          coachDashboardEndpoint(),
+          { signal: controller.signal, credentials: 'include' },
         );
         if (controller.signal.aborted) return;
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
@@ -435,7 +436,7 @@ export default function CoachKsbImpact() {
       setError(null);
 
       try {
-        const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email), { signal: controller.signal });
+        const response = await coachFetch(API_ENDPOINT, { signal: controller.signal });
         if (!response.ok) {
           throw new Error(`Request failed with status ${response.status}`);
         }

@@ -19,15 +19,15 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from django.conf import settings
 from django.core.cache import cache
-from django.db import DatabaseError, close_old_connections, connections, router
+from django.db import DatabaseError, IntegrityError, close_old_connections, connections, router, transaction
 from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import JsonResponse
 from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 
-from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+from coach_api.auth import authenticated_coach_email, coach_access_required
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence
 from learner_api.evidence_storage import (
     azure_configured,
     blob_url,
@@ -77,7 +77,6 @@ from curriculum_api.views import (
 )
 
 
-DEFAULT_COACH_EMAIL = "Med.Maher@kentbusinesscollege.com"
 logger = logging.getLogger(__name__)
 PROGRESS_REVIEW_RESPONSE_IDS = {
     "attendance_issues",
@@ -3147,7 +3146,7 @@ def serialize_learner(row: dict) -> dict:
         "gatewayReviewDate": format_date(row["gateway_review_date"]),
         "plannedEndDate": format_date(row["end_date"]),
         "coachName": row["owner_name"] or "Med Maher",
-        "coachEmail": row["owner_email"] or DEFAULT_COACH_EMAIL,
+        "coachEmail": row["owner_email"] or "",
         "rawProgramStatus": row["program_status"] or "",
         "coachRag": row["coach_rag"] or "",
     }
@@ -3700,6 +3699,9 @@ def build_catchup_calendar_event(
         "platform": meeting_provider or ("Microsoft Teams" if meeting_link else "--"),
         "location": "Online" if meeting_link else "--",
         "syncWarning": public_graph_sync_warning(record.last_graph_sync_error),
+        "operationId": str(record.operation_id),
+        "syncState": record.sync_state,
+        "syncAttemptCount": record.sync_attempt_count,
     }
 
 
@@ -3951,6 +3953,9 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "managerSignedBy": clean_text(record.manager_signed_by) if record else "",
             "priority": generated_event_priority(status, target_date, display_date),
             "syncWarning": public_graph_sync_warning(record.last_graph_sync_error) if record else "",
+            "operationId": str(record.operation_id) if record else "",
+            "syncState": record.sync_state if record else CoachCalendarEvent.SYNC_PENDING,
+            "syncAttemptCount": record.sync_attempt_count if record else 0,
         }
     )
     return event
@@ -3999,6 +4004,11 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
         "isOnlineMeeting": True,
         "onlineMeetingProvider": "teamsForBusiness",
     }
+    # Microsoft Graph documents transactionId specifically for suppressing
+    # redundant event POSTs after an ambiguous client/network timeout. The
+    # durable local operation UUID is stable for every retry of this booking.
+    if not clean_text(record.graph_event_id) and record.operation_id:
+        payload["transactionId"] = str(record.operation_id)
     attendees = []
     if learner_email:
         attendees.append(
@@ -4152,6 +4162,35 @@ def delete_calendar_event_from_graph(record: CoachCalendarEvent) -> str:
         logger.warning("Unable to delete coach timetable event from Microsoft Graph: %s", exc)
         return public_graph_sync_warning(str(exc))
     return ""
+
+
+def cancel_reserved_calendar_event(record: CoachCalendarEvent) -> tuple[CoachCalendarEvent, str]:
+    """Persist cancellation intent before deleting the external Graph event."""
+    with transaction.atomic():
+        current = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
+        current.sync_state = CoachCalendarEvent.SYNC_CANCELLED
+        current.save(update_fields=["sync_state", "updated_at"])
+
+    warning = delete_calendar_event_from_graph(current)
+    with transaction.atomic():
+        current = CoachCalendarEvent.objects.select_for_update().get(pk=record.pk)
+        current.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        current.scheduled_date = None
+        current.scheduled_time = None
+        current.last_graph_sync_error = public_graph_sync_warning(warning)
+        if warning:
+            # Retain the external identifiers so an operator/retry can reconcile
+            # the cancellation instead of silently losing the orphan's address.
+            current.sync_state = CoachCalendarEvent.SYNC_RECONCILIATION
+        else:
+            current.meeting_link = ""
+            current.graph_web_link = ""
+            current.graph_event_id = ""
+            current.graph_organizer_email = ""
+            current.meeting_provider = ""
+            current.sync_state = CoachCalendarEvent.SYNC_CANCELLED
+        current.save()
+    return current, warning
 
 
 def build_live_session_calendar_event(
@@ -4674,6 +4713,325 @@ def normalize_duration_minutes(value) -> int:
     return minutes
 
 
+IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,254}$")
+
+
+def calendar_idempotency_key(request) -> str:
+    """Return the caller's stable booking-operation identity.
+
+    The key is scoped to the authenticated Coach by the database constraint.
+    Reusing it with different booking inputs is rejected rather than silently
+    changing the meaning of an already durable operation.
+    """
+    value = clean_text(request.headers.get("Idempotency-Key"))
+    if not value:
+        raise ValueError("Idempotency-Key header is required.")
+    if not IDEMPOTENCY_KEY_PATTERN.fullmatch(value):
+        raise ValueError("Idempotency-Key must be 8 to 255 URL-safe characters.")
+    return value
+
+
+def booking_request_matches_record(
+    record: CoachCalendarEvent,
+    *,
+    learner_id: int,
+    session_type: str,
+    scheduled_date: date,
+    scheduled_time: time,
+    duration_minutes: int,
+    notes: str,
+) -> bool:
+    return (
+        record.learner_id == learner_id
+        and clean_text(record.event_type).lower() == session_type
+        and record.scheduled_date == scheduled_date
+        and record.scheduled_time == scheduled_time
+        and record.duration_minutes == duration_minutes
+        and clean_text(record.notes) == notes
+    )
+
+
+def reserve_coach_calendar_booking(
+    *,
+    owner_email: str,
+    owner_name: str,
+    learner_id: int,
+    learner_name: str,
+    learner_email: str,
+    session_type: str,
+    scheduled_date: date,
+    scheduled_time: time,
+    duration_minutes: int,
+    notes: str,
+    idempotency_key: str,
+) -> tuple[CoachCalendarEvent, bool]:
+    """Durably reserve one booking before any external call.
+
+    ``CoachCalendarSequence`` is the stable row locked for the whole allocation.
+    Its unique scope and the event constraints make this safe across processes,
+    not merely threads in one Python worker.
+    """
+
+    owner_email = normalize_email(owner_email)
+    session_type = clean_text(session_type).lower()
+
+    def existing_replay() -> CoachCalendarEvent | None:
+        return CoachCalendarEvent.objects.filter(
+            owner_email=owner_email,
+            idempotency_key=idempotency_key,
+        ).first()
+
+    existing = existing_replay()
+    if existing:
+        if not booking_request_matches_record(
+            existing,
+            learner_id=learner_id,
+            session_type=session_type,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
+            duration_minutes=duration_minutes,
+            notes=notes,
+        ):
+            raise ValueError("Idempotency-Key was already used for a different booking.")
+        return existing, False
+
+    try:
+        with transaction.atomic():
+            # Recheck after entering the transaction. The unique constraint is
+            # the final authority if another transaction is still uncommitted.
+            existing = (
+                CoachCalendarEvent.objects.select_for_update()
+                .filter(owner_email=owner_email, idempotency_key=idempotency_key)
+                .first()
+            )
+            if existing:
+                if not booking_request_matches_record(
+                    existing,
+                    learner_id=learner_id,
+                    session_type=session_type,
+                    scheduled_date=scheduled_date,
+                    scheduled_time=scheduled_time,
+                    duration_minutes=duration_minutes,
+                    notes=notes,
+                ):
+                    raise ValueError("Idempotency-Key was already used for a different booking.")
+                return existing, False
+
+            current_max = (
+                CoachCalendarEvent.objects.filter(
+                    learner_id=learner_id,
+                    event_type=session_type,
+                ).aggregate(max_seq=Max("sequence"))["max_seq"]
+                or 0
+            )
+            counter, _ = CoachCalendarSequence.objects.select_for_update().get_or_create(
+                learner_id=learner_id,
+                event_type=session_type,
+                defaults={"last_sequence": current_max},
+            )
+            # Handles a counter introduced before a legacy/manual event import.
+            counter.last_sequence = max(counter.last_sequence, current_max) + 1
+            counter.save(update_fields=["last_sequence", "updated_at"])
+            sequence = counter.last_sequence
+
+            record = CoachCalendarEvent.objects.create(
+                event_key=build_timetable_event_key(
+                    learner_id, session_type, sequence, scheduled_date
+                ),
+                idempotency_key=idempotency_key,
+                owner_email=owner_email,
+                owner_name=owner_name,
+                learner_id=learner_id,
+                learner_name=learner_name,
+                learner_email=learner_email,
+                event_type=session_type,
+                sequence=sequence,
+                target_date=scheduled_date,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
+                duration_minutes=duration_minutes,
+                status=CoachCalendarEvent.STATUS_SCHEDULED,
+                sync_state=CoachCalendarEvent.SYNC_PENDING,
+                notes=notes,
+            )
+            return record, True
+    except IntegrityError:
+        # A same-key concurrent transaction may have committed while this one
+        # waited on the unique index. The failed transaction has rolled back its
+        # counter increment, so returning the winner cannot create a sequence gap.
+        existing = existing_replay()
+        if existing and booking_request_matches_record(
+            existing,
+            learner_id=learner_id,
+            session_type=session_type,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
+            duration_minutes=duration_minutes,
+            notes=notes,
+        ):
+            return existing, False
+        raise
+
+
+def finalize_calendar_graph_sync(record: CoachCalendarEvent, warning: str) -> None:
+    record.sync_state = CoachCalendarEvent.SYNC_SYNCED
+    record.last_graph_sync_error = public_graph_sync_warning(warning)
+    record.save()
+
+
+class CalendarSyncInProgress(RuntimeError):
+    pass
+
+
+def persist_calendar_sync_reservation(candidate: CoachCalendarEvent) -> CoachCalendarEvent:
+    """Persist scheduling inputs and mark pending before Graph network I/O."""
+    mutable_fields = (
+        "owner_email",
+        "owner_name",
+        "learner_id",
+        "learner_name",
+        "learner_email",
+        "event_type",
+        "sequence",
+        "target_date",
+        "scheduled_date",
+        "scheduled_time",
+        "duration_minutes",
+        "status",
+        "notes",
+    )
+    with transaction.atomic():
+        record = CoachCalendarEvent.objects.select_for_update().get(pk=candidate.pk)
+        if record.sync_state in {
+            CoachCalendarEvent.SYNC_SYNCING,
+            CoachCalendarEvent.SYNC_RECONCILIATION,
+        }:
+            raise CalendarSyncInProgress("Calendar event synchronization is already in progress.")
+        for field in mutable_fields:
+            setattr(record, field, getattr(candidate, field))
+        record.sync_state = CoachCalendarEvent.SYNC_PENDING
+        record.save(update_fields=[*mutable_fields, "sync_state", "updated_at"])
+        return record
+
+
+def synchronize_reserved_calendar_event(
+    record_id: int,
+    base_event: dict,
+) -> tuple[CoachCalendarEvent, str, bool]:
+    """Claim and synchronise a durable operation without holding DB locks on I/O."""
+    with transaction.atomic():
+        record = CoachCalendarEvent.objects.select_for_update().get(pk=record_id)
+        if record.sync_state == CoachCalendarEvent.SYNC_SYNCED:
+            return record, "", False
+        syncing_is_fresh = (
+            record.sync_state == CoachCalendarEvent.SYNC_SYNCING
+            and record.last_sync_attempt_at
+            and record.last_sync_attempt_at > timezone.now() - timedelta(minutes=5)
+        )
+        if syncing_is_fresh or record.sync_state in {
+            CoachCalendarEvent.SYNC_RECONCILIATION,
+            CoachCalendarEvent.SYNC_CANCELLED,
+        }:
+            return record, public_graph_sync_warning(record.last_graph_sync_error), False
+        record.sync_state = CoachCalendarEvent.SYNC_SYNCING
+        record.sync_attempt_count += 1
+        record.last_sync_attempt_at = timezone.now()
+        record.save(update_fields=["sync_state", "sync_attempt_count", "last_sync_attempt_at", "updated_at"])
+
+    logger.info(
+        "coach_calendar_graph_sync_started operation_id=%s coach_account_id=%s learner_id=%s "
+        "event_type=%s sync_state=%s attempt=%s request_id=%s",
+        record.operation_id,
+        record.owner_email,
+        record.learner_id,
+        record.event_type,
+        record.sync_state,
+        record.sync_attempt_count,
+        record.idempotency_key,
+    )
+    try:
+        warning = sync_calendar_event_to_graph(record, base_event)
+    except Exception:
+        CoachCalendarEvent.objects.filter(pk=record.pk).update(
+            sync_state=CoachCalendarEvent.SYNC_FAILED,
+            last_graph_sync_error=TEAMS_SYNC_TEMPORARY_MESSAGE,
+            updated_at=timezone.now(),
+        )
+        logger.exception(
+            "coach_calendar_graph_sync_exception operation_id=%s learner_id=%s "
+            "event_type=%s attempt=%s request_id=%s",
+            record.operation_id,
+            record.learner_id,
+            record.event_type,
+            record.sync_attempt_count,
+            record.idempotency_key,
+        )
+        raise
+    if not calendar_record_has_launch_url(record):
+        warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
+        record.sync_state = CoachCalendarEvent.SYNC_FAILED
+        record.last_graph_sync_error = public_graph_sync_warning(warning)
+        record.save()
+        logger.warning(
+            "coach_calendar_graph_sync_failed operation_id=%s learner_id=%s event_type=%s "
+            "sync_state=%s attempt=%s request_id=%s",
+            record.operation_id,
+            record.learner_id,
+            record.event_type,
+            record.sync_state,
+            record.sync_attempt_count,
+            record.idempotency_key,
+        )
+        return record, warning, True
+
+    try:
+        finalize_calendar_graph_sync(record, warning)
+    except Exception:
+        logger.exception(
+            "coach_calendar_graph_finalize_failed operation_id=%s learner_id=%s request_id=%s",
+            record.operation_id,
+            record.learner_id,
+            record.idempotency_key,
+        )
+        compensation_warning = delete_calendar_event_from_graph(record)
+        recovery_state = (
+            CoachCalendarEvent.SYNC_RECONCILIATION
+            if compensation_warning
+            else CoachCalendarEvent.SYNC_FAILED
+        )
+        recovery_error = compensation_warning or "Graph event was compensated after local finalization failed."
+        try:
+            CoachCalendarEvent.objects.filter(pk=record.pk).update(
+                sync_state=recovery_state,
+                last_graph_sync_error=public_graph_sync_warning(recovery_error),
+                graph_event_id="" if not compensation_warning else record.graph_event_id,
+                graph_organizer_email="" if not compensation_warning else record.graph_organizer_email,
+                meeting_provider="" if not compensation_warning else record.meeting_provider,
+                meeting_link="" if not compensation_warning else record.meeting_link,
+                graph_web_link="" if not compensation_warning else record.graph_web_link,
+                updated_at=timezone.now(),
+            )
+        except Exception:
+            logger.exception(
+                "coach_calendar_graph_recovery_record_failed operation_id=%s request_id=%s",
+                record.operation_id,
+                record.idempotency_key,
+            )
+        raise
+
+    logger.info(
+        "coach_calendar_graph_sync_completed operation_id=%s learner_id=%s event_type=%s "
+        "sync_state=%s attempt=%s request_id=%s",
+        record.operation_id,
+        record.learner_id,
+        record.event_type,
+        record.sync_state,
+        record.sync_attempt_count,
+        record.idempotency_key,
+    )
+    return record, warning, True
+
+
 def find_generated_timetable_event(owner_email: str, event_key: str) -> tuple[dict | None, str]:
     payload = collect_generated_timetable(owner_email)
     event = next((item for item in payload["events"] if item.get("eventKey") == event_key), None)
@@ -4716,14 +5074,14 @@ def find_catchup_template_event(owner_email: str, event_key: str) -> tuple[dict 
     return None, owner_name
 
 
-@csrf_exempt
+@coach_access_required
 def coach_timetable_schedule_event(request):
     if request.method not in ("POST", "PATCH"):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
 
     try:
         payload = parse_json_body(request)
-        owner_email = clean_text(payload.get("ownerEmail") or request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+        owner_email = authenticated_coach_email(request)
         event_key = clean_text(payload.get("eventKey"))
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
         scheduled_time = parse_time_value(payload.get("scheduledTime"))
@@ -4759,12 +5117,18 @@ def coach_timetable_schedule_event(request):
         catchup_record.target_date = catchup_record.target_date or scheduled_date
         catchup_record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
+        try:
+            catchup_record = persist_calendar_sync_reservation(catchup_record)
+        except CalendarSyncInProgress as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
         base_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
             learner=learner_map.get(catchup_record.learner_id),
         )
-        warning = sync_calendar_event_to_graph(catchup_record, base_event)
+        catchup_record, warning, _attempted = synchronize_reserved_calendar_event(
+            catchup_record.pk, base_event
+        )
         if not calendar_record_has_launch_url(catchup_record):
             warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
             catchup_record = repair_calendar_record_to_needs_schedule(catchup_record, reason=warning)
@@ -4817,12 +5181,16 @@ def coach_timetable_schedule_event(request):
         record.duration_minutes = duration_minutes
         record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
+        try:
+            record = persist_calendar_sync_reservation(record)
+        except CalendarSyncInProgress as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
         base_event = build_catchup_calendar_event(
             record,
             owner_name=owner_name,
             learner=learner_map.get(record.learner_id),
         )
-        warning = sync_calendar_event_to_graph(record, base_event)
+        record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
         if not calendar_record_has_launch_url(record):
             warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
             record = repair_calendar_record_to_needs_schedule(record, reason=warning)
@@ -4889,7 +5257,11 @@ def coach_timetable_schedule_event(request):
     record.duration_minutes = duration_minutes
     record.status = CoachCalendarEvent.STATUS_SCHEDULED
 
-    warning = sync_calendar_event_to_graph(record, base_event)
+    try:
+        record = persist_calendar_sync_reservation(record)
+    except CalendarSyncInProgress as exc:
+        return JsonResponse({"detail": str(exc)}, status=409)
+    record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
     if not calendar_record_has_launch_url(record):
         warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
         record = repair_calendar_record_to_needs_schedule(record, reason=warning)
@@ -4901,14 +5273,14 @@ def coach_timetable_schedule_event(request):
     return JsonResponse({"event": updated_event, "warning": warning})
 
 
-@csrf_exempt
+@coach_access_required
 def coach_timetable_book_event(request):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
 
     try:
         payload = parse_json_body(request)
-        owner_email = clean_text(payload.get("ownerEmail") or request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+        owner_email = authenticated_coach_email(request)
         learner_id = int(payload.get("learnerId") or 0)
         session_type = clean_text(payload.get("sessionType")).lower()
         scheduled_date = parse_date_value(payload.get("scheduledDate"))
@@ -4940,48 +5312,110 @@ def coach_timetable_book_event(request):
     learner = next((row for row in caseload_rows if int(getattr(row, "id", 0) or 0) == learner_id), None)
     if not learner:
         return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+    owner_name = fetch_owner_name(owner_email, fallback=clean_text(getattr(learner, "coach_name", None)) or "Med Maher")
+    learner_name = clean_text(getattr(learner, "username", None)) or "Unknown learner"
+    learner_email = clean_text(getattr(learner, "email", None))
+    try:
+        idempotency_key = calendar_idempotency_key(request)
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=400)
+
+    replay = CoachCalendarEvent.objects.filter(
+        owner_email=normalize_email(owner_email),
+        idempotency_key=idempotency_key,
+    ).first()
+    if replay:
+        if not booking_request_matches_record(
+            replay,
+            learner_id=learner_id,
+            session_type=session_type,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
+            duration_minutes=duration_minutes,
+            notes=notes,
+        ):
+            return JsonResponse(
+                {"detail": "Idempotency-Key was already used for a different booking."},
+                status=409,
+            )
+        try:
+            replay, warning, _attempted = synchronize_reserved_calendar_event(
+                replay.pk, build_booked_calendar_event(replay)
+            )
+        except Exception:
+            logger.exception(
+                "coach_calendar_booking_replay_failed operation_id=%s request_id=%s",
+                replay.operation_id,
+                replay.idempotency_key,
+            )
+            return JsonResponse({"detail": "Unable to synchronize coach session."}, status=500)
+        event = build_catchup_calendar_event(replay, owner_name=owner_name, learner=learner)
+        return JsonResponse(
+            {
+                "event": event,
+                "warning": warning,
+                "operation": {
+                    "id": str(replay.operation_id),
+                    "syncState": replay.sync_state,
+                    "attemptCount": replay.sync_attempt_count,
+                    "replayed": True,
+                },
+            },
+            status=200,
+        )
+
     if coach_learner_personal_calendar_conflicts(
         learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes
     ):
         return JsonResponse({"detail": "This learner is busy at that time. Choose another time."}, status=409)
 
-    owner_name = fetch_owner_name(owner_email, fallback=clean_text(getattr(learner, "coach_name", None)) or "Med Maher")
-    learner_name = clean_text(getattr(learner, "username", None)) or "Unknown learner"
-    learner_email = clean_text(getattr(learner, "email", None))
-
     try:
-        next_sequence = (
-            CoachCalendarEvent.objects.filter(learner_id=learner_id, event_type__iexact=session_type)
-            .aggregate(max_seq=Max("sequence"))["max_seq"]
-            or 0
-        ) + 1
-        record = CoachCalendarEvent(
-            event_key=build_timetable_event_key(learner_id, session_type, next_sequence, scheduled_date),
+        record, created = reserve_coach_calendar_booking(
             owner_email=owner_email,
             owner_name=owner_name,
             learner_id=learner_id,
             learner_name=learner_name,
             learner_email=learner_email,
-            event_type=session_type,
-            sequence=next_sequence,
-            target_date=scheduled_date,
+            session_type=session_type,
             scheduled_date=scheduled_date,
             scheduled_time=scheduled_time,
             duration_minutes=duration_minutes,
-            status=CoachCalendarEvent.STATUS_SCHEDULED,
             notes=notes,
+            idempotency_key=idempotency_key,
         )
-        warning = sync_calendar_event_to_graph(record, build_booked_calendar_event(record))
-        record.last_graph_sync_error = public_graph_sync_warning(warning)
-        record.save()
+        record, warning, attempted = synchronize_reserved_calendar_event(
+            record.pk,
+            build_booked_calendar_event(record),
+        )
+    except ValueError as exc:
+        return JsonResponse({"detail": str(exc)}, status=409 if "already used" in str(exc) else 400)
     except Exception as exc:  # noqa: BLE001
-        return JsonResponse({"detail": "Unable to create coach session.", "error": str(exc)}, status=500)
+        logger.exception(
+            "coach_calendar_booking_failed coach_account_id=%s learner_id=%s event_type=%s",
+            owner_email,
+            learner_id,
+            session_type,
+        )
+        return JsonResponse({"detail": "Unable to create coach session."}, status=500)
 
     event = build_catchup_calendar_event(record, owner_name=owner_name, learner=learner)
-    return JsonResponse({"event": event, "warning": warning}, status=201)
+    return JsonResponse(
+        {
+            "event": event,
+            "warning": warning,
+            "operation": {
+                "id": str(record.operation_id),
+                "syncState": record.sync_state,
+                "attemptCount": record.sync_attempt_count,
+                "replayed": not created,
+            },
+        },
+        status=201 if created else 200,
+    )
 
 
-@csrf_exempt
+@coach_access_required
 def coach_timetable_event_action(request):
     if request.method not in ("POST", "PATCH"):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
@@ -4991,7 +5425,7 @@ def coach_timetable_event_action(request):
     except ValueError as exc:
         return JsonResponse({"detail": str(exc)}, status=400)
 
-    owner_email = clean_text(payload.get("ownerEmail") or request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
     event_key = clean_text(payload.get("eventKey"))
     action = clean_text(payload.get("action")).lower()
     if not event_key:
@@ -5017,14 +5451,7 @@ def coach_timetable_event_action(request):
         elif action == "complete":
             catchup_record.status = CoachCalendarEvent.STATUS_COMPLETED
         elif action == "cancel":
-            warning = delete_calendar_event_from_graph(catchup_record)
-            catchup_record.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
-            catchup_record.scheduled_date = None
-            catchup_record.scheduled_time = None
-            catchup_record.meeting_link = ""
-            catchup_record.graph_web_link = ""
-            catchup_record.graph_event_id = ""
-            catchup_record.meeting_provider = ""
+            catchup_record, warning = cancel_reserved_calendar_event(catchup_record)
 
         catchup_record.owner_name = owner_name or catchup_record.owner_name
         catchup_record.last_graph_sync_error = public_graph_sync_warning(warning)
@@ -5198,14 +5625,7 @@ def coach_timetable_event_action(request):
         record.manager_signed_at = timezone.now()
         record.manager_signed_by = clean_text(payload.get("managerName")) or "Line Manager"
     elif action == "cancel":
-        warning = delete_calendar_event_from_graph(record)
-        record.status = CoachCalendarEvent.STATUS_NOT_SCHEDULED
-        record.scheduled_date = None
-        record.scheduled_time = None
-        record.meeting_link = ""
-        record.graph_web_link = ""
-        record.graph_event_id = ""
-        record.meeting_provider = ""
+        record, warning = cancel_reserved_calendar_event(record)
 
     record.last_graph_sync_error = public_graph_sync_warning(warning)
     record.save()
@@ -5298,9 +5718,10 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     ]
 
 
+@coach_access_required
 @require_GET
 def coach_attendance_details(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
     learner_id = clean_text(request.GET.get("learner_id"))
     learner_email = normalize_email(request.GET.get("learner_email"))
 
@@ -5347,9 +5768,10 @@ def coach_attendance_details(request):
     )
 
 
+@coach_access_required
 @require_GET
 def coach_timetable(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
     start_date = parse_date_value(request.GET.get("start"))
     end_date = parse_date_value(request.GET.get("end"))
     include_live_sessions = clean_text(request.GET.get("include_live_sessions", "1")).casefold() not in {"0", "false", "no", "off"}
@@ -5383,10 +5805,11 @@ def coach_timetable(request):
     )
 
 
+@coach_access_required
 @require_GET
 def coach_dashboard(request):
     """Return every data set needed by the coach workspace in one request."""
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
     today = date.today()
     calendar_end = today + timedelta(days=90)
 
@@ -5464,9 +5887,10 @@ def coach_dashboard(request):
         }
     )
 
+@coach_access_required
 @require_GET
 def coach_monthly_activity(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
     start_date, end_date, month_label, month_key = parse_month_bounds(request.GET.get("month"))
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
 
@@ -5532,9 +5956,10 @@ def coach_monthly_activity(request):
     )
 
 
+@coach_access_required
 @require_GET
 def coach_caseload(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
     summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
 
@@ -5566,12 +5991,12 @@ def coach_caseload(request):
     )
 
 
-@csrf_exempt
+@coach_access_required
 def coach_caseload_coach_rag(request, learner_id):
     if request.method not in ("GET", "PATCH", "PUT"):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
 
-    owner_email = clean_text(request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
     learner_queryset = LearnerProfile.objects.annotate(
         coach_email_key=Lower(Trim("coach_email")),
     ).filter(
@@ -5602,9 +6027,10 @@ def coach_caseload_coach_rag(request, learner_id):
     return JsonResponse({"id": str(learner_id), "coachRag": format_coach_rag_value(coach_rag)})
 
 
+@coach_access_required
 @require_GET
 def coach_attendance(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
 
     try:
         caseload_rows = fetch_attendance_caseload_rows(owner_email)
@@ -5896,9 +6322,9 @@ def serialize_absence_report(
     }
 
 
-@csrf_exempt
+@coach_access_required
 def coach_absence_reports(request):
-    owner_email = clean_text(request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
     active_rows = fetch_owner_active_learner_profiles(owner_email)
     active_ids = {int(row.id) for row in active_rows}
     active_emails = {normalize_email(row.email) for row in active_rows if normalize_email(row.email)}
@@ -5992,11 +6418,11 @@ def coach_absence_reports(request):
     })
 
 
-@csrf_exempt
+@coach_access_required
 def coach_marking_queue(request, submission_id=None):
     """List and review the complete reflections submitted by learners."""
     ensure_learning_reflection_submissions_table()
-    owner_email = clean_text(request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
     requested_owner = normalize_email(owner_email)
     allowed_learner_ids = {
         str(learner_id)
@@ -6147,9 +6573,10 @@ def coach_marking_queue(request, submission_id=None):
     })
 
 
+@coach_access_required
 @require_GET
 def coach_evidence_awaiting_review(request):
-    owner_email = request.GET.get("owner_email", DEFAULT_COACH_EMAIL).strip() or DEFAULT_COACH_EMAIL
+    owner_email = authenticated_coach_email(request)
 
     try:
         items, caseload_learners = fetch_evidence_file_queue(owner_email)

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
@@ -92,7 +93,7 @@ export default function CoachMarkingReviewPage() {
       return;
     }
     try {
-      const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email));
+      const response = await coachFetch(API_ENDPOINT);
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
       if (!response.ok) throw new Error(data.detail || 'Unable to load submissions.');
@@ -181,7 +182,7 @@ export default function CoachMarkingReviewPage() {
     setSaving(true);
     setError('');
     try {
-      const response = await fetch(withCoachOwnerEmail(`${API_ENDPOINT}/${selected.id}`, coach.email), {
+      const response = await coachFetch(`${API_ENDPOINT}/${selected.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ decision, feedback: feedback.trim(), reviewedBy: coach.name }),

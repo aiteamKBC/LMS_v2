@@ -1,6 +1,7 @@
 import json
 from datetime import date, timedelta
 from decimal import Decimal
+from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -28,6 +29,12 @@ from coach_api.views import (
     route_absence_report_evidence,
     serialize_caseload_learner,
 )
+
+
+def call_coach_view(view, request):
+    """Unit-test view logic below the integration-tested auth boundary."""
+    request.coach_email = "coach@example.com"
+    return unwrap(view)(request)
 
 
 class SourceProfileIdentityTests(SimpleTestCase):
@@ -204,7 +211,7 @@ class CoachCaseloadViewTests(SimpleTestCase):
         fetch_rows.return_value = [row]
         serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
 
-        response = coach_caseload(
+        response = call_coach_view(coach_caseload,
             self.factory.get(
                 "/coach_api/coach/caseload",
                 {"owner_email": "coach@example.com", "summary": "1"},
@@ -226,7 +233,7 @@ class CoachCaseloadViewTests(SimpleTestCase):
         fetch_rows.return_value = [row]
         serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
 
-        response = coach_caseload(
+        response = call_coach_view(coach_caseload,
             self.factory.get(
                 "/coach_api/coach/caseload",
                 {"owner_email": "coach@example.com"},
@@ -247,7 +254,7 @@ class CoachCaseloadViewTests(SimpleTestCase):
         fetch_rows.return_value = [row]
         serialize_learner.return_value = {"id": "2", "coachName": "Med Maher"}
 
-        response = coach_caseload(
+        response = call_coach_view(coach_caseload,
             self.factory.get(
                 "/coach_api/coach/caseload",
                 {"owner_email": "coach@example.com", "live": "1"},
@@ -283,7 +290,7 @@ class CoachDashboardViewTests(SimpleTestCase):
         dashboard_cache.get.return_value = None
         collect_live_sessions.return_value = [{"id": "live-1", "date": "2026-08-09", "startHour": 9}]
 
-        response = coach_dashboard(
+        response = call_coach_view(coach_dashboard,
             RequestFactory().get("/coach_api/coach/dashboard", {"owner_email": "coach@example.com"})
         )
         payload = json.loads(response.content)
@@ -421,7 +428,7 @@ class CoachTimetableBookingConflictTests(SimpleTestCase):
                     content_type="application/json",
                 )
 
-                response = coach_timetable_book_event(request)
+                response = call_coach_view(coach_timetable_book_event, request)
 
                 self.assertEqual(response.status_code, 409)
                 self.assertIn("busy at that time", response.content.decode())
@@ -474,7 +481,7 @@ class CoachTimetableBookingConflictTests(SimpleTestCase):
             content_type="application/json",
         )
 
-        response = coach_timetable_schedule_event(request)
+        response = call_coach_view(coach_timetable_schedule_event, request)
 
         self.assertEqual(response.status_code, 409)
         self.assertIn("busy at that time", response.content.decode())
@@ -689,7 +696,7 @@ class MonthlyActivityTests(SimpleTestCase):
             "activities": [],
         }
 
-        response = coach_monthly_activity(
+        response = call_coach_view(coach_monthly_activity,
             self.factory.get(
                 "/coach_api/coach/monthly-activity",
                 {"owner_email": "coach@example.com", "month": "2026-08"},
@@ -724,7 +731,7 @@ class MonthlyActivityTests(SimpleTestCase):
             "activities": [],
         }
 
-        response = coach_monthly_activity(
+        response = call_coach_view(coach_monthly_activity,
             self.factory.get(
                 "/coach_api/coach/monthly-activity",
                 {"owner_email": "coach@example.com", "month": "2026-08", "live": "1"},

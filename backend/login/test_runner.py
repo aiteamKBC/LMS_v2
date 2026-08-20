@@ -34,6 +34,9 @@ SETUP_COMMANDS = (
     # database needs both, in this order.
     "apply_created_users_table",
     "apply_created_users_employer_id",
+    # Current StaffUser/Employer/learner models include the additive public
+    # uuid column. Fresh test databases must match that production shape.
+    "apply_user_uuid",
     # Staff_users."Access" — the staff access grant. Added after the base table
     # command, which does not know about it.
     "apply_staff_access_column",

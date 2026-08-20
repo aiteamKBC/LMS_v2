@@ -133,7 +133,6 @@ if decks:
 
 for path in (
     "/coach_api/coach/caseload",
-    "/coach_api/coach/messages",
     "/coach_api/coach/attendance",
     "/coach_api/coach/absence-reports",
     "/coach_api/coach/evidence-awaiting-review",

@@ -8,7 +8,8 @@ import {
   type LearnerKind,
 } from '@/api/learnerDetail';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
-import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
 import {
@@ -337,8 +338,8 @@ async function readJson<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-async function fetchCoachMarkingQueue(ownerEmail: string, signal?: AbortSignal): Promise<MarkingQueueResponse> {
-  const response = await fetch(withCoachOwnerEmail(MARKING_QUEUE_ENDPOINT, ownerEmail), { signal });
+async function fetchCoachMarkingQueue(signal?: AbortSignal): Promise<MarkingQueueResponse> {
+  const response = await coachFetch(MARKING_QUEUE_ENDPOINT, { signal });
   return readJson<MarkingQueueResponse>(response);
 }
 
@@ -2433,9 +2434,9 @@ export default function CoachReports() {
       const nextWarnings: string[] = [];
 
       const [caseloadResult, attendanceResult, timetableResult] = await Promise.allSettled([
-        fetch(withCoachOwnerEmail(CASELOAD_ENDPOINT, coach.email), { signal: controller.signal }).then(response => readJson<CaseloadResponse>(response)),
-        fetch(withCoachOwnerEmail(ATTENDANCE_ENDPOINT, coach.email), { signal: controller.signal }).then(response => readJson<AttendanceResponse>(response)),
-        fetchCoachCalendarEvents(controller.signal, coach.email),
+        coachFetch(CASELOAD_ENDPOINT, { signal: controller.signal }).then(response => readJson<CaseloadResponse>(response)),
+        coachFetch(ATTENDANCE_ENDPOINT, { signal: controller.signal }).then(response => readJson<AttendanceResponse>(response)),
+        fetchCoachCalendarEvents(controller.signal),
       ]);
 
       if (controller.signal.aborted) return;
@@ -2659,7 +2660,7 @@ export default function CoachReports() {
       if (detailKind && reportOptions.learnerId && reportOptions.learnerId !== 'all') {
         const [reflectionResult, evidenceResult] = await Promise.allSettled([
           reportOptions.inclusions.learnerReflections
-            ? fetchCoachMarkingQueue(coach.email).then(data => data.items || [])
+            ? fetchCoachMarkingQueue().then(data => data.items || [])
             : Promise.resolve([] as MarkingQueueSubmission[]),
           reportOptions.inclusions.evidenceLinks
             ? fetchEvidence(detailKind, reportOptions.learnerId)

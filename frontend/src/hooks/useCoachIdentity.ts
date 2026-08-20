@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from './useAuth';
+import { coachFetch } from '@/lib/coachFetch';
 
 /**
  * The signed-in staff account is the single source of truth for coach-scoped
@@ -16,11 +17,6 @@ export function useCoachIdentity() {
     hasCoachAccess,
     isInitialized,
   };
-}
-
-export function withCoachOwnerEmail(endpoint: string, ownerEmail: string) {
-  const separator = endpoint.includes('?') ? '&' : '?';
-  return `${endpoint}${separator}owner_email=${encodeURIComponent(ownerEmail)}`;
 }
 
 export function useCoachAssignedLearnerNames() {
@@ -42,7 +38,7 @@ export function useCoachAssignedLearnerNames() {
     setCaseloadLoading(true);
     setCaseloadError('');
 
-    fetch(withCoachOwnerEmail('/coach_api/coach/caseload?summary=1', coach.email), {
+    coachFetch('/coach_api/coach/caseload?summary=1', {
       signal: controller.signal,
     })
       .then(async response => {

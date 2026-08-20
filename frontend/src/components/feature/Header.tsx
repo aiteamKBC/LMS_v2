@@ -58,9 +58,6 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
   }, []);
 
   const displayName = auth.user?.fullName || userName;
-  const roleSlug = auth.roles[0]?.slug || 'learner';
-  const roleMessagesPath = roleSlug === 'learner' ? '/learner/messages' : roleSlug === 'coach' ? '/coach/messages' : '/messages';
-
   return (
     <>
     {/* Height and border deliberately match the sidebar's brand row, so the two

@@ -29,7 +29,6 @@ export const roleNotifications: Record<string, RoleNotification[]> = {
     { id: 4, text: 'Coaching session confirmed with Sophie Williams on 19 June', time: 'Yesterday', unread: false, type: 'meeting', category: 'Meeting', link: '/coach/meetings' },
     { id: 5, text: 'AI marking completed for 8 Module 7 assignments', time: 'Yesterday', unread: false, type: 'marking', category: 'Marking', link: '/coach/ai-marking' },
     { id: 6, text: 'QA finding raised: Evidence pack EV-2024-442 rejected', time: '2 days ago', unread: true, type: 'qa', category: 'QA', link: '/coach/evidence-validation' },
-    { id: 7, text: 'David Chen asked for help linking GitHub evidence', time: '2 days ago', unread: false, type: 'message', category: 'Messages', link: '/coach/messages' },
     { id: 8, text: 'Monthly cycle checklist: 6 tasks still pending', time: '3 days ago', unread: false, type: 'cycle', category: 'Monthly Cycle', link: '/coach/monthly-cycle' },
     { id: 9, text: 'Emily Watson is approaching gateway readiness — KSBs at 92%', time: '4 days ago', unread: false, type: 'gateway', category: 'Gateway', link: '/coach/caseload' },
     { id: 10, text: 'New learner allocated to your caseload: Maya Kapoor', time: '5 days ago', unread: false, type: 'assignment', category: 'Caseload', link: '/coach/caseload' },

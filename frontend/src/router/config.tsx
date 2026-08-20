@@ -49,7 +49,6 @@ const CoachKsbImpact = lazy(() => import("../pages/coach/ksb-impact/page"));
 const CoachMarkingQueue = lazy(() => import("../pages/coach/marking-queue/page"));
 const CoachMarkingReviewPage = lazy(() => import("../pages/coach/marking-review/page"));
 const CoachMeetings = lazy(() => import("../pages/coach/meetings/page"));
-const CoachMessagesPage = lazy(() => import("../pages/coach/messages/page"));
 const CoachMonthlyCycle = lazy(() => import("../pages/coach/monthly-cycle/page"));
 const CoachOtjhReports = lazy(() => import("../pages/coach/otjh-reports/page"));
 const CoachProgressReviews = lazy(() => import("../pages/coach/progress-reviews/page"));
@@ -858,10 +857,6 @@ const routes: RouteObject[] = [
   {
     path: "/employer/support",
     element: <EmployerSupportRequests />,
-  },
-  {
-    path: "/coach/messages",
-    element: <CoachMessagesPage />,
   },
   {
     path: "/coach/reports",
