@@ -8,6 +8,7 @@ from .views import (
     coach_absence_reports,
     coach_caseload,
     coach_caseload_coach_rag,
+    coach_directory,
     coach_evidence_awaiting_review,
     coach_marking_queue,
     coach_monthly_activity,
@@ -20,6 +21,7 @@ from .views import (
 
 urlpatterns = [
     path('csrf', coach_csrf_token, name='coach-csrf'),
+    path('coaches', coach_directory, name='coach-directory'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),
     path('coach/caseload', coach_caseload, name='coach-caseload'),
     path('coach/caseload/<int:learner_id>/coach-rag', coach_caseload_coach_rag, name='coach-caseload-coach-rag'),

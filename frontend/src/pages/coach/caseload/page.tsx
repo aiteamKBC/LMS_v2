@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { useAuth } from '@/hooks/useAuth';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { coachFetch } from '@/lib/coachFetch';
 
@@ -497,9 +498,12 @@ async function fetchAttendanceLearners(signal: AbortSignal) {
 
 export default function CoachCaseload() {
   const navigate = useNavigate();
-  const { auth, isInitialized } = useAuth();
-  const authenticatedCoachEmail = auth.account?.access === 'coach' ? auth.account.email : '';
-  const authenticatedCoachName = auth.account?.displayName || auth.user?.fullName || 'Coach';
+  const { isInitialized } = useAuth();
+  // Whose caseload this is: the signed-in coach, or the coach an administrator
+  // opened the workspace as.
+  const coach = useCoachIdentity();
+  const authenticatedCoachEmail = coach.email;
+  const authenticatedCoachName = coach.name;
   const [ownerName, setOwnerName] = useState('Coach');
   const [ownerEmail, setOwnerEmail] = useState('');
   const [learners, setLearners] = useState<Learner[]>([]);

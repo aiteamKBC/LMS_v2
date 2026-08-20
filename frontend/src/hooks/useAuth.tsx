@@ -8,6 +8,7 @@ import { kbcTenant, demoProviderTenant, type Tenant } from '@/mocks/tenant';
 import { clearChatSession } from '@/api/chat';
 import { apiLogin, apiLogout, apiMe, type AuthUser, type Role } from '@/api/auth';
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
+import { clearCoachViewAs, syncCoachViewAsAccount } from '@/lib/coachViewAs';
 
 // ============================================================
 // Types
@@ -95,6 +96,12 @@ function stateFromAccount(account: AuthUser): AuthState {
   // last in localStorage, or the hardcoded demo learner on a fresh browser.
   // Single funnel: every sign-in, session restore and refresh lands here.
   rememberSignedInLearner(account.subjectType, account.subjectId, account.learnerType);
+
+  // Same reasoning for the coach workspace: an admin's "view as coach" choice
+  // is stored per browser, so it has to be dropped here when the account that
+  // resolves is not the admin who made it — otherwise a coach signing in on
+  // that browser would request somebody else's caseload and be refused.
+  syncCoachViewAsAccount(account);
 
   const roles = (ROLE_TO_RBAC_IDS[account.role] ?? [])
     .map(id => ALL_ROLES.find(r => r.id === id))
@@ -247,6 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // before navigation completes; the local state is cleared regardless.
     void apiLogout().catch(() => undefined);
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    clearCoachViewAs();
     setAuth(SIGNED_OUT);
     navigate('/login');
   }, [navigate]);

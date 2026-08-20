@@ -4,8 +4,11 @@ import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
+import { setCoachViewAs, withCoachViewAs } from '@/lib/coachViewAs';
 import { useAuth } from '@/hooks/useAuth';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
+import { CoachDirectoryPicker } from './CoachDirectoryPicker';
 import {
   type CoachCalendarEvent,
   eventDisplayDate,
@@ -764,8 +767,12 @@ function CoachingCalendarSkeleton() {
 
 export default function CoachDashboard() {
   const { auth, isInitialized } = useAuth();
-  const authenticatedCoachEmail = auth.account?.access === 'coach' ? auth.account.email : '';
-  const authenticatedCoachName = auth.account?.displayName || auth.user?.fullName || 'Coach';
+  const coach = useCoachIdentity();
+  // For a coach this is their own address; for an admin it is the coach they
+  // chose, and empty until they choose one — which is what shows the picker.
+  const authenticatedCoachEmail = coach.email;
+  const authenticatedCoachName = coach.name;
+  const adminEmail = auth.account?.email || '';
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<CoachLearner[]>([]);
@@ -799,7 +806,9 @@ export default function CoachDashboard() {
         setCalendarPreviewEvents([]);
         setLiveSessionEvents([]);
         setEvidenceQueue([]);
-        setLoadWarning('Coach access is required to load this dashboard.');
+        // An admin has no caseload of their own, so there is nothing missing to
+        // report — the picker below is the whole page for them.
+        setLoadWarning(coach.canChooseCoach ? null : 'Coach access is required to load this dashboard.');
         setCalendarError('Coach access is required.');
         setLiveSessionsError('Coach access is required.');
         setCalendarLoading(false);
@@ -810,7 +819,7 @@ export default function CoachDashboard() {
 
       try {
         const dashboard = await fetchSharedJsonGet<CoachDashboardApiResponse>(
-          coachDashboardEndpoint(),
+          withCoachViewAs(coachDashboardEndpoint()),
           { signal: controller.signal, credentials: 'include' },
         );
         if (controller.signal.aborted) return;
@@ -854,7 +863,7 @@ export default function CoachDashboard() {
     return () => {
       controller.abort();
     };
-  }, [authenticatedCoachEmail, authenticatedCoachName, isInitialized]);
+  }, [authenticatedCoachEmail, authenticatedCoachName, coach.canChooseCoach, isInitialized]);
 
   useEffect(() => {
     if (!selectedKpi) return;
@@ -954,6 +963,26 @@ export default function CoachDashboard() {
       document.getElementById('learner-caseload')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
   };
+
+  // An administrator reaches this page with no caseload of their own. Rather
+  // than a dashboard of zeros, they pick whose workspace to open; the selection
+  // then travels with every coach request (see `@/lib/coachViewAs`), so the
+  // sidebar's caseload, timetable and marking pages follow the same coach.
+  if (coach.canChooseCoach && !coach.isViewingAsCoach) {
+    return (
+      <WorkspaceShell
+        role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel}
+        pageTitle="Coach Workspace" pageSubtitle="Choose a coach to open their workspace"
+        userName={auth.account?.displayName || auth.user?.fullName || 'Administrator'} userRole="Administrator"
+      >
+        <div className="space-y-6 p-3 md:p-6">
+          <CoachDirectoryPicker
+            onSelect={selected => setCoachViewAs({ email: selected.email, name: selected.name }, adminEmail)}
+          />
+        </div>
+      </WorkspaceShell>
+    );
+  }
 
   return (
     <WorkspaceShell

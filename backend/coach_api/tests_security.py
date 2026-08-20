@@ -334,6 +334,136 @@ class CoachAuthorizationSecurityTests(TestCase):
         report.refresh_from_db()
         self.assertEqual(report.status, CoachAbsenceReport.STATUS_PENDING)
 
+    @patch("coach_api.views.coach_staff_display_name", return_value="Coach A")
+    @patch("coach_api.views.collect_tracked_live_session_events", return_value=[])
+    @patch(
+        "coach_api.views.collect_generated_timetable",
+        return_value={"events": [], "summary": {}, "owner_name": "Coach A"},
+    )
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+    def test_super_admin_view_as_reads_the_named_coachs_workspace(
+        self,
+        profiles,
+        _timetable,
+        _live_events,
+        _display_name,
+    ):
+        self._make_staff_account(email="coach-a@example.com", access="coach")
+        self._authenticate(
+            self._make_staff_account(email="admin@example.com", access="super-admin")
+        )
+
+        response = self.client.get(
+            "/coach_api/coach/dashboard", {"viewAsCoach": "  COACH-A@example.com  "}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["owner"]["email"], "coach-a@example.com")
+        profiles.assert_called_once_with("coach-a@example.com")
+
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_super_admin_without_a_selection_is_told_to_choose_a_coach(self, profiles):
+        self._authenticate(
+            self._make_staff_account(email="admin@example.com", access="super-admin")
+        )
+
+        response = self.client.get("/coach_api/coach/dashboard")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["code"], "coach_selection_required")
+        profiles.assert_not_called()
+
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_view_as_only_resolves_accounts_that_hold_coach_access(self, profiles):
+        self._make_staff_account(email="designer@example.com", access="curriculum")
+        self._authenticate(
+            self._make_staff_account(email="admin@example.com", access="super-admin")
+        )
+
+        for target in ("designer@example.com", "nobody@example.com"):
+            with self.subTest(target=target):
+                response = self.client.get(
+                    "/coach_api/coach/dashboard", {"viewAsCoach": target}
+                )
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(response.json()["code"], "coach_not_found")
+        profiles.assert_not_called()
+
+    @patch("coach_api.views.sync_calendar_event_to_graph")
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_view_as_cannot_write_as_the_coach_it_is_reading(
+        self, fetch_caseload, sync_graph
+    ):
+        self._make_staff_account(email="coach-a@example.com", access="coach")
+        self._authenticate(
+            self._make_staff_account(email="admin@example.com", access="super-admin")
+        )
+        before = CoachCalendarEvent.objects.count()
+
+        response = self._request(
+            "POST",
+            "/coach_api/coach/timetable/events/book",
+            {
+                "viewAsCoach": "coach-a@example.com",
+                "learnerId": 101,
+                "sessionType": "catch-up",
+                "scheduledDate": "2099-01-01",
+                "scheduledTime": "10:00",
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["code"], "coach_view_as_read_only")
+        self.assertEqual(CoachCalendarEvent.objects.count(), before)
+        fetch_caseload.assert_not_called()
+        sync_graph.assert_not_called()
+
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_a_coach_cannot_view_as_another_coach(self, profiles):
+        self._make_staff_account(email="coach-b@example.com", access="coach")
+        self._authenticate(
+            self._make_staff_account(email="coach-a@example.com", access="coach")
+        )
+
+        response = self.client.get(
+            "/coach_api/coach/dashboard", {"viewAsCoach": "coach-b@example.com"}
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["code"], "coach_identity_mismatch")
+        profiles.assert_not_called()
+
+    @patch(
+        "coach_api.views.caseload_counts_by_coach",
+        return_value={"coach-a@example.com": {"total": 7, "active": 5}},
+    )
+    def test_coach_directory_lists_coach_accounts_for_an_admin(self, _counts):
+        self._make_staff_account(email="coach-a@example.com", access="coach")
+        self._make_staff_account(email="designer@example.com", access="curriculum")
+        self._authenticate(
+            self._make_staff_account(email="admin@example.com", access="super-admin")
+        )
+
+        response = self.client.get("/coach_api/coaches")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        listed = {coach["email"]: coach for coach in payload["coaches"]}
+        self.assertIn("coach-a@example.com", listed)
+        self.assertNotIn("designer@example.com", listed)
+        self.assertNotIn("admin@example.com", listed)
+        self.assertEqual(listed["coach-a@example.com"]["caseloadCount"], 7)
+        self.assertEqual(listed["coach-a@example.com"]["activeLearnerCount"], 5)
+        self.assertTrue(payload["caseloadCountsAvailable"])
+
+    def test_coach_directory_is_refused_to_a_coach_and_to_anonymous_callers(self):
+        self.assertEqual(self.client.get("/coach_api/coaches").status_code, 401)
+
+        self._authenticate(
+            self._make_staff_account(email="coach-a@example.com", access="coach")
+        )
+        self.assertEqual(self.client.get("/coach_api/coaches").status_code, 403)
+
     def test_batch_transport_cannot_bypass_the_coach_authentication_boundary(self):
         response = self._request(
             "POST",

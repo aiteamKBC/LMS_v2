@@ -80,6 +80,7 @@ import {
   Loader2,
   Lock,
   LockKeyhole,
+  LogOut,
   Mail,
   Map,
   MessageCircle,
@@ -138,6 +139,9 @@ function resolveIcon(name: string): LucideIcon {
   const key = name.replace(/^ri-/, '').toLowerCase();
 
   if (/loader|loading/.test(key)) return Loader2;
+  // Sign-out sits in the header and on the access-required screen; without
+  // this it fell through every branch below and rendered a bare circle.
+  if (/logout|log-out|sign-out|signout/.test(key)) return LogOut;
   if (/dashboard|layout/.test(key)) return LayoutDashboard;
   if (/home/.test(key)) return LayoutDashboard;
   // High-frequency workspace actions should never fall back to a generic circle.

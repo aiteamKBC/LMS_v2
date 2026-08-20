@@ -37,6 +37,7 @@ from coach_api.validation import (
     validation_error_response,
 )
 from config.observability import metric_event
+from login.permissions import require_access
 from learner_api.evidence_storage import (
     azure_configured,
     blob_url,
@@ -53,7 +54,7 @@ from learner_api.models import (
     learner_activity_events_relation_exists,
     learner_ksbs_relation_exists,
 )
-from learner_api.constants import ACCESS_COACH
+from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
 from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
@@ -5853,6 +5854,106 @@ def coach_timetable(request):
             "summary": timetable_payload["summary"],
             "events": timetable_payload["events"],
             "schedulerQueues": timetable_payload.get("schedulerQueues", {}),
+        }
+    )
+
+
+def caseload_counts_by_coach(coach_emails: set[str]) -> dict[str, dict[str, int]]:
+    """Learner counts per coach email, in one pass over the caseload table.
+
+    Reusing ``fetch_caseload_dashboard_profiles`` per coach would issue a query
+    and serialise a full caseload for every card on the picker; each card shows
+    two integers.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    if not coach_emails:
+        return counts
+
+    # Not ``.iterator()``: the pooled connection this runs over rejects the
+    # server-side cursor it opens ("portal does not exist"). Three short columns
+    # for the coached learners is a small result set to hold.
+    rows = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(coach_email_key__in=sorted(coach_emails))
+        .values_list("coach_email_key", "programme_status", "full_name")
+    )
+    for email_key, programme_status, full_name in rows:
+        # The same "has a name" guard the caseload fetches apply — a row without
+        # one is a placeholder and is not counted as a learner anywhere else.
+        if not clean_text(full_name):
+            continue
+        bucket = counts.setdefault(email_key, {"total": 0, "active": 0})
+        bucket["total"] += 1
+        if normalize_program_status(programme_status) == "active":
+            bucket["active"] += 1
+    return counts
+
+
+@require_access(ACCESS_SUPER_ADMIN)
+@require_GET
+def coach_directory(request):
+    """The accounts holding Coach access, for the admin's coach-workspace picker.
+
+    Gated on ``ACCESS_SUPER_ADMIN`` rather than ``ACCESS_COACH`` because this is
+    the one coach route where that grant is the requirement and not a bypass: a
+    coach has no reason to enumerate their colleagues' caseloads.
+    """
+    try:
+        staff_rows = list(
+            StaffUser.objects.annotate(
+                staff_email_key=Lower(Trim("email")),
+                staff_access_key=Lower(Trim("access")),
+            )
+            .filter(staff_access_key=ACCESS_COACH)
+            .values("id", "username", "email", "staff_email_key")
+            .order_by("username", "id")
+        )
+    except DatabaseError:
+        logger.exception("coach_directory_staff_lookup_failed")
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load the coach directory.",
+            status=503,
+        )
+
+    emails = {row["staff_email_key"] for row in staff_rows if row["staff_email_key"]}
+    counts_available = True
+    try:
+        counts = caseload_counts_by_coach(emails)
+    except DatabaseError:
+        # The list itself is still worth serving: a caseload database that is
+        # down must not hide which accounts hold Coach access.
+        logger.exception("coach_directory_caseload_counts_failed")
+        counts_available = False
+        counts = {}
+
+    coaches: list[dict] = []
+    seen: set[str] = set()
+    for row in staff_rows:
+        email = row["staff_email_key"]
+        # An address is what every coach-scoped query is keyed by, so a staff row
+        # without one cannot open a workspace and is left out rather than shown
+        # as a card that loads nothing.
+        if not email or email in seen:
+            continue
+        seen.add(email)
+        bucket = counts.get(email, {})
+        coaches.append(
+            {
+                "id": row["id"],
+                "name": clean_text(row["username"]) or email,
+                "email": email,
+                "caseloadCount": bucket.get("total", 0),
+                "activeLearnerCount": bucket.get("active", 0),
+            }
+        )
+
+    return JsonResponse(
+        {
+            "coaches": coaches,
+            "count": len(coaches),
+            "caseloadCountsAvailable": counts_available,
         }
     )
 

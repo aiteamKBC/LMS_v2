@@ -2700,3 +2700,48 @@ table tbody td:last-child {
 .kbc-sb-flyout {
   animation: workspace-flyout-in 140ms ease-out;
 }
+
+/* ==========================================================================
+   Account menu + confirmation dialog
+
+   Both live in components/feature/Header.tsx. The pop origins are the part
+   Tailwind cannot express: the menu has to grow out of the avatar it hangs
+   from (top right), and the dialog has to rise into the middle of the screen.
+   The dialog previously asked for `zoom-in-95`, a class that was never
+   defined here — which is why it appeared with no animation at all.
+   ========================================================================== */
+@keyframes account-menu-pop {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+.account-menu-pop {
+  animation: account-menu-pop 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: top right;
+}
+
+@keyframes dialog-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dialog-card-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: none; }
+}
+
+.dialog-backdrop-in {
+  animation: dialog-backdrop-in 0.18s ease-out both;
+}
+
+.dialog-card-in {
+  animation: dialog-card-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .account-menu-pop,
+  .dialog-backdrop-in,
+  .dialog-card-in {
+    animation: none;
+  }
+}

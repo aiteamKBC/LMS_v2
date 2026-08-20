@@ -1,6 +1,7 @@
 import { useState, type CSSProperties, type ReactNode, useEffect, useRef } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Sidebar, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, type SidebarNavItem } from './Sidebar';
+import { CoachViewAsBar } from './CoachViewAsBar';
 import { Header } from './Header';
 import { GlobalSearch } from './GlobalSearch';
 import { useAuth } from '@/hooks/useAuth';
@@ -277,6 +278,10 @@ export function WorkspaceShell({
           key={displayKey}
           className={`workspace-main flex-1 overflow-y-auto bg-background-200 transition-opacity duration-200 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}
         >
+          {/* An administrator reading a coach's workspace: shown on every coach
+              page, since the sidebar reaches most of them without passing the
+              dashboard that chose the coach. */}
+          {role === 'coach' && <CoachViewAsBar />}
           {children}
         </main>
       </div>

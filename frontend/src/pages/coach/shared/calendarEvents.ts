@@ -1,5 +1,6 @@
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { coachFetch } from '@/lib/coachFetch';
+import { withCoachViewAs } from '@/lib/coachViewAs';
 
 interface CoachCalendarFetchOptions {
   start?: string;
@@ -159,7 +160,9 @@ export async function fetchCoachCalendarEvents(
   signal: AbortSignal | undefined,
   options: CoachCalendarFetchOptions = {},
 ) {
-  return fetchSharedJsonGet<CoachTimetableResponse>(coachTimetableEndpoint(options), {
+  // Not via `coachFetch`, so the admin's selected coach has to be added here
+  // too — otherwise the calendar would load the caller's own (empty) timetable.
+  return fetchSharedJsonGet<CoachTimetableResponse>(withCoachViewAs(coachTimetableEndpoint(options)), {
     signal,
     credentials: 'include',
   });

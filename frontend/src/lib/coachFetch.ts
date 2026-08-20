@@ -1,3 +1,5 @@
+import { withCoachViewAs } from './coachViewAs';
+
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const CSRF_ENDPOINT = '/coach_api/csrf';
 
@@ -22,6 +24,18 @@ function coachCsrfToken(): Promise<string> {
   return csrfTokenPromise;
 }
 
+/**
+ * Every coach page routes its requests through here, which is what makes an
+ * admin's "view as coach" selection apply to the whole workspace rather than
+ * only the dashboard that set it. A Request instance is passed through
+ * untouched — its URL is already fixed — but no caller builds one.
+ */
+function coachRequestTarget(input: globalThis.RequestInfo | URL) {
+  if (typeof input === 'string') return withCoachViewAs(input);
+  if (input instanceof URL) return withCoachViewAs(input.toString());
+  return input;
+}
+
 /** Fetch Coach APIs with the session cookie and Django CSRF on unsafe methods. */
 export async function coachFetch(
   input: globalThis.RequestInfo | URL,
@@ -36,7 +50,7 @@ export async function coachFetch(
     headers.set('X-CSRFToken', await coachCsrfToken());
   }
 
-  return fetch(input, {
+  return fetch(coachRequestTarget(input), {
     ...init,
     credentials: 'include',
     headers,

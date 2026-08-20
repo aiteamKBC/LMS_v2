@@ -45,4 +45,18 @@ describe('coachFetch', () => {
       expect(new Headers(init.headers).get('X-CSRFToken')).toBe('server-token');
     },
   );
+
+  it("carries an administrator's selected coach on every coach request", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    localStorage.clear();
+    const { setCoachViewAs } = await import('../coachViewAs');
+    const { coachFetch } = await import('../coachFetch');
+    setCoachViewAs({ email: 'coach-a@kbc.test', name: 'Coach A' }, 'admin@kbc.test');
+
+    await coachFetch('/coach_api/coach/caseload');
+
+    expect(fetchMock.mock.calls[0][0]).toBe('/coach_api/coach/caseload?viewAsCoach=coach-a%40kbc.test');
+    localStorage.clear();
+  });
 });
