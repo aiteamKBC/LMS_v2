@@ -76,6 +76,54 @@ export class CurriculumApiError extends Error {
   }
 }
 
+/** One module already holding a slot the save tried to book the same tutor into. */
+export interface CurriculumTutorConflict {
+  moduleCatalogueId: string;
+  moduleName: string;
+  programme: string;
+  cohort: string;
+  group: string;
+  startTime: string;
+  endTime: string;
+  /** Every date the two modules overlap on, not just the first. */
+  dates: string[];
+}
+
+export interface CurriculumTutorConflictPayload {
+  error: string;
+  tutorConflicts: CurriculumTutorConflict[];
+  tutor: string;
+  moduleName: string;
+}
+
+/**
+ * A save refused because it would have put one tutor in two places at once.
+ *
+ * Raised by every endpoint that assigns a tutor — the module PATCH, the group
+ * modules POST/PATCH, the group and staffing PATCHes and the programme tree save
+ * — so a caller can recognise it once rather than per screen.
+ */
+export function isTutorConflictError(error: unknown): error is CurriculumApiError & { data: CurriculumTutorConflictPayload } {
+  return (
+    error instanceof CurriculumApiError
+    && error.status === 409
+    && Boolean(error.data)
+    && typeof error.data === 'object'
+    && Array.isArray((error.data as CurriculumTutorConflictPayload).tutorConflicts)
+  );
+}
+
+/**
+ * The backend's sentence for a clash, or null when the error is something else.
+ *
+ * `CurriculumApiError.message` wraps it in "Curriculum API returned 409 for
+ * /path: …", which is diagnostic rather than something to show a user. Screens
+ * that assign a tutor should prefer this and fall back to their own copy.
+ */
+export function tutorConflictMessage(error: unknown): string | null {
+  return isTutorConflictError(error) ? error.data.error : null;
+}
+
 export interface CurriculumProgramme {
   id: string;
   sourceId: string;
@@ -700,6 +748,12 @@ export interface CurriculumCohort {
   /** Manually authored apprenticeship end date. Empty when the date is calculated. */
   apprenticeshipEndOverride?: string;
   durationMonths?: string | number;
+  /**
+   * The duration rule alone (start plus duration, less a day), before the
+   * holiday extension the practical end date already includes. Compare the two
+   * to tell whether holidays moved this cohort's dates.
+   */
+  baseEndDate?: string;
   status: 'active' | 'planned' | 'completed' | 'archived' | string;
   learners: number;
   groups: string[];
@@ -768,6 +822,29 @@ export interface CurriculumSession {
   scheduleWarnings?: string[];
   status: 'scheduled' | 'completed' | 'cancelled' | 'pending' | string;
   ksbCodes: string[];
+}
+
+/**
+ * Teams meeting state for one module, from `curriculum.live_sessions`.
+ *
+ * The meeting is never stored on the module row — it lives in its own table,
+ * keyed by module. Listing pages read this instead of pulling every module's
+ * full week structure just to inspect a live-session component's settings.
+ */
+export interface CurriculumTeamsMeetingSummary {
+  moduleCatalogueId: string;
+  liveSessionId: string;
+  status: string;
+  joinUrl: string;
+  organizerEmail: string;
+  repeatPattern: string;
+  startDateTime: string;
+  durationMinutes: number;
+  occurrenceCount: number;
+  upcomingCount: number;
+  syncedCount: number;
+  nextOccurrence: string;
+  updatedAt: string;
 }
 
 export interface CurriculumHoliday {
@@ -913,9 +990,32 @@ export interface CurriculumSessionPlanPreview {
   warnings: string[];
 }
 
+/** One holiday's share of a cohort's end-date extension. */
+export interface CurriculumHolidayExtension {
+  label: string;
+  /** The first and last day of this holiday that fell inside the cohort's period. */
+  startDate: string;
+  endDate: string;
+  days: number;
+}
+
 export interface CurriculumCohortEndDatePreview {
   endDate: string;
   practicalEndDate?: string;
+  /** What the duration rule gives plus the holiday extension, regardless of any practical end date sent in. */
+  calculatedEndDate?: string;
+  /** The duration rule alone, before holidays. The holiday picker's window. */
+  baseEndDate?: string;
+  /** Days the selected holidays take out of the cohort's base period. */
+  holidayExtensionDays?: number;
+  /** Which holiday took which days, for an editor that names them. */
+  holidayExtensions?: CurriculumHolidayExtension[];
+  /** The contracted duration in months, unchanged by holidays. */
+  durationMonths?: number;
+  /** How long the cohort actually runs once the holidays are in. */
+  effectiveDurationMonths?: number;
+  /** True when the practical end date sent in differs from the calculated one. */
+  practicalEndIsManual?: boolean;
   epaMonths?: number | null;
   apprenticeshipEndDate?: string;
   apprenticeshipEndOverride?: string;
@@ -1560,6 +1660,18 @@ export function deleteCurriculumKsbFramework(id: string) {
   return deleteJson<{ deleted: boolean; id: string }>(`/curriculum/ksb-frameworks/${encodeURIComponent(id)}/`);
 }
 
+export function fetchCurriculumTeamsMeetingSummaries(
+  signal?: AbortSignal,
+  options: { moduleCatalogueIds?: string[]; skipCache?: boolean } = {},
+): Promise<CurriculumTeamsMeetingSummary[]> {
+  const ids = (options.moduleCatalogueIds || []).filter(Boolean);
+  const suffix = ids.length ? `?module_catalogue_ids=${encodeURIComponent(ids.join(','))}` : '';
+  return fetchCollection<CurriculumTeamsMeetingSummary>(
+    `/curriculum/teams-meetings/summary/${suffix}`,
+    { signal, skipCache: options.skipCache },
+  );
+}
+
 export function fetchCurriculumSessions(signal?: AbortSignal): Promise<CurriculumSession[]> {
   return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal });
 }
@@ -1620,7 +1732,14 @@ function deleteJson<T>(path: string): Promise<T> {
   return fetchJson<T>(path, { method: 'DELETE' });
 }
 
-export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description' | 'structureType' | 'ksbProfileSourceId' | 'status'>>;
+export type CurriculumProgrammeInput = Partial<Pick<CurriculumProgramme, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description' | 'structureType' | 'ksbProfileSourceId' | 'status'>> & {
+  /**
+   * Off-the-job hours target. A string is accepted because form inputs produce
+   * one and the backend parses either; null clears a stored target, and omitting
+   * the key leaves it untouched.
+   */
+  requiredOtjh?: number | string | null;
+};
 export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'weeks' | 'color' | 'notes'>> & {
   programmeId?: string;
   programmeName?: string;
@@ -1640,12 +1759,21 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   startTime?: string;
   endTime?: string;
   ksbMappings?: unknown[];
+  // Both are already honoured by PATCH /curriculum/modules/<id>/ — declared here
+  // so the module workspace can send them without casting.
+  status?: string;
+  sessionsNumber?: number;
+  /**
+   * Book a slot the tutor already holds. Without it the save is refused with a
+   * 409 carrying `tutorConflicts` — see `isTutorConflictError`.
+   */
+  allowTutorConflict?: boolean;
 };
 export type CurriculumComponentInput = Partial<Omit<CurriculumComponent, 'lastEdited'>>;
 export type CurriculumCohortInput = { id?: string; cohortId?: string; name?: string; programme?: string; programmeId?: string; startDate?: string; endDate?: string; durationMonths?: number; epaMonths?: number | null; /** null clears the manual apprenticeship end date and restores the calculated one. */ apprenticeshipEndOverride?: string | null; color?: string; moduleName?: string; sessionsNumber?: number; holidayIds?: Array<string | number> };
-export type CurriculumGroupInput = { id?: string; groupId?: string; name?: string; cohortId?: string; programmeId?: string; tutor?: string; coach?: string; color?: string; weekDays?: string; startTime?: string; endTime?: string; startDate?: string; endDate?: string; moduleName?: string; sessionsNumber?: number };
+export type CurriculumGroupInput = { id?: string; groupId?: string; name?: string; cohortId?: string; programmeId?: string; tutor?: string; coach?: string; color?: string; weekDays?: string; startTime?: string; endTime?: string; startDate?: string; endDate?: string; moduleName?: string; sessionsNumber?: number; /** Honoured by PATCH /curriculum/groups/<id>/ only. */ status?: string; /** See CurriculumModuleInput.allowTutorConflict. */ allowTutorConflict?: boolean };
 export type CurriculumSessionInput = Partial<Pick<CurriculumSession, 'date' | 'startTime' | 'endTime' | 'tutor'>>;
-export type CurriculumStaffingInput = { groupId?: string; tutor?: string; coach?: string };
+export type CurriculumStaffingInput = { groupId?: string; tutor?: string; coach?: string; /** See CurriculumModuleInput.allowTutorConflict. */ allowTutorConflict?: boolean };
 export type CurriculumHolidayInput = Partial<Pick<CurriculumHoliday, 'label' | 'startDate' | 'endDate' | 'type' | 'color'>>;
 export type CurriculumModuleAttachmentInput = {
   moduleName: string;
@@ -1666,23 +1794,6 @@ export type CurriculumModuleAttachmentInput = {
   notes?: string;
   holidays?: unknown[];
   linkedHolidays?: unknown[];
-};
-export type CurriculumProgrammeTreeInput = {
-  programme: CurriculumProgrammeInput & { id?: string; sourceId?: string; programmeId?: string };
-  cohorts: Array<CurriculumCohortInput & {
-    id: string;
-    groups?: Array<CurriculumGroupInput & {
-      id: string;
-      modules?: CurriculumModuleAttachmentInput[];
-      modulesPartial?: boolean;
-    }>;
-  }>;
-  partialTree?: boolean;
-  removeMissing?: boolean;
-  hydrationComplete?: boolean;
-  removeCohortIds?: string[];
-  removeGroupIds?: string[];
-  removeModuleIds?: string[];
 };
 export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
   id: string;
@@ -1710,64 +1821,6 @@ export function updateCurriculumProgramme(id: string, input: CurriculumProgramme
   return patchJson<{ updated: boolean; programme: CurriculumProgramme }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
 }
 
-export function saveCurriculumProgrammeTree(input: CurriculumProgrammeTreeInput) {
-  return postJson<{
-    saved: boolean;
-    programme: CurriculumProgramme;
-    cohorts: CurriculumCohort[];
-    groups: CurriculumGroup[];
-    modules: CurriculumModule[];
-    removedModuleIds: string[];
-    removedMissing: boolean;
-  }>('/curriculum/programmes/tree/', input);
-}
-
-export type CurriculumProgrammeDeleteResult = {
-  deleted: boolean;
-  permanent: boolean;
-  archived?: boolean;
-  reason?: string;
-  message?: string;
-  id: string;
-  // Permanent deletes only: rows removed per table, and how many learner records
-  // still name this programme (learner rows are never deleted).
-  removed?: Record<string, number>;
-  learners?: number;
-};
-
-export type CurriculumProgrammeDependencyReport = {
-  blocked: boolean;
-  counts: Record<string, number>;
-  total: number;
-  programme?: {
-    id?: string;
-    sourceId?: string;
-    name?: string;
-  };
-  cleanupStartStep?: string;
-  message?: string;
-};
-
-export type CurriculumProgrammeDependencyError = {
-  error?: string;
-  reason?: 'programme-has-dependencies'
-    | 'programme-not-archived'
-    | 'programme-has-learner-delivery'
-    | 'programme-delete-restricted'
-    | string;
-  deleted?: false;
-  permanent?: false;
-  id?: string;
-  dependencyReport?: CurriculumProgrammeDependencyReport;
-  // programme-has-learner-delivery: learner training-plan rows per table that the
-  // database refuses to orphan, so the permanent delete cannot proceed.
-  blockers?: Record<string, number>;
-  detail?: string;
-  message?: string;
-};
-
-/** Archives by default. `permanent` removes the programme and everything beneath
- *  it for good, which the API only allows once the programme is archived. */
 export function deleteCurriculumProgramme(id: string, options: { permanent?: boolean } = {}) {
   const suffix = options.permanent ? '?permanent=true' : '';
   return fetchJson<CurriculumProgrammeDeleteResult>(
@@ -1811,10 +1864,6 @@ export function archiveCurriculumGroup(id: string) {
   return deleteJson(`/curriculum/groups/${encodeURIComponent(id)}/`);
 }
 
-export function attachCurriculumModulesToGroup(groupId: string, modules: CurriculumModuleAttachmentInput[]) {
-  return patchJson(`/curriculum/groups/${encodeURIComponent(groupId)}/modules/`, { modules });
-}
-
 export function fetchFreeProgrammeModules(programmeId: string, signal?: AbortSignal): Promise<FreeProgrammeModule[]> {
   return fetchCollection<FreeProgrammeModule>(`/curriculum/free-programmes/${encodeURIComponent(programmeId)}/modules/`, { signal });
 }
@@ -1831,12 +1880,84 @@ export function fetchGroupModules(groupId: string, signal?: AbortSignal): Promis
   return fetchCollection<CurriculumModule>(`/curriculum/groups/${encodeURIComponent(groupId)}/modules/`, { signal });
 }
 
-export function previewCohortEndDate(input: { startDate?: string; durationMonths?: number }) {
+/**
+ * The canonical practical-end / EPA / apprenticeship-end calculation, run by the
+ * backend. Editors call this while the user types rather than reimplementing the
+ * date rules client-side, so the preview and the saved value cannot disagree.
+ */
+export function previewCohortEndDate(input: {
+  startDate?: string;
+  durationMonths?: number;
+  /** An authored practical end date. Overrides the duration rule for this preview. */
+  practicalEndDate?: string | null;
+  epaMonths?: number | null;
+  apprenticeshipEndDate?: string;
+  apprenticeshipEndOverride?: string | null;
+  /**
+   * The holidays applied to this cohort. Days these take out of the cohort's own
+   * period push the practical end date out, which carries the apprenticeship end
+   * date with it via the EPA rule.
+   */
+  holidays?: { label?: string; startDate: string; endDate: string }[];
+}) {
   return postJson<CurriculumCohortEndDatePreview>('/curriculum/preview/cohort-end-date/', input);
 }
 
 export function previewModuleSessionPlan(input: { startDate?: string; numberOfSessions?: number; sessionsNumber?: number; weekDays?: string | string[]; deliveryDays?: string | string[]; holidays?: unknown[] }) {
   return postJson<CurriculumSessionPlanPreview>('/curriculum/preview/module-session-plan/', input);
+}
+
+/** The slot a tutor is being asked about. Matches the module's own schedule fields. */
+export interface CurriculumTutorAvailabilityInput {
+  startDate?: string;
+  sessionsNumber?: number | string;
+  weekDays?: string;
+  startTime?: string;
+  endTime?: string;
+  /** Ask about one person. Omit to get a verdict for every tutor in one call. */
+  tutor?: string;
+  /** The module being edited, so it is not reported as blocking its own slot. */
+  moduleCatalogueId?: string;
+}
+
+export interface CurriculumTutorAvailabilityVerdict {
+  tutor: string;
+  available: boolean;
+  conflicts: CurriculumTutorConflict[];
+  /** The same sentence the save would have refused with, or '' when free. */
+  message: string;
+}
+
+export interface CurriculumTutorAvailabilitySlot {
+  sessionDates: string[];
+  startTime: string;
+  endTime: string;
+  /** False when the slot books nothing, so "everyone is free" is not an all-clear. */
+  bookable: boolean;
+}
+
+export type CurriculumTutorAvailability = CurriculumTutorAvailabilitySlot & CurriculumTutorAvailabilityVerdict;
+
+export type CurriculumTutorAvailabilityRoster = CurriculumTutorAvailabilitySlot & {
+  results: CurriculumTutorAvailabilityVerdict[];
+  availableCount: number;
+  busyCount: number;
+};
+
+/**
+ * Whether a tutor is already teaching in a proposed slot — asked *before* saving.
+ *
+ * Runs the same rule the save enforces, so a screen can warn while the tutor is
+ * still being chosen instead of letting the person fill in a whole form and
+ * discover the clash from a refused save.
+ */
+export function previewTutorAvailability(input: CurriculumTutorAvailabilityInput & { tutor: string }) {
+  return postJson<CurriculumTutorAvailability>('/curriculum/preview/tutor-availability/', input);
+}
+
+/** Every tutor's verdict for one slot, for annotating a tutor picker. */
+export function previewTutorAvailabilityRoster(input: CurriculumTutorAvailabilityInput) {
+  return postJson<CurriculumTutorAvailabilityRoster>('/curriculum/preview/tutor-availability/', input);
 }
 
 export function createCurriculumModule(input: CurriculumModuleInput) {

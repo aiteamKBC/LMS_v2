@@ -353,6 +353,53 @@ h4 { font-size: 1.1875rem; font-weight: 600; }
 .duration-600 { animation-duration: 600ms; }
 .duration-700 { animation-duration: 700ms; }
 
+/* Select dropdown (components/feature/SelectField) — a short, origin-aware pop
+   so the list reads as attached to the field it opened from, plus a slim
+   scrollbar so a long list does not sprout a grey system gutter. */
+@keyframes select-menu-pop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes select-menu-pop-above {
+  from { opacity: 0; transform: translateY(4px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+.select-menu-pop {
+  animation: select-menu-pop 0.16s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: top center;
+}
+
+.select-menu-pop.is-above {
+  animation-name: select-menu-pop-above;
+  transform-origin: bottom center;
+}
+
+.select-menu-list {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(var(--primary-200)) transparent;
+}
+
+.select-menu-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.select-menu-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.select-menu-list::-webkit-scrollbar-thumb {
+  background: oklch(var(--primary-200));
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .select-menu-pop { animation: none; }
+}
+
 /* Stagger children — apply to parent, children get animated in order */
 .stagger-children > * {
   opacity: 0;

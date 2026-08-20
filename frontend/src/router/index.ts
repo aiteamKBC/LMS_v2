@@ -1,5 +1,6 @@
 import { Suspense, createElement, useEffect } from "react";
-import { useNavigate, useRoutes, type NavigateFunction } from "react-router-dom";
+import { useLocation, useNavigate, useRoutes, type NavigateFunction } from "react-router-dom";
+import { RouteErrorBoundary } from "@/components/feature/RouteErrorBoundary";
 import routes from "./config";
 
 let navigateResolver: (navigate: ReturnType<typeof useNavigate>) => void;
@@ -33,11 +34,18 @@ function RouteLoadingFallback() {
 export function AppRoutes() {
   const element = useRoutes(routes);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   useEffect(() => {
     window.REACT_APP_NAVIGATE = navigate;
     navigateResolver(window.REACT_APP_NAVIGATE);
   }, [navigate]);
 
-  return createElement(Suspense, { fallback: createElement(RouteLoadingFallback) }, element);
+  // Keyed by pathname so the boundary resets on navigation: a crashed page must
+  // not survive a Back or a link click as a permanent error screen.
+  return createElement(
+    RouteErrorBoundary,
+    { key: pathname },
+    createElement(Suspense, { fallback: createElement(RouteLoadingFallback) }, element),
+  );
 }
