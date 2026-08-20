@@ -43,7 +43,6 @@ const CoachCaseFiles = lazy(() => import("../pages/coach/case-files/page"));
 const CoachCaseload = lazy(() => import("../pages/coach/caseload/page"));
 const CoachCatchupQueue = lazy(() => import("../pages/coach/catchup-queue/page"));
 const CoachDashboard = lazy(() => import("../pages/workspace/coach/page"));
-const CoachEmployerActions = lazy(() => import("../pages/coach/employer-actions/page"));
 const CoachEvidenceValidation = lazy(() => import("../pages/coach/evidence-validation/page"));
 const CoachKsbImpact = lazy(() => import("../pages/coach/ksb-impact/page"));
 const CoachMarkingQueue = lazy(() => import("../pages/coach/marking-queue/page"));
@@ -652,10 +651,6 @@ const routes: RouteObject[] = [
   {
     path: "/coach/evidence-validation",
     element: <CoachEvidenceValidation />,
-  },
-  {
-    path: "/coach/employer-actions",
-    element: <CoachEmployerActions />,
   },
   {
     path: "/admin/access-logs",
