@@ -127,6 +127,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
     res = await fetch(url, {
+      // The portal endpoints are gated on the session (employer_or_staff): an
+      // employer may read only their own record, staff may read any. Without
+      // this the HttpOnly kbc_session cookie is not sent and every call 401s.
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       ...init,
     });

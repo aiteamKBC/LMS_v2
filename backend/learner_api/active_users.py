@@ -1292,6 +1292,14 @@ def sync_active_user(source):
             defaults["learner_type"] = (
                 _s(getattr(source, "learner_type", "")).lower() or None
             )
+            # One identity across both phases: the profile takes the enrolment
+            # row's uuid rather than minting its own. Without this the column
+            # default would hand every promoted learner a second identifier and
+            # re-open the split that apply_user_uuid closed. Guarded because the
+            # column is nullable until that command has been run.
+            source_uuid = getattr(source, "uuid", None)
+            if source_uuid is not None:
+                defaults["uuid"] = source_uuid
             if learner is None:
                 # Never force the Created_users primary key into this table:
                 # both sequences are independent after the learner-table merge.

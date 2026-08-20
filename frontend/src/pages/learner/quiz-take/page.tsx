@@ -101,6 +101,14 @@ export default function QuizTakePage() {
     setPhase('reflect');
   };
 
+  // The quiz's time limit as hours, for presetting "Actual time spent (minutes)".
+  // `timeUnit` is free text defaulting to "minutes", so it is read the same way
+  // the quiz runner's own countdown reads it: seconds when it says so, minutes
+  // otherwise. Passing the raw number would preset a 30-minute quiz as 30 hours.
+  const quizPlannedHours = quiz?.duration
+    ? (quiz.duration * (quiz.timeUnit === 'seconds' ? 1 : 60)) / 3600
+    : undefined;
+
   const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
     if (!quiz || !kind || !id || submitting) return;
     setSubmitting(true);
@@ -161,6 +169,7 @@ export default function QuizTakePage() {
           <ReflectionWindow
             noun="quiz"
             plannedTimeLabel={quiz.duration ? `${quiz.duration} ${quiz.timeUnit || 'min'}` : ''}
+            plannedHours={quizPlannedHours}
             learnerKsbs={learnerKsbs}
             elapsedSeconds={elapsedSeconds}
               submitting={submitting}

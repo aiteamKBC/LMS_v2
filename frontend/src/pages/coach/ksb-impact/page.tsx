@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
@@ -408,16 +409,25 @@ function KsbPagination({
 }
 
 export default function CoachKsbImpact() {
+  const coach = useCoachIdentity();
   const [filter, setFilter] = useState<FilterKey>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [rows, setRows] = useState<KsbImpactRow[]>([]);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [selectedDetailFilter, setSelectedDetailFilter] = useState<KsbDetailFilter>('all');
-  const [ownerName, setOwnerName] = useState('Med Maher');
+  const [ownerName, setOwnerName] = useState('Coach');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
+    if (!coach.email) {
+      setRows([]);
+      setOwnerName(coach.name);
+      setError('Coach access is required to load KSB data.');
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
 
     async function loadKsbData() {
@@ -425,13 +435,13 @@ export default function CoachKsbImpact() {
       setError(null);
 
       try {
-        const response = await fetch(API_ENDPOINT, { signal: controller.signal });
+        const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email), { signal: controller.signal });
         if (!response.ok) {
           throw new Error(`Request failed with status ${response.status}`);
         }
 
         const payload = (await response.json()) as CaseloadApiResponse;
-        setOwnerName(payload.owner?.name || 'Med Maher');
+        setOwnerName(payload.owner?.name || coach.name);
         setRows((payload.learners || []).map(toKsbImpactRow));
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
@@ -447,7 +457,7 @@ export default function CoachKsbImpact() {
     loadKsbData();
 
     return () => controller.abort();
-  }, []);
+  }, [coach.email, coach.isInitialized, coach.name]);
 
   const stats = useMemo(() => {
     const totalCompleted = sumCompleted(rows.map(row => row.completed));

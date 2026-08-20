@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
@@ -72,6 +73,7 @@ function riskClasses(risk: AttendanceLearner['risk']) {
 
 export default function CoachAttendanceProfile() {
   const navigate = useNavigate();
+  const coach = useCoachIdentity();
   const { learnerId = '' } = useParams();
   const historySectionRef = useRef<HTMLDivElement>(null);
   const [learner, setLearner] = useState<AttendanceLearner | null>(null);
@@ -82,18 +84,26 @@ export default function CoachAttendanceProfile() {
   const [historyMonth, setHistoryMonth] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
     let cancelled = false;
     async function load() {
       setLoading(true);
       setError(null);
+      if (!coach.email) {
+        setError('Coach access is required to load this attendance profile.');
+        setLearner(null);
+        setSessions([]);
+        setLoading(false);
+        return;
+      }
       try {
-        const attendanceResponse = await fetch(ATTENDANCE_ENDPOINT);
+        const attendanceResponse = await fetch(withCoachOwnerEmail(ATTENDANCE_ENDPOINT, coach.email));
         if (!attendanceResponse.ok) throw new Error('Unable to load learner attendance.');
         const attendancePayload = await attendanceResponse.json();
         const selected = (attendancePayload.learners || []).find((item: AttendanceLearner) => String(item.id) === String(learnerId));
         if (!selected) throw new Error('Learner attendance record was not found.');
 
-        const params = new URLSearchParams({ learner_id: String(selected.id) });
+        const params = new URLSearchParams({ owner_email: coach.email, learner_id: String(selected.id) });
         if (selected.email) params.set('learner_email', selected.email);
         const detailsResponse = await fetch(`${DETAILS_ENDPOINT}?${params.toString()}`);
         if (!detailsResponse.ok) throw new Error('Unable to load attendance sessions.');
@@ -110,7 +120,7 @@ export default function CoachAttendanceProfile() {
     }
     load();
     return () => { cancelled = true; };
-  }, [learnerId]);
+  }, [coach.email, coach.isInitialized, learnerId]);
 
   const monthlyTrend = useMemo(() => {
     const groups = new Map<string, { label: string; present: number; total: number }>();
@@ -167,7 +177,7 @@ export default function CoachAttendanceProfile() {
       workspaceLabel={coachNav.workspaceLabel}
       pageTitle="Learner Attendance"
       pageSubtitle="Attendance history and absence insights"
-      userName="Med Maher"
+      userName={coach.name}
       userRole="Progress Coach"
     >
       <main className="min-h-screen bg-[#f7f6fb] p-3 md:p-5">

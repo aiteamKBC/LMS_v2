@@ -16,6 +16,8 @@ from coach_api.views import (
     coach_monthly_activity,
     coach_timetable_book_event,
     coach_timetable_schedule_event,
+    coach_has_live_session_access,
+    coach_staff_display_name,
     collect_generated_timetable,
     completed_ksb_codes,
     fetch_caseload_learner_profiles,
@@ -307,6 +309,30 @@ class CoachDashboardViewTests(SimpleTestCase):
 
 
 class CoachTimetableWindowTests(SimpleTestCase):
+    @patch("coach_api.views.StaffUser.objects.annotate")
+    def test_live_session_access_comes_from_staff_user_coach_grant(self, annotate):
+        annotate.return_value.filter.return_value.exists.return_value = True
+
+        self.assertTrue(coach_has_live_session_access(" Coach@Example.com "))
+        annotate.return_value.filter.assert_called_once_with(
+            staff_email_key="coach@example.com",
+            staff_access_key="coach",
+        )
+
+    @patch("coach_api.views.StaffUser.objects.annotate")
+    def test_live_session_access_rejects_non_coach_staff(self, annotate):
+        annotate.return_value.filter.return_value.exists.return_value = False
+
+        self.assertFalse(coach_has_live_session_access("enrolment@example.com"))
+
+    @patch("coach_api.views.StaffUser.objects.annotate")
+    def test_coach_display_name_comes_from_staff_user(self, annotate):
+        annotate.return_value.filter.return_value.only.return_value.first.return_value = SimpleNamespace(
+            username="Test Coach"
+        )
+
+        self.assertEqual(coach_staff_display_name("coach@example.com"), "Test Coach")
+
     def test_generated_schedule_dates_respect_requested_window(self):
         generated_dates = list(
             iterate_generated_schedule_dates(
@@ -331,10 +357,12 @@ class CoachTimetableWindowTests(SimpleTestCase):
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.build_learner_profile_map", return_value={})
     @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
+    @patch("coach_api.views.coach_staff_display_name", return_value="")
     @patch("coach_api.views.collect_live_session_events", side_effect=RuntimeError("legacy staff profile schema"))
     def test_collect_generated_timetable_ignores_live_session_errors(
         self,
         collect_live_session_events,
+        coach_staff_display_name,
         fetch_owner_active_learner_profiles,
         build_learner_profile_map,
         fetch_source_schedule_rows,
@@ -346,6 +374,7 @@ class CoachTimetableWindowTests(SimpleTestCase):
         self.assertEqual(payload["events"], [])
         self.assertEqual(payload["summary"]["sourceCounts"]["liveSessionRows"], 0)
         collect_live_session_events.assert_called_once()
+        coach_staff_display_name.assert_called_once_with("coach@example.com")
         fetch_owner_active_learner_profiles.assert_called_once_with("coach@example.com")
         build_learner_profile_map.assert_called_once_with([])
         fetch_source_schedule_rows.assert_called_once_with([])

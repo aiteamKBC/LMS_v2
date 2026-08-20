@@ -2,7 +2,7 @@
 
 Feedback report for the authentication feature (`backend/login/`).
 
-**Status: 132 backend + 63 frontend tests, all passing.** See
+**Status: 195 backend + 63 frontend tests, all passing.** See
 [Results](#results) for the raw output.
 
 ---
@@ -83,7 +83,7 @@ npx vitest run src/api/__tests__/auth.test.ts \
 Fast subset:
 
 ```
-Ran 68 tests in 0.521s
+Ran 82 tests in 0.656s
 
 OK
 ```
@@ -92,7 +92,7 @@ Full suite (`python manage.py test_login`):
 
 ```
 Provisioning unmanaged enrolment/login tables into 'test_neondb_enrolment'…
-Ran 132 tests in 127.933s
+Ran 195 tests in 339.359s
 
 OK
 ```
@@ -119,7 +119,7 @@ Test Files  30 passed (30)
 
 ## What the tests cover
 
-### `tests_unit.py` — 82 tests
+### `tests_unit.py` — 96 tests
 
 | Class | n | What it pins down |
 | --- | --- | --- |
@@ -138,8 +138,10 @@ Test Files  30 passed (30)
 | `LinkBuildingTests` | 3 | Links point at `FRONTEND_URL`; no double slash; the two flows use different paths |
 | `SessionLifecycleTests` | 9 | Issue/resolve/revoke; expired and unknown tokens rejected; **deactivating an account kills live sessions immediately**; `revoke_all` can spare the current session; other accounts untouched |
 | `ThrottleCounterTests` | 5 | Quiet IP not throttled; throttled after enough failures; old failures fall out of the window; successful logins don't count; a null IP never throttles everyone |
+| `MicrosoftSsoConfigTests` | 5 | `MICROSOFT_SSO_*` wins over the shared delegated app; the fallback works; **the tenant never borrows `MICROSOFT_TENANT`** (set to `common` for personal calendars) and the callback never borrows the calendar's; `missing_settings` reports names, never values |
+| `MicrosoftSsoStartTests` | 6 | An unconfigured deployment is refused rather than half-built; the authorize URL targets the configured tenant/client; **no `offline_access`** is requested; the state is signed and round-trips the return path; the calendar flow's salt is not interchangeable; **an absolute or protocol-relative `next` is refused** (open redirect) |
 
-### `tests.py` — 43 tests
+### `tests.py` — 70 tests
 
 | Class | n | What it pins down |
 | --- | --- | --- |
@@ -152,6 +154,7 @@ Test Files  30 passed (30)
 | `InvitePrivilegeTests` | 6 | The regression tests for the escalation bug — see below |
 | `LearnerApiGateTests` | 7 | Anonymous writes to the four `learner_api` creation endpoints are refused and create nothing; a learner session gets 403; a staff session succeeds; reads stay open; the `LEARNER_API_REQUIRE_AUTH=0` escape hatch works **and still cannot mint an admin** |
 | `PermissionTests` | 2 | The invite endpoint rejects anonymous callers and learner sessions |
+| `MicrosoftSsoCallbackTests` | 19 | **An address in the login table is signed in; one that is not is refused and no account is created**; matching is case-insensitive; deactivated and locked accounts refused; an account with no password may still sign in; the cookie is HttpOnly; success and refusal are both audited, success as `microsoft_sso`; **a state lifted from another browser is refused** (login CSRF) and the nonce is retired after use; forged and expired states refused; a failed exchange leaks no reason; a cancelled consent is reported, not crashed |
 
 ### Frontend — 63 tests
 

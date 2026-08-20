@@ -27,6 +27,8 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from login.permissions import employer_or_staff
+
 from .learner_detail import SOURCE_MODELS
 from .mappers import _s, to_employer_row
 from .models import Employer, EnrolmentReview
@@ -340,6 +342,7 @@ def _learner_cards(employer_id):
 
 
 @csrf_exempt
+@employer_or_staff()
 def employer_portal(request, employer_id):
     """The employer's landing page: who they are, and their learners."""
     if request.method != "GET":
@@ -360,6 +363,7 @@ def employer_portal(request, employer_id):
 
 
 @csrf_exempt
+@employer_or_staff()
 def employer_portal_learner(request, employer_id, kind, learner_id):
     """One learner, as their employer sees them.
 
@@ -423,6 +427,7 @@ def employer_portal_learner(request, employer_id, kind, learner_id):
 
 
 @csrf_exempt
+@employer_or_staff()
 def employer_portal_learner_plan(request, employer_id, kind, learner_id):
     """The learner's own training plan, hours and KSBs — for their employer.
 

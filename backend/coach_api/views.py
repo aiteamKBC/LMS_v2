@@ -40,9 +40,11 @@ from learner_api.models import (
     EnrolmentUser,
     LearnerAbsence,
     LearnerProfile,
+    StaffUser,
     learner_activity_events_relation_exists,
     learner_ksbs_relation_exists,
 )
+from learner_api.constants import ACCESS_COACH
 from learner_api.active_users import dedupe_otjh_progress_records, refresh_learner_ksb_snapshot
 from learner_api.calendar_connections import (
     booking_conflicts as personal_calendar_booking_conflicts,
@@ -61,7 +63,6 @@ from curriculum_api.views import (
     authoring_modules_as_training_rows,
     build_module_session_plan,
     COHORT_AUTHORING_DETAILS_TABLE,
-    get_coach_rows,
     get_program_config_rows,
     get_training_rows,
     is_operational_training_row,
@@ -3451,7 +3452,10 @@ def build_learner_profile_map(rows: list[LearnerProfile]) -> dict[int, LearnerPr
     return learner_profile_map
 
 
-def fetch_owner_name(owner_email: str, fallback: str = "Med Maher") -> str:
+def fetch_owner_name(owner_email: str, fallback: str = "Coach") -> str:
+    staff_name = coach_staff_display_name(owner_email)
+    if staff_name:
+        return staff_name
     active_rows = fetch_owner_active_learner_profiles(owner_email)
     return next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
@@ -4237,24 +4241,56 @@ def build_live_session_calendar_event(
     }
 
 
-def fetch_coach_assigned_group_ids(owner_email: str) -> set[str]:
+def coach_has_live_session_access(owner_email: str) -> bool:
+    """Use the enrolment staff access grant as the coach authority.
+
+    Curriculum staff profiles used to gate live sessions through
+    ``assigned_group_ids``. Staff identity and workspace access now live in
+    enrolment."Staff_users", so the dashboard admits only the staff row whose
+    email matches the requested owner and whose Access grant is ``coach``.
+    """
     requested_owner = normalize_email(owner_email)
+    if not requested_owner:
+        return False
     try:
-        coach_rows = authoring_fetch_all(
-            'coaches',
-            'coalesce(is_archived, false) = false',
-            ensure_tables=False,
+        return (
+            StaffUser.objects.annotate(
+                staff_email_key=Lower(Trim("email")),
+                staff_access_key=Lower(Trim("access")),
+            )
+            .filter(
+                staff_email_key=requested_owner,
+                staff_access_key=ACCESS_COACH,
+            )
+            .exists()
+        )
+    except DatabaseError:
+        return False
+
+
+def coach_staff_display_name(owner_email: str) -> str:
+    requested_owner = normalize_email(owner_email)
+    if not requested_owner:
+        return ""
+    try:
+        row = (
+            StaffUser.objects.annotate(
+                staff_email_key=Lower(Trim("email")),
+                staff_access_key=Lower(Trim("access")),
+            )
+            .filter(
+                staff_email_key=requested_owner,
+                staff_access_key=ACCESS_COACH,
+            )
+            .only("username")
+            .first()
         )
     except Exception:
-        # Compatibility fallback for databases that have not provisioned the
-        # normalized staff tables yet.
-        coach_rows = get_coach_rows()
-    for coach in coach_rows:
-        if normalize_email(coach.get("email")) != requested_owner:
-            continue
-        group_ids = parse_json_value(coach.get("assigned_group_ids"), [])
-        return {clean_text(group_id) for group_id in group_ids if clean_text(group_id)}
-    return set()
+        # Display-name lookup is optional; coach data must remain available when
+        # the staff database is offline, unavailable in tests, or still on a
+        # legacy schema.
+        return ""
+    return clean_text(getattr(row, "username", None))
 
 
 def fetch_cohort_holidays_in_range(cohort_id: str) -> list[dict]:
@@ -4275,8 +4311,7 @@ def collect_live_session_events(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> list[dict]:
-    assigned_group_ids = fetch_coach_assigned_group_ids(owner_email)
-    if not assigned_group_ids:
+    if not coach_has_live_session_access(owner_email):
         return []
 
     program_configs_by_id = program_config_by_id(get_program_config_rows())
@@ -4332,10 +4367,6 @@ def collect_live_session_events(
             continue
         if not clean_text(row.get("module_name")):
             continue
-        group_id = clean_text(row.get("_meta", {}).get("group_id"))
-        if not group_id or group_id not in assigned_group_ids:
-            continue
-
         identity = programme_identity(row, program_configs_by_id)
         programme = identity["name"]
         cohort = actual_cohort_identity(row, programme)
@@ -4419,8 +4450,7 @@ def collect_tracked_live_session_events(
     is useful on the timetable page, but unnecessarily expensive for the small
     dashboard preview.
     """
-    assigned_group_ids = fetch_coach_assigned_group_ids(owner_email)
-    if not assigned_group_ids:
+    if not coach_has_live_session_access(owner_email):
         return []
 
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, ensure_tables=False)
@@ -4428,7 +4458,6 @@ def collect_tracked_live_session_events(
         clean_text(row.get("module_catalogue_id")): row
         for row in module_rows
         if clean_text(row.get("module_catalogue_id"))
-        and clean_text(row.get("group_id")) in assigned_group_ids
     }
     if not modules_by_id:
         return []
@@ -4497,7 +4526,8 @@ def collect_generated_timetable(
 ) -> dict:
     active_rows = fetch_owner_active_learner_profiles(owner_email)
     learner_profile_map = build_learner_profile_map(active_rows)
-    owner_name = next(
+    staff_owner_name = coach_staff_display_name(owner_email)
+    owner_name = staff_owner_name or next(
         (clean_text(row.coach_name) for row in active_rows if clean_text(row.coach_name)),
         "Med Maher",
     )
@@ -5368,7 +5398,7 @@ def coach_dashboard(request):
             close_old_connections()
 
     def load_dashboard_timetable():
-        cache_key = f"coach-dashboard-timetable:v2:{normalize_email(owner_email)}:{today.isoformat()}"
+        cache_key = f"coach-dashboard-timetable:v3:{normalize_email(owner_email)}:{today.isoformat()}"
         cached = cache.get(cache_key)
         if cached is not None:
             return cached
@@ -5405,9 +5435,9 @@ def coach_dashboard(request):
             timetable_future = executor.submit(load_dashboard_timetable)
             learners = learners_future.result()
             timetable_payload = timetable_future.result()
-        owner_name = next(
+        owner_name = coach_staff_display_name(owner_email) or next(
             (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
-            "Med Maher",
+            "Coach",
         )
     except Exception as exc:
         return JsonResponse(
@@ -5460,9 +5490,9 @@ def coach_monthly_activity(request):
             status=500,
         )
 
-    owner_name = next(
+    owner_name = coach_staff_display_name(owner_email) or next(
         (clean_text(getattr(row, "coach_name", "")) for row, _learner in active_pairs if clean_text(getattr(row, "coach_name", ""))),
-        timetable_payload.get("owner_name") or "Med Maher",
+        timetable_payload.get("owner_name") or "Coach",
     )
     on_track = sum(1 for learner in learners if learner["status"] == "on-track")
     need_attention = sum(1 for learner in learners if learner["status"] == "need-attention")
@@ -5524,9 +5554,9 @@ def coach_caseload(request):
             status=500,
         )
 
-    owner_name = next(
+    owner_name = coach_staff_display_name(owner_email) or next(
         (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
-        "Med Maher",
+        "Coach",
     )
     return JsonResponse(
         {
@@ -5541,9 +5571,17 @@ def coach_caseload_coach_rag(request, learner_id):
     if request.method not in ("GET", "PATCH", "PUT"):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
 
+    owner_email = clean_text(request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+    learner_queryset = LearnerProfile.objects.annotate(
+        coach_email_key=Lower(Trim("coach_email")),
+    ).filter(
+        id=learner_id,
+        coach_email_key=normalize_email(owner_email),
+    )
+
     if request.method == "GET":
-        row = LearnerProfile.objects.filter(id=learner_id).values_list("coach_rag", flat=True).first()
-        if row is None and not LearnerProfile.objects.filter(id=learner_id).exists():
+        row = learner_queryset.values_list("coach_rag", flat=True).first()
+        if row is None and not learner_queryset.exists():
             return JsonResponse({"detail": "Learner not found."}, status=404)
         return JsonResponse({"id": str(learner_id), "coachRag": format_coach_rag_value(row)})
 
@@ -5554,7 +5592,7 @@ def coach_caseload_coach_rag(request, learner_id):
         return JsonResponse({"detail": str(exc)}, status=400)
 
     try:
-        updated = update_learner_coach_rag(int(learner_id), coach_rag)
+        updated = learner_queryset.update(coach_rag=coach_rag) > 0
     except Exception as exc:  # noqa: BLE001
         return JsonResponse({"detail": "Unable to update coach RAG.", "error": str(exc)}, status=500)
 
@@ -5680,7 +5718,11 @@ def coach_attendance(request):
         "absenceReasons": absence_reasons,
     }
 
-    owner_name = caseload_learners[0]["coachName"] if caseload_learners else "Med Maher"
+    owner_name = (
+        caseload_learners[0]["coachName"]
+        if caseload_learners
+        else coach_staff_display_name(owner_email) or "Coach"
+    )
     active_trends = active_attendance_data["trends"]
     if not any(active_trends.values()):
         active_trends = fetch_learner_absence_data(active_email_keys)["trends"]
@@ -5954,6 +5996,16 @@ def coach_absence_reports(request):
 def coach_marking_queue(request, submission_id=None):
     """List and review the complete reflections submitted by learners."""
     ensure_learning_reflection_submissions_table()
+    owner_email = clean_text(request.GET.get("owner_email") or DEFAULT_COACH_EMAIL) or DEFAULT_COACH_EMAIL
+    requested_owner = normalize_email(owner_email)
+    allowed_learner_ids = {
+        str(learner_id)
+        for learner_id in (
+            LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+            .filter(coach_email_key=requested_owner)
+            .values_list("id", flat=True)
+        )
+    }
 
     if submission_id is not None:
         if request.method not in {"PATCH", "POST"}:
@@ -5976,6 +6028,13 @@ def coach_marking_queue(request, submission_id=None):
             return JsonResponse({"detail": "Feedback is required for this decision."}, status=400)
 
         with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                'select learner_id from "Learner"."learning_reflection_submissions" where id = %s',
+                [str(submission_id)],
+            )
+            submission_row = cur.fetchone()
+            if not submission_row or str(submission_row[0]) not in allowed_learner_ids:
+                return JsonResponse({"detail": "Submission not found."}, status=404)
             cur.execute(
                 """
                 update "Learner"."learning_reflection_submissions"
@@ -6019,6 +6078,7 @@ def coach_marking_queue(request, submission_id=None):
         )
         columns = [column[0] for column in cur.description]
         rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+    rows = [row for row in rows if str(row["learner_id"]) in allowed_learner_ids]
 
     now = timezone.now()
     items = []
@@ -6072,7 +6132,7 @@ def coach_marking_queue(request, submission_id=None):
     pending = [item for item in items if item["status"] in {"pending", "escalated"}]
     overdue = [item for item in pending if item["isOverdue"]]
     return JsonResponse({
-        "owner": {"name": "Med Maher", "email": DEFAULT_COACH_EMAIL},
+        "owner": {"name": fetch_owner_name(owner_email), "email": owner_email},
         "summary": {
             "totalItems": len(items),
             "activeLearners": len({(item["learnerKind"], item["learnerId"]) for item in items}),

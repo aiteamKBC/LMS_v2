@@ -118,12 +118,6 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/caseload',
   },
   {
-    id: 'coach-messages',
-    label: 'Learner Messages',
-    icon: 'ri-message-3-line',
-    href: '/coach/messages',
-  },
-  {
     id: 'coach-group-attendance',
     label: 'Attendance',
     icon: 'ri-calendar-2-line',
@@ -162,15 +156,6 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
       { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
-    ],
-  },
-  {
-    id: 'coach-group-employer',
-    label: 'Employer Engagement',
-    icon: 'ri-building-2-line',
-    href: '',
-    children: [
-      { id: 'coach-employer-actions', label: 'Employer Actions', icon: 'ri-building-2-line', href: '/coach/employer-actions' },
     ],
   },
 ];
@@ -230,73 +215,19 @@ export const tutorNavItems: SidebarNavItem[] = [
 // EMPLOYER WORKSPACE — Grouped sidebar (7 groups)
 // ============================================================================
 export const employerNavItems: SidebarNavItem[] = [
-  // Dashboard
+  // Deliberately one entry. The employer's console is the single portal page at
+  // /employers/:employerId — everything they do (their learners, and the
+  // documents waiting on their signature) is on it, so a sidebar of section
+  // links would only offer ways to leave the one page they need.
+  //
+  // The pages the removed links pointed at (/employer/apprentices,
+  // /employer/documents, the OTJH and review queues, clubs, events, reports)
+  // still exist and are still routed — they are simply not advertised here.
+  // Restoring any of them is adding its entry back.
+  //
+  // EmployerPortalPage overrides this href with the signed-in employer's own
+  // id: the portal route is per-employer, so no static path can name it.
   { id: 'employer-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/employer' },
-
-  // My Apprentices
-  {
-    id: 'employer-group-apprentices',
-    label: 'My Apprentices',
-    icon: 'ri-star-line',
-    children: [
-      { id: 'employer-apprentice-overview', label: 'Apprentice Overview', icon: 'ri-group-line', href: '/employer/apprentices' },
-      { id: 'employer-apprentice-progress', label: 'Apprentice Progress', icon: 'ri-bar-chart-line', href: '/employer/apprentice-progress' },
-      { id: 'employer-apprentice-risk', label: 'Apprentice Risk', icon: 'ri-alert-line', href: '/employer/apprentice-risk', statusDot: 'red' },
-    ],
-  },
-
-  // Actions Required
-  {
-    id: 'employer-group-actions',
-    label: 'Actions Required',
-    icon: 'ri-alert-line',
-    children: [
-      { id: 'employer-documents-sign', label: 'Documents to Sign', icon: 'ri-pen-nib-line', href: '/employer/documents', statusDot: 'red' },
-      { id: 'employer-workplace-confirm', label: 'Workplace Confirmations', icon: 'ri-building-line', href: '/employer/workplace-confirm', statusDot: 'amber' },
-      { id: 'employer-otjh-confirm', label: 'OTJH Confirmations', icon: 'ri-time-line', href: '/employer/otjh-confirm', statusDot: 'amber' },
-      { id: 'employer-review-actions', label: 'Review Actions', icon: 'ri-file-chart-line', href: '/employer/review-actions', statusDot: 'red' },
-    ],
-  },
-
-  // Learning & Progress
-  {
-    id: 'employer-group-learning',
-    label: 'Learning & Progress',
-    icon: 'ri-book-open-line',
-    children: [
-      { id: 'employer-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/employer/progress-reviews' },
-      { id: 'employer-ksb-progress', label: 'KSB Progress', icon: 'ri-bar-chart-2-line', href: '/employer/ksb-progress' },
-      { id: 'employer-evidence-summary', label: 'Evidence Summary', icon: 'ri-folder-upload-line', href: '/employer/evidence-summary' },
-      { id: 'employer-gateway-epa', label: 'Gateway & EPA', icon: 'ri-flag-line', href: '/employer/gateway-epa', statusDot: 'amber' },
-    ],
-  },
-
-  // Community
-  {
-    id: 'employer-group-community',
-    label: 'Community',
-    icon: 'ri-team-line',
-    children: [
-      { id: 'employer-employer-clubs', label: 'Employer Clubs', icon: 'ri-building-2-line', href: '/employer/employer-clubs' },
-      { id: 'employer-learner-clubs', label: 'Learner Clubs', icon: 'ri-team-line', href: '/employer/learner-clubs', statusDot: 'blue' },
-      { id: 'employer-events', label: 'Events', icon: 'ri-calendar-event-line', href: '/employer/events', statusDot: 'green' },
-      { id: 'employer-community-activity', label: 'Community Activity', icon: 'ri-heart-line', href: '/employer/community-activity', statusDot: 'blue' },
-    ],
-  },
-
-  // Communication
-  {
-    id: 'employer-group-communication',
-    label: 'Communication',
-    icon: 'ri-mail-line',
-    children: [
-      { id: 'employer-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', statusDot: 'blue' },
-      { id: 'employer-support', label: 'Support Requests', icon: 'ri-question-line', href: '/employer/support' },
-    ],
-  },
-
-  // Reporting
-  { id: 'employer-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/employer/reports' },
 ];
 
 // ============================================================================
@@ -305,28 +236,12 @@ export const employerNavItems: SidebarNavItem[] = [
 export const curriculumNavItems: SidebarNavItem[] = [
   { id: 'curriculum-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/curriculum' },
   {
-    // The primary Curriculum navigation is entity-based: each record type has a
-    // page of its own, and exactly one form. The multi-step structure wizard that
-    // used to be a second way to create the same records is gone.
-    id: 'curriculum-group-manage',
-    label: 'Curriculum',
+    id: 'curriculum-group-programme-design',
+    label: 'Programme Design',
     icon: 'ri-stack-line',
     href: '',
     children: [
       { id: 'curriculum-programmes', label: 'Programmes', icon: 'ri-stack-line', href: '/curriculum/programmes' },
-      { id: 'curriculum-cohorts', label: 'Cohorts', icon: 'ri-calendar-event-line', href: '/curriculum/cohorts' },
-      { id: 'curriculum-groups', label: 'Groups', icon: 'ri-team-line', href: '/curriculum/groups' },
-      { id: 'curriculum-module-builder', label: 'Module Builder', icon: 'ri-layout-4-line', href: '/curriculum/module-builder' },
-      { id: 'curriculum-ksb-mapping', label: 'KSB Mapping', icon: 'ri-link', href: '/curriculum/ksb-mapping' },
-      { id: 'curriculum-holidays', label: 'Holidays', icon: 'ri-calendar-close-line', href: '/curriculum/holidays' },
-    ],
-  },
-  {
-    id: 'curriculum-group-programme-design',
-    label: 'Programme Design',
-    icon: 'ri-file-list-3-line',
-    href: '',
-    children: [
       { id: 'curriculum-free-courses', label: 'Free Courses', icon: 'ri-graduation-cap-line', href: '/curriculum/free-courses' },
       { id: 'curriculum-standards', label: 'Standards', icon: 'ri-file-list-3-line', href: '/curriculum/standards' },
       { id: 'curriculum-ksb-frameworks', label: 'KSB Frameworks', icon: 'ri-bar-chart-line', href: '/curriculum/ksb-frameworks' },
@@ -334,11 +249,13 @@ export const curriculumNavItems: SidebarNavItem[] = [
   },
   {
     id: 'curriculum-group-builder',
-    label: 'Content Library',
+    label: 'Curriculum Builder',
     icon: 'ri-tools-line',
     href: '',
     children: [
+      { id: 'curriculum-module-builder', label: 'Module Builder', icon: 'ri-layout-4-line', href: '/curriculum/module-builder' },
       { id: 'curriculum-week-builder', label: 'Week Builder', icon: 'ri-calendar-line', href: '/curriculum/week-builder' },
+      { id: 'curriculum-ksb-mapping', label: 'KSB Mapping', icon: 'ri-link', href: '/curriculum/ksb-mapping' },
     ],
   },
   {

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import {
   PROGRESS_REVIEW_SECTIONS,
@@ -627,12 +628,13 @@ function buildProgressReviewSlidesDeck(
 }
 
 export default function CoachProgressReviews() {
+  const coach = useCoachIdentity();
   const [tab, setTab] = useState<ReviewTab>('this-month');
   const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
-  const [ownerName, setOwnerName] = useState('Med Maher');
+  const [ownerName, setOwnerName] = useState('Coach');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
@@ -644,16 +646,24 @@ export default function CoachProgressReviews() {
   const [slidesDeck, setSlidesDeck] = useState<ProgressReviewSlidesDeck | null>(null);
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
+    if (!coach.email) {
+      setEvents([]);
+      setOwnerName(coach.name);
+      setError('Coach access is required to load progress reviews.');
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
 
     const loadReviews = async () => {
       setLoading(true);
       setError(null);
       try {
-        const data = await fetchCoachCalendarEvents(controller.signal);
+        const data = await fetchCoachCalendarEvents(controller.signal, coach.email);
         const reviews = sortEvents((data.events || []).filter(event => event.source === 'progress-review'));
         setEvents(reviews);
-        setOwnerName(data.owner?.name || 'Med Maher');
+        setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
         setEvents([]);
@@ -665,7 +675,7 @@ export default function CoachProgressReviews() {
 
     loadReviews();
     return () => controller.abort();
-  }, []);
+  }, [coach.email, coach.isInitialized, coach.name]);
 
   const thisMonthEvents = events.filter(event => isEventThisMonth(event));
   const overdueEvents = events.filter(event => isAtRiskProgressReview(event));

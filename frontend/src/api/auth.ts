@@ -128,6 +128,34 @@ export async function apiLogout(): Promise<void> {
   await request('/logout/', { method: 'POST' });
 }
 
+// ---------------------------------------------------------------------------
+// Sign in with Microsoft
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask the backend where to send the browser to sign in with Microsoft.
+ *
+ * The URL is built server-side rather than here because it carries a signed
+ * `state` only the server can mint — that signature is what stands in for the
+ * `X-Requested-With` CSRF check on the callback, which arrives as a top-level
+ * redirect and so cannot carry a custom header.
+ *
+ * The caller navigates to the result with `window.location.href`. It must be a
+ * full page navigation, not a fetch: the whole point is to hand the browser to
+ * Microsoft and let it come back with a `Set-Cookie`.
+ *
+ * `next` is a path to return to after signing in; the server ignores anything
+ * that is not a same-site path.
+ *
+ * Throws `AuthError` with code `sso_unconfigured` (503) when the deployment has
+ * no Microsoft app registration wired up.
+ */
+export async function apiMicrosoftStart(next?: string): Promise<string> {
+  const query = next ? `?next=${encodeURIComponent(next)}` : '';
+  const data = await request<{ authorizationUrl: string }>(`/microsoft/start/${query}`);
+  return data.authorizationUrl;
+}
+
 /**
  * The signed-in identity, or null when there is no live session.
  *
@@ -234,6 +262,8 @@ export interface AuthHealth {
   ok: boolean;
   database: { ok: boolean; error: string | null; accounts: number | null; accountsWithPassword: number | null };
   email: { configured: boolean; missing: string[] };
+  /** Whether the Microsoft sign-in button can work. `missing` is names, never values. */
+  microsoftSso: { configured: boolean; missing: string[] };
 }
 
 export function apiAuthHealth(): Promise<AuthHealth> {

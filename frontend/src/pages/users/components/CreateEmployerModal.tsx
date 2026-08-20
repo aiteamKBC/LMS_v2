@@ -64,7 +64,9 @@ const SECTIONS: SectionDef[] = [
       { name: 'firstName', label: 'First name', type: 'text', required: true, placeholder: 'firstname' },
       { name: 'surname', label: 'Surname', type: 'text', required: true, placeholder: 'lastname' },
       { name: 'gender', label: 'Gender', type: 'radio', options: GENDER_OPTIONS },
-      { name: 'email', label: 'Email', type: 'email', placeholder: 'you@youremail.com' },
+      // Required: the invitation is sent on save, and an employer with no
+      // address cannot be given one — see the Invitation section below.
+      { name: 'email', label: 'Email', type: 'email', required: true, placeholder: 'you@youremail.com' },
       { name: 'mobile', label: 'Mobile', type: 'tel', placeholder: 'NNN NNNN NNNN or +NNN NNN NNN NNNN' },
     ],
   },
@@ -261,9 +263,6 @@ export function CreateEmployerModal({
   // drop the existing groups on save — so saving is blocked while it loads.
   const [groupsReady, setGroupsReady] = useState(!editing);
   const [submitting, setSubmitting] = useState(false);
-  // Off by default: emailing someone a credential-setting link is an action
-  // with a real-world effect, so it should be chosen rather than defaulted in.
-  const [inviteToPlatform, setInviteToPlatform] = useState(false);
 
   useEffect(() => {
     if (!row) return;
@@ -308,35 +307,41 @@ export function CreateEmployerModal({
         ...form,
         // Ids only — the backend resolves the names and rejects unknown ids.
         employerGroupIds: groups.map((g) => g.id),
-        // Ignored on the update path; only the create endpoint acts on it.
-        ...(editing ? {} : { inviteToPlatform }),
       };
       const saved = row
         ? await updateEmployer(row.id, payload)
         : await createEmployer(payload);
 
-      // The employer is saved whether or not the invitation email went out, so
-      // report the two outcomes separately rather than implying both worked.
+      // Create always invites; editing never does, so the edit path keeps its
+      // plain "saved" message. On create the employer is saved whether or not
+      // the invitation worked, and the failures differ — "no account" means
+      // nobody can sign in, a mail failure leaves a link that can be re-sent.
       const invite = saved.invitation;
-      if (!editing && inviteToPlatform && invite?.forbidden) {
+      if (editing || !invite) {
+        success(
+          row ? 'Changes saved' : 'Employer created',
+          `${saved.name} was ${row ? 'updated' : 'saved'}.`,
+        );
+      } else if (invite.forbidden) {
         success('Employer created', `${saved.name} was saved.`);
         error(
           'Not permitted to invite',
           invite.error || 'You do not have permission to invite this person.',
         );
-      } else if (!editing && inviteToPlatform && invite && !invite.emailSent) {
+      } else if (!invite.invited) {
         success('Employer created', `${saved.name} was saved.`);
         error(
-          'Invitation not sent',
-          invite.error || 'The employer was created but the invitation email could not be sent.',
+          'No account created',
+          invite.error || 'They have no sign-in account yet, so they cannot log in.',
         );
-      } else if (!editing && inviteToPlatform) {
-        success('Employer created and invited', `${saved.name} was emailed a link to set their password.`);
+      } else if (!invite.emailSent) {
+        success('Employer created', `${saved.name} was saved.`);
+        error(
+          'Invitation email not sent',
+          invite.error || 'The invitation exists and can be re-sent, but the email did not go out.',
+        );
       } else {
-        success(
-          row ? 'Changes saved' : 'Employer created',
-          `${saved.name} was ${row ? 'updated' : 'saved'}.`,
-        );
+        success('Employer created and invited', `${saved.name} was emailed a link to set their password.`);
       }
       onCreated(saved);
       onClose();
@@ -452,9 +457,9 @@ export function CreateEmployerModal({
           </div>
         </section>
 
-        {/* Invitation — create only. On edit the person may already have an
-            account, and re-inviting is a deliberate action from the account
-            list, not a side effect of correcting their address. */}
+        {/* Invitation — create only, and always sent. On edit the person already
+            has an account, and re-inviting is a deliberate action from the
+            account list, not a side effect of correcting their address. */}
         {!editing && (
           <section className="rounded-xl border border-foreground-200/70 overflow-hidden">
             <header className="flex items-center gap-2 px-4 py-2.5 bg-background-100/70 border-b border-foreground-200/60">
@@ -464,23 +469,13 @@ export function CreateEmployerModal({
               </h3>
             </header>
             <div className="p-4">
-              <label className="flex items-start gap-2.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={inviteToPlatform}
-                  onChange={(e) => setInviteToPlatform(e.target.checked)}
-                  className="accent-primary-500 mt-0.5"
-                />
-                <span>
-                  <span className="block text-[13px] font-medium text-foreground-800">
-                    Invite this employer to the platform
-                  </span>
-                  <span className="block text-[12px] text-foreground-500 mt-0.5">
-                    Emails them a single-use link to set their own password, giving them access
-                    to the employer portal and the documents they need to sign.
-                  </span>
-                </span>
-              </label>
+              <p className="text-[13px] font-medium text-foreground-800">
+                They will be emailed an invitation when you save.
+              </p>
+              <p className="text-[12px] text-foreground-500 mt-0.5">
+                A single-use link to set their own password, giving them access to the employer
+                portal and the documents they need to sign.
+              </p>
             </div>
           </section>
         )}

@@ -21,6 +21,11 @@ export type ProgrammeStatus =
 
 export interface UserListRow {
   id: string;
+  /** Permanent identifier, the same value before and after the learner becomes
+   *  active. `id` remains the integer the current routes are built on; prefer
+   *  this when something new needs to name a user. Null only on rows written
+   *  before the uuid backfill. */
+  uuid: string | null;
   name: string;
   type: UserType;
   email: string;
@@ -52,9 +57,9 @@ export interface UserListRow {
    */
   source?: 'apprenticeship' | 'commercial' | 'staff' | 'employer';
   /**
-   * Present on create only, and only when the form asked for an invitation.
-   * The record is saved whether or not the email was sent, so the invitation's
-   * outcome is reported separately — see backend/login/services.py.
+   * Present on create, where an invitation is always issued. The record is
+   * saved whether or not the account and email got as far as existing, so the
+   * invitation's outcome is reported separately — see backend/login/services.py.
    */
   invitation?: InvitationOutcome;
 }

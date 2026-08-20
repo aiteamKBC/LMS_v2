@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
@@ -308,17 +309,26 @@ function OtjhPagination({ currentPage, pageCount, total, onChange }: { currentPa
 }
 
 export default function CoachOtjhReports() {
+  const coach = useCoachIdentity();
   const [filter, setFilter] = useState<FilterKey>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [rows, setRows] = useState<OtjhRow[]>([]);
   const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
   const [selectedDetailFocus, setSelectedDetailFocus] = useState<OtjhDetailFocus>('summary');
-  const [ownerName, setOwnerName] = useState('Med Maher');
+  const [ownerName, setOwnerName] = useState('Coach');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const completedBreakdownRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
+    if (!coach.email) {
+      setRows([]);
+      setOwnerName(coach.name);
+      setError('Coach access is required to load OTJH data.');
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
 
     async function loadOtjhData() {
@@ -326,13 +336,13 @@ export default function CoachOtjhReports() {
       setError(null);
 
       try {
-        const response = await fetch(API_ENDPOINT, { signal: controller.signal });
+        const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email), { signal: controller.signal });
         if (!response.ok) {
           throw new Error(`Request failed with status ${response.status}`);
         }
 
         const payload = (await response.json()) as CaseloadApiResponse;
-        setOwnerName(payload.owner?.name || 'Med Maher');
+        setOwnerName(payload.owner?.name || coach.name);
         setRows((payload.learners || []).map(toOtjhRow));
       } catch (err) {
         if ((err as Error).name === 'AbortError') return;
@@ -348,7 +358,7 @@ export default function CoachOtjhReports() {
     loadOtjhData();
 
     return () => controller.abort();
-  }, []);
+  }, [coach.email, coach.isInitialized, coach.name]);
 
   const stats = useMemo(() => {
     const totalTarget = rows.reduce((total, row) => total + row.target, 0);

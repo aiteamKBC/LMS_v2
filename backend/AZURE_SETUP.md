@@ -214,6 +214,16 @@ response.
 
 ---
 
+## Not covered here: signing users in
+
+This document is about the app *sending mail as itself* (client credentials).
+Letting a person **sign in** with their Microsoft account is a different
+registration with a redirect URI and delegated permissions — see
+[MICROSOFT_SSO_SETUP.md](MICROSOFT_SSO_SETUP.md). The mail registration cannot
+be used for it, and vice versa.
+
+---
+
 ## Note on the existing `MICROSOFT_*` credentials
 
 `backend/.env` already holds several `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET`

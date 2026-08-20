@@ -166,6 +166,65 @@ def staff_only(*, writes_only=False, allow_own_learner=None):
     return decorator
 
 
+def employer_or_staff(employer_kwarg="employer_id"):
+    """Gate an employer-portal endpoint on its owner, or on staff/admin.
+
+    The portal endpoints were written to be opened by an admin from the Users
+    directory and had no authentication at all, so the employer id in the URL
+    was the only thing naming whose data came back. That is fine while the link
+    exists in one staff-only place; it stops being fine the moment employers
+    sign in and land there themselves, because the id is a small integer and
+    changing it in the address bar would read another employer's learners.
+
+    Staff and admin keep full access — the directory's View action opens the
+    same page and must go on working. An employer reaches only their own record:
+    ``account.subject_id`` is their ``enrolment."Employers".id``, which is
+    exactly what the URL names.
+
+    Naming somebody else's id gets **404**, not 403, matching
+    ``staff_only(allow_own_learner=...)`` — a 403 would confirm the id exists.
+
+    Honours ``LEARNER_API_REQUIRE_AUTH=0`` like ``staff_only``, so local
+    development toggles every gate in this module the same way.
+    """
+    allowed = frozenset({"admin", "staff"})
+
+    def decorator(view):
+        @functools.wraps(view)
+        def wrapped(request, *args, **kwargs):
+            import os
+
+            enabled = os.environ.get(
+                "LEARNER_API_REQUIRE_AUTH", "1"
+            ).strip().lower() not in _DISABLED_VALUES
+
+            if not enabled:
+                authenticate_request(request)
+                return view(request, *args, **kwargs)
+
+            account = authenticate_request(request)
+            if account is None:
+                return _unauthenticated()
+
+            if account.role in allowed:
+                return view(request, *args, **kwargs)
+
+            if account.role == "employer":
+                try:
+                    target_id = int(kwargs.get(employer_kwarg))
+                except (TypeError, ValueError):
+                    return _forbidden(allowed)
+                if target_id != account.subject_id:
+                    return JsonResponse({"error": "Not found."}, status=404)
+                return view(request, *args, **kwargs)
+
+            return _forbidden(allowed)
+
+        return wrapped
+
+    return decorator
+
+
 def require_access(*accesses):
     """Gate an endpoint on the caller's staff **access** grant.
 

@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { jsPDF } from 'jspdf';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
-import { DEFAULT_COACH_EMAIL, formatDateLabel } from '@/pages/coach/shared/calendarEvents';
+import { formatDateLabel } from '@/pages/coach/shared/calendarEvents';
 
 const coachNav = roleNavMap.coach;
 
@@ -244,9 +245,9 @@ function formatMonthLabel(monthKey: string) {
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1));
 }
 
-function monthlyActivityEndpoint(monthKey: string) {
+function monthlyActivityEndpoint(monthKey: string, ownerEmail: string) {
   const params = new URLSearchParams({
-    owner_email: DEFAULT_COACH_EMAIL,
+    owner_email: ownerEmail,
     month: monthKey,
   });
   return `/coach_api/coach/monthly-activity?${params.toString()}`;
@@ -657,6 +658,7 @@ function downloadLearnerMonthlyCyclePdf(learner: MonthlyLearnerActivity, monthLa
 
 export default function CoachMonthlyCycle() {
   const navigate = useNavigate();
+  const coach = useCoachIdentity();
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey());
   const [data, setData] = useState<MonthlyActivityResponse | null>(null);
   const [selectedLearnerId, setSelectedLearnerId] = useState<string | null>(null);
@@ -670,11 +672,20 @@ export default function CoachMonthlyCycle() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!coach.isInitialized) return;
+    if (!coach.email) {
+      setData(null);
+      setSelectedLearnerId(null);
+      setExpandedLearnerId(null);
+      setError('Coach access is required to load monthly activity.');
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
     setError('');
 
-    fetch(monthlyActivityEndpoint(selectedMonth), { signal: controller.signal })
+    fetch(monthlyActivityEndpoint(selectedMonth, coach.email), { signal: controller.signal })
       .then(readJson<MonthlyActivityResponse>)
       .then((payload) => {
         setData(payload);
@@ -699,7 +710,7 @@ export default function CoachMonthlyCycle() {
       });
 
     return () => controller.abort();
-  }, [selectedMonth]);
+  }, [coach.email, coach.isInitialized, selectedMonth]);
 
   const summary = data?.summary || EMPTY_SUMMARY;
   const learners = data?.learners || EMPTY_LEARNERS;
@@ -849,7 +860,7 @@ export default function CoachMonthlyCycle() {
 
   return (
     <>
-      <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Monthly Cycle" pageSubtitle="See what each learner did this month" userName={data?.owner?.name || 'Med Maher'} userRole="Progress Coach">
+      <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Monthly Cycle" pageSubtitle="See what each learner did this month" userName={data?.owner?.name || coach.name} userRole="Progress Coach">
         <div className="p-6 space-y-6">
           <section className="rounded-3xl overflow-hidden shadow-sm border border-primary-900/20" style={{ background: 'linear-gradient(135deg, #070211 0%, #17032d 52%, #2a0754 100%)' }}>
             <div className="p-6 sm:p-8">

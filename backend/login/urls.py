@@ -1,7 +1,7 @@
 """URLs for the login app, mounted at /login_api/ (see config/urls.py)."""
 from django.urls import path
 
-from . import access_requests, platform_admin, views
+from . import access_requests, microsoft_sso, platform_admin, views
 
 urlpatterns = [
     path("health/", views.health, name="login-health"),
@@ -10,6 +10,10 @@ urlpatterns = [
     path("login/", views.login, name="login"),
     path("logout/", views.logout, name="logout"),
     path("me/", views.me, name="login-me"),
+
+    # --- sign in with Microsoft (see microsoft_sso.py) ---
+    path("microsoft/start/", microsoft_sso.start, name="login-microsoft-start"),
+    path("microsoft/callback/", microsoft_sso.callback, name="login-microsoft-callback"),
 
     # --- password management ---
     path("change-password/", views.change_password, name="login-change-password"),

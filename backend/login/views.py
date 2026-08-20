@@ -10,6 +10,8 @@
     GET    /login_api/reset/?token=       validate a reset token
     POST   /login_api/reset-password/     redeem a reset, set new password
     POST   /login_api/accounts/invite/    (admin) invite an existing person
+    GET    /login_api/microsoft/start/    begin sign-in with Microsoft
+    GET    /login_api/microsoft/callback/ finish it (see microsoft_sso.py)
     GET    /login_api/health/             config/readiness, no secrets
 
 Two conventions run through the file:
@@ -36,7 +38,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
-from . import email_azure, identity
+from . import email_azure, identity, microsoft_sso
 from .invitations import (
     TokenError,
     accept_invitation,
@@ -531,5 +533,11 @@ def health(request):
             "configured": email_azure.is_configured(),
             # Names, never values.
             "missing": email_azure.missing_settings(),
+        },
+        # The sign-in page reads this to decide whether to offer the Microsoft
+        # button at all — an SSO button that cannot work is worse than none.
+        "microsoftSso": {
+            "configured": microsoft_sso.is_configured(),
+            "missing": microsoft_sso.missing_settings(),
         },
     })

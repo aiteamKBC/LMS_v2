@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
-import { AuthError, type Role } from '@/api/auth';
+import { AuthError, apiAuthHealth, apiMicrosoftStart, type Role } from '@/api/auth';
 
 /** Where each backend role lands after signing in. */
 /**
@@ -14,7 +14,19 @@ import { AuthError, type Role } from '@/api/auth';
  * on the user directory. Falls back to the coarse role for accounts with no
  * access recorded, and for learners and employers, which have no grant.
  */
-function homeFor(account: { role: Role; accessHome?: string | null }): string {
+function homeFor(account: {
+  role: Role;
+  accessHome?: string | null;
+  subjectId?: number | null;
+}): string {
+  // An employer's console is their own record, so the route needs their id —
+  // there is no single static path to send them to. `subjectId` is the
+  // employer's Employers.id, which is exactly what /employers/:employerId
+  // names. The generic workspace dashboard stays the fallback for an account
+  // with no usable subject id.
+  if (account.role === 'employer' && account.subjectId) {
+    return `/employers/${account.subjectId}`;
+  }
   return account.accessHome || HOME_BY_ROLE[account.role];
 }
 
@@ -34,9 +46,38 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [ssoLoading, setSsoLoading] = useState(false);
+  // Undefined until the health check answers, so the button is not flashed in
+  // and then taken away on a deployment that has no provider configured.
+  const [ssoAvailable, setSsoAvailable] = useState<boolean | undefined>(undefined);
 
   // Where the user was heading before RequireAuth sent them here.
   const from = (location.state as { from?: string } | null)?.from;
+
+  // A refused Microsoft sign-in comes back as a redirect to this page carrying
+  // ?sso_error=..., because the callback is a browser navigation and cannot
+  // answer with JSON. Lift it into the same error box the form uses, then strip
+  // it from the URL so a reload does not resurrect a stale message.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const ssoError = params.get('sso_error');
+    if (!ssoError) return;
+    setError(ssoError);
+    params.delete('sso_error');
+    const rest = params.toString();
+    navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '' }, { replace: true });
+  }, [location.search, location.pathname, navigate]);
+
+  // Is a Microsoft app registration actually wired up? A sign-in button that
+  // cannot work is worse than no button — the same reasoning that had the
+  // original Google/Microsoft buttons removed.
+  useEffect(() => {
+    let cancelled = false;
+    apiAuthHealth()
+      .then((health) => { if (!cancelled) setSsoAvailable(!!health.microsoftSso?.configured); })
+      .catch(() => { if (!cancelled) setSsoAvailable(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   // Bounce an already-signed-in visitor to their console. Waits for
   // isInitialized so it does not fire before the session has been resolved.
@@ -73,6 +114,23 @@ export default function LoginPage() {
           : 'Something went wrong signing in. Please try again.',
       );
       setIsLoading(false);
+    }
+  };
+
+  const handleMicrosoftLogin = async () => {
+    setError('');
+    setSsoLoading(true);
+    try {
+      // A full navigation, not a fetch: the browser has to visit Microsoft and
+      // come back to the callback, which is what sets the session cookie.
+      window.location.href = await apiMicrosoftStart(from);
+    } catch (err) {
+      setError(
+        err instanceof AuthError
+          ? err.message
+          : 'Could not start sign-in with Microsoft. Please try again.',
+      );
+      setSsoLoading(false);
     }
   };
 
@@ -188,11 +246,53 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Footer.
-              The Google/Microsoft buttons that used to sit here were removed:
-              no SSO provider is wired up, and a sign-in button that does
-              nothing is worse than no button. Add them back alongside the
-              provider. */}
+          {/* Sign in with Microsoft.
+              Rendered only once /login_api/health/ confirms an app registration
+              is configured — the button that used to sit here was removed
+              precisely because it did nothing, and that must not come back on a
+              deployment with no provider. Sits outside the <form> so it can
+              never be submitted by Enter in the password field. */}
+          {ssoAvailable && (
+            <div className="mt-6 animate-login-slide-up" style={{ animationDelay: '450ms' }}>
+              <div className="flex items-center gap-3 mb-5">
+                <div className="h-px flex-1 bg-background-200" />
+                <span className="text-[11px] text-foreground-400 font-medium">or</span>
+                <div className="h-px flex-1 bg-background-200" />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleMicrosoftLogin}
+                disabled={ssoLoading || isLoading}
+                className="w-full py-3.5 rounded-xl border border-background-200 bg-background-50 text-[14px] font-semibold text-foreground-700 hover:bg-background-100 hover:border-background-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2.5 cursor-pointer"
+              >
+                {ssoLoading ? (
+                  <>
+                    <AppIcon className="ri-loader-4-line animate-spin" />
+                    Redirecting to Microsoft...
+                  </>
+                ) : (
+                  <>
+                    {/* The Microsoft mark, inline rather than from a font: the
+                        brand guidelines require these four exact colours, and
+                        the icon set this project uses has no faithful glyph. */}
+                    <svg className="w-[18px] h-[18px] shrink-0" viewBox="0 0 21 21" aria-hidden="true">
+                      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+                    </svg>
+                    Sign in with Microsoft
+                  </>
+                )}
+              </button>
+
+              <p className="text-[11px] text-foreground-300 mt-2 text-center">
+                Use your work account. You must already have access to this platform.
+              </p>
+            </div>
+          )}
+
           <div className="mt-8 pt-6 border-t border-background-200 animate-login-slide-up" style={{ animationDelay: '600ms' }}>
             <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
               <span className="inline-flex items-center gap-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium border border-emerald-200/50">

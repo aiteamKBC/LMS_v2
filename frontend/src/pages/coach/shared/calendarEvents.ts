@@ -1,7 +1,5 @@
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 
-export const DEFAULT_COACH_EMAIL = 'Med.Maher@kentbusinesscollege.com';
-
 interface CoachCalendarFetchOptions {
   start?: string;
   end?: string;
@@ -9,7 +7,7 @@ interface CoachCalendarFetchOptions {
   includeSchedulerQueues?: boolean;
 }
 
-function coachTimetableEndpoint(ownerEmail = DEFAULT_COACH_EMAIL, options: CoachCalendarFetchOptions = {}) {
+function coachTimetableEndpoint(ownerEmail: string, options: CoachCalendarFetchOptions = {}) {
   const params = new URLSearchParams({
     owner_email: ownerEmail,
   });
@@ -102,8 +100,8 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
 }
 
 export async function fetchCoachCalendarEvents(
-  signal?: AbortSignal,
-  ownerEmail = DEFAULT_COACH_EMAIL,
+  signal: AbortSignal | undefined,
+  ownerEmail: string,
   options: CoachCalendarFetchOptions = {},
 ) {
   return fetchSharedJsonGet<CoachTimetableResponse>(coachTimetableEndpoint(ownerEmail, options), { signal });

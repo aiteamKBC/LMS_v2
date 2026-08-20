@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useCoachAssignedLearnerNames } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
@@ -14,15 +15,17 @@ const EMPLOYER_ACTIONS = [
 ];
 
 export default function CoachEmployerActions() {
+  const coach = useCoachAssignedLearnerNames();
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('all');
 
-  const filtered = EMPLOYER_ACTIONS.filter(a => filter === 'all' || a.status === filter);
-  const pending = EMPLOYER_ACTIONS.filter(a => a.status === 'pending').length;
-  const completed = EMPLOYER_ACTIONS.filter(a => a.status === 'completed').length;
-  const highPriority = EMPLOYER_ACTIONS.filter(a => a.priority === 'high').length;
+  const employerActions = EMPLOYER_ACTIONS.filter(action => coach.assignedLearnerNames.has(action.learner.trim().toLocaleLowerCase()));
+  const filtered = employerActions.filter(a => filter === 'all' || a.status === filter);
+  const pending = employerActions.filter(a => a.status === 'pending').length;
+  const completed = employerActions.filter(a => a.status === 'completed').length;
+  const highPriority = employerActions.filter(a => a.priority === 'high').length;
 
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Employer Actions" pageSubtitle="Track employer commitments and required actions" userName="Med Maher" userRole="Progress Coach">
+    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Employer Actions" pageSubtitle="Track employer commitments and required actions" userName={coach.name} userRole="Progress Coach">
       <div className="p-6 space-y-6">
         {/* Hero Banner */}
         <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
@@ -40,7 +43,7 @@ export default function CoachEmployerActions() {
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
-                <p className="text-2xl font-bold text-white">{EMPLOYER_ACTIONS.length}</p>
+                <p className="text-2xl font-bold text-white">{employerActions.length}</p>
                 <p className="text-[10px] text-white/70 uppercase tracking-wide">Total</p>
               </div>
               <div className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center">
@@ -57,7 +60,7 @@ export default function CoachEmployerActions() {
 
         {/* Filters */}
         <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 w-fit">
-          <button onClick={() => setFilter('all')} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === 'all' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>All <span className="text-[10px] opacity-60">({EMPLOYER_ACTIONS.length})</span></button>
+          <button onClick={() => setFilter('all')} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === 'all' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>All <span className="text-[10px] opacity-60">({employerActions.length})</span></button>
           <button onClick={() => setFilter('pending')} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === 'pending' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>Pending <span className="text-[10px] opacity-60">({pending})</span></button>
           <button onClick={() => setFilter('completed')} className={`px-4 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${filter === 'completed' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>Completed <span className="text-[10px] opacity-60">({completed})</span></button>
         </div>
@@ -100,6 +103,14 @@ export default function CoachEmployerActions() {
               </div>
             </div>
           ))}
+          {!coach.caseloadLoading && filtered.length === 0 && (
+            <div className="rounded-xl border border-foreground-200/60 bg-background-50 px-6 py-16 text-center">
+              <AppIcon className="ri-building-2-line text-3xl text-foreground-300"></AppIcon>
+              <p className="mt-3 text-sm font-semibold text-foreground-700">
+                {coach.caseloadError || 'No employer actions are available for your assigned learners.'}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </WorkspaceShell>

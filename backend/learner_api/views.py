@@ -316,10 +316,12 @@ def _create_profile_from_delivery_payload(payload, *, apprenticeship):
 @csrf_exempt
 @staff_only(writes_only=True)
 def learner_coach(request, pk):
-    """Read/update a learner's coach contact, stored on the "Learner"."Active_users"
-    mirror (columns coach_name / coach_email). Set from the Delivery block of the
-    learner's own page (BoardPage's Programme panel). The learner must be Active —
-    they only have a mirror row then — so this 404s otherwise and the UI treats
+    """Read/update a learner's coach contact, stored on "Learner"."learners"
+    (LearnerProfile, columns coach_name / coach_email), resolved from the
+    enrolment row by ``learner_profile_for_source``. Set from the Owner cell in
+    the learner header (BoardPage's HeroCoach), which picks a Caseowner/Admin out
+    of Staff_users and writes both columns together. The learner must be Active —
+    they only have a profile row then — so this 404s otherwise and the UI treats
     that as "no coach yet" rather than an error.
 
         GET   /learner_api/learners/<id>/coach/   -> {coachName, coachEmail}
@@ -351,11 +353,16 @@ def learner_coach(request, pk):
         except ValidationError as exc:
             return _error(str(exc), 400)
 
+        # Empty string, never None: both columns on "Learner"."learners" are
+        # NOT NULL, so coercing a cleared field to NULL made unassigning a coach
+        # fail with an IntegrityError. "" is the table's own "no coach" value —
+        # the model declares blank=True and every reader already treats a blank
+        # as unassigned.
         update = {}
         if "coachName" in payload:
-            update["coach_name"] = (str(payload["coachName"]).strip() or None) if payload["coachName"] is not None else None
+            update["coach_name"] = str(payload["coachName"] or "").strip()
         if "coachEmail" in payload:
-            update["coach_email"] = (str(payload["coachEmail"]).strip() or None) if payload["coachEmail"] is not None else None
+            update["coach_email"] = str(payload["coachEmail"] or "").strip()
         if not update:
             return _error("Provide coachName and/or coachEmail.", 400)
 
@@ -415,6 +422,12 @@ def enrolment_users(request):
         stamp = timezone.now().strftime("%d/%m/%Y %H:%M:%S")
         fields.setdefault("enrolled_time_and_user", f"{stamp} by Enrolment Officer")
 
+        # Every learner is invited on enrolment — the form no longer asks, and a
+        # caller cannot opt out by sending the flag as false. Assignment rather
+        # than setdefault for exactly that reason: the column now records what
+        # the platform does, not a choice somebody made on a form.
+        fields["invite_to_platform"] = True
+
         # Stamp the cohort's delivery window from the authored cohort table. The
         # cohort carries two end dates: end_date/practical_period_end_date close
         # the practical period, and apprenticeship_end_date adds the cohort's EPA
@@ -446,12 +459,12 @@ def enrolment_users(request):
         # and review progression.
         advance_learner(user)
         row = to_list_row(user)
-        # "Would you like to invite this user into the platform?" — send the
-        # set-your-password email. Reported alongside the created learner rather
-        # than raising: the learner exists either way, and a mail outage must not
-        # turn a successful enrolment into a 5xx.
-        if fields.get("invite_to_platform"):
-            row["invitation"] = _send_platform_invitation(request, "learner", user.id, subject=user)
+        # Send the set-your-password email. Unconditional: enrolling somebody is
+        # what gives them a platform account, so there is no longer a form
+        # question gating it. Reported alongside the created learner rather than
+        # raising: the learner exists either way, and a mail outage must not turn
+        # a successful enrolment into a 5xx.
+        row["invitation"] = _send_platform_invitation(request, "learner", user.id, subject=user)
         return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
@@ -662,14 +675,21 @@ def staff_users(request):
             fields = write_staff_fields(payload, require_create=True)
         except ValidationError as exc:
             return _error(str(exc), 400)
+
+        # As on the learner form: creating a colleague invites them, and the
+        # column records that rather than a choice — see enrolment_users.
+        fields["invite_to_platform"] = True
+
         try:
             user = StaffUser.objects.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
 
         row = to_staff_row(user)
-        if fields.get("invite_to_platform"):
-            row["invitation"] = _send_platform_invitation(request, "staff", user.id, subject=user)
+        # Unconditional. The authorisation in login.services still applies, so a
+        # staff member creating an Admin gets a refused invitation reported on
+        # the row — the record saves, the credential does not.
+        row["invitation"] = _send_platform_invitation(request, "staff", user.id, subject=user)
         return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
