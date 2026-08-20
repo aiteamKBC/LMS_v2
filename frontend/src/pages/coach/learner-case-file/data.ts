@@ -266,7 +266,7 @@ export function useCoachLearnerCaseFileData(args: {
       const coachDataPromise = Promise.allSettled([
         fetchCoachCaseload(),
         fetchCoachAttendance(),
-        fetchCoachMarkingQueue(),
+        fetchCoachMarkingQueue(rawLearnerId, rawLearnerName),
         fetchCoachTimetable(),
       ]);
       const directId = numericId(rawLearnerId);
@@ -545,8 +545,11 @@ async function fetchCoachAttendance() {
   return data.learners || [];
 }
 
-async function fetchCoachMarkingQueue() {
-  const data = await request<CoachMarkingQueueResponse>(MARKING_BASE);
+async function fetchCoachMarkingQueue(learnerId?: string, learnerName?: string) {
+  const query = new URLSearchParams({ page_size: '100' });
+  if (learnerId) query.set('learner', learnerId);
+  else if (learnerName) query.set('search', learnerName);
+  const data = await request<CoachMarkingQueueResponse>(`${MARKING_BASE}?${query}`);
   return data.items || [];
 }
 

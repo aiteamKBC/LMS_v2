@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 from urllib.parse import urlsplit
 
 from django.http import JsonResponse, StreamingHttpResponse
@@ -23,6 +24,7 @@ ALLOWED_API_PREFIXES = (
 )
 MAX_BATCH_REQUESTS = 40
 BATCH_PATHS = {"/api/batch/", "/coach_api/_batch/"}
+logger = logging.getLogger(__name__)
 
 
 def _safe_api_path(raw_url):
@@ -80,8 +82,9 @@ def _execute_get(parent_request, item):
         }
     except Resolver404:
         return {"id": request_id, "status": 404, "body": "", "headers": {}}
-    except Exception as exc:  # Keep one broken section from failing the full page batch.
-        body = json.dumps({"detail": "Batched request failed.", "error": str(exc)}).encode()
+    except Exception:  # Keep one broken section from failing the full page batch.
+        logger.exception("Batched API subrequest failed path=%s", parsed.path)
+        body = json.dumps({"error": "internal_error", "message": "Batched request failed."}).encode()
         return {
             "id": request_id,
             "status": 500,

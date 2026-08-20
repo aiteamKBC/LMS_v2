@@ -93,17 +93,17 @@ export default function CoachMarkingReviewPage() {
       return;
     }
     try {
-      const response = await coachFetch(API_ENDPOINT);
+      const response = await coachFetch(`${API_ENDPOINT}/${submissionId}`);
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
       if (!response.ok) throw new Error(data.detail || 'Unable to load submissions.');
-      setItems(data.items || []);
+      setItems(data.item ? [data.item] : []);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load submissions.');
     } finally {
       setLoading(false);
     }
-  }, [coach.email, coach.isInitialized]);
+  }, [coach.email, coach.isInitialized, submissionId]);
 
   useEffect(() => {
     void load();

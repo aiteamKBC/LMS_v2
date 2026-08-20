@@ -215,6 +215,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'config.observability.RequestObservabilityMiddleware',
     'django.middleware.security.SecurityMiddleware',
     # Compress JSON/CSS/JS responses when the reverse proxy has not already done
     # so. Large curriculum payloads benefit substantially from this middleware.
@@ -567,15 +568,35 @@ except ImportError:
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {
+        'request_context': {
+            '()': 'config.observability.RequestContextFilter',
+        },
+    },
+    'formatters': {
+        'json': {
+            '()': 'config.observability.JsonLogFormatter',
+        },
+        'plain': {
+            'format': '%(levelname)s %(name)s request_id=%(request_id)s %(message)s',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'filters': ['request_context'],
+            'formatter': 'plain' if DEBUG else 'json',
         },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.environ.get('LOG_LEVEL', 'INFO'),
     },
     'loggers': {
         'curriculum_api': {
             'handlers': ['console'],
             'level': 'INFO',
+            'propagate': False,
         },
     },
 }

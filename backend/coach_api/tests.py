@@ -392,15 +392,20 @@ class CoachTimetableWindowTests(SimpleTestCase):
 class CoachTimetableBookingConflictTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
+        self.future_date = (date.today() + timedelta(days=30)).isoformat()
 
+    @patch("coach_api.views.CoachCalendarEvent.objects.filter")
     @patch("coach_api.views.sync_calendar_event_to_graph")
+    @patch("coach_api.views.fetch_owner_name", return_value="Coach Example")
     @patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=True)
     @patch("coach_api.views.fetch_caseload_learner_profiles")
     def test_book_event_does_not_create_catch_up_or_support_when_learner_busy(
         self,
         fetch_caseload_learner_profiles,
         coach_learner_personal_calendar_conflicts,
+        fetch_owner_name,
         sync_calendar_event_to_graph,
+        calendar_event_filter,
     ):
         learner = SimpleNamespace(
             id=7,
@@ -409,6 +414,7 @@ class CoachTimetableBookingConflictTests(SimpleTestCase):
             coach_name="Coach Example",
         )
         fetch_caseload_learner_profiles.return_value = [learner]
+        calendar_event_filter.return_value.first.return_value = None
 
         for session_type in ("catch-up", "student-support"):
             with self.subTest(session_type=session_type):
@@ -419,13 +425,14 @@ class CoachTimetableBookingConflictTests(SimpleTestCase):
                             "ownerEmail": "coach@example.com",
                             "learnerId": 7,
                             "sessionType": session_type,
-                            "scheduledDate": "2026-08-19",
+                            "scheduledDate": self.future_date,
                             "scheduledTime": "10:00",
                             "durationMinutes": 60,
                             "timezoneOffsetMinutes": -180,
                         }
                     ),
                     content_type="application/json",
+                    HTTP_IDEMPOTENCY_KEY=f"busy-{session_type}",
                 )
 
                 response = call_coach_view(coach_timetable_book_event, request)
@@ -472,7 +479,7 @@ class CoachTimetableBookingConflictTests(SimpleTestCase):
                 {
                     "ownerEmail": "coach@example.com",
                     "eventKey": "coach-catchup-template:coach@example.com:7",
-                    "scheduledDate": "2026-08-19",
+                    "scheduledDate": self.future_date,
                     "scheduledTime": "10:00",
                     "durationMinutes": 45,
                     "timezoneOffsetMinutes": -180,

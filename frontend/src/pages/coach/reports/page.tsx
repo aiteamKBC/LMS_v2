@@ -338,8 +338,10 @@ async function readJson<T>(response: Response): Promise<T> {
   return data as T;
 }
 
-async function fetchCoachMarkingQueue(signal?: AbortSignal): Promise<MarkingQueueResponse> {
-  const response = await coachFetch(MARKING_QUEUE_ENDPOINT, { signal });
+async function fetchCoachMarkingQueue(learnerId?: string, signal?: AbortSignal): Promise<MarkingQueueResponse> {
+  const query = new URLSearchParams({ page_size: '100' });
+  if (learnerId) query.set('learner', learnerId);
+  const response = await coachFetch(`${MARKING_QUEUE_ENDPOINT}?${query}`, { signal });
   return readJson<MarkingQueueResponse>(response);
 }
 
@@ -2660,7 +2662,7 @@ export default function CoachReports() {
       if (detailKind && reportOptions.learnerId && reportOptions.learnerId !== 'all') {
         const [reflectionResult, evidenceResult] = await Promise.allSettled([
           reportOptions.inclusions.learnerReflections
-            ? fetchCoachMarkingQueue().then(data => data.items || [])
+            ? fetchCoachMarkingQueue(reportOptions.learnerId).then(data => data.items || [])
             : Promise.resolve([] as MarkingQueueSubmission[]),
           reportOptions.inclusions.evidenceLinks
             ? fetchEvidence(detailKind, reportOptions.learnerId)

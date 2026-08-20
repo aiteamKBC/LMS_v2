@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
-import { useCurriculumWizardData } from './useCurriculumWizardData';
+import { useCurriculumWizardData, type WizardStep } from './useCurriculumWizardData';
 import {
   clearCurriculumGetCache,
   fetchCurriculumCoaches,
@@ -70,9 +70,9 @@ describe('useCurriculumWizardData — edit-mode hydration must always settle', (
   // (whose prefetch warms the cohort data), then advance to the cohort step.
   it('clears loading after the programme step prefetch warms the cohort request', async () => {
     const { rerender, result } = renderHook(
-      ({ step }) =>
+      ({ step }: { step: WizardStep }) =>
         useCurriculumWizardData({ isOpen: true, currentStep: step, selectedProgrammeId: 'prog-1' }),
-      { initialProps: { step: 'programme' as const } },
+      { initialProps: { step: 'programme' as WizardStep } },
     );
 
     // Let the 300ms prefetch timer fire and settle.
@@ -90,9 +90,9 @@ describe('useCurriculumWizardData — edit-mode hydration must always settle', (
 
   it('clears loading when two concurrent loads race for the same programme', async () => {
     const { rerender, result } = renderHook(
-      ({ step, programmeId }) =>
+      ({ step, programmeId }: { step: WizardStep; programmeId: string }) =>
         useCurriculumWizardData({ isOpen: true, currentStep: step, selectedProgrammeId: programmeId }),
-      { initialProps: { step: 'cohort' as const, programmeId: 'prog-1' } },
+      { initialProps: { step: 'cohort' as WizardStep, programmeId: 'prog-1' } },
     );
 
     // Group also calls loadCohortStepData; flipping between the two steps

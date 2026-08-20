@@ -5,7 +5,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
-from time import sleep as _sleep
+from time import perf_counter, sleep as _sleep
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -27,7 +27,16 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET
 
 from coach_api.auth import authenticated_coach_email, coach_access_required
+from coach_api.errors import coach_error
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence
+from coach_api.validation import (
+    ObjectValidator,
+    ValidationError,
+    parse_json_object,
+    validate_month,
+    validation_error_response,
+)
+from config.observability import metric_event
 from learner_api.evidence_storage import (
     azure_configured,
     blob_url,
@@ -608,8 +617,18 @@ def microsoft_graph_token() -> str:
 
 
 def microsoft_graph_request(method: str, path: str, *, payload: dict | None = None) -> dict:
+    started = perf_counter()
     settings = get_graph_settings()
-    token = microsoft_graph_token()
+    try:
+        token = microsoft_graph_token()
+    except Exception:
+        metric_event(
+            "graph_call",
+            method=method.upper(),
+            graph_status="token_error",
+            latency_ms=round((perf_counter() - started) * 1000, 1),
+        )
+        raise
     url = f"{settings['base_url'].rstrip('/')}/{path.lstrip('/')}"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -625,11 +644,29 @@ def microsoft_graph_request(method: str, path: str, *, payload: dict | None = No
         with urllib_request.urlopen(request, timeout=25) as response:
             raw = response.read().decode("utf-8")
     except urllib_error.HTTPError as exc:
+        metric_event(
+            "graph_call",
+            method=method.upper(),
+            graph_status=f"http_{exc.code}",
+            latency_ms=round((perf_counter() - started) * 1000, 1),
+        )
         detail = exc.read().decode("utf-8", errors="ignore")
         raise RuntimeError(f"Microsoft Graph {method.upper()} {path} failed: {exc.code} {detail}") from exc
     except urllib_error.URLError as exc:
+        metric_event(
+            "graph_call",
+            method=method.upper(),
+            graph_status="network_error",
+            latency_ms=round((perf_counter() - started) * 1000, 1),
+        )
         raise RuntimeError(f"Microsoft Graph {method.upper()} {path} failed: {exc}") from exc
 
+    metric_event(
+        "graph_call",
+        method=method.upper(),
+        graph_status="success",
+        latency_ms=round((perf_counter() - started) * 1000, 1),
+    )
     return json.loads(raw) if raw else {}
 
 
@@ -762,12 +799,7 @@ def clean_text(value) -> str:
 
 
 def parse_json_body(request) -> dict:
-    if not request.body:
-        return {}
-    try:
-        return json.loads(request.body.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
-        raise ValueError(f"Invalid JSON body: {exc}") from exc
+    return parse_json_object(request)
 
 
 def normalize_coach_rag_value(value) -> str | None:
@@ -1700,22 +1732,7 @@ def serialize_attendance_source_learner(row: LearnerProfile) -> dict:
 
 
 def parse_month_bounds(value: str | None) -> tuple[date, date, str, str]:
-    text = clean_text(value)
-    today = date.today()
-    year = today.year
-    month = today.month
-    match = re.match(r"^(\d{4})-(\d{2})$", text)
-    if match:
-        candidate_year = int(match.group(1))
-        candidate_month = int(match.group(2))
-        if 1 <= candidate_month <= 12:
-            year = candidate_year
-            month = candidate_month
-
-    start_date = date(year, month, 1)
-    next_month = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
-    end_date = next_month - timedelta(days=1)
-    return start_date, end_date, start_date.strftime("%B %Y"), f"{year:04d}-{month:02d}"
+    return validate_month(value)
 
 
 def date_only(value) -> date | None:
@@ -3496,7 +3513,7 @@ def public_graph_sync_warning(raw_message: str | None) -> str:
         return TEAMS_SYNC_LINK_MISSING_MESSAGE
     if "microsoft graph" in lowered or "microsoft token" in lowered:
         return TEAMS_SYNC_TEMPORARY_MESSAGE
-    return message
+    return TEAMS_SYNC_TEMPORARY_MESSAGE
 
 
 def calendar_record_needs_schedule_repair(record: CoachCalendarEvent) -> bool:
@@ -4109,7 +4126,7 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
                 payload=payload,
             )
     except RuntimeError as exc:
-        logger.warning("Unable to sync coach timetable event to Microsoft Graph: %s", exc)
+        logger.exception("Unable to sync coach timetable event to Microsoft Graph")
         record.meeting_provider = ""
         record.meeting_link = ""
         record.graph_web_link = ""
@@ -4158,7 +4175,7 @@ def delete_calendar_event_from_graph(record: CoachCalendarEvent) -> str:
     try:
         microsoft_graph_request("DELETE", f"users/{owner_key}/events/{event_key}")
     except RuntimeError as exc:
-        logger.warning("Unable to delete coach timetable event from Microsoft Graph: %s", exc)
+        logger.exception("Unable to delete coach timetable event from Microsoft Graph")
         return public_graph_sync_warning(str(exc))
     return ""
 
@@ -4938,15 +4955,13 @@ def synchronize_reserved_calendar_event(
         record.save(update_fields=["sync_state", "sync_attempt_count", "last_sync_attempt_at", "updated_at"])
 
     logger.info(
-        "coach_calendar_graph_sync_started operation_id=%s coach_account_id=%s learner_id=%s "
-        "event_type=%s sync_state=%s attempt=%s request_id=%s",
-        record.operation_id,
-        record.owner_email,
-        record.learner_id,
-        record.event_type,
-        record.sync_state,
-        record.sync_attempt_count,
-        record.idempotency_key,
+        "coach_calendar_graph_sync_started",
+        extra={
+            "event": "coach_calendar_graph_sync_started",
+            "operation_id": str(record.operation_id),
+            "graph_status": record.sync_state,
+            "attempt_count": record.sync_attempt_count,
+        },
     )
     try:
         warning = sync_calendar_event_to_graph(record, base_event)
@@ -4957,29 +4972,29 @@ def synchronize_reserved_calendar_event(
             updated_at=timezone.now(),
         )
         logger.exception(
-            "coach_calendar_graph_sync_exception operation_id=%s learner_id=%s "
-            "event_type=%s attempt=%s request_id=%s",
-            record.operation_id,
-            record.learner_id,
-            record.event_type,
-            record.sync_attempt_count,
-            record.idempotency_key,
+            "coach_calendar_graph_sync_exception",
+            extra={
+                "event": "coach_calendar_graph_sync_exception",
+                "operation_id": str(record.operation_id),
+                "graph_status": CoachCalendarEvent.SYNC_FAILED,
+                "attempt_count": record.sync_attempt_count,
+            },
         )
         raise
+    warning = public_graph_sync_warning(warning)
     if not calendar_record_has_launch_url(record):
         warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
         record.sync_state = CoachCalendarEvent.SYNC_FAILED
         record.last_graph_sync_error = public_graph_sync_warning(warning)
         record.save()
         logger.warning(
-            "coach_calendar_graph_sync_failed operation_id=%s learner_id=%s event_type=%s "
-            "sync_state=%s attempt=%s request_id=%s",
-            record.operation_id,
-            record.learner_id,
-            record.event_type,
-            record.sync_state,
-            record.sync_attempt_count,
-            record.idempotency_key,
+            "coach_calendar_graph_sync_failed",
+            extra={
+                "event": "coach_calendar_graph_sync_failed",
+                "operation_id": str(record.operation_id),
+                "graph_status": record.sync_state,
+                "attempt_count": record.sync_attempt_count,
+            },
         )
         return record, warning, True
 
@@ -4987,10 +5002,8 @@ def synchronize_reserved_calendar_event(
         finalize_calendar_graph_sync(record, warning)
     except Exception:
         logger.exception(
-            "coach_calendar_graph_finalize_failed operation_id=%s learner_id=%s request_id=%s",
-            record.operation_id,
-            record.learner_id,
-            record.idempotency_key,
+            "coach_calendar_graph_finalize_failed",
+            extra={"event": "coach_calendar_graph_finalize_failed", "operation_id": str(record.operation_id)},
         )
         compensation_warning = delete_calendar_event_from_graph(record)
         recovery_state = (
@@ -5012,21 +5025,19 @@ def synchronize_reserved_calendar_event(
             )
         except Exception:
             logger.exception(
-                "coach_calendar_graph_recovery_record_failed operation_id=%s request_id=%s",
-                record.operation_id,
-                record.idempotency_key,
+                "coach_calendar_graph_recovery_record_failed",
+                extra={"event": "coach_calendar_graph_recovery_record_failed", "operation_id": str(record.operation_id)},
             )
         raise
 
     logger.info(
-        "coach_calendar_graph_sync_completed operation_id=%s learner_id=%s event_type=%s "
-        "sync_state=%s attempt=%s request_id=%s",
-        record.operation_id,
-        record.learner_id,
-        record.event_type,
-        record.sync_state,
-        record.sync_attempt_count,
-        record.idempotency_key,
+        "coach_calendar_graph_sync_completed",
+        extra={
+            "event": "coach_calendar_graph_sync_completed",
+            "operation_id": str(record.operation_id),
+            "graph_status": record.sync_state,
+            "attempt_count": record.sync_attempt_count,
+        },
     )
     return record, warning, True
 
@@ -5081,24 +5092,19 @@ def coach_timetable_schedule_event(request):
     try:
         payload = parse_json_body(request)
         owner_email = authenticated_coach_email(request)
-        event_key = clean_text(payload.get("eventKey"))
-        scheduled_date = parse_date_value(payload.get("scheduledDate"))
-        scheduled_time = parse_time_value(payload.get("scheduledTime"))
-        duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or TIMETABLE_DEFAULT_DURATION_MINUTES)
-        timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
-        if not -840 <= timezone_offset_minutes <= 840:
-            raise ValueError("timezoneOffsetMinutes is outside the supported range.")
-    except ValueError as exc:
-        return JsonResponse({"detail": str(exc)}, status=400)
-
-    if isinstance(scheduled_date, datetime):
-        scheduled_date = scheduled_date.date()
-    if not event_key:
-        return JsonResponse({"detail": "eventKey is required."}, status=400)
-    if not scheduled_date:
-        return JsonResponse({"detail": "scheduledDate is required."}, status=400)
-    if not scheduled_time:
-        return JsonResponse({"detail": "scheduledTime is required."}, status=400)
+        validator = ObjectValidator(payload)
+        event_key = validator.text("eventKey", required=True, max_length=255)
+        scheduled_date = validator.iso_date("scheduledDate", required=True)
+        scheduled_time = validator.clock_time("scheduledTime", required=True)
+        duration_minutes = validator.integer(
+            "durationMinutes", default=TIMETABLE_DEFAULT_DURATION_MINUTES, minimum=15, maximum=480
+        )
+        timezone_offset_minutes = validator.integer(
+            "timezoneOffsetMinutes", default=0, minimum=-840, maximum=840
+        )
+        validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
 
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
@@ -5118,8 +5124,13 @@ def coach_timetable_schedule_event(request):
 
         try:
             catchup_record = persist_calendar_sync_reservation(catchup_record)
-        except CalendarSyncInProgress as exc:
-            return JsonResponse({"detail": str(exc)}, status=409)
+        except CalendarSyncInProgress:
+            return coach_error(
+                request,
+                code="calendar_sync_in_progress",
+                message="Calendar event synchronization is already in progress.",
+                status=409,
+            )
         base_event = build_catchup_calendar_event(
             catchup_record,
             owner_name=owner_name,
@@ -5182,8 +5193,13 @@ def coach_timetable_schedule_event(request):
 
         try:
             record = persist_calendar_sync_reservation(record)
-        except CalendarSyncInProgress as exc:
-            return JsonResponse({"detail": str(exc)}, status=409)
+        except CalendarSyncInProgress:
+            return coach_error(
+                request,
+                code="calendar_sync_in_progress",
+                message="Calendar event synchronization is already in progress.",
+                status=409,
+            )
         base_event = build_catchup_calendar_event(
             record,
             owner_name=owner_name,
@@ -5258,8 +5274,13 @@ def coach_timetable_schedule_event(request):
 
     try:
         record = persist_calendar_sync_reservation(record)
-    except CalendarSyncInProgress as exc:
-        return JsonResponse({"detail": str(exc)}, status=409)
+    except CalendarSyncInProgress:
+        return coach_error(
+            request,
+            code="calendar_sync_in_progress",
+            message="Calendar event synchronization is already in progress.",
+            status=409,
+        )
     record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
     if not calendar_record_has_launch_url(record):
         warning = warning or TEAMS_SYNC_LINK_MISSING_MESSAGE
@@ -5280,33 +5301,27 @@ def coach_timetable_book_event(request):
     try:
         payload = parse_json_body(request)
         owner_email = authenticated_coach_email(request)
-        learner_id = int(payload.get("learnerId") or 0)
-        session_type = clean_text(payload.get("sessionType")).lower()
-        scheduled_date = parse_date_value(payload.get("scheduledDate"))
-        scheduled_time = parse_time_value(payload.get("scheduledTime"))
-        duration_minutes = normalize_duration_minutes(payload.get("durationMinutes") or TIMETABLE_DEFAULT_DURATION_MINUTES)
-        timezone_offset_minutes = int(payload.get("timezoneOffsetMinutes") or 0)
-        if not -840 <= timezone_offset_minutes <= 840:
-            raise ValueError("timezoneOffsetMinutes is outside the supported range.")
-    except (TypeError, ValueError) as exc:
-        return JsonResponse({"detail": str(exc)}, status=400)
-
-    # Deliberately narrower than BOOKED_EVENT_TITLES: the onboarding reviews in
-    # that map are booked by the learner against their case owner, not here.
-    if session_type not in COACH_BOOKABLE_EVENT_TYPES:
-        return JsonResponse({"detail": "sessionType must be 'catch-up' or 'student-support'."}, status=400)
-    if learner_id <= 0:
-        return JsonResponse({"detail": "learnerId is required."}, status=400)
-    if isinstance(scheduled_date, datetime):
-        scheduled_date = scheduled_date.date()
-    if not isinstance(scheduled_date, date):
-        return JsonResponse({"detail": "scheduledDate is required."}, status=400)
-    if scheduled_date < date.today():
-        return JsonResponse({"detail": "Choose today or a future date for this session."}, status=400)
-    if not isinstance(scheduled_time, time):
-        return JsonResponse({"detail": "scheduledTime is required."}, status=400)
-
-    notes = clean_text(payload.get("notes"))[:500]
+        validator = ObjectValidator(payload)
+        learner_id = validator.integer("learnerId", required=True, minimum=1)
+        # Deliberately narrower than BOOKED_EVENT_TITLES: onboarding reviews
+        # are booked by the learner against their case owner, not here.
+        session_type = validator.text(
+            "sessionType", required=True, lower=True, choices=set(COACH_BOOKABLE_EVENT_TYPES)
+        )
+        scheduled_date = validator.iso_date("scheduledDate", required=True)
+        scheduled_time = validator.clock_time("scheduledTime", required=True)
+        duration_minutes = validator.integer(
+            "durationMinutes", default=TIMETABLE_DEFAULT_DURATION_MINUTES, minimum=15, maximum=480
+        )
+        timezone_offset_minutes = validator.integer(
+            "timezoneOffsetMinutes", default=0, minimum=-840, maximum=840
+        )
+        notes = validator.text("notes", max_length=500)
+        if scheduled_date and scheduled_date < date.today():
+            validator.error("scheduledDate", "Choose today or a future date for this session.")
+        validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
     caseload_rows = fetch_caseload_learner_profiles(owner_email)
     learner = next((row for row in caseload_rows if int(getattr(row, "id", 0) or 0) == learner_id), None)
     if not learner:
@@ -5318,7 +5333,7 @@ def coach_timetable_book_event(request):
     try:
         idempotency_key = calendar_idempotency_key(request)
     except ValueError as exc:
-        return JsonResponse({"detail": str(exc)}, status=400)
+        return validation_error_response(ValidationError({"Idempotency-Key": [str(exc)]}))
 
     replay = CoachCalendarEvent.objects.filter(
         owner_email=normalize_email(owner_email),
@@ -5344,11 +5359,15 @@ def coach_timetable_book_event(request):
             )
         except Exception:
             logger.exception(
-                "coach_calendar_booking_replay_failed operation_id=%s request_id=%s",
-                replay.operation_id,
-                replay.idempotency_key,
+                "coach_calendar_booking_replay_failed",
+                extra={"event": "coach_calendar_booking_replay_failed", "operation_id": str(replay.operation_id)},
             )
-            return JsonResponse({"detail": "Unable to synchronize coach session."}, status=500)
+            return coach_error(
+                request,
+                code="calendar_sync_failed",
+                message="The calendar operation could not be completed.",
+                status=500,
+            )
         event = build_catchup_calendar_event(replay, owner_name=owner_name, learner=learner)
         return JsonResponse(
             {
@@ -5388,15 +5407,27 @@ def coach_timetable_book_event(request):
             build_booked_calendar_event(record),
         )
     except ValueError as exc:
-        return JsonResponse({"detail": str(exc)}, status=409 if "already used" in str(exc) else 400)
-    except Exception as exc:  # noqa: BLE001
+        if "already used" in str(exc):
+            return coach_error(
+                request,
+                code="idempotency_conflict",
+                message="Idempotency-Key was already used for a different booking.",
+                status=409,
+            )
+        return validation_error_response(ValidationError({"body": ["The booking could not be validated."]}))
+    except Exception:  # noqa: BLE001
         logger.exception(
             "coach_calendar_booking_failed coach_account_id=%s learner_id=%s event_type=%s",
             owner_email,
             learner_id,
             session_type,
         )
-        return JsonResponse({"detail": "Unable to create coach session."}, status=500)
+        return coach_error(
+            request,
+            code="calendar_sync_failed",
+            message="The calendar operation could not be completed.",
+            status=500,
+        )
 
     event = build_catchup_calendar_event(record, owner_name=owner_name, learner=learner)
     return JsonResponse(
@@ -5421,16 +5452,16 @@ def coach_timetable_event_action(request):
 
     try:
         payload = parse_json_body(request)
-    except ValueError as exc:
-        return JsonResponse({"detail": str(exc)}, status=400)
+        validator = ObjectValidator(payload)
+        event_key = validator.text("eventKey", required=True, max_length=255)
+        action = validator.text(
+            "action", required=True, lower=True, choices={"start", "complete", "sign", "cancel"}
+        )
+        validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
 
     owner_email = authenticated_coach_email(request)
-    event_key = clean_text(payload.get("eventKey"))
-    action = clean_text(payload.get("action")).lower()
-    if not event_key:
-        return JsonResponse({"detail": "eventKey is required."}, status=400)
-    if action not in {"start", "complete", "sign", "cancel"}:
-        return JsonResponse({"detail": "action must be one of: start, complete, sign, cancel."}, status=400)
 
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
@@ -5500,10 +5531,18 @@ def coach_timetable_event_action(request):
     if action == "complete" and response_ids:
         submitted_responses = payload.get("reviewResponses")
         if not isinstance(submitted_responses, dict):
-            record_label = "Progress review" if completion_source == "progress-review" else "Monthly coaching"
-            return JsonResponse({"detail": f"{record_label} responses are required before completing the session."}, status=400)
+            return validation_error_response(ValidationError({
+                "reviewResponses": ["Responses are required as a JSON object before completing the session."]
+            }))
+        invalid_response_text = {
+            f"reviewResponses.{key}": ["Must be a string of at most 4000 characters."]
+            for key, value in submitted_responses.items()
+            if key in response_ids and (not isinstance(value, str) or len(value.strip()) > 4000)
+        }
+        if invalid_response_text:
+            return validation_error_response(ValidationError(invalid_response_text))
         review_responses = {
-            key: clean_text(submitted_responses.get(key))[:4000]
+            key: clean_text(submitted_responses.get(key))
             for key in response_ids
         }
         missing = sorted(
@@ -5512,10 +5551,9 @@ def coach_timetable_event_action(request):
             if not review_responses.get(key)
         )
         if missing:
-            return JsonResponse(
-                {"detail": "Please answer every question before completing the session.", "missing": missing},
-                status=400,
-            )
+            return validation_error_response(ValidationError({
+                f"reviewResponses.{key}": ["This response is required."] for key in missing
+            }))
         if completion_source == "progress-review":
             invalid_ratings = sorted(
                 key
@@ -5524,22 +5562,23 @@ def coach_timetable_event_action(request):
                 or not 1 <= int(review_responses[key]) <= 10
             )
             if invalid_ratings:
-                return JsonResponse(
-                    {"detail": "Every progress review rating must be between 1 and 10.", "invalid": invalid_ratings},
-                    status=400,
-                )
+                return validation_error_response(ValidationError({
+                    f"reviewResponses.{key}": ["Must be a whole number between 1 and 10."]
+                    for key in invalid_ratings
+                }))
             invalid_yes_no = sorted(
                 key
                 for key in PROGRESS_REVIEW_YES_NO_RESPONSE_IDS
                 if review_responses.get(key) not in {"Yes", "No"}
             )
             if invalid_yes_no:
-                return JsonResponse(
-                    {"detail": "Every Yes/No progress review question must be answered.", "invalid": invalid_yes_no},
-                    status=400,
-                )
+                return validation_error_response(ValidationError({
+                    f"reviewResponses.{key}": ["Must be Yes or No."] for key in invalid_yes_no
+                }))
             if review_responses.get("key_theme") not in PROGRESS_REVIEW_KEY_THEMES:
-                return JsonResponse({"detail": "Select a valid key theme."}, status=400)
+                return validation_error_response(ValidationError({
+                    "reviewResponses.key_theme": ["Select a valid key theme."]
+                }))
             conditional_requirements = {
                 ("other_progress_issues", "Yes"): "other_progress_issues_detail",
                 ("safeguarding_concerns", "Yes"): "safeguarding_concerns_detail",
@@ -5556,10 +5595,10 @@ def coach_timetable_event_action(request):
                 and not review_responses.get(detail_id)
             )
             if missing_conditional:
-                return JsonResponse(
-                    {"detail": "Complete the required follow-up details.", "missing": missing_conditional},
-                    status=400,
-                )
+                return validation_error_response(ValidationError({
+                    f"reviewResponses.{key}": ["This follow-up detail is required."]
+                    for key in missing_conditional
+                }))
         if completion_source == "mcr":
             invalid_yes_no = sorted(
                 key
@@ -5567,10 +5606,9 @@ def coach_timetable_event_action(request):
                 if review_responses.get(key) not in {"Yes", "No"}
             )
             if invalid_yes_no:
-                return JsonResponse(
-                    {"detail": "Every Yes/No MCM question must be answered.", "invalid": invalid_yes_no},
-                    status=400,
-                )
+                return validation_error_response(ValidationError({
+                    f"reviewResponses.{key}": ["Must be Yes or No."] for key in invalid_yes_no
+                }))
             valid_agreement_values = {"Agree", "Neutral", "Disagree", "Not discussed"}
             invalid_agreements = sorted(
                 key
@@ -5578,22 +5616,28 @@ def coach_timetable_event_action(request):
                 if review_responses.get(key) not in valid_agreement_values
             )
             if invalid_agreements:
-                return JsonResponse(
-                    {"detail": "Select a valid response for every MCM agreement statement.", "invalid": invalid_agreements},
-                    status=400,
-                )
+                return validation_error_response(ValidationError({
+                    f"reviewResponses.{key}": ["Select a valid agreement response."]
+                    for key in invalid_agreements
+                }))
             if review_responses.get("mcm_previous_meeting") not in {
                 "Previous Monthly Coaching Meeting",
                 "No previous meeting",
             }:
-                return JsonResponse({"detail": "Select a valid previous meeting."}, status=400)
+                return validation_error_response(ValidationError({
+                    "reviewResponses.mcm_previous_meeting": ["Select a valid previous meeting."]
+                }))
             try:
                 date.fromisoformat(review_responses.get("mcm_next_meeting_date", ""))
             except ValueError:
-                return JsonResponse({"detail": "Enter a valid next coaching meeting date."}, status=400)
+                return validation_error_response(ValidationError({
+                    "reviewResponses.mcm_next_meeting_date": ["Enter a valid date in YYYY-MM-DD format."]
+                }))
         outcome_key = "rag_status" if completion_source == "progress-review" else "mcm_outcome"
         if review_responses[outcome_key].lower() not in {"green", "amber", "red"}:
-            return JsonResponse({"detail": "RAG status must be Green, Amber or Red."}, status=400)
+            return validation_error_response(ValidationError({
+                f"reviewResponses.{outcome_key}": ["Must be Green, Amber or Red."]
+            }))
 
     if action == "start" and not calendar_record_has_launch_url(record):
         return JsonResponse({"detail": "This event does not have a Teams link yet. Schedule it again first."}, status=409)
@@ -5739,10 +5783,13 @@ def coach_attendance_details(request):
             return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
 
         sessions = fetch_attendance_detail_rows(learner)
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load learner attendance details.", "error": str(exc)},
-            status=500,
+    except Exception:
+        logger.exception("coach_attendance_details_failed coach_account_id=%s learner_id=%s", owner_email, learner_id)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load learner attendance details.",
+            status=503,
         )
 
     present = sum(1 for item in sessions if item["status"] == "present")
@@ -5771,14 +5818,17 @@ def coach_attendance_details(request):
 @require_GET
 def coach_timetable(request):
     owner_email = authenticated_coach_email(request)
-    start_date = parse_date_value(request.GET.get("start"))
-    end_date = parse_date_value(request.GET.get("end"))
+    validator = ObjectValidator(request.GET)
+    start_date = validator.iso_date("start")
+    end_date = validator.iso_date("end")
+    if start_date and end_date and start_date > end_date:
+        validator.error("end", "Must be on or after start.")
+    try:
+        validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
     include_live_sessions = clean_text(request.GET.get("include_live_sessions", "1")).casefold() not in {"0", "false", "no", "off"}
     include_scheduler_queues = clean_text(request.GET.get("include_scheduler_queues", "1")).casefold() not in {"0", "false", "no", "off"}
-    if isinstance(start_date, datetime):
-        start_date = start_date.date()
-    if isinstance(end_date, datetime):
-        end_date = end_date.date()
 
     try:
         timetable_payload = collect_generated_timetable(
@@ -5788,10 +5838,13 @@ def coach_timetable(request):
             include_live_sessions=include_live_sessions,
             include_scheduler_queues=include_scheduler_queues,
         )
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load coach timetable data.", "error": str(exc)},
-            status=500,
+    except Exception:
+        logger.exception("coach_timetable_load_failed coach_account_id=%s", owner_email)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load coach timetable data.",
+            status=503,
         )
 
     return JsonResponse(
@@ -5861,10 +5914,13 @@ def coach_dashboard(request):
             (clean_text(learner.get("coachName")) for learner in learners if clean_text(learner.get("coachName"))),
             "Coach",
         )
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load coach dashboard data.", "error": str(exc)},
-            status=500,
+    except Exception:
+        logger.exception("coach_dashboard_load_failed coach_account_id=%s", owner_email)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load coach dashboard data.",
+            status=503,
         )
 
     return JsonResponse(
@@ -5890,7 +5946,10 @@ def coach_dashboard(request):
 @require_GET
 def coach_monthly_activity(request):
     owner_email = authenticated_coach_email(request)
-    start_date, end_date, month_label, month_key = parse_month_bounds(request.GET.get("month"))
+    try:
+        start_date, end_date, month_label, month_key = parse_month_bounds(request.GET.get("month"))
+    except ValidationError as exc:
+        return validation_error_response(exc)
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
 
     try:
@@ -5907,10 +5966,13 @@ def coach_monthly_activity(request):
             build_monthly_activity_learner(row, learner, events, start_date, end_date)
             for row, learner in active_pairs
         ]
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load monthly activity data.", "error": str(exc)},
-            status=500,
+    except Exception:
+        logger.exception("coach_monthly_activity_load_failed coach_account_id=%s month=%s", owner_email, month_key)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load monthly activity data.",
+            status=503,
         )
 
     owner_name = coach_staff_display_name(owner_email) or next(
@@ -5972,10 +6034,13 @@ def coach_caseload(request):
                 serialize_caseload_learner(row, refresh_live_snapshots=refresh_live_snapshots)
                 for row in rows
             ]
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load coach caseload data.", "error": str(exc)},
-            status=500,
+    except Exception:
+        logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load coach caseload data.",
+            status=503,
         )
 
     owner_name = coach_staff_display_name(owner_email) or next(
@@ -6011,14 +6076,25 @@ def coach_caseload_coach_rag(request, learner_id):
 
     try:
         payload = parse_json_body(request)
-        coach_rag = normalize_coach_rag_value(payload.get("coachRag"))
-    except ValueError as exc:
-        return JsonResponse({"detail": str(exc)}, status=400)
+        validator = ObjectValidator(payload)
+        raw_rag = validator.text("coachRag", lower=True)
+        if raw_rag and raw_rag not in COACH_RAG_LABELS:
+            validator.error("coachRag", "Must be one of: green, amber, red.")
+        validator.check()
+        coach_rag = raw_rag or None
+    except ValidationError as exc:
+        return validation_error_response(exc)
 
     try:
         updated = learner_queryset.update(coach_rag=coach_rag) > 0
-    except Exception as exc:  # noqa: BLE001
-        return JsonResponse({"detail": "Unable to update coach RAG.", "error": str(exc)}, status=500)
+    except Exception:  # noqa: BLE001
+        logger.exception("coach_rag_update_failed coach_account_id=%s learner_id=%s", owner_email, learner_id)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to update coach RAG.",
+            status=503,
+        )
 
     if not updated:
         return JsonResponse({"detail": "Learner not found."}, status=404)
@@ -6085,10 +6161,13 @@ def coach_attendance(request):
             )
             for learner in caseload_learners
         ]
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load coach attendance data.", "error": str(exc)},
-            status=500,
+    except Exception:
+        logger.exception("coach_attendance_load_failed coach_account_id=%s", owner_email)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load coach attendance data.",
+            status=503,
         )
 
     metric_learners = [
@@ -6332,12 +6411,18 @@ def coach_absence_reports(request):
     if request.method == "PATCH":
         try:
             payload = parse_json_body(request)
-            report_id = int(payload.get("id"))
-        except (TypeError, ValueError):
-            return JsonResponse({"detail": "A valid report id is required."}, status=400)
-        status = clean_text(payload.get("status")).lower()
-        if status not in {CoachAbsenceReport.STATUS_APPROVED, CoachAbsenceReport.STATUS_DECLINED}:
-            return JsonResponse({"detail": "status must be approved or declined."}, status=400)
+            validator = ObjectValidator(payload)
+            report_id = validator.integer("id", required=True, minimum=1)
+            status = validator.text(
+                "status",
+                required=True,
+                lower=True,
+                choices={CoachAbsenceReport.STATUS_APPROVED, CoachAbsenceReport.STATUS_DECLINED},
+            )
+            coach_note = validator.text("coachNote", max_length=500)
+            validator.check()
+        except ValidationError as exc:
+            return validation_error_response(exc)
         report = CoachAbsenceReport.objects.filter(id=report_id, owner_email__iexact=owner_email).first()
         if not report or (report.learner_id not in active_ids and normalize_email(report.learner_email) not in active_emails):
             return JsonResponse({"detail": "Absence report not found."}, status=404)
@@ -6345,13 +6430,30 @@ def coach_absence_reports(request):
         try:
             moved_blob = route_absence_report_evidence(report, status)
         except RuntimeError as exc:
+            logger.exception("coach_absence_evidence_route_failed coach_account_id=%s report_id=%s", owner_email, report_id)
             if str(exc) == "Evidence storage is not configured.":
-                return JsonResponse({"detail": str(exc)}, status=503)
-            return JsonResponse({"detail": "Could not move the evidence file in storage."}, status=502)
+                return coach_error(
+                    request,
+                    code="storage_unavailable",
+                    message="Evidence storage is not configured.",
+                    status=503,
+                )
+            return coach_error(
+                request,
+                code="storage_unavailable",
+                message="Could not move the evidence file in storage.",
+                status=502,
+            )
         except Exception:
-            return JsonResponse({"detail": "Could not move the evidence file in storage."}, status=502)
+            logger.exception("coach_absence_evidence_route_failed coach_account_id=%s report_id=%s", owner_email, report_id)
+            return coach_error(
+                request,
+                code="storage_unavailable",
+                message="Could not move the evidence file in storage.",
+                status=502,
+            )
         report.status = status
-        report.coach_note = clean_text(payload.get("coachNote"))
+        report.coach_note = coach_note
         update_fields = ["status", "coach_note", "updated_at"]
         if moved_blob:
             update_fields.append("evidence_image_url")
@@ -6364,7 +6466,13 @@ def coach_absence_reports(request):
                     move_blob(current_container, source_container, blob_name)
                 except Exception:
                     pass
-            return JsonResponse({"detail": "Could not save the absence report decision."}, status=502)
+            logger.exception("coach_absence_decision_save_failed coach_account_id=%s report_id=%s", owner_email, report_id)
+            return coach_error(
+                request,
+                code="database_unavailable",
+                message="Could not save the absence report decision.",
+                status=502,
+            )
         attendance_rates = fetch_absence_report_attendance_rates([report.learner_id], [report.learner_email])
         attendance_rate = attendance_rates["by_id"].get(report.learner_id)
         if attendance_rate is None:
@@ -6417,63 +6525,174 @@ def coach_absence_reports(request):
     })
 
 
+MARKING_QUEUE_COLUMNS = """
+    id, learner_kind, learner_id, learner_name, programme_name,
+    activity_type, activity_id, activity_title, module_title,
+    week_title, planned_otjh, status, learning_reflection,
+    ksb_codes, ksb_weights, ksb_explanations, confidence_before, confidence_after,
+    application_type, application_text, evidence_files,
+    evidence_consent_confirmed, selected_benefits,
+    benefit_explanation, actual_time_hours,
+    completed_during_paid_hours, date_completed, otjh_confirmed,
+    signed_declaration, quality_score, coach_feedback, reviewed_by,
+    reviewed_at, submitted_at
+"""
+
+
+def serialize_marking_submission(row, *, now=None):
+    now = now or timezone.now()
+    submitted_at = row["submitted_at"]
+    elapsed_days = max((now - submitted_at).days, 0) if submitted_at else 0
+    status = "pending" if row["status"] == "submitted_for_tutor_review" else row["status"]
+    learner_name = row["learner_name"] or f"Learner {row['learner_id']}"
+    initials = "".join(part[:1].upper() for part in learner_name.split()[:2]) or "L"
+    return {
+        "id": str(row["id"]),
+        "learnerKind": row["learner_kind"],
+        "learnerId": row["learner_id"],
+        "learner": learner_name,
+        "initials": initials,
+        "programme": row["programme_name"],
+        "activityType": row["activity_type"],
+        "activityId": row["activity_id"],
+        "activityTitle": row["activity_title"],
+        "module": row["module_title"],
+        "week": row["week_title"],
+        "plannedOtjh": row["planned_otjh"],
+        "status": status,
+        "learningReflection": row["learning_reflection"],
+        "ksbCodes": parse_json_value(row["ksb_codes"], []),
+        "ksbWeights": parse_json_value(row["ksb_weights"], {}),
+        "ksbExplanations": parse_json_value(row["ksb_explanations"], {}),
+        "confidenceBefore": parse_json_value(row["confidence_before"], {}),
+        "confidenceAfter": parse_json_value(row["confidence_after"], {}),
+        "applicationType": row["application_type"],
+        "applicationText": row["application_text"],
+        "evidenceFiles": parse_json_value(row["evidence_files"], []),
+        "evidenceConsentConfirmed": bool(row["evidence_consent_confirmed"]),
+        "selectedBenefits": parse_json_value(row["selected_benefits"], []),
+        "benefitExplanation": row["benefit_explanation"],
+        "actualTimeHours": row["actual_time_hours"],
+        "completedDuringPaidHours": row["completed_during_paid_hours"],
+        "dateCompleted": row["date_completed"].isoformat() if row["date_completed"] else None,
+        "otjhConfirmed": bool(row["otjh_confirmed"]),
+        "signedDeclaration": bool(row["signed_declaration"]),
+        "qualityScore": row["quality_score"],
+        "coachFeedback": row["coach_feedback"],
+        "reviewedBy": row["reviewed_by"],
+        "reviewedAt": row["reviewed_at"].isoformat() if row["reviewed_at"] else None,
+        "submittedAt": submitted_at.isoformat() if submitted_at else None,
+        "submittedDisplay": submitted_at.strftime("%d/%m/%Y %H:%M") if submitted_at else "--",
+        "elapsedDays": elapsed_days,
+        "isOverdue": status == "pending" and elapsed_days >= MARKING_OVERDUE_DAYS,
+    }
+
+
+def empty_marking_queue_response(owner_email, *, page=1, page_size=25):
+    return JsonResponse({
+        "owner": {"name": fetch_owner_name(owner_email), "email": owner_email},
+        "summary": {
+            "totalItems": 0,
+            "activeLearners": 0,
+            "pendingItems": 0,
+            "acceptedItems": 0,
+            "referredItems": 0,
+            "overdueItems": 0,
+            "oldestSubmission": "--",
+            "overdueThresholdDays": MARKING_OVERDUE_DAYS,
+        },
+        "pagination": {
+            "page": page,
+            "pageSize": page_size,
+            "totalItems": 0,
+            "totalPages": 0,
+            "hasNext": False,
+            "hasPrevious": page > 1,
+        },
+        "items": [],
+    })
+
+
 @coach_access_required
 def coach_marking_queue(request, submission_id=None):
-    """List and review the complete reflections submitted by learners."""
+    """List and review complete reflections, scoped and paged in PostgreSQL."""
     owner_email = authenticated_coach_email(request)
     requested_owner = normalize_email(owner_email)
-    allowed_learner_ids = {
+    allowed_learner_ids = [
         str(learner_id)
         for learner_id in (
             LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
             .filter(coach_email_key=requested_owner)
             .values_list("id", flat=True)
         )
-    }
+    ]
 
     if submission_id is not None:
+        if request.method == "GET":
+            if not allowed_learner_ids:
+                return JsonResponse({"detail": "Submission not found."}, status=404)
+            try:
+                with connections["enrolment"].cursor() as cur:
+                    cur.execute(
+                        f"""
+                        select {MARKING_QUEUE_COLUMNS}
+                          from "Learner".learning_reflection_submissions
+                         where id = %s and learner_id = any(%s)
+                        """,
+                        [str(submission_id), allowed_learner_ids],
+                    )
+                    columns = [column[0] for column in cur.description]
+                    value = cur.fetchone()
+            except DatabaseError:
+                logger.exception("Could not load Coach marking submission.")
+                return coach_error(
+                    request,
+                    code="marking_queue_unavailable",
+                    message="Could not load the marking submission.",
+                    status=502,
+                )
+            if not value:
+                return JsonResponse({"detail": "Submission not found."}, status=404)
+            return JsonResponse({"item": serialize_marking_submission(dict(zip(columns, value)))})
+
         if request.method not in {"PATCH", "POST"}:
             return JsonResponse({"detail": "Method not allowed."}, status=405)
         try:
-            payload = json.loads(request.body or b"{}")
-        except (TypeError, ValueError):
-            return JsonResponse({"detail": "Request body must be valid JSON."}, status=400)
-
-        decision = clean_text(payload.get("decision")).lower()
-        feedback = clean_text(payload.get("feedback"))
-        reviewed_by = clean_text(payload.get("reviewedBy")) or "Progress Coach"
-        valid_decisions = {"accepted", "partial", "referred", "escalated", "rejected"}
-        if decision not in valid_decisions:
-            return JsonResponse(
-                {"detail": "decision must be accepted, partial, referred, escalated or rejected."},
-                status=400,
+            payload = parse_json_body(request)
+            validator = ObjectValidator(payload)
+            decision = validator.text(
+                "decision",
+                required=True,
+                lower=True,
+                choices={"accepted", "partial", "referred", "escalated", "rejected"},
             )
-        if decision != "accepted" and not feedback:
-            return JsonResponse({"detail": "Feedback is required for this decision."}, status=400)
+            feedback = validator.text("feedback", max_length=4000)
+            reviewed_by = validator.text("reviewedBy", max_length=255, default="Progress Coach") or "Progress Coach"
+            if decision and decision != "accepted" and not feedback:
+                validator.error("feedback", "Feedback is required for this decision.")
+            validator.check()
+        except ValidationError as exc:
+            return validation_error_response(exc)
 
         try:
             with connections["enrolment"].cursor() as cur:
                 cur.execute(
-                    'select learner_id from "Learner"."learning_reflection_submissions" where id = %s',
-                    [str(submission_id)],
-                )
-                submission_row = cur.fetchone()
-                if not submission_row or str(submission_row[0]) not in allowed_learner_ids:
-                    return JsonResponse({"detail": "Submission not found."}, status=404)
-                cur.execute(
                     """
                     update "Learner"."learning_reflection_submissions"
                     set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
-                    where id = %s
+                    where id = %s and learner_id = any(%s)
                     returning id, status, reviewed_at
                     """,
-                    [decision, feedback, reviewed_by, timezone.now(), str(submission_id)],
+                    [decision, feedback, reviewed_by, timezone.now(), str(submission_id), allowed_learner_ids],
                 )
                 updated = cur.fetchone()
         except DatabaseError:
             logger.exception("Could not update Coach marking submission.")
-            return JsonResponse(
-                {"detail": "Could not update the marking submission."}, status=502
+            return coach_error(
+                request,
+                code="marking_queue_unavailable",
+                message="Could not update the marking submission.",
+                status=502,
             )
         if not updated:
             return JsonResponse({"detail": "Submission not found."}, status=404)
@@ -6486,96 +6705,139 @@ def coach_marking_queue(request, submission_id=None):
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
 
+    query_validator = ObjectValidator(request.GET)
+    page = query_validator.integer("page", default=1, minimum=1)
+    requested_page_size = query_validator.integer("page_size", default=25, minimum=1)
+    status_filter = clean_text(request.GET.get("status")).lower()
+    status_groups = {
+        "pending": ["submitted_for_tutor_review", "escalated"],
+        "overdue": ["submitted_for_tutor_review"],
+        "accepted": ["accepted", "partial"],
+        "referred": ["referred", "rejected"],
+        "all": [],
+    }
+    valid_database_statuses = {
+        "submitted_for_tutor_review", "accepted", "partial", "referred",
+        "escalated", "rejected",
+    }
+    if status_filter and status_filter not in status_groups and status_filter not in valid_database_statuses:
+        query_validator.error("status", "Select a valid marking status.")
+    date_from = query_validator.iso_date("date_from")
+    date_to = query_validator.iso_date("date_to")
+    if date_from and date_to and date_from > date_to:
+        query_validator.error("date_to", "Must be on or after date_from.")
+    learner_filter = query_validator.text("learner", max_length=128)
+    search_filter = query_validator.text("search", max_length=200)
+    try:
+        query_validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    page_size = min(requested_page_size, 100)
+    if not allowed_learner_ids:
+        return empty_marking_queue_response(owner_email, page=page, page_size=page_size)
+
+    base_clauses = ["learner_id = any(%s)"]
+    base_params = [allowed_learner_ids]
+    if learner_filter:
+        base_clauses.append("learner_id = %s")
+        base_params.append(learner_filter)
+    if date_from:
+        base_clauses.append("submitted_at >= %s")
+        base_params.append(date_from)
+    if date_to:
+        base_clauses.append("submitted_at < %s")
+        base_params.append(date_to + timedelta(days=1))
+    if search_filter:
+        base_clauses.append(
+            "(learner_name ilike %s or activity_title ilike %s or module_title ilike %s or week_title ilike %s)"
+        )
+        search_pattern = f"%{search_filter}%"
+        base_params.extend([search_pattern] * 4)
+
+    item_clauses = list(base_clauses)
+    item_params = list(base_params)
+    if status_filter and status_filter != "all":
+        statuses = status_groups.get(status_filter, [status_filter])
+        item_clauses.append("status = any(%s)")
+        item_params.append(statuses)
+    overdue_before = timezone.now() - timedelta(days=MARKING_OVERDUE_DAYS)
+    if status_filter == "overdue":
+        item_clauses.append("submitted_at <= %s")
+        item_params.append(overdue_before)
+
+    base_where = " and ".join(base_clauses)
+    item_where = " and ".join(item_clauses)
+    offset = (page - 1) * page_size
     try:
         with connections["enrolment"].cursor() as cur:
             cur.execute(
-                """
-            select
-                id, learner_kind, learner_id, learner_name, programme_name,
-                activity_type, activity_id, activity_title, module_title,
-                week_title, planned_otjh, status, learning_reflection,
-                ksb_codes, ksb_weights, ksb_explanations, confidence_before, confidence_after,
-                application_type, application_text, evidence_files,
-                evidence_consent_confirmed, selected_benefits,
-                benefit_explanation, actual_time_hours,
-                completed_during_paid_hours, date_completed, otjh_confirmed,
-                signed_declaration, quality_score, coach_feedback, reviewed_by,
-                reviewed_at, submitted_at
-            from "Learner"."learning_reflection_submissions"
-            order by
-                case when status = 'submitted_for_tutor_review' then 0 else 1 end,
-                submitted_at asc
-                """
+                f"""
+                select count(*) as total_items,
+                       count(distinct (learner_kind, learner_id)) as active_learners,
+                       count(*) filter (where status in ('submitted_for_tutor_review', 'escalated')) as pending_items,
+                       count(*) filter (where status in ('accepted', 'partial')) as accepted_items,
+                       count(*) filter (where status in ('referred', 'rejected')) as referred_items,
+                       count(*) filter (
+                           where status = 'submitted_for_tutor_review' and submitted_at <= %s
+                       ) as overdue_items,
+                       min(submitted_at) filter (
+                           where status in ('submitted_for_tutor_review', 'escalated')
+                       ) as oldest_submission
+                  from "Learner".learning_reflection_submissions
+                 where {base_where}
+                """,
+                [overdue_before, *base_params],
+            )
+            summary_row = cur.fetchone()
+            cur.execute(
+                f'select count(*) from "Learner".learning_reflection_submissions where {item_where}',
+                item_params,
+            )
+            filtered_total = cur.fetchone()[0]
+            cur.execute(
+                f"""
+                select {MARKING_QUEUE_COLUMNS}
+                  from "Learner".learning_reflection_submissions
+                 where {item_where}
+                 order by case when status = 'submitted_for_tutor_review' then 0 else 1 end,
+                          submitted_at asc, id asc
+                 limit %s offset %s
+                """,
+                [*item_params, page_size, offset],
             )
             columns = [column[0] for column in cur.description]
             rows = [dict(zip(columns, row)) for row in cur.fetchall()]
     except DatabaseError:
         logger.exception("Could not load Coach marking queue.")
-        return JsonResponse({"detail": "Could not load the marking queue."}, status=502)
-    rows = [row for row in rows if str(row["learner_id"]) in allowed_learner_ids]
-
+        return coach_error(
+            request,
+            code="marking_queue_unavailable",
+            message="Could not load the marking queue.",
+            status=502,
+        )
     now = timezone.now()
-    items = []
-    for row in rows:
-        submitted_at = row["submitted_at"]
-        elapsed_days = max((now - submitted_at).days, 0) if submitted_at else 0
-        status = "pending" if row["status"] == "submitted_for_tutor_review" else row["status"]
-        learner_name = row["learner_name"] or f"Learner {row['learner_id']}"
-        initials = "".join(part[:1].upper() for part in learner_name.split()[:2]) or "L"
-        items.append({
-            "id": str(row["id"]),
-            "learnerKind": row["learner_kind"],
-            "learnerId": row["learner_id"],
-            "learner": learner_name,
-            "initials": initials,
-            "programme": row["programme_name"],
-            "activityType": row["activity_type"],
-            "activityId": row["activity_id"],
-            "activityTitle": row["activity_title"],
-            "module": row["module_title"],
-            "week": row["week_title"],
-            "plannedOtjh": row["planned_otjh"],
-            "status": status,
-            "learningReflection": row["learning_reflection"],
-            "ksbCodes": parse_json_value(row["ksb_codes"], []),
-            "ksbWeights": parse_json_value(row["ksb_weights"], {}),
-            "ksbExplanations": parse_json_value(row["ksb_explanations"], {}),
-            "confidenceBefore": parse_json_value(row["confidence_before"], {}),
-            "confidenceAfter": parse_json_value(row["confidence_after"], {}),
-            "applicationType": row["application_type"],
-            "applicationText": row["application_text"],
-            "evidenceFiles": parse_json_value(row["evidence_files"], []),
-            "evidenceConsentConfirmed": bool(row["evidence_consent_confirmed"]),
-            "selectedBenefits": parse_json_value(row["selected_benefits"], []),
-            "benefitExplanation": row["benefit_explanation"],
-            "actualTimeHours": row["actual_time_hours"],
-            "completedDuringPaidHours": row["completed_during_paid_hours"],
-            "dateCompleted": row["date_completed"].isoformat() if row["date_completed"] else None,
-            "otjhConfirmed": bool(row["otjh_confirmed"]),
-            "signedDeclaration": bool(row["signed_declaration"]),
-            "qualityScore": row["quality_score"],
-            "coachFeedback": row["coach_feedback"],
-            "reviewedBy": row["reviewed_by"],
-            "reviewedAt": row["reviewed_at"].isoformat() if row["reviewed_at"] else None,
-            "submittedAt": submitted_at.isoformat() if submitted_at else None,
-            "submittedDisplay": submitted_at.strftime("%d/%m/%Y %H:%M") if submitted_at else "--",
-            "elapsedDays": elapsed_days,
-            "isOverdue": status == "pending" and elapsed_days >= MARKING_OVERDUE_DAYS,
-        })
-
-    pending = [item for item in items if item["status"] in {"pending", "escalated"}]
-    overdue = [item for item in pending if item["isOverdue"]]
+    items = [serialize_marking_submission(row, now=now) for row in rows]
+    total_items, active_learners, pending_items, accepted_items, referred_items, overdue_items, oldest = summary_row
+    total_pages = (filtered_total + page_size - 1) // page_size if filtered_total else 0
     return JsonResponse({
         "owner": {"name": fetch_owner_name(owner_email), "email": owner_email},
         "summary": {
-            "totalItems": len(items),
-            "activeLearners": len({(item["learnerKind"], item["learnerId"]) for item in items}),
-            "pendingItems": len(pending),
-            "acceptedItems": sum(1 for item in items if item["status"] in {"accepted", "partial"}),
-            "referredItems": sum(1 for item in items if item["status"] in {"referred", "rejected"}),
-            "overdueItems": len(overdue),
-            "oldestSubmission": pending[0]["submittedDisplay"] if pending else "--",
+            "totalItems": total_items,
+            "activeLearners": active_learners,
+            "pendingItems": pending_items,
+            "acceptedItems": accepted_items,
+            "referredItems": referred_items,
+            "overdueItems": overdue_items,
+            "oldestSubmission": oldest.strftime("%d/%m/%Y %H:%M") if oldest else "--",
             "overdueThresholdDays": MARKING_OVERDUE_DAYS,
+        },
+        "pagination": {
+            "page": page,
+            "pageSize": page_size,
+            "totalItems": filtered_total,
+            "totalPages": total_pages,
+            "hasNext": page < total_pages,
+            "hasPrevious": page > 1,
         },
         "items": items,
     })
@@ -6588,10 +6850,13 @@ def coach_evidence_awaiting_review(request):
 
     try:
         items, caseload_learners = fetch_evidence_file_queue(owner_email)
-    except Exception as exc:
-        return JsonResponse(
-            {"detail": "Unable to load coach evidence awaiting review data.", "error": str(exc)},
-            status=500,
+    except Exception:
+        logger.exception("coach_evidence_queue_load_failed coach_account_id=%s", owner_email)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load coach evidence awaiting review data.",
+            status=503,
         )
 
     return JsonResponse(

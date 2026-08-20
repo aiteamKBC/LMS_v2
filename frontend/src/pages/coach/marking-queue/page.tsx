@@ -62,6 +62,15 @@ interface QueueSummary {
   overdueThresholdDays: number;
 }
 
+interface QueuePagination {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+}
+
 const EMPTY_SUMMARY: QueueSummary = {
   totalItems: 0,
   activeLearners: 0,
@@ -71,6 +80,15 @@ const EMPTY_SUMMARY: QueueSummary = {
   overdueItems: 0,
   oldestSubmission: '--',
   overdueThresholdDays: 7,
+};
+
+const EMPTY_PAGINATION: QueuePagination = {
+  page: 1,
+  pageSize: 25,
+  totalItems: 0,
+  totalPages: 0,
+  hasNext: false,
+  hasPrevious: false,
 };
 
 function StatusBadge({ status, overdue }: { status: string; overdue?: boolean }) {
@@ -126,7 +144,9 @@ export default function CoachMarkingQueue() {
   const coach = useCoachIdentity();
   const [items, setItems] = useState<MarkingSubmission[]>([]);
   const [summary, setSummary] = useState<QueueSummary>(EMPTY_SUMMARY);
+  const [pagination, setPagination] = useState<QueuePagination>(EMPTY_PAGINATION);
   const [filter, setFilter] = useState<QueueFilter>('pending');
+  const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<MarkingSubmission | null>(null);
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(true);
@@ -145,31 +165,26 @@ export default function CoachMarkingQueue() {
       return;
     }
     try {
-      const response = await coachFetch(API_ENDPOINT);
+      const query = new URLSearchParams({ status: filter, page: String(page), page_size: '25' });
+      const response = await coachFetch(`${API_ENDPOINT}?${query}`);
       const text = await response.text();
       const data = text ? JSON.parse(text) : {};
       if (!response.ok) throw new Error(data.detail || 'Unable to load the marking queue.');
       setItems(data.items || []);
       setSummary(data.summary || EMPTY_SUMMARY);
+      setPagination(data.pagination || EMPTY_PAGINATION);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Unable to load the marking queue.');
     } finally {
       setLoading(false);
     }
-  }, [coach.email, coach.isInitialized]);
+  }, [coach.email, coach.isInitialized, filter, page]);
 
   useEffect(() => {
     void loadQueue();
   }, [loadQueue]);
 
-  const filtered = useMemo(() => items.filter(item => {
-    if (filter === 'all') return true;
-    if (filter === 'overdue') return item.isOverdue;
-    if (filter === 'pending') return item.status === 'pending' || item.status === 'escalated';
-    if (filter === 'accepted') return item.status === 'accepted' || item.status === 'partial';
-    if (filter === 'referred') return item.status === 'referred' || item.status === 'rejected';
-    return item.status === filter;
-  }), [filter, items]);
+  const filtered = useMemo(() => items, [items]);
 
   const openReview = (item: MarkingSubmission) => {
     setSelected(item);
@@ -263,7 +278,7 @@ export default function CoachMarkingQueue() {
             {(['pending', 'overdue', 'accepted', 'referred', 'all'] as QueueFilter[]).map(key => (
               <button
                 key={key}
-                onClick={() => setFilter(key)}
+                onClick={() => { setFilter(key); setPage(1); }}
                 className={`rounded-lg px-4 py-2 text-xs font-semibold capitalize transition-colors ${
                   filter === key ? 'bg-white text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-800'
                 }`}
@@ -322,6 +337,17 @@ export default function CoachMarkingQueue() {
             </div>
           )}
         </div>
+        {pagination.totalPages > 1 && (
+          <div className="flex items-center justify-between rounded-xl border border-foreground-200 bg-white px-4 py-3">
+            <p className="text-xs text-foreground-500">
+              Page {pagination.page} of {pagination.totalPages} · {pagination.totalItems} submission(s)
+            </p>
+            <div className="flex gap-2">
+              <button disabled={!pagination.hasPrevious} onClick={() => setPage(value => Math.max(1, value - 1))} className="rounded-lg border border-foreground-200 px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Previous</button>
+              <button disabled={!pagination.hasNext} onClick={() => setPage(value => value + 1)} className="rounded-lg border border-foreground-200 px-3 py-1.5 text-xs font-semibold disabled:opacity-40">Next</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {selected && (

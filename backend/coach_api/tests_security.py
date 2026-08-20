@@ -265,7 +265,7 @@ class CoachAuthorizationSecurityTests(TestCase):
         )
         annotate.return_value.filter.return_value.values_list.return_value = [101]
         cursor = MagicMock()
-        cursor.fetchone.return_value = (202,)
+        cursor.fetchone.return_value = None
         enrolment_connection = MagicMock()
         enrolment_connection.cursor.return_value.__enter__.return_value = cursor
         submission_id = "00000000-0000-0000-0000-000000000001"
@@ -279,7 +279,9 @@ class CoachAuthorizationSecurityTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(cursor.execute.call_count, 1)
-        self.assertNotIn("update", cursor.execute.call_args.args[0].lower())
+        update_sql = cursor.execute.call_args.args[0].lower()
+        self.assertIn("update", update_sql)
+        self.assertIn("learner_id = any", update_sql)
 
     @patch("coach_api.views.sync_calendar_event_to_graph")
     @patch("coach_api.views.fetch_caseload_learner_profiles")
