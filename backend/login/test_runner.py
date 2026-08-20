@@ -19,6 +19,8 @@ or make it the default by setting in config/settings.py:
 
     TEST_RUNNER = 'login.test_runner.EnrolmentTestRunner'
 """
+from pathlib import Path
+
 from django.core.management import call_command
 from django.db import connections
 from django.test.runner import DiscoverRunner
@@ -102,6 +104,17 @@ class EnrolmentTestRunner(DiscoverRunner):
         # A fresh test database has neither.
         with connection.cursor() as cursor:
             cursor.execute('CREATE SCHEMA IF NOT EXISTS "enrolment"')
+
+        # Reflection schema is deployed from reviewed SQL rather than runtime
+        # request code. Apply that same deployment artifact to the test DB.
+        reflection_sql = (
+            Path(__file__).resolve().parents[1]
+            / "learner_api"
+            / "sql"
+            / "learning_reflection_submissions.sql"
+        ).read_text(encoding="utf-8")
+        with connection.cursor() as cursor:
+            cursor.execute(reflection_sql)
 
         for command in SETUP_COMMANDS:
             try:

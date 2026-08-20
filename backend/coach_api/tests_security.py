@@ -131,21 +131,17 @@ class CoachAuthorizationSecurityTests(TestCase):
         )
 
     def test_every_coach_route_rejects_anonymous_requests_before_view_work(self):
-        with patch("coach_api.views.ensure_learning_reflection_submissions_table") as ensure_table:
-            for method, path, payload in COACH_ENDPOINTS:
-                with self.subTest(method=method, path=path):
-                    response = self._request(method, path, payload)
-                    self.assertEqual(response.status_code, 401)
-        ensure_table.assert_not_called()
+        for method, path, payload in COACH_ENDPOINTS:
+            with self.subTest(method=method, path=path):
+                response = self._request(method, path, payload)
+                self.assertEqual(response.status_code, 401)
 
     def test_every_coach_route_rejects_a_learner_session(self):
         self._authenticate(self._make_non_staff_account(role="learner"))
-        with patch("coach_api.views.ensure_learning_reflection_submissions_table") as ensure_table:
-            for method, path, payload in COACH_ENDPOINTS:
-                with self.subTest(method=method, path=path):
-                    response = self._request(method, path, payload)
-                    self.assertEqual(response.status_code, 403)
-        ensure_table.assert_not_called()
+        for method, path, payload in COACH_ENDPOINTS:
+            with self.subTest(method=method, path=path):
+                response = self._request(method, path, payload)
+                self.assertEqual(response.status_code, 403)
 
     def test_removed_coach_message_routes_return_not_found(self):
         self.assertEqual(self.client.get("/coach_api/coach/messages").status_code, 404)
@@ -260,10 +256,9 @@ class CoachAuthorizationSecurityTests(TestCase):
         )
         owned_queryset.update.assert_called_once_with(coach_rag="red")
 
-    @patch("coach_api.views.ensure_learning_reflection_submissions_table")
     @patch("coach_api.views.LearnerProfile.objects.annotate")
     def test_coach_cannot_review_another_coachs_marking_submission(
-        self, annotate, _ensure_table
+        self, annotate
     ):
         self._authenticate(
             self._make_staff_account(email="coach-a@example.com", access="coach")

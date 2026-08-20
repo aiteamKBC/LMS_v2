@@ -51,7 +51,6 @@ from learner_api.calendar_connections import (
 )
 from learner_api.learner_detail import refresh_learner_otjh_snapshot
 from learner_api.progress_rules import progress_record_counts_as_achieved
-from learner_api.reflection_submission_tables import ensure_learning_reflection_submissions_table
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
     actual_cohort_identity,
@@ -6421,7 +6420,6 @@ def coach_absence_reports(request):
 @coach_access_required
 def coach_marking_queue(request, submission_id=None):
     """List and review the complete reflections submitted by learners."""
-    ensure_learning_reflection_submissions_table()
     owner_email = authenticated_coach_email(request)
     requested_owner = normalize_email(owner_email)
     allowed_learner_ids = {
@@ -6453,24 +6451,30 @@ def coach_marking_queue(request, submission_id=None):
         if decision != "accepted" and not feedback:
             return JsonResponse({"detail": "Feedback is required for this decision."}, status=400)
 
-        with connections["enrolment"].cursor() as cur:
-            cur.execute(
-                'select learner_id from "Learner"."learning_reflection_submissions" where id = %s',
-                [str(submission_id)],
+        try:
+            with connections["enrolment"].cursor() as cur:
+                cur.execute(
+                    'select learner_id from "Learner"."learning_reflection_submissions" where id = %s',
+                    [str(submission_id)],
+                )
+                submission_row = cur.fetchone()
+                if not submission_row or str(submission_row[0]) not in allowed_learner_ids:
+                    return JsonResponse({"detail": "Submission not found."}, status=404)
+                cur.execute(
+                    """
+                    update "Learner"."learning_reflection_submissions"
+                    set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
+                    where id = %s
+                    returning id, status, reviewed_at
+                    """,
+                    [decision, feedback, reviewed_by, timezone.now(), str(submission_id)],
+                )
+                updated = cur.fetchone()
+        except DatabaseError:
+            logger.exception("Could not update Coach marking submission.")
+            return JsonResponse(
+                {"detail": "Could not update the marking submission."}, status=502
             )
-            submission_row = cur.fetchone()
-            if not submission_row or str(submission_row[0]) not in allowed_learner_ids:
-                return JsonResponse({"detail": "Submission not found."}, status=404)
-            cur.execute(
-                """
-                update "Learner"."learning_reflection_submissions"
-                set status = %s, coach_feedback = %s, reviewed_by = %s, reviewed_at = %s
-                where id = %s
-                returning id, status, reviewed_at
-                """,
-                [decision, feedback, reviewed_by, timezone.now(), str(submission_id)],
-            )
-            updated = cur.fetchone()
         if not updated:
             return JsonResponse({"detail": "Submission not found."}, status=404)
         return JsonResponse({
@@ -6482,9 +6486,10 @@ def coach_marking_queue(request, submission_id=None):
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
 
-    with connections["enrolment"].cursor() as cur:
-        cur.execute(
-            """
+    try:
+        with connections["enrolment"].cursor() as cur:
+            cur.execute(
+                """
             select
                 id, learner_kind, learner_id, learner_name, programme_name,
                 activity_type, activity_id, activity_title, module_title,
@@ -6500,10 +6505,13 @@ def coach_marking_queue(request, submission_id=None):
             order by
                 case when status = 'submitted_for_tutor_review' then 0 else 1 end,
                 submitted_at asc
-            """
-        )
-        columns = [column[0] for column in cur.description]
-        rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+                """
+            )
+            columns = [column[0] for column in cur.description]
+            rows = [dict(zip(columns, row)) for row in cur.fetchall()]
+    except DatabaseError:
+        logger.exception("Could not load Coach marking queue.")
+        return JsonResponse({"detail": "Could not load the marking queue."}, status=502)
     rows = [row for row in rows if str(row["learner_id"]) in allowed_learner_ids]
 
     now = timezone.now()

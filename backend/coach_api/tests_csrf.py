@@ -65,12 +65,11 @@ class CoachCsrfIntegrationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         return response.json()["csrfToken"]
 
-    @patch("coach_api.views.ensure_learning_reflection_submissions_table")
     @patch("coach_api.views.sync_calendar_event_to_graph")
     @patch("coach_api.views.fetch_owner_active_learner_profiles")
     @patch("coach_api.views.LearnerProfile.objects.annotate")
     def test_authenticated_coach_mutations_without_csrf_are_rejected_before_side_effects(
-        self, learner_annotate, fetch_active_learners, sync_graph, ensure_table
+        self, learner_annotate, fetch_active_learners, sync_graph
     ):
         self._authenticate_coach()
         calendar_count = CoachCalendarEvent.objects.count()
@@ -128,7 +127,6 @@ class CoachCsrfIntegrationTests(TestCase):
         self.assertEqual(report.status, CoachAbsenceReport.STATUS_PENDING)
         learner_annotate.assert_not_called()
         fetch_active_learners.assert_not_called()
-        ensure_table.assert_not_called()
         sync_graph.assert_not_called()
 
     def test_authenticated_coach_with_invalid_csrf_token_is_rejected(self):
