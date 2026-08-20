@@ -4,6 +4,7 @@ import { jsPDF } from 'jspdf';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import { formatDateLabel } from '@/pages/coach/shared/calendarEvents';
 
@@ -245,11 +246,8 @@ function formatMonthLabel(monthKey: string) {
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1));
 }
 
-function monthlyActivityEndpoint(monthKey: string, ownerEmail: string) {
-  const params = new URLSearchParams({
-    owner_email: ownerEmail,
-    month: monthKey,
-  });
+function monthlyActivityEndpoint(monthKey: string) {
+  const params = new URLSearchParams({ month: monthKey });
   return `/coach_api/coach/monthly-activity?${params.toString()}`;
 }
 
@@ -685,7 +683,7 @@ export default function CoachMonthlyCycle() {
     setLoading(true);
     setError('');
 
-    fetch(monthlyActivityEndpoint(selectedMonth, coach.email), { signal: controller.signal })
+    coachFetch(monthlyActivityEndpoint(selectedMonth), { signal: controller.signal })
       .then(readJson<MonthlyActivityResponse>)
       .then((payload) => {
         setData(payload);

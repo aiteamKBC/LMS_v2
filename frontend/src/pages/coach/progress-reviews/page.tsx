@@ -660,7 +660,7 @@ export default function CoachProgressReviews() {
       setLoading(true);
       setError(null);
       try {
-        const data = await fetchCoachCalendarEvents(controller.signal, coach.email);
+        const data = await fetchCoachCalendarEvents(controller.signal);
         const reviews = sortEvents((data.events || []).filter(event => event.source === 'progress-review'));
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);

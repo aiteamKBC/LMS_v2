@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import SparklineChart from '@/components/feature/SparklineChart';
-import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import TrendChart from './components/TrendChart';
 
@@ -355,7 +356,7 @@ export default function CoachAttendance() {
         return;
       }
       try {
-        const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email));
+        const response = await coachFetch(API_ENDPOINT);
         if (!response.ok) throw new Error(`Request failed with ${response.status}`);
         const data: AttendanceApiResponse = await response.json();
         if (cancelled) return;
@@ -498,12 +499,11 @@ export default function CoachAttendance() {
 
     try {
       const params = new URLSearchParams();
-      params.set('owner_email', coach.email);
       params.set('learner_id', learner.id);
       if (learner.email) {
         params.set('learner_email', learner.email);
       }
-      const response = await fetch(`${ATTENDANCE_DETAILS_ENDPOINT}?${params.toString()}`);
+      const response = await coachFetch(`${ATTENDANCE_DETAILS_ENDPOINT}?${params.toString()}`);
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.detail || `Request failed with ${response.status}`);

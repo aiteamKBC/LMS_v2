@@ -392,7 +392,7 @@ export default function CoachCatchupQueue() {
     setQueueLoading(true);
     setQueueError('');
 
-    fetchCoachCalendarEvents(controller.signal, coach.email)
+    fetchCoachCalendarEvents(controller.signal)
       .then((data) => {
         const catchups = (data.events || [])
           .filter((event) => event.source === 'catch-up')
@@ -491,11 +491,6 @@ export default function CoachCatchupQueue() {
   const handleViewProfile = (item: CatchUpItem) => {
     navigate(`/coach/learner-case-file?id=${item.id}`);
     success(`Opening profile`, item.learner);
-  };
-
-  const handleSendMessage = (item: CatchUpItem) => {
-    const threadId = `th-catchup-${item.id}`;
-    navigate(`/coach/messages?thread=${threadId}`);
   };
 
   const handleEmailEmployer = (item: CatchUpItem) => {
@@ -1066,10 +1061,6 @@ export default function CoachCatchupQueue() {
                 </button>
                 {showEmployerDropdown && (
                   <div className="absolute bottom-full left-0 right-0 mb-1 bg-background-50 rounded-xl border border-background-200 shadow-xl overflow-hidden z-50">
-                    <button onClick={() => handleSendMessage(selectedItem)} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer">
-                      <span className="w-7 h-7 rounded-lg bg-primary-100 flex items-center justify-center text-primary-600"><AppIcon className="ri-message-3-line text-xs"></AppIcon></span>
-                      <div><p className="font-medium">Send Message</p><p className="text-[10px] text-foreground-400">Open in-app chat</p></div>
-                    </button>
                     <button onClick={() => handleEmailEmployer(selectedItem)} className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[12px] text-foreground-700 hover:bg-background-100 transition-smooth text-left cursor-pointer border-t border-background-200/30">
                       <span className="w-7 h-7 rounded-lg bg-accent-100 flex items-center justify-center text-accent-600"><AppIcon className="ri-mail-send-line text-xs"></AppIcon></span>
                       <div><p className="font-medium">Email</p><p className="text-[10px] text-foreground-400">hr@{selectedItem.employer.toLowerCase().replace(/\s+/g, '')}.co.uk</p></div>

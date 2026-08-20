@@ -89,8 +89,7 @@ class LearnerDetailPrefetchTests(SimpleTestCase):
 
 
 class LearnerReflectionStatusTests(SimpleTestCase):
-    @patch("learner_api.reflection_submissions.ensure_learning_reflection_submissions_table")
-    def test_loads_all_statuses_in_one_read_without_running_schema_ddl(self, ensure_table):
+    def test_loads_all_statuses_in_one_read_without_running_schema_ddl(self):
         cursor = MagicMock()
         cursor.__enter__.return_value = cursor
         cursor.fetchall.return_value = [
@@ -119,7 +118,10 @@ class LearnerReflectionStatusTests(SimpleTestCase):
                 },
             ],
         )
-        ensure_table.assert_not_called()
+        sql = " ".join(call.args[0].lower() for call in cursor.execute.call_args_list)
+        self.assertNotIn("create ", sql)
+        self.assertNotIn("alter ", sql)
+        self.assertNotIn("drop ", sql)
 
 
 class LearnerProgressionTests(SimpleTestCase):

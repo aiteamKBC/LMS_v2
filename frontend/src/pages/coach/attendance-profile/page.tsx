@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 
 const coachNav = roleNavMap.coach;
@@ -97,15 +98,15 @@ export default function CoachAttendanceProfile() {
         return;
       }
       try {
-        const attendanceResponse = await fetch(withCoachOwnerEmail(ATTENDANCE_ENDPOINT, coach.email));
+        const attendanceResponse = await coachFetch(ATTENDANCE_ENDPOINT);
         if (!attendanceResponse.ok) throw new Error('Unable to load learner attendance.');
         const attendancePayload = await attendanceResponse.json();
         const selected = (attendancePayload.learners || []).find((item: AttendanceLearner) => String(item.id) === String(learnerId));
         if (!selected) throw new Error('Learner attendance record was not found.');
 
-        const params = new URLSearchParams({ owner_email: coach.email, learner_id: String(selected.id) });
+        const params = new URLSearchParams({ learner_id: String(selected.id) });
         if (selected.email) params.set('learner_email', selected.email);
-        const detailsResponse = await fetch(`${DETAILS_ENDPOINT}?${params.toString()}`);
+        const detailsResponse = await coachFetch(`${DETAILS_ENDPOINT}?${params.toString()}`);
         if (!detailsResponse.ok) throw new Error('Unable to load attendance sessions.');
         const detailsPayload = await detailsResponse.json();
         if (!cancelled) {

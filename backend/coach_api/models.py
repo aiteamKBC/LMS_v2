@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+import uuid
 
 
 COACH_TEST_MODE = getattr(settings, "COACH_TEST_MODE", False)
@@ -10,6 +11,21 @@ def _table_name(test_name, production_name):
 
 
 class CoachCalendarEvent(models.Model):
+    SYNC_PENDING = "pending"
+    SYNC_SYNCING = "syncing"
+    SYNC_SYNCED = "synced"
+    SYNC_FAILED = "failed"
+    SYNC_RECONCILIATION = "reconciliation"
+    SYNC_CANCELLED = "cancelled"
+    SYNC_STATE_CHOICES = [
+        (SYNC_PENDING, "Pending"),
+        (SYNC_SYNCING, "Syncing"),
+        (SYNC_SYNCED, "Synced"),
+        (SYNC_FAILED, "Failed"),
+        (SYNC_RECONCILIATION, "Reconciliation Required"),
+        (SYNC_CANCELLED, "Cancelled"),
+    ]
+
     STATUS_NOT_SCHEDULED = "not-scheduled"
     STATUS_SCHEDULED = "scheduled"
     STATUS_IN_PROGRESS = "in-progress"
@@ -29,6 +45,8 @@ class CoachCalendarEvent(models.Model):
     ]
 
     event_key = models.CharField(max_length=255, unique=True)
+    operation_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    idempotency_key = models.CharField(max_length=255, blank=True)
     owner_email = models.EmailField(max_length=255, db_index=True)
     owner_name = models.CharField(max_length=255, blank=True)
     learner_id = models.IntegerField(db_index=True)
@@ -55,6 +73,14 @@ class CoachCalendarEvent(models.Model):
     manager_signed_at = models.DateTimeField(null=True, blank=True)
     manager_signed_by = models.CharField(max_length=255, blank=True)
     last_graph_sync_error = models.TextField(blank=True)
+    sync_state = models.CharField(
+        max_length=24,
+        choices=SYNC_STATE_CHOICES,
+        default=SYNC_PENDING,
+        db_index=True,
+    )
+    sync_attempt_count = models.PositiveIntegerField(default=0)
+    last_sync_attempt_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -65,9 +91,50 @@ class CoachCalendarEvent(models.Model):
             models.Index(fields=["owner_email", "target_date", "status"], name="coach_owner_date_status_idx"),
             models.Index(fields=["learner_id", "event_type", "target_date"], name="coach_learner_type_date_idx"),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["learner_id", "event_type", "sequence"],
+                condition=models.Q(
+                    event_type__in=[
+                        "catch-up",
+                        "student-support",
+                        "eligibility-review",
+                        "workspace",
+                        "training-plan",
+                    ]
+                ),
+                name="coach_calendar_booking_seq_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["owner_email", "idempotency_key"],
+                condition=~models.Q(idempotency_key=""),
+                name="coach_calendar_owner_idempotency_uniq",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_id}"
+
+
+class CoachCalendarSequence(models.Model):
+    """Cross-process sequence allocator for a learner/session-type scope."""
+
+    learner_id = models.IntegerField()
+    event_type = models.CharField(max_length=32)
+    last_sequence = models.PositiveIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name(
+            "coach_test_calendar_sequences",
+            'Coach"."coach_calendar_sequence',
+        )
+        constraints = [
+            models.UniqueConstraint(
+                fields=["learner_id", "event_type"],
+                name="coach_calendar_sequence_scope_uniq",
+            ),
+        ]
 
 
 class CoachAbsenceReport(models.Model):

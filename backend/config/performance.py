@@ -39,11 +39,14 @@ class PerformanceTimingMiddleware:
 
         total_ms = (time.perf_counter() - started) * 1000
         application_ms = max(0.0, total_ms - database_ms)
-        response['Server-Timing'] = (
-            f'db;dur={database_ms:.1f};desc="{query_count} queries", '
-            f'app;dur={application_ms:.1f}, total;dur={total_ms:.1f}'
-        )
-        response['X-DB-Query-Count'] = str(query_count)
+        # Query counts and timing breakdowns expose implementation details and
+        # are therefore browser-visible only in local DEBUG mode.
+        if settings.DEBUG:
+            response['Server-Timing'] = (
+                f'db;dur={database_ms:.1f};desc="{query_count} queries", '
+                f'app;dur={application_ms:.1f}, total;dur={total_ms:.1f}'
+            )
+            response['X-DB-Query-Count'] = str(query_count)
 
         threshold = getattr(settings, 'SLOW_REQUEST_THRESHOLD_MS', 750)
         if total_ms >= threshold:

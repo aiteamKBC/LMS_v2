@@ -215,6 +215,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'config.observability.RequestObservabilityMiddleware',
     'django.middleware.security.SecurityMiddleware',
     # Compress JSON/CSS/JS responses when the reverse proxy has not already done
     # so. Large curriculum payloads benefit substantially from this middleware.
@@ -436,13 +437,20 @@ DATABASE_ROUTERS = ['learner_api.routers.EnrolmentRouter']
 
 # CORS/CSRF: the Vite dev server (port 3000) proxies /learner_api to this server, so
 # requests are same-origin in the browser. Allow the dev hosts explicitly.
-CSRF_TRUSTED_ORIGINS = [
+_default_csrf_trusted_origins = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://localhost:3001',
     'http://127.0.0.1:3001',
     'https://lms.kentbusinesscollege.net',
     'https://api.kentbusinesscollege.net',
+]
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        'CSRF_TRUSTED_ORIGINS', ','.join(_default_csrf_trusted_origins)
+    ).split(',')
+    if origin.strip()
 ]
 
 
@@ -518,6 +526,16 @@ AZURE_ENROLMENT_DOCS_CONTAINER = (
 )
 
 # --- Platform authentication (the `login` app) -------------------------------
+# Django's CSRF cookie follows the same environment-aware transport policy as
+# the platform session: local HTTP remains usable, while deployed environments
+# default to Secure cookies. The token itself is returned by /coach_api/csrf,
+# so this remains compatible if operations later opt into HttpOnly.
+CSRF_COOKIE_SECURE = os.environ.get(
+    "CSRF_COOKIE_SECURE", "false" if DEBUG else "true"
+).lower() == "true"
+CSRF_COOKIE_HTTPONLY = os.environ.get("CSRF_COOKIE_HTTPONLY", "false").lower() == "true"
+CSRF_COOKIE_SAMESITE = os.environ.get("CSRF_COOKIE_SAMESITE", "Lax")
+
 # Cookie flags for the kbc_session cookie. Secure is tied to DEBUG because a
 # Secure cookie is simply not stored over plain http, which would break local
 # development; every deployed environment runs DJANGO_DEBUG=false and so gets it.
@@ -550,15 +568,35 @@ except ImportError:
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {
+        'request_context': {
+            '()': 'config.observability.RequestContextFilter',
+        },
+    },
+    'formatters': {
+        'json': {
+            '()': 'config.observability.JsonLogFormatter',
+        },
+        'plain': {
+            'format': '%(levelname)s %(name)s request_id=%(request_id)s %(message)s',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'filters': ['request_context'],
+            'formatter': 'plain' if DEBUG else 'json',
         },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': os.environ.get('LOG_LEVEL', 'INFO'),
     },
     'loggers': {
         'curriculum_api': {
             'handlers': ['console'],
             'level': 'INFO',
+            'propagate': False,
         },
     },
 }

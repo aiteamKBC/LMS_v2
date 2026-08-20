@@ -1,4 +1,5 @@
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
+import { coachFetch } from '@/lib/coachFetch';
 
 interface CoachCalendarFetchOptions {
   start?: string;
@@ -7,18 +8,18 @@ interface CoachCalendarFetchOptions {
   includeSchedulerQueues?: boolean;
 }
 
-function coachTimetableEndpoint(ownerEmail: string, options: CoachCalendarFetchOptions = {}) {
-  const params = new URLSearchParams({
-    owner_email: ownerEmail,
-  });
+function coachTimetableEndpoint(options: CoachCalendarFetchOptions = {}) {
+  const params = new URLSearchParams();
   if (options.start) params.set('start', options.start);
   if (options.end) params.set('end', options.end);
   if (options.includeLiveSessions === false) params.set('include_live_sessions', '0');
   if (options.includeSchedulerQueues === false) params.set('include_scheduler_queues', '0');
-  return `/coach_api/coach/timetable?${params.toString()}`;
+  const query = params.toString();
+  return `/coach_api/coach/timetable${query ? `?${query}` : ''}`;
 }
 const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
 const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
+const BOOK_ENDPOINT = '/coach_api/coach/timetable/events/book';
 
 export type CoachCalendarStatus =
   | 'completed'
@@ -68,6 +69,9 @@ export interface CoachCalendarEvent {
   platform?: string;
   location?: string;
   syncWarning?: string;
+  operationId?: string;
+  syncState?: 'pending' | 'syncing' | 'synced' | 'failed' | 'reconciliation' | 'cancelled';
+  syncAttemptCount?: number;
   reviewResponses?: Record<string, string>;
   reviewCompletedAt?: string | null;
   managerSignedAt?: string | null;
@@ -88,6 +92,16 @@ export interface ScheduleFormState {
   durationMinutes: number;
 }
 
+export interface CoachCalendarBookingInput {
+  learnerId: string;
+  sessionType: string;
+  scheduledDate: string;
+  scheduledTime: string;
+  durationMinutes: number;
+  timezoneOffsetMinutes: number;
+  notes: string;
+}
+
 export type CalendarAction = 'start' | 'complete' | 'sign' | 'cancel';
 
 async function readJsonResponse<T>(response: Response): Promise<T> {
@@ -99,25 +113,68 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
   return data as T;
 }
 
+async function sha256Hex(value: string) {
+  if (globalThis.crypto?.subtle) {
+    const bytes = new TextEncoder().encode(value);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export async function calendarBookingIdempotencyKey(input: CoachCalendarBookingInput) {
+  const fingerprint = JSON.stringify({
+    learnerId: String(input.learnerId),
+    sessionType: input.sessionType.trim().toLowerCase(),
+    scheduledDate: input.scheduledDate,
+    scheduledTime: input.scheduledTime.slice(0, 5),
+    durationMinutes: input.durationMinutes,
+    notes: input.notes.trim(),
+  });
+  return `coach-book:${await sha256Hex(fingerprint)}`;
+}
+
+export async function bookCoachCalendarEvent(input: CoachCalendarBookingInput) {
+  const response = await coachFetch(BOOK_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': await calendarBookingIdempotencyKey(input),
+    },
+    body: JSON.stringify(input),
+  });
+  return readJsonResponse<{
+    event: CoachCalendarEvent;
+    warning?: string;
+    operation?: { id: string; syncState: string; attemptCount: number; replayed: boolean };
+  }>(response);
+}
+
 export async function fetchCoachCalendarEvents(
   signal: AbortSignal | undefined,
-  ownerEmail: string,
   options: CoachCalendarFetchOptions = {},
 ) {
-  return fetchSharedJsonGet<CoachTimetableResponse>(coachTimetableEndpoint(ownerEmail, options), { signal });
+  return fetchSharedJsonGet<CoachTimetableResponse>(coachTimetableEndpoint(options), {
+    signal,
+    credentials: 'include',
+  });
 }
 
 export async function scheduleCoachCalendarEvent(event: CoachCalendarEvent, form: ScheduleFormState) {
-  if (!event.eventKey || !event.ownerEmail) {
+  if (!event.eventKey) {
     throw new Error('This event is missing its calendar key.');
   }
 
-  const response = await fetch(SCHEDULE_ENDPOINT, {
+  const response = await coachFetch(SCHEDULE_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       eventKey: event.eventKey,
-      ownerEmail: event.ownerEmail,
       scheduledDate: form.date,
       scheduledTime: form.time,
       durationMinutes: form.durationMinutes,
@@ -132,16 +189,15 @@ export async function runCoachCalendarAction(
   action: CalendarAction,
   options: { reviewResponses?: Record<string, string>; managerName?: string } = {},
 ) {
-  if (!event.eventKey || !event.ownerEmail) {
+  if (!event.eventKey) {
     throw new Error('This event is missing its calendar key.');
   }
 
-  const response = await fetch(ACTION_ENDPOINT, {
+  const response = await coachFetch(ACTION_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       eventKey: event.eventKey,
-      ownerEmail: event.ownerEmail,
       action,
       ...options,
     }),

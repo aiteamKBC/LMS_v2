@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
-import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import type { AbsenceReport } from '@/mocks/absence-reports';
@@ -104,7 +105,7 @@ export default function CoachAbsenceReports() {
       return;
     }
     const controller = new AbortController();
-    fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email), { signal: controller.signal })
+    coachFetch(API_ENDPOINT, { signal: controller.signal })
       .then(async response => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
@@ -185,7 +186,7 @@ export default function CoachAbsenceReports() {
     const report = reports.find(item => item.id === reportId);
     if (!report) return;
     try {
-      const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email), {
+      const response = await coachFetch(API_ENDPOINT, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id: reportId, status, coachNote: coachNoteText }),

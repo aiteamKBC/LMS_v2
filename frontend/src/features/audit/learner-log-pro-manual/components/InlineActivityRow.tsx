@@ -324,7 +324,7 @@ function ActivityNamePicker({ category, value, onPick, onGroupPick, disabled }: 
   });
   const groups = useQuery({
     queryKey: ["plan-lms-groups"],
-    queryFn: pickLmsGroups,
+    queryFn: () => pickLmsGroups(),
     enabled: isMedia,
   });
   const titles = useQuery({
@@ -605,7 +605,7 @@ export function InlineActivityCreateRow({ learnerId, learnerName, onCancel, defa
   const set = (patch: Partial<ActivityRowInput>) => setDraft((value) => ({ ...value, ...patch }));
 
   const learnerGroups = useQuery({ queryKey: ["learner-lms-groups", learnerId], queryFn: () => learnerLmsGroups(learnerId) });
-  const lmsGroups = useQuery({ queryKey: ["plan-lms-groups"], queryFn: pickLmsGroups });
+  const lmsGroups = useQuery({ queryKey: ["plan-lms-groups"], queryFn: () => pickLmsGroups() });
   // Groups offered for sharing: the learner's own groups, plus whatever group
   // the media name-picker chose (it may not be recorded against the learner).
   const shareCandidates = (() => {

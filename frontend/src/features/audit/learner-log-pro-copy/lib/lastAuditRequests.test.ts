@@ -18,6 +18,8 @@ const cohort = {
     programme_status: "—",
     planned_total: 839,
     planned_hours_available: true,
+    aptem_planned_total: 839,
+    aptem_planned_monthly: {},
     actual_total: 0,
     not_accepted_total: 0,
     hours_mapped: false,
@@ -168,6 +170,18 @@ describe("Last_audit request scoping", () => {
       })),
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("cohort-totals")) return jsonResponse({
+        items: [{
+          aptem_id: 1930,
+          planned: 0,
+          actual: 1.3327,
+          not_accepted: 0,
+          row_count: 1,
+          months: {
+            undated: { planned: 0, actual: 1.3327, not_accepted: 0, row_count: 1 },
+          },
+        }],
+      });
       if (String(input).includes("activity-overrides")) return jsonResponse({ items: [] });
       return jsonResponse(malformedCohort);
     });
@@ -181,7 +195,7 @@ describe("Last_audit request scoping", () => {
     expect(result.learners[0]).toMatchObject({
       planned_hours: 0,
       actual_hours: 1.33,
-      planned_hours_available: true,
+      planned_hours_available: false,
     });
     expect(result.learners[0].flags).toContain("invalid_activity_date");
   });

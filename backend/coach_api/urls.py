@@ -1,6 +1,6 @@
 from django.urls import path
 
-from .message_views import coach_message_thread, coach_messages_threads
+from .csrf import coach_csrf_token
 from .views import (
     coach_attendance,
     coach_attendance_details,
@@ -19,10 +19,9 @@ from .views import (
 
 
 urlpatterns = [
+    path('csrf', coach_csrf_token, name='coach-csrf'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),
     path('coach/caseload', coach_caseload, name='coach-caseload'),
-    path('coach/messages', coach_messages_threads, name='coach-messages-threads'),
-    path('coach/messages/<int:learner_id>', coach_message_thread, name='coach-message-thread'),
     path('coach/caseload/<int:learner_id>/coach-rag', coach_caseload_coach_rag, name='coach-caseload-coach-rag'),
     path('coach/attendance', coach_attendance, name='coach-attendance'),
     path('coach/attendance/details', coach_attendance_details, name='coach-attendance-details'),

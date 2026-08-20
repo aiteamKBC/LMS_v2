@@ -451,6 +451,12 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
   const editGeneratedTime = row.category !== "attendance" && draft.tsMode === "time"
     ? workingTimeRange(draft.startTime, draft.actual_hours)
     : null;
+  const editGeneratedTimeError = editGeneratedTime && "error" in editGeneratedTime
+    ? editGeneratedTime.error
+    : null;
+  const editGeneratedTimeLabel = editGeneratedTime && "label" in editGeneratedTime
+    ? editGeneratedTime.label
+    : null;
 
   return (
     <TableRow className="bg-primary/5 hover:bg-primary/5">
@@ -481,10 +487,10 @@ export function ManualActivityRow({ row, onPatch, onDelete, onStageFiles, onUnst
             {draft.tsMode === "time" ? (
               <>
                 <RowInput type="time" min="09:00:00" max="17:00:00" step="1" value={draft.startTime} onChange={(e) => set({ startTime: e.target.value || WORK_DAY_START })} className="w-full text-center" aria-label="Start time including seconds" />
-                {editGeneratedTime && "label" in editGeneratedTime ? (
-                  <span className="block font-mono text-[10px] text-[#182d48]">{editGeneratedTime.label}</span>
-                ) : editGeneratedTime ? (
-                  <span className="block max-w-36 text-[10px] leading-tight text-destructive">{editGeneratedTime.error}</span>
+                {editGeneratedTimeError ? (
+                  <span className="block max-w-36 text-[10px] leading-tight text-destructive">{editGeneratedTimeError}</span>
+                ) : editGeneratedTimeLabel ? (
+                  <span className="block font-mono text-[10px] text-[#182d48]">{editGeneratedTimeLabel}</span>
                 ) : null}
               </>
             ) : null}

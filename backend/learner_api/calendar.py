@@ -10,9 +10,10 @@ the same email against coach_calendar_event.learner_id.
 """
 import json
 import logging
+import hashlib
 
 from django.db import DatabaseError
-from django.db.models import Max, Q
+from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -368,11 +369,13 @@ def learner_calendar_book(request, kind, pk):
     # module out of learner_api's import path until a booking actually happens.
     from coach_api.views import (
         build_booked_calendar_event,
-        build_timetable_event_key,
+        booking_request_matches_record,
+        calendar_idempotency_key,
         normalize_duration_minutes,
         parse_date_value,
         parse_time_value,
-        sync_calendar_event_to_graph,
+        reserve_coach_calendar_booking,
+        synchronize_reserved_calendar_event,
     )
     from datetime import datetime
 
@@ -437,10 +440,6 @@ def learner_calendar_book(request, kind, pk):
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
 
-    from .calendar_connections import booking_conflicts
-    if booking_conflicts(kind, pk, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes):
-        return _error("That time overlaps an event in your connected personal calendar. Please choose another time.", 409)
-
     notes = _s(payload.get("notes"))[:500]
     # An onboarding learner has no mirror row yet, so fall back to the source.
     # (LearnerProfile's name column is full_name, not username.)
@@ -469,30 +468,81 @@ def learner_calendar_book(request, kind, pk):
                     status=200,
                 )
 
-        next_sequence = (
-            CoachCalendarEvent.objects.filter(learner_id=pk, event_type=session_type)
-            .aggregate(max_seq=Max("sequence"))["max_seq"]
-            or 0
-        ) + 1
-        record = CoachCalendarEvent(
-            event_key=build_timetable_event_key(pk, session_type, next_sequence, scheduled_date),
+        supplied_key = _s(request.headers.get("Idempotency-Key"))
+        if supplied_key:
+            idempotency_key = calendar_idempotency_key(request)
+        else:
+            # Backward-compatible deterministic identity for existing learner
+            # clients. Onboarding review identity intentionally ignores the
+            # slot because each review type is a one-time logical operation.
+            logical_parts = [kind, str(pk), session_type]
+            if not is_onboarding_review:
+                logical_parts.extend(
+                    [
+                        scheduled_date.isoformat(),
+                        scheduled_time.isoformat(),
+                        str(duration_minutes),
+                        notes,
+                    ]
+                )
+            digest = hashlib.sha256("\x1f".join(logical_parts).encode("utf-8")).hexdigest()
+            idempotency_key = f"learner-book:{digest}"
+
+        replay = CoachCalendarEvent.objects.filter(
+            owner_email=owner_email.strip().lower(),
+            idempotency_key=idempotency_key,
+        ).first()
+        if replay is not None:
+            if not booking_request_matches_record(
+                replay,
+                learner_id=pk,
+                session_type=session_type,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
+                duration_minutes=duration_minutes,
+                notes=notes,
+            ):
+                return _error("Idempotency-Key was already used for a different booking.", 409)
+            replay, warning, _attempted = synchronize_reserved_calendar_event(
+                replay.pk, build_booked_calendar_event(replay)
+            )
+            return JsonResponse(
+                {"event": _serialize_event(replay), "warning": _friendly_sync_warning(warning)},
+                status=200,
+            )
+
+        from .calendar_connections import booking_conflicts
+        if booking_conflicts(
+            kind,
+            pk,
+            scheduled_date,
+            scheduled_time,
+            duration_minutes,
+            timezone_offset_minutes,
+        ):
+            return _error(
+                "That time overlaps an event in your connected personal calendar. Please choose another time.",
+                409,
+            )
+
+        record, created = reserve_coach_calendar_booking(
             owner_email=owner_email,
             owner_name=owner_name,
             learner_id=pk,
             learner_name=learner_name,
             learner_email=learner_email,
-            event_type=session_type,
-            sequence=next_sequence,
-            target_date=scheduled_date,
+            session_type=session_type,
             scheduled_date=scheduled_date,
             scheduled_time=scheduled_time,
             duration_minutes=duration_minutes,
-            status=CoachCalendarEvent.STATUS_SCHEDULED,
             notes=notes,
+            idempotency_key=idempotency_key,
         )
-        warning = sync_calendar_event_to_graph(record, build_booked_calendar_event(record))
-        record.last_graph_sync_error = warning
-        record.save()
+        record, warning, _attempted = synchronize_reserved_calendar_event(
+            record.pk, build_booked_calendar_event(record)
+        )
+    except ValueError as exc:
+        return _error(str(exc), 409 if "already used" in str(exc) else 400)
     except DatabaseError as exc:
         logger.exception("learner_calendar_book: booking failed")
         return _error(f"Database error: {exc}", 502)
@@ -509,7 +559,7 @@ def learner_calendar_book(request, kind, pk):
 
     return JsonResponse(
         {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)},
-        status=201,
+        status=201 if created else 200,
     )
 
 

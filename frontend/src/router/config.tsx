@@ -43,13 +43,11 @@ const CoachCaseFiles = lazy(() => import("../pages/coach/case-files/page"));
 const CoachCaseload = lazy(() => import("../pages/coach/caseload/page"));
 const CoachCatchupQueue = lazy(() => import("../pages/coach/catchup-queue/page"));
 const CoachDashboard = lazy(() => import("../pages/workspace/coach/page"));
-const CoachEmployerActions = lazy(() => import("../pages/coach/employer-actions/page"));
 const CoachEvidenceValidation = lazy(() => import("../pages/coach/evidence-validation/page"));
 const CoachKsbImpact = lazy(() => import("../pages/coach/ksb-impact/page"));
 const CoachMarkingQueue = lazy(() => import("../pages/coach/marking-queue/page"));
 const CoachMarkingReviewPage = lazy(() => import("../pages/coach/marking-review/page"));
 const CoachMeetings = lazy(() => import("../pages/coach/meetings/page"));
-const CoachMessagesPage = lazy(() => import("../pages/coach/messages/page"));
 const CoachMonthlyCycle = lazy(() => import("../pages/coach/monthly-cycle/page"));
 const CoachOtjhReports = lazy(() => import("../pages/coach/otjh-reports/page"));
 const CoachProgressReviews = lazy(() => import("../pages/coach/progress-reviews/page"));
@@ -655,10 +653,6 @@ const routes: RouteObject[] = [
     element: <CoachEvidenceValidation />,
   },
   {
-    path: "/coach/employer-actions",
-    element: <CoachEmployerActions />,
-  },
-  {
     path: "/admin/access-logs",
     element: <AdminAccessLogsPage />,
   },
@@ -900,10 +894,6 @@ const routes: RouteObject[] = [
   {
     path: "/employer/support",
     element: <EmployerSupportRequests />,
-  },
-  {
-    path: "/coach/messages",
-    element: <CoachMessagesPage />,
   },
   {
     path: "/coach/reports",

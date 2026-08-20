@@ -387,7 +387,7 @@ export function RetrieveActivitiesPanel({ aptemId, month, monthLabel, existingRe
                 ) : selectedCourse !== "attendance" ? (
                   <>
                     <div className="flex rounded-md border border-border">
-                      {[["video", "Videos"], ["reading+quiz", "Reading+Quiz"], ["audio", "Audio"], ["all", "All"]].map(([value, label]) => (
+                      {([["video", "Videos"], ["reading+quiz", "Reading+Quiz"], ["audio", "Audio"], ["all", "All"]] as const).map(([value, label]) => (
                         <button key={value} type="button" onClick={() => setTypeFilter(value)} className={`px-3 py-1.5 text-xs font-semibold ${typeFilter === value ? "bg-[#182d48] text-white" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>
                       ))}
                     </div>

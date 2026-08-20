@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { EmptyState } from '@/pages/users/components/ui';
 import { type CaseFileTabProps } from '../data';
 
@@ -11,11 +10,9 @@ interface ContactRow {
   secondary: string;
   tone: string;
   target: string;
-  learnerId?: string;
 }
 
 export default function MessagesTab({ data }: CaseFileTabProps) {
-  const navigate = useNavigate();
   const contacts = useMemo<ContactRow[]>(() => {
     const rows: ContactRow[] = [];
 
@@ -27,7 +24,6 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
       secondary: data.detail?.phone || data.programme || '--',
       tone: 'bg-accent-100 text-accent-700',
       target: data.email || data.displayName,
-      learnerId: data.learnerId,
     });
 
     if (data.coachName || data.coachEmail) {
@@ -65,17 +61,12 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
     { label: 'Last Evidence Submitted', value: data.snapshot?.lastSubmittedEvidence || '--', detail: 'Latest evidence date stored in the coach caseload snapshot.', icon: 'ri-folder-upload-line' },
   ].filter((row) => row.value && row.value !== '--');
 
-  const handleOpenConversation = (contact: ContactRow) => {
-    if (contact.id === 'learner' && contact.learnerId) {
-      navigate(`/coach/messages?learner=${encodeURIComponent(contact.learnerId)}`);
-      return;
-    }
-
+  const handleEmailContact = (contact: ContactRow) => {
     const target = contact.target;
-    if (!target) {
+    if (!target || !target.includes('@')) {
       return;
     }
-    navigate('/messages', { state: { openContact: target } });
+    window.location.href = `mailto:${target}`;
   };
 
   return (
@@ -116,10 +107,11 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
                       <p className="text-[10px] text-foreground-400 mt-1">{contact.secondary}</p>
                     </div>
                     <button
-                      onClick={() => handleOpenConversation(contact)}
+                      onClick={() => handleEmailContact(contact)}
+                      disabled={!contact.target.includes('@')}
                       className="px-3 py-2 rounded-full bg-primary-500 text-background-50 dark:text-foreground-950 text-[11px] font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
                     >
-                      <AppIcon className="ri-message-3-line text-xs"></AppIcon> Message
+                      <AppIcon className="ri-mail-line text-xs"></AppIcon> Email
                     </button>
                   </div>
                 </div>
@@ -152,10 +144,10 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
       <section className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
         <div className="p-5 md:p-6 text-[12px] text-foreground-600 space-y-2">
           <p>
-            Historic message threads are not exposed by the current learner or coach APIs yet, so this tab now shows only real contacts and live communication dates.
+            Coach messaging is not available in this workspace, so this tab shows contact details and live communication dates only.
           </p>
           <p>
-            The message buttons route into the shared messaging workspace using the live learner, coach, or employer contact that was returned.
+            Email actions use the live contact address returned for the learner, coach, or employer.
           </p>
         </div>
       </section>

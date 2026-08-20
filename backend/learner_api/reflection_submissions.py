@@ -9,8 +9,6 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from .reflection_submission_tables import ensure_learning_reflection_submissions_table
-
 logger = logging.getLogger(__name__)
 
 VALID_KINDS = {"commercial", "apprenticeship"}
@@ -187,7 +185,6 @@ def create_reflection_submission(request):
     full_submission["ksbWeights"] = ksb_weights
 
     try:
-        ensure_learning_reflection_submissions_table()
         with transaction.atomic(using="enrolment"):
             with connections["enrolment"].cursor() as cur:
                 cur.execute(

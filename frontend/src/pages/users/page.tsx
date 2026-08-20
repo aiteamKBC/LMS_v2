@@ -44,6 +44,7 @@ type DirectoryRow = UserListRow & Partial<StaffUserRow> & { employer?: EmployerR
 function employerToRow(e: EmployerRow): DirectoryRow {
   return {
     id: e.id,
+    uuid: null,
     name: e.name,
     type: 'Employer',
     email: e.email,

@@ -5,8 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { useAuth } from '@/hooks/useAuth';
-import { withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
+import { coachFetch } from '@/lib/coachFetch';
 
 type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter';
 type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn' | 'ready-to-enrol' | 'unknown';
@@ -150,8 +150,8 @@ const API_ENDPOINT = '/coach_api/coach/caseload';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
 const COACH_RAG_ENDPOINT = (learnerId: string) => `/coach_api/coach/caseload/${learnerId}/coach-rag`;
 
-function coachCaseloadEndpoint(ownerEmail: string) {
-  return `${API_ENDPOINT}?owner_email=${encodeURIComponent(ownerEmail)}`;
+function coachCaseloadEndpoint() {
+  return API_ENDPOINT;
 }
 
 const COACH_RAG_OPTIONS = [
@@ -473,14 +473,14 @@ function DonutChart({ percentage, size = 72, strokeWidth = 6, color = 'primary',
   );
 }
 
-async function fetchAttendanceLearners(signal: AbortSignal, ownerEmail: string) {
+async function fetchAttendanceLearners(signal: AbortSignal) {
   const endpoints = [
-    `${ATTENDANCE_ENDPOINT}?owner_email=${encodeURIComponent(ownerEmail)}`,
+    ATTENDANCE_ENDPOINT,
     ATTENDANCE_ENDPOINT,
   ];
 
   for (const endpoint of endpoints) {
-    const response = await fetch(endpoint, { signal });
+    const response = await coachFetch(endpoint, { signal });
     if (!response.ok) {
       continue;
     }
@@ -554,7 +554,7 @@ export default function CoachCaseload() {
       }
 
       try {
-        const caseloadResponse = await fetch(coachCaseloadEndpoint(authenticatedCoachEmail), { signal: controller.signal });
+        const caseloadResponse = await coachFetch(coachCaseloadEndpoint(), { signal: controller.signal });
 
         if (!caseloadResponse.ok) {
           throw new Error(`Request failed with status ${caseloadResponse.status}`);
@@ -563,7 +563,7 @@ export default function CoachCaseload() {
         const data: CaseloadApiResponse = await caseloadResponse.json();
         const resolvedOwnerName = data.owner?.name || authenticatedCoachName;
         const resolvedOwnerEmail = data.owner?.email || authenticatedCoachEmail;
-        const attendanceLearners = await fetchAttendanceLearners(controller.signal, resolvedOwnerEmail);
+        const attendanceLearners = await fetchAttendanceLearners(controller.signal);
 
         setOwnerName(resolvedOwnerName);
         setOwnerEmail(resolvedOwnerEmail);
@@ -838,7 +838,7 @@ export default function CoachCaseload() {
     setLearnerCoachRag(learnerId, nextValue);
 
     try {
-      const response = await fetch(withCoachOwnerEmail(COACH_RAG_ENDPOINT(learnerId), coachEmail), {
+      const response = await coachFetch(COACH_RAG_ENDPOINT(learnerId), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ coachRag: nextValue || null }),

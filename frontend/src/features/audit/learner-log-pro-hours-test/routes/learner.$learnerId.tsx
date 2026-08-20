@@ -142,6 +142,10 @@ function skillRadarTicks(maximum: number) {
   return ticks;
 }
 
+function journalHref(learner: string, period: string) {
+  return `#/journal?${new URLSearchParams({ learner, period }).toString()}`;
+}
+
 function wrapRadarLabel(value: string, maximumLineLength = 22) {
   return value.split(/\s+/).reduce<string[]>((lines, word) => {
     const last = lines.at(-1);
@@ -831,13 +835,12 @@ function LearnerProfilePage() {
             <span className="label-caps">Learner profile</span>
           </div>
           <div className="flex items-center gap-3">
-            <Link
-              to="/journal"
-              search={{ learner: String(learner.aptem_id), period: "" }}
+            <a
+              href={journalHref(String(learner.aptem_id), "")}
               className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:bg-secondary"
             >
               <FileText className="h-3.5 w-3.5" /> Monthly report
-            </Link>
+            </a>
             <Link to="/search" className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground hover:underline">
               <ArrowLeft className="h-3.5 w-3.5" /> Learner search
             </Link>
@@ -1084,9 +1087,9 @@ function LearnerProfilePage() {
                         </button>
                       )}
                       {evidence.source_activity_month && (
-                        <Link to="/journal" search={{ learner: String(learner.aptem_id), period: evidence.source_activity_month }} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
+                        <a href={journalHref(String(learner.aptem_id), evidence.source_activity_month)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
                           <ExternalLink className="h-3.5 w-3.5" /> Monthly report
-                        </Link>
+                        </a>
                       )}
                     </div>
                   ))}
@@ -1148,9 +1151,9 @@ function LearnerProfilePage() {
                         </button>
                       )}
                       {evidence.source_activity_month && (
-                        <Link to="/journal" search={{ learner: String(learner.aptem_id), period: evidence.source_activity_month }} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
+                        <a href={journalHref(String(learner.aptem_id), evidence.source_activity_month)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
                           <ExternalLink className="h-3.5 w-3.5" /> Monthly report
-                        </Link>
+                        </a>
                       )}
                     </div>
                   ))}
@@ -1244,9 +1247,9 @@ function LearnerProfilePage() {
                           </button>
                         )}
                         {evidence.source_activity_month && (
-                          <Link to="/journal" search={{ learner: String(learner.aptem_id), period: evidence.source_activity_month }} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
+                          <a href={journalHref(String(learner.aptem_id), evidence.source_activity_month)} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary">
                             <ExternalLink className="h-3.5 w-3.5" /> Monthly report
-                          </Link>
+                          </a>
                         )}
                         <button
                           type="button"
@@ -1362,7 +1365,7 @@ function LearnerProfilePage() {
                         <RadarChart data={activeSkillGroup.points} outerRadius="84%" margin={{ top: 72, right: 96, bottom: 72, left: 96 }}>
                           <PolarGrid stroke="#d9d6cd" />
                           <PolarAngleAxis dataKey="domain" tick={<SkillRadarAxisTick />} />
-                          <PolarRadiusAxis angle={90} domain={[0, activeSkillChartMaximum]} ticks={activeSkillRadarTicks} tick={{ fill: "#64748b", fontSize: 10 }} />
+                          <PolarRadiusAxis angle={90} domain={[0, activeSkillChartMaximum]} tickCount={activeSkillRadarTicks.length} tick={{ fill: "#64748b", fontSize: 10 }} />
                           <Tooltip content={<SkillRadarTooltip />} />
                           <Radar name={activeSkillGroup.label} dataKey="score" stroke={activeSkillGroup.colour} fill={activeSkillGroup.colour} fillOpacity={0.18} strokeWidth={2.5} />
                         </RadarChart>
@@ -1906,13 +1909,12 @@ function LearnerProfilePage() {
                       </button>
                     )}
                     {evidence.source_activity_month && (
-                      <Link
-                        to="/journal"
-                        search={{ learner: String(learner.aptem_id), period: evidence.source_activity_month }}
+                      <a
+                        href={journalHref(String(learner.aptem_id), evidence.source_activity_month)}
                         className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
                       >
                         <ExternalLink className="h-3.5 w-3.5" /> Monthly report
-                      </Link>
+                      </a>
                     )}
                     <button
                       type="button"
@@ -2024,13 +2026,12 @@ function LearnerProfilePage() {
               )}
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
-                <Link
-                  to="/journal"
-                  search={{ learner: String(profile.data?.aptem_id ?? ""), period: evidenceSelectionTarget.evidenceDate.slice(0, 7) }}
+                <a
+                  href={journalHref(String(profile.data?.aptem_id ?? ""), evidenceSelectionTarget.evidenceDate.slice(0, 7))}
                   className="text-xs font-semibold text-foreground hover:underline"
                 >
                   Open monthly report
-                </Link>
+                </a>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"

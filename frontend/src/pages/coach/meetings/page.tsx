@@ -108,7 +108,7 @@ export default function CoachMeetings() {
       setLoading(true);
       setError(null);
       try {
-        const data = await fetchCoachCalendarEvents(controller.signal, coach.email);
+        const data = await fetchCoachCalendarEvents(controller.signal);
         const mcrEvents = sortEvents((data.events || []).filter(event => event.source === 'mcr'));
         setEvents(mcrEvents);
         setOwnerName(data.owner?.name || coach.name);

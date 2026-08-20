@@ -5,14 +5,15 @@ import 'sweetalert2/dist/sweetalert2.min.css';
 import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
-import { useCoachIdentity, withCoachOwnerEmail } from '@/hooks/useCoachIdentity';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
+import { bookCoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/timetable';
-const BOOK_ENDPOINT = '/coach_api/coach/timetable/events/book';
 const SCHEDULE_ENDPOINT = '/coach_api/coach/timetable/events/schedule';
 const ACTION_ENDPOINT = '/coach_api/coach/timetable/events/action';
 
@@ -998,7 +999,7 @@ export default function CoachTimetablePage() {
         return;
       }
       try {
-        const response = await fetch(withCoachOwnerEmail(API_ENDPOINT, coach.email));
+        const response = await coachFetch(API_ENDPOINT);
         if (!response.ok) throw new Error(`Request failed with ${response.status}`);
 
         const data: TimetableResponse = await response.json();
@@ -1533,18 +1534,17 @@ export default function CoachTimetablePage() {
   }, [events, focusEventOnCalendar, loading, pendingFocusIntent, setCalendarDate]);
 
   const handleScheduleSave = useCallback(async () => {
-    if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
+    if (!selectedEvent?.eventKey) return;
 
     setEventActionBusy(true);
     setEventActionError(null);
     setEventActionNotice(null);
     try {
-      const response = await fetch(SCHEDULE_ENDPOINT, {
+      const response = await coachFetch(SCHEDULE_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           eventKey: selectedEvent.eventKey,
-          ownerEmail: selectedEvent.ownerEmail,
           scheduledDate: scheduleDate,
           scheduledTime: scheduleTime,
           durationMinutes: scheduleDuration,
@@ -1572,21 +1572,15 @@ export default function CoachTimetablePage() {
     setCreateSessionBusy(true);
     setCreateSessionError(null);
     try {
-      const response = await fetch(BOOK_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ownerEmail: coach.email,
-          learnerId: createSessionLearnerId,
-          sessionType: createSessionType,
-          scheduledDate: createSessionDate,
-          scheduledTime: createSessionTime,
-          durationMinutes: createSessionDuration,
-          timezoneOffsetMinutes: new Date().getTimezoneOffset(),
-          notes: createSessionNotes,
-        }),
+      const data = await bookCoachCalendarEvent({
+        learnerId: createSessionLearnerId,
+        sessionType: createSessionType,
+        scheduledDate: createSessionDate,
+        scheduledTime: createSessionTime,
+        durationMinutes: createSessionDuration,
+        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+        notes: createSessionNotes,
       });
-      const data = await readApiJson<{ event: TimetableEvent; warning?: string }>(response);
 
       const createdEvent = data.event as TimetableEvent;
       updateSingleEvent(createdEvent);
@@ -1622,24 +1616,22 @@ export default function CoachTimetablePage() {
     createSessionNotes,
     createSessionTime,
     createSessionType,
-    coach.email,
     focusEventOnCalendar,
     updateSingleEvent,
   ]);
 
   const handleModalScheduleSave = useCallback(async () => {
-    if (!selectedScheduleEvent?.eventKey || !selectedScheduleEvent.ownerEmail) return;
+    if (!selectedScheduleEvent?.eventKey) return;
 
     setScheduleModalBusy(true);
     setScheduleModalError(null);
     setScheduleModalNotice(null);
     try {
-      const response = await fetch(SCHEDULE_ENDPOINT, {
+      const response = await coachFetch(SCHEDULE_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           eventKey: selectedScheduleEvent.eventKey,
-          ownerEmail: selectedScheduleEvent.ownerEmail,
           scheduledDate: scheduleModalDate,
           scheduledTime: scheduleModalTime,
           durationMinutes: scheduleModalDuration,
@@ -1681,18 +1673,17 @@ export default function CoachTimetablePage() {
   }, [selectedEvent]);
 
   const handleProgressReviewSubmit = useCallback(async (responses: ProgressReviewResponses) => {
-    if (!progressReviewCompletionEvent?.eventKey || !progressReviewCompletionEvent.ownerEmail) return;
+    if (!progressReviewCompletionEvent?.eventKey) return;
 
     setEventActionBusy(true);
     setEventActionError(null);
     setEventActionNotice(null);
     try {
-      const response = await fetch(ACTION_ENDPOINT, {
+      const response = await coachFetch(ACTION_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           eventKey: progressReviewCompletionEvent.eventKey,
-          ownerEmail: progressReviewCompletionEvent.ownerEmail,
           action: 'complete',
           reviewResponses: responses,
         }),
@@ -1725,7 +1716,7 @@ export default function CoachTimetablePage() {
   }, [selectedEvent]);
 
   const handleEventAction = useCallback(async (action: 'start' | 'complete' | 'sign' | 'cancel') => {
-    if (!selectedEvent?.eventKey || !selectedEvent.ownerEmail) return;
+    if (!selectedEvent?.eventKey) return;
     if (action === 'complete' && selectedEvent.source === 'progress-review') {
       setEventActionError(null);
       setEventActionNotice(null);
@@ -1737,12 +1728,11 @@ export default function CoachTimetablePage() {
     setEventActionError(null);
     setEventActionNotice(null);
     try {
-      const response = await fetch(ACTION_ENDPOINT, {
+      const response = await coachFetch(ACTION_ENDPOINT, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           eventKey: selectedEvent.eventKey,
-          ownerEmail: selectedEvent.ownerEmail,
           action,
         }),
       });
