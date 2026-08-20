@@ -305,12 +305,28 @@ export const employerNavItems: SidebarNavItem[] = [
 export const curriculumNavItems: SidebarNavItem[] = [
   { id: 'curriculum-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/curriculum' },
   {
-    id: 'curriculum-group-programme-design',
-    label: 'Programme Design',
+    // The primary Curriculum navigation is entity-based: each record type has a
+    // page of its own, and exactly one form. The multi-step structure wizard that
+    // used to be a second way to create the same records is gone.
+    id: 'curriculum-group-manage',
+    label: 'Curriculum',
     icon: 'ri-stack-line',
     href: '',
     children: [
       { id: 'curriculum-programmes', label: 'Programmes', icon: 'ri-stack-line', href: '/curriculum/programmes' },
+      { id: 'curriculum-cohorts', label: 'Cohorts', icon: 'ri-calendar-event-line', href: '/curriculum/cohorts' },
+      { id: 'curriculum-groups', label: 'Groups', icon: 'ri-team-line', href: '/curriculum/groups' },
+      { id: 'curriculum-module-builder', label: 'Module Builder', icon: 'ri-layout-4-line', href: '/curriculum/module-builder' },
+      { id: 'curriculum-ksb-mapping', label: 'KSB Mapping', icon: 'ri-link', href: '/curriculum/ksb-mapping' },
+      { id: 'curriculum-holidays', label: 'Holidays', icon: 'ri-calendar-close-line', href: '/curriculum/holidays' },
+    ],
+  },
+  {
+    id: 'curriculum-group-programme-design',
+    label: 'Programme Design',
+    icon: 'ri-file-list-3-line',
+    href: '',
+    children: [
       { id: 'curriculum-free-courses', label: 'Free Courses', icon: 'ri-graduation-cap-line', href: '/curriculum/free-courses' },
       { id: 'curriculum-standards', label: 'Standards', icon: 'ri-file-list-3-line', href: '/curriculum/standards' },
       { id: 'curriculum-ksb-frameworks', label: 'KSB Frameworks', icon: 'ri-bar-chart-line', href: '/curriculum/ksb-frameworks' },
@@ -318,13 +334,11 @@ export const curriculumNavItems: SidebarNavItem[] = [
   },
   {
     id: 'curriculum-group-builder',
-    label: 'Curriculum Builder',
+    label: 'Content Library',
     icon: 'ri-tools-line',
     href: '',
     children: [
-      { id: 'curriculum-module-builder', label: 'Module Builder', icon: 'ri-layout-4-line', href: '/curriculum/module-builder' },
       { id: 'curriculum-week-builder', label: 'Week Builder', icon: 'ri-calendar-line', href: '/curriculum/week-builder' },
-      { id: 'curriculum-ksb-mapping', label: 'KSB Mapping', icon: 'ri-link', href: '/curriculum/ksb-mapping' },
     ],
   },
   {

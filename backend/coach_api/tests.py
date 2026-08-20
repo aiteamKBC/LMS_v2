@@ -353,6 +353,12 @@ class CoachTimetableWindowTests(SimpleTestCase):
         fetch_calendar_event_records.assert_called_once_with("coach@example.com", [])
 
 
+#: Both booking views refuse a date in the past, so these fixtures cannot use a
+#: literal: one stops testing the conflict rule and starts testing the date rule
+#: the day it goes by. Relative keeps them honest for good.
+FUTURE_BOOKING_DATE = (date.today() + timedelta(days=7)).isoformat()
+
+
 class CoachTimetableBookingConflictTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
@@ -383,7 +389,7 @@ class CoachTimetableBookingConflictTests(SimpleTestCase):
                             "ownerEmail": "coach@example.com",
                             "learnerId": 7,
                             "sessionType": session_type,
-                            "scheduledDate": "2026-08-19",
+                            "scheduledDate": FUTURE_BOOKING_DATE,
                             "scheduledTime": "10:00",
                             "durationMinutes": 60,
                             "timezoneOffsetMinutes": -180,
@@ -436,7 +442,7 @@ class CoachTimetableBookingConflictTests(SimpleTestCase):
                 {
                     "ownerEmail": "coach@example.com",
                     "eventKey": "coach-catchup-template:coach@example.com:7",
-                    "scheduledDate": "2026-08-19",
+                    "scheduledDate": FUTURE_BOOKING_DATE,
                     "scheduledTime": "10:00",
                     "durationMinutes": 45,
                     "timezoneOffsetMinutes": -180,

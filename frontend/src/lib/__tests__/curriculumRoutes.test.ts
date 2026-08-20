@@ -7,6 +7,12 @@ import { describe, expect, it } from 'vitest';
 const CURRICULUM_ROUTE_IMPORTS: Record<string, () => Promise<unknown>> = {
   '/curriculum/programmes': () => import('@/pages/curriculum/programmes/page'),
   '/curriculum/programmes/:id': () => import('@/pages/curriculum/programme-detail/page'),
+  '/curriculum/cohorts': () => import('@/pages/curriculum/cohorts/page'),
+  '/curriculum/cohorts/:id': () => import('@/pages/curriculum/cohort-workspace/page'),
+  '/curriculum/groups': () => import('@/pages/curriculum/groups/page'),
+  '/curriculum/groups/:id': () => import('@/pages/curriculum/group-workspace/page'),
+  '/curriculum/modules/:id': () => import('@/pages/curriculum/module-workspace/page'),
+  '/curriculum/holidays': () => import('@/pages/curriculum/holidays/page'),
   '/curriculum/module-builder': () => import('@/pages/curriculum/module-builder/page'),
   '/curriculum/week-builder': () => import('@/pages/curriculum/week-builder/page'),
   '/curriculum/ksb-mapping': () => import('@/pages/curriculum/ksb-mapping/page'),

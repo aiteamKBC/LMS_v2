@@ -131,15 +131,6 @@ export interface KsbOption {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/curriculum_api';
 
-export const MODULE_BUILDER_WIZARD_DRAFT_PREFIX = 'lms.module-builder.wizard-draft.';
-
-export function wizardDraftLocalIdFromKey(storageKey: string) {
-  const key = String(storageKey || '').trim();
-  return key.startsWith(MODULE_BUILDER_WIZARD_DRAFT_PREFIX)
-    ? key.slice(MODULE_BUILDER_WIZARD_DRAFT_PREFIX.length)
-    : key;
-}
-
 export const emptyCompletionCriteria = (): CompletionCriteria => ({
   quizzesCompletedRequired: false,
   checkpointsCompletedRequired: false,
