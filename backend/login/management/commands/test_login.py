@@ -32,6 +32,8 @@ FAST_LABELS = [
     "login.tests_unit.MailFallbackTests",
     "login.tests_unit.MessageTemplateTests",
     "login.tests_unit.LinkBuildingTests",
+    "login.tests_unit.MicrosoftSsoConfigTests",
+    "login.tests_unit.MicrosoftSsoStartTests",
 ]
 
 

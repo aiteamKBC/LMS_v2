@@ -61,32 +61,16 @@ interface SectionDef {
 
 const opts = (values: string[]) => values.map((v) => ({ value: v, label: v }));
 
-const YES_NO = [
-  { value: 'true', label: 'Yes' },
-  { value: 'false', label: 'No' },
-];
-
 const GENDER_OPTIONS = opts(['Male', 'Female', 'Prefer not to say']);
 // The full country list, shared with the employer and organisation forms. Still
 // UK-first — see src/lib/countries.ts.
 const COUNTRY_OPTIONS = opts(ALL_COUNTRIES);
 const PROVIDER_OPTIONS = opts(['Kent Business College']);
 
-// The form, section by section, in Aptem's order.
+// The form, section by section, in Aptem's order. There is no Invitation
+// section: enrolling a learner always invites them, so the question was a way
+// of creating somebody who could never sign in.
 const SECTIONS: SectionDef[] = [
-  {
-    title: 'Invitation',
-    icon: 'ri-mail-send-line',
-    fields: [
-      {
-        name: 'inviteToPlatform',
-        label: 'Would you like to invite this user into the platform?',
-        type: 'radio',
-        options: YES_NO,
-        hint: 'Choosing “Yes” flags the record so an invitation email can be sent after enrolment.',
-      },
-    ],
-  },
   {
     title: 'Identity',
     icon: 'ri-user-line',
@@ -161,10 +145,8 @@ const SECTIONS: SectionDef[] = [
   },
 ];
 
-// Defaults chosen to match Aptem's own initial state: invite off.
 // Type/Status aren't asked for here — they're stamped on submit.
 const INITIAL: Record<string, string> = {
-  inviteToPlatform: 'false',
   learningProvider: 'Kent Business College',
   country: DEFAULT_COUNTRY,
 };
@@ -217,7 +199,6 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
       }
       return next;
     });
-  const isOn = (name: string) => formData[name] === 'true';
 
   useEffect(() => {
     let cancelled = false;
@@ -349,7 +330,6 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
       mentor: formData.mentor,
       referenceNumber: formData.referenceNumber,
       extendedBreak: formData.extendedBreak,
-      inviteToPlatform: isOn('inviteToPlatform'),
     };
 
     setSubmitting(true);
@@ -360,26 +340,34 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
       const row = await createEnrolmentUser({ ...shared, learnerType: kind });
       const label = kind === 'commercial' ? 'Commercial learner' : 'Apprenticeship learner';
 
-      // The learner is saved whether or not the invitation email went out, so
-      // the two outcomes are reported separately — a silent mail failure would
-      // leave someone waiting for a link that never arrives.
+      // Every learner is invited now, so the invitation's fate is always worth
+      // reporting — and the three ways it can fail are not the same thing. "No
+      // account" leaves somebody who cannot sign in at all; a mail failure
+      // leaves a link that still exists and can be re-sent.
       const invite = row.invitation;
-      if (isOn('inviteToPlatform') && invite?.forbidden) {
-        success(`${label} created`, `${row.name || name} was saved to Enrolment_Users.`);
+      const saved = `${row.name || name} was saved to Enrolment_Users.`;
+      if (!invite) {
+        success(`${label} created`, saved);
+      } else if (invite.forbidden) {
+        success(`${label} created`, saved);
         error(
           'Not permitted to invite',
           invite.error || 'You do not have permission to invite this person.',
         );
-      } else if (isOn('inviteToPlatform') && invite && !invite.emailSent) {
-        success(`${label} created`, `${row.name || name} was saved to Enrolment_Users.`);
+      } else if (!invite.invited) {
+        success(`${label} created`, saved);
         error(
-          'Invitation not sent',
-          invite.error || 'The learner was created but the invitation email could not be sent.',
+          'No account created',
+          invite.error || 'The learner has no sign-in account yet, so they cannot log in.',
         );
-      } else if (isOn('inviteToPlatform')) {
-        success(`${label} created and invited`, `${row.name || name} was emailed a link to set their password.`);
+      } else if (!invite.emailSent) {
+        success(`${label} created`, saved);
+        error(
+          'Invitation email not sent',
+          invite.error || 'The invitation exists and can be re-sent, but the email did not go out.',
+        );
       } else {
-        success(`${label} created`, `${row.name || name} was saved to Enrolment_Users.`);
+        success(`${label} created and invited`, `${row.name || name} was emailed a link to set their password.`);
       }
       onCreated(row);
       onClose();
@@ -623,6 +611,25 @@ export function CreateUserModal({ onClose, onCreated }: { onClose: () => void; o
                 </span>
               </label>
             ))}
+          </div>
+        </section>
+
+        {/* Invitation — always sent on save. Stated rather than asked: a learner
+            with no account is a record nobody can sign in as. */}
+        <section className="rounded-xl border border-foreground-200/70 overflow-hidden">
+          <header className="flex items-center gap-2 px-4 py-2.5 bg-background-100/70 border-b border-foreground-200/60">
+            <AppIcon className="ri-mail-send-line text-primary-500" />
+            <h3 className="text-[12px] font-semibold uppercase tracking-wider text-foreground-600">
+              Invitation
+            </h3>
+          </header>
+          <div className="p-4">
+            <p className="text-[13px] font-medium text-foreground-800">
+              They will be emailed an invitation when you save.
+            </p>
+            <p className="text-[12px] text-foreground-500 mt-0.5">
+              A single-use link to set their own password. They cannot sign in until they do.
+            </p>
           </div>
         </section>
 

@@ -42,17 +42,6 @@ from login.permissions import staff_only
 from .models import Employer, Organisation, StaffUser
 from .views import _error, _parse_body, _send_platform_invitation
 
-#: Values the invite flag may arrive as. The form sends a real boolean, but the
-#: radio-based learner form sends the strings "true"/"false", so both are handled
-#: here to keep the three creation paths consistent.
-_TRUTHY = {True, "true", "True", "yes", "on", "1", 1}
-
-
-def _wants_invite(payload):
-    if not isinstance(payload, dict):
-        return False
-    return payload.get("inviteToPlatform") in _TRUTHY
-
 # The picker in the reference UI pages ten rows at a time.
 PAGE_SIZE = 10
 
@@ -226,15 +215,14 @@ def employers(request):
             return _error(f"Database error: {exc}", 502)
 
         row = to_employer_row(emp)
-        # Read straight off the payload rather than from `fields`: unlike the
-        # learner and staff tables, enrolment."Employers" has no
+        # Unconditional, as on the learner and staff forms. Nothing is stamped on
+        # the row to say so: unlike those two tables, enrolment."Employers" has no
         # "Invite_to_platform" column, and adding one would store a transient
         # action as though it were a property of the person. Whether they were
         # invited is answered by login."Invitations".
-        if _wants_invite(payload):
-            row["invitation"] = _send_platform_invitation(
-                request, "employer", emp.id, subject=emp
-            )
+        row["invitation"] = _send_platform_invitation(
+            request, "employer", emp.id, subject=emp
+        )
         return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
