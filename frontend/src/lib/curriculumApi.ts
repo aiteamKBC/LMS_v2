@@ -1832,6 +1832,29 @@ export function deleteCurriculumProgramme(id: string, options: { permanent?: boo
 export const archiveCurriculumProgramme = (id: string) => deleteCurriculumProgramme(id);
 export const permanentlyDeleteCurriculumProgramme = (id: string) => deleteCurriculumProgramme(id, { permanent: true });
 
+export type CurriculumProgrammeRestoreResult = {
+  restored: boolean;
+  id: string;
+  programme?: CurriculumProgramme | null;
+  details?: {
+    programmeRestored?: boolean;
+    cohorts?: number;
+    groups?: number;
+    modules?: number;
+    weeks?: number;
+    components?: number;
+    ksbMappings?: number;
+  };
+  message?: string;
+};
+
+export function restoreCurriculumProgramme(id: string) {
+  return postJson<CurriculumProgrammeRestoreResult>(
+    `/curriculum/programmes/${encodeURIComponent(id)}/restore/`,
+    {},
+  );
+}
+
 export function createCurriculumCohort(input: CurriculumCohortInput) {
   return postJson<{ created: boolean; cohort: CurriculumCohort }>('/curriculum/cohorts/', input);
 }
@@ -2017,7 +2040,7 @@ export function updateCurriculumCoach(id: string | number, input: CurriculumStaf
 }
 
 export function deleteCurriculumCoach(id: string | number) {
-  return deleteJson<{ archived: boolean; id: string | number }>(`/curriculum/coaches/${encodeURIComponent(String(id))}/`);
+  return deleteJson<{ deleted: boolean; id: string | number; count: number; ids: string[] }>(`/curriculum/coaches/${encodeURIComponent(String(id))}/`);
 }
 
 export function createCurriculumTutor(input: CurriculumStaffProfileInput) {
@@ -2029,7 +2052,7 @@ export function updateCurriculumTutor(id: string | number, input: CurriculumStaf
 }
 
 export function deleteCurriculumTutor(id: string | number) {
-  return deleteJson<{ archived: boolean; id: string | number }>(`/curriculum/tutors/${encodeURIComponent(String(id))}/`);
+  return deleteJson<{ deleted: boolean; id: string | number; count: number; ids: string[] }>(`/curriculum/tutors/${encodeURIComponent(String(id))}/`);
 }
 
 export function createCurriculumHoliday(input: CurriculumHolidayInput) {

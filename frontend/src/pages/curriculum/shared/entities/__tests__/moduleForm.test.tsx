@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -138,6 +138,17 @@ describe('ModuleFormDrawer', () => {
     });
     // The caller gets the canonical id so it can open the module straight away.
     expect(onSaved).toHaveBeenCalledWith({ catalogueId: 'MOD-NEW', name: 'Data Modelling', created: true });
+  });
+
+  it('shows the end date the backend calculated, read-only', async () => {
+    // The end date is the last session of the generated plan, so the drawer
+    // displays it instead of taking it: a typed date could only disagree with
+    // the plan the save stores.
+    renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
+
+    const endDate = screen.getByRole('combobox', { name: 'End date' });
+    expect(endDate).toBeDisabled();
+    await waitFor(() => expect(endDate).toHaveValue('07/10/2026'));
   });
 
   it('creates a catalogue draft when no group has been chosen', async () => {

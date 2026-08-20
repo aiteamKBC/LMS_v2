@@ -6026,6 +6026,7 @@ function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem): ModuleFormT
     sessionsNumber: module.sessionsNumber,
     weeks: module.weeks,
     startDate: module.startDate,
+    endDate: module.endDate,
     tutor: module.tutor,
     status: module.status,
     notes: module.description,

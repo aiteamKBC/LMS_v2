@@ -383,7 +383,7 @@ export default function StaffProfilesPage() {
     }
     await showCurriculumConfirm({
       title: `Delete ${roleLabel(role).toLowerCase()} profile?`,
-      text: `This archives ${profile.name} and removes their current ${role === 'coach' ? 'group' : 'module'} assignments.`,
+      text: `This permanently deletes ${profile.name} and removes their current ${role === 'coach' ? 'group' : 'module'} assignments. It cannot be undone.`,
       icon: 'warning',
       confirmButtonText: 'Delete profile',
       onConfirm: async () => {
@@ -393,7 +393,7 @@ export default function StaffProfilesPage() {
         await load();
       },
       successTitle: 'Profile deleted',
-      successText: 'The profile was archived and assignments were cleared.',
+      successText: 'The profile was deleted from the database and assignments were cleared.',
     });
   };
 

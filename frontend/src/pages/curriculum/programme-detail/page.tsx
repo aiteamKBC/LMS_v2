@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -1782,7 +1782,7 @@ export default function ProgrammeDetailPage() {
       ksbHeatmap: scopedRows || filterHeatmapRowsByProgrammeSource(liveProgramme.ksbHeatmap, effectiveSource),
     };
   }, [backendCoverage, data, liveProgramme, programmeKsbSets, skillsStandards]);
-  const [tab, setTab] = useState<'overview' | 'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'review'>('overview');
+  const [tab, setTab] = useState<'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'review'>('cohorts');
   const [selectedCohort, setSelectedCohort] = useState<string>(PROGRAMME.cohorts[0]?.id || '');
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [selectedModule, setSelectedModule] = useState<string>(PROGRAMME.modules[0]?.id || '');
@@ -1792,7 +1792,6 @@ export default function ProgrammeDetailPage() {
   const [cohortStatusFilter, setCohortStatusFilter] = useState<string>('all');
   const [groupSearch, setGroupSearch] = useState<string>('');
   const [groupCohortFilter, setGroupCohortFilter] = useState<string>('all');
-  const [groupStatusFilter, setGroupStatusFilter] = useState<string>('all');
   const [moduleSearch, setModuleSearch] = useState<string>('');
   const [moduleCohortFilter, setModuleCohortFilter] = useState<string>('all');
   const [moduleGroupFilter, setModuleGroupFilter] = useState<string>('all');
@@ -2054,12 +2053,11 @@ export default function ProgrammeDetailPage() {
   const filteredGroups = useMemo(() => {
     const query = normalise(groupSearch);
     return allGroups.filter(({ cohort: cohortItem, group }) => {
-      const matchesSearch = !query || [group.name, cohortItem.name, group.coach, group.tutor, group.schedule, group.mode, group.status].some(value => normalise(value).includes(query));
+      const matchesSearch = !query || [group.name, cohortItem.name, group.coach, group.schedule, group.mode].some(value => normalise(value).includes(query));
       const matchesCohort = groupCohortFilter === 'all' || cohortItem.id === groupCohortFilter;
-      const matchesStatus = groupStatusFilter === 'all' || group.status === groupStatusFilter;
-      return matchesSearch && matchesCohort && matchesStatus;
+      return matchesSearch && matchesCohort;
     });
-  }, [allGroups, groupSearch, groupCohortFilter, groupStatusFilter]);
+  }, [allGroups, groupSearch, groupCohortFilter]);
   const moduleCohorts = useMemo(() => [...new Set(PROGRAMME.modules.map(m => clean(m.cohort)).filter(Boolean))].sort(), [PROGRAMME.modules]);
   const moduleGroups = useMemo(() => [...new Set(PROGRAMME.modules.map(m => clean(m.group)).filter(Boolean))].sort(), [PROGRAMME.modules]);
   const filteredModules = useMemo(() => {
@@ -2144,7 +2142,7 @@ export default function ProgrammeDetailPage() {
   // Surfaced in the Groups toolbar so an unstaffed group is visible without
   // expanding every cohort.
   const unstaffedGroupCount = PROGRAMME.cohorts.reduce(
-    (total, cohortItem) => total + cohortItem.groups.filter(g => !isStaffAssigned(g.tutor) || !isStaffAssigned(g.coach)).length,
+    (total, cohortItem) => total + cohortItem.groups.filter(g => !isStaffAssigned(g.coach)).length,
     0,
   );
   const totalWeeks = PROGRAMME.modules.reduce((a, m) => a + m.weeksData.length, 0);
@@ -2157,7 +2155,6 @@ export default function ProgrammeDetailPage() {
     : 0;
   const missingKsbCount = PROGRAMME.ksbHeatmap.length - mappedKsbCount;
   const totalKsbOccurrences = PROGRAMME.ksbHeatmap.reduce((total, row) => total + Number(row.totalOccurrences || 0), 0);
-  const programmeHealth = Math.round((ksbCoverage + contentReadiness) / 2);
   const openKsbTrace = (initialTab: 'map' | 'coverage' | 'trace') => {
     setKsbTraceInitialTab(initialTab);
     setKsbTraceOpen(true);
@@ -2300,7 +2297,6 @@ export default function ProgrammeDetailPage() {
   };
 
   const tabs = [
-    { key: 'overview' as const, label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'cohorts' as const, label: 'Cohorts', icon: 'ri-group-line' },
     { key: 'groups' as const, label: 'Groups', icon: 'ri-team-line' },
     { key: 'modules' as const, label: 'Modules', icon: 'ri-stack-line' },
@@ -2314,31 +2310,6 @@ export default function ProgrammeDetailPage() {
     return (
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme loading" pageSubtitle="Preparing live curriculum data from the database" userName="Rachel Myers" userRole="Curriculum Designer">
         <div className="p-6 space-y-6">
-          <div className="bg-background-50 rounded-2xl border border-primary-200/70 p-5 sm:p-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="flex items-start gap-4">
-                <span className="w-11 h-11 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
-                  <AppIcon className="ri-database-2-line text-lg"></AppIcon>
-                </span>
-                <div>
-                  <p className="text-[11px] font-semibold text-primary-600 uppercase tracking-wider mb-1">Live database sync</p>
-                  <h1 className="text-xl font-heading font-bold text-foreground-900">Loading programme structure</h1>
-                  <p className="text-[13px] text-foreground-500 mt-1">Cohorts, groups, modules, weeks and sessions are being prepared.</p>
-                </div>
-              </div>
-              <button disabled className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold cursor-wait whitespace-nowrap flex items-center gap-2">
-                <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>
-                Process in progress
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-5 pt-4 border-t border-foreground-200/60">
-              {['Cohorts', 'Groups', 'Learners', 'Modules', 'Total OTJH'].map(label => (
-                <LoadingStatPill key={label} label={label} />
-              ))}
-            </div>
-          </div>
-
           <div className="flex items-center gap-2 rounded-xl bg-background-100 p-2 overflow-hidden">
             {['Cohorts', 'Groups', 'Modules', 'Weeks', 'Sessions'].map(label => (
               <div key={label} className="h-8 w-24 rounded-lg bg-background-50 border border-foreground-200/50 animate-pulse" />
@@ -2387,55 +2358,6 @@ export default function ProgrammeDetailPage() {
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="min-h-screen space-y-5 bg-[linear-gradient(180deg,#fbfcff_0%,#f7f8fb_46%,#f3f5f8_100%)] p-5 sm:p-6">
-        <section className="relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-          {/* Signature: an accent bar tinted with this programme's own colour identity */}
-          <div className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: PROGRAMME.color || 'oklch(var(--primary-500))' }} aria-hidden="true" />
-          <div className="p-5 pl-6 sm:p-6 sm:pl-7">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">
-                    <AppIcon className="ri-database-2-line text-xs"></AppIcon>
-                    Live programme
-                  </span>
-                  <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.level || 'Level not set'}</span>
-                </div>
-                <h1 className="text-2xl font-heading font-black leading-tight tracking-tight text-foreground-950">{PROGRAMME.name}</h1>
-                <p className="mt-1 max-w-4xl text-[13px] leading-6 text-foreground-500">{PROGRAMME.description}</p>
-              </div>
-
-              <div className="flex flex-col items-start gap-4 xl:items-end">
-                <div className="flex items-center gap-3">
-                  <HealthRing value={programmeHealth} color={PROGRAMME.color} />
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Programme health</p>
-                    <p className="text-[12px] text-foreground-500">KSB {ksbCoverage}% · Content {contentReadiness}%</p>
-                  </div>
-                </div>
-                {/* The structure is this page: its Cohorts, Groups and Modules
-                    tabs each add their own records through the shared drawers.
-                    This button is only the programme's own details. */}
-                <div className="flex flex-wrap gap-2 xl:justify-end">
-                  <button onClick={openProgrammeForm} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-                    <AppIcon className="ri-edit-line text-sm"></AppIcon>
-                    Edit programme
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Live KPI rail — every value computed from the fetched programme data */}
-            <div className="mt-5 grid grid-cols-2 gap-3 border-t border-foreground-200/60 pt-4 sm:grid-cols-3 xl:grid-cols-6">
-              <StatPill icon="ri-group-line" value={liveCohortCount} label="Cohorts" />
-              <StatPill icon="ri-team-line" value={totalGroups} label="Groups" />
-              <StatPill icon="ri-graduation-cap-line" value={totalLearners} label="Learners" />
-              <StatPill icon="ri-stack-line" value={PROGRAMME.modules.length} label="Modules" />
-              <StatPill icon="ri-time-line" value={`${totalOtjh}h`} label="Total OTJH" />
-              <StatPill icon="ri-broadcast-line" value={totalSessions} label="Sessions" />
-            </div>
-          </div>
-        </section>
-
         {/* Programme Navigation */}
         <div className="sticky top-0 z-20 flex items-center gap-2 rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
           <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
@@ -2465,81 +2387,6 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════════
             TAB: Cohorts
         ═══════════════════════════════════════════════════════════════════════ */}
-        {/* ═══════════════════════════════════════════════════════════════════════
-            TAB: Overview
-
-            The programme's own summary, plus the way through to the global
-            entity pages scoped to this programme. Both views read the same
-            records — the links carry the programme as a filter rather than
-            opening a second source of truth.
-        ═══════════════════════════════════════════════════════════════════════ */}
-        {tab === 'overview' && (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,360px)]">
-            <section className="rounded-2xl border border-foreground-200/60 bg-background-50">
-              <div className="border-b border-background-200 px-5 py-4">
-                <h3 className="text-[13px] font-heading font-bold text-foreground-950">Programme summary</h3>
-                <p className="mt-0.5 text-[12px] text-foreground-500">What is planned beneath {PROGRAMME.name}.</p>
-              </div>
-              <div className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-3">
-                <OverviewTile label="Cohorts" value={liveCohortCount} icon="ri-group-line" />
-                <OverviewTile label="Groups" value={totalGroups} icon="ri-team-line" />
-                <OverviewTile label="Modules" value={PROGRAMME.modules.length} icon="ri-stack-line" />
-                <OverviewTile label="Learners" value={totalLearners} icon="ri-graduation-cap-line" />
-                <OverviewTile label="Sessions" value={totalSessions} icon="ri-broadcast-line" />
-                <OverviewTile label="Total OTJH" value={`${totalOtjh}h`} icon="ri-time-line" />
-              </div>
-              <div className="border-t border-background-200 px-5 py-4">
-                <dl className="grid gap-3 sm:grid-cols-2">
-                  <OverviewFact label="Standard" value={PROGRAMME.standard || '—'} />
-                  <OverviewFact label="Level" value={PROGRAMME.level || '—'} />
-                  <OverviewFact label="Owner" value={PROGRAMME.owner || '—'} />
-                  <OverviewFact label="Duration" value={PROGRAMME.duration || '—'} />
-                  <OverviewFact label="KSB coverage" value={`${ksbCoverage}%`} />
-                  <OverviewFact label="Content readiness" value={`${contentReadiness}%`} />
-                </dl>
-                {PROGRAMME.description && (
-                  <p className="mt-4 text-[13px] leading-6 text-foreground-600">{PROGRAMME.description}</p>
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-foreground-200/60 bg-background-50">
-              <div className="border-b border-background-200 px-5 py-4">
-                <h3 className="text-[13px] font-heading font-bold text-foreground-950">Manage</h3>
-                <p className="mt-0.5 text-[12px] text-foreground-500">
-                  Open the entity pages already filtered to this programme.
-                </p>
-              </div>
-              <div className="space-y-2 p-5">
-                <OverviewLink
-                  to={`/curriculum/cohorts?programme=${encodeURIComponent(PROGRAMME.sourceId || PROGRAMME.id)}`}
-                  icon="ri-calendar-event-line"
-                  label="Cohorts"
-                  detail={`${liveCohortCount} in this programme`}
-                />
-                <OverviewLink
-                  to={`/curriculum/groups?programme=${encodeURIComponent(PROGRAMME.sourceId || PROGRAMME.id)}`}
-                  icon="ri-team-line"
-                  label="Groups"
-                  detail={`${totalGroups} in this programme`}
-                />
-                <OverviewLink
-                  to={`/curriculum/module-builder?programme=${encodeURIComponent(PROGRAMME.sourceId || PROGRAMME.id)}`}
-                  icon="ri-book-open-line"
-                  label="Modules"
-                  detail={`${PROGRAMME.modules.length} in this programme`}
-                />
-                <OverviewLink
-                  to="/curriculum/holidays"
-                  icon="ri-calendar-close-line"
-                  label="Holidays"
-                  detail="Shared non-delivery calendar"
-                />
-              </div>
-            </section>
-          </div>
-        )}
-
         {tab === 'cohorts' && (
           <div className="space-y-4">
             <TabToolbar
@@ -2761,7 +2608,7 @@ export default function ProgrammeDetailPage() {
             <TabToolbar
               search={groupSearch}
               onSearch={setGroupSearch}
-              placeholder="Search groups, coach, tutor, schedule..."
+              placeholder="Search groups, coach, schedule..."
               selects={[
                 {
                   label: 'Filter by cohort',
@@ -2772,20 +2619,9 @@ export default function ProgrammeDetailPage() {
                     ...PROGRAMME.cohorts.map(cohortItem => ({ value: cohortItem.id, label: cohortItem.name })),
                   ],
                 },
-                {
-                  label: 'Filter by status',
-                  value: groupStatusFilter,
-                  onChange: setGroupStatusFilter,
-                  options: [
-                    { value: 'all', label: 'All statuses' },
-                    { value: 'planned', label: 'Planned' },
-                    { value: 'active', label: 'Active' },
-                    { value: 'completed', label: 'Completed' },
-                  ],
-                },
               ]}
-              onReset={() => { setGroupSearch(''); setGroupCohortFilter('all'); setGroupStatusFilter('all'); }}
-              resetDisabled={!groupSearch && groupCohortFilter === 'all' && groupStatusFilter === 'all'}
+              onReset={() => { setGroupSearch(''); setGroupCohortFilter('all'); }}
+              resetDisabled={!groupSearch && groupCohortFilter === 'all'}
               actions={(
                 <TabAddButton
                   label="Add group"
@@ -2795,7 +2631,7 @@ export default function ProgrammeDetailPage() {
                   onClick={() => setGroupDrawerCohortId(groupCohortFilter === 'all' ? '' : groupCohortFilter)}
                 />
               )}
-              summary={`Showing ${filteredGroups.length} of ${totalGroups} groups${unstaffedGroupCount > 0 ? ` · ${unstaffedGroupCount} still need a tutor or coach` : ''}`}
+              summary={`Showing ${filteredGroups.length} of ${totalGroups} groups${unstaffedGroupCount > 0 ? ` · ${unstaffedGroupCount} still need a coach` : ''}`}
             />
 
             {loading && totalGroups === 0 && <TabLoadingRows />}
@@ -2804,7 +2640,7 @@ export default function ProgrammeDetailPage() {
               <TabEmptyState
                 icon="ri-team-line"
                 title="No groups yet"
-                message="A group is the timetabled class that learners attend: it carries the weekly schedule and the tutor and coach who deliver it."
+                message="A group is the timetabled class that learners attend: it carries the weekly schedule and the coach who supports it. Tutors are assigned per module."
                 actionLabel="Add group"
                 onAction={() => setGroupDrawerCohortId('')}
               />
@@ -2833,7 +2669,7 @@ export default function ProgrammeDetailPage() {
                   </div>
 
                   {visibleGroups.map(g => {
-                    const needsStaff = !isStaffAssigned(g.tutor) || !isStaffAssigned(g.coach);
+                    const needsStaff = !isStaffAssigned(g.coach);
                     return (
                       <div key={g.id} className={`rounded-2xl border bg-background-50 p-4 shadow-sm ${needsStaff ? 'border-amber-200' : 'border-foreground-200/70'}`}>
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
@@ -2844,7 +2680,6 @@ export default function ProgrammeDetailPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <p className="text-sm font-bold text-foreground-900">{g.name}</p>
-                              <StatusChip status={g.status} />
                               {needsStaff && (
                                 <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
                                   <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon> Needs staffing
@@ -2860,15 +2695,7 @@ export default function ProgrammeDetailPage() {
                             </div>
                           </div>
 
-                          <div className="grid w-full shrink-0 grid-cols-1 gap-2.5 border-t border-background-200/70 pt-3 sm:grid-cols-2 lg:w-[380px] lg:border-t-0 lg:pt-0">
-                            <StaffSlot
-                              role="Tutor"
-                              icon="ri-user-settings-line"
-                              name={g.tutor}
-                              options={data?.tutors || []}
-                              saving={savingAction === `tutor:${g.id}`}
-                              onAssign={value => assignGroupStaff(g.id, 'tutor', value)}
-                            />
+                          <div className="w-full shrink-0 border-t border-background-200/70 pt-3 lg:w-[190px] lg:border-t-0 lg:pt-0">
                             <StaffSlot
                               role="Coach"
                               icon="ri-heart-line"
@@ -4085,59 +3912,6 @@ function KsbInspectorModal({
   );
 }
 
-function OverviewTile({ label, value, icon }: { label: string; value: string | number; icon: string }) {
-  return (
-    <div className="rounded-xl border border-background-200 bg-background-100/60 p-3">
-      <div className="flex items-center gap-1.5 text-foreground-400">
-        <AppIcon className={`${icon} text-sm`}></AppIcon>
-        <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
-      </div>
-      <p className="mt-1 text-xl font-heading font-bold text-foreground-950">{value}</p>
-    </div>
-  );
-}
-
-function OverviewFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{label}</dt>
-      <dd className="mt-0.5 text-[13px] font-semibold text-foreground-900">{value}</dd>
-    </div>
-  );
-}
-
-function OverviewLink({ to, icon, label, detail }: { to: string; icon: string; label: string; detail: string }) {
-  return (
-    <Link
-      to={to}
-      className="flex items-center gap-3 rounded-xl border border-background-200 px-3 py-2.5 transition-smooth hover:border-primary-200 hover:bg-primary-50/50"
-    >
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500">
-        <AppIcon className={`${icon} text-sm`}></AppIcon>
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-[13px] font-bold text-foreground-900">{label}</span>
-        <span className="block text-[11px] text-foreground-400">{detail}</span>
-      </span>
-      <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
-    </Link>
-  );
-}
-
-function StatPill({ icon, value, label }: { icon: string; value: number | string; label: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
-      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
-        <AppIcon className={`${icon} text-sm`}></AppIcon>
-      </span>
-      <div>
-        <p className="text-base font-black leading-tight text-foreground-950">{value}</p>
-        <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
-      </div>
-    </div>
-  );
-}
-
 function formatHours(value: number | string) {
   const parsed = Number(value || 0);
   if (!Number.isFinite(parsed)) return '0';
@@ -4456,19 +4230,6 @@ function ModuleDetailLine({ icon, label, value, warnWhenUnassigned = false }: { 
   );
 }
 
-function HealthRing({ value, color }: { value: number; color?: string }) {
-  const safe = Math.max(0, Math.min(100, Math.round(value || 0)));
-  const ring = color || 'oklch(var(--primary-500))';
-  return (
-    <div className="relative h-14 w-14 shrink-0" role="img" aria-label={`Programme health ${safe} percent`}>
-      <div className="h-14 w-14 rounded-full" style={{ background: `conic-gradient(${ring} ${safe * 3.6}deg, oklch(var(--background-200)) ${safe * 3.6}deg)` }} />
-      <div className="absolute inset-[4px] flex items-center justify-center rounded-full bg-background-50">
-        <span className="text-[13px] font-black text-foreground-900">{safe}%</span>
-      </div>
-    </div>
-  );
-}
-
 function ProgressRow({ label, value }: { label: string; value: number }) {
   return (
     <div>
@@ -4488,18 +4249,6 @@ function MiniDarkMetric({ label, value }: { label: string; value: number | strin
     <div>
       <p className="text-[15px] font-black leading-tight text-foreground-950">{value}</p>
       <p className="mt-0.5 text-[9px] font-bold uppercase leading-tight text-foreground-400">{label}</p>
-    </div>
-  );
-}
-
-function LoadingStatPill({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 bg-background-100 rounded-lg p-3">
-      <span className="w-4 h-4 rounded bg-background-200 animate-pulse" />
-      <div className="min-w-0 flex-1">
-        <div className="h-4 w-10 rounded bg-background-200 animate-pulse mb-1" />
-        <p className="text-[9px] text-foreground-400 uppercase">{label}</p>
-      </div>
     </div>
   );
 }

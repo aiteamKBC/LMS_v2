@@ -693,7 +693,6 @@ export function GroupFormDrawer({
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('11:00');
   const [color, setColor] = useState('#2563eb');
-  const [status, setStatus] = useState('planned');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // What the drawer opened with, for the unsaved-changes check below.
@@ -714,7 +713,6 @@ export function GroupFormDrawer({
         startTime: cleanText(group.startTime) || '09:00',
         endTime: cleanText(group.endTime) || '11:00',
         color: group.color || '#2563eb',
-        status: cleanText(group.status) || 'planned',
       };
       baseline.current = initial;
       setName(initial.name);
@@ -725,7 +723,6 @@ export function GroupFormDrawer({
       setStartTime(initial.startTime);
       setEndTime(initial.endTime);
       setColor(initial.color);
-      setStatus(initial.status);
       return;
     }
     const parent = cohorts.find(cohort => normaliseKey(cohort.id) === normaliseKey(defaults?.cohortId));
@@ -738,7 +735,6 @@ export function GroupFormDrawer({
       startTime: '09:00',
       endTime: '11:00',
       color: '#2563eb',
-      status: 'planned',
     };
     baseline.current = initial;
     setName(initial.name);
@@ -749,11 +745,10 @@ export function GroupFormDrawer({
     setStartTime(initial.startTime);
     setEndTime(initial.endTime);
     setColor(initial.color);
-    setStatus(initial.status);
   }, [cohorts, defaults?.cohortId, defaults?.programmeId, group, open]);
 
   const dirty = !sameFormValues(
-    { name, programmeId, cohortId, coach, weekDays, startTime, endTime, color, status },
+    { name, programmeId, cohortId, coach, weekDays, startTime, endTime, color },
     baseline.current,
   );
 
@@ -776,7 +771,10 @@ export function GroupFormDrawer({
       // Only cohortId is sent as a parent. The backend reads the programme off
       // the cohort, which is what keeps Programme -> Cohort -> Group intact.
       const payload = { name: name.trim(), cohortId, coach, weekDays, startTime, endTime, color };
-      if (group) await updateCurriculumGroup(group.id, { ...payload, status });
+      // Status is deliberately absent: a group's status is not shown anywhere, and
+      // the group PATCH only writes it when the key is present, so leaving it out
+      // keeps whatever is stored.
+      if (group) await updateCurriculumGroup(group.id, payload);
       else await createCurriculumGroup(payload);
       onClose();
       await onSaved();
@@ -846,19 +844,6 @@ export function GroupFormDrawer({
           <TextControl type="time" value={endTime} onChange={setEndTime} />
         </FormField>
       </div>
-      {group && (
-        <FormField label="Status">
-          <SelectControl
-            value={status}
-            onChange={setStatus}
-            options={[
-              { value: 'planned', label: 'Planned' },
-              { value: 'active', label: 'Active' },
-              { value: 'completed', label: 'Completed' },
-            ]}
-          />
-        </FormField>
-      )}
       <FormField label="Colour">
         <ColorControl value={color} onChange={setColor} />
       </FormField>

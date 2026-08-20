@@ -1620,7 +1620,8 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
             ['coach.same.one@example.com', 'coach.same.two@example.com'],
         )
 
-    def test_create_coach_profile_restores_archived_duplicate_in_place(self):
+    def test_create_coach_profile_after_delete_starts_a_fresh_row(self):
+        """A deleted coach is gone, so re-adding them is a create, not a restore."""
         created = self.post_json('/curriculum_api/curriculum/coaches/', {
             'name': 'Coach Restore',
             'email': 'coach.restore@example.com',
@@ -1631,23 +1632,22 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
         deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
         self.assertEqual(deleted.status_code, 200, deleted.content)
 
-        restored = self.post_json('/curriculum_api/curriculum/coaches/', {
+        recreated = self.post_json('/curriculum_api/curriculum/coaches/', {
             'name': 'Coach Restore Updated',
             'email': 'coach.restore@example.com',
             'phone': '07999999999',
         })
-        self.assertEqual(restored.status_code, 200, restored.content)
-        self.assertFalse(restored.json()['created'])
-        self.assertTrue(restored.json()['restored'])
-        self.assertEqual(restored.json()['profile']['id'], created_id)
-        self.assertEqual(restored.json()['profile']['name'], 'Coach Restore Updated')
-        self.assertEqual(restored.json()['profile']['phone'], '07999999999')
+        self.assertEqual(recreated.status_code, 201, recreated.content)
+        self.assertTrue(recreated.json()['created'])
+        self.assertNotEqual(recreated.json()['profile']['id'], created_id)
+        self.assertEqual(recreated.json()['profile']['name'], 'Coach Restore Updated')
+        self.assertEqual(recreated.json()['profile']['phone'], '07999999999')
 
         matching = views.staff_profile_rows_by_identity('coach', 'Coach Restore Updated', 'coach.restore@example.com', include_archived=True)
         self.assertEqual(len(matching), 1)
         self.assertFalse(views.staff_profile_is_archived(matching[0]))
 
-    def test_delete_coach_archives_all_duplicate_rows_for_same_email(self):
+    def test_delete_coach_removes_all_duplicate_rows_for_same_email(self):
         created = self.post_json('/curriculum_api/curriculum/coaches/', {
             'name': 'Coach Archive All',
             'email': 'coach.archive@example.com',
@@ -1664,11 +1664,37 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
 
         deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
         self.assertEqual(deleted.status_code, 200, deleted.content)
+        self.assertTrue(deleted.json()['deleted'])
         self.assertEqual(deleted.json()['count'], 2)
 
         matching = views.staff_profile_rows_by_identity('coach', 'Coach Archive All', 'coach.archive@example.com', include_archived=True)
-        self.assertEqual(len(matching), 2)
-        self.assertTrue(all(views.staff_profile_is_archived(row) for row in matching))
+        self.assertEqual(matching, [])
+
+    def test_staff_ids_are_minted_even_when_the_name_looks_like_an_id(self):
+        """Staff ids follow the PROG-/MOD- scheme: prefix plus a UTC timestamp.
+
+        The mirror used to hand the *name* to unique_prefixed_id, whose second
+        argument is a requested id — so a tutor called "tutor-1" was stored as
+        ``TUTOR-1`` while a tutor called "Osama" got a timestamp.
+        """
+        response = self.post_json(
+            '/curriculum_api/curriculum/programmes/tree/', self.tree_payload(tutor='tutor-1'),
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        tutor = views.find_staff_profile_row('tutor', 'tutor-1', include_archived=True)
+        coach = views.find_staff_profile_row('coach', 'Coach One', include_archived=True)
+        self.assertIsNotNone(tutor)
+        self.assertIsNotNone(coach)
+        self.assertRegex(tutor['id'], r'^TUTOR-\d{14,}$')
+        self.assertRegex(coach['id'], r'^COACH-\d{14,}$')
+
+        created = self.post_json('/curriculum_api/curriculum/tutors/', {
+            'name': 'coach-9',
+            'email': 'coach.nine@example.com',
+        })
+        self.assertEqual(created.status_code, 201, created.content)
+        self.assertRegex(created.json()['profile']['id'], r'^TUTOR-\d{14,}$')
 
     def test_patch_coach_profile_rejects_email_change_to_existing_email(self):
         first = self.post_json('/curriculum_api/curriculum/coaches/', {
@@ -2674,6 +2700,62 @@ class ProgrammeIntegrityRegressionTests(TestCase):
         self.assertTrue(views.truthy(rows[0].get('is_archived')))
         cohorts = views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)
         self.assertEqual(len(cohorts), 1)
+
+    def test_archived_programme_can_be_restored_with_its_children(self):
+        """Restore is the inverse of archive: the row comes back, so do its children."""
+        self._insert_programme('PROG-RESTORE', 'Programme A')
+        self._seed_cohort('PROG-RESTORE', 'COHORT-RESTORE')
+        self.client.delete('/curriculum_api/curriculum/programmes/PROG-RESTORE/')
+
+        response = self.client.post('/curriculum_api/curriculum/programmes/PROG-RESTORE/restore/')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json().get('restored'))
+        rows = self._programme_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(views.truthy(rows[0].get('is_archived')))
+        self.assertEqual(views.programme_config_status(rows[0]), 'active')
+        cohorts = views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)
+        self.assertEqual(len(cohorts), 1)
+        self.assertIsNone(cohorts[0].get('deleted_at'))
+        self.assertFalse(views.truthy(cohorts[0].get('is_programme_deleted')))
+
+    def test_restoring_a_live_programme_is_rejected(self):
+        self._insert_programme('PROG-LIVE', 'Programme A')
+
+        response = self.client.post('/curriculum_api/curriculum/programmes/PROG-LIVE/restore/')
+
+        self.assertEqual(response.status_code, 409, response.content)
+
+    def test_restore_of_unknown_programme_returns_404(self):
+        response = self.client.post('/curriculum_api/curriculum/programmes/PROG-NOPE/restore/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_restore_leaves_independently_archived_children_alone(self):
+        """A cohort archived on its own is not revived by restoring the programme.
+
+        The cascade stamps deleted_via_parent; a standalone archive does not, so
+        the two are told apart and restore only undoes its own cascade.
+        """
+        self._insert_programme('PROG-MIXED', 'Programme A')
+        self._seed_cohort('PROG-MIXED', 'COHORT-OWN')
+        # Archive the cohort by itself first - no parent marker.
+        views.authoring_soft_delete(
+            views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', ['COHORT-OWN'],
+        )
+        self.client.delete('/curriculum_api/curriculum/programmes/PROG-MIXED/')
+
+        response = self.client.post('/curriculum_api/curriculum/programmes/PROG-MIXED/restore/')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        cohorts = views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)
+        self.assertEqual(len(cohorts), 1)
+        self.assertIsNotNone(cohorts[0].get('deleted_at'))
+
+    def test_restore_rejects_non_post(self):
+        self._insert_programme('PROG-METHOD', 'Programme A')
+        response = self.client.get('/curriculum_api/curriculum/programmes/PROG-METHOD/restore/')
+        self.assertEqual(response.status_code, 405)
 
     def test_dependency_counts_report_children(self):
         self._insert_programme('PROG-DEP2', 'Programme A')

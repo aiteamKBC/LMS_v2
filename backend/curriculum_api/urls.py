@@ -17,6 +17,7 @@ urlpatterns = [
     path('curriculum/programmes/<str:programme_id>/learner-ksb-impact/', views.curriculum_programme_learner_ksb_impact, name='curriculum-programme-learner-ksb-impact'),
     path('curriculum/programmes/<str:programme_id>/learner-roster/', views.curriculum_programme_learner_roster, name='curriculum-programme-learner-roster'),
     path('curriculum/programmes/<str:programme_id>/cohorts/', views.curriculum_programme_cohort_collection, name='curriculum-programme-cohorts'),
+    path('curriculum/programmes/<str:identifier>/restore/', views.curriculum_programme_restore, name='curriculum-programme-restore'),
     path('curriculum/programmes/<str:identifier>/', views.curriculum_programme_detail, name='curriculum-programme-detail'),
     path('curriculum/standards/', views.curriculum_standards, name='curriculum-standards'),
     path('curriculum/standards/<str:identifier>/', views.curriculum_standard_detail, name='curriculum-standard-detail'),

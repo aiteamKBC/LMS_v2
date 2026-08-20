@@ -22,6 +22,7 @@ import {
   fetchCurriculumProgrammeLearnerKsbImpact,
   fetchCurriculumKsbSets,
   fetchCurriculumStandards,
+  restoreCurriculumProgramme,
   updateCurriculumCohort,
   updateCurriculumGroup,
   updateCurriculumKsbFramework,
@@ -185,6 +186,7 @@ export default function CurriculumProgrammes() {
   const [programmeDrawerTarget, setProgrammeDrawerTarget] = useState<CurriculumProgramme | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deletingProgrammeId, setDeletingProgrammeId] = useState<string | null>(null);
+  const [restoringProgrammeId, setRestoringProgrammeId] = useState<string | null>(null);
   const [reviewProgramme, setReviewProgramme] = useState<CurriculumProgramme | null>(null);
   const [applyProgramme, setApplyProgramme] = useState<CurriculumProgramme | null>(null);
   const [applyingKsbSource, setApplyingKsbSource] = useState(false);
@@ -199,7 +201,7 @@ export default function CurriculumProgrammes() {
   const [ksbSets, setKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
   const [programmeSourceOverrides, setProgrammeSourceOverrides] = useState<Map<string, string>>(new Map());
-  const { programmes, loading, error, reload, removeProgramme } = useCurriculumProgrammes({ visibility: 'all' });
+  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored } = useCurriculumProgrammes({ visibility: 'all' });
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 
@@ -324,7 +326,9 @@ export default function CurriculumProgrammes() {
         try {
           const result = await deleteCurriculumProgramme(programmeId);
           outcome = result.deleted ? 'archived' : null;
-          removeProgramme(programmeId);
+          // Flip the row to archived instead of dropping it, so it lands in the
+          // archive tab. Dropping it would hide it from both lists.
+          markProgrammeArchived(programmeId);
         } catch (err) {
           if (isProgrammeDependencyError(err)) {
             dependencyReport = err.data.dependencyReport || null;
@@ -410,6 +414,43 @@ export default function CurriculumProgrammes() {
   const deleteProgramme = (programme: CurriculumProgramme) => (
     programmeIsArchived(programme) ? permanentlyDeleteProgramme(programme) : archiveProgramme(programme)
   );
+
+  // The way back out of the archive. Everything the archive took down with the
+  // programme comes back with it, so the confirm says so before it runs.
+  const restoreProgramme = async (programme: CurriculumProgramme) => {
+    const programmeId = programme.sourceId || programme.id;
+    setActionError(null);
+    let restored = false;
+    await showCurriculumConfirm({
+      title: 'Restore programme?',
+      text: `Restore "${programme.name}" to the active list, along with the cohorts, groups and modules that were archived with it.`,
+      icon: 'question',
+      confirmButtonText: 'Restore',
+      cancelButtonText: 'Cancel',
+      onConfirm: async () => {
+        setRestoringProgrammeId(programmeId);
+        try {
+          const result = await restoreCurriculumProgramme(programmeId);
+          restored = Boolean(result.restored);
+          markProgrammeRestored(programmeId);
+        } catch (err) {
+          setActionError(err instanceof Error ? err.message : 'Unable to restore programme.');
+          throw err;
+        } finally {
+          setRestoringProgrammeId(null);
+        }
+      },
+    });
+    if (restored) {
+      await showProgrammeSwalToast(
+        'Programme restored',
+        `${programme.name} is back in the active list.`,
+      );
+      // The counts on the card come from the curriculum payload, so pull fresh
+      // numbers now that the children are no longer flagged as deleted.
+      void reload({ silent: true, skipCache: true });
+    }
+  };
 
   const openProgrammeKsbReview = async (programme: CurriculumProgramme) => {
     const programmeId = programme.sourceId || programme.id;
@@ -699,8 +740,9 @@ export default function CurriculumProgrammes() {
 
         {showArchived && (
           <div className="rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800">
-            Archived programmes are hidden from planning. Deleting one here removes it and every cohort, group,
-            module, week and component beneath it from the database - learner accounts and progress are never touched.
+            Archived programmes are hidden from planning. Restore one to put it back in the active list with everything
+            archived alongside it. Deleting one here removes it and every cohort, group, module, week and component
+            beneath it from the database - learner accounts and progress are never touched.
           </div>
         )}
 
@@ -814,11 +856,24 @@ export default function CurriculumProgrammes() {
                   <button className="programme-action-button programme-action-edit inline-flex items-center justify-center gap-1 rounded-lg border border-background-200 bg-background-50 px-1.5 py-1 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
                     <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
                   </button>
+                  {isArchivedProgramme && (
+                    <button
+                      className="programme-action-button programme-action-restore inline-flex items-center justify-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-1.5 py-1 text-[10px] font-bold text-amber-800 transition-smooth hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={restoringProgrammeId === (prog.sourceId || prog.id) || deletingProgrammeId === (prog.sourceId || prog.id)}
+                      onClick={e => { e.stopPropagation(); void restoreProgramme(prog); }}
+                      title="Restore this programme and the rows archived with it to the active list"
+                    >
+                      <AppIcon className={restoringProgrammeId === (prog.sourceId || prog.id)
+                        ? 'ri-loader-4-line animate-spin text-sm'
+                        : 'ri-inbox-unarchive-line text-sm'}></AppIcon>
+                      Restore
+                    </button>
+                  )}
                   <button
                     className={`programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border px-1.5 py-1 text-[10px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-60 ${isArchivedProgramme
                       ? 'border-red-600 bg-red-600 text-white hover:bg-red-700'
                       : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'}`}
-                    disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
+                    disabled={deletingProgrammeId === (prog.sourceId || prog.id) || restoringProgrammeId === (prog.sourceId || prog.id)}
                     onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
                     title={isArchivedProgramme
                       ? 'Delete this programme and everything beneath it permanently'

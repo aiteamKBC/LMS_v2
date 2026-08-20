@@ -75,6 +75,8 @@ export interface ModuleFormTarget {
   sessionsNumber?: number;
   weeks?: number;
   startDate?: string;
+  /** The stored end date, shown until the session-plan preview returns its own. */
+  endDate?: string;
   tutor?: string;
   status?: string;
   notes?: string;
@@ -230,7 +232,15 @@ export function ModuleFormDrawer({
     return () => { active = false; clearTimeout(timer); };
   }, [cohortHolidays, open, sessionsNumber, startDate, weekDays]);
 
-  const endDate = plan?.finalEndDate || '';
+  // The stored date is the fallback: a module whose group has no delivery day
+  // cannot be re-planned, and blanking the end date it was saved with would read
+  // as data loss.
+  const endDate = plan?.finalEndDate || cleanText(module?.endDate);
+  // Either what the date is made of, or the backend's own sentence naming what
+  // is still missing before it can be calculated.
+  const endDateHelper = endDate
+    ? `The last of ${sessionsNumber} session${Number(sessionsNumber) === 1 ? '' : 's'}${weekDays ? ` on ${weekDays}` : ''}${cohortHolidays.length ? `, skipping ${cohortHolidays.length} holiday${cohortHolidays.length === 1 ? '' : 's'}` : ''}.`
+    : plan?.warnings?.[0] || 'Set the start date, the sessions and the group delivery day to calculate it.';
 
   const changeProgramme = (value: string) => {
     setProgrammeId(value);
@@ -398,10 +408,10 @@ export function ModuleFormDrawer({
       <FormField label="Module name" required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Data Modelling" />
       </FormField>
+      <FormField label="Sessions" hint="One week is authored per session.">
+        <TextControl type="number" min={1} max={104} value={sessionsNumber} onChange={setSessionsNumber} />
+      </FormField>
       <div className="grid gap-4 sm:grid-cols-2">
-        <FormField label="Sessions" hint="One week is authored per session.">
-          <TextControl type="number" min={1} max={104} value={sessionsNumber} onChange={setSessionsNumber} />
-        </FormField>
         <DatePickerField
           label="Start date"
           value={startDate}
@@ -410,15 +420,19 @@ export function ModuleFormDrawer({
           max={selectedCohort?.practicalEndDate || selectedCohort?.endDate || undefined}
           helper={selectedCohort ? `Within ${formatDateLabel(selectedCohort.startDate)} – ${formatDateLabel(selectedCohort.practicalEndDate || selectedCohort.endDate)}` : undefined}
         />
+        {/* Read-only: the end date is the last session the backend generates, so
+            it moves with the session count, the group's delivery days and the
+            holidays the cohort skips. Typing over it could only make the drawer
+            disagree with the plan the save stores. */}
+        <DatePickerField
+          label="End date"
+          value={endDate}
+          onChange={() => {}}
+          disabled
+          placeholder="Calculated"
+          helper={endDateHelper}
+        />
       </div>
-      {endDate && (
-        <p className="rounded-lg border border-primary-200 bg-primary-50 px-3 py-2.5 text-[12px] font-semibold text-primary-700">
-          {`${sessionsNumber} session${Number(sessionsNumber) === 1 ? '' : 's'} run ${formatDateLabel(startDate)} – ${formatDateLabel(endDate)}`}
-          {weekDays ? ` on ${weekDays}` : ''}
-          {cohortHolidays.length ? `, skipping ${cohortHolidays.length} holiday${cohortHolidays.length === 1 ? '' : 's'}` : ''}
-          .
-        </p>
-      )}
       <FormField label="Tutor" hint="Checked against the tutor's existing sessions before it saves.">
         <SelectControl
           value={tutor}

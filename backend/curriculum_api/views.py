@@ -3198,6 +3198,95 @@ def soft_delete_programme_authoring_structure(identifier, programme=None, config
     return result
 
 
+# The soft-delete bookkeeping columns a restore has to blank. filtered_payload
+# drops None unless a column is named here, so leaving them out would silently
+# keep deleted_at set and the row would stay invisible.
+RESTORE_NULLABLE_COLUMNS = ('deleted_at', 'deleted_by', 'deleted_via_parent')
+
+
+def restore_rows_via_parent(table, parent_id):
+    """Undo one soft-delete cascade, and only that one.
+
+    Rows are matched on ``deleted_via_parent``, the marker
+    ``soft_delete_programme_authoring_structure`` stamps on everything it takes
+    down. A cohort archived on its own carries an empty marker, so restoring the
+    programme leaves it archived rather than silently reviving it.
+    """
+    if not has_column(table, 'deleted_via_parent'):
+        return []
+    payload = restore_soft_delete_payload(table)
+    if has_column(table, 'is_archived'):
+        payload['is_archived'] = False
+    if has_column(table, 'status') and table in {'cohorts'}:
+        payload['status'] = 'active'
+    return update_rows(
+        table,
+        f'{quote_ident("deleted_via_parent")} = %s',
+        [parent_id],
+        payload,
+        allow_null_columns=RESTORE_NULLABLE_COLUMNS,
+    )
+
+
+def restore_programme_authoring_structure(identifier, programme=None, config=None):
+    """Bring an archived programme and its cascade-archived children back.
+
+    The mirror image of ``soft_delete_programme_authoring_structure``: the
+    programme row loses its archive flags and every child that went down *with
+    this programme* is un-marked. Children archived independently keep their own
+    state, so restoring is not a way to resurrect unrelated deletions.
+    """
+    config = config or programme_config_by_identifier(identifier)
+    programme_id = clean_str(programme_config_identity(config) or identifier)
+    result = {
+        'programmeRestored': False,
+        'cohorts': 0,
+        'groups': 0,
+        'modules': 0,
+        'weeks': 0,
+        'components': 0,
+        'ksbMappings': 0,
+    }
+    if not programme_id:
+        return result
+
+    try:
+        ensure_program_config_archive_columns()
+        if config:
+            key_column = programme_config_key_column()
+            key_value = config.get(key_column)
+            if key_value is not None:
+                payload = restore_payload('programmes', config.get('notes'))
+                payload.update(restore_soft_delete_payload('programmes'))
+                result['programmeRestored'] = bool(update_rows(
+                    'programmes',
+                    f'{quote_ident(key_column)} = %s',
+                    [key_value],
+                    payload,
+                    allow_null_columns=RESTORE_NULLABLE_COLUMNS,
+                ))
+    except Exception:
+        logger.warning('Could not restore programme %s.', identifier, exc_info=True)
+        raise
+
+    try:
+        ensure_module_authoring_tables()
+        for key, table in (
+            ('cohorts', COHORT_AUTHORING_DETAILS_TABLE),
+            ('groups', GROUPS_TABLE),
+            ('modules', AUTHORING_MODULES_TABLE),
+            ('weeks', AUTHORING_WEEKS_TABLE),
+            ('components', AUTHORING_COMPONENTS_TABLE),
+            ('ksbMappings', AUTHORING_KSB_MAPPINGS_TABLE),
+        ):
+            result[key] = len(restore_rows_via_parent(table, programme_id))
+    except Exception:
+        logger.warning('Could not restore programme children for %s.', identifier, exc_info=True)
+        raise
+    invalidate_curriculum_cache()
+    return result
+
+
 # Learner-side tables holding ON DELETE RESTRICT foreign keys into the curriculum
 # content a programme owns. Postgres itself refuses to remove content a learner
 # has already been given, so a permanent delete reports these as blockers instead
@@ -5763,6 +5852,14 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'startDate': format_date(detail.get('startDate')),
             'endDate': format_date(detail.get('endDate')),
             'status': detail.get('status') or 'planned',
+            # The delivery pattern travels with the group: build_module_session_plan
+            # cannot date a single session without a delivery day, so a module
+            # editor that only receives `schedule` can never show an end date.
+            # serialize_group_authoring_detail already falls back to the day
+            # inside the schedule string, which is what older rows carry.
+            'weekDays': clean_str(detail.get('weekDays')),
+            'startTime': clean_str(detail.get('startTime')),
+            'endTime': clean_str(detail.get('endTime')),
             'schedule': detail.get('schedule') or '',
             'color': detail.get('color') or '',
             'mode': detail.get('mode') or 'Live',
@@ -5793,6 +5890,11 @@ def build_cohorts_and_groups(training_rows=None, program_configs=None, include_a
             'startDate': format_date(first_module.get('start_date')),
             'endDate': format_date(first_module.get('end_date')),
             'status': 'planned' if clean_str(first_module.get('status')).lower() == 'archived' else (clean_str(first_module.get('status')) or 'planned'),
+            # Same delivery pattern, read off the module rows this group was
+            # reconstructed from.
+            'weekDays': clean_str(first_module.get('session_week_day')),
+            'startTime': clean_str(first_module.get('session_start_time')),
+            'endTime': clean_str(first_module.get('session_end_time')),
             'schedule': '',
             'color': clean_str(first_module.get('color')),
             'mode': 'Live',
@@ -13437,6 +13539,39 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
 
 
 @csrf_exempt
+def curriculum_programme_restore(request, identifier):
+    """Take a programme back out of the archive, children included."""
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+
+    ensure_program_config_archive_columns()
+    config = programme_config_by_identifier(identifier)
+    programme = programme_response(identifier) if not config else {
+        'id': programme_config_identity(config),
+        'sourceId': programme_config_identity(config),
+        'name': config.get('name'),
+    }
+    if not programme and not config:
+        return json_error('Programme not found.', status=404)
+
+    archived = is_archived_program_config(config) or programme_status_is_archived(
+        (programme or {}).get('status')
+    )
+    if not archived:
+        return json_error('Programme is not archived.', status=409)
+
+    with transaction.atomic():
+        restored = restore_programme_authoring_structure(identifier, programme, config)
+    return JsonResponse({
+        'restored': True,
+        'id': identifier,
+        'programme': programme_response(identifier),
+        'details': restored,
+        'message': 'Programme and the rows archived with it were restored.',
+    })
+
+
+@csrf_exempt
 def curriculum_programme_detail(request, identifier):
     if request.method not in {'PATCH', 'DELETE'}:
         return json_error('Method not allowed.', status=405)
@@ -17942,7 +18077,11 @@ def rebuild_staff_profile_assignments_from_authoring(*, allow_writes=True):
             if key in tutor_by_key:
                 continue
             row = insert_row(tutor_table, {
-                'id': unique_prefixed_id('TUTOR', name, tutor_ids),
+                # Minted, never derived from the name: unique_prefixed_id treats
+                # its second argument as a *requested id*, so a tutor called
+                # "tutor-1" used to be stored as TUTOR-1 while everybody else got
+                # a timestamp. Ids follow the PROG-/MOD- scheme for all of them.
+                'id': unique_timestamp_prefixed_id('TUTOR', tutor_ids),
                 'name': name,
                 'email': '',
                 'phone': '',
@@ -17964,7 +18103,7 @@ def rebuild_staff_profile_assignments_from_authoring(*, allow_writes=True):
             if key in coach_by_key:
                 continue
             row = insert_row(coach_table, {
-                'id': unique_prefixed_id('COACH', name, coach_ids),
+                'id': unique_timestamp_prefixed_id('COACH', coach_ids),
                 'name': name,
                 'email': '',
                 'phone': '',
@@ -18075,10 +18214,11 @@ def curriculum_staff_profile_collection(request, role):
             return JsonResponse({'created': False, 'duplicate': True, 'profile': current_staff_profile_payload(role, duplicate_row.get('id'))})
 
         existing_ids = [row.get('id') for row in get_staff_profile_rows(role, include_archived=True)]
-        profile_payload = staff_profile_payload(role, {
-            **payload,
-            'id': clean_str(payload.get('id')) or unique_timestamp_prefixed_id(role.upper(), existing_ids),
-        })
+        profile_payload = staff_profile_payload(role, payload)
+        # Minted here, not taken from the request: staff_profile_payload reads the
+        # id off `existing` only, so an id passed in the body was silently
+        # dropped and the collision check against existing_ids never ran.
+        profile_payload['id'] = unique_timestamp_prefixed_id(role.upper(), existing_ids)
         row = insert_row(table, profile_payload)
         if role == 'tutor':
             assignment_ids = as_json_value(profile_payload.get('assigned_module_ids'), [])
@@ -18104,42 +18244,39 @@ def curriculum_staff_profile_detail(request, role, identifier):
 
     table = staff_profile_table(role)
     if request.method == 'DELETE':
-        archived_ids = []
+        # A delete removes the row. Archiving it instead left the person in the
+        # database after the UI reported them gone, and an archived row is
+        # invisible to every operational read, so there was no way back to it
+        # from the app either.
+        deleted_ids = []
         with transaction.atomic():
-            for duplicate in staff_profile_rows_by_identity(
+            # Drop the name off the curriculum first: profiles are rebuilt from
+            # curriculum.modules.tutor_name / curriculum.groups.coach_name on
+            # the next write, so a row deleted while its name is still assigned
+            # comes straight back under a freshly minted id.
+            release_staff_assignments_from_authoring(role, staff_profile_name(row))
+            targets = staff_profile_rows_by_identity(
                 role,
                 staff_profile_name(row),
                 staff_profile_email(row),
                 include_archived=True,
-            ) or [row]:
-                if staff_profile_is_archived(duplicate):
+            )
+            target_ids = unique([
+                clean_str(row.get('id')),
+                *[clean_str(duplicate.get('id')) for duplicate in targets],
+            ])
+            for target_id in target_ids:
+                if not target_id:
                     continue
-                archive_updates = {
-                    'is_archived': True,
-                    'updated_at': datetime.utcnow(),
-                }
-                if has_column(table, 'status'):
-                    archive_updates['status'] = 'archived'
-                update_rows(table, 'id = %s', [duplicate.get('id')], archive_updates)
-                archived_ids.append(duplicate.get('id'))
-            # Archiving the row is not enough on its own: the name also has to
-            # come off the curriculum it was assigned to, or the training rows
-            # keep reporting it and the profile is rebuilt on the next read.
-            release_staff_assignments_from_authoring(role, staff_profile_name(row))
-            assignment_column = STAFF_PROFILE_ASSIGNMENT_DB_COLUMNS.get(role)
-            if assignment_column and assignment_column in column_names(table):
-                for archived_id in archived_ids:
-                    update_rows(table, 'id = %s', [archived_id], {
-                        assignment_column: json_db_value([]),
-                        'updated_at': datetime.utcnow(),
-                    })
+                delete_rows(table, 'id = %s', [target_id])
+                deleted_ids.append(target_id)
             if role == 'tutor':
                 sync_staff_profile_module_assignments(role, staff_profile_name(row), [], previous_name=staff_profile_name(row), clear_missing=True)
             elif role == 'coach':
                 sync_staff_profile_group_assignments(staff_profile_name(row), [], previous_name=staff_profile_name(row), clear_missing=True)
             tutor_notifications.schedule_assignment_notifications()
         invalidate_curriculum_cache()
-        return JsonResponse({'archived': True, 'id': row.get('id'), 'count': len(archived_ids), 'ids': archived_ids})
+        return JsonResponse({'deleted': True, 'id': row.get('id'), 'count': len(deleted_ids), 'ids': deleted_ids})
 
     payload = json_body(request)
     if payload is None:
