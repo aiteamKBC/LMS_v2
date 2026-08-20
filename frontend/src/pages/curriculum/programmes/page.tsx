@@ -1,8 +1,10 @@
 import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardGridSkeleton } from '@/components/feature/CurriculumSkeletons';
-import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculumStructureWizard';
+import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
@@ -13,12 +15,14 @@ import {
   archiveCurriculumGroup,
   archiveCurriculumModule,
   CurriculumApiError,
+  tutorConflictMessage,
   deleteCurriculumProgramme,
   fetchCurriculumModules,
   fetchCurriculumProgrammeKsbCoverage,
   fetchCurriculumProgrammeLearnerKsbImpact,
   fetchCurriculumKsbSets,
   fetchCurriculumStandards,
+  restoreCurriculumProgramme,
   updateCurriculumCohort,
   updateCurriculumGroup,
   updateCurriculumKsbFramework,
@@ -98,6 +102,17 @@ function showProgrammeSwalToast(title: string, text: string, icon: 'success' | '
   });
 }
 
+/**
+ * Report a failed save from one of the inline editor rows.
+ *
+ * A tutor assignment can be refused because the person is already teaching
+ * elsewhere at that hour; the backend's sentence names the module and date, so
+ * it is shown as-is rather than reduced to "could not be saved".
+ */
+function reportEditorSaveFailure(error: unknown, fallback: string) {
+  return showProgrammeSwalToast('Could not save', tutorConflictMessage(error) || (error instanceof Error ? error.message : fallback), 'error');
+}
+
 const DEPENDENCY_LABELS: Record<string, string> = {
   cohorts: 'cohorts',
   groups: 'groups',
@@ -163,18 +178,15 @@ function programmeIsArchived(programme: CurriculumProgramme) {
 }
 
 export default function CurriculumProgrammes() {
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [programmePage, setProgrammePage] = useState(1);
-  const [editingProgramme, setEditingProgramme] = useState<CurriculumProgramme | null>(null);
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardProgrammeId, setWizardProgrammeId] = useState<string | undefined>();
-  const [wizardProgramme, setWizardProgramme] = useState<CurriculumProgramme | undefined>();
-  const [wizardStartStep, setWizardStartStep] = useState<StructureWizardStep>('programme');
-  const [wizardCohortId, setWizardCohortId] = useState<string | undefined>();
-  const [wizardGroupId, setWizardGroupId] = useState<string | undefined>();
+  const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
+  const [programmeDrawerTarget, setProgrammeDrawerTarget] = useState<CurriculumProgramme | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deletingProgrammeId, setDeletingProgrammeId] = useState<string | null>(null);
+  const [restoringProgrammeId, setRestoringProgrammeId] = useState<string | null>(null);
   const [reviewProgramme, setReviewProgramme] = useState<CurriculumProgramme | null>(null);
   const [applyProgramme, setApplyProgramme] = useState<CurriculumProgramme | null>(null);
   const [applyingKsbSource, setApplyingKsbSource] = useState(false);
@@ -189,7 +201,7 @@ export default function CurriculumProgrammes() {
   const [ksbSets, setKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
   const [programmeSourceOverrides, setProgrammeSourceOverrides] = useState<Map<string, string>>(new Map());
-  const { programmes, loading, error, reload, removeProgramme } = useCurriculumProgrammes({ visibility: 'all' });
+  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored } = useCurriculumProgrammes({ visibility: 'all' });
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 
@@ -275,7 +287,7 @@ export default function CurriculumProgrammes() {
     const [nextKsbSets, nextStandards] = await Promise.all([
       fetchCurriculumKsbSets(undefined, { all: true }).catch(() => ksbSets),
       fetchCurriculumStandards().catch(() => standards),
-      // Silent: the wizard has already closed on a successful save, so the cards
+      // Silent: the drawer has already closed on a successful save, so the cards
       // stay on screen with the previous data instead of collapsing to skeletons
       // while the (slow) uncached programme/tree requests come back.
       reload({ skipCache: true, silent: true }),
@@ -285,23 +297,13 @@ export default function CurriculumProgrammes() {
     setStandards(nextStandards);
   };
 
+  // Editing programme-level details is a focused form. Structure edits live on
+  // the Cohorts / Groups / Module Builder pages and in the programme workspace,
+  // each through the one form that record type has.
   const openEdit = (programme: CurriculumProgramme) => {
     setActionError(null);
-    setWizardProgrammeId(programme.sourceId || programme.id);
-    setWizardProgramme(programme);
-    setWizardStartStep('programme');
-    setWizardCohortId(undefined);
-    setWizardGroupId(undefined);
-    setWizardOpen(true);
-  };
-
-  const closeWizard = () => {
-    setWizardOpen(false);
-    setWizardProgrammeId(undefined);
-    setWizardProgramme(undefined);
-    setWizardStartStep('programme');
-    setWizardCohortId(undefined);
-    setWizardGroupId(undefined);
+    setProgrammeDrawerTarget(programme);
+    setProgrammeDrawerOpen(true);
   };
 
   // Two different operations behind one button. A live programme is archived
@@ -324,7 +326,9 @@ export default function CurriculumProgrammes() {
         try {
           const result = await deleteCurriculumProgramme(programmeId);
           outcome = result.deleted ? 'archived' : null;
-          removeProgramme(programmeId);
+          // Flip the row to archived instead of dropping it, so it lands in the
+          // archive tab. Dropping it would hide it from both lists.
+          markProgrammeArchived(programmeId);
         } catch (err) {
           if (isProgrammeDependencyError(err)) {
             dependencyReport = err.data.dependencyReport || null;
@@ -341,17 +345,12 @@ export default function CurriculumProgrammes() {
     if (dependencyReport) {
       await showCurriculumConfirm({
         title: 'Clean up programme first',
-        text: `${programme.name} is linked to ${programmeDependencySummary(dependencyReport)}. Open the wizard and remove the linked modules, groups and cohorts before deleting the programme.`,
+        text: `${programme.name} is linked to ${programmeDependencySummary(dependencyReport)}. Remove the linked modules, groups and cohorts before deleting the programme.`,
         icon: 'info',
-        confirmButtonText: 'Open cleanup wizard',
+        confirmButtonText: 'Open its cohorts',
         cancelButtonText: 'Cancel',
         onConfirm: () => {
-          setWizardProgrammeId(programmeId);
-          setWizardProgramme(programme);
-          setWizardStartStep('cohort');
-          setWizardCohortId(undefined);
-          setWizardGroupId(undefined);
-          setWizardOpen(true);
+          navigate(`/curriculum/cohorts?programme=${encodeURIComponent(programmeId)}`);
         },
       });
     } else if (outcome === 'archived') {
@@ -415,6 +414,43 @@ export default function CurriculumProgrammes() {
   const deleteProgramme = (programme: CurriculumProgramme) => (
     programmeIsArchived(programme) ? permanentlyDeleteProgramme(programme) : archiveProgramme(programme)
   );
+
+  // The way back out of the archive. Everything the archive took down with the
+  // programme comes back with it, so the confirm says so before it runs.
+  const restoreProgramme = async (programme: CurriculumProgramme) => {
+    const programmeId = programme.sourceId || programme.id;
+    setActionError(null);
+    let restored = false;
+    await showCurriculumConfirm({
+      title: 'Restore programme?',
+      text: `Restore "${programme.name}" to the active list, along with the cohorts, groups and modules that were archived with it.`,
+      icon: 'question',
+      confirmButtonText: 'Restore',
+      cancelButtonText: 'Cancel',
+      onConfirm: async () => {
+        setRestoringProgrammeId(programmeId);
+        try {
+          const result = await restoreCurriculumProgramme(programmeId);
+          restored = Boolean(result.restored);
+          markProgrammeRestored(programmeId);
+        } catch (err) {
+          setActionError(err instanceof Error ? err.message : 'Unable to restore programme.');
+          throw err;
+        } finally {
+          setRestoringProgrammeId(null);
+        }
+      },
+    });
+    if (restored) {
+      await showProgrammeSwalToast(
+        'Programme restored',
+        `${programme.name} is back in the active list.`,
+      );
+      // The counts on the card come from the curriculum payload, so pull fresh
+      // numbers now that the children are no longer flagged as deleted.
+      void reload({ silent: true, skipCache: true });
+    }
+  };
 
   const openProgrammeKsbReview = async (programme: CurriculumProgramme) => {
     const programmeId = programme.sourceId || programme.id;
@@ -618,20 +654,17 @@ export default function CurriculumProgrammes() {
                 <p className="mt-2 text-[12px] font-semibold text-white/70">{loading ? 'Loading live LMS programmes...' : heroSummary}</p>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                {/* A programme is independently saveable: this creates one from
+                    programme-level details alone. Its cohorts, groups and modules
+                    are then added from their own pages, each through the one form
+                    that record type has. */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setWizardProgrammeId(undefined);
-                    setWizardProgramme(undefined);
-                    setWizardStartStep('programme');
-                    setWizardCohortId(undefined);
-                    setWizardGroupId(undefined);
-                    setWizardOpen(true);
-                  }}
+                  onClick={() => { setProgrammeDrawerTarget(null); setProgrammeDrawerOpen(true); }}
                   className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 text-[12px] font-bold text-primary-900 shadow-lg shadow-black/10 transition-smooth hover:bg-primary-50"
                 >
                   <AppIcon className="ri-add-line text-base"></AppIcon>
-                  Create Programme Structure
+                  Add Programme
                 </button>
                 <button
                   type="button"
@@ -707,8 +740,9 @@ export default function CurriculumProgrammes() {
 
         {showArchived && (
           <div className="rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800">
-            Archived programmes are hidden from planning. Deleting one here removes it and every cohort, group,
-            module, week and component beneath it from the database - learner accounts and progress are never touched.
+            Archived programmes are hidden from planning. Restore one to put it back in the active list with everything
+            archived alongside it. Deleting one here removes it and every cohort, group, module, week and component
+            beneath it from the database - learner accounts and progress are never touched.
           </div>
         )}
 
@@ -822,11 +856,24 @@ export default function CurriculumProgrammes() {
                   <button className="programme-action-button programme-action-edit inline-flex items-center justify-center gap-1 rounded-lg border border-background-200 bg-background-50 px-1.5 py-1 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
                     <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
                   </button>
+                  {isArchivedProgramme && (
+                    <button
+                      className="programme-action-button programme-action-restore inline-flex items-center justify-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-1.5 py-1 text-[10px] font-bold text-amber-800 transition-smooth hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={restoringProgrammeId === (prog.sourceId || prog.id) || deletingProgrammeId === (prog.sourceId || prog.id)}
+                      onClick={e => { e.stopPropagation(); void restoreProgramme(prog); }}
+                      title="Restore this programme and the rows archived with it to the active list"
+                    >
+                      <AppIcon className={restoringProgrammeId === (prog.sourceId || prog.id)
+                        ? 'ri-loader-4-line animate-spin text-sm'
+                        : 'ri-inbox-unarchive-line text-sm'}></AppIcon>
+                      Restore
+                    </button>
+                  )}
                   <button
                     className={`programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border px-1.5 py-1 text-[10px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-60 ${isArchivedProgramme
                       ? 'border-red-600 bg-red-600 text-white hover:bg-red-700'
                       : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'}`}
-                    disabled={deletingProgrammeId === (prog.sourceId || prog.id)}
+                    disabled={deletingProgrammeId === (prog.sourceId || prog.id) || restoringProgrammeId === (prog.sourceId || prog.id)}
                     onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
                     title={isArchivedProgramme
                       ? 'Delete this programme and everything beneath it permanently'
@@ -855,45 +902,16 @@ export default function CurriculumProgrammes() {
             hasSearch={Boolean(search.trim())}
             archived={showArchived}
             onClear={() => setSearch('')}
-            onCreate={() => {
-              setWizardProgrammeId(undefined);
-              setWizardProgramme(undefined);
-              setWizardStartStep('programme');
-              setWizardCohortId(undefined);
-              setWizardGroupId(undefined);
-              setWizardOpen(true);
-            }}
+            onCreate={() => { setProgrammeDrawerTarget(null); setProgrammeDrawerOpen(true); }}
           />
         )}
 
-        {editingProgramme && (
-          <ProgrammeStructureEditor
-            programme={editingProgramme}
-            onClose={() => setEditingProgramme(null)}
-            onSaved={refreshProgrammeCards}
-            onOpenAddStructure={(startStep = 'cohort', cohortId, groupId) => {
-              setWizardProgrammeId(editingProgramme.sourceId || editingProgramme.id);
-              setWizardProgramme(editingProgramme);
-              setWizardStartStep(startStep);
-              setWizardCohortId(cohortId);
-              setWizardGroupId(groupId);
-              setEditingProgramme(null);
-              setWizardOpen(true);
-            }}
-          />
-        )}
-        {wizardOpen && (
-          <AddCurriculumStructureWizard
-            isOpen={wizardOpen}
-            onClose={closeWizard}
-            onSaved={refreshProgrammeCards}
-            initialProgrammeId={wizardProgrammeId}
-            initialProgramme={wizardProgramme}
-            initialCohortId={wizardCohortId}
-            initialGroupId={wizardGroupId}
-            startStep={wizardStartStep}
-          />
-        )}
+        <ProgrammeFormDrawer
+          open={programmeDrawerOpen}
+          programme={programmeDrawerTarget}
+          onClose={() => setProgrammeDrawerOpen(false)}
+          onSaved={refreshProgrammeCards}
+        />
         {reviewProgramme && (
           <ProgrammeKsbReviewModal
             programme={reviewProgramme}
@@ -1507,16 +1525,26 @@ function ApplyProgrammeKsbSourceModal({
     detail: `${standard.knowledge || 0} K / ${standard.skills || 0} S / ${standard.behaviours || 0} B`,
   })), [standards]);
   const options = sourceKind === 'profile' ? profileOptions : standardOptions;
-  const recommended = useMemo(() => {
-    if (currentSource.value && options.some(option => option.value === currentSource.value)) return currentSource.value;
+  // Only a source that is genuinely applied may start selected. Pre-selecting a
+  // name-match guess (or the first option) made programmes with no applied KSB
+  // Source open this modal looking like a source had already been chosen, while
+  // the programme card next to it still read "No KSB Source selected".
+  const appliedSelection = useMemo(() => (
+    currentSource.value && options.some(option => option.value === currentSource.value) ? currentSource.value : ''
+  ), [currentSource.value, options]);
+  const suggestedSource = useMemo(() => {
+    if (appliedSelection) return '';
     const programmeKey = normalise(programme.name);
     const standardKey = normalise(programme.standard);
-    return options.find(option => normalise(option.title) === standardKey || normalise(option.title) === programmeKey || normalise(option.subtitle).includes(programmeKey))?.value || options[0]?.value || '';
-  }, [currentSource.value, options, programme.name, programme.standard]);
-  const [selectedSource, setSelectedSource] = useState(recommended);
+    return options.find(option => (
+      (standardKey && normalise(option.title) === standardKey)
+      || (programmeKey && (normalise(option.title) === programmeKey || normalise(option.subtitle).includes(programmeKey)))
+    ))?.value || '';
+  }, [appliedSelection, options, programme.name, programme.standard]);
+  const [selectedSource, setSelectedSource] = useState(appliedSelection);
   useEffect(() => {
-    setSelectedSource(recommended);
-  }, [recommended, sourceKind]);
+    setSelectedSource(appliedSelection);
+  }, [appliedSelection, sourceKind]);
   const selectedOption = options.find(option => option.value === selectedSource);
   const selectedIsCurrent = Boolean(currentSource.value && selectedSource === currentSource.value);
 
@@ -1557,6 +1585,7 @@ function ApplyProgrammeKsbSourceModal({
                       <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <p className="text-sm font-heading font-black text-foreground-950">{option.title}</p>
                         {current && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-emerald-700">Currently applied</span>}
+                        {!currentSource.value && option.value === suggestedSource && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-700">Suggested</span>}
                       </div>
                       <p className="mt-1 text-[12px] font-semibold text-foreground-500">{option.subtitle}</p>
                     </div>
@@ -1576,6 +1605,13 @@ function ApplyProgrammeKsbSourceModal({
             <div className={`mt-4 rounded-xl border px-4 py-3 text-[12px] font-semibold ${selectedIsCurrent ? 'border-primary-100 bg-primary-50 text-primary-800' : 'border-emerald-100 bg-emerald-50 text-emerald-800'}`}>
               {selectedIsCurrent ? 'This is the active KSB Source selection for this programme: ' : 'Applying this will make programme coverage, missing KSBs, occurrences and component weights roll up against: '}
               <strong>{selectedOption.title}</strong>.
+            </div>
+          )}
+          {!selectedOption && options.length > 0 && (
+            <div className="mt-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
+              {currentSource.value
+                ? `The applied KSB Source for this programme is a ${currentSource.kind === 'standard' ? 'KSB standard' : 'KSB profile'}. Switch tabs to see it, or pick a ${sourceKind === 'profile' ? 'KSB profile' : 'KSB standard'} to replace it.`
+                : `No KSB Source is applied to this programme yet. Select a ${sourceKind === 'profile' ? 'KSB profile' : 'KSB standard'} above to apply one.`}
             </div>
           )}
         </div>
@@ -2758,6 +2794,8 @@ function GroupEditorRow({ group, tutors, coaches, onRefreshStaffProfiles, onSave
     try {
       await updateCurriculumGroup(group.id, form);
       await onSaved();
+    } catch (error) {
+      await reportEditorSaveFailure(error, 'The group could not be saved.');
     } finally {
       setSaving(false);
     }
@@ -2867,6 +2905,8 @@ function ModuleEditorRow({
         notes: cleanEditorNotes(form.notes),
       });
       await onSaved();
+    } catch (error) {
+      await reportEditorSaveFailure(error, 'The module could not be saved.');
     } finally {
       setSaving(false);
     }

@@ -60,8 +60,6 @@ export interface AptemUserFields {
   mentor?: string;
   referenceNumber?: string;
   extendedBreak?: string;
-  /** Radio: invite the new user into the platform on create. */
-  inviteToPlatform?: boolean;
   allowCheckpoint?: boolean;
   allowConsole?: boolean;
   allowClassic?: boolean;

@@ -422,6 +422,12 @@ def enrolment_users(request):
         stamp = timezone.now().strftime("%d/%m/%Y %H:%M:%S")
         fields.setdefault("enrolled_time_and_user", f"{stamp} by Enrolment Officer")
 
+        # Every learner is invited on enrolment — the form no longer asks, and a
+        # caller cannot opt out by sending the flag as false. Assignment rather
+        # than setdefault for exactly that reason: the column now records what
+        # the platform does, not a choice somebody made on a form.
+        fields["invite_to_platform"] = True
+
         # Stamp the cohort's delivery window from the authored cohort table. The
         # cohort carries two end dates: end_date/practical_period_end_date close
         # the practical period, and apprenticeship_end_date adds the cohort's EPA
@@ -453,12 +459,12 @@ def enrolment_users(request):
         # and review progression.
         advance_learner(user)
         row = to_list_row(user)
-        # "Would you like to invite this user into the platform?" — send the
-        # set-your-password email. Reported alongside the created learner rather
-        # than raising: the learner exists either way, and a mail outage must not
-        # turn a successful enrolment into a 5xx.
-        if fields.get("invite_to_platform"):
-            row["invitation"] = _send_platform_invitation(request, "learner", user.id, subject=user)
+        # Send the set-your-password email. Unconditional: enrolling somebody is
+        # what gives them a platform account, so there is no longer a form
+        # question gating it. Reported alongside the created learner rather than
+        # raising: the learner exists either way, and a mail outage must not turn
+        # a successful enrolment into a 5xx.
+        row["invitation"] = _send_platform_invitation(request, "learner", user.id, subject=user)
         return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)
@@ -669,14 +675,21 @@ def staff_users(request):
             fields = write_staff_fields(payload, require_create=True)
         except ValidationError as exc:
             return _error(str(exc), 400)
+
+        # As on the learner form: creating a colleague invites them, and the
+        # column records that rather than a choice — see enrolment_users.
+        fields["invite_to_platform"] = True
+
         try:
             user = StaffUser.objects.create(**fields)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
 
         row = to_staff_row(user)
-        if fields.get("invite_to_platform"):
-            row["invitation"] = _send_platform_invitation(request, "staff", user.id, subject=user)
+        # Unconditional. The authorisation in login.services still applies, so a
+        # staff member creating an Admin gets a refused invitation reported on
+        # the row — the record saves, the credential does not.
+        row["invitation"] = _send_platform_invitation(request, "staff", user.id, subject=user)
         return JsonResponse(row, status=201)
 
     return _error("Method not allowed.", 405)

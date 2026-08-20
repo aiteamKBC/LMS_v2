@@ -42,6 +42,10 @@ SETUP_COMMANDS = (
     # Staff_users."Access" — the staff access grant. Added after the base table
     # command, which does not know about it.
     "apply_staff_access_column",
+    # Staff_users/Employers/Created_users."uuid" — the permanent public user
+    # identifier. The models declare it, so every INSERT names the column and a
+    # test database without it fails on the first row created.
+    "apply_user_uuid",
     "apply_login_tables",
 )
 

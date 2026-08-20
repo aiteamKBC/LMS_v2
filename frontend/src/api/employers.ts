@@ -73,7 +73,7 @@ export interface EmployerRow {
   /** Their names, denormalised server-side so a row renders without a lookup. */
   employerGroupNames: string[];
   /**
-   * Present on create only, when the form asked for an invitation. Reports the
+   * Present on create, where an invitation is always issued. Reports the
    * invitation's fate separately from the employer's creation, which succeeds
    * either way — see login/services.py.
    */
@@ -92,15 +92,7 @@ export interface EmployerOptions {
 export type OrganisationInput = Partial<Omit<OrganisationRow, 'id'>>;
 export type EmployerInput = Partial<
   Omit<EmployerRow, 'id' | 'name' | 'employerGroupNames' | 'invitation'>
-> & {
-  /**
-   * Send the "set your password" email on create. Unlike the learner and staff
-   * forms this is not stored on the employer record — enrolment."Employers" has
-   * no such column, and whether they were invited is answered by
-   * login."Invitations". It is an instruction for this request only.
-   */
-  inviteToPlatform?: boolean;
-};
+>;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;

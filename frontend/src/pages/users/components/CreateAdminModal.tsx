@@ -53,9 +53,6 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
   // chooser here only ever produced a job title that no longer decides anything.
   const position = ADMIN_POSITION;
   const [submitting, setSubmitting] = useState(false);
-  // Off by default: sending someone a credential-setting email is an action
-  // with a real-world effect, so it should be chosen, not defaulted into.
-  const [inviteToPlatform, setInviteToPlatform] = useState(false);
 
   const setField = (name: string, value: string) => setFormData((prev) => ({ ...prev, [name]: value }));
 
@@ -89,31 +86,37 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
         title: formData.title,
         gender: formData.gender,
         organization: formData.organization,
-        inviteToPlatform,
       });
-      // The API reports the invitation outcome separately from the record's
-      // creation: the admin exists either way, but a mail failure must be
-      // visible rather than leaving someone waiting for an email that never
-      // arrives.
+      // Creating an admin always invites them. The API reports the invitation's
+      // outcome separately from the record's creation: the admin exists either
+      // way, and the failures differ — "no account" means nobody can sign in at
+      // all, while a mail failure leaves a link that can still be re-sent.
       const invite = row.invitation;
-      if (inviteToPlatform && invite?.forbidden) {
+      const created = `${row.name || name} was created as an Admin.`;
+      if (!invite) {
+        success('Admin created', created);
+      } else if (invite.forbidden) {
         // No login account exists. Say so plainly rather than implying a
         // transient mail problem — somebody with the right role must re-invite.
-        success('Admin created', `${row.name || name} was created as an Admin.`);
+        success('Admin created', created);
         error(
           'Not permitted to invite',
           invite.error || 'You do not have permission to invite this person.',
         );
-      } else if (inviteToPlatform && invite && !invite.emailSent) {
-        success('Admin created', `${row.name || name} was created as an Admin.`);
+      } else if (!invite.invited) {
+        success('Admin created', created);
         error(
-          'Invitation not sent',
-          invite.error || 'The account was created but the invitation email could not be sent.',
+          'No account created',
+          invite.error || 'They have no sign-in account yet, so they cannot log in.',
         );
-      } else if (inviteToPlatform) {
-        success('Admin created and invited', `${row.name || name} was emailed a link to set their password.`);
+      } else if (!invite.emailSent) {
+        success('Admin created', created);
+        error(
+          'Invitation email not sent',
+          invite.error || 'The invitation exists and can be re-sent, but the email did not go out.',
+        );
       } else {
-        success('Admin created', `${row.name || name} was created as an Admin.`);
+        success('Admin created and invited', `${row.name || name} was emailed a link to set their password.`);
       }
       onCreated(row);
       onClose();
@@ -199,7 +202,8 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
           </div>
         </section>
 
-        {/* Invitation — sends the "set your password" email on save. */}
+        {/* Invitation — always sent on save. Stated, not asked: an admin with no
+            account is a record nobody can sign in as. */}
         <section className="rounded-xl border border-foreground-200 overflow-hidden">
           <header className="flex items-center gap-2 px-4 py-2.5 bg-background-100 border-b border-foreground-200/60">
             <AppIcon className="ri-mail-send-line text-primary-500" />
@@ -208,23 +212,12 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
             </h3>
           </header>
           <div className="p-4">
-            <label className="flex items-start gap-2.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={inviteToPlatform}
-                onChange={(e) => setInviteToPlatform(e.target.checked)}
-                className="accent-primary-500 mt-0.5"
-              />
-              <span>
-                <span className="block text-[13px] font-medium text-foreground-800">
-                  Invite this admin to the platform
-                </span>
-                <span className="block text-[12px] text-foreground-500 mt-0.5">
-                  Emails them a single-use link to set their own password. They cannot sign in
-                  until they do.
-                </span>
-              </span>
-            </label>
+            <p className="text-[13px] font-medium text-foreground-800">
+              They will be emailed an invitation when you save.
+            </p>
+            <p className="text-[12px] text-foreground-500 mt-0.5">
+              A single-use link to set their own password. They cannot sign in until they do.
+            </p>
           </div>
         </section>
 

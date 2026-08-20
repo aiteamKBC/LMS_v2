@@ -21,19 +21,22 @@ wording of messages, which are allowed to change.
 """
 import json
 import uuid
+from datetime import timedelta
 from unittest import mock
 
+from django.core import signing
 from django.test import Client, TestCase
 from django.utils import timezone
 
 from learner_api.models import StaffUser
 
-from . import identity
+from . import identity, microsoft_sso
 from .invitations import accept_invitation, create_invitation, create_reset, complete_reset
 from .models import Invitation, LoginAccount, LoginAudit, LoginSession, PasswordReset
 from .security import (
     LOCKOUT_THRESHOLD,
     PasswordPolicyError,
+    generate_token,
     hash_password,
     hash_token,
     normalize_email,
@@ -774,3 +777,261 @@ class PermissionTests(LoginTestBase):
             "/login_api/accounts/invite/", {"subjectType": "staff", "subjectId": staff_target.id}
         )
         self.assertEqual(response.status_code, 403)
+
+
+class MicrosoftSsoCallbackTests(LoginTestBase):
+    """Sign in with Microsoft: the login table is the gate.
+
+    Microsoft says who the caller is; ``Login_accounts`` says whether that person
+    may in. These pin the second half — the first is mocked out, because what a
+    real token exchange returns is Microsoft's business and not something this
+    suite can or should assert.
+    """
+
+    SSO_ENV = {
+        "MICROSOFT_SSO_CLIENT_ID": "sso-client",
+        "MICROSOFT_SSO_CLIENT_SECRET": "sso-secret",
+        "MICROSOFT_SSO_TENANT_ID": "sso-tenant",
+        "MICROSOFT_SSO_CALLBACK_URI": "https://lms.kbc.test/login_api/microsoft/callback/",
+    }
+
+    def _get(self, params):
+        return self.client.get("/login_api/microsoft/callback/", params)
+
+    def _begin(self, next_path=""):
+        """Mint a state and put the paired nonce in the test client's cookie jar.
+
+        This is what ``start`` does. The two halves have to travel together —
+        the state proves the server minted it, the cookie proves this browser
+        asked for it — so a test that wants a *working* callback needs both.
+        """
+        nonce = generate_token()
+        self.client.cookies[microsoft_sso.NONCE_COOKIE] = nonce
+        return signing.dumps(
+            {"next": next_path, "n": hash_token(nonce)},
+            salt=microsoft_sso.STATE_SALT,
+            compress=True,
+        )
+
+    def _callback(self, *, signed_in_as, next_path=""):
+        """Drive the callback as though Microsoft authenticated ``signed_in_as``."""
+        state = self._begin(next_path)
+        with (
+            mock.patch.dict("os.environ", self.SSO_ENV, clear=False),
+            mock.patch.object(microsoft_sso, "_exchange_code", return_value="access-token"),
+            mock.patch.object(microsoft_sso, "_graph_email", return_value=signed_in_as),
+        ):
+            return self._get({"code": "auth-code", "state": state})
+
+    def _assert_refused(self, response):
+        """No session cookie, and the browser is sent back carrying a reason."""
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("sso_error=", response["Location"])
+        self.assertNotIn("kbc_session", response.cookies)
+
+    # --- the address is in the login table ---
+
+    def test_a_known_address_is_signed_in(self):
+        account = self.make_account()
+        response = self._callback(signed_in_as=self.email)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn("sso_error=", response["Location"])
+        token = response.cookies["kbc_session"].value
+        self.assertTrue(token)
+        self.assertTrue(
+            LoginSession.objects.filter(
+                account_id=account.id,
+                token_hash=hash_token(token),
+                revoked_at__isnull=True,
+            ).exists()
+        )
+
+    def test_the_session_cookie_is_httponly(self):
+        """The one control that keeps an XSS bug from becoming account theft.
+        Set by the same helper the password path uses; this pins that the SSO
+        path did not grow its own weaker copy."""
+        self.make_account()
+        cookie = self._callback(signed_in_as=self.email).cookies["kbc_session"]
+        self.assertTrue(cookie["httponly"])
+
+    def test_the_address_is_matched_case_insensitively(self):
+        """Entra returns the UPN in whatever case the directory happens to hold."""
+        self.make_account()
+        response = self._callback(signed_in_as=self.email.upper())
+        self.assertIn("kbc_session", response.cookies)
+
+    def test_success_is_audited_as_an_sso_sign_in(self):
+        """A password sign-in and an SSO one must be tellable apart afterwards."""
+        account = self.make_account()
+        self._callback(signed_in_as=self.email)
+        row = LoginAudit.objects.filter(
+            event="login", account_id=account.id, succeeded=True
+        ).latest("id")
+        self.assertEqual(row.reason, "microsoft_sso")
+
+    def test_the_return_path_is_honoured(self):
+        self.make_account()
+        response = self._callback(signed_in_as=self.email, next_path="/workspace/admin")
+        self.assertTrue(response["Location"].endswith("/workspace/admin"))
+
+    def test_an_account_that_never_set_a_password_may_still_sign_in(self):
+        """Deliberate: their tenant account is the credential. The password form
+        still refuses them, having nothing to verify against."""
+        self.make_account(with_password=False)
+        self.assertIn("kbc_session", self._callback(signed_in_as=self.email).cookies)
+
+    # --- the address is not in the login table ---
+
+    def test_an_unknown_address_is_refused_and_no_account_is_created(self):
+        """The whole point of the feature: authenticating with Microsoft is not
+        the same as being registered here."""
+        stranger = f"nobody-{uuid.uuid4().hex[:12]}@kbc.invalid"
+        before = LoginAccount.objects.count()
+        try:
+            self._assert_refused(self._callback(signed_in_as=stranger))
+            self.assertEqual(LoginAccount.objects.count(), before)
+            self.assertFalse(LoginAccount.objects.filter(email=stranger).exists())
+        finally:
+            LoginAudit.objects.filter(email=stranger).delete()
+
+    def test_a_deactivated_account_is_refused(self):
+        """Deactivating somebody has to close every door, not just the one."""
+        self.make_account(active=False)
+        self._assert_refused(self._callback(signed_in_as=self.email))
+
+    def test_a_locked_account_is_refused(self):
+        """Otherwise the password lockout is bypassable by anyone whose tenant
+        account still works, which would make it decorative."""
+        account = self.make_account()
+        account.locked_until = timezone.now() + timedelta(minutes=30)
+        account.save(update_fields=["locked_until"])
+        self._assert_refused(self._callback(signed_in_as=self.email))
+
+    def test_a_refusal_is_audited(self):
+        stranger = f"nobody-{uuid.uuid4().hex[:12]}@kbc.invalid"
+        try:
+            self._callback(signed_in_as=stranger)
+            row = LoginAudit.objects.filter(event="login", email=stranger).latest("id")
+            self.assertFalse(row.succeeded)
+            self.assertEqual(row.reason, "sso_unknown_account")
+        finally:
+            LoginAudit.objects.filter(email=stranger).delete()
+
+    # --- the callback itself ---
+
+    def test_a_callback_without_valid_state_is_refused(self):
+        """The signed state is this endpoint's CSRF defence — it arrives as a
+        top-level redirect and so cannot carry the X-Requested-With header the
+        rest of the login API requires."""
+        self.make_account()
+        with (
+            mock.patch.dict("os.environ", self.SSO_ENV, clear=False),
+            mock.patch.object(microsoft_sso, "_exchange_code", return_value="access-token"),
+            mock.patch.object(microsoft_sso, "_graph_email", return_value=self.email),
+        ):
+            response = self._get({"code": "auth-code", "state": "forged"})
+        self._assert_refused(response)
+
+    def test_an_expired_state_is_refused(self):
+        self.make_account()
+        stale = self._begin()
+        with (
+            mock.patch.dict("os.environ", self.SSO_ENV, clear=False),
+            mock.patch.object(microsoft_sso, "STATE_MAX_AGE", -1),
+            mock.patch.object(microsoft_sso, "_exchange_code", return_value="access-token"),
+            mock.patch.object(microsoft_sso, "_graph_email", return_value=self.email),
+        ):
+            response = self._get({"code": "auth-code", "state": stale})
+        self._assert_refused(response)
+
+    def test_a_failed_token_exchange_does_not_leak_the_reason(self):
+        """The exception can quote a client secret or an internal URL. It is
+        logged in full; the browser is told only that it did not work."""
+        self.make_account()
+        state = self._begin()
+        with (
+            mock.patch.dict("os.environ", self.SSO_ENV, clear=False),
+            mock.patch.object(
+                microsoft_sso,
+                "_exchange_code",
+                side_effect=RuntimeError("client_secret=sso-secret rejected"),
+            ),
+        ):
+            with self.assertLogs("login.sso", level="ERROR"):
+                response = self._get({"code": "auth-code", "state": state})
+        self._assert_refused(response)
+        self.assertNotIn("sso-secret", response["Location"])
+
+    def test_a_state_from_another_browser_is_refused(self):
+        """Login CSRF. A signed state proves this server minted it, not that
+        this browser asked for it. Without the pairing, somebody with a platform
+        account could start a sign-in, stop the redirect on their own machine
+        and hand the finished callback URL to another person — whose browser
+        would complete it and be signed in as the attacker, so everything they
+        then wrote landed in the attacker's account."""
+        self.make_account()
+        state = self._begin()
+        # The victim's browser holds no nonce, only the URL it was given.
+        self.client.cookies.pop(microsoft_sso.NONCE_COOKIE)
+        with (
+            mock.patch.dict("os.environ", self.SSO_ENV, clear=False),
+            mock.patch.object(microsoft_sso, "_exchange_code", return_value="access-token"),
+            mock.patch.object(microsoft_sso, "_graph_email", return_value=self.email),
+        ):
+            response = self._get({"code": "auth-code", "state": state})
+        self._assert_refused(response)
+
+    def test_a_mismatched_nonce_is_refused(self):
+        """A browser mid-flight for a *different* sign-in must not complete
+        this one — the cookie has to match the state, not merely exist."""
+        self.make_account()
+        state = self._begin()
+        self.client.cookies[microsoft_sso.NONCE_COOKIE] = generate_token()
+        with (
+            mock.patch.dict("os.environ", self.SSO_ENV, clear=False),
+            mock.patch.object(microsoft_sso, "_exchange_code", return_value="access-token"),
+            mock.patch.object(microsoft_sso, "_graph_email", return_value=self.email),
+        ):
+            response = self._get({"code": "auth-code", "state": state})
+        self._assert_refused(response)
+
+    def test_the_nonce_is_retired_after_a_successful_sign_in(self):
+        """One cookie completes exactly one sign-in, so a callback URL that
+        leaks from history cannot be replayed on the same machine."""
+        self.make_account()
+        response = self._callback(signed_in_as=self.email)
+        self.assertEqual(response.cookies[microsoft_sso.NONCE_COOKIE].value, "")
+
+    def test_the_nonce_cookie_is_httponly(self):
+        """It is the whole binding. Readable from JS, an XSS bug could mint a
+        callback URL that works anywhere."""
+        state_response = self._start()
+        cookie = state_response.cookies[microsoft_sso.NONCE_COOKIE]
+        self.assertTrue(cookie["httponly"])
+        self.assertEqual(cookie["samesite"], "Lax")
+
+    def _start(self):
+        with mock.patch.dict("os.environ", self.SSO_ENV, clear=False):
+            return self.client.get("/login_api/microsoft/start/")
+
+    def test_start_binds_the_state_to_the_nonce_it_sets(self):
+        """The state carries only the hash — it travels through Microsoft and
+        sits in browser history, so it should be no more useful than one."""
+        from urllib.parse import parse_qs, urlparse
+
+        response = self._start()
+        nonce = response.cookies[microsoft_sso.NONCE_COOKIE].value
+        url = json.loads(response.content)["authorizationUrl"]
+        state = parse_qs(urlparse(url).query)["state"][0]
+        payload = signing.loads(state, salt=microsoft_sso.STATE_SALT)
+
+        self.assertEqual(payload["n"], hash_token(nonce))
+        self.assertNotIn(nonce, state)
+
+    def test_a_cancelled_consent_is_reported_not_crashed(self):
+        with mock.patch.dict("os.environ", self.SSO_ENV, clear=False):
+            response = self._get(
+                {"error": "access_denied", "error_description": "The user cancelled."}
+            )
+        self._assert_refused(response)

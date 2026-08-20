@@ -1,8 +1,14 @@
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculumStructureWizard';
-import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { programmeIdentity, sameFormValues } from '@/pages/curriculum/shared/entities/model';
+// Adding a cohort, a group or a module from this page opens the same drawer the
+// Cohorts, Groups and Module Builder pages open. One form per record type in the
+// whole studio, so nothing behaves differently depending on the door taken.
+import { CohortFormDrawer, GroupFormDrawer } from '@/pages/curriculum/shared/entities/forms';
+import { ModuleFormDrawer } from '@/pages/curriculum/shared/entities/moduleForm';
 import { curriculumNavItems } from '@/mocks/navigation';
 import type {
   CurriculumComponent,
@@ -35,6 +41,7 @@ import {
   fetchCurriculumHolidays,
   fetchCurriculumStandards,
   fetchCurriculumTutors,
+  tutorConflictMessage,
   updateCurriculumGroup,
   updateCurriculumProgramme,
 } from '@/lib/curriculumApi';
@@ -772,6 +779,20 @@ function findProgramme(data: CurriculumOverview | null, routeId: string) {
   )) ?? null;
 }
 
+/** Staff roster plus anyone already named on a record, de-duplicated and sorted. */
+function staffNameOptions(profiles: CurriculumStaffProfile[] | undefined, assigned: Array<string | undefined>) {
+  const names = new Set<string>();
+  (profiles || []).forEach(profile => {
+    const name = clean(profile.name) || clean(profile.email);
+    if (name) names.add(name);
+  });
+  assigned.forEach(value => {
+    const name = clean(value);
+    if (name && normalise(name) !== 'unassigned') names.add(name);
+  });
+  return Array.from(names).sort((a, b) => a.localeCompare(b));
+}
+
 function programmeDetailToOverview(
   detail: CurriculumProgrammeDetail,
   staff: { coaches?: CurriculumStaffProfile[]; tutors?: CurriculumStaffProfile[] } = {},
@@ -1439,6 +1460,27 @@ function TabToolbar({
   );
 }
 
+/**
+ * The "add one of these" button a records tab carries in its toolbar.
+ *
+ * The empty state offers the same action, but only while the tab is empty — this
+ * is what a tab that already has rows is added from. It replaced the header's
+ * single "Manage structure" button, which opened the structure wizard on the
+ * step matching the active tab.
+ */
+function TabAddButton({ label, icon, onClick }: { label: string; icon: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary-600 px-3.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
+    >
+      <AppIcon className={`${icon} text-sm`}></AppIcon>
+      {label}
+    </button>
+  );
+}
+
 // Shared empty state. Every tab previously ended at a bare "no match" line with
 // no way forward; this always offers the next action when one exists.
 function TabEmptyState({
@@ -1750,7 +1792,6 @@ export default function ProgrammeDetailPage() {
   const [cohortStatusFilter, setCohortStatusFilter] = useState<string>('all');
   const [groupSearch, setGroupSearch] = useState<string>('');
   const [groupCohortFilter, setGroupCohortFilter] = useState<string>('all');
-  const [groupStatusFilter, setGroupStatusFilter] = useState<string>('all');
   const [moduleSearch, setModuleSearch] = useState<string>('');
   const [moduleCohortFilter, setModuleCohortFilter] = useState<string>('all');
   const [moduleGroupFilter, setModuleGroupFilter] = useState<string>('all');
@@ -1768,9 +1809,14 @@ export default function ProgrammeDetailPage() {
   // name so the popup can say where the mapping was made.
   const [ksbInspector, setKsbInspector] = useState<{ codes: string[]; componentTitle: string } | null>(null);
   const [programmeFormOpen, setProgrammeFormOpen] = useState(false);
-  const [wizardOpen, setWizardOpen] = useState(false);
-  const [wizardContext, setWizardContext] = useState<{ cohortId?: string; groupId?: string; startStep?: 'programme' | 'cohort' | 'group' | 'modules' | 'review' }>({});
+  const [cohortDrawerOpen, setCohortDrawerOpen] = useState(false);
+  // The cohort the new group belongs to; '' when the user has not narrowed it.
+  const [groupDrawerCohortId, setGroupDrawerCohortId] = useState<string | null>(null);
+  const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
   const [programmeForm, setProgrammeForm] = useState<ProgrammeFormState>({ name: '', standard: '', level: '', owner: '', color: '#6941c6', description: '' });
+  // What the edit form opened with, and whether its discard dialog is already up.
+  const programmeFormBaseline = useRef<ProgrammeFormState | null>(null);
+  const confirmingProgrammeDiscard = useRef(false);
   const [savingAction, setSavingAction] = useState<string | null>(null);
   const [teamsSyncingId, setTeamsSyncingId] = useState('');
   const [teamsSyncMessages, setTeamsSyncMessages] = useState<Record<string, string>>({});
@@ -2007,12 +2053,11 @@ export default function ProgrammeDetailPage() {
   const filteredGroups = useMemo(() => {
     const query = normalise(groupSearch);
     return allGroups.filter(({ cohort: cohortItem, group }) => {
-      const matchesSearch = !query || [group.name, cohortItem.name, group.coach, group.tutor, group.schedule, group.mode, group.status].some(value => normalise(value).includes(query));
+      const matchesSearch = !query || [group.name, cohortItem.name, group.coach, group.schedule, group.mode].some(value => normalise(value).includes(query));
       const matchesCohort = groupCohortFilter === 'all' || cohortItem.id === groupCohortFilter;
-      const matchesStatus = groupStatusFilter === 'all' || group.status === groupStatusFilter;
-      return matchesSearch && matchesCohort && matchesStatus;
+      return matchesSearch && matchesCohort;
     });
-  }, [allGroups, groupSearch, groupCohortFilter, groupStatusFilter]);
+  }, [allGroups, groupSearch, groupCohortFilter]);
   const moduleCohorts = useMemo(() => [...new Set(PROGRAMME.modules.map(m => clean(m.cohort)).filter(Boolean))].sort(), [PROGRAMME.modules]);
   const moduleGroups = useMemo(() => [...new Set(PROGRAMME.modules.map(m => clean(m.group)).filter(Boolean))].sort(), [PROGRAMME.modules]);
   const filteredModules = useMemo(() => {
@@ -2097,7 +2142,7 @@ export default function ProgrammeDetailPage() {
   // Surfaced in the Groups toolbar so an unstaffed group is visible without
   // expanding every cohort.
   const unstaffedGroupCount = PROGRAMME.cohorts.reduce(
-    (total, cohortItem) => total + cohortItem.groups.filter(g => !isStaffAssigned(g.tutor) || !isStaffAssigned(g.coach)).length,
+    (total, cohortItem) => total + cohortItem.groups.filter(g => !isStaffAssigned(g.coach)).length,
     0,
   );
   const totalWeeks = PROGRAMME.modules.reduce((a, m) => a + m.weeksData.length, 0);
@@ -2110,12 +2155,14 @@ export default function ProgrammeDetailPage() {
     : 0;
   const missingKsbCount = PROGRAMME.ksbHeatmap.length - mappedKsbCount;
   const totalKsbOccurrences = PROGRAMME.ksbHeatmap.reduce((total, row) => total + Number(row.totalOccurrences || 0), 0);
-  const programmeHealth = Math.round((ksbCoverage + contentReadiness) / 2);
   const openKsbTrace = (initialTab: 'map' | 'coverage' | 'trace') => {
     setKsbTraceInitialTab(initialTab);
     setKsbTraceOpen(true);
   };
-  const wizardProgramme = useMemo<CurriculumProgramme>(() => ({
+  // This programme as the shared drawers expect it. Used as the programme list
+  // when the detail payload has not landed yet, so opening "Add cohort" during a
+  // reload still knows which programme it is adding to.
+  const pageProgramme = useMemo<CurriculumProgramme>(() => ({
     id: PROGRAMME.id,
     sourceId: PROGRAMME.sourceId || PROGRAMME.id,
     name: PROGRAMME.name,
@@ -2133,15 +2180,12 @@ export default function ProgrammeDetailPage() {
     color: PROGRAMME.color,
     description: PROGRAMME.description,
     ksbProfileSourceId: PROGRAMME.ksbProfileSourceId,
-    // Omitting this let the wizard read structureType as undefined until its own
-    // fetch landed, which flipped isFreeProgramme mid-edit and bounced the user
-    // back to the first step.
     structureType: PROGRAMME.structureType,
   }), [PROGRAMME, liveCohortCount, mappedKsbCount, totalGroups, totalLearners, totalWeeks]);
 
   // Assign a tutor/coach straight from the Cohorts and Groups tabs. The group
-  // PATCH is the same endpoint the structure wizard uses, so the tutor lands on
-  // the group's module rows and is read back by the group payload.
+  // PATCH is the canonical endpoint, so the tutor lands on the group's module
+  // rows and is read back by the group payload.
   const assignGroupStaff = async (groupId: string, role: 'tutor' | 'coach', value: string) => {
     const actionKey = `${role}:${groupId}`;
     setSavingAction(actionKey);
@@ -2151,7 +2195,10 @@ export default function ProgrammeDetailPage() {
     } catch (updateError) {
       await showCurriculumAlert({
         title: `Could not assign ${role}`,
-        text: updateError instanceof Error ? updateError.message : `The ${role} could not be saved. Please try again.`,
+        // A tutor set here lands on every module in the group, so the refusal
+        // names the module and date that are already taken.
+        text: tutorConflictMessage(updateError)
+          || (updateError instanceof Error ? updateError.message : `The ${role} could not be saved. Please try again.`),
         icon: 'error',
       });
     } finally {
@@ -2159,21 +2206,62 @@ export default function ProgrammeDetailPage() {
     }
   };
 
+  // What the shared Cohort / Group / Module drawers need. The programme list is
+  // this programme alone, which is what fixes the parent for every record added
+  // from here without locking the field out of the form.
+  const drawerProgrammes = useMemo(
+    () => (data?.programmes?.length ? data.programmes : [pageProgramme]),
+    [data, pageProgramme],
+  );
+  const drawerProgrammeId = useMemo(
+    () => (drawerProgrammes[0] ? programmeIdentity(drawerProgrammes[0]) : clean(liveProgramme.sourceId) || clean(liveProgramme.id) || clean(id || '')),
+    [drawerProgrammes, id, liveProgramme.id, liveProgramme.sourceId],
+  );
+  const moduleDrawerDefaults = useMemo(() => {
+    const cohort = (data?.cohorts || []).find(item => normalise(item.name) === normalise(moduleCohortFilter));
+    const group = (data?.groups || []).find(item => normalise(item.name) === normalise(moduleGroupFilter));
+    return {
+      programmeId: drawerProgrammeId,
+      cohortId: cohort?.id || group?.cohortId || undefined,
+      groupId: group?.id || undefined,
+    };
+  }, [data, drawerProgrammeId, moduleCohortFilter, moduleGroupFilter]);
+
+  const drawerCoachNames = useMemo(() => staffNameOptions(data?.coaches, (data?.groups || []).map(group => group.coach)), [data]);
+  const drawerTutorNames = useMemo(() => staffNameOptions(data?.tutors, (data?.modules || []).map(module => module.tutor)), [data]);
+
   const openProgrammeForm = () => {
-    setProgrammeForm({
+    const initial = {
       name: PROGRAMME.name,
       standard: PROGRAMME.standard,
       level: PROGRAMME.level,
       owner: PROGRAMME.owner,
       color: PROGRAMME.color,
       description: PROGRAMME.description,
-    });
+    };
+    programmeFormBaseline.current = initial;
+    setProgrammeForm(initial);
     setProgrammeFormOpen(true);
   };
 
-  const openStructureWizard = (context: { cohortId?: string; groupId?: string; startStep?: 'programme' | 'cohort' | 'group' | 'modules' | 'review' } = {}) => {
-    setWizardContext(context);
-    setWizardOpen(true);
+  // Cancel, the cross and the backdrop all come through here, so none of them
+  // can throw away edits the user has not saved yet.
+  const closeProgrammeForm = () => {
+    if (savingAction === 'programme') return;
+    if (sameFormValues(programmeForm, programmeFormBaseline.current)) {
+      setProgrammeFormOpen(false);
+      return;
+    }
+    if (confirmingProgrammeDiscard.current) return;
+    confirmingProgrammeDiscard.current = true;
+    void showCurriculumConfirm({
+      title: 'Discard unsaved changes?',
+      text: 'This form has answers that have not been saved. Closing it now throws them away.',
+      icon: 'warning',
+      confirmButtonText: 'Discard changes',
+      cancelButtonText: 'Keep editing',
+      onConfirm: () => { setProgrammeFormOpen(false); },
+    }).finally(() => { confirmingProgrammeDiscard.current = false; });
   };
 
   const saveProgramme = async (event: FormEvent) => {
@@ -2222,31 +2310,6 @@ export default function ProgrammeDetailPage() {
     return (
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme loading" pageSubtitle="Preparing live curriculum data from the database" userName="Rachel Myers" userRole="Curriculum Designer">
         <div className="p-6 space-y-6">
-          <div className="bg-background-50 rounded-2xl border border-primary-200/70 p-5 sm:p-6">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div className="flex items-start gap-4">
-                <span className="w-11 h-11 rounded-xl bg-primary-100 text-primary-700 flex items-center justify-center shrink-0">
-                  <AppIcon className="ri-database-2-line text-lg"></AppIcon>
-                </span>
-                <div>
-                  <p className="text-[11px] font-semibold text-primary-600 uppercase tracking-wider mb-1">Live database sync</p>
-                  <h1 className="text-xl font-heading font-bold text-foreground-900">Loading programme structure</h1>
-                  <p className="text-[13px] text-foreground-500 mt-1">Cohorts, groups, modules, weeks and sessions are being prepared.</p>
-                </div>
-              </div>
-              <button disabled className="px-4 py-2.5 bg-primary-500 text-white rounded-xl text-[12px] font-semibold cursor-wait whitespace-nowrap flex items-center gap-2">
-                <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>
-                Process in progress
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-5 pt-4 border-t border-foreground-200/60">
-              {['Cohorts', 'Groups', 'Learners', 'Modules', 'Total OTJH'].map(label => (
-                <LoadingStatPill key={label} label={label} />
-              ))}
-            </div>
-          </div>
-
           <div className="flex items-center gap-2 rounded-xl bg-background-100 p-2 overflow-hidden">
             {['Cohorts', 'Groups', 'Modules', 'Weeks', 'Sessions'].map(label => (
               <div key={label} className="h-8 w-24 rounded-lg bg-background-50 border border-foreground-200/50 animate-pulse" />
@@ -2295,56 +2358,6 @@ export default function ProgrammeDetailPage() {
   return (
     <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
       <div className="min-h-screen space-y-5 bg-[linear-gradient(180deg,#fbfcff_0%,#f7f8fb_46%,#f3f5f8_100%)] p-5 sm:p-6">
-        <section className="relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-          {/* Signature: an accent bar tinted with this programme's own colour identity */}
-          <div className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: PROGRAMME.color || 'oklch(var(--primary-500))' }} aria-hidden="true" />
-          <div className="p-5 pl-6 sm:p-6 sm:pl-7">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0">
-                <div className="mb-2 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">
-                    <AppIcon className="ri-database-2-line text-xs"></AppIcon>
-                    Live programme
-                  </span>
-                  <span className="rounded-full border border-foreground-200 bg-background-100 px-2.5 py-1 text-[10px] font-bold uppercase text-foreground-600">{PROGRAMME.level || 'Level not set'}</span>
-                </div>
-                <h1 className="text-2xl font-heading font-black leading-tight tracking-tight text-foreground-950">{PROGRAMME.name}</h1>
-                <p className="mt-1 max-w-4xl text-[13px] leading-6 text-foreground-500">{PROGRAMME.description}</p>
-              </div>
-
-              <div className="flex flex-col items-start gap-4 xl:items-end">
-                <div className="flex items-center gap-3">
-                  <HealthRing value={programmeHealth} color={PROGRAMME.color} />
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Programme health</p>
-                    <p className="text-[12px] text-foreground-500">KSB {ksbCoverage}% · Content {contentReadiness}%</p>
-                  </div>
-                </div>
-                {/* One entry point into the structure wizard. Editing the
-                    programme, adding a cohort, a group or a module are all steps
-                    of the same wizard, so three separate buttons only made the
-                    user choose a door before knowing which room they wanted. */}
-                <div className="flex flex-wrap gap-2 xl:justify-end">
-                  <button onClick={() => openStructureWizard({ startStep: 'programme' })} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-                    <AppIcon className="ri-layout-grid-line text-sm"></AppIcon>
-                    Manage structure
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Live KPI rail — every value computed from the fetched programme data */}
-            <div className="mt-5 grid grid-cols-2 gap-3 border-t border-foreground-200/60 pt-4 sm:grid-cols-3 xl:grid-cols-6">
-              <StatPill icon="ri-group-line" value={liveCohortCount} label="Cohorts" />
-              <StatPill icon="ri-team-line" value={totalGroups} label="Groups" />
-              <StatPill icon="ri-graduation-cap-line" value={totalLearners} label="Learners" />
-              <StatPill icon="ri-stack-line" value={PROGRAMME.modules.length} label="Modules" />
-              <StatPill icon="ri-time-line" value={`${totalOtjh}h`} label="Total OTJH" />
-              <StatPill icon="ri-broadcast-line" value={totalSessions} label="Sessions" />
-            </div>
-          </div>
-        </section>
-
         {/* Programme Navigation */}
         <div className="sticky top-0 z-20 flex items-center gap-2 rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
           <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
@@ -2396,6 +2409,7 @@ export default function ProgrammeDetailPage() {
               }]}
               onReset={() => { setCohortSearch(''); setCohortStatusFilter('all'); }}
               resetDisabled={!cohortSearch && cohortStatusFilter === 'all'}
+              actions={<TabAddButton label="Add cohort" icon="ri-calendar-event-line" onClick={() => setCohortDrawerOpen(true)} />}
               summary={cohortStatusFilter === 'archived'
                 ? `Showing ${filteredCohorts.length} of ${archivedCohortCount} archived cohorts`
                 : `Showing ${filteredCohorts.length} of ${liveCohortCount} cohorts${archivedCohortCount > 0 ? ` · ${archivedCohortCount} archived` : ''}`}
@@ -2408,8 +2422,8 @@ export default function ProgrammeDetailPage() {
                 icon="ri-group-line"
                 title="No cohorts yet"
                 message="Cohorts define when a group of learners starts and finishes this programme. Add the first one to begin planning delivery."
-                actionLabel="Add structure"
-                onAction={() => openStructureWizard({ startStep: 'cohort' })}
+                actionLabel="Add cohort"
+                onAction={() => setCohortDrawerOpen(true)}
               />
             )}
 
@@ -2462,7 +2476,7 @@ export default function ProgrammeDetailPage() {
                             title="This cohort has no groups"
                             message="Groups hold the weekly timetable and the tutor and coach who deliver it. Add one to start scheduling."
                             actionLabel="New group"
-                            onAction={() => openStructureWizard({ cohortId: c.id, startStep: 'group' })}
+                            onAction={() => setGroupDrawerCohortId(c.id)}
                           />
                         </div>
                       ) : (
@@ -2594,7 +2608,7 @@ export default function ProgrammeDetailPage() {
             <TabToolbar
               search={groupSearch}
               onSearch={setGroupSearch}
-              placeholder="Search groups, coach, tutor, schedule..."
+              placeholder="Search groups, coach, schedule..."
               selects={[
                 {
                   label: 'Filter by cohort',
@@ -2605,21 +2619,19 @@ export default function ProgrammeDetailPage() {
                     ...PROGRAMME.cohorts.map(cohortItem => ({ value: cohortItem.id, label: cohortItem.name })),
                   ],
                 },
-                {
-                  label: 'Filter by status',
-                  value: groupStatusFilter,
-                  onChange: setGroupStatusFilter,
-                  options: [
-                    { value: 'all', label: 'All statuses' },
-                    { value: 'planned', label: 'Planned' },
-                    { value: 'active', label: 'Active' },
-                    { value: 'completed', label: 'Completed' },
-                  ],
-                },
               ]}
-              onReset={() => { setGroupSearch(''); setGroupCohortFilter('all'); setGroupStatusFilter('all'); }}
-              resetDisabled={!groupSearch && groupCohortFilter === 'all' && groupStatusFilter === 'all'}
-              summary={`Showing ${filteredGroups.length} of ${totalGroups} groups${unstaffedGroupCount > 0 ? ` · ${unstaffedGroupCount} still need a tutor or coach` : ''}`}
+              onReset={() => { setGroupSearch(''); setGroupCohortFilter('all'); }}
+              resetDisabled={!groupSearch && groupCohortFilter === 'all'}
+              actions={(
+                <TabAddButton
+                  label="Add group"
+                  icon="ri-team-line"
+                  // Filtering to one cohort is already a statement about which
+                  // cohort the user is working in, so it seeds the drawer.
+                  onClick={() => setGroupDrawerCohortId(groupCohortFilter === 'all' ? '' : groupCohortFilter)}
+                />
+              )}
+              summary={`Showing ${filteredGroups.length} of ${totalGroups} groups${unstaffedGroupCount > 0 ? ` · ${unstaffedGroupCount} still need a coach` : ''}`}
             />
 
             {loading && totalGroups === 0 && <TabLoadingRows />}
@@ -2628,9 +2640,9 @@ export default function ProgrammeDetailPage() {
               <TabEmptyState
                 icon="ri-team-line"
                 title="No groups yet"
-                message="A group is the timetabled class that learners attend: it carries the weekly schedule and the tutor and coach who deliver it."
-                actionLabel="Add structure"
-                onAction={() => openStructureWizard({ startStep: 'group' })}
+                message="A group is the timetabled class that learners attend: it carries the weekly schedule and the coach who supports it. Tutors are assigned per module."
+                actionLabel="Add group"
+                onAction={() => setGroupDrawerCohortId('')}
               />
             )}
 
@@ -2657,7 +2669,7 @@ export default function ProgrammeDetailPage() {
                   </div>
 
                   {visibleGroups.map(g => {
-                    const needsStaff = !isStaffAssigned(g.tutor) || !isStaffAssigned(g.coach);
+                    const needsStaff = !isStaffAssigned(g.coach);
                     return (
                       <div key={g.id} className={`rounded-2xl border bg-background-50 p-4 shadow-sm ${needsStaff ? 'border-amber-200' : 'border-foreground-200/70'}`}>
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
@@ -2668,7 +2680,6 @@ export default function ProgrammeDetailPage() {
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <p className="text-sm font-bold text-foreground-900">{g.name}</p>
-                              <StatusChip status={g.status} />
                               {needsStaff && (
                                 <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
                                   <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon> Needs staffing
@@ -2684,15 +2695,7 @@ export default function ProgrammeDetailPage() {
                             </div>
                           </div>
 
-                          <div className="grid w-full shrink-0 grid-cols-1 gap-2.5 border-t border-background-200/70 pt-3 sm:grid-cols-2 lg:w-[380px] lg:border-t-0 lg:pt-0">
-                            <StaffSlot
-                              role="Tutor"
-                              icon="ri-user-settings-line"
-                              name={g.tutor}
-                              options={data?.tutors || []}
-                              saving={savingAction === `tutor:${g.id}`}
-                              onAssign={value => assignGroupStaff(g.id, 'tutor', value)}
-                            />
+                          <div className="w-full shrink-0 border-t border-background-200/70 pt-3 lg:w-[190px] lg:border-t-0 lg:pt-0">
                             <StaffSlot
                               role="Coach"
                               icon="ri-heart-line"
@@ -2743,6 +2746,7 @@ export default function ProgrammeDetailPage() {
               ]}
               onReset={() => { setModuleSearch(''); setModuleCohortFilter('all'); setModuleGroupFilter('all'); }}
               resetDisabled={!moduleSearch && moduleCohortFilter === 'all' && moduleGroupFilter === 'all'}
+              actions={<TabAddButton label="Add module" icon="ri-stack-line" onClick={() => setModuleDrawerOpen(true)} />}
               summary={`Showing ${filteredModules.length} of ${PROGRAMME.modules.length} modules`}
             />
 
@@ -2753,8 +2757,8 @@ export default function ProgrammeDetailPage() {
                 icon="ri-stack-line"
                 title="No modules yet"
                 message="Modules carry the weekly content, sessions and OTJH for this programme. Add the first one to start building the curriculum."
-                actionLabel="Add structure"
-                onAction={() => openStructureWizard({ startStep: 'modules' })}
+                actionLabel="Add module"
+                onAction={() => setModuleDrawerOpen(true)}
               />
             )}
 
@@ -2839,13 +2843,14 @@ export default function ProgrammeDetailPage() {
                           <AppIcon className="ri-microsoft-teams-line text-base"></AppIcon>
                         </span>
                         <div className="min-w-0">
-                          <p className="text-[11px] font-black text-foreground-900">Microsoft Teams results</p>
-                          <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">Attendance, transcript and recording for this module's sessions.</p>
-                          {teamsJoinUrl && <a href={teamsJoinUrl} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[10px] font-bold text-primary-700 hover:text-primary-800">Open meeting link</a>}
+                          <p className="text-[11px] font-black text-foreground-900">Attendance and recordings from Teams</p>
+                          <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">Pulled back from Microsoft Teams after each meeting of this module has run.</p>
+                          {teamsJoinUrl && <a href={teamsJoinUrl} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[10px] font-bold text-primary-700 hover:text-primary-800">Open in Teams</a>}
                         </div>
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center gap-2">
                         <button
+                          title="Ask Microsoft Teams for the attendance, transcripts and recordings of every meeting of this module that has already run."
                           type="button"
                           disabled={teamsSyncingId === teamsLiveSessionId}
                           onClick={async () => {
@@ -2858,12 +2863,12 @@ export default function ProgrammeDetailPage() {
                               setTeamsResultsOpen(previous => ({ ...previous, [teamsLiveSessionId]: true }));
                               setTeamsSyncMessages(previous => ({
                                 ...previous,
-                                [teamsLiveSessionId]: `Synced ${result.synced.attendanceRecords} attendance rows, ${result.synced.transcripts} transcripts and ${result.synced.recordings} recordings.`,
+                                [teamsLiveSessionId]: `Saved ${result.synced.attendanceRecords} attendance records, ${result.synced.transcripts} transcripts and ${result.synced.recordings} recordings.`,
                               }));
                             } catch (error) {
                               setTeamsSyncMessages(previous => ({
                                 ...previous,
-                                [teamsLiveSessionId]: error instanceof Error ? error.message : 'Unable to sync Teams results.',
+                                [teamsLiveSessionId]: error instanceof Error ? error.message : 'Unable to fetch the attendance and recordings from Teams.',
                               }));
                             } finally {
                               setTeamsSyncingId('');
@@ -2872,9 +2877,10 @@ export default function ProgrammeDetailPage() {
                           className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[10px] font-bold text-white hover:bg-primary-700 disabled:cursor-wait disabled:opacity-50"
                         >
                           <AppIcon className={`${teamsSyncingId === teamsLiveSessionId ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}`}></AppIcon>
-                          {teamsSyncingId === teamsLiveSessionId ? 'Syncing...' : 'Sync results'}
+                          {teamsSyncingId === teamsLiveSessionId ? 'Fetching...' : 'Fetch attendance & recordings'}
                         </button>
                         <button
+                          title="Show what has already been fetched from Teams, meeting by meeting."
                           type="button"
                           disabled={teamsSyncingId === teamsLiveSessionId}
                           onClick={async () => {
@@ -2890,7 +2896,7 @@ export default function ProgrammeDetailPage() {
                             } catch (error) {
                               setTeamsSyncMessages(previous => ({
                                 ...previous,
-                                [teamsLiveSessionId]: error instanceof Error ? error.message : 'Unable to load Teams results.',
+                                [teamsLiveSessionId]: error instanceof Error ? error.message : 'Unable to load the saved Teams detail.',
                               }));
                             } finally {
                               setTeamsSyncingId('');
@@ -2899,7 +2905,7 @@ export default function ProgrammeDetailPage() {
                           className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[10px] font-bold text-primary-700 hover:bg-primary-50 disabled:cursor-wait disabled:opacity-50"
                         >
                           <AppIcon className={teamsResultsOpen[teamsLiveSessionId] ? 'ri-arrow-up-s-line' : 'ri-eye-line'}></AppIcon>
-                          {teamsResultsOpen[teamsLiveSessionId] ? 'Hide details' : 'View details'}
+                          {teamsResultsOpen[teamsLiveSessionId] ? 'Hide per-meeting detail' : 'View per-meeting detail'}
                         </button>
                       </div>
                     </div>
@@ -3024,8 +3030,8 @@ export default function ProgrammeDetailPage() {
               icon="ri-calendar-line"
               title="No weeks to show yet"
               message="Weeks belong to a module. Add a module to this programme and its weekly plan will appear here."
-              actionLabel="Add structure"
-              onAction={() => openStructureWizard({ startStep: 'modules' })}
+              actionLabel="Add module"
+              onAction={() => setModuleDrawerOpen(true)}
             />
           )
         )}
@@ -3702,11 +3708,11 @@ const mappedKsbCodes = [...new Set([
         )}
 
         {programmeFormOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={() => setProgrammeFormOpen(false)}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={closeProgrammeForm}>
             <form onSubmit={saveProgramme} className="bg-background-50 rounded-2xl w-full max-w-xl shadow-2xl" onClick={event => event.stopPropagation()}>
               <div className="px-6 py-4 border-b border-foreground-400/50 flex items-center justify-between">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Edit Programme</h3>
-                <button type="button" onClick={() => setProgrammeFormOpen(false)} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-foreground-500"></AppIcon></button>
+                <button type="button" onClick={closeProgrammeForm} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-foreground-500"></AppIcon></button>
               </div>
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -3733,27 +3739,41 @@ const mappedKsbCodes = [...new Set([
                 </label>
               </div>
               <div className="px-6 py-4 border-t border-background-200/60 flex justify-end gap-2">
-                <button type="button" onClick={() => setProgrammeFormOpen(false)} disabled={savingAction === 'programme'} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
+                <button type="button" onClick={closeProgrammeForm} disabled={savingAction === 'programme'} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
                 <button type="submit" disabled={savingAction === 'programme'} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 disabled:opacity-50">{savingAction === 'programme' ? 'Saving...' : 'Save Programme'}</button>
               </div>
             </form>
           </div>
         )}
 
-        {wizardOpen && (
-          <AddCurriculumStructureWizard
-            isOpen={wizardOpen}
-            onClose={() => setWizardOpen(false)}
-onSaved={async () => {
-              await reload();
-            }}
-            initialProgrammeId={id || PROGRAMME.id}
-            initialProgramme={wizardProgramme}
-            initialCohortId={wizardContext.cohortId}
-            initialGroupId={wizardContext.groupId}
-            startStep={wizardContext.startStep || 'cohort'}
-          />
-        )}
+        <CohortFormDrawer
+          open={cohortDrawerOpen}
+          defaults={{ programmeId: drawerProgrammeId }}
+          programmes={drawerProgrammes}
+          holidays={data?.holidays || []}
+          onClose={() => setCohortDrawerOpen(false)}
+          onSaved={() => reload()}
+        />
+        <GroupFormDrawer
+          open={groupDrawerCohortId !== null}
+          defaults={{ programmeId: drawerProgrammeId, cohortId: groupDrawerCohortId || undefined }}
+          programmes={drawerProgrammes}
+          cohorts={data?.cohorts || []}
+          coachNames={drawerCoachNames}
+          onClose={() => setGroupDrawerCohortId(null)}
+          onSaved={() => reload()}
+        />
+        <ModuleFormDrawer
+          open={moduleDrawerOpen}
+          defaults={moduleDrawerDefaults}
+          programmes={drawerProgrammes}
+          cohorts={data?.cohorts || []}
+          groups={data?.groups || []}
+          holidays={data?.holidays || []}
+          tutorNames={drawerTutorNames}
+          onClose={() => setModuleDrawerOpen(false)}
+          onSaved={() => reload()}
+        />
         {ksbTraceOpen && (
           <KsbTraceModal
             programme={PROGRAMME}
@@ -3887,20 +3907,6 @@ function KsbInspectorModal({
             </section>
           ))}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function StatPill({ icon, value, label }: { icon: string; value: number | string; label: string }) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
-      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
-        <AppIcon className={`${icon} text-sm`}></AppIcon>
-      </span>
-      <div>
-        <p className="text-base font-black leading-tight text-foreground-950">{value}</p>
-        <p className="mt-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
       </div>
     </div>
   );
@@ -4078,21 +4084,21 @@ function TeamsResultsDetails({ liveSessionId, data }: { liveSessionId: string; d
           <p className="mt-0.5 text-[9px] font-semibold text-foreground-500">Only people recorded in Microsoft Teams attendance reports are shown—not the invitation list.</p>
         </div>
         <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-foreground-600">
-          {completed.length} session{completed.length === 1 ? '' : 's'} with results
+          {completed.length} meeting{completed.length === 1 ? '' : 's'} with data
         </span>
       </div>
       {completed.length ? completed.map(occurrence => (
         <div key={occurrence.id} className="overflow-hidden rounded-xl border border-primary-100 bg-white">
           <div className="flex flex-wrap items-center justify-between gap-2 bg-primary-50/70 px-3 py-2">
             <div>
-              <p className="text-[11px] font-black text-foreground-900">Session {occurrence.session_number}</p>
+              <p className="text-[11px] font-black text-foreground-900">Meeting {occurrence.session_number}</p>
               <p className="text-[10px] font-semibold text-foreground-500">
                 {formatDateTime(occurrence.actual_start || occurrence.scheduled_start)}
               </p>
             </div>
             <div className="flex flex-wrap gap-1.5">
               <span className="rounded-full bg-sky-100 px-2 py-1 text-[9px] font-bold text-sky-800">
-                {occurrence.attendance.length} attendance
+                {occurrence.attendance.length} attended
               </span>
               <span className="rounded-full bg-violet-100 px-2 py-1 text-[9px] font-bold text-violet-800">
                 {occurrence.artifacts.filter(item => item.artifact_type === 'transcript').length} transcript
@@ -4183,7 +4189,7 @@ function TeamsResultsDetails({ liveSessionId, data }: { liveSessionId: string; d
         </div>
       )) : (
         <p className="rounded-lg bg-white px-3 py-3 text-[10px] font-semibold text-foreground-500">
-          No completed session results are stored yet. Run Sync results after the Teams meeting ends.
+          Nothing is stored yet. Use Fetch attendance &amp; recordings once a meeting has ended.
         </p>
       )}
     </div>
@@ -4224,19 +4230,6 @@ function ModuleDetailLine({ icon, label, value, warnWhenUnassigned = false }: { 
   );
 }
 
-function HealthRing({ value, color }: { value: number; color?: string }) {
-  const safe = Math.max(0, Math.min(100, Math.round(value || 0)));
-  const ring = color || 'oklch(var(--primary-500))';
-  return (
-    <div className="relative h-14 w-14 shrink-0" role="img" aria-label={`Programme health ${safe} percent`}>
-      <div className="h-14 w-14 rounded-full" style={{ background: `conic-gradient(${ring} ${safe * 3.6}deg, oklch(var(--background-200)) ${safe * 3.6}deg)` }} />
-      <div className="absolute inset-[4px] flex items-center justify-center rounded-full bg-background-50">
-        <span className="text-[13px] font-black text-foreground-900">{safe}%</span>
-      </div>
-    </div>
-  );
-}
-
 function ProgressRow({ label, value }: { label: string; value: number }) {
   return (
     <div>
@@ -4256,18 +4249,6 @@ function MiniDarkMetric({ label, value }: { label: string; value: number | strin
     <div>
       <p className="text-[15px] font-black leading-tight text-foreground-950">{value}</p>
       <p className="mt-0.5 text-[9px] font-bold uppercase leading-tight text-foreground-400">{label}</p>
-    </div>
-  );
-}
-
-function LoadingStatPill({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 bg-background-100 rounded-lg p-3">
-      <span className="w-4 h-4 rounded bg-background-200 animate-pulse" />
-      <div className="min-w-0 flex-1">
-        <div className="h-4 w-10 rounded bg-background-200 animate-pulse mb-1" />
-        <p className="text-[9px] text-foreground-400 uppercase">{label}</p>
-      </div>
     </div>
   );
 }

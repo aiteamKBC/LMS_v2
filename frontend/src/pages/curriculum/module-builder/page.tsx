@@ -1,13 +1,42 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { AddCurriculumStructureWizard } from '@/components/feature/AddCurriculumStructureWizard';
+import { TutorClashNotice } from '@/components/feature/TutorClashNotice';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
+import { useTutorAvailability } from '@/hooks/useTutorAvailability';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { fetchCurriculumStandards, type CurriculumKsbSet, type CurriculumProgramme, type CurriculumStandard } from '@/lib/curriculumApi';
+import {
+  fetchCurriculumHolidays,
+  fetchCurriculumOverview,
+  fetchCurriculumStandards,
+  fetchCurriculumTeamsMeetingSummaries,
+  fetchCurriculumTutors,
+  updateCurriculumModule,
+  type CurriculumCohort,
+  type CurriculumGroup,
+  type CurriculumHoliday,
+  type CurriculumKsbSet,
+  type CurriculumProgramme,
+  type CurriculumStaffProfile,
+  type CurriculumStandard,
+  type CurriculumTeamsMeetingSummary,
+  tutorConflictMessage,
+} from '@/lib/curriculumApi';
+// The delivery side of a module -- which cohort and group run it, who tutors it,
+// when it runs and whether its Teams series exists -- used to live on a separate
+// Curriculum -> Modules page. It is managed from this catalogue now, so the
+// shared entity drawer and date formatting come across with it.
+import { EntityDrawer, FormField, SelectControl } from '../shared/entities/ui';
+import { formatDateLabel, moduleIdentity } from '../shared/entities/model';
+// Creating a module and moving it between programmes, cohorts and groups is one
+// dedicated form, shared with the Group and Module workspaces. It replaced the
+// six-step structure wizard this page used to open for both jobs.
+import { ModuleFormDrawer, type ModuleFormTarget, type SavedModuleRef } from '../shared/entities/moduleForm';
 import {
   calculateQualityChecklist,
   componentTypeGroups,
@@ -26,12 +55,10 @@ import {
   loadModuleStructure,
   loadTeamsMeetingConfiguration,
   makeAuthoringId,
-  MODULE_BUILDER_WIZARD_DRAFT_PREFIX,
   recalculateModule,
   restoreModuleTeamsMeeting,
   saveModuleStructure,
   uploadComponentResource,
-  wizardDraftLocalIdFromKey,
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
@@ -70,6 +97,8 @@ import { RichTextDraft } from './RichTextEditor';
 // false = classic single-open accordion (the current default look/feel).
 const ALLOW_MULTIPLE_EXPANDED_WEEKS = false;
 
+const FILTER_SELECT_CLASS = 'h-10 min-w-40 rounded-lg border border-background-200 bg-background-100 px-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50';
+
 type Selection =
   | { kind: 'week'; weekId: string }
   | { kind: 'component'; weekId: string; componentId: string };
@@ -81,19 +110,15 @@ type KsbTarget =
 
 type DragState = { type: 'week'; weekId: string } | null;
 
-type NewModuleInput = {
-  programme: string;
-  programmeId?: string;
-  title: string;
-  description: string;
-  sessionsNumber: number;
-  startDate: string;
-  endDate: string;
-};
-
 type ModuleDeliveryUsage = {
   id: string;
   moduleId: string;
+  /**
+   * The identity the per-module endpoints answer to, resolved exactly the way
+   * the entity pages resolve it. `moduleId` above keeps its own legacy order and
+   * is used for matching, so the two are deliberately separate.
+   */
+  deliveryModuleId: string;
   sourceId: string;
   catalogueId: string;
   structureId: string;
@@ -104,6 +129,7 @@ type ModuleDeliveryUsage = {
   cohort: string;
   groupId?: string;
   group: string;
+  tutor: string;
   deliveryStatus: string;
   startDate?: string;
   endDate?: string;
@@ -144,25 +170,6 @@ type QuizPackageSummary = {
   passingGrade?: number | null;
   linkedCourses?: number;
 };
-
-type WizardModuleDraftPayload = {
-  programmeId?: string;
-  programme?: string;
-  programmeStatus?: string;
-  cohortId?: string;
-  cohortName?: string;
-  groupId?: string;
-  groupName?: string;
-  ksbSourceId?: string;
-  ksbSourceLabel?: string;
-  title?: string;
-  description?: string;
-  sessionsNumber?: number;
-  startDate?: string;
-  endDate?: string;
-};
-
-const MODULE_BUILDER_SYNC_CHANNEL = 'kbc-module-builder-sync';
 
 function wait(ms: number) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
@@ -210,22 +217,41 @@ async function showBuilderDeleteSwal({
 }
 
 export default function ModuleBuilder() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState('');
   const [programmeFilter, setProgrammeFilter] = useState<string>('All');
+  // The delivery filters the Modules page used to carry. They read the module's
+  // own deliveries rather than a second fetch of cohorts and groups, so the
+  // cascade can never offer a cohort or group no module is actually delivered to.
+  const [cohortFilter, setCohortFilter] = useState(() => searchParams.get('cohort') || '');
+  const [groupFilter, setGroupFilter] = useState(() => searchParams.get('group') || '');
+  const [tutorFilter, setTutorFilter] = useState(() => searchParams.get('tutor') || '');
+  const [tutorProfiles, setTutorProfiles] = useState<CurriculumStaffProfile[]>([]);
+  const [teamsMeetings, setTeamsMeetings] = useState<CurriculumTeamsMeetingSummary[]>([]);
+  const [tutorDrawer, setTutorDrawer] = useState<{ moduleId: string; moduleTitle: string; delivery: string; tutor: string } | null>(null);
+  const [tutorDrawerSaving, setTutorDrawerSaving] = useState(false);
+  const [tutorDrawerError, setTutorDrawerError] = useState<string | null>(null);
+  // Asked as the drawer opens, so the picker can mark who is already teaching in
+  // this module's slot instead of letting the save be the one to say so. Only
+  // the module id is sent -- the backend reads its stored weekday and times.
+  const tutorAvailability = useTutorAvailability(
+    tutorDrawer ? { moduleCatalogueId: tutorDrawer.moduleId } : null,
+  );
+  const tutorDrawerVerdict = tutorDrawer ? tutorAvailability.verdictFor(tutorDrawer.tutor) : null;
   const [workingModule, setWorkingModule] = useState<ModuleCatalogueItem | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsWizardModule, setSettingsWizardModule] = useState<ModuleCatalogueItem | null>(null);
+  const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [creatingQuickModule, setCreatingQuickModule] = useState(false);
-  const [creatingQuickModuleComplete, setCreatingQuickModuleComplete] = useState(false);
+  // Programme -> cohort -> group tree plus the holiday list: read only by the
+  // module form, so it is fetched the first time that drawer opens rather than
+  // on every Module Builder load.
+  const [moduleFormScope, setModuleFormScope] = useState<{ cohorts: CurriculumCohort[]; groups: CurriculumGroup[]; holidays: CurriculumHoliday[] }>({ cohorts: [], groups: [], holidays: [] });
   const [openingModule, setOpeningModule] = useState<{ title: string; mode: 'builder' | 'settings' } | null>(null);
   const [openingModuleComplete, setOpeningModuleComplete] = useState(false);
   const [duplicatingModule, setDuplicatingModule] = useState<ModuleCatalogueItem | null>(null);
   const [duplicatingModuleComplete, setDuplicatingModuleComplete] = useState(false);
-  const [quickCreateRetryInput, setQuickCreateRetryInput] = useState<NewModuleInput | null>(null);
-  const [quickCreateError, setQuickCreateError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
@@ -252,16 +278,16 @@ export default function ModuleBuilder() {
   const [saveElapsedSeconds, setSaveElapsedSeconds] = useState(0);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const deepLinkedModuleRef = useRef('');
-  const wizardDraftLocalIdRef = useRef('');
+  // Until the user drives a filter themselves the URL is read-only: the existing
+  // programme deep link resolves an id into a name a beat later, and a sync that
+  // deleted params it had not written would erase it before that happens.
+  const filtersTouchedRef = useRef(false);
   const savedModuleSnapshotRef = useRef('');
   const saveRequestRef = useRef(0);
   const { modules, loading, error, reload } = useCurriculumModules({ compact: true, skipCache: true });
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ skipCache: true, visibility: 'all' });
   const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets({ all: true });
   const liveCurriculumProgrammes = curriculumProgrammes;
-  const wizardModulePayload = useMemo(() => (
-    typeof window === 'undefined' ? null : readWizardModuleDraft(new URLSearchParams(window.location.search))
-  ), []);
 
   // Reuse of the week-builder component editor needs group options, rule-driven
   // points and a scope — sourced the same way the week builder does.
@@ -332,21 +358,6 @@ export default function ModuleBuilder() {
     };
   }, [programmeLookup]);
 
-  const wizardProgrammeKsbSourceId = useMemo(() => {
-    if (!wizardModulePayload) return '';
-    const candidates = [
-      wizardModulePayload.programmeId,
-      wizardModulePayload.programme,
-    ].map(normaliseDeepLinkValue).filter(Boolean);
-    if (!candidates.length) return '';
-    const programme = curriculumProgrammes.find(item => candidates.some(candidate => (
-      normaliseDeepLinkValue(item.id) === candidate
-      || normaliseDeepLinkValue(item.sourceId) === candidate
-      || normaliseDeepLinkValue(item.name) === candidate
-    )));
-    return cleanKsbSourceId(programme?.ksbProfileSourceId);
-  }, [curriculumProgrammes, wizardModulePayload]);
-
   const initialKsbSourceId = useMemo(() => {
     const selectedSource = cleanKsbSourceId(workingModule?.ksbProfileSourceId);
     if (selectedSource && ksbSourceMatchesModule(selectedSource, ksbSets, standards, workingModule, curriculumProgrammes)) return selectedSource;
@@ -362,33 +373,18 @@ export default function ModuleBuilder() {
     ksbSourceOptions(ksbSets, standards)
   ), [ksbSets, standards]);
   const workspaceKsbProfileValue = useMemo(() => {
-    const wizardSource = wizardProgrammeKsbSourceId || cleanKsbSourceId(wizardModulePayload?.ksbSourceId);
-    if (wizardSource) return wizardSource;
     const selectedSource = cleanKsbSourceId(workingModule?.ksbProfileSourceId);
     if (selectedSource && ksbSourceMatchesModule(selectedSource, ksbSets, standards, workingModule, curriculumProgrammes)) return selectedSource;
     const matchingProfile = ksbSetForModule(ksbSets, workingModule, curriculumProgrammes);
     if (matchingProfile) return ksbSetSourceId(matchingProfile);
     const matchingStandard = standardForModule(standards, workingModule, curriculumProgrammes);
     return matchingStandard ? ksbStandardSourceId(matchingStandard) : '';
-  }, [curriculumProgrammes, ksbSets, standards, wizardModulePayload?.ksbSourceId, wizardProgrammeKsbSourceId, workingModule]);
+  }, [curriculumProgrammes, ksbSets, standards, workingModule]);
 
+  // The module's programme and KSB source, read off the delivery it is used in.
+  // A second branch used to override both from query parameters the structure
+  // wizard put on the URL; with the wizard gone the delivery is the only source.
   const resolveModuleScopeLock = useCallback((module: ModuleCatalogueItem | ModuleBuilderListItem): ModuleScopeLock => {
-    const wizardSource = wizardProgrammeKsbSourceId || cleanKsbSourceId(wizardModulePayload?.ksbSourceId);
-    if (wizardModulePayload && (wizardModulePayload.programmeId || wizardModulePayload.programme || wizardSource)) {
-      const programmeIdentity = resolveProgrammeIdentity(wizardModulePayload.programme || module.programmeName || '', wizardModulePayload.programmeId || module.programmeId || '');
-      const wizardSourceLabel = ksbSourceLabels[wizardSource]
-        || ksbSourceLabels[`profile:${wizardSource}`]
-        || ksbSourceLabels[`standard:${wizardSource}`]
-        || (!wizardProgrammeKsbSourceId ? wizardModulePayload.ksbSourceLabel : '')
-        || wizardSource;
-      return {
-        programmeId: programmeIdentity.programmeId,
-        programmeName: programmeIdentity.programmeName,
-        ksbSourceId: wizardSource,
-        ksbSourceLabel: wizardSourceLabel,
-        locked: true,
-      };
-    }
     const usage = deliveryUsageForModuleScope(module as ModuleBuilderListItem, programmeFilter, curriculumProgrammes);
     const rawProgrammeName = usage?.programme || module.programmeName || module.sourceModule?.programme || '';
     const rawProgrammeId = usage?.programmeId || module.programmeId || module.sourceModule?.programmeId || '';
@@ -414,36 +410,44 @@ export default function ModuleBuilder() {
       ksbSourceLabel,
       locked,
     };
-  }, [curriculumProgrammes, ksbSets, ksbSourceLabels, programmeFilter, resolveProgrammeIdentity, standards, wizardModulePayload, wizardProgrammeKsbSourceId]);
+  }, [curriculumProgrammes, ksbSets, ksbSourceLabels, programmeFilter, resolveProgrammeIdentity, standards]);
 
   const workingModuleScopeLock = useMemo(
     () => (workingModule ? resolveModuleScopeLock(workingModule) : null),
     [resolveModuleScopeLock, workingModule],
   );
 
-  const settingsWizardProgramme = useMemo(() => {
-    if (!settingsWizardModule) return undefined;
-    const candidateKeys = [
-      settingsWizardModule.programmeId,
-      settingsWizardModule.programmeName,
-      settingsWizardModule.sourceModule?.programmeId,
-      settingsWizardModule.sourceModule?.programme,
-    ].map(normaliseDeepLinkValue).filter(Boolean);
-    return curriculumProgrammes.find(programme => [
-      programme.id,
-      programme.sourceId,
-      programme.name,
-    ].some(value => candidateKeys.includes(normaliseDeepLinkValue(value))));
-  }, [curriculumProgrammes, settingsWizardModule]);
-
-  const openSettingsWizard = useCallback((module: ModuleCatalogueItem) => {
+  // "Module settings" used to reopen the structure wizard on its Modules step
+  // just to move a module between programmes, cohorts and groups. That is the
+  // same job the Add-module drawer does, so it opens that instead.
+  const openPlacementForm = useCallback((module: ModuleCatalogueItem) => {
     setSettingsOpen(false);
-    setSettingsWizardModule(module);
+    setPlacementModule(moduleFormTargetFromCatalogue(module));
   }, []);
 
-  const closeSettingsWizard = useCallback(() => {
-    setSettingsWizardModule(null);
+  const closePlacementForm = useCallback(() => {
+    setPlacementModule(null);
   }, []);
+
+  const moduleFormOpen = createOpen || Boolean(placementModule);
+  const moduleFormScopeLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!moduleFormOpen || moduleFormScopeLoadedRef.current) return undefined;
+    let active = true;
+    void Promise.all([
+      fetchCurriculumOverview(undefined, { compact: true }).catch(() => null),
+      fetchCurriculumHolidays().catch(() => [] as CurriculumHoliday[]),
+    ]).then(([overview, holidays]) => {
+      if (!active) return;
+      moduleFormScopeLoadedRef.current = true;
+      setModuleFormScope({
+        cohorts: overview?.cohorts || [],
+        groups: overview?.groups || [],
+        holidays,
+      });
+    });
+    return () => { active = false; };
+  }, [moduleFormOpen]);
 
   // Scope + module-scoped uploader passed to the shared week-builder editor.
   const weekScopeForModule = useMemo<WeekScope>(() => ({
@@ -506,12 +510,145 @@ export default function ModuleBuilder() {
     }
   }, [reload, restoringTeamsModuleId, workingModule]);
 
+  // Staff and Teams state are additive: the catalogue must still render if either
+  // request fails, so neither is allowed to surface as a page-level error.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchCurriculumTutors(controller.signal)
+      .then(profiles => setTutorProfiles(profiles))
+      .catch(() => {});
+    fetchCurriculumTeamsMeetingSummaries(controller.signal)
+      .then(summaries => setTeamsMeetings(summaries))
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
+
+  const deliveryUsages = useMemo(
+    () => catalogueModules.flatMap(module => module.deliveryUsages || []),
+    [catalogueModules],
+  );
+
+  const cohortFilterOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    deliveryUsages
+      .filter(usage => usageMatchesProgrammeFilter(usage, programmeFilter, curriculumProgrammes))
+      .forEach(usage => {
+        const value = deliveryFilterValue(usage.cohortId, usage.cohort);
+        if (value) options.set(value, cleanModuleMeta(usage.cohort) || value);
+      });
+    return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [curriculumProgrammes, deliveryUsages, programmeFilter]);
+
+  const groupFilterOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    deliveryUsages
+      .filter(usage => (
+        usageMatchesProgrammeFilter(usage, programmeFilter, curriculumProgrammes)
+        && deliveryFilterMatches(cohortFilter, usage.cohortId, usage.cohort)
+      ))
+      .forEach(usage => {
+        const value = deliveryFilterValue(usage.groupId, usage.group);
+        if (value) options.set(value, cleanModuleMeta(usage.group) || value);
+      });
+    return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [cohortFilter, curriculumProgrammes, deliveryUsages, programmeFilter]);
+
+  /** Every tutor who could be assigned: the staff roster plus anyone already on a delivery. */
+  const tutorNames = useMemo(() => {
+    const names = new Set<string>();
+    tutorProfiles.forEach(profile => {
+      const name = tutorDisplayName(profile.name) || tutorDisplayName(profile.email);
+      if (name) names.add(name);
+    });
+    deliveryUsages.forEach(usage => { if (usage.tutor) names.add(usage.tutor); });
+    return Array.from(names).sort((a, b) => a.localeCompare(b));
+  }, [deliveryUsages, tutorProfiles]);
+
+  // Drop a child filter its parent no longer contains, so the cascade can never
+  // show a contradictory Programme / Cohort / Group combination.
+  useEffect(() => {
+    if (cohortFilter && !cohortFilterOptions.some(option => option.value === cohortFilter)) setCohortFilter('');
+  }, [cohortFilter, cohortFilterOptions]);
+  useEffect(() => {
+    if (groupFilter && !groupFilterOptions.some(option => option.value === groupFilter)) setGroupFilter('');
+  }, [groupFilter, groupFilterOptions]);
+
+  useEffect(() => {
+    if (!filtersTouchedRef.current) return;
+    const next = new URLSearchParams(searchParams);
+    ([
+      ['programme', programmeFilter === 'All' ? '' : programmeFilter],
+      ['cohort', cohortFilter],
+      ['group', groupFilter],
+      ['tutor', tutorFilter],
+    ] as const).forEach(([key, value]) => { if (value) next.set(key, value); else next.delete(key); });
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+  }, [cohortFilter, groupFilter, programmeFilter, searchParams, setSearchParams, tutorFilter]);
+
+  const changeFilter = useCallback((apply: () => void) => {
+    filtersTouchedRef.current = true;
+    apply();
+  }, []);
+
+  const teamsByModule = useMemo(() => {
+    const map = new Map<string, CurriculumTeamsMeetingSummary>();
+    teamsMeetings.forEach(summary => {
+      const key = normaliseDeepLinkValue(summary.moduleCatalogueId);
+      if (key) map.set(key, summary);
+    });
+    return map;
+  }, [teamsMeetings]);
+
+  const deliveryFiltersActive = Boolean(cohortFilter || groupFilter || tutorFilter);
+
   const filtered = catalogueModules.filter(module => {
     const text = `${module.title} ${module.catalogueId} ${module.programmeName} ${moduleIdentityText(module)} ${moduleDeliverySearchText(module)}`.toLowerCase();
     if (search && !text.includes(search.toLowerCase())) return false;
     if (programmeFilter !== 'All' && !moduleBelongsToProgrammeFilter(module, programmeFilter, curriculumProgrammes)) return false;
-    return true;
+    // A delivery filter is a question about deliveries, so a module qualifies
+    // only when one single delivery answers all of them at once -- never one
+    // delivery for the cohort and a different one for the tutor.
+    if (!deliveryFiltersActive) return true;
+    return (module.deliveryUsages || []).some(usage => (
+      deliveryFilterMatches(cohortFilter, usage.cohortId, usage.cohort)
+      && deliveryFilterMatches(groupFilter, usage.groupId, usage.group)
+      && (!tutorFilter || normaliseDeepLinkValue(usage.tutor) === normaliseDeepLinkValue(tutorFilter))
+    ));
   });
+
+  const deliveryStats = useMemo(() => ({
+    deliveries: deliveryUsages.length,
+    withTutor: deliveryUsages.filter(usage => Boolean(usage.tutor)).length,
+    sessions: deliveryUsages.reduce((total, usage) => total + (usage.sessions || 0), 0),
+    teams: teamsMeetings.length,
+  }), [deliveryUsages, teamsMeetings]);
+
+  const saveDeliveryTutor = async () => {
+    if (!tutorDrawer) return;
+    setTutorDrawerSaving(true);
+    setTutorDrawerError(null);
+    try {
+      // PATCH the module itself. The backend mirrors the change onto the tutor's
+      // profile and schedules the assignment notification.
+      await updateCurriculumModule(tutorDrawer.moduleId, { tutor: tutorDrawer.tutor });
+      const { moduleTitle, tutor } = tutorDrawer;
+      setTutorDrawer(null);
+      await reload({ silent: true });
+      await showCurriculumAlert({
+        title: 'Tutor updated',
+        text: tutor ? `${tutor} is now assigned to ${moduleTitle}.` : `${moduleTitle} has no tutor assigned.`,
+        timer: 1800,
+      });
+    } catch (err) {
+      // A double-booking comes back as a sentence naming the module already in
+      // the slot; anything else keeps the generic copy.
+      setTutorDrawerError(
+        tutorConflictMessage(err) || (err instanceof Error ? err.message : 'The tutor could not be assigned.'),
+      );
+    } finally {
+      setTutorDrawerSaving(false);
+    }
+  };
 
   const published = catalogueModules.filter(module => module.status === 'published').length;
   const draftCount = catalogueModules.filter(module => module.status === 'draft').length;
@@ -571,8 +708,6 @@ export default function ModuleBuilder() {
         }
       }
       const deepLinkTarget = moduleBuilderDeepLinkTarget(next, new URLSearchParams(window.location.search));
-      const wizardPayload = readWizardModuleDraft(new URLSearchParams(window.location.search));
-      next = applyWizardSessionCount(next, wizardPayload?.sessionsNumber);
       savedModuleSnapshotRef.current = moduleSnapshot(next);
       setWorkingModule(next);
       setSelection(deepLinkTarget.selection || (next.weekStructure[0] ? { kind: 'week', weekId: next.weekStructure[0].id } : null));
@@ -585,6 +720,23 @@ export default function ModuleBuilder() {
       setOpeningModuleComplete(false);
     }
   }, [finishLoadingProgress, resolveModuleScopeLock]);
+
+  /**
+   * Straight from "Create module" into authoring it. Only the canonical id and
+   * the title are known here; `openModule` loads the real structure the backend
+   * just wrote, so the local draft is a stand-in for the trip there.
+   */
+  const openCreatedModule = useCallback(async (saved: SavedModuleRef) => {
+    if (!saved.catalogueId) return;
+    await openModule(createLocalModuleDraft({
+      catalogueId: saved.catalogueId,
+      title: saved.name,
+      description: '',
+      programme: '',
+      weeks: 0,
+      status: 'draft',
+    }));
+  }, [openModule]);
 
   const openKsbMap = useCallback(async (module: ModuleBuilderListItem) => {
     const loadingId = module.catalogueId || moduleStructureIdentifier(module) || module.title;
@@ -694,19 +846,28 @@ export default function ModuleBuilder() {
     const requestedProgramme = (params.get('programme') || params.get('programmeId') || '').trim();
     if (!requestedProgramme || loading || programmeFilter !== 'All') return;
     const requestedNormalised = normaliseDeepLinkValue(requestedProgramme);
+    // The Programme workspace links with a canonical id, not a name, so resolve
+    // the id back to its programme before matching the (name-based) options.
+    const byIdentifier = curriculumProgrammes.find(programme => (
+      [programme.id, programme.sourceId, programme.name, programme.standard]
+        .map(normaliseDeepLinkValue)
+        .filter(Boolean)
+        .includes(requestedNormalised)
+    ));
+    const resolvedName = normaliseDeepLinkValue(byIdentifier?.name);
     const match = programmeOptions.find(option => (
-      option !== 'All' && (option === requestedProgramme || normaliseDeepLinkValue(option) === requestedNormalised)
+      option !== 'All' && (
+        option === requestedProgramme
+        || normaliseDeepLinkValue(option) === requestedNormalised
+        || (Boolean(resolvedName) && normaliseDeepLinkValue(option) === resolvedName)
+      )
     ));
     if (match) setProgrammeFilter(match);
-  }, [loading, programmeFilter, programmeOptions]);
+  }, [curriculumProgrammes, loading, programmeFilter, programmeOptions]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || params.get('moduleTitle') || '';
-    const wizardModuleKey = params.get('wizardModule') || '';
-    if (wizardModuleKey && !wizardDraftLocalIdRef.current) {
-      wizardDraftLocalIdRef.current = wizardDraftLocalIdFromKey(wizardModuleKey);
-    }
     const requestedKey = requestedModule.trim();
     if (!requestedKey || loading || error || workingModule || deepLinkedModuleRef.current === requestedKey) return;
 
@@ -718,50 +879,10 @@ export default function ModuleBuilder() {
         || titles.some(value => normaliseDeepLinkValue(value) === requestedNormalised);
     });
 
+    // A deep link only ever *opens* a module. It used to fall through to creating
+    // one from the rest of the query string, which meant a link naming a module
+    // that had been renamed or deleted silently wrote a new record instead.
     if (!target) {
-      const wizardPayload = readWizardModuleDraft(params);
-      if (wizardPayload?.title) {
-        deepLinkedModuleRef.current = requestedKey;
-        setOpeningModule({ title: wizardPayload.title, mode: 'builder' });
-        setOpeningModuleComplete(false);
-        setActionMessage(null);
-        setNoticeAlert(null);
-        void createNewModule({
-          programmeId: wizardPayload.programmeId || '',
-          programmeStatus: wizardPayload.programmeStatus || 'draft',
-          programme: wizardPayload.programme || (programmeFilter !== 'All' ? programmeFilter : 'Unassigned programme'),
-          cohortId: wizardPayload.cohortId || '',
-          cohortName: wizardPayload.cohortName || '',
-          groupId: wizardPayload.groupId || '',
-          groupName: wizardPayload.groupName || '',
-          ksbProfileSourceId: cleanKsbSourceId(wizardPayload.ksbSourceId),
-          title: wizardPayload.title,
-          description: wizardPayload.description || '',
-          weeks: Math.max(1, Math.round(Number(wizardPayload.sessionsNumber) || 1)),
-          sessionsNumber: Math.max(1, Math.round(Number(wizardPayload.sessionsNumber) || 1)),
-          startDate: wizardPayload.startDate || todayDateInput(),
-          endDate: wizardPayload.endDate || '',
-          status: 'draft',
-        }).then(async module => {
-          const nextModule = recalculateModule(module);
-          setNoticeAlert({
-            title: 'Module created',
-            message: `${nextModule.title} was created in Module Builder and saved to the database.`,
-          });
-          reload({ silent: true });
-          savedModuleSnapshotRef.current = moduleSnapshot(nextModule);
-          setWorkingModule(nextModule);
-          setSelection(nextModule.weekStructure[0] ? { kind: 'week', weekId: nextModule.weekStructure[0].id } : null);
-          setSettingsOpen(false);
-          await finishLoadingProgress(setOpeningModuleComplete);
-        }).catch(err => {
-          setActionMessage(err instanceof Error ? err.message : 'Unable to create module from Curriculum Studio.');
-        }).finally(() => {
-          setOpeningModule(null);
-          setOpeningModuleComplete(false);
-        });
-        return;
-      }
       if (catalogueModules.length) {
         deepLinkedModuleRef.current = requestedKey;
         setActionMessage(`Unable to find module "${requestedKey}" in Module Builder.`);
@@ -771,46 +892,7 @@ export default function ModuleBuilder() {
 
     deepLinkedModuleRef.current = requestedKey;
     openModule(target);
-  }, [catalogueModules, error, finishLoadingProgress, loading, openModule, programmeFilter, reload, workingModule]);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requestedModule = params.get('module') || params.get('moduleId') || params.get('catalogueId') || params.get('moduleTitle') || '';
-    const requestedKey = requestedModule.trim();
-    if (!requestedKey || loading || workingModule || !error || deepLinkedModuleRef.current === requestedKey) return;
-
-    const wizardPayload = readWizardModuleDraft(params);
-    if (!wizardPayload?.title) return;
-
-    deepLinkedModuleRef.current = requestedKey;
-    const fallback = recalculateModule(createLocalModuleDraft({
-      programmeId: wizardPayload.programmeId || '',
-      programmeStatus: wizardPayload.programmeStatus || 'draft',
-      programme: wizardPayload.programme || (programmeFilter !== 'All' ? programmeFilter : 'Unassigned programme'),
-      cohortId: wizardPayload.cohortId || '',
-      cohortName: wizardPayload.cohortName || '',
-      groupId: wizardPayload.groupId || '',
-      groupName: wizardPayload.groupName || '',
-      ksbProfileSourceId: cleanKsbSourceId(wizardPayload.ksbSourceId),
-      catalogueId: isCanonicalModuleCatalogueId(requestedKey) ? requestedKey : undefined,
-      title: wizardPayload.title,
-      description: wizardPayload.description || '',
-      weeks: Math.max(1, Math.round(Number(wizardPayload.sessionsNumber) || 1)),
-      sessionsNumber: Math.max(1, Math.round(Number(wizardPayload.sessionsNumber) || 1)),
-      startDate: wizardPayload.startDate || todayDateInput(),
-      endDate: wizardPayload.endDate || '',
-      status: 'draft',
-    }));
-    savedModuleSnapshotRef.current = moduleSnapshot(fallback);
-    setWorkingModule(fallback);
-    setSelection(fallback.weekStructure[0] ? { kind: 'week', weekId: fallback.weekStructure[0].id } : null);
-    setExpandedWeekIds(new Set(fallback.weekStructure.map(week => week.id)));
-    setSettingsOpen(false);
-    setNoticeAlert({
-      title: 'Opened from Curriculum Studio',
-      message: 'Live module data is taking longer than expected, so this module was opened from the wizard details. Saving will sync it back to the database.',
-    });
-  }, [error, loading, programmeFilter, workingModule]);
+  }, [catalogueModules, error, loading, openModule, workingModule]);
 
   const updateWorkingModule = useCallback((updater: (module: ModuleCatalogueItem) => ModuleCatalogueItem) => {
     setSaveSuccess(null);
@@ -913,43 +995,10 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(saved);
       setStorageVersion(version => version + 1);
       setActionMessage(null);
-      if (wizardDraftLocalIdRef.current) {
-        try {
-          const syncKey = `${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${wizardDraftLocalIdRef.current}`;
-          const syncPayload = {
-            savedAt: new Date().toISOString(),
-            module: saved,
-          };
-          window.localStorage.setItem(`${MODULE_BUILDER_WIZARD_DRAFT_PREFIX}${wizardDraftLocalIdRef.current}`, JSON.stringify({
-            ...syncPayload,
-          }));
-          const syncMessage = {
-            action: 'module-builder:saved',
-            closeEmbedded: closeAfterSave,
-            key: syncKey,
-            draftId: wizardDraftLocalIdRef.current,
-            structureId: saved.catalogueId,
-            payload: syncPayload,
-          };
-          window.dispatchEvent(new CustomEvent(MODULE_BUILDER_SYNC_CHANNEL, { detail: syncMessage }));
-          if (window.parent && window.parent !== window) {
-            window.parent.postMessage(syncMessage, window.location.origin);
-          }
-          if ('BroadcastChannel' in window) {
-            const channel = new BroadcastChannel(MODULE_BUILDER_SYNC_CHANNEL);
-            channel.postMessage(syncMessage);
-            channel.close();
-          }
-        } catch (err) {
-          console.warn('Unable to sync saved module back to Curriculum Studio wizard.', err);
-        }
-      }
       if (closeAfterSave) {
         setSaveSuccess({
           title: 'Module saved',
-          message: wizardDraftLocalIdRef.current
-            ? 'Module structure saved and synced back to the curriculum wizard.'
-            : 'Module structure saved successfully. Returning to the modules list.',
+          message: 'Module structure saved successfully. Returning to the modules list.',
         });
       } else {
         setNoticeAlert({
@@ -1031,74 +1080,6 @@ export default function ModuleBuilder() {
         await deleteModule(module);
       },
     });
-  };
-
-  const createModule = async (input: { programme: string; programmeId?: string; title: string; description: string; weeks: number; status: string }, options: { openSettings?: boolean } = {}) => {
-    setActionMessage(null);
-    setNoticeAlert(null);
-    try {
-      const programmeIdentity = resolveProgrammeIdentity(input.programme, input.programmeId);
-      const module = await createNewModule({
-        ...input,
-        programme: programmeIdentity.programmeName,
-        programmeId: programmeIdentity.programmeId,
-      });
-      setActionMessage(null);
-      reload();
-      setCreateOpen(false);
-      await openModule(module, Boolean(options.openSettings));
-    } catch (err) {
-      setActionMessage(err instanceof Error ? err.message : 'Unable to create module.');
-      throw err;
-    }
-  };
-
-  const createQuickModule = async (input?: NewModuleInput) => {
-    if (creatingQuickModule) return;
-    const availableProgrammes = programmeOptions.filter(option => option !== 'All');
-    const programme = input?.programme || (programmeFilter !== 'All' ? programmeFilter : availableProgrammes[0] || 'Unassigned programme');
-    const title = input?.title?.trim() || nextModuleTitle(catalogueModules);
-    const description = input?.description || '';
-    const sessionsNumber = Math.max(1, Math.round(Number(input?.sessionsNumber) || 1));
-    const startDate = input?.startDate || todayDateInput();
-    const endDate = input?.endDate || calculateWeeklyEndDate(startDate, sessionsNumber);
-    const programmeIdentity = resolveProgrammeIdentity(programme, input?.programmeId);
-    setCreatingQuickModule(true);
-    setCreatingQuickModuleComplete(false);
-    setQuickCreateRetryInput({ programme: programmeIdentity.programmeName, programmeId: programmeIdentity.programmeId, title, description, sessionsNumber, startDate, endDate });
-    setQuickCreateError(null);
-    setActionMessage(null);
-    try {
-      const module = await createNewModule({
-        programme: programmeIdentity.programmeName,
-        programmeId: programmeIdentity.programmeId,
-        title,
-        description,
-        weeks: sessionsNumber,
-        sessionsNumber,
-        startDate,
-        endDate,
-        status: 'draft',
-      });
-      const nextModule = recalculateModule(module);
-      savedModuleSnapshotRef.current = moduleSnapshot(nextModule);
-      setWorkingModule(nextModule);
-      setSelection(null);
-      setSettingsOpen(false);
-      setPreviewOpen(false);
-      setLessonPickerWeekId(null);
-      setCreateOpen(false);
-      setQuickCreateRetryInput(null);
-      setActionMessage(null);
-      reload({ silent: true });
-      await finishLoadingProgress(setCreatingQuickModuleComplete);
-    } catch (err) {
-      setQuickCreateError(err instanceof Error ? err.message : 'Unable to create module.');
-      setActionMessage(null);
-    } finally {
-      setCreatingQuickModule(false);
-      setCreatingQuickModuleComplete(false);
-    }
   };
 
   const closeWorkingModule = () => {
@@ -1239,27 +1220,6 @@ export default function ModuleBuilder() {
       active = false;
     };
   }, [saveSuccess]);
-
-  useEffect(() => {
-    if (!quickCreateError) return;
-    let active = true;
-    const retryInput = quickCreateRetryInput;
-    showCurriculumConfirm({
-      title: 'Module was not created',
-      text: quickCreateError,
-      icon: 'error',
-      confirmButtonText: 'Try again',
-      cancelButtonText: 'Close',
-      onConfirm: async () => undefined,
-    }).then(confirmed => {
-      if (!active) return;
-      setQuickCreateError(null);
-      if (confirmed) createQuickModule(retryInput || undefined);
-    });
-    return () => {
-      active = false;
-    };
-  }, [quickCreateError, quickCreateRetryInput]);
 
   if (workingModule) {
     return (
@@ -1406,7 +1366,8 @@ export default function ModuleBuilder() {
             saving={saving}
             saved={!hasUnsavedWorkingModuleChanges}
             onPreview={() => setPreviewOpen(true)}
-            onSettings={() => openSettingsWizard(workingModule)}
+            onEditModule={() => openPlacementForm(workingModule)}
+            onModuleSettings={() => setSettingsOpen(true)}
             onDelete={() => confirmDeleteModule(workingModule)}
             onSave={persistWorkingModule}
           />
@@ -1430,20 +1391,17 @@ export default function ModuleBuilder() {
             onUpdateKsbWeightClass={(mappingId, weightClass) => updateWorkingModule(module => updateKsbMappingWeightClass(module, { scope: 'module' }, mappingId, weightClass))}
           />
         )}
-        {settingsWizardModule && (
-          <AddCurriculumStructureWizard
-            isOpen={Boolean(settingsWizardModule)}
-            onClose={closeSettingsWizard}
-            onSaved={async () => {
-              closeSettingsWizard();
-              await reload({ silent: true });
-            }}
-            initialProgrammeId={settingsWizardProgramme?.sourceId || settingsWizardProgramme?.id || settingsWizardModule.programmeId || settingsWizardModule.programmeName}
-            initialProgramme={settingsWizardProgramme}
-            initialModuleId={moduleStructureIdentifier(settingsWizardModule) || settingsWizardModule.catalogueId || settingsWizardModule.title}
-            startStep="modules"
-          />
-        )}
+        <ModuleFormDrawer
+          open={Boolean(placementModule)}
+          module={placementModule}
+          programmes={curriculumProgrammes}
+          cohorts={moduleFormScope.cohorts}
+          groups={moduleFormScope.groups}
+          holidays={moduleFormScope.holidays}
+          tutorNames={tutorNames}
+          onClose={closePlacementForm}
+          onSaved={async () => { await reload({ silent: true }); }}
+        />
         {previewOpen && <PreviewModal module={workingModule} onClose={() => setPreviewOpen(false)} />}
         {sessionKsbMappingOpen && (
           <SessionKsbMappingModal
@@ -1513,7 +1471,6 @@ export default function ModuleBuilder() {
             complete={duplicatingModuleComplete}
           />
         )}
-        {creatingQuickModule && <CreatingModuleAlert complete={creatingQuickModuleComplete} />}
         {ksbTarget && (
             <KsbSelectorModal
               standards={standards}
@@ -1557,6 +1514,13 @@ export default function ModuleBuilder() {
               New module
             </button>
           </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-background-200 pt-3">
+            <BuilderStatChip icon="ri-stack-line" label="Modules" value={catalogueModules.length} />
+            <BuilderStatChip icon="ri-route-line" label="Deliveries" value={deliveryStats.deliveries} />
+            <BuilderStatChip icon="ri-presentation-line" label="With tutor" value={deliveryStats.withTutor} />
+            <BuilderStatChip icon="ri-broadcast-line" label="Sessions" value={deliveryStats.sessions} />
+            <BuilderStatChip icon="ri-vidicon-line" label="Teams meetings" value={deliveryStats.teams} />
+          </div>
         </div>
 
         {error && (
@@ -1582,14 +1546,65 @@ export default function ModuleBuilder() {
               </div>
               <p className="mt-1 text-[11px] text-foreground-500">Scoped modules can share titles while keeping their own programme, delivery and KSB mapping.</p>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <div className="relative min-w-0 sm:w-80">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative min-w-0 grow sm:w-72 sm:grow-0">
                 <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                <input type="text" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search modules..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
+                <input type="text" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search modules, tutors, cohorts..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-100 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth placeholder:text-foreground-400 focus:border-primary-300 focus:bg-background-50" />
               </div>
-              <select value={programmeFilter} onChange={event => setProgrammeFilter(event.target.value)} className="h-10 min-w-44 rounded-lg border border-background-200 bg-background-100 px-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-400 focus:bg-background-50">
-                {programmeOptions.map(option => <option key={option}>{option}</option>)}
+              <select
+                aria-label="Programme"
+                value={programmeFilter}
+                onChange={event => changeFilter(() => {
+                  setProgrammeFilter(event.target.value);
+                  setCohortFilter('');
+                  setGroupFilter('');
+                })}
+                className={FILTER_SELECT_CLASS}
+              >
+                {programmeOptions.map(option => <option key={option} value={option}>{option === 'All' ? 'All programmes' : option}</option>)}
               </select>
+              <select
+                aria-label="Cohort"
+                value={cohortFilter}
+                onChange={event => changeFilter(() => { setCohortFilter(event.target.value); setGroupFilter(''); })}
+                className={FILTER_SELECT_CLASS}
+              >
+                <option value="">{cohortFilterOptions.length ? 'All cohorts' : 'No cohorts in scope'}</option>
+                {cohortFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+              <select
+                aria-label="Group"
+                value={groupFilter}
+                onChange={event => changeFilter(() => setGroupFilter(event.target.value))}
+                className={FILTER_SELECT_CLASS}
+              >
+                <option value="">{groupFilterOptions.length ? 'All groups' : 'No groups in scope'}</option>
+                {groupFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+              <select
+                aria-label="Tutor"
+                value={tutorFilter}
+                onChange={event => changeFilter(() => setTutorFilter(event.target.value))}
+                className={FILTER_SELECT_CLASS}
+              >
+                <option value="">All tutors</option>
+                {tutorNames.map(name => <option key={name} value={name}>{name}</option>)}
+              </select>
+              <button
+                type="button"
+                disabled={!search && programmeFilter === 'All' && !deliveryFiltersActive}
+                onClick={() => changeFilter(() => {
+                  setSearch('');
+                  setProgrammeFilter('All');
+                  setCohortFilter('');
+                  setGroupFilter('');
+                  setTutorFilter('');
+                })}
+                className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-background-50"
+              >
+                <AppIcon className="ri-refresh-line text-sm"></AppIcon>
+                Reset
+              </button>
             </div>
           </div>
           <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
@@ -1601,12 +1616,22 @@ export default function ModuleBuilder() {
                   <ModuleCatalogueCard
                     key={module.catalogueId}
                     module={module}
+                    teamsSummary={teamsByModule.get(normaliseDeepLinkValue(module.catalogueId))}
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
                     onBuild={() => openModule(module)}
-                    onSettings={() => openSettingsWizard(module)}
+                    onSettings={() => openPlacementForm(module)}
                     onDuplicate={() => duplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
+                    onChangeTutor={usage => {
+                      setTutorDrawerError(null);
+                      setTutorDrawer({
+                        moduleId: usage.deliveryModuleId,
+                        moduleTitle: module.title,
+                        delivery: formatDeliveryUsage(usage),
+                        tutor: usage.tutor,
+                      });
+                    }}
                   />
                 ))}
               </div>
@@ -1614,40 +1639,40 @@ export default function ModuleBuilder() {
               <div className="px-4 py-14 text-center">
                 <AppIcon className="ri-inbox-line mb-3 block text-3xl text-foreground-300"></AppIcon>
                 <p className="text-[13px] font-semibold text-foreground-700">No modules match the current filters.</p>
-                <p className="mt-1 text-[12px] text-foreground-400">Try changing the search or programme filter.</p>
+                <p className="mt-1 text-[12px] text-foreground-400">Try changing the search, or the programme, cohort, group or tutor filter.</p>
               </div>
             )}
           </div>
         </div>
-        {/* Mounted only while open, matching the programmes and programme-detail
-            pages. The wizard's ~1,700 lines of hooks and memos otherwise re-run on
-            every render of this page just to hit its own `if (!isOpen) return null`. */}
-        {createOpen && (
-          <AddCurriculumStructureWizard
-            isOpen={createOpen}
-            onClose={() => setCreateOpen(false)}
-            onSaved={() => {
-              setCreateOpen(false);
-              reload({ silent: true });
-            }}
-            startStep="programme"
-            modulePlacementMode
-          />
-        )}
-        {settingsWizardModule && (
-          <AddCurriculumStructureWizard
-            isOpen={Boolean(settingsWizardModule)}
-            onClose={closeSettingsWizard}
-            onSaved={async () => {
-              closeSettingsWizard();
-              await reload({ silent: true });
-            }}
-            initialProgrammeId={settingsWizardProgramme?.sourceId || settingsWizardProgramme?.id || settingsWizardModule.programmeId || settingsWizardModule.programmeName}
-            initialProgramme={settingsWizardProgramme}
-            initialModuleId={moduleStructureIdentifier(settingsWizardModule) || settingsWizardModule.catalogueId || settingsWizardModule.title}
-            startStep="modules"
-          />
-        )}
+        <ModuleFormDrawer
+          open={createOpen}
+          defaults={{
+            programmeId: programmeFilter === 'All' ? '' : resolveProgrammeIdentity(programmeFilter).programmeId,
+            cohortId: cohortFilter,
+            groupId: groupFilter,
+          }}
+          programmes={curriculumProgrammes}
+          cohorts={moduleFormScope.cohorts}
+          groups={moduleFormScope.groups}
+          holidays={moduleFormScope.holidays}
+          tutorNames={tutorNames}
+          onClose={() => setCreateOpen(false)}
+          onSaved={async saved => {
+            await reload({ silent: true });
+            await openCreatedModule(saved);
+          }}
+        />
+        <ModuleFormDrawer
+          open={Boolean(placementModule)}
+          module={placementModule}
+          programmes={curriculumProgrammes}
+          cohorts={moduleFormScope.cohorts}
+          groups={moduleFormScope.groups}
+          holidays={moduleFormScope.holidays}
+          tutorNames={tutorNames}
+          onClose={closePlacementForm}
+          onSaved={async () => { await reload({ silent: true }); }}
+        />
         {ksbMapDisplayModule && (
           <ModuleKsbMapModal
             module={ksbMapDisplayModule}
@@ -1671,7 +1696,43 @@ export default function ModuleBuilder() {
             onClose={() => setProgrammeKsbMap(null)}
           />
         )}
-        {creatingQuickModule && <CreatingModuleAlert complete={creatingQuickModuleComplete} />}
+        <EntityDrawer
+          open={Boolean(tutorDrawer)}
+          title="Change tutor"
+          subtitle={tutorDrawer
+            ? `Assign or clear the tutor for ${tutorDrawer.moduleTitle}${tutorDrawer.delivery ? ` (${tutorDrawer.delivery})` : ''}. The tutor's profile and their assignment notification follow the change.`
+            : undefined}
+          onClose={() => setTutorDrawer(null)}
+          onSubmit={saveDeliveryTutor}
+          submitLabel="Save tutor"
+          saving={tutorDrawerSaving}
+          error={tutorDrawerError}
+          width="w-[420px]"
+        >
+          <FormField
+            label="Tutor"
+            hint={tutorAvailability.loading
+              ? 'Checking who is free in this slot...'
+              : tutorAvailability.bookable
+                ? `${tutorAvailability.sessionDates.length} session${tutorAvailability.sessionDates.length === 1 ? '' : 's'} in this slot. Busy tutors are marked.`
+                : undefined}
+          >
+            {/* Busy names stay selectable: a clash can be deliberate, and the
+                save is still the authority. Marking beats hiding. */}
+            <SelectControl
+              value={tutorDrawer?.tutor || ''}
+              onChange={value => setTutorDrawer(current => (current ? { ...current, tutor: value } : current))}
+              options={tutorNames.map(name => ({
+                value: name,
+                label: tutorAvailability.verdictFor(name)?.available === false ? `${name} — busy in this slot` : name,
+              }))}
+              placeholder="Unassigned"
+            />
+          </FormField>
+          {tutorDrawerVerdict && !tutorDrawerVerdict.available && (
+            <TutorClashNotice verdict={tutorDrawerVerdict} />
+          )}
+        </EntityDrawer>
         {openingModule && (
           <OpeningModuleAlert
             title={openingModule.title}
@@ -1816,11 +1877,14 @@ function WorkspaceHeader({ module, programmeOptions, ksbProfileOptions, ksbProfi
   );
 }
 
-function WorkspaceActionFooter({ saving, saved, onPreview, onSettings, onDelete, onSave }: {
+function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModuleSettings, onDelete, onSave }: {
   saving: boolean;
   saved: boolean;
   onPreview: () => void;
-  onSettings: () => void;
+  /** Name, placement, dates and tutor — the shared module form. */
+  onEditModule: () => void;
+  /** Completion criteria, advanced details and module-level KSBs. */
+  onModuleSettings: () => void;
   onDelete: () => void;
   onSave: () => void;
 }) {
@@ -1838,7 +1902,8 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onSettings, onDelete,
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <IconButton label="Preview" icon="ri-eye-line" onClick={onPreview} />
-          <IconButton label="Module settings" icon="ri-edit-line" onClick={onSettings} />
+          <IconButton label="Edit module" icon="ri-edit-line" onClick={onEditModule} />
+          <IconButton label="Module settings" icon="ri-settings-3-line" onClick={onModuleSettings} />
           <IconButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
           <button onClick={onSave} disabled={saving} className={`inline-flex h-10 min-w-[120px] items-center justify-center gap-1.5 rounded-lg px-4 text-[12px] font-semibold text-white shadow-sm transition-smooth disabled:opacity-70 whitespace-nowrap ${saved ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-primary-500 hover:bg-primary-600'}`}>
             <AppIcon className={saveButtonIcon}></AppIcon>{saveButtonLabel}
@@ -2116,31 +2181,6 @@ function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?'
               <AppIcon className="ri-add-line"></AppIcon>
               {submitLabel} {selected.length || ''} component{selected.length === 1 ? '' : 's'}
             </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CreatingModuleAlert({ complete }: { complete: boolean }) {
-  return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-background-50 text-center shadow-2xl">
-        <div className="p-6">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border-4 border-primary-100 bg-primary-50 text-primary-600">
-            <AppIcon className="ri-loader-4-line animate-spin text-3xl"></AppIcon>
-          </div>
-          <h3 className="mt-4 text-lg font-heading font-bold text-foreground-950">Creating new module...</h3>
-          <p className="mx-auto mt-2 max-w-xs text-[13px] leading-relaxed text-foreground-500">
-            Saving a blank draft and opening the authoring workspace.
-          </p>
-          <div className="mt-5 rounded-xl border border-background-200 bg-background-100/70 p-3 text-left">
-            <div className="flex items-center gap-2 text-[12px] font-semibold text-foreground-700">
-              <AppIcon className="ri-database-2-line text-primary-600"></AppIcon>
-              Preparing module structure...
-            </div>
-            <LoadingProgressBar complete={complete} />
           </div>
         </div>
       </div>
@@ -3304,6 +3344,7 @@ function moduleDeliveryUsageFallback(module: ModuleCatalogueItem): ModuleDeliver
       group,
     ].filter(Boolean).join('::'),
     moduleId: String(module.sourceModule?.id || module.id || ''),
+    deliveryModuleId: (module.sourceModule ? moduleIdentity(module.sourceModule) : '') || String(module.catalogueId || module.id || ''),
     sourceId: String(module.sourceModule?.sourceId || module.sourceId || ''),
     catalogueId: String(module.catalogueId || ''),
     structureId: moduleStructureIdentifier(module),
@@ -3314,6 +3355,7 @@ function moduleDeliveryUsageFallback(module: ModuleCatalogueItem): ModuleDeliver
     cohort,
     groupId: String(module.sourceModule?.groupId || module.groupId || ''),
     group,
+    tutor: tutorDisplayName(module.tutor || module.sourceModule?.tutor),
     deliveryStatus: deliveryStatusText(module.deliveryStatus || module.sourceModule?.deliveryStatus).replace(/^Delivery: /, ''),
     startDate: module.startDate || module.sourceModule?.startDate,
     endDate: module.endDate || module.sourceModule?.endDate,
@@ -4173,137 +4215,6 @@ function KsbSelectorModal({ standards, standardsLoading, ksbSets, ksbSetsLoading
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function NewModuleChoiceModal({ programmeOptions, defaultProgramme, onClose, onCreate }: {
-  programmeOptions: string[];
-  defaultProgramme?: string;
-  onClose: () => void;
-  onCreate: (input: NewModuleInput) => void;
-}) {
-  const usableProgrammes = programmeOptions.length ? programmeOptions : ['Unassigned programme'];
-  const [programme, setProgramme] = useState(defaultProgramme || usableProgrammes[0]);
-  const [customTitle, setCustomTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [sessionsNumber, setSessionsNumber] = useState(1);
-  const [startDate, setStartDate] = useState(todayDateInput());
-  const suggestedEndDate = calculateWeeklyEndDate(startDate, sessionsNumber);
-  const [endDate, setEndDate] = useState(suggestedEndDate);
-  const [endDateTouched, setEndDateTouched] = useState(false);
-  const dateError = Boolean(startDate && endDate && endDate < startDate);
-  const canCreate = Boolean(customTitle.trim()) && Boolean(programme) && sessionsNumber > 0 && Boolean(startDate) && Boolean(endDate) && !dateError;
-
-  useEffect(() => {
-    if (!endDateTouched) setEndDate(suggestedEndDate);
-  }, [endDateTouched, suggestedEndDate]);
-
-  const handleCreate = () => {
-    if (!canCreate) return;
-    onCreate({
-      programme,
-      title: customTitle.trim(),
-      description,
-      sessionsNumber,
-      startDate,
-      endDate,
-    });
-  };
-
-  return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <form
-        className="flex max-h-[calc(100vh-2rem)] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-foreground-200 bg-background-50 shadow-2xl"
-        onClick={event => event.stopPropagation()}
-        onSubmit={event => {
-          event.preventDefault();
-          handleCreate();
-        }}
-      >
-        <div className="relative shrink-0 overflow-hidden border-b border-background-200 bg-background-50 px-5 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-primary-600 ring-1 ring-primary-100">
-                <AppIcon className="ri-layout-4-line text-xl"></AppIcon>
-              </span>
-              <div>
-                <h3 className="text-base font-heading font-bold text-foreground-950">Create new module</h3>
-                <p className="mt-1 text-[12px] text-foreground-500">Set the module scope and schedule. You can add weeks and components next.</p>
-              </div>
-            </div>
-            <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900" aria-label="Close"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-background-100/35 p-5">
-          <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
-            <div className="mb-4 flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><AppIcon className="ri-book-open-line"></AppIcon></span>
-              <div>
-                <p className="text-[13px] font-bold text-foreground-950">Module setup</p>
-                <p className="text-[11px] text-foreground-500">New modules start as drafts.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <SelectInput label="Programme" value={programme} options={usableProgrammes} onChange={setProgramme} />
-              <TextInput label="Module title" value={customTitle} onChange={setCustomTitle} required />
-            </div>
-            <div className="mt-4">
-              <TextArea label="Short description" value={description} onChange={setDescription} rows={3} />
-            </div>
-          </section>
-
-          <section className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-sm">
-            <div className="mb-4 flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><AppIcon className="ri-calendar-check-line"></AppIcon></span>
-              <div>
-                <p className="text-[13px] font-bold text-foreground-950">Delivery shape</p>
-                <p className="text-[11px] text-foreground-500">Set the session count and module date range.</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <NumberInput label="Number of sessions" value={sessionsNumber} min={1} step={1} onChange={value => setSessionsNumber(Math.max(1, Math.round(value || 1)))} />
-              <DateInput label="Module start date" value={startDate} onChange={value => {
-                setStartDate(value);
-                if (!endDateTouched) setEndDate(calculateWeeklyEndDate(value, sessionsNumber));
-              }} />
-              <DateInput label="Module end date" value={endDate} onChange={value => {
-                setEndDate(value);
-                setEndDateTouched(true);
-              }} />
-            </div>
-            <div className="mt-3 flex flex-col gap-2 rounded-xl border border-background-200 bg-background-100/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className={`text-[11px] font-semibold ${dateError ? 'text-red-600' : 'text-foreground-500'}`}>
-                {dateError ? 'End date must be on or after the start date.' : `${sessionsNumber} weekly session${sessionsNumber === 1 ? '' : 's'} from ${startDate || 'start date'} to ${endDate || 'end date'}.`}
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setEndDate(suggestedEndDate);
-                  setEndDateTouched(false);
-                }}
-                className="w-fit rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700 hover:bg-primary-100"
-              >
-                Use suggested end: {suggestedEndDate || 'Set start date'}
-              </button>
-            </div>
-          </section>
-
-          <div className="rounded-xl border border-primary-100 bg-primary-50 px-4 py-3">
-            <p className="text-[11px] font-semibold text-primary-800">The module will open immediately after it is created.</p>
-          </div>
-
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <button type="button" onClick={onClose} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-700 hover:bg-background-100">Cancel</button>
-            <button type="submit" disabled={!canCreate} className="inline-flex items-center justify-center gap-2 rounded-lg bg-primary-500 px-5 py-2 text-[12px] font-bold text-white shadow-sm hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60">
-              <AppIcon className="ri-add-circle-line"></AppIcon>Create and open builder
-            </button>
-          </div>
-        </div>
-      </form>
     </div>
   );
 }
@@ -5291,20 +5202,24 @@ function StatusBadge({ status }: { status: string }) {
 
 function ModuleCatalogueCard({
   module,
+  teamsSummary,
   onKsbMap,
   ksbMapLoading,
   onBuild,
   onSettings,
   onDuplicate,
   onDelete,
+  onChangeTutor,
 }: {
   module: ModuleBuilderListItem;
+  teamsSummary?: CurriculumTeamsMeetingSummary;
   onKsbMap: () => void;
   ksbMapLoading: boolean;
   onBuild: () => void;
   onSettings: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onChangeTutor: (usage: ModuleDeliveryUsage) => void;
 }) {
   // weekStructure is only populated once a module is opened/built. For modules
   // fetched from the catalogue it stays empty, so fall back to lessonCount,
@@ -5340,6 +5255,7 @@ function ModuleCatalogueCard({
                 <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} components`} tone={hasContent ? 'default' : 'muted'} />
                 <ModuleDeliverySummary module={module} />
               </div>
+              <ModuleDeliveryRows module={module} teamsSummary={teamsSummary} onChangeTutor={onChangeTutor} />
             </div>
           </div>
         </div>
@@ -5358,7 +5274,7 @@ function ModuleCatalogueCard({
             <AppIcon name="ri-hammer-line" size={15}></AppIcon>
             Edit components
           </button>
-          <IconButton label="Module settings" icon="ri-settings-3-line" onClick={onSettings} />
+          <IconButton label="Edit module" icon="ri-edit-line" onClick={onSettings} />
           <IconButton label="Duplicate" icon="ri-file-copy-line" onClick={onDuplicate} />
           <IconButton label="Delete module" icon="ri-delete-bin-line" tone="danger" onClick={onDelete} />
         </div>
@@ -5704,6 +5620,85 @@ function ModuleMetricPill({ icon, label, tone = 'default' }: { icon: string; lab
   );
 }
 
+function BuilderStatChip({ icon, label, value }: { icon: string; label: string; value: number }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-100 px-2.5 py-1.5 text-[11px] font-semibold text-foreground-600">
+      <AppIcon className={`${icon} text-[13px] text-primary-600`}></AppIcon>
+      {label}
+      <span className="font-heading text-[13px] font-black text-foreground-950">{value}</span>
+    </span>
+  );
+}
+
+/**
+ * The delivery context the Curriculum -> Modules page used to list in a table:
+ * which cohort and group run this module, who tutors it, when it runs and where
+ * its Teams series stands. A module is one row per delivery because the same
+ * authored module can run for several groups with a different tutor on each.
+ */
+function ModuleDeliveryRows({ module, teamsSummary, onChangeTutor }: {
+  module: ModuleBuilderListItem;
+  teamsSummary?: CurriculumTeamsMeetingSummary;
+  onChangeTutor: (usage: ModuleDeliveryUsage) => void;
+}) {
+  const usages = module.deliveryUsages || [];
+  if (!usages.length) {
+    return (
+      <p className="mt-3 rounded-lg border border-dashed border-background-300 bg-background-100/70 px-3 py-2 text-[11px] font-semibold text-foreground-500">
+        Not attached to a delivery yet. Add it to a group from New module to give it a cohort, tutor and dates.
+      </p>
+    );
+  }
+  const teams = teamsMeetingLabel(teamsSummary);
+  return (
+    <div className="mt-3 divide-y divide-background-200 overflow-hidden rounded-lg border border-background-200 bg-background-50">
+      {usages.map(usage => (
+        <div key={usage.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2">
+          <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-foreground-900">
+            <AppIcon className="ri-route-line text-[12px] text-primary-600"></AppIcon>
+            {formatDeliveryUsage(usage)}
+          </span>
+          <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${usage.tutor ? 'text-foreground-600' : 'text-amber-700'}`}>
+            <AppIcon className="ri-presentation-line text-[12px]"></AppIcon>
+            {usage.tutor || 'Unassigned'}
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500">
+            <AppIcon className="ri-calendar-event-line text-[12px]"></AppIcon>
+            {formatDateLabel(usage.startDate)} – {formatDateLabel(usage.endDate)}
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500">
+            <AppIcon className="ri-broadcast-line text-[12px]"></AppIcon>
+            {usage.sessions || 0} sessions
+          </span>
+          <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${teams.tone}`}>
+            <AppIcon className="ri-vidicon-line text-[12px]"></AppIcon>
+            {teams.text}
+          </span>
+          <span className="ml-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onChangeTutor(usage)}
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-background-200 bg-background-50 px-2 text-[10px] font-bold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
+            >
+              <AppIcon className="ri-user-settings-line text-[12px]"></AppIcon>
+              Change tutor
+            </button>
+            {usage.deliveryModuleId && (
+              <Link
+                to={`/curriculum/modules/${encodeURIComponent(usage.deliveryModuleId)}`}
+                className="inline-flex h-7 items-center gap-1 rounded-md border border-background-200 bg-background-50 px-2 text-[10px] font-bold text-foreground-600 transition-smooth hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
+              >
+                <AppIcon className="ri-external-link-line text-[12px]"></AppIcon>
+                Delivery workspace
+              </Link>
+            )}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ModuleDeliverySummary({ module }: { module: ModuleBuilderListItem }) {
   const usages = module.deliveryUsages || [];
   if (!usages.length) {
@@ -5792,15 +5787,52 @@ function moduleDefinitionKey(module: ModuleCatalogueItem) {
   return `${programme || 'programme'}::${title || module.catalogueId}`;
 }
 
-function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
+/** Every identifier the selected programme answers to: name, id, source id, standard. */
+function programmeFilterKeys(programmeName: string, programmes: CurriculumProgramme[]) {
   const selected = programmes.find(programme => normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(programmeName));
-  const selectedKeys = [
+  return [
     programmeName,
     selected?.name,
     selected?.id,
     selected?.sourceId,
     selected?.standard,
   ].map(normaliseDeepLinkValue).filter(Boolean);
+}
+
+function usageMatchesProgrammeFilter(usage: ModuleDeliveryUsage, programmeName: string, programmes: CurriculumProgramme[]) {
+  if (programmeName === 'All') return true;
+  const selectedKeys = programmeFilterKeys(programmeName, programmes);
+  return [usage.programme, usage.programmeId]
+    .map(normaliseDeepLinkValue)
+    .filter(Boolean)
+    .some(key => selectedKeys.includes(key));
+}
+
+/**
+ * The value a cohort / group filter carries. The id is preferred so a deep link
+ * from a Cohort or Group workspace lands exactly; the name is the fallback for
+ * deliveries the backend never gave an id.
+ */
+function deliveryFilterValue(id?: string, name?: string) {
+  return String(id || '').trim() || String(name || '').trim();
+}
+
+/** Empty means "all". A set filter matches either the delivery's id or its name. */
+function deliveryFilterMatches(filter: string, id?: string, name?: string) {
+  const key = normaliseDeepLinkValue(filter);
+  if (!key) return true;
+  return [id, name].map(normaliseDeepLinkValue).filter(Boolean).includes(key);
+}
+
+function teamsMeetingLabel(summary?: CurriculumTeamsMeetingSummary) {
+  if (!summary) return { text: 'Teams not created', tone: 'text-foreground-400' };
+  if (summary.upcomingCount > 0) return { text: `${summary.upcomingCount} upcoming`, tone: 'text-emerald-700' };
+  if (summary.occurrenceCount > 0) return { text: `${summary.occurrenceCount} held`, tone: 'text-foreground-600' };
+  return { text: 'Teams scheduled', tone: 'text-sky-700' };
+}
+
+function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
+  const selectedKeys = programmeFilterKeys(programmeName, programmes);
   const moduleKeys = [
     module.programmeName,
     module.programmeId,
@@ -5835,14 +5867,7 @@ function deliveryUsageForModuleScope(module: ModuleBuilderListItem, programmeNam
   const usages = module.deliveryUsages || [];
   if (!usages.length) return null;
   if (programmeName === 'All') return usages[0];
-  const selected = programmes.find(programme => normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(programmeName));
-  const selectedKeys = [
-    programmeName,
-    selected?.name,
-    selected?.id,
-    selected?.sourceId,
-    selected?.standard,
-  ].map(normaliseDeepLinkValue).filter(Boolean);
+  const selectedKeys = programmeFilterKeys(programmeName, programmes);
   return usages.find(usage => (
     [usage.programme, usage.programmeId].map(normaliseDeepLinkValue).some(key => selectedKeys.includes(key))
   )) || usages[0];
@@ -5853,6 +5878,7 @@ function moduleDeliveryUsage(module: ModuleCatalogueItem): ModuleDeliveryUsage |
   const group = cleanModuleMeta(module.sourceModule?.group);
   if (!cohort && !group) return null;
   return {
+    deliveryModuleId: (module.sourceModule ? moduleIdentity(module.sourceModule) : '') || String(module.catalogueId || module.id || ''),
     id: [
       module.sourceModule?.id,
       module.sourceModule?.sourceId,
@@ -5871,6 +5897,7 @@ function moduleDeliveryUsage(module: ModuleCatalogueItem): ModuleDeliveryUsage |
     cohort,
     groupId: String(module.groupId || module.sourceModule?.groupId || ''),
     group,
+    tutor: tutorDisplayName(module.tutor || module.sourceModule?.tutor),
     deliveryStatus: deliveryStatusText(module.deliveryStatus || module.sourceModule?.deliveryStatus).replace(/^Delivery: /, ''),
     startDate: module.startDate || module.sourceModule?.startDate,
     endDate: module.endDate || module.sourceModule?.endDate,
@@ -5974,27 +6001,6 @@ function moduleDeepLinkIdentifiers(module: ModuleBuilderListItem) {
   return Array.from(identifiers);
 }
 
-function readWizardModuleDraft(params: URLSearchParams): WizardModuleDraftPayload | null {
-  const title = params.get('title') || params.get('moduleTitle') || '';
-  if (!title.trim()) return null;
-  return {
-    programmeId: params.get('programmeId') || '',
-    programme: params.get('programme') || '',
-    programmeStatus: params.get('programmeStatus') || '',
-    cohortId: params.get('cohortId') || '',
-    cohortName: params.get('cohortName') || '',
-    groupId: params.get('groupId') || '',
-    groupName: params.get('groupName') || '',
-    ksbSourceId: params.get('ksbSourceId') || params.get('ksbProfileSourceId') || '',
-    ksbSourceLabel: params.get('ksbSourceLabel') || '',
-    title,
-    description: params.get('description') || '',
-    sessionsNumber: Number(params.get('sessionsNumber') || 1),
-    startDate: params.get('startDate') || '',
-    endDate: params.get('endDate') || '',
-  };
-}
-
 function moduleOptionKey(module: ModuleCatalogueItem) {
   return [
     module.catalogueId,
@@ -6006,6 +6012,26 @@ function moduleOptionKey(module: ModuleCatalogueItem) {
     cleanModuleMeta(module.sourceModule?.cohort),
     cleanModuleMeta(module.sourceModule?.group),
   ].filter(Boolean).join('::');
+}
+
+/** A catalogue item as the shared module form's target. */
+function moduleFormTargetFromCatalogue(module: ModuleCatalogueItem): ModuleFormTarget {
+  return {
+    id: moduleStructureIdentifier(module) || module.catalogueId,
+    name: module.title,
+    programmeId: module.programmeId,
+    programme: module.programmeName,
+    cohortId: module.cohortId,
+    groupId: module.groupId,
+    sessionsNumber: module.sessionsNumber,
+    weeks: module.weeks,
+    startDate: module.startDate,
+    endDate: module.endDate,
+    tutor: module.tutor,
+    status: module.status,
+    notes: module.description,
+    color: module.color,
+  };
 }
 
 function moduleStructureIdentifier(module: ModuleCatalogueItem) {
@@ -6054,27 +6080,6 @@ function moduleCatalogueRecency(module: ModuleCatalogueItem) {
   return numericMatch ? Number(numericMatch.join('').slice(0, 14)) || 0 : 0;
 }
 
-function todayDateInput() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, '0');
-  const day = String(today.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function calculateWeeklyEndDate(startDate: string, sessionsNumber: number) {
-  if (!startDate) return '';
-  const [year, month, day] = startDate.split('-').map(Number);
-  if (!year || !month || !day) return '';
-  const sessions = Math.max(1, Math.round(Number(sessionsNumber) || 1));
-  const date = new Date(year, month - 1, day);
-  date.setDate(date.getDate() + sessions * 7);
-  const endYear = date.getFullYear();
-  const endMonth = String(date.getMonth() + 1).padStart(2, '0');
-  const endDay = String(date.getDate()).padStart(2, '0');
-  return `${endYear}-${endMonth}-${endDay}`;
-}
-
 function moduleListSubLabel(module: ModuleCatalogueItem) {
   const usages = (module as ModuleBuilderListItem).deliveryUsages || [];
   if (usages.length) {
@@ -6087,8 +6092,14 @@ function moduleListSubLabel(module: ModuleCatalogueItem) {
 
 function moduleDeliverySearchText(module: ModuleBuilderListItem) {
   return (module.deliveryUsages || [])
-    .map(usage => `${usage.cohort} ${usage.group} ${usage.deliveryStatus}`)
+    .map(usage => `${usage.cohort} ${usage.group} ${usage.tutor} ${usage.deliveryStatus}`)
     .join(' ');
+}
+
+/** A tutor name, with the backend's "Unassigned" placeholder read as no tutor. */
+function tutorDisplayName(value?: string) {
+  const text = String(value || '').trim();
+  return text.toLowerCase() === 'unassigned' ? '' : text;
 }
 
 function formatDeliveryUsage(usage: ModuleDeliveryUsage) {
@@ -6107,15 +6118,6 @@ function moduleScheduleText(module: ModuleCatalogueItem) {
   const sessions = module.sessionsNumber || module.weeks || 0;
   const range = module.startDate && module.endDate ? ` - ${module.startDate} to ${module.endDate}` : '';
   return `${sessions} session${sessions === 1 ? '' : 's'} / ${module.weeks} weeks${range}`;
-}
-
-function nextModuleTitle(modules: ModuleCatalogueItem[]) {
-  const highestNumber = modules.reduce((highest, module) => {
-    const match = module.title.trim().match(/^M(\d+)\b/i);
-    return match ? Math.max(highest, Number(match[1]) || 0) : highest;
-  }, 0);
-  const nextNumber = highestNumber + 1;
-  return `M${nextNumber} - Module ${nextNumber}`;
 }
 
 function cleanModuleMeta(value?: string) {
@@ -6581,42 +6583,6 @@ function normaliseComponentTitles(module: ModuleCatalogueItem): ModuleCatalogueI
       })),
     })),
   };
-}
-
-function weekHasAuthoredContent(week: ModuleWeek) {
-  return Boolean(
-    week.components.length
-    || (week.ksbMappings || []).length
-    || String(week.summary || '').trim()
-    || (week.learningOutcomes || []).length,
-  );
-}
-
-function applyWizardSessionCount(module: ModuleCatalogueItem, sessionsNumber?: number) {
-  const parsedCount = Math.round(Number(sessionsNumber));
-  if (!Number.isFinite(parsedCount) || parsedCount < 1) return module;
-  const requestedCount = Math.max(1, parsedCount);
-  const currentWeeks = module.weekStructure || [];
-  let weekStructure = currentWeeks;
-  if (requestedCount > currentWeeks.length) {
-    weekStructure = [
-      ...currentWeeks,
-      ...Array.from({ length: requestedCount - currentWeeks.length }, (_, index) => (
-        createEmptyWeek(module.id, currentWeeks.length + index + 1)
-      )),
-    ];
-  } else if (requestedCount < currentWeeks.length) {
-    const removedWeeks = currentWeeks.slice(requestedCount);
-    if (!removedWeeks.some(weekHasAuthoredContent)) {
-      weekStructure = currentWeeks.slice(0, requestedCount);
-    }
-  }
-  return recalculateModule({
-    ...module,
-    sessionsNumber: Math.max(requestedCount, weekStructure.length),
-    weeks: weekStructure.length,
-    weekStructure,
-  });
 }
 
 function resizeWeeks(module: ModuleCatalogueItem, count: number, onChange: (updates: Partial<ModuleCatalogueItem>) => void) {

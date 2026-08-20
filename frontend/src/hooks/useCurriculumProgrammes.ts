@@ -47,5 +47,27 @@ export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCu
     setProgrammes(prev => prev.filter(p => (p.sourceId || p.id) !== id));
   };
 
-  return { programmes, loading, error, reload: (options?: LoadOptions) => load(undefined, options), removeProgramme };
+  // Archiving is not a delete: the row has to stay in state and flip to
+  // archived, or it leaves the active list without ever reaching the archive.
+  const markProgrammeArchived = (id: string) => {
+    setProgrammes(prev => prev.map(p => (
+      (p.sourceId || p.id) === id ? { ...p, isArchived: true, status: 'archived' } : p
+    )));
+  };
+
+  const markProgrammeRestored = (id: string) => {
+    setProgrammes(prev => prev.map(p => (
+      (p.sourceId || p.id) === id ? { ...p, isArchived: false, status: 'active' } : p
+    )));
+  };
+
+  return {
+    programmes,
+    loading,
+    error,
+    reload: (options?: LoadOptions) => load(undefined, options),
+    removeProgramme,
+    markProgrammeArchived,
+    markProgrammeRestored,
+  };
 }

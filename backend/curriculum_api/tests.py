@@ -255,20 +255,28 @@ class CurriculumTeamsMeetingTests(TestCase):
         'timezone': 'GMT Standard Time',
     })
     def test_creates_calendar_backed_teams_meeting(self, _settings, _credentials, graph_request):
-        graph_request.side_effect = [
-            {
-                'id': 'event-1',
-                'webLink': 'https://outlook.office.com/calendar/item',
-                'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'},
-            },
-            {
-                'value': [{
-                    'id': 'meeting-1',
-                    'meetingOptionsWebUrl': 'https://teams.microsoft.com/meetingOptions/example',
-                }],
-            },
-            {},
-        ]
+        # Answered by path rather than by position: the create path also
+        # reconciles the series' individual occurrences, and a fixed list would
+        # have to be re-counted every time that reconciliation changes shape.
+        def graph_side_effect(method, path, payload=None):
+            if method == 'POST' and path.endswith('/events'):
+                return {
+                    'id': 'event-1',
+                    'webLink': 'https://outlook.office.com/calendar/item',
+                    'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'},
+                }
+            if method == 'GET' and 'onlineMeetings' in path:
+                return {
+                    'value': [{
+                        'id': 'meeting-1',
+                        'meetingOptionsWebUrl': 'https://teams.microsoft.com/meetingOptions/example',
+                    }],
+                }
+            if method == 'GET' and '/instances?' in path:
+                return {'value': []}
+            return {}
+
+        graph_request.side_effect = graph_side_effect
         response = self.client.post(
             '/curriculum_api/curriculum/teams-meetings/',
             data=json.dumps({
@@ -325,7 +333,10 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertTrue(event_payload['isOnlineMeeting'])
         self.assertEqual(len(event_payload['attendees']), 3)
         self.assertEqual(event_payload['recurrence']['range']['numberOfOccurrences'], 6)
-        meeting_patch = graph_request.call_args_list[2].kwargs['payload']
+        meeting_patch = next(
+            call for call in graph_request.call_args_list
+            if call.args[0] == 'PATCH' and '/onlineMeetings/' in call.args[1]
+        ).kwargs['payload']
         self.assertEqual(meeting_patch['allowedPresenters'], 'roleIsPresenter')
         self.assertEqual(meeting_patch['lobbyBypassSettings'], {
             'scope': 'invited',
@@ -410,7 +421,11 @@ class CurriculumTeamsMeetingTests(TestCase):
                         ], start=1)
                     ],
                 }
-            if method == 'PATCH' and path.endswith('/instance-6'):
+            # instance-4 is the one carried furthest past the end of the
+            # original series (26 Aug -> 14 Oct), so it is the occurrence Graph
+            # refuses to move across the boundary. instance-5 and instance-6
+            # already sit on wanted dates and are deliberately left alone.
+            if method == 'PATCH' and path.endswith('/instance-4'):
                 raise RuntimeError('ErrorOccurrenceCrossingBoundary')
             if method in {'PATCH', 'POST', 'DELETE'}:
                 return {}
@@ -452,7 +467,7 @@ class CurriculumTeamsMeetingTests(TestCase):
         result = response.json()
         self.assertEqual(result['meeting']['trackedOccurrences'], 6)
         self.assertEqual(result['warnings'][0]['code'], 'teams_shifted_occurrence_recreated')
-        self.assertTrue(any(call.args[:2] == ('DELETE', 'users/tutor%40example.com/events/instance-6') for call in graph_request.call_args_list))
+        self.assertTrue(any(call.args[:2] == ('DELETE', 'users/tutor%40example.com/events/instance-4') for call in graph_request.call_args_list))
         occurrences = views.authoring_fetch_all(
             views.LIVE_SESSION_OCCURRENCES_TABLE,
             'live_session_id = %s',
@@ -659,7 +674,14 @@ class CurriculumPersistenceHarness(TestCase):
     def patch_json(self, path, payload):
         return self.client.patch(path, data=json.dumps(payload), content_type='application/json')
 
-    def tree_payload(self, programme_id='PROG-DATA', cohort_id='COHORT-DATA-1', group_id='GROUP-DATA-1', module_id='MOD-DATA-1'):
+    def tree_payload(self, programme_id='PROG-DATA', cohort_id='COHORT-DATA-1', group_id='GROUP-DATA-1', module_id='MOD-DATA-1', tutor='Tutor One'):
+        """One programme -> cohort -> group -> module, ready to POST.
+
+        `tutor` is a parameter because the fixture keeps the same weekday, time
+        and start date whichever ids it is given: a test that builds a *second*
+        tree has to name a different tutor, or the save is refused as a
+        double-booking (see tests_tutor_schedule_conflicts).
+        """
         return {
             'programme': {
                 'id': programme_id,
@@ -679,7 +701,7 @@ class CurriculumPersistenceHarness(TestCase):
                     'id': group_id,
                     'name': 'Group A',
                     'coach': 'Coach One',
-                    'tutor': 'Tutor One',
+                    'tutor': tutor,
                     'weekDays': 'Wednesday',
                     'startTime': '10:00',
                     'endTime': '12:00',
@@ -691,7 +713,7 @@ class CurriculumPersistenceHarness(TestCase):
                         'sessionsNumber': 2,
                         'weekDays': 'Wednesday',
                         'coach': 'Coach One',
-                        'tutor': 'Tutor One',
+                        'tutor': tutor,
                         'weekStructure': [{
                             'id': 'WEEK-DATA-1',
                             'weekNumber': 1,
@@ -780,9 +802,13 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
             cohort_id='COHORT-OTHER-1',
             group_id='GROUP-OTHER-1',
             module_id=module_catalogue_id,
+            tutor='Tutor Two',
         )
         module = payload['cohorts'][0]['groups'][0]['modules'][0]
         week = module['weekStructure'][0]
+        # Distinct from the first module's week: a shared id would move the week
+        # (and its components) onto this module instead of copying it.
+        week['id'] = f'WEEK-{module_catalogue_id}'
         template = week['components'][0]
         week['components'] = [
             {**template, 'id': f'COMP-{module_catalogue_id}-{index}'}
@@ -918,12 +944,12 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
 
         response = self.client.get('/curriculum_api/curriculum/programmes/')
         self.assertEqual(response.status_code, 200, response.content)
-        active = next(item for item in response.json()['programmes'] if item['sourceId'] == 'PROG-DRAFT')
+        active = next(item for item in response.json()['results'] if item['sourceId'] == 'PROG-DRAFT')
         self.assertEqual(active['status'], 'active')
 
         response = self.client.get('/curriculum_api/curriculum/programmes/?visibility=all')
         self.assertEqual(response.status_code, 200, response.content)
-        active = next(item for item in response.json()['programmes'] if item['sourceId'] == 'PROG-DRAFT')
+        active = next(item for item in response.json()['results'] if item['sourceId'] == 'PROG-DRAFT')
         self.assertEqual(active['status'], 'active')
 
         payload['programme']['status'] = 'active'
@@ -932,7 +958,7 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
 
         response = self.client.get('/curriculum_api/curriculum/programmes/')
         self.assertEqual(response.status_code, 200, response.content)
-        active = next(item for item in response.json()['programmes'] if item['sourceId'] == 'PROG-DRAFT')
+        active = next(item for item in response.json()['results'] if item['sourceId'] == 'PROG-DRAFT')
         self.assertEqual(active['status'], 'active')
 
     def test_integer_weeks_count_never_replaces_the_authored_week_structure(self):
@@ -1151,7 +1177,7 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
         payload = response.json()
         self.assertEqual(payload['scope'], 'all')
         self.assertEqual(payload['summary']['overall']['required'], 1)
-        self.assertEqual(payload['summary']['overall']['missing'], 1)
+        self.assertEqual(payload['summary']['overall']['unmapped'], 1)
         self.assertEqual(payload['items'][0]['code'], 'K1')
         self.assertEqual(payload['items'][0]['source_id'], 'KSBP-DATA')
 
@@ -1199,7 +1225,7 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
     def test_add_cohort_without_removing_existing_when_hydration_incomplete(self):
         first = self.tree_payload()
         self.post_json('/curriculum_api/curriculum/programmes/tree/', first)
-        second = self.tree_payload(cohort_id='COHORT-DATA-2', group_id='GROUP-DATA-2', module_id='MOD-DATA-2')
+        second = self.tree_payload(cohort_id='COHORT-DATA-2', group_id='GROUP-DATA-2', module_id='MOD-DATA-2', tutor='Tutor Two')
         second['removeMissing'] = True
         second['hydrationComplete'] = False
 
@@ -1214,7 +1240,7 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
     def test_tree_save_removes_missing_rows_when_hydrated(self):
         first = self.tree_payload()
         self.post_json('/curriculum_api/curriculum/programmes/tree/', first)
-        second = self.tree_payload(cohort_id='COHORT-DATA-2', group_id='GROUP-DATA-2', module_id='MOD-DATA-2')
+        second = self.tree_payload(cohort_id='COHORT-DATA-2', group_id='GROUP-DATA-2', module_id='MOD-DATA-2', tutor='Tutor Two')
         second['removeMissing'] = True
         second['hydrationComplete'] = True
 
@@ -1226,7 +1252,7 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
     def test_tree_save_explicitly_removes_deleted_cohort(self):
         first = self.tree_payload()
         self.post_json('/curriculum_api/curriculum/programmes/tree/', first)
-        second = self.tree_payload(cohort_id='COHORT-DATA-2', group_id='GROUP-DATA-2', module_id='MOD-DATA-2')
+        second = self.tree_payload(cohort_id='COHORT-DATA-2', group_id='GROUP-DATA-2', module_id='MOD-DATA-2', tutor='Tutor Two')
         second['removeMissing'] = False
         second['hydrationComplete'] = False
         second['removeCohortIds'] = ['COHORT-DATA-1']
@@ -1393,7 +1419,7 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
 
     def test_move_group_updates_both_cohort_group_ids_and_modules(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
-        second = self.tree_payload(cohort_id='COHORT-DATA-2', group_id='GROUP-DATA-2', module_id='MOD-DATA-2')
+        second = self.tree_payload(cohort_id='COHORT-DATA-2', group_id='GROUP-DATA-2', module_id='MOD-DATA-2', tutor='Tutor Two')
         second['removeMissing'] = False
         self.post_json('/curriculum_api/curriculum/programmes/tree/', second)
 
@@ -1594,7 +1620,8 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
             ['coach.same.one@example.com', 'coach.same.two@example.com'],
         )
 
-    def test_create_coach_profile_restores_archived_duplicate_in_place(self):
+    def test_create_coach_profile_after_delete_starts_a_fresh_row(self):
+        """A deleted coach is gone, so re-adding them is a create, not a restore."""
         created = self.post_json('/curriculum_api/curriculum/coaches/', {
             'name': 'Coach Restore',
             'email': 'coach.restore@example.com',
@@ -1605,23 +1632,22 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
         deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
         self.assertEqual(deleted.status_code, 200, deleted.content)
 
-        restored = self.post_json('/curriculum_api/curriculum/coaches/', {
+        recreated = self.post_json('/curriculum_api/curriculum/coaches/', {
             'name': 'Coach Restore Updated',
             'email': 'coach.restore@example.com',
             'phone': '07999999999',
         })
-        self.assertEqual(restored.status_code, 200, restored.content)
-        self.assertFalse(restored.json()['created'])
-        self.assertTrue(restored.json()['restored'])
-        self.assertEqual(restored.json()['profile']['id'], created_id)
-        self.assertEqual(restored.json()['profile']['name'], 'Coach Restore Updated')
-        self.assertEqual(restored.json()['profile']['phone'], '07999999999')
+        self.assertEqual(recreated.status_code, 201, recreated.content)
+        self.assertTrue(recreated.json()['created'])
+        self.assertNotEqual(recreated.json()['profile']['id'], created_id)
+        self.assertEqual(recreated.json()['profile']['name'], 'Coach Restore Updated')
+        self.assertEqual(recreated.json()['profile']['phone'], '07999999999')
 
         matching = views.staff_profile_rows_by_identity('coach', 'Coach Restore Updated', 'coach.restore@example.com', include_archived=True)
         self.assertEqual(len(matching), 1)
         self.assertFalse(views.staff_profile_is_archived(matching[0]))
 
-    def test_delete_coach_archives_all_duplicate_rows_for_same_email(self):
+    def test_delete_coach_removes_all_duplicate_rows_for_same_email(self):
         created = self.post_json('/curriculum_api/curriculum/coaches/', {
             'name': 'Coach Archive All',
             'email': 'coach.archive@example.com',
@@ -1638,11 +1664,37 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
 
         deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
         self.assertEqual(deleted.status_code, 200, deleted.content)
+        self.assertTrue(deleted.json()['deleted'])
         self.assertEqual(deleted.json()['count'], 2)
 
         matching = views.staff_profile_rows_by_identity('coach', 'Coach Archive All', 'coach.archive@example.com', include_archived=True)
-        self.assertEqual(len(matching), 2)
-        self.assertTrue(all(views.staff_profile_is_archived(row) for row in matching))
+        self.assertEqual(matching, [])
+
+    def test_staff_ids_are_minted_even_when_the_name_looks_like_an_id(self):
+        """Staff ids follow the PROG-/MOD- scheme: prefix plus a UTC timestamp.
+
+        The mirror used to hand the *name* to unique_prefixed_id, whose second
+        argument is a requested id — so a tutor called "tutor-1" was stored as
+        ``TUTOR-1`` while a tutor called "Osama" got a timestamp.
+        """
+        response = self.post_json(
+            '/curriculum_api/curriculum/programmes/tree/', self.tree_payload(tutor='tutor-1'),
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+
+        tutor = views.find_staff_profile_row('tutor', 'tutor-1', include_archived=True)
+        coach = views.find_staff_profile_row('coach', 'Coach One', include_archived=True)
+        self.assertIsNotNone(tutor)
+        self.assertIsNotNone(coach)
+        self.assertRegex(tutor['id'], r'^TUTOR-\d{14,}$')
+        self.assertRegex(coach['id'], r'^COACH-\d{14,}$')
+
+        created = self.post_json('/curriculum_api/curriculum/tutors/', {
+            'name': 'coach-9',
+            'email': 'coach.nine@example.com',
+        })
+        self.assertEqual(created.status_code, 201, created.content)
+        self.assertRegex(created.json()['profile']['id'], r'^TUTOR-\d{14,}$')
 
     def test_patch_coach_profile_rejects_email_change_to_existing_email(self):
         first = self.post_json('/curriculum_api/curriculum/coaches/', {
@@ -2649,6 +2701,62 @@ class ProgrammeIntegrityRegressionTests(TestCase):
         cohorts = views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)
         self.assertEqual(len(cohorts), 1)
 
+    def test_archived_programme_can_be_restored_with_its_children(self):
+        """Restore is the inverse of archive: the row comes back, so do its children."""
+        self._insert_programme('PROG-RESTORE', 'Programme A')
+        self._seed_cohort('PROG-RESTORE', 'COHORT-RESTORE')
+        self.client.delete('/curriculum_api/curriculum/programmes/PROG-RESTORE/')
+
+        response = self.client.post('/curriculum_api/curriculum/programmes/PROG-RESTORE/restore/')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json().get('restored'))
+        rows = self._programme_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(views.truthy(rows[0].get('is_archived')))
+        self.assertEqual(views.programme_config_status(rows[0]), 'active')
+        cohorts = views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)
+        self.assertEqual(len(cohorts), 1)
+        self.assertIsNone(cohorts[0].get('deleted_at'))
+        self.assertFalse(views.truthy(cohorts[0].get('is_programme_deleted')))
+
+    def test_restoring_a_live_programme_is_rejected(self):
+        self._insert_programme('PROG-LIVE', 'Programme A')
+
+        response = self.client.post('/curriculum_api/curriculum/programmes/PROG-LIVE/restore/')
+
+        self.assertEqual(response.status_code, 409, response.content)
+
+    def test_restore_of_unknown_programme_returns_404(self):
+        response = self.client.post('/curriculum_api/curriculum/programmes/PROG-NOPE/restore/')
+        self.assertEqual(response.status_code, 404)
+
+    def test_restore_leaves_independently_archived_children_alone(self):
+        """A cohort archived on its own is not revived by restoring the programme.
+
+        The cascade stamps deleted_via_parent; a standalone archive does not, so
+        the two are told apart and restore only undoes its own cascade.
+        """
+        self._insert_programme('PROG-MIXED', 'Programme A')
+        self._seed_cohort('PROG-MIXED', 'COHORT-OWN')
+        # Archive the cohort by itself first - no parent marker.
+        views.authoring_soft_delete(
+            views.COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', ['COHORT-OWN'],
+        )
+        self.client.delete('/curriculum_api/curriculum/programmes/PROG-MIXED/')
+
+        response = self.client.post('/curriculum_api/curriculum/programmes/PROG-MIXED/restore/')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        cohorts = views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)
+        self.assertEqual(len(cohorts), 1)
+        self.assertIsNotNone(cohorts[0].get('deleted_at'))
+
+    def test_restore_rejects_non_post(self):
+        self._insert_programme('PROG-METHOD', 'Programme A')
+        response = self.client.get('/curriculum_api/curriculum/programmes/PROG-METHOD/restore/')
+        self.assertEqual(response.status_code, 405)
+
     def test_dependency_counts_report_children(self):
         self._insert_programme('PROG-DEP2', 'Programme A')
         self._seed_cohort('PROG-DEP2', 'COHORT-X')
@@ -2675,6 +2783,347 @@ class ProgrammeIntegrityRegressionTests(TestCase):
     def test_saving_a_module_without_a_programme_creates_no_junk_programme(self):
         self.assertIsNone(views.ensure_programme_config_for_authoring('Unassigned programme', 'programme-local'))
         self.assertEqual(self._programme_rows(), [])
+
+
+class CohortPracticalEndDateRuleTests(SimpleTestCase):
+    """One rule for the practical end date, shared by the preview and every write.
+
+    The editor's preview and the three write paths (the programme tree save, the
+    cohort create and the cohort PATCH) used to reach the date by different code.
+    A cohort created through the API with holidays therefore landed on an
+    unextended date while the same cohort created in the UI landed on an extended
+    one -- same inputs, two answers. They now all call
+    ``cohort_practical_end_date``, and these tests hold that rule still.
+    """
+
+    HOLIDAY_ROWS = [
+        {'id': 'HOL-1', 'label': 'Oct 27', 'start_date': '2027-09-26', 'end_date': '2027-10-02'},
+        {'id': 'HOL-2', 'label': 'Summer 27', 'start_date': '2027-07-25', 'end_date': '2027-08-07'},
+        # Past the base end date of a 24 month cohort starting 2026-02-01.
+        {'id': 'HOL-3', 'label': 'Later', 'start_date': '2028-05-01', 'end_date': '2028-05-07'},
+    ]
+
+    def test_the_rule_adds_the_selected_holiday_days(self):
+        self.assertEqual(
+            views.format_date(views.cohort_practical_end_date(
+                '2026-02-01', 24, ['HOL-1'], self.HOLIDAY_ROWS,
+            )),
+            '2028-02-07',
+        )
+
+    def test_the_rule_matches_the_duration_alone_when_no_holiday_applies(self):
+        self.assertEqual(
+            views.format_date(views.cohort_practical_end_date(
+                '2026-02-01', 24, ['HOL-3'], self.HOLIDAY_ROWS,
+            )),
+            '2028-01-31',
+        )
+
+    def test_an_empty_selection_applies_every_holiday_in_the_period(self):
+        # The fallback build_module_session_plan and the editor's picker both
+        # state: nothing ticked means all of them. The dates have to agree, or a
+        # cohort nobody ticked anything for carries dates its sessions overrun.
+        self.assertEqual(
+            views.format_date(views.cohort_practical_end_date(
+                '2026-02-01', 24, [], self.HOLIDAY_ROWS,
+            )),
+            # HOL-1 (7) + HOL-2 (14) = 21 days; HOL-3 is outside the period.
+            '2028-02-21',
+        )
+
+    def test_the_rule_is_idempotent(self):
+        # Feeding the result back in must not extend it again: the holidays are
+        # measured over the base period, which does not move.
+        first = views.format_date(views.cohort_practical_end_date(
+            '2026-02-01', 24, ['HOL-1'], self.HOLIDAY_ROWS,
+        ))
+        # 24 months from the same start still gives the same base window.
+        second = views.format_date(views.cohort_practical_end_date(
+            '2026-02-01', 24, ['HOL-1'], self.HOLIDAY_ROWS,
+        ))
+        self.assertEqual(first, second)
+        self.assertEqual(first, '2028-02-07')
+
+    def test_no_start_date_or_duration_has_no_rule_to_apply(self):
+        self.assertIsNone(views.cohort_practical_end_date('', 24, ['HOL-1'], self.HOLIDAY_ROWS))
+        self.assertIsNone(views.cohort_practical_end_date('2026-02-01', 0, ['HOL-1'], self.HOLIDAY_ROWS))
+
+    def test_the_rule_agrees_with_the_preview_endpoint(self):
+        # The guarantee that matters: what an editor is shown is what a save stores.
+        request = RequestFactory().post(
+            '/curriculum_api/curriculum/preview/cohort-end-date/',
+            data=json.dumps({
+                'startDate': '2026-02-01',
+                'durationMonths': 24,
+                'epaMonths': 5,
+                'holidays': [{'label': 'Oct 27', 'startDate': '2027-09-26', 'endDate': '2027-10-02'}],
+            }),
+            content_type='application/json',
+        )
+        previewed = json.loads(views.curriculum_preview_cohort_end_date(request).content)
+        stored = views.format_date(views.cohort_practical_end_date(
+            '2026-02-01', 24, ['HOL-1'], self.HOLIDAY_ROWS,
+        ))
+        self.assertEqual(previewed['practicalEndDate'], stored)
+
+
+class CohortAppliedHolidaysTests(SimpleTestCase):
+    """Which holidays a cohort's dates and sessions are both measured against."""
+
+    HOLIDAY_ROWS = [
+        {'id': 'HOL-1', 'label': 'In period', 'start_date': '2027-09-26', 'end_date': '2027-10-02'},
+        {'id': 'HOL-2', 'label': 'Out of period', 'start_date': '2028-05-01', 'end_date': '2028-05-07'},
+        {'id': 'HOL-3', 'label': 'Straddling', 'start_date': '2028-01-31', 'end_date': '2028-02-06'},
+    ]
+
+    def test_an_explicit_selection_is_honoured(self):
+        applied = views.cohort_applied_holidays(
+            ['HOL-1'], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
+        )
+        self.assertEqual([item['id'] for item in applied], ['HOL-1'])
+
+    def test_an_empty_selection_means_every_holiday_in_the_period(self):
+        applied = views.cohort_applied_holidays(
+            [], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
+        )
+        # The straddling holiday touches the period, so it is in; the later one is not.
+        self.assertEqual(sorted(item['id'] for item in applied), ['HOL-1', 'HOL-3'])
+
+    def test_a_selected_holiday_outside_the_period_is_dropped(self):
+        # It cannot take delivery days out of a period it does not touch.
+        applied = views.cohort_applied_holidays(
+            ['HOL-2'], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
+        )
+        self.assertEqual(applied, [])
+
+
+class CohortHolidayExtensionTests(SimpleTestCase):
+    """Holidays applied to a cohort push its end dates out.
+
+    A holiday stops delivery without reducing the training the cohort owes, so
+    the module sessions shift later (build_module_session_plan keeps the session
+    count and stretches the span) and the practical period has to cover them.
+    The EPA window is then counted from the extended date, so the apprenticeship
+    end date follows on.
+
+    The extension is measured against the *base* period -- start date plus
+    duration -- and never against the extended date. Measuring against the
+    extended date would list holidays past the original window, whose selection
+    would extend the date again, and again, without ever settling.
+    """
+
+    def preview(self, **body):
+        request = RequestFactory().post(
+            '/curriculum_api/curriculum/preview/cohort-end-date/',
+            data=json.dumps(body),
+            content_type='application/json',
+        )
+        return json.loads(views.curriculum_preview_cohort_end_date(request).content)
+
+    def test_a_holiday_inside_the_period_extends_both_end_dates(self):
+        # A 7 day holiday inside a 24 month cohort: the practical end moves 7
+        # days, and the EPA window is counted from there.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[{'startDate': '2027-09-26', 'endDate': '2027-10-02'}],
+        )
+        self.assertEqual(result['baseEndDate'], '2028-01-31')
+        self.assertEqual(result['holidayExtensionDays'], 7)
+        self.assertEqual(result['practicalEndDate'], '2028-02-07')
+        self.assertEqual(result['apprenticeshipEndDate'], '2028-07-07')
+
+    def test_no_holidays_leaves_the_duration_rule_untouched(self):
+        result = self.preview(startDate='2026-02-01', durationMonths=24, epaMonths=5)
+        self.assertEqual(result['holidayExtensionDays'], 0)
+        self.assertEqual(result['practicalEndDate'], '2028-01-31')
+        self.assertEqual(result['baseEndDate'], '2028-01-31')
+        self.assertEqual(result['apprenticeshipEndDate'], '2028-06-30')
+
+    def test_a_holiday_outside_the_period_is_not_counted(self):
+        # Past the base end date, so it takes no delivery days out of this cohort.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[{'startDate': '2028-05-01', 'endDate': '2028-05-07'}],
+        )
+        self.assertEqual(result['holidayExtensionDays'], 0)
+        self.assertEqual(result['practicalEndDate'], '2028-01-31')
+
+    def test_a_holiday_straddling_the_end_date_counts_only_its_days_inside(self):
+        # 31 Jan 2028 - 06 Feb 2028 against a period ending 31 Jan 2028: one day
+        # of delivery is lost, not seven. Delivery has stopped for the rest.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[{'startDate': '2028-01-31', 'endDate': '2028-02-06'}],
+        )
+        self.assertEqual(result['holidayExtensionDays'], 1)
+        self.assertEqual(result['practicalEndDate'], '2028-02-01')
+
+    def test_overlapping_holidays_are_not_double_counted(self):
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[
+                {'startDate': '2027-09-26', 'endDate': '2027-10-02'},
+                {'startDate': '2027-09-29', 'endDate': '2027-10-05'},
+            ],
+        )
+        # 26 Sept - 05 Oct inclusive is 10 distinct days, not 7 + 7.
+        self.assertEqual(result['holidayExtensionDays'], 10)
+        self.assertEqual(result['practicalEndDate'], '2028-02-10')
+
+    def test_the_extension_is_stable_when_fed_back_in(self):
+        # Re-previewing the same inputs must not move the base window, or the
+        # date would creep further out every time the drawer is reopened.
+        holidays = [{'startDate': '2027-09-26', 'endDate': '2027-10-02'}]
+        first = self.preview(
+            startDate='2026-02-01', durationMonths=24, epaMonths=5, holidays=holidays,
+        )
+        second = self.preview(
+            startDate='2026-02-01', durationMonths=24, epaMonths=5, holidays=holidays,
+        )
+        self.assertEqual(first['practicalEndDate'], second['practicalEndDate'])
+        self.assertEqual(first['baseEndDate'], second['baseEndDate'])
+        self.assertEqual(second['practicalEndDate'], '2028-02-07')
+
+    def test_an_authored_practical_end_date_still_wins_over_the_extension(self):
+        # A human who typed a date has accounted for what they meant to.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            practicalEndDate='2028-03-01',
+            holidays=[{'startDate': '2027-09-26', 'endDate': '2027-10-02'}],
+        )
+        self.assertEqual(result['practicalEndDate'], '2028-03-01')
+        self.assertEqual(result['apprenticeshipEndDate'], '2028-08-01')
+        # ...but the editor is told what the holidays would have given.
+        self.assertTrue(any('2028-02-07' in warning for warning in result['warnings']))
+
+    def test_the_extension_is_broken_down_per_holiday(self):
+        # A bare total is not checkable. The editor names each holiday and the
+        # days of it that landed inside the period, so this is what it reads.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[
+                {'label': 'Summer 27', 'startDate': '2027-07-25', 'endDate': '2027-08-07'},
+                {'label': 'Oct 27', 'startDate': '2027-09-26', 'endDate': '2027-10-02'},
+            ],
+        )
+        self.assertEqual(result['holidayExtensions'], [
+            {'label': 'Summer 27', 'startDate': '2027-07-25', 'endDate': '2027-08-07', 'days': 14},
+            {'label': 'Oct 27', 'startDate': '2027-09-26', 'endDate': '2027-10-02', 'days': 7},
+        ])
+        self.assertEqual(result['holidayExtensionDays'], 21)
+
+    def test_the_breakdown_reports_only_the_days_inside_the_period(self):
+        # A holiday straddling the end date is listed by the part that counted,
+        # not by its own full span -- otherwise the lines would not sum to the total.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[{'label': 'Feb 28', 'startDate': '2028-01-31', 'endDate': '2028-02-06'}],
+        )
+        self.assertEqual(result['holidayExtensions'], [
+            {'label': 'Feb 28', 'startDate': '2028-01-31', 'endDate': '2028-01-31', 'days': 1},
+        ])
+
+    def test_the_breakdown_lines_sum_to_the_total_when_holidays_overlap(self):
+        # Shared days are attributed once, so the named lines and the date
+        # arithmetic cannot disagree.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[
+                {'label': 'First', 'startDate': '2027-09-26', 'endDate': '2027-10-02'},
+                {'label': 'Second', 'startDate': '2027-09-29', 'endDate': '2027-10-05'},
+            ],
+        )
+        self.assertEqual(
+            sum(item['days'] for item in result['holidayExtensions']),
+            result['holidayExtensionDays'],
+        )
+        self.assertEqual(result['holidayExtensionDays'], 10)
+
+    def test_a_holiday_outside_the_period_is_left_out_of_the_breakdown(self):
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[{'label': 'Later', 'startDate': '2028-05-01', 'endDate': '2028-05-07'}],
+        )
+        self.assertEqual(result['holidayExtensions'], [])
+
+    def test_the_contracted_duration_is_reported_alongside_the_effective_one(self):
+        # The duration the user typed is not rewritten by the holidays. What the
+        # editor states next to it is how long the cohort now actually runs.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[{'label': 'Oct 27', 'startDate': '2027-09-26', 'endDate': '2027-10-02'}],
+        )
+        self.assertEqual(result['durationMonths'], 24)
+        self.assertEqual(result['effectiveDurationMonths'], 25)
+        self.assertEqual(result['practicalEndDate'], '2028-02-07')
+
+    def test_no_holidays_leaves_the_effective_duration_equal_to_the_contracted_one(self):
+        result = self.preview(startDate='2026-02-01', durationMonths=24, epaMonths=5)
+        self.assertEqual(result['durationMonths'], 24)
+        self.assertEqual(result['effectiveDurationMonths'], 24)
+
+    def test_weekends_inside_a_holiday_are_counted(self):
+        # The practical period is a calendar span, not a working-day budget: its
+        # end date already includes every weekend inside it, so a two week
+        # holiday has to move it a full 14 days.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[{'startDate': '2027-07-25', 'endDate': '2027-08-07'}],
+        )
+        self.assertEqual(result['holidayExtensionDays'], 14)
+        self.assertEqual(result['practicalEndDate'], '2028-02-14')
+
+    def test_a_single_day_holiday_is_reported_in_the_singular(self):
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[{'startDate': '2027-09-26', 'endDate': '2027-09-26'}],
+        )
+        self.assertEqual(result['holidayExtensionDays'], 1)
+        self.assertEqual(result['holidayExtensions'][0]['days'], 1)
+
+    def test_the_screenshot_cohort_extends_by_all_four_holidays(self):
+        # The worked case from the delivery team's MBA Feb-2026 cohort: four
+        # holidays, the last straddling the practical end date.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[
+                {'startDate': '2027-07-25', 'endDate': '2027-08-07'},
+                {'startDate': '2027-09-26', 'endDate': '2027-10-02'},
+                {'startDate': '2027-12-19', 'endDate': '2028-01-02'},
+                {'startDate': '2028-01-31', 'endDate': '2028-02-06'},
+            ],
+        )
+        # 14 + 7 + 15 + 1 (clamped) = 37 days.
+        self.assertEqual(result['holidayExtensionDays'], 37)
+        self.assertEqual(result['baseEndDate'], '2028-01-31')
+        self.assertEqual(result['practicalEndDate'], '2028-03-08')
+        self.assertEqual(result['apprenticeshipEndDate'], '2028-08-08')
 
 
 class CohortEpaPeriodTests(SimpleTestCase):
@@ -2878,6 +3327,95 @@ class ApprenticeshipEndDateOverrideTests(SimpleTestCase):
         self.assertEqual(cohort['practicalEndDate'], '2027-03-04')
         self.assertEqual(cohort['apprenticeshipEndDate'], '2027-09-30')
         self.assertEqual(cohort['apprenticeshipEndOverride'], '2027-09-30')
+
+
+class CohortEndDatePreviewTests(SimpleTestCase):
+    """The preview the cohort editors call while the user types.
+
+    Both end dates are shown to the delivery team as real, editable dates rather
+    than as blank override boxes, so the preview has to accept a practical end
+    date that was nudged a day either way and count the EPA window from *that*
+    date -- while still reporting what the duration rule would have given, so the
+    editor can offer a way back to it.
+    """
+
+    def preview(self, **body):
+        request = RequestFactory().post(
+            '/curriculum_api/curriculum/preview/cohort-end-date/',
+            data=json.dumps(body),
+            content_type='application/json',
+        )
+        return json.loads(views.curriculum_preview_cohort_end_date(request).content)
+
+    def test_practical_end_date_is_calculated_when_none_is_authored(self):
+        result = self.preview(startDate='2025-02-01', durationMonths=24, epaMonths=5)
+        self.assertEqual(result['practicalEndDate'], '2027-01-31')
+        self.assertEqual(result['calculatedEndDate'], '2027-01-31')
+        self.assertEqual(result['apprenticeshipEndDate'], '2027-06-30')
+        self.assertFalse(result['practicalEndIsManual'])
+
+    def test_an_authored_practical_end_date_moves_the_epa_window(self):
+        result = self.preview(
+            startDate='2025-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            practicalEndDate='2027-02-02',
+        )
+        self.assertEqual(result['practicalEndDate'], '2027-02-02')
+        self.assertEqual(result['apprenticeshipEndDate'], '2027-07-02')
+        self.assertTrue(result['practicalEndIsManual'])
+
+    def test_the_calculated_practical_end_date_is_reported_alongside_the_authored_one(self):
+        # What the editor's "reset to the calculated date" needs, without a
+        # second round trip that sends no practical end date.
+        result = self.preview(
+            startDate='2025-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            practicalEndDate='2027-02-02',
+        )
+        self.assertEqual(result['calculatedEndDate'], '2027-01-31')
+
+    def test_an_authored_date_matching_the_rule_is_not_reported_as_manual(self):
+        result = self.preview(
+            startDate='2025-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            practicalEndDate='2027-01-31',
+        )
+        self.assertFalse(result['practicalEndIsManual'])
+
+    def test_no_practical_end_date_leaves_the_calculation_alone(self):
+        # The editor sends null in automatic mode; it must not read as a date.
+        result = self.preview(
+            startDate='2025-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            practicalEndDate=None,
+        )
+        self.assertEqual(result['practicalEndDate'], '2027-01-31')
+        self.assertFalse(result['practicalEndIsManual'])
+
+    def test_an_authored_apprenticeship_end_date_still_wins_outright(self):
+        result = self.preview(
+            startDate='2025-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            practicalEndDate='2027-02-02',
+            apprenticeshipEndOverride='2027-07-15',
+        )
+        self.assertEqual(result['apprenticeshipEndDate'], '2027-07-15')
+        self.assertEqual(result['apprenticeshipEndOverride'], '2027-07-15')
+
+    def test_a_practical_end_date_before_the_start_date_warns_rather_than_fails(self):
+        result = self.preview(
+            startDate='2025-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            practicalEndDate='2024-12-01',
+        )
+        self.assertEqual(result['practicalEndDate'], '2024-12-01')
+        self.assertIn('The practical end date is before the cohort start date.', result['warnings'])
 
 
 class TutorAssignmentNotificationTests(TestCase):

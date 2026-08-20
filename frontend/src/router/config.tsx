@@ -58,6 +58,12 @@ const CommunicationPage = lazy(() => import("../pages/communication/page"));
 const CurriculumDashboard = lazy(() => import("../pages/workspace/curriculum/page"));
 const CurriculumFreeCourses = lazy(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
+const CurriculumCohorts = lazy(() => import("../pages/curriculum/cohorts/page"));
+const CurriculumCohortWorkspace = lazy(() => import("../pages/curriculum/cohort-workspace/page"));
+const CurriculumGroups = lazy(() => import("../pages/curriculum/groups/page"));
+const CurriculumGroupWorkspace = lazy(() => import("../pages/curriculum/group-workspace/page"));
+const CurriculumHolidays = lazy(() => import("../pages/curriculum/holidays/page"));
+const CurriculumModuleWorkspace = lazy(() => import("../pages/curriculum/module-workspace/page"));
 const CurriculumProgrammes = lazy(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazy(() => import("../pages/curriculum/published/page"));
 const CurriculumQAPage = lazy(() => import("../pages/curriculum/curriculum-qa/page"));
@@ -684,6 +690,13 @@ const routes: RouteObject[] = [
     element: <LearnerCaseFile />,
   },
   {
+    // Every Curriculum Studio page lives under /curriculum/*, so the bare path
+    // gets typed and linked (ROUTE_PERMISSIONS lists it too) — send it to the
+    // workspace dashboard instead of the catch-all 404.
+    path: "/curriculum",
+    element: <Navigate to="/workspace/curriculum" replace />,
+  },
+  {
     path: "/curriculum/programmes/:id",
     element: <ProgrammeDetailPage />,
   },
@@ -737,12 +750,41 @@ const routes: RouteObject[] = [
     element: <CheckpointsPage />,
   },
   {
-    path: "/curriculum/cohorts/:id/allocate",
-    element: <Navigate to="/curriculum/programmes" replace />,
+    path: "/curriculum/cohorts",
+    element: <CurriculumCohorts />,
   },
   {
     path: "/curriculum/cohorts/:id",
-    element: <Navigate to="/curriculum/programmes" replace />,
+    element: <CurriculumCohortWorkspace />,
+  },
+  {
+    // Learner allocation has no page of its own yet; the cohort workspace is the
+    // nearest live view of who is in the cohort.
+    path: "/curriculum/cohorts/:id/allocate",
+    element: <Navigate to="/curriculum/cohorts" replace />,
+  },
+  {
+    path: "/curriculum/groups",
+    element: <CurriculumGroups />,
+  },
+  {
+    path: "/curriculum/groups/:id",
+    element: <CurriculumGroupWorkspace />,
+  },
+  {
+    // The Modules list is gone: the Module Builder catalogue is the single list
+    // of modules, and it carries the delivery context (cohort, group, tutor,
+    // dates, Teams) the list used to hold. Old links keep working, filters and all.
+    path: "/curriculum/modules",
+    element: <Navigate to="/curriculum/module-builder" replace />,
+  },
+  {
+    path: "/curriculum/modules/:id",
+    element: <CurriculumModuleWorkspace />,
+  },
+  {
+    path: "/curriculum/holidays",
+    element: <CurriculumHolidays />,
   },
   {
     path: "/curriculum/session-calendar",

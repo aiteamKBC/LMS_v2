@@ -22,10 +22,11 @@ import uuid
 from datetime import timedelta
 from unittest import mock
 
+from django.core import signing
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
-from . import email_azure, identity, invitations
+from . import email_azure, identity, invitations, microsoft_sso
 from .models import (
     ROLE_ADMIN,
     ROLE_EMPLOYER,
@@ -779,3 +780,132 @@ class ThrottleCounterTests(TestCase):
         from .security import ip_is_throttled
 
         self.assertFalse(ip_is_throttled(None))
+
+
+#: A complete Microsoft sign-in configuration, for tests that want one.
+_SSO_ENV = {
+    "MICROSOFT_SSO_CLIENT_ID": "sso-client",
+    "MICROSOFT_SSO_CLIENT_SECRET": "sso-secret",
+    "MICROSOFT_SSO_TENANT_ID": "sso-tenant",
+    "MICROSOFT_SSO_CALLBACK_URI": "https://lms.kbc.test/login_api/microsoft/callback/",
+}
+
+
+class MicrosoftSsoConfigTests(SimpleTestCase):
+    """Which environment names the sign-in flow reads, and which it must not."""
+
+    def test_dedicated_names_win(self):
+        env = dict(
+            _SSO_ENV,
+            MICROSOFT_CLIENT_ID="calendar-client",
+            MICROSOFT_CLIENT_SECRET="calendar-secret",
+        )
+        with mock.patch.dict("os.environ", env, clear=False):
+            config = microsoft_sso.config()
+        self.assertEqual(config["client_id"], "sso-client")
+        self.assertEqual(config["client_secret"], "sso-secret")
+        self.assertEqual(config["tenant"], "sso-tenant")
+
+    def test_falls_back_to_the_shared_delegated_app(self):
+        """One delegated app registration may serve both sign-in and calendar."""
+        env = {
+            "MICROSOFT_SSO_CLIENT_ID": "", "MICROSOFT_SSO_CLIENT_SECRET": "",
+            "MICROSOFT_SSO_TENANT_ID": "",
+            "MICROSOFT_SSO_CALLBACK_URI": _SSO_ENV["MICROSOFT_SSO_CALLBACK_URI"],
+            "MICROSOFT_CLIENT_ID": "calendar-client",
+            "MICROSOFT_CLIENT_SECRET": "calendar-secret",
+            "MICROSOFT_TENANT_ID": "real-directory-guid",
+        }
+        with mock.patch.dict("os.environ", env, clear=False):
+            config = microsoft_sso.config()
+            self.assertTrue(microsoft_sso.is_configured())
+        self.assertEqual(config["client_id"], "calendar-client")
+        self.assertEqual(config["tenant"], "real-directory-guid")
+
+    def test_tenant_never_borrows_the_calendar_audience(self):
+        """MICROSOFT_TENANT is set to 'common' so learners can attach a personal
+        Outlook calendar. Reusing it here would offer sign-in to personal
+        accounts that can never hold a platform account."""
+        env = dict(_SSO_ENV, MICROSOFT_SSO_TENANT_ID="", MICROSOFT_TENANT="common")
+        with mock.patch.dict("os.environ", env, clear=False):
+            env2 = dict(env, MICROSOFT_TENANT_ID="")
+            with mock.patch.dict("os.environ", env2, clear=False):
+                self.assertEqual(microsoft_sso.config()["tenant"], "organizations")
+
+    def test_callback_never_borrows_the_calendar_callback(self):
+        """MICROSOFT_CALLBACK_URI points at the calendar's own handler; a
+        sign-in redirected there would be swallowed by the wrong view."""
+        env = dict(
+            _SSO_ENV,
+            MICROSOFT_SSO_CALLBACK_URI="",
+            MICROSOFT_CALLBACK_URI="https://lms.kbc.test/learner_api/calendar/oauth/microsoft/",
+        )
+        with mock.patch.dict("os.environ", env, clear=False):
+            self.assertEqual(microsoft_sso.config()["callback"], "")
+            self.assertIn("MICROSOFT_SSO_CALLBACK_URI", microsoft_sso.missing_settings())
+
+    def test_missing_settings_reports_names_only_never_values(self):
+        """/login_api/health/ publishes this list — it must leak no secrets."""
+        env = dict(_SSO_ENV, MICROSOFT_SSO_CLIENT_SECRET="", MICROSOFT_CLIENT_SECRET="")
+        with mock.patch.dict("os.environ", env, clear=False):
+            reported = " ".join(microsoft_sso.missing_settings())
+        self.assertIn("MICROSOFT_SSO_CLIENT_SECRET", reported)
+        self.assertNotIn("sso-secret", reported)
+        self.assertNotIn("sso-client", reported)
+
+
+class MicrosoftSsoStartTests(SimpleTestCase):
+    """The authorize URL handed to the browser. No database is touched."""
+
+    def setUp(self):
+        super().setUp()
+        self.factory = RequestFactory()
+
+    def _start(self, **params):
+        with mock.patch.dict("os.environ", _SSO_ENV, clear=False):
+            return microsoft_sso.start(self.factory.get("/login_api/microsoft/start/", params))
+
+    def _authorize_url(self, **params):
+        import json as _json
+
+        return _json.loads(self._start(**params).content)["authorizationUrl"]
+
+    def test_unconfigured_deployment_is_refused_not_half_built(self):
+        env = dict(_SSO_ENV, MICROSOFT_SSO_CLIENT_ID="", MICROSOFT_CLIENT_ID="")
+        with mock.patch.dict("os.environ", env, clear=False):
+            response = microsoft_sso.start(self.factory.get("/login_api/microsoft/start/"))
+        self.assertEqual(response.status_code, 503)
+
+    def test_url_targets_the_configured_tenant_and_client(self):
+        url = self._authorize_url()
+        self.assertTrue(url.startswith("https://login.microsoftonline.com/sso-tenant/oauth2/v2.0/authorize?"))
+        self.assertIn("client_id=sso-client", url)
+        self.assertIn("response_type=code", url)
+
+    def test_no_refresh_token_is_requested(self):
+        """This flow wants an identity once. A refresh token it never uses is a
+        stored credential with nothing to gain from holding it."""
+        self.assertNotIn("offline_access", self._authorize_url())
+
+    def test_state_is_signed_and_round_trips_the_return_path(self):
+        from urllib.parse import parse_qs, urlparse
+
+        state = parse_qs(urlparse(self._authorize_url(next="/workspace/admin")).query)["state"][0]
+        payload = signing.loads(state, salt=microsoft_sso.STATE_SALT, max_age=microsoft_sso.STATE_MAX_AGE)
+        self.assertEqual(payload["next"], "/workspace/admin")
+
+    def test_state_from_a_different_flow_is_rejected(self):
+        """The calendar connection flow signs its own state; salts must not be
+        interchangeable or one flow's state would authorise the other."""
+        forged = signing.dumps({"next": "/"}, salt="learner-personal-calendar-oauth")
+        with self.assertRaises(signing.BadSignature):
+            signing.loads(forged, salt=microsoft_sso.STATE_SALT)
+
+    def test_absolute_next_is_refused(self):
+        """An attacker-supplied return target would make this an open redirect."""
+        from urllib.parse import parse_qs, urlparse
+
+        for hostile in ("https://evil.test/steal", "//evil.test/steal", "javascript:alert(1)"):
+            state = parse_qs(urlparse(self._authorize_url(next=hostile)).query)["state"][0]
+            payload = signing.loads(state, salt=microsoft_sso.STATE_SALT)
+            self.assertEqual(payload["next"], "", f"{hostile} survived the path check")
