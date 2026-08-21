@@ -24,6 +24,7 @@ from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
+from login.permissions import learner_self_or_staff
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +353,9 @@ def learner_calendar(request, kind, pk):
 
 
 @csrf_exempt
+# The one write a staff viewer keeps on a learner's page: arranging a coaching
+# session is administration, not a claim about the learner's own work.
+@learner_self_or_staff(kwarg="pk")
 def learner_calendar_book(request, kind, pk):
     """Book a session with the learner's assigned coach.
 
@@ -564,6 +568,8 @@ def learner_calendar_book(request, kind, pk):
 
 
 @csrf_exempt
+# Same reasoning as booking: staff who arranged a session can call it off.
+@learner_self_or_staff(kwarg="pk")
 def learner_calendar_cancel(request, kind, pk):
     """Cancel a session the learner booked.
 

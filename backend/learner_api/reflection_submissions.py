@@ -9,6 +9,8 @@ from django.db import DatabaseError, connections, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from login.permissions import learner_self_only
+
 logger = logging.getLogger(__name__)
 
 VALID_KINDS = {"commercial", "apprenticeship"}
@@ -138,6 +140,9 @@ def _reflection_lineage(learner_id, activity_id):
 
 
 @csrf_exempt
+# The learner id arrives in the JSON body here, not the URL. GET falls through
+# to get_reflection_submission below, and the gate lets reads past untouched.
+@learner_self_only(body_field="learnerId")
 def create_reflection_submission(request):
     if request.method == "GET":
         return get_reflection_submission(request)

@@ -6,6 +6,7 @@ import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEAR
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
 import type { LearnerDetail, LearnerKind, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
 import { learningReflectionStatusKey, loadLearningReflectionStatuses, type LearningReflectionStatusMap } from '@/api/reflectionSubmission';
@@ -124,10 +125,13 @@ function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
 }
 
 /** The highlighted "current week" hero card with rich component list + progress. */
-function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, learnerId, reflectionStatuses }: {
+function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, learnerId, reflectionStatuses, canProgress }: {
   moduleTitle: string; weekLabel: string; components: JourneyComponent[];
   videos: LearnerVideoProgress[]; kind?: string; learnerId?: string;
   reflectionStatuses: LearningReflectionStatusMap;
+  /** False for a staff/coach viewer: the rows still show progress, but none of
+   *  them opens the runner that would record progress as the learner. */
+  canProgress: boolean;
 }) {
   const navigate = useNavigate();
   const total = components.length;
@@ -138,7 +142,9 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
   const percent = total ? Math.round((done / total) * 100) : 0;
 
   const openFor = (c: JourneyComponent): (() => void) | undefined => {
-    if (!kind || !learnerId) return undefined;
+    // Returning undefined leaves the row rendered but inert — CurrentWeekRow
+    // already draws that state for components with nowhere to open.
+    if (!kind || !learnerId || !canProgress) return undefined;
     const q = `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekLabel)}`;
     if (c.isQuiz && c.quizMeta?.quizId != null) return () => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`);
     if (c.type === 'video' && c.videoUrl && c.componentId) return () => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}${q}`);
@@ -773,6 +779,9 @@ export default function LearnerOverview() {
   /* ── Real-learner mode: /workspace/learner/:kind/:id ── */
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
+  // Anyone but this learner reads the workspace: the plan is visible, nothing in
+  // it can be progressed. Booking a session is unaffected — see the calendar card.
+  const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
   const isCommercialPreStart = isRealMode
     && kind === 'commercial'
@@ -1333,6 +1342,20 @@ export default function LearnerOverview() {
                   </a>
                   )}
                 </div>
+                {/* Says why the rows below do not open, so a read-only plan does
+                    not read as a broken one. */}
+                {showReadOnlyNotice && (
+                  <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
+                    <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
+                    <p className="text-[12px] leading-snug text-foreground-600">
+                      {/* Not "viewing as staff": the same state covers a learner
+                          who opened somebody else's URL. */}
+                      <span className="font-semibold text-foreground-800">Viewing read-only.</span>{' '}
+                      Only the learner can complete activities, upload evidence or submit
+                      reflections. You can still book a session.
+                    </p>
+                  </div>
+                )}
                 <div className="flex-1 overflow-y-auto" style={{ maxHeight: 620 }}>
                   {journey.length === 0 || !currentWeek ? (
                     <EmptyState text={loading ? 'Loading…' : 'No training plan built for this learner yet.'} />
@@ -1345,6 +1368,7 @@ export default function LearnerOverview() {
                       kind={kind}
                       learnerId={id}
                       reflectionStatuses={reflectionStatuses}
+                      canProgress={canProgress}
                     />
                   )}
                 </div>

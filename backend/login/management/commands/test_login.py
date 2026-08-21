@@ -17,8 +17,12 @@ from django.core.management.base import BaseCommand
 
 RUNNER = "login.test_runner.EnrolmentTestRunner"
 
-#: Test classes in login.tests_unit that need no database at all.
+#: Test classes that need no database at all.
 FAST_LABELS = [
+    # The learner-progress gates: a whole module rather than a class list,
+    # because everything in it patches authenticate_request and so stays
+    # database-free by construction.
+    "login.tests_learner_progress_gate",
     "login.tests_unit.NormalisationTests",
     "login.tests_unit.TokenPrimitiveTests",
     "login.tests_unit.PasswordHashingTests",

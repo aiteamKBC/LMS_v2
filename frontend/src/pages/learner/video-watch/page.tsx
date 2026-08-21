@@ -16,6 +16,8 @@ import { fetchEvidence } from '@/api/evidence';
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
+import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import {
   loadTeamsMeetingArtifacts,
   syncTeamsMeetingArtifacts,
@@ -78,6 +80,9 @@ export default function ComponentViewPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
+  // Reachable by URL even now the plan rows are inert for a staff viewer.
+  // Completing the component here would be recorded as the learner's own work.
+  const { canProgress } = useLearnerWorkspaceAccess(id);
 
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -195,7 +200,7 @@ export default function ComponentViewPage() {
   };
 
   const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
-    if (!component || !componentId || !kind || !id || submitting) return;
+    if (!component || !componentId || !kind || !id || submitting || !canProgress) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -245,6 +250,8 @@ export default function ComponentViewPage() {
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>
         ) : !component ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Component not found in this learner's plan." /></div>
+        ) : !canProgress ? (
+          <ReadOnlyLearnerNotice what="complete their own training-plan activities" onBack={() => navigate(-1)} />
         ) : !openable ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This component can't be completed here yet." /></div>
         ) : isVideo && !parsed ? (

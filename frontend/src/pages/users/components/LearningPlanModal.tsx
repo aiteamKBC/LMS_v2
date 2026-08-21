@@ -29,9 +29,16 @@ interface Props {
   onClose: () => void;
   /** Called after a successful save, so the list can refresh. */
   onSaved?: () => void;
+  /**
+   * View the plan without being able to change it. Used for learners who are
+   * past planning — the Users directory only offers editing while they are in
+   * Delivery, so the same modal opened from an Active row shows the agreed plan
+   * and nothing that could alter it.
+   */
+  readOnly?: boolean;
 }
 
-export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved }: Props) {
+export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, readOnly = false }: Props) {
   const toast = useToast();
   const [data, setData] = useState<LearningPlanResponse | null>(null);
   const [plan, setPlan] = useState<LearningPlanModule[]>([]);
@@ -91,6 +98,17 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved }: 
     return before !== plan.map((m) => m.moduleId).join('|');
   }, [data, plan]);
 
+  // Accepting the group's preset unchanged is the commonest outcome, so it has
+  // to be savable. `dirty` alone cannot express that: while nothing is saved,
+  // `data.plan` IS the preset, so agreeing with it looks like no change at all
+  // and the button would stay dead until you removed a module and added it back.
+  // An empty preset is the one thing still not worth saving — there is nothing
+  // to agree to, and removing modules makes the plan dirty in its own right.
+  const canSave = useMemo(() => {
+    if (!data) return false;
+    return dirty || (!data.saved && plan.length > 0);
+  }, [data, dirty, plan.length]);
+
   const remove = (moduleId: string) => setPlan((rows) => rows.filter((m) => m.moduleId !== moduleId));
   const add = (module: LearningPlanModule) => {
     setPlan((rows) => [...rows, module]);
@@ -141,14 +159,32 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved }: 
             {plan.length} module{plan.length === 1 ? '' : 's'} ·{' '}
             <strong className="text-foreground-800">{formatHours(totalHours)}</strong> total
           </span>
-          <span className="flex items-center gap-2">
-            <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>
-              Cancel
+          {readOnly ? (
+            <button type="button" className={btnSecondary} onClick={onClose}>
+              Close
             </button>
-            <button type="button" className={btnPrimary} onClick={save} disabled={saving || !dirty}>
-              {saving ? 'Saving…' : 'Save learning plan'}
-            </button>
-          </span>
+          ) : (
+            <span className="flex items-center gap-2">
+              <button type="button" className={btnSecondary} onClick={onClose} disabled={saving}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className={btnPrimary}
+                onClick={save}
+                disabled={saving || !canSave}
+                title={
+                  canSave || saving
+                    ? undefined
+                    : plan.length === 0
+                      ? 'Add at least one module to save this plan.'
+                      : 'This plan is already saved as it stands.'
+                }
+              >
+                {saving ? 'Saving…' : 'Save learning plan'}
+              </button>
+            </span>
+          )}
         </div>
       }
     >
@@ -171,6 +207,13 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved }: 
                 Pre-filled from group — not saved yet
               </span>
             )}
+            {/* Says why there is nothing to change here, rather than leaving the
+                missing controls to be read as a bug. */}
+            {readOnly && (
+              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[11px] font-semibold text-foreground-500">
+                View only — a plan is edited while the learner is in Delivery
+              </span>
+            )}
           </div>
 
           {error && <p className="text-[12px] text-red-600">{error}</p>}
@@ -183,14 +226,16 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved }: 
                   <th className="py-2 px-3 font-semibold text-foreground-600">Module</th>
                   <th className="py-2 px-3 font-semibold text-foreground-600">Group</th>
                   <th className="py-2 px-3 font-semibold text-foreground-600 text-right">Hours</th>
-                  <th className="py-2 px-3 w-10" />
+                  {!readOnly && <th className="py-2 px-3 w-10" />}
                 </tr>
               </thead>
               <tbody>
                 {plan.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="py-8 text-center text-foreground-400">
-                      No modules on this plan yet — add one below.
+                    <td colSpan={readOnly ? 3 : 4} className="py-8 text-center text-foreground-400">
+                      {readOnly
+                        ? 'No modules on this plan.'
+                        : 'No modules on this plan yet — add one below.'}
                     </td>
                   </tr>
                 )}
@@ -211,16 +256,18 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved }: 
                     <td className="py-2 px-3 text-right font-medium text-foreground-700">
                       {formatHours(m.hours)}
                     </td>
-                    <td className="py-2 px-3 text-right">
-                      <button
-                        type="button"
-                        onClick={() => remove(m.moduleId)}
-                        title={`Remove ${m.moduleTitle}`}
-                        className="text-foreground-400 hover:text-red-600 cursor-pointer"
-                      >
-                        <i className="ri-close-line" />
-                      </button>
-                    </td>
+                    {!readOnly && (
+                      <td className="py-2 px-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => remove(m.moduleId)}
+                          title={`Remove ${m.moduleTitle}`}
+                          className="text-foreground-400 hover:text-red-600 cursor-pointer"
+                        >
+                          <i className="ri-close-line" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -232,69 +279,72 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved }: 
                   <td className="py-2 px-3 text-right font-bold text-foreground-900">
                     {formatHours(totalHours)}
                   </td>
-                  <td />
+                  {!readOnly && <td />}
                 </tr>
               </tfoot>
             </table>
           </div>
 
-          {/* Add a module from another group on the same programme. */}
-          <div>
-            <div className="flex items-center justify-between gap-3 mb-2">
-              <button
-                type="button"
-                onClick={() => setPicker((v) => !v)}
-                className="text-[12px] font-semibold text-primary-600 hover:underline cursor-pointer"
-              >
-                <i className={`ri-${picker ? 'subtract' : 'add'}-line mr-1`} />
-                Add a module from this programme
-              </button>
-              {data && data.preset.length > 0 && (
+          {/* Add a module from another group on the same programme. Absent when
+              viewing: nothing here is meaningful without a save. */}
+          {!readOnly && (
+            <div>
+              <div className="flex items-center justify-between gap-3 mb-2">
                 <button
                   type="button"
-                  onClick={resetToGroup}
-                  className="text-[12px] text-foreground-500 hover:text-foreground-800 hover:underline cursor-pointer"
+                  onClick={() => setPicker((v) => !v)}
+                  className="text-[12px] font-semibold text-primary-600 hover:underline cursor-pointer"
                 >
-                  Reset to group default
+                  <i className={`ri-${picker ? 'subtract' : 'add'}-line mr-1`} />
+                  Add a module from this programme
                 </button>
+                {data && data.preset.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={resetToGroup}
+                    className="text-[12px] text-foreground-500 hover:text-foreground-800 hover:underline cursor-pointer"
+                  >
+                    Reset to group default
+                  </button>
+                )}
+              </div>
+
+              {picker && (
+                <div className="rounded-xl border border-foreground-200/60 p-3 space-y-2">
+                  <input
+                    className={inputClass}
+                    placeholder="Search modules on this programme…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                  <div className="max-h-56 overflow-y-auto divide-y divide-foreground-200/40">
+                    {addable.length === 0 && (
+                      <p className="py-4 text-center text-[12px] text-foreground-400">
+                        No other modules available on {learner?.programme || 'this programme'}.
+                      </p>
+                    )}
+                    {addable.map((m) => (
+                      <div key={m.moduleId} className="flex items-center gap-3 py-2">
+                        <span className="flex-1 min-w-0">
+                          <span className="block truncate text-[13px] text-foreground-900">{m.moduleTitle}</span>
+                          <span className="block text-[11px] text-foreground-400">
+                            {m.groupName || 'No group'} · {formatHours(m.hours)}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => add(m)}
+                          className="rounded-lg border border-foreground-200 px-2.5 py-1 text-[11px] font-semibold text-foreground-600 hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
-
-            {picker && (
-              <div className="rounded-xl border border-foreground-200/60 p-3 space-y-2">
-                <input
-                  className={inputClass}
-                  placeholder="Search modules on this programme…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <div className="max-h-56 overflow-y-auto divide-y divide-foreground-200/40">
-                  {addable.length === 0 && (
-                    <p className="py-4 text-center text-[12px] text-foreground-400">
-                      No other modules available on {learner?.programme || 'this programme'}.
-                    </p>
-                  )}
-                  {addable.map((m) => (
-                    <div key={m.moduleId} className="flex items-center gap-3 py-2">
-                      <span className="flex-1 min-w-0">
-                        <span className="block truncate text-[13px] text-foreground-900">{m.moduleTitle}</span>
-                        <span className="block text-[11px] text-foreground-400">
-                          {m.groupName || 'No group'} · {formatHours(m.hours)}
-                        </span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => add(m)}
-                        className="rounded-lg border border-foreground-200 px-2.5 py-1 text-[11px] font-semibold text-foreground-600 hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
-                      >
-                        Add
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
     </Modal>

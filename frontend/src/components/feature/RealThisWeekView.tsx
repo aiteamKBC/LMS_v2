@@ -10,6 +10,7 @@ import {
   type JourneyModule, type JourneyWeek, type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 
 const learnerNav = roleNavMap.learner;
 
@@ -497,7 +498,10 @@ function WeekCard({ week, module, kind, learnerId, navigate, completedIds }: {
 }) {
   const [open, setOpen] = useState(false);
   const componentCount = week.components.length;
-  const canStartQuiz = !!(kind && learnerId);
+  // A staff or coach viewer reads this plan; only the learner works through
+  // it. Every open button below hangs off this flag or canOpenComponent.
+  const { canProgress } = useLearnerWorkspaceAccess(learnerId);
+  const canStartQuiz = !!(kind && learnerId) && canProgress;
 
   return (
     <div className="relative pl-6 md:pl-7">
@@ -550,7 +554,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
   const gradeLabel = lastAttempt ? `${gradePercent(lastAttempt.grade)}%` : '';
-  const canOpenComponent = !!(kind && learnerId && isOpenableComponent(c));
+  const canOpenComponent = canStartQuiz && isOpenableComponent(c);
   // Only assignments collect uploaded evidence, so only they get the view-file affordance.
   const isAssignment = (c.type || '').toLowerCase() === 'assignment';
 

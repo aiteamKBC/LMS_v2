@@ -7,6 +7,7 @@ import type { LearnerDetail, LearnerKind, LearnerQuizAttempt, LearnerQuizQuestio
 import { fetchQuiz, type Quiz } from '@/api/quizzes';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
 import { buildLearnerJourney, componentTypeMeta, gradePercent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 
 /** Resolve a stored (id-only) attempt question to display text using the fetched
  * quiz. Free-text types carry chosenText; others resolve answer ids -> text. */
@@ -275,7 +276,10 @@ function WeekCard({ week, module, kind, learnerId, completedIds }: {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const componentCount = week.components.length;
-  const canStartQuiz = !!(kind && learnerId);
+  // A staff or coach viewer reads this plan; only the learner works through
+  // it. Every open button below hangs off this flag or canOpenComponent.
+  const { canProgress } = useLearnerWorkspaceAccess(learnerId);
+  const canStartQuiz = !!(kind && learnerId) && canProgress;
 
   return (
     <div className={`min-w-0 transition-all ${open ? 'xl:col-span-2' : ''}`}>
@@ -348,7 +352,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   const meta = componentTypeMeta(c.title);
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
-  const canOpenComponent = !!(kind && learnerId && isOpenableComponent(c));
+  const canOpenComponent = canStartQuiz && isOpenableComponent(c);
   // Only assignments collect uploaded evidence, so only they get the view-file affordance.
   const isAssignment = (c.type || '').toLowerCase() === 'assignment';
 

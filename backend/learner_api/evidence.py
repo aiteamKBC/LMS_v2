@@ -30,6 +30,7 @@ from .evidence_tables import ensure_evidence_tables
 from .evidence_storage import (
     azure_configured, upload_to_quarantine, move_blob, blob_url, get_download_sas,
 )
+from login.permissions import learner_self_only
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +133,9 @@ def _evidence_lineage(kind, learner_id, section_ref):
 
 
 @csrf_exempt
+# Evidence is the learner's own portfolio: staff assess what is uploaded, they
+# do not upload on the learner's behalf from the learner's own page.
+@learner_self_only(kwarg="pk")
 def upload_evidence(request, kind, pk):
     """Multipart upload -> quarantine -> (scan) -> promote to approved.
     On approval the blob is recorded in "Learner"."Evidence"."""

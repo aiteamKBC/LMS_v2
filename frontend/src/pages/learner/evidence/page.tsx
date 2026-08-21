@@ -5,6 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { fetchEvidence, getEvidenceDownloadUrl, uploadEvidence, type EvidenceRecord } from '@/api/evidence';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 
 const learnerNav = roleNavMap.learner;
@@ -389,6 +390,10 @@ function FilePreviewModal({ item, onClose, onDownload, opening }: {
    ═══════════════════════════════════════════════════════════════ */
 export default function EvidencePage() {
   const learner = useMyLearner();
+  // This page has no :id in its URL — it follows the remembered learner, which
+  // is whichever one the viewer last opened. A staff viewer therefore lands on
+  // that learner's own library; the portfolio stays theirs to add to.
+  const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(learner.id);
   const { real } = useLearnerDetailParam(learner.kind, learner.id);
   const weekLookup = useMemo(() => buildWeekLookup(real), [real]);
   const allKsbs = useMemo(() => buildAllKSBs(real), [real]);
@@ -462,7 +467,7 @@ export default function EvidencePage() {
   const hasActiveFilters = activeFilter !== 'All' || filterType !== 'All' || searchQuery.trim().length > 0;
 
   const handleUpload = async (files: File[]) => {
-    if (!uploadTitle.trim() || files.length === 0 || uploading) return;
+    if (!uploadTitle.trim() || files.length === 0 || uploading || !canProgress) return;
     const weekInfo = weekLookup.find(w => w.weekNumber === uploadWeek);
     const moduleName = weekInfo?.moduleName || 'Programme';
     const sectionRef = `evidence-library-week-${uploadWeek}`;
@@ -613,12 +618,18 @@ export default function EvidencePage() {
               </div>
 
               <div className="flex items-center lg:ml-auto">
-                <button
-                  onClick={() => setShowUploadModal(true)}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/15 backdrop-blur-sm text-white text-sm font-semibold hover:bg-white/25 transition-smooth cursor-pointer whitespace-nowrap border border-white/20"
-                >
-                  <AppIcon className="ri-add-line"></AppIcon> Upload Evidence
-                </button>
+                {showReadOnlyNotice ? (
+                  <span className="flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 py-2.5 text-sm font-semibold whitespace-nowrap text-white/70">
+                    <AppIcon className="ri-eye-line"></AppIcon> Read only — the learner uploads their own evidence
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setShowUploadModal(true)}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/15 backdrop-blur-sm text-white text-sm font-semibold hover:bg-white/25 transition-smooth cursor-pointer whitespace-nowrap border border-white/20"
+                  >
+                    <AppIcon className="ri-add-line"></AppIcon> Upload Evidence
+                  </button>
+                )}
               </div>
             </div>
           </div>

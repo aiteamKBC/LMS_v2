@@ -2,7 +2,7 @@
 
 Feedback report for the authentication feature (`backend/login/`).
 
-**Status: 195 backend + 63 frontend tests, all passing.** See
+**Status: 209 backend + 70 frontend tests, all passing.** See
 [Results](#results) for the raw output.
 
 ---
@@ -52,6 +52,7 @@ test database before the suite starts.
 | File | Tests | Needs a database? | Runtime |
 | --- | --- | --- | --- |
 | `login/tests_unit.py` | 82 | 68 no · 14 yes | 0.5s (fast subset) |
+| `login/tests_learner_progress_gate.py` | 14 | no — `authenticate_request` is patched | <0.1s |
 | `login/tests.py` | 50 | yes — full HTTP + DB | ~95s |
 
 The split is about feedback speed. Everything that is pure logic — the lockout
@@ -75,6 +76,7 @@ npx vitest run src/api/__tests__/auth.test.ts \
 | `src/api/__tests__/auth.test.ts` | 28 | The API client's contract with `/login_api/` |
 | `src/hooks/__tests__/useAuth.test.tsx` | 16 | Session hydration, login/logout, role mapping |
 | `src/pages/__tests__/authPages.test.tsx` | 19 | Login, forgot-password and set-password pages |
+| `src/hooks/__tests__/useLearnerWorkspaceAccess.test.tsx` | 7 | Whether the viewer may act *as* the learner whose workspace is open — the UI half of `learner_self_only` |
 
 ---
 
@@ -155,6 +157,31 @@ Test Files  30 passed (30)
 | `LearnerApiGateTests` | 7 | Anonymous writes to the four `learner_api` creation endpoints are refused and create nothing; a learner session gets 403; a staff session succeeds; reads stay open; the `LEARNER_API_REQUIRE_AUTH=0` escape hatch works **and still cannot mint an admin** |
 | `PermissionTests` | 2 | The invite endpoint rejects anonymous callers and learner sessions |
 | `MicrosoftSsoCallbackTests` | 19 | **An address in the login table is signed in; one that is not is refused and no account is created**; matching is case-insensitive; deactivated and locked accounts refused; an account with no password may still sign in; the cookie is HttpOnly; success and refusal are both audited, success as `microsoft_sso`; **a state lifted from another browser is refused** (login CSRF) and the nonce is retired after use; forged and expired states refused; a failed exchange leaks no reason; a cancelled consent is reported, not crashed |
+
+### `tests_learner_progress_gate.py` — 14 tests
+
+The gate that inverts this module's usual shape: for a learner's training-plan
+progress, **staff and admin are the refused case**. Every staff drill-down —
+workspace overview, coach case file, employer portal — renders the learner's own
+plan pages, and those pages write progress records in the learner's name, so a
+caseowner opening a learner to look at their week could complete components as
+them. Those records are the audit trail for off-the-job hours and KSB coverage,
+which makes a staff-recorded completion a false claim about what the apprentice
+did, indistinguishable afterwards from the real thing.
+
+| Class | n | What it pins down |
+| --- | --- | --- |
+| `LearnerProgressGateTests` | 14 | The learner may write their own progress; **staff, admin and employers get 403** with `read_only_learner_view`; another learner gets **404, not 403** (a 403 would confirm the id exists); anonymous gets 401; a missing learner id is rejected rather than waved through; **reads stay open** so staff can still review the plan; the learner id is read correctly from a URL kwarg, a query parameter and a JSON body; **reading the body in the gate leaves it readable by the view** (Django caches `request.body` — without that, every reflection submission would reach its view empty); **booking a session is the one write staff keep**; the `LEARNER_API_REQUIRE_AUTH=0` escape hatch disables it |
+
+The gated endpoints are quiz submission, video completion, component
+completion, reflection submissions and evidence upload
+(`learner_self_only`), plus calendar book/cancel, which take
+`learner_self_or_staff` instead — arranging a coaching session is administration,
+not a claim about the learner's own work.
+
+The UI half of the same rule lives in
+`frontend/src/hooks/useLearnerWorkspaceAccess.ts` and is tested separately; a
+hidden button is not a permission check, so this suite is the one that matters.
 
 ### Frontend — 63 tests
 

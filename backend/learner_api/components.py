@@ -22,6 +22,7 @@ from django.views.decorators.csrf import csrf_exempt
 from .active_users import ComponentReferenceError, save_progress_record, sync_active_user
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
+from login.permissions import learner_self_only
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +201,7 @@ def _completion_criteria(component_id, kind, learner_id, component_type=None):
 
 
 @csrf_exempt
+@learner_self_only(query_param="learnerId")
 def submit_component_progress(request, component_id):
     if request.method != "POST":
         return _error("Method not allowed.", 405)

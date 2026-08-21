@@ -20,6 +20,7 @@ from .active_users import ComponentReferenceError, save_progress_record, sync_ac
 from .components import component_ksb_codes
 from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
+from login.permissions import learner_self_only
 
 SOURCE_MODELS = {
     "commercial": CommercialUser,
@@ -60,6 +61,9 @@ def _video_title(component_id):
 
 
 @csrf_exempt
+# Only the learner may mark their own video watched: a staff viewer opening
+# this learner's plan reads it, they do not complete it as them.
+@learner_self_only(query_param="learnerId")
 def submit_video_progress(request, component_id):
     if request.method != "POST":
         return _error("Method not allowed.", 405)

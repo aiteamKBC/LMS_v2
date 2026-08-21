@@ -11,6 +11,8 @@ import {
 import { fetchLearnerDetail, type LearnerKsbItem, type LearnerKind } from '@/api/learnerDetail';
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
 import { rememberLearner } from '@/hooks/useMyLearner';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
+import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 
 const learnerNav = roleNavMap.learner;
 
@@ -22,6 +24,10 @@ export default function QuizTakePage() {
   useEffect(() => { rememberLearner(kind, id); }, [kind, id]);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  // A staff viewer can reach this URL directly (pasted, or from history) even
+  // though the plan rows no longer link here. Sitting the quiz would file an
+  // attempt in the learner's name, so they get the read-only panel instead.
+  const { canProgress } = useLearnerWorkspaceAccess(id);
   const moduleTitle = searchParams.get('module');
   const weekTitle = searchParams.get('week');
 
@@ -110,7 +116,7 @@ export default function QuizTakePage() {
     : undefined;
 
   const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
-    if (!quiz || !kind || !id || submitting) return;
+    if (!quiz || !kind || !id || submitting || !canProgress) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -149,6 +155,8 @@ export default function QuizTakePage() {
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading quiz…" /></div>
         ) : loadError || !quiz ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError || 'Quiz not found.'} /></div>
+        ) : !canProgress ? (
+          <ReadOnlyLearnerNotice what="sit their own quizzes" onBack={() => navigate(-1)} />
         ) : phase === 'intro' ? (
           <IntroScreen quiz={quiz} totalPoints={totalPoints} onStart={startQuiz} onBack={() => navigate(-1)} />
         ) : phase === 'quiz' ? (

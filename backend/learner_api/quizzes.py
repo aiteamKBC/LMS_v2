@@ -33,6 +33,7 @@ from .identity import learner_profile_for_source
 
 from .active_users import ComponentReferenceError, save_progress_record
 from .models import CommercialUser, EnrolmentUser
+from login.permissions import learner_self_only
 
 SOURCE_MODELS = {
     "commercial": CommercialUser,
@@ -371,6 +372,9 @@ def _coerce_id(value):
 
 
 @csrf_exempt
+# A quiz attempt is a claim about what this learner knows, so only they may
+# record one. Staff reading the plan (GET quiz_detail) is untouched.
+@learner_self_only(query_param="learnerId")
 def submit_quiz_attempt(request, quiz_id):
     if request.method != "POST":
         return _error("Method not allowed.", 405)

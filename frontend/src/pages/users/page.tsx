@@ -68,7 +68,7 @@ function initials(name: string) {
   return name.split(' ').filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
 }
 
-function MultiSelect({ label, placeholder, options, selected, onChange }: { label: string; placeholder: string; options: string[]; selected: string[]; onChange: (next: string[]) => void }) {
+function MultiSelect({ label, placeholder, options, selected, onChange, disabled = false }: { label: string; placeholder: string; options: string[]; selected: string[]; onChange: (next: string[]) => void; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -76,16 +76,24 @@ function MultiSelect({ label, placeholder, options, selected, onChange }: { labe
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, []);
+  // A filter that becomes disabled while its list is open would otherwise leave
+  // the panel hanging over the card with nothing behind it.
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
   const toggle = (opt: string) => onChange(selected.includes(opt) ? selected.filter((s) => s !== opt) : [...selected, opt]);
   return (
     <div>
       <label className="block text-[11px] uppercase tracking-wider font-medium text-foreground-500 mb-1">{label}</label>
       <div className="relative" ref={ref}>
-        <button type="button" onClick={() => setOpen((o) => !o)} className={`${inputClass} text-left flex items-center justify-between cursor-pointer`}>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpen((o) => !o)}
+          className={`${inputClass} text-left flex items-center justify-between ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
+        >
           <span className={selected.length ? 'text-foreground-900 truncate' : 'text-foreground-300'}>{selected.length ? selected.join(', ') : placeholder}</span>
           <i className="ri-arrow-down-s-line text-foreground-400 shrink-0" />
         </button>
-        {open && (
+        {open && !disabled && (
           <div className="absolute z-20 mt-1 w-full bg-background-50 border border-foreground-200 rounded-lg shadow-lg max-h-56 overflow-y-auto py-1">
             {options.length === 0 && <p className="px-3 py-1.5 text-[12px] text-foreground-300">No options</p>}
             {options.map((opt) => (
@@ -286,11 +294,16 @@ export default function UsersListPage() {
     ])).sort(),
     [cohorts, rows, draft.programme],
   );
-  // Groups narrow with whatever has been chosen above them: the curriculum list
-  // once a cohort is picked, otherwise the groups of the rows still in scope.
+  // Groups hang off a programme the same way cohorts do, so there is nothing to
+  // offer until one is chosen — and offering everything meant employers' company
+  // names (their stand-in for Group, see employerToRow) sat in the list beside
+  // real cohort groups. Below that the list narrows again: the curriculum's own
+  // groups once a cohort is picked, otherwise the groups of the rows still in
+  // scope for the programme.
   const groupOptions = useMemo(() => {
+    if (!draft.programme) return [];
     const inScope = rows.filter(
-      (r) => (!draft.programme || !differs(r.programme, draft.programme))
+      (r) => !differs(r.programme, draft.programme!)
         && (!draft.cohort || !differs(r.cohort, draft.cohort)),
     );
     return Array.from(new Set([...cascadeGroups, ...distinct(inScope, (r) => r.group)])).sort();
@@ -421,7 +434,22 @@ export default function UsersListPage() {
         <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 card-premium">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <TextFilter label="User name" value={draft.userName ?? ''} onChange={(v) => set({ userName: v })} />
-            <MultiSelect label="Group" placeholder={draft.cohort ? 'Select groups in this cohort' : 'Select groups'} options={groupOptions} selected={draft.groups ?? []} onChange={(v) => set({ groups: v })} />
+            {/* Programme -> cohort -> group, same gate as the Cohort filter: a
+                group only means something inside a programme. */}
+            <MultiSelect
+              label="Group"
+              placeholder={
+                !draft.programme
+                  ? 'Select a programme first'
+                  : draft.cohort
+                    ? 'Select groups in this cohort'
+                    : 'Select groups in this programme'
+              }
+              options={groupOptions}
+              selected={draft.groups ?? []}
+              onChange={(v) => set({ groups: v })}
+              disabled={!draft.programme}
+            />
             <TextFilter label="Email" value={draft.email ?? ''} onChange={(v) => set({ email: v })} />
             <MultiSelect label="Status" placeholder="Select statuses" options={STATUS_OPTIONS} selected={draft.statuses ?? []} onChange={(v) => set({ statuses: v })} />
             <SelectFilter label="Type" value={draft.type ?? 'all'} onChange={(v) => set({ type: v as UsersFilter['type'] })} options={[{ value: 'all', label: '--All--' }, ...typeOptions.map((t) => ({ value: t, label: t }))]} />
@@ -522,7 +550,16 @@ export default function UsersListPage() {
                           {row.hasLearningPlan ? 'Edit learning plan' : 'Add learning plan'}
                         </button>
                       ) : isLearner && row.learningPlan ? (
-                        <button onClick={() => openUser(row)} className="text-primary-600 hover:underline cursor-pointer">Learning plan</button>
+                        // Past planning — the plan is fixed, so this opens the
+                        // same modal read-only rather than routing to the
+                        // learner's record, which is not their plan.
+                        <button
+                          onClick={() => setPlanFor(row)}
+                          title={`View ${row.name}'s learning plan`}
+                          className="text-primary-600 hover:underline cursor-pointer"
+                        >
+                          Learning plan
+                        </button>
                       ) : null}
                     </td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
@@ -585,6 +622,8 @@ export default function UsersListPage() {
         <LearningPlanModal
           learnerId={planFor.id}
           learnerName={planFor.name}
+          // Editing is a Delivery-stage action; every other status views.
+          readOnly={planFor.programmeStatus !== DELIVERY_STATUS}
           onClose={() => setPlanFor(null)}
           onSaved={load}
         />

@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
+import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 
 const learnerNav = roleNavMap.learner;
 
@@ -55,7 +56,10 @@ export function RealQuizzesView({
 }) {
   const navigate = useNavigate();
   const quizzes = useMemo(() => buildLinkedQuizzes(real), [real]);
-  const canTake = !!(kind && learnerId);
+  // Only the learner sits their own quizzes; a staff viewer sees the attempts
+  // and scores but gets no Start/Retake button.
+  const { canProgress } = useLearnerWorkspaceAccess(learnerId);
+  const canTake = !!(kind && learnerId) && canProgress;
 
   const taken = quizzes.filter((q) => q.attempts.length > 0);
   const passed = taken.filter((q) => q.attempts.some((a) => a.passed));
