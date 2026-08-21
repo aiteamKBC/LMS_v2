@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode, useEffect, useRef } from 'react';
+import { useState, type CSSProperties, type ReactNode, useEffect } from 'react';
 import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { Sidebar, SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH, type SidebarNavItem } from './Sidebar';
 import { CoachViewAsBar } from './CoachViewAsBar';
@@ -148,10 +148,7 @@ export function WorkspaceShell({
   const navigate = useNavigate();
   const { auth } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const [displayKey, setDisplayKey] = useState(location.pathname);
   const [previousRoute, setPreviousRoute] = useState('');
-  const prevPathRef = useRef(location.pathname);
 
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarPinned, setSidebarPinned] = useState(readPinnedPreference);
@@ -166,19 +163,6 @@ export function WorkspaceShell({
   const displayName = userName || auth.user?.fullName || 'User';
   const displayRole = userRole || auth.roles[0]?.name || roleLabel;
   const defaultWorkspaceLabel = workspaceLabel || roleLabel + ' Workspace';
-
-  // Page transition on route change
-  useEffect(() => {
-    if (prevPathRef.current !== location.pathname) {
-      setIsTransitioning(true);
-      const timer = setTimeout(() => {
-        setDisplayKey(location.pathname);
-        setIsTransitioning(false);
-        prevPathRef.current = location.pathname;
-      }, 120);
-      return () => clearTimeout(timer);
-    }
-  }, [location.pathname]);
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -274,10 +258,11 @@ export function WorkspaceShell({
         )}
 
         {/* Main content with page transition */}
-        <main
-          key={displayKey}
-          className={`workspace-main flex-1 overflow-y-auto bg-background-200 transition-opacity duration-200 ${isTransitioning ? 'opacity-0' : 'opacity-100'}`}
-        >
+        {/* No fade or key here: the whole shell is remounted on every route
+            change (router/index.ts keys the boundary by pathname), so a
+            transition owned by this component could never run. It used to hold
+            an opacity-0 state behind a 120ms timer that nothing ever set. */}
+        <main className="workspace-main flex-1 overflow-y-auto bg-background-200">
           {/* An administrator reading a coach's workspace: shown on every coach
               page, since the sidebar reaches most of them without passing the
               dashboard that chose the coach. */}

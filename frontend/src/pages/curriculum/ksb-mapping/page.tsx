@@ -11,7 +11,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { TableRowsSkeleton } from '@/components/feature/CurriculumSkeletons';
+import { TableRowsSkeleton } from '@/components/feature/Skeletons';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
   fetchCurriculumProgrammeKsbCoverage,

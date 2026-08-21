@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
@@ -197,9 +198,9 @@ export default function EnrolmentDashboard() {
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Onboarding Pipeline Overview</h3>
                 <p className="text-[11px] text-foreground-400 mt-0.5">14 learners progressing through 15-stage onboarding journey</p>
               </div>
-              <a href="/compliance/pre-active" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
+              <Link to="/compliance/pre-active" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
                 Full Journey <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
-              </a>
+              </Link>
             </div>
             <div className="space-y-2">
               {[
@@ -277,9 +278,9 @@ export default function EnrolmentDashboard() {
                 <p className="text-[11px] text-foreground-400 mt-0.5">3 unread messages from coaches, employers and MIS team</p>
               </div>
             </div>
-            <a href="/messages" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
+            <Link to="/messages" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap">
               Open Messages <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
-            </a>
+            </Link>
           </div>
           <div className="space-y-2">
             {[
@@ -288,7 +289,7 @@ export default function EnrolmentDashboard() {
               { from: 'MIS Data Team', subject: 'ILR Batch Validation — 3 Warnings for Cohort G', preview: 'The latest ILR batch upload shows 3 validation warnings for learners in Cohort G. Planned OTJH fields are missing...', time: '9 Jun, 09:00', unread: true },
               { from: 'QA Team', subject: 'Eligibility QA Passed — Batch of 4', preview: 'QA review completed for batch ENR-2026-042. 4 of 4 eligibility cases passed. Releasing to next stage...', time: '8 Jun, 16:45', unread: false },
             ].map((msg, i) => (
-              <a key={i} href="/messages" className={`flex items-start gap-3 p-3 rounded-lg transition-smooth cursor-pointer block ${msg.unread ? 'bg-primary-50/50 border border-primary-100/50' : 'hover:bg-background-100/50'}`}>
+              <Link key={i} to="/messages" className={`flex items-start gap-3 p-3 rounded-lg transition-smooth cursor-pointer block ${msg.unread ? 'bg-primary-50/50 border border-primary-100/50' : 'hover:bg-background-100/50'}`}>
                 <span className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${msg.unread ? 'bg-primary-100 text-primary-700' : 'bg-foreground-100 text-foreground-400'}`}>
                   {msg.from.charAt(0)}
                 </span>
@@ -301,7 +302,7 @@ export default function EnrolmentDashboard() {
                   <p className="text-[11px] text-foreground-400 mt-0.5 truncate">{msg.preview}</p>
                 </div>
                 <span className="text-[10px] text-foreground-300 shrink-0">{msg.time}</span>
-              </a>
+              </Link>
             ))}
           </div>
         </div>

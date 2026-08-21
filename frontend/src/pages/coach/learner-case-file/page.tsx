@@ -14,6 +14,7 @@ import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
 import NetworkTab from './components/NetworkTab';
 import LearningPlanTab from './components/OverviewTab';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 import {
   flattenJourney,
   formatFraction,
@@ -145,8 +146,10 @@ export default function LearnerCaseFile() {
   const renderTab = () => {
     if (!data) {
       return (
-        <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-6">
-          <EmptyState text={loading ? 'Loading learner case file...' : (error || 'No learner selected.')} />
+        <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5">
+          {loading
+            ? <RowsSkeleton rows={5} />
+            : <EmptyState text={error || 'No learner selected.'} />}
         </div>
       );
     }
@@ -788,7 +791,7 @@ function ReferenceProgressContent({ data }: { data: CoachLearnerCaseFileData }) 
         </div>
       </ReferencePanel>
       <ReferencePanel title="KSB Detailed Breakdown" icon="ri-file-list-3-line" tone="primary">
-        {fallbackKsbsLoading && ksbs.length === 0 ? <ProfileEmpty text="Loading programme KSB framework..." /> : ksbs.length === 0 ? <ProfileEmpty text="No learner KSB snapshot or programme KSB framework is available yet." /> : (
+        {fallbackKsbsLoading && ksbs.length === 0 ? <div className="p-2"><RowsSkeleton rows={4} avatar={false} /></div> : ksbs.length === 0 ? <ProfileEmpty text="No learner KSB snapshot or programme KSB framework is available yet." /> : (
           <div className="space-y-5">
             <div className="grid gap-3 md:grid-cols-3">
               <KsbOverviewCard icon="ri-stack-line" label="Total KSBs" value={String(ksbs.length)} tone="primary" />
@@ -1217,7 +1220,7 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
         </ReferencePanel>
         <ReferencePanel title="Missed Sessions" icon="ri-close-circle-line" tone="red">
           {detailsLoading ? (
-            <ProfileEmpty text="Loading missed session details..." />
+            <div className="p-2"><RowsSkeleton rows={3} avatar={false} /></div>
           ) : detailsError ? (
             <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-[11px] text-red-700">{detailsError}</div>
           ) : missedSessions.length > 0 ? (
@@ -1271,7 +1274,7 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
       </div>
       <ReferencePanel title="Session History" icon="ri-table-line" tone="primary">
         {detailsLoading ? (
-          <ProfileEmpty text="Loading session history..." />
+          <div className="p-2"><RowsSkeleton rows={3} avatar={false} /></div>
         ) : detailsError ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-[11px] text-amber-800">{detailsError}</div>
         ) : recentSessions.length ? (

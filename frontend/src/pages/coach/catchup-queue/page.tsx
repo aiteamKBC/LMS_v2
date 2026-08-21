@@ -5,6 +5,7 @@ import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
+import { TableBodySkeleton } from '@/components/feature/Skeletons';
 import {
   type CatchUpItem,
 } from '@/mocks/catchup-queue';
@@ -822,12 +823,7 @@ export default function CoachCatchupQueue() {
               </thead>
               <tbody className="divide-y divide-background-200/30">
                 {queueLoading ? (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-14 text-center">
-                      <AppIcon className="ri-loader-4-line text-primary-500 text-2xl animate-spin inline-block mb-2"></AppIcon>
-                      <p className="text-sm text-foreground-400">Loading catch-up sessions...</p>
-                    </td>
-                  </tr>
+                  <TableBodySkeleton rows={6} columns={8} />
                 ) : queueError ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-14 text-center">

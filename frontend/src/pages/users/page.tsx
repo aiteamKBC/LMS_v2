@@ -16,6 +16,7 @@ import { CreateEmployerModal } from './components/CreateEmployerModal';
 import { CreateOrganisationModal } from './components/CreateOrganisationModal';
 import { EditStaffModal } from './components/EditStaffModal';
 import { LearningPlanModal } from './components/LearningPlanModal';
+import { TableBodySkeleton } from '@/components/feature/Skeletons';
 
 const enrolmentNav = roleNavMap.apprentice;
 const PAGE_SIZE = 8;
@@ -488,7 +489,10 @@ export default function UsersListPage() {
                 </tr>
               </thead>
               <tbody>
-                {loading && <tr><td colSpan={9} className="py-10 text-center text-[13px] text-foreground-400"><i className="ri-loader-4-line animate-spin mr-2" />Loading users…</td></tr>}
+                {/* Skeleton rows, not a spinner in a merged cell: the table keeps
+                    its column widths and height, so the header stops jumping when
+                    the first page of users lands. */}
+                {loading && <TableBodySkeleton rows={6} columns={9} />}
                 {!loading && error && (
                   <tr><td colSpan={9} className="py-10 text-center text-[13px]">
                     <p className="text-red-600 mb-2"><i className="ri-error-warning-line mr-1.5" />{error}</p>

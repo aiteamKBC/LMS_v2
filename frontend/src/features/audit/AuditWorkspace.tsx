@@ -3,7 +3,7 @@ import { jsPDF } from 'jspdf';
 import SignaturePad from 'signature_pad';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { roleNavMap } from '@/mocks/navigation';
 import {
   fetchAuditLearners,

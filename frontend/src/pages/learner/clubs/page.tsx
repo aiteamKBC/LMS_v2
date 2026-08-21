@@ -14,6 +14,7 @@ import {
   type EventBooking,
 } from '@/api/engagement';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 type SectionKey = 'clubs' | 'meetings' | 'events' | 'ambassadors';
@@ -194,5 +195,13 @@ function ContentHeader({ title, subtitle, count, children }: { title: string; su
   return <section><div className="mb-4 flex items-start justify-between gap-3 sm:items-end"><div className="min-w-0"><h2 className="text-lg font-bold text-foreground-900">{title}</h2><p className="mt-1 text-xs leading-5 text-foreground-500">{subtitle}</p></div><span className="shrink-0 rounded-full border border-background-200 bg-white px-3 py-1 text-[10px] font-semibold text-foreground-500">{count} {count === 1 ? 'record' : 'records'}</span></div>{children}</section>;
 }
 
-function Loading() { return <div className="rounded-2xl border border-background-200 bg-white px-4 py-10 text-center text-sm text-foreground-400 sm:rounded-3xl sm:p-14"><AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600"></AppIcon>Loading clubs from the database…</div>; }
+function Loading() {
+  // Skeleton rather than a spinner: this stands in for the page's own
+  // content, so it should hold that shape while it loads.
+  return (
+    <div className="rounded-2xl border border-background-200 bg-white p-4 sm:rounded-3xl sm:p-5">
+      <RowsSkeleton rows={5} />
+    </div>
+  );
+}
 function EmptyState({ message }: { message: string }) { return <div className="rounded-2xl border border-dashed border-foreground-300 bg-white px-4 py-10 text-center sm:rounded-3xl sm:px-6 sm:py-14"><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-primary-50 text-primary-500"><AppIcon className="ri-inbox-line text-xl"></AppIcon></span><p className="mt-3 text-sm font-semibold text-foreground-700">{message}</p></div>; }

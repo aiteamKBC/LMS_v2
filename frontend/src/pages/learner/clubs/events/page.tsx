@@ -11,6 +11,7 @@ import {
   type EventBooking,
 } from '@/api/engagement';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 type StatusFilter = 'all' | EngagementEvent['status'];
@@ -157,5 +158,13 @@ export default function LearnerEventsPage() {
   );
 }
 
-function Loading() { return <div className="rounded-2xl border border-background-200 bg-white px-4 py-10 text-center text-sm text-foreground-400 sm:rounded-3xl sm:p-14"><AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600"></AppIcon>Loading events from the database…</div>; }
+function Loading() {
+  // Skeleton rather than a spinner: this stands in for the page's own
+  // content, so it should hold that shape while it loads.
+  return (
+    <div className="rounded-2xl border border-background-200 bg-white p-4 sm:rounded-3xl sm:p-5">
+      <RowsSkeleton rows={5} />
+    </div>
+  );
+}
 function Empty() { return <div className="rounded-2xl border border-dashed border-foreground-300 bg-white px-4 py-10 text-center sm:rounded-3xl sm:px-6 sm:py-16"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary-50 text-primary-500"><AppIcon className="ri-calendar-close-line text-xl"></AppIcon></span><h2 className="mt-3 text-sm font-bold text-foreground-800">No events found</h2><p className="mt-1 text-xs leading-5 text-foreground-400">Try changing the filters, or check back when new events are published.</p></div>; }

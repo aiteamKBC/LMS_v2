@@ -6,6 +6,7 @@ import type { Ksb, KsbAssessment, RagLevel } from '../../types';
 import { Modal } from '../../components/Modal';
 import { FileList, inputClass, btnPrimary, btnSecondary, EmptyState } from '../../components/ui';
 import { StepHeading } from './fields';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 /**
  * Skills Radar — a sequential self-assessment questionnaire.
@@ -133,11 +134,7 @@ export default function SkillsRadar() {
         subtitle={programme ? `${programme} [${ksbs.length}]` : 'No programme assigned'}
       />
 
-      {loading && (
-        <p className="text-[13px] text-foreground-400 py-6">
-          <i className="ri-loader-4-line animate-spin mr-2" />Loading your programme’s competencies…
-        </p>
-      )}
+      {loading && <RowsSkeleton rows={4} avatar={false} className="py-4" />}
       {!loading && loadError && (
         <p className="text-[13px] text-red-600 py-6">
           <i className="ri-error-warning-line mr-1.5" />{loadError}

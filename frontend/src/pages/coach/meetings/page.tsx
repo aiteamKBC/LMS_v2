@@ -4,6 +4,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { MonthlyCoachingCompletionModal } from './MonthlyCoachingCompletionModal';
+import { CardSkeleton } from '@/components/feature/Skeletons';
 import {
   type CalendarAction,
   type CoachCalendarEvent,
@@ -300,7 +301,9 @@ export default function CoachMeetings() {
             </div>
           </div>
           <div className="grid gap-3 bg-background-100/55 p-3 sm:p-5 xl:grid-cols-2">
-          {loading && <EmptyState icon="ri-loader-4-line" title="Loading coaching meetings..." />}
+          {/* Cards straight into the surrounding grid, so the placeholders sit
+              where the meetings themselves will. */}
+          {loading && Array.from({ length: 4 }).map((_, index) => <CardSkeleton key={index} />)}
           {!loading && !error && filtered.length === 0 && <EmptyState icon="ri-calendar-check-line" title="No coaching meetings found." />}
 
           {!loading && paginatedEvents.map(event => {

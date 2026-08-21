@@ -6,6 +6,7 @@ import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 import {
   fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach,
   fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
@@ -844,9 +845,8 @@ export function LearnerCalendarContent() {
           </div>
         )}
         {calendarLoading && !calendarError && (
-          <div className="rounded-xl border border-background-300 bg-background-50 px-4 py-3 flex items-center gap-3">
-            <AppIcon className="ri-loader-4-line animate-spin text-primary-500"></AppIcon>
-            <p className="text-sm text-foreground-500">Loading your coaching sessions&hellip;</p>
+          <div className="rounded-xl border border-background-300 bg-background-50 p-4">
+            <RowsSkeleton rows={3} avatar={false} />
           </div>
         )}
 

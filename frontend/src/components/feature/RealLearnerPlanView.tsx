@@ -8,6 +8,7 @@ import { fetchQuiz, type Quiz } from '@/api/quizzes';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
 import { buildLearnerJourney, componentTypeMeta, gradePercent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 /** Resolve a stored (id-only) attempt question to display text using the fetched
  * quiz. Free-text types carry chosenText; others resolve answer ids -> text. */
@@ -177,7 +178,7 @@ export function LearnerPlanBody({
 
         {/* ═══════════ MODULE GROUPS — TIMELINE ═══════════ */}
         {loading ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} /></div>
         ) : loadError ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>
         ) : journey.length === 0 ? (

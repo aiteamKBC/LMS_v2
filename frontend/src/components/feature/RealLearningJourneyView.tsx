@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { buildLearnerJourney, quizAggregateStats, parseHours, formatHoursMinutes, isOpenableComponent, type JourneyModule } from '@/utils/learnerJourney';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -1173,7 +1175,7 @@ function FinishLineSection({ overallPct, stations, totalActivities, doneActiviti
         <div className="mt-5 h-2.5 overflow-hidden rounded-full bg-background-200"><div className="h-full rounded-full bg-gradient-to-r from-primary-500 to-amber-400" style={{ width: `${overallPct}%` }} /></div>
         <p className="mt-2 text-[10px] text-foreground-400">{overallPct}% of programme completed</p>
       </div>
-      <a href="/learner/training-plan" className="mt-7 inline-flex items-center gap-2 rounded-xl bg-primary-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600"><AppIcon className="ri-rocket-line" />Continue Learning Journey</a>
+      <Link to="/learner/training-plan" className="mt-7 inline-flex items-center gap-2 rounded-xl bg-primary-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600"><AppIcon className="ri-rocket-line" />Continue Learning Journey</Link>
     </section>
   );
 }
@@ -1209,7 +1211,7 @@ export function TrailToGatewaySection({
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
   const allDone = currentIndex === -1 && stations.length > 0;
 
-  if (loading) return <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>;
+  if (loading) return <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} /></div>;
   if (loadError) return <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>;
   if (journey.length === 0) return <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="No training plan built for this learner yet." /></div>;
 

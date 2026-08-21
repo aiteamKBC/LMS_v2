@@ -12,6 +12,7 @@ import {
 } from '@/mocks/engagement-data';
 import { fetchVoucherClaims, updateVoucherClaim } from '@/api/engagement';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend, ScatterChart, Scatter, ZAxis, ReferenceLine } from 'recharts';
+import { TableBodySkeleton } from '@/components/feature/Skeletons';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -423,9 +424,7 @@ export default function EngagementDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {claimsLoading && (
-                      <tr><td colSpan={6} className="px-5 py-6 text-center text-[11px] text-foreground-400">Loading voucher claims…</td></tr>
-                    )}
+                    {claimsLoading && <TableBodySkeleton rows={5} columns={6} />}
                     {!claimsLoading && filteredVoucherClaims.length === 0 && (
                       <tr><td colSpan={6} className="px-5 py-6 text-center text-[11px] text-foreground-400">No voucher claims for this programme.</td></tr>
                     )}

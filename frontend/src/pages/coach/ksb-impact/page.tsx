@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
+import { TableRowsSkeleton } from '@/components/feature/Skeletons';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/caseload';
@@ -614,7 +615,14 @@ export default function CoachKsbImpact() {
                 <span className="text-center">Action</span>
               </div>
 
-              {loading && <KsbTableMessage icon="ri-loader-4-line animate-spin" message="Loading live KSB data..." />}
+              {/* Rows on the table's own grid, so the columns stay put. */}
+              {loading && (
+                <TableRowsSkeleton
+                  rows={6}
+                  columns={8}
+                  gridClass="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(150px,0.9fr)_minmax(90px,0.65fr)_minmax(90px,0.5fr)]"
+                />
+              )}
 
               {!loading && error && <KsbTableMessage icon="ri-error-warning-line text-red-500" message={error} />}
 

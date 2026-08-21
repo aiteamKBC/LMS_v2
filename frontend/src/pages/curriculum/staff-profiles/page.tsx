@@ -1,7 +1,7 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {

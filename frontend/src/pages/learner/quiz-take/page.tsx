@@ -13,6 +13,7 @@ import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWi
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -152,7 +153,7 @@ export default function QuizTakePage() {
     >
       <div className="p-3 md:p-6 max-w-5xl mx-auto">
         {loading ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading quiz…" /></div>
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError || !quiz ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError || 'Quiz not found.'} /></div>
         ) : !canProgress ? (

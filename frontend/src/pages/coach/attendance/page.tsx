@@ -6,6 +6,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import TrendChart from './components/TrendChart';
+import { RowsSkeleton, TableBodySkeleton } from '@/components/feature/Skeletons';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/attendance';
@@ -775,11 +776,7 @@ export default function CoachAttendance() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-foreground-100 bg-white">
-                {loading && (
-                  <tr>
-                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">Loading live attendance data...</td>
-                  </tr>
-                )}
+                {loading && <TableBodySkeleton rows={6} columns={7} />}
                 {!loading && error && (
                   <tr>
                     <td colSpan={7} className="py-16 text-center">
@@ -952,11 +949,8 @@ export default function CoachAttendance() {
 
             <div className="overflow-y-auto p-4">
               {attendanceDetailsLoading ? (
-                <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 text-center">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-50 text-primary-600">
-                    <AppIcon className="ri-loader-4-line animate-spin text-lg"></AppIcon>
-                  </span>
-                  <p className="text-[12px] text-foreground-500">Loading attendance sessions...</p>
+                <div className="min-h-[220px] p-2">
+                  <RowsSkeleton rows={5} avatar={false} />
                 </div>
               ) : attendanceDetailsError ? (
                 <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[12px] text-red-700">

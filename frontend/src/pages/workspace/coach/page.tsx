@@ -9,6 +9,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { CoachDirectoryPicker } from './CoachDirectoryPicker';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 import {
   type CoachCalendarEvent,
   eventDisplayDate,
@@ -1097,8 +1098,10 @@ export default function CoachDashboard() {
                     />
                   ))}
                   {atRiskLearners.length === 0 && (
-                    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-6 text-center text-[12px] text-foreground-400">
-                      {loading ? 'Loading learners...' : 'No at-risk learners right now.'}
+                    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
+                      {loading
+                        ? <RowsSkeleton rows={3} />
+                        : <p className="py-2 text-center text-[12px] text-foreground-400">No at-risk learners right now.</p>}
                     </div>
                   )}
                 </div>
@@ -1287,8 +1290,10 @@ export default function CoachDashboard() {
                     </Link>
                   ))}
                   {!pendingAbsenceReports.length && (
-                    <div className="rounded-lg bg-background-100/50 p-5 text-center text-[10px] text-foreground-400">
-                      {absenceReportsLoading ? 'Loading absence reports...' : absenceReportsError || 'No pending absence reports.'}
+                    <div className="rounded-lg bg-background-100/50 p-4">
+                      {absenceReportsLoading
+                        ? <RowsSkeleton rows={2} avatar={false} />
+                        : <p className="py-1 text-center text-[10px] text-foreground-400">{absenceReportsError || 'No pending absence reports.'}</p>}
                     </div>
                   )}
                 </div>

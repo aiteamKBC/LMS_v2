@@ -7,6 +7,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import { formatDateLabel } from '@/pages/coach/shared/calendarEvents';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const coachNav = roleNavMap.coach;
 
@@ -912,9 +913,8 @@ export default function CoachMonthlyCycle() {
           )}
 
           {loading && (
-            <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 text-center shadow-sm">
-              <AppIcon className="ri-loader-4-line text-primary-600 text-3xl animate-spin inline-block mb-3"></AppIcon>
-              <p className="text-sm font-semibold text-foreground-700">Loading monthly activity...</p>
+            <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 shadow-sm">
+              <RowsSkeleton rows={5} />
             </div>
           )}
 

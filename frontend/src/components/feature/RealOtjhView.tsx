@@ -4,6 +4,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail } from '@/api/learnerDetail';
 import { formatHoursMinutes, parseHours } from '@/utils/learnerJourney';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -198,7 +199,7 @@ export function OtjhBody({
               <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">{rows.length} {rows.length === 1 ? 'entry' : 'entries'}</span>
             </div>
             {loading ? (
-              <div className="p-5"><EmptyState text="Loading…" /></div>
+              <div className="p-5"><RowsSkeleton rows={4} avatar={false} /></div>
             ) : rows.length === 0 ? (
               <div className="p-5"><EmptyState text={isObserver ? 'No logged activity yet.' : 'No logged activity yet — complete a quiz or video to see it here.'} /></div>
             ) : (

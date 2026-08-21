@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
@@ -181,9 +182,9 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
 
       {/* Provider logo — below lg only. From lg up the sidebar carries the
           brand, and showing it twice was the duplication that read as clutter. */}
-      <a href="/" className="flex shrink-0 lg:hidden" aria-label="Kent Business College home">
+      <Link to="/" className="flex shrink-0 lg:hidden" aria-label="Kent Business College home">
         <BrandLockup size="compact" />
-      </a>
+      </Link>
 
       {/* Where the page says what it is. These props were being passed by every
           page and thrown away, which is what left the bar looking empty. */}

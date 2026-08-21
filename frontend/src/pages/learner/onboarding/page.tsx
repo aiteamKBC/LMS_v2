@@ -13,6 +13,7 @@ import { WizardProvider, useWizard } from '@/pages/users/wizard/WizardContext';
 import { WizardShell } from '@/pages/users/wizard/WizardShell';
 import { maxReachableStep, missingAcrossWizard } from '@/pages/users/wizard/validation';
 import { ONBOARDING_REVIEWS_ROUTE } from '@/hooks/useOnboardingRedirect';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -186,7 +187,11 @@ export default function LearnerOnboardingPage() {
       {/* w-full, matching the other learner pages — the shell already offsets for
           the collapsed sidebar rail, so an extra centred max-width fought it. */}
       <main className="w-full p-3 sm:p-4 md:p-6">
-        {loading && <div className="py-20 text-center text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-2" />Loading your enrolment…</div>}
+        {loading && (
+          <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-5">
+            <RowsSkeleton rows={5} />
+          </div>
+        )}
         {!loading && loadError && (
           <div className="py-20 text-center text-[13px]">
             <p className="text-red-600 mb-3"><AppIcon className="ri-error-warning-line mr-1.5" />{loadError}</p>

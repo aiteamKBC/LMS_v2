@@ -18,6 +18,7 @@ import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 import {
   loadTeamsMeetingArtifacts,
   syncTeamsMeetingArtifacts,
@@ -245,7 +246,7 @@ export default function ComponentViewPage() {
         </button>
 
         {loading ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
         ) : loadError ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>
         ) : !component ? (

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNavMap } from '@/mocks/navigation';
@@ -134,7 +135,7 @@ export default function SupportDashboard() {
             </div>
 
             {RECENT_TICKETS.map(ticket => (
-              <a key={ticket.id} href="/support/ticket-queue" className="block bg-background-50 rounded-xl border border-foreground-200/60 p-4 hover:border-background-300/60 transition-smooth cursor-pointer group">
+              <Link key={ticket.id} to="/support/ticket-queue" className="block bg-background-50 rounded-xl border border-foreground-200/60 p-4 hover:border-background-300/60 transition-smooth cursor-pointer group">
                 <div className="flex items-start gap-3">
                   {/* Priority indicator */}
                   <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
@@ -184,7 +185,7 @@ export default function SupportDashboard() {
                     </div>
                   </div>
                 </div>
-              </a>
+              </Link>
             ))}
           </div>
 

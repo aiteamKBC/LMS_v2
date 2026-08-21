@@ -9,6 +9,7 @@ import {
 } from '@/api/learningPlan';
 import { Modal } from './Modal';
 import { btnPrimary, btnSecondary, inputClass } from './ui';
+import { RowsSkeleton, SkeletonBlock } from '@/components/feature/Skeletons';
 
 // ============================================================================
 // Learning plan — the modules a learner will actually be taught.
@@ -189,7 +190,14 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       }
     >
       {loading ? (
-        <p className="py-10 text-center text-[13px] text-foreground-400">Loading learning plan…</p>
+        // Shaped like the plan it is standing in for: the context line, then the
+        // module table.
+        <div className="space-y-5">
+          <SkeletonBlock className="h-2.5 w-64" />
+          <div className="rounded-xl border border-foreground-200/60 p-4">
+            <RowsSkeleton rows={3} avatar={false} />
+          </div>
+        </div>
       ) : error && !data ? (
         <p className="py-10 text-center text-[13px] text-red-600">{error}</p>
       ) : (

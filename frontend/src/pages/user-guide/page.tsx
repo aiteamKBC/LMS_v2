@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
@@ -397,9 +397,9 @@ export default function UserGuidePage() {
             <AppIcon className="ri-information-line text-secondary-400"></AppIcon>
             <span>Guides are updated regularly. If something is missing, contact your coach.</span>
           </div>
-          <a href="/learner/support" className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
+          <Link to="/learner/support" className="inline-flex items-center gap-1 text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
             <AppIcon className="ri-question-line"></AppIcon> Need Help?
-          </a>
+          </Link>
         </div>
       </div>
     </WorkspaceShell>

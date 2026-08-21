@@ -7,6 +7,7 @@ import {
   buildKsbProgress, completedComponentIds, componentTypeMeta, ksbParentCode, recordedKsbEvidenceCodes,
   type KsbProgress, type KsbStatus,
 } from '@/utils/learnerJourney';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -265,7 +266,7 @@ export function KsbProgressBody({
 
         {/* Category cards */}
         {loading ? (
-          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>
+          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} /></div>
         ) : total === 0 ? (
           <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-6"><EmptyState text="No KSBs defined for this programme yet." /></div>
         ) : visible.length === 0 ? (

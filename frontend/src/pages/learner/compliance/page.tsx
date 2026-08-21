@@ -41,6 +41,7 @@ import {
   writtenAgreementFilename,
 } from '@/lib/writtenAgreementPdf';
 import { DocumentCard, Field } from './DocumentCard';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 // ============================================================================
 // Compliance documents — the learner's statutory paperwork.
@@ -216,7 +217,7 @@ export default function LearnerCompliancePage() {
     >
       <div className="p-6 space-y-6">
         {loading ? (
-          <p className="py-16 text-center text-[13px] text-foreground-400">Loading your documents…</p>
+          <RowsSkeleton rows={5} className="py-2" />
         ) : error ? (
           <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-6 text-center">
             <p className="text-[13px] text-red-600">{error}</p>

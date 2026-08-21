@@ -11,7 +11,7 @@
 // row on every request, so an edit here would be reverted within a request.
 // ============================================================================
 import { useCallback, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { accountAction, fetchAccounts, type AccountStatus, type PlatformAccount } from '@/api/platformAdmin';
@@ -122,7 +122,7 @@ export default function AdminAccountsPage() {
       icon="ri-shield-user-line"
       heroTitle="Platform accounts"
       heroBlurb={
-        <>Every identity that can sign in, sourced from <strong>login.Login_accounts</strong>. People who have not been invited yet appear in the <a href="/users" className="underline hover:text-white">user directory</a>, not here.</>
+        <>Every identity that can sign in, sourced from <strong>login.Login_accounts</strong>. People who have not been invited yet appear in the <Link to="/users" className="underline hover:text-white">user directory</Link>, not here.</>
       }
       stats={[{ label: 'Accounts', value: loading && !data ? '—' : count }]}
     >

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import {
@@ -89,16 +90,16 @@ export default function SafeguardingDashboard() {
               </p>
               <div className="mt-2 space-y-1">
                 {highRiskCases.filter(c => c.status === 'Immediate Action Required').map(c => (
-                  <a key={c.id} href={`/safeguarding/high-risk-cases`} className="block text-[12px] text-red-800 font-medium hover:text-red-950 cursor-pointer">
+                  <Link key={c.id} to={`/safeguarding/high-risk-cases`} className="block text-[12px] text-red-800 font-medium hover:text-red-950 cursor-pointer">
                     <AppIcon className="ri-arrow-right-s-line text-[10px] mr-1"></AppIcon>
                     {c.caseRef} — {c.learnerName} — {c.concernType} — <span className="font-semibold">{c.safeguardingOfficerAssigned}</span>
-                  </a>
+                  </Link>
                 ))}
               </div>
             </div>
-            <a href="/safeguarding/high-risk-cases" className="px-4 py-2 bg-red-500 text-white rounded-lg text-[12px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
+            <Link to="/safeguarding/high-risk-cases" className="px-4 py-2 bg-red-500 text-white rounded-lg text-[12px] font-semibold hover:bg-red-600 transition-smooth cursor-pointer whitespace-nowrap shrink-0">
               View Cases <AppIcon className="ri-arrow-right-line ml-1"></AppIcon>
-            </a>
+            </Link>
           </div>
         )}
 
@@ -123,13 +124,13 @@ export default function SafeguardingDashboard() {
                   Active Safeguarding Cases
                   <span className="ml-2 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200/50">RESTRICTED</span>
                 </h3>
-                <a href="/safeguarding/open-cases" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
+                <Link to="/safeguarding/open-cases" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
                   All Cases <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
-                </a>
+                </Link>
               </div>
               <div className="space-y-2">
                 {openCases.slice(0, 6).map(kase => (
-                  <a key={kase.id} href="/safeguarding/open-cases" className="block bg-background-50 rounded-xl border border-background-200/40 p-3 hover:border-red-200/40 transition-smooth cursor-pointer group">
+                  <Link key={kase.id} to="/safeguarding/open-cases" className="block bg-background-50 rounded-xl border border-background-200/40 p-3 hover:border-red-200/40 transition-smooth cursor-pointer group">
                     <div className="flex items-start gap-3">
                       <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
                         kase.riskLevel === 'Immediate Action Required' ? 'bg-red-500 animate-pulse' :
@@ -164,7 +165,7 @@ export default function SafeguardingDashboard() {
                         </div>
                       </div>
                     </div>
-                  </a>
+                  </Link>
                 ))}
               </div>
             </section>
@@ -173,9 +174,9 @@ export default function SafeguardingDashboard() {
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Recent Escalations</h3>
-                <a href="/safeguarding/referrals" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
+                <Link to="/safeguarding/referrals" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
                   View All <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
-                </a>
+                </Link>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-[12px]">
@@ -238,9 +239,9 @@ export default function SafeguardingDashboard() {
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">External Referrals</h3>
-                <a href="/safeguarding/referrals" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
+                <Link to="/safeguarding/referrals" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
                   Details <AppIcon className="ri-external-link-line text-[10px] ml-0.5"></AppIcon>
-                </a>
+                </Link>
               </div>
               <div className="space-y-2.5">
                 {EXTERNAL_REFERRALS.slice(0, 6).map(ref => (
@@ -284,9 +285,9 @@ export default function SafeguardingDashboard() {
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Team Messages</h3>
-                <a href="/safeguarding/communication" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
+                <Link to="/safeguarding/communication" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
                   Inbox <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
-                </a>
+                </Link>
               </div>
               <div className="space-y-2">
                 {SAFEGUARDING_MESSAGES.slice(0, 4).map(msg => (
@@ -312,9 +313,9 @@ export default function SafeguardingDashboard() {
           <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-heading font-semibold text-foreground-900">Safeguarding Audit Trail</h3>
-              <a href="/safeguarding/qa-audit" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
+              <Link to="/safeguarding/qa-audit" className="text-[11px] text-red-600 hover:text-red-700 font-medium whitespace-nowrap cursor-pointer">
                 Full Audit <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
-              </a>
+              </Link>
             </div>
             <div className="space-y-3">
               {SAFEGUARDING_AUDIT.map(audit => (

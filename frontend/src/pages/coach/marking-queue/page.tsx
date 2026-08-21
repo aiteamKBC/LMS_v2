@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
+import { TableRowsSkeleton } from '@/components/feature/Skeletons';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/marking-queue';
@@ -298,7 +299,7 @@ export default function CoachMarkingQueue() {
             <span>Submitted</span><span>Status</span><span className="text-right">Action</span>
           </div>
           {loading ? (
-            <div className="p-16 text-center text-sm text-foreground-400"><AppIcon className="ri-loader-4-line mr-2 animate-spin" />Loading submissions...</div>
+            <TableRowsSkeleton rows={6} columns={6} gridClass="grid grid-cols-[1.3fr_1.5fr_1.2fr_0.8fr_0.7fr_0.6fr]" />
           ) : error && !selected ? (
             <div className="p-16 text-center text-sm text-red-600">{error}</div>
           ) : filtered.length === 0 ? (

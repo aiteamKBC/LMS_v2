@@ -11,6 +11,7 @@ import { type ReactNode } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useAuth } from '@/hooks/useAuth';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const adminNav = roleNavMap.admin;
 
@@ -80,7 +81,7 @@ export function AdminPage({
 
 /** Panel that resolves loading / error / empty before rendering its children. */
 export function DataPanel({
-  loading, error, empty, emptyMessage, onRetry, children, className = '',
+  loading, error, empty, emptyMessage, onRetry, children, className = '', skeleton,
 }: {
   loading: boolean;
   error: string | null;
@@ -89,12 +90,16 @@ export function DataPanel({
   onRetry?: () => void;
   children: ReactNode;
   className?: string;
+  /** Override the placeholder when the panel holds something other than rows. */
+  skeleton?: ReactNode;
 }) {
   if (loading) {
+    // Skeleton rather than a spinner: this panel is the body of every admin
+    // console page, so what is arriving is always a list of things — and the
+    // page keeps its height instead of collapsing and jumping back.
     return (
-      <div className={`bg-background-50 rounded-xl border border-foreground-200/60 p-10 text-center ${className}`}>
-        <AppIcon className="ri-loader-4-line text-2xl text-foreground-300 animate-spin"></AppIcon>
-        <p className="text-[12px] text-foreground-400 mt-2">Loading…</p>
+      <div className={`bg-background-50 rounded-xl border border-foreground-200/60 p-5 ${className}`}>
+        {skeleton ?? <RowsSkeleton rows={5} />}
       </div>
     );
   }

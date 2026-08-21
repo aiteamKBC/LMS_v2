@@ -9,6 +9,7 @@
 // says plainly where membership of each comes from.
 // ============================================================================
 import { useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { AdminPage, DataPanel, SourceNote } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchRoles } from '@/api/platformAdmin';
@@ -83,9 +84,9 @@ export default function AdminRolesPage() {
                 <p className="text-[10px] text-foreground-400 truncate">
                   <AppIcon className="ri-database-2-line mr-1"></AppIcon>{role.source}
                 </p>
-                <a href={`/admin/users?role=${role.id}`} className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer shrink-0">
+                <Link to={`/admin/users?role=${role.id}`} className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer shrink-0">
                   View accounts <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon>
-                </a>
+                </Link>
               </div>
             </div>
           ))}

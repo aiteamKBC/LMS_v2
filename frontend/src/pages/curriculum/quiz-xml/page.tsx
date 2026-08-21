@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
@@ -866,6 +866,7 @@ function serializeEditorQuestions(questions: QuizPreviewQuestion[]) {
 
 export default function QuizXmlWorkspacePage() {
   const { success, error: toastError } = useToast();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [quizzes, setQuizzes] = useState<QuizPackage[]>([]);
   const [selectedQuiz, setSelectedQuiz] = useState<QuizPackage | null>(null);
@@ -1663,7 +1664,9 @@ export default function QuizXmlWorkspacePage() {
   };
 
   const openQuestionEditor = async (quiz: QuizPackage) => {
-    window.location.href = `/curriculum/quiz-xml/${quiz.id}/edit`;
+    // navigate, not window.location: the latter reloaded the SPA, which threw
+    // away this page's loaded state and re-fetched every route chunk.
+    navigate(`/curriculum/quiz-xml/${quiz.id}/edit`);
   };
 
   const updateEditorQuestion = (questionId: number, patch: Partial<QuizPreviewQuestion>) => {

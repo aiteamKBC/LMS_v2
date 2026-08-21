@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ALL_SEARCH_RESULTS, SEARCH_CATEGORIES, RECENT_SEARCHES, type SearchResultItem } from '@/mocks/search';
 
 interface GlobalSearchProps {
@@ -7,6 +8,9 @@ interface GlobalSearchProps {
 }
 
 export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
+  // Client-side navigation: assigning window.location reloaded the whole SPA,
+  // so opening a search result reset the app and re-fetched every route chunk.
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -78,14 +82,14 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         if (allFlat[selectedIndex]) {
-          window.location.href = allFlat[selectedIndex].href;
+          navigate(allFlat[selectedIndex].href);
           onClose();
         }
       } else if (e.key === 'Escape') {
         onClose();
       }
     },
-    [allFlat, selectedIndex, onClose]
+    [allFlat, selectedIndex, onClose, navigate]
   );
 
   useEffect(() => {
@@ -193,7 +197,7 @@ export function GlobalSearch({ isOpen, onClose }: GlobalSearchProps) {
                     key={item.id}
                     href={item.href}
                     data-search-index={flatIdx}
-                    onClick={e => { e.preventDefault(); window.location.href = item.href; onClose(); }}
+                    onClick={e => { e.preventDefault(); navigate(item.href); onClose(); }}
                     className={`flex items-center gap-3 px-5 py-2.5 transition-smooth group ${
                       isSelected ? 'bg-primary-50/70 border-l-2 border-primary-400' : 'hover:bg-background-100 border-l-2 border-transparent'
                     }`}

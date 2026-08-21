@@ -6,6 +6,7 @@ import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -127,4 +128,12 @@ export default function LearnerProfilePage() {
 function StatCard({ icon, label, value, detail, progress, colour, bar }: { icon: string; label: string; value: string; detail: string; progress?: number; colour: string; bar?: string }) { return <article className="rounded-2xl border border-background-200 bg-white p-4 shadow-sm"><div className="flex items-center gap-3"><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${colour}`}><AppIcon className={icon}></AppIcon></span><div><p className="text-[10px] text-foreground-400">{label}</p><p className="mt-0.5 text-base font-bold text-foreground-900">{value}</p></div></div>{progress !== undefined && <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-background-200"><div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(progress, 100)}%` }}></div></div>}<p className="mt-2 text-[10px] text-foreground-400">{detail}</p></article>; }
 function ProfileSection({ icon, title, children }: { icon: string; title: string; children: React.ReactNode }) { return <section className="overflow-hidden rounded-3xl border border-background-200 bg-white shadow-[0_5px_24px_rgba(28,10,55,0.05)]"><div className="flex items-center gap-3 border-b border-background-200 px-5 py-4"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className={icon}></AppIcon></span><h2 className="text-sm font-bold text-foreground-900">{title}</h2></div><div className="divide-y divide-background-200 px-5">{children}</div></section>; }
 function DetailRow({ label, value }: { label: string; value?: string }) { return <div className="grid gap-1 py-3.5 sm:grid-cols-[150px_1fr]"><p className="text-xs text-foreground-400">{label}</p><p className="break-words text-sm font-semibold text-foreground-700">{value || 'Not set'}</p></div>; }
-function Loading() { return <div className="rounded-3xl border border-background-200 bg-white p-16 text-center text-sm text-foreground-400"><AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600"></AppIcon>Loading the selected learner…</div>; }
+function Loading() {
+  // Skeleton rather than a spinner: this stands in for the page's own
+  // content, so it should hold that shape while it loads.
+  return (
+    <div className="rounded-3xl border border-background-200 bg-white p-5">
+      <RowsSkeleton rows={5} />
+    </div>
+  );
+}

@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const coachNav = roleNavMap.coach;
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
@@ -183,7 +184,11 @@ export default function CoachAttendanceProfile() {
     >
       <main className="min-h-screen bg-[#f7f6fb] p-3 md:p-5">
         <div className="w-full space-y-4">
-          {loading && <div className="rounded-2xl border border-foreground-200 bg-white p-12 text-center text-sm text-foreground-400">Loading attendance profile...</div>}
+          {loading && (
+            <div className="rounded-2xl border border-foreground-200 bg-white p-5">
+              <RowsSkeleton rows={5} />
+            </div>
+          )}
           {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div>}
 
           {!loading && !error && learner && (

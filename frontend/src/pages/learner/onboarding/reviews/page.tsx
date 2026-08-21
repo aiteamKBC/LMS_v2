@@ -15,6 +15,7 @@ import {
 import { fetchReviewForm, type ReviewFormResponse } from '@/api/reviewForm';
 import { btnPrimary, btnSecondary } from '@/pages/users/components/ui';
 import SignReviewModal from './SignReviewModal';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -370,9 +371,9 @@ export default function OnboardingReviewsPage() {
         </div>
 
         {loading && (
-          <p className="py-16 text-center text-[13px] text-foreground-400">
-            <i className="ri-loader-4-line animate-spin mr-2" />Loading your reviews…
-          </p>
+          <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-5">
+            <RowsSkeleton rows={4} />
+          </div>
         )}
 
         {!loading && error && (

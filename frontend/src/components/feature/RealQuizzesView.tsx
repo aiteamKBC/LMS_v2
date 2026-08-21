@@ -5,6 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -121,7 +122,7 @@ export function RealQuizzesView({
 
         {/* ═══════════ QUIZ LIST ═══════════ */}
         {loading ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} /></div>
         ) : loadError ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>
         ) : quizzes.length === 0 ? (

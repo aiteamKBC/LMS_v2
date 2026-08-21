@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
+import { TableRowsSkeleton } from '@/components/feature/Skeletons';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/caseload';
@@ -477,7 +478,13 @@ export default function CoachOtjhReports() {
                 <span className="text-center">Action</span>
               </div>
 
-              {loading && <OtjhTableMessage icon="ri-loader-4-line animate-spin" message="Loading live OTJH data..." />}
+              {loading && (
+                <TableRowsSkeleton
+                  rows={6}
+                  columns={8}
+                  gridClass="grid grid-cols-[minmax(250px,1.5fr)_minmax(150px,0.9fr)_repeat(4,minmax(90px,0.6fr))_minmax(180px,1fr)_minmax(90px,0.5fr)]"
+                />
+              )}
               {!loading && error && <OtjhTableMessage icon="ri-error-warning-line text-red-500" message={error} />}
               {!loading && !error && filteredRows.length === 0 && <OtjhTableMessage icon="ri-user-search-line text-violet-500" message="No learners match this OTJH filter." />}
 

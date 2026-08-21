@@ -13,7 +13,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { SelectMenu } from '@/components/feature/SelectField';
 import { statusTone } from './model';
 import { AppIcon } from '@/components/feature/AppIcon';

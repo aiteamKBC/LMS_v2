@@ -14,11 +14,13 @@
 // does not support it.
 // ============================================================================
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { PORTAL_WORKSPACES } from '@/lib/portalWorkspaces';
 import { ResendInvitationButton, canResendInvitation } from '@/pages/admin/_shared/ResendInvitation';
 import { useAuth } from '@/hooks/useAuth';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import {
   fetchAuditLog,
   fetchPlatformOverview,
@@ -186,9 +188,9 @@ export default function AdminDashboard() {
         {attention.length > 0 && (
           <div className="space-y-2">
             {attention.map((a, i) => (
-              <a
+              <Link
                 key={i}
-                href={a.href}
+                to={a.href}
                 className={`rounded-xl p-3.5 flex items-start gap-3 cursor-pointer transition-smooth ${
                   a.tone === 'critical'
                     ? 'bg-red-50 border border-red-200/60 hover:bg-red-100/70'
@@ -200,7 +202,7 @@ export default function AdminDashboard() {
                 </span>
                 <p className={`text-[13px] font-medium flex-1 ${a.tone === 'critical' ? 'text-red-900' : 'text-amber-900'}`}>{a.text}</p>
                 <AppIcon className={`ri-arrow-right-line text-sm shrink-0 ${a.tone === 'critical' ? 'text-red-400' : 'text-amber-400'}`}></AppIcon>
-              </a>
+              </Link>
             ))}
           </div>
         )}
@@ -252,9 +254,9 @@ export default function AdminDashboard() {
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             {PORTAL_WORKSPACES.map(ws => (
-              <a
+              <Link
                 key={ws.slug}
-                href={ws.path}
+                to={ws.path}
                 className="group flex flex-col items-start gap-2 p-3.5 rounded-xl border border-foreground-200/60 hover:border-primary-300 hover:bg-primary-50/40 transition-smooth cursor-pointer"
               >
                 <span className="w-9 h-9 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center shrink-0 group-hover:bg-primary-200 transition-smooth">
@@ -262,7 +264,7 @@ export default function AdminDashboard() {
                 </span>
                 <span className="text-[13px] font-semibold text-foreground-900">{ws.label}</span>
                 <span className="text-[10px] text-foreground-400 leading-snug">{ws.blurb}</span>
-              </a>
+              </Link>
             ))}
           </div>
         </section>
@@ -276,16 +278,16 @@ export default function AdminDashboard() {
             <section>
               <div className="flex items-center justify-between mb-3 md:mb-4">
                 <h2 className="text-base font-heading font-semibold text-foreground-900">Accounts by role</h2>
-                <a href="/admin/roles" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
+                <Link to="/admin/roles" className="text-[12px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
                   Manage roles <AppIcon className="ri-arrow-right-line text-[10px] ml-0.5"></AppIcon>
-                </a>
+                </Link>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {acc ? (Object.entries(acc.byRole) as [string, number][]).map(([role, count]) => {
                   const total = acc.total || 1;
                   const pct = Math.round((count / total) * 100);
                   return (
-                    <a key={role} href={`/admin/users?role=${role}`} className="block bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
+                    <Link key={role} to={`/admin/users?role=${role}`} className="block bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex items-center gap-3">
                           <span className="w-10 h-10 rounded-xl bg-primary-100 text-primary-600 flex items-center justify-center shrink-0">
@@ -306,7 +308,7 @@ export default function AdminDashboard() {
                       <div className="h-1.5 rounded-full bg-background-200 overflow-hidden">
                         <div className="h-full rounded-full bg-primary-500 transition-smooth" style={{ width: `${pct}%` }} />
                       </div>
-                    </a>
+                    </Link>
                   );
                 }) : (
                   <div className="col-span-2 text-[12px] text-foreground-400 py-6 text-center">
@@ -320,7 +322,7 @@ export default function AdminDashboard() {
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Authentication activity</h3>
-                <a href="/admin/access-logs" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Access logs</a>
+                <Link to="/admin/access-logs" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Access logs</Link>
               </div>
               {overview?.authActivity.available ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -329,8 +331,19 @@ export default function AdminDashboard() {
                   <Figure value={overview.authActivity.distinctSignIns7d} label="Distinct users (7d)" tone="neutral" />
                   <Figure value={overview.authActivity.events24h} label="Audit events (24h)" tone="neutral" />
                 </div>
+              ) : loading ? (
+                // Same four-up shape as the figures it replaces, so the section
+                // does not resize when the overview lands.
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <div key={index} className="space-y-2">
+                      <SkeletonBlock className="h-5 w-10" />
+                      <SkeletonBlock className="h-2.5 w-20" />
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <p className="text-[12px] text-foreground-400 py-4 text-center">{loading ? 'Loading…' : 'Audit trail unavailable.'}</p>
+                <p className="text-[12px] text-foreground-400 py-4 text-center">Audit trail unavailable.</p>
               )}
             </section>
 
@@ -338,7 +351,7 @@ export default function AdminDashboard() {
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Recent access events</h3>
-                <a href="/admin/access-logs" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Full log</a>
+                <Link to="/admin/access-logs" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Full log</Link>
               </div>
               {audit.length === 0 ? (
                 <p className="text-[12px] text-foreground-400 py-6 text-center">
@@ -380,7 +393,7 @@ export default function AdminDashboard() {
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-1">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">System status</h3>
-                <a href="/admin/system" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Details</a>
+                <Link to="/admin/system" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Details</Link>
               </div>
               <p className="text-[10px] text-foreground-400 mb-4">Whether each subsystem is configured in this deployment.</p>
               <div className="space-y-2.5">
@@ -406,7 +419,7 @@ export default function AdminDashboard() {
             <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-heading font-semibold text-foreground-900">Invitations</h3>
-                <a href="/admin/notifications" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Email log</a>
+                <Link to="/admin/notifications" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Email log</Link>
               </div>
               {overview ? (
                 <div className="grid grid-cols-3 gap-2">
@@ -414,8 +427,17 @@ export default function AdminDashboard() {
                   <Figure value={overview.invitations.expired} label="Expired" tone={overview.invitations.expired > 0 ? 'warn' : 'neutral'} />
                   <Figure value={overview.invitations.failed} label="Failed" tone={overview.invitations.failed > 0 ? 'bad' : 'neutral'} />
                 </div>
+              ) : loading ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div key={index} className="space-y-2">
+                      <SkeletonBlock className="h-5 w-10" />
+                      <SkeletonBlock className="h-2.5 w-20" />
+                    </div>
+                  ))}
+                </div>
               ) : (
-                <p className="text-[12px] text-foreground-400 py-2">{loading ? 'Loading…' : 'Unavailable.'}</p>
+                <p className="text-[12px] text-foreground-400 py-2">Unavailable.</p>
               )}
             </section>
 
@@ -424,7 +446,7 @@ export default function AdminDashboard() {
               <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-heading font-semibold text-foreground-900">Compliance documents</h3>
-                  <a href="/admin/documents" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Browse</a>
+                  <Link to="/admin/documents" className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">Browse</Link>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   <Figure value={overview.documents.total} label="Stored" tone="neutral" />
@@ -463,7 +485,7 @@ function MiniStat({ label, value, sub, icon, color, href, loading }: {
     accent: 'bg-accent-50 text-accent-700',
   };
   return (
-    <a href={href} className="block bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 card-premium cursor-pointer">
+    <Link to={href} className="block bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 card-premium cursor-pointer">
       <span className={`w-7 md:w-8 h-7 md:h-8 rounded-lg flex items-center justify-center ${bgMap[color] || bgMap.primary} mb-2 md:mb-3`}>
         <AppIcon className={`${icon} text-xs md:text-sm`}></AppIcon>
       </span>
@@ -472,7 +494,7 @@ function MiniStat({ label, value, sub, icon, color, href, loading }: {
       </p>
       <p className="text-[10px] md:text-[11px] text-foreground-400 mt-1">{label}</p>
       <p className="text-[10px] text-foreground-300 truncate">{sub}</p>
-    </a>
+    </Link>
   );
 }
 

@@ -1,6 +1,7 @@
 import { Suspense, createElement, useEffect } from "react";
 import { useLocation, useNavigate, useRoutes, type NavigateFunction } from "react-router-dom";
 import { RouteErrorBoundary } from "@/components/feature/RouteErrorBoundary";
+import { PageSkeleton } from "@/components/feature/Skeletons";
 import routes from "./config";
 
 let navigateResolver: (navigate: ReturnType<typeof useNavigate>) => void;
@@ -15,20 +16,13 @@ export const navigatePromise = new Promise<NavigateFunction>((resolve) => {
   navigateResolver = resolve;
 });
 
+// Every route in config.tsx is lazy(), so this is what the whole site shows
+// between a click and the page's chunk arriving. It used to be a pulsing dot
+// beside the words "Loading workspace" — honest, but it threw the layout away
+// and rebuilt it, which reads as a page flash on every navigation. PageSkeleton
+// holds the shape instead: rail, breadcrumb, header, content.
 function RouteLoadingFallback() {
-  return createElement(
-    "div",
-    { className: "min-h-screen bg-background-200 flex items-center justify-center px-6" },
-    createElement(
-      "div",
-      {
-        className:
-          "flex items-center gap-3 rounded-xl border border-foreground-200 bg-background-50 px-5 py-4 shadow-sm",
-      },
-      createElement("span", { className: "h-3 w-3 rounded-full bg-primary-500 animate-pulse" }),
-      createElement("span", { className: "text-sm font-medium text-foreground-600" }, "Loading workspace..."),
-    ),
-  );
+  return createElement(PageSkeleton);
 }
 
 export function AppRoutes() {

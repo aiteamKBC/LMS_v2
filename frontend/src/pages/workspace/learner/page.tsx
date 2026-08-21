@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEARNING_COMPONENTS } from '@/mocks/learner-profile';
@@ -18,6 +18,7 @@ import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 /* ─────────────────────────────────────────────
    Real-learner component progress + current-week UI
@@ -430,7 +431,7 @@ function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
   const next = () => { if (vm === 11) { setVm(0); setVy(vy + 1); } else { setVm(vm + 1); } };
   const goToday = () => { setVy(now.getFullYear()); setVm(now.getMonth()); };
 
-  if (loading) return <div className="py-8 text-center text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-1.5" />Loading…</div>;
+  if (loading) return <RowsSkeleton rows={4} avatar={false} className="py-2" />;
   if (err) return <EmptyState text={err} />;
 
   return (
@@ -608,13 +609,13 @@ function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; labe
   );
 
   return href ? (
-    <a
-      href={href}
+    <Link
+      to={href}
       aria-label={`Open ${label}`}
       className="group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
     >
       {content}
-    </a>
+    </Link>
   ) : (
     <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 py-1 text-center">
       {content}
@@ -636,7 +637,7 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
   const journey = useMemo(() => buildLearnerJourney(real), [real]);
   const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
 
-  if (loading) return <div className="py-8 text-center text-[13px] text-foreground-400"><AppIcon className="ri-loader-4-line animate-spin mr-1.5" />Loading…</div>;
+  if (loading) return <RowsSkeleton rows={4} className="py-2" />;
   if (loadError) return <EmptyState text={loadError} />;
   if (journey.length === 0) return <EmptyState text="No training plan built for this learner yet." />;
 
@@ -685,8 +686,8 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
 
       {/* Current-module card */}
       {current ? (
-        <a
-          href={`${journeyHref}?module=${current.index + 1}`}
+        <Link
+          to={`${journeyHref}?module=${current.index + 1}`}
           aria-label={`Open Module ${current.index + 1}: ${current.module.module}`}
           className="group mt-4 block cursor-pointer rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
         >
@@ -704,7 +705,7 @@ function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerD
             <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={current.quizTotal > 0 ? `${current.quizTaken}/${current.quizTotal}` : '—'} />
             <JourneyStat icon="ri-play-circle-line" label="Videos" value={current.videoTotal > 0 ? `${current.videoDone}/${current.videoTotal}` : '—'} />
           </div>
-        </a>
+        </Link>
       ) : allDone ? (
         <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
           <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-trophy-fill" /></span>
@@ -1151,13 +1152,13 @@ export default function LearnerOverview() {
             </div>
             {/* Roadmap Icon Button — links to the logged-in learner's own journey, not applicable when viewing another learner's read-only profile */}
             {!isRealMode && (
-            <a
-              href="/learner/modules"
+            <Link
+              to="/learner/modules"
               className="absolute top-4 right-4 lg:top-5 lg:right-5 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 flex items-center justify-center transition-all duration-200 hover:scale-110 cursor-pointer group z-10"
               title="My Learning Journey"
             >
               <AppIcon className="ri-route-line text-white/80 text-lg group-hover:text-white transition-colors"></AppIcon>
-            </a>
+            </Link>
             )}
           </section>
         </SectionReveal>
@@ -1173,14 +1174,14 @@ export default function LearnerOverview() {
               {/* ── View Overdue ── */}
               {!isRealMode && (
               <div className="flex items-center gap-2">
-                <a
-                  href="/learner/training-plan?highlight=overdue"
+                <Link
+                  to="/learner/training-plan?highlight=overdue"
                   className="flex items-center gap-1.5 text-sm font-bold text-white whitespace-nowrap transition-smooth px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-600 shadow-sm shadow-red-500/15"
                 >
                   <AppIcon className="ri-error-warning-line text-sm"></AppIcon>
                   View Overdue
                   <AppIcon className="ri-arrow-right-line text-xs"></AppIcon>
-                </a>
+                </Link>
               </div>
               )}
             </div>
@@ -1337,9 +1338,9 @@ export default function LearnerOverview() {
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Training Plan</h2>
                   {real && journey.length > 0 && (
-                  <a href={`/learner/training-plan/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <Link to={`/learner/training-plan/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                     View full plan <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </a>
+                  </Link>
                   )}
                 </div>
                 {/* Says why the rows below do not open, so a read-only plan does
@@ -1358,7 +1359,9 @@ export default function LearnerOverview() {
                 )}
                 <div className="flex-1 overflow-y-auto" style={{ maxHeight: 620 }}>
                   {journey.length === 0 || !currentWeek ? (
-                    <EmptyState text={loading ? 'Loading…' : 'No training plan built for this learner yet.'} />
+                    loading
+                      ? <div className="p-4"><RowsSkeleton rows={4} /></div>
+                      : <EmptyState text="No training plan built for this learner yet." />
                   ) : (
                     <CurrentWeekCard
                       moduleTitle={currentWeek.module}
@@ -1386,9 +1389,9 @@ export default function LearnerOverview() {
                       <p className="mt-0.5 text-[11px] text-foreground-400">Sessions and upcoming reviews</p>
                     </div>
                   </div>
-                  <a href="/learner/calendar" className="rounded-lg px-2.5 py-1.5 text-sm font-medium whitespace-nowrap text-primary-600 transition-smooth hover:bg-primary-50 hover:text-primary-700">
+                  <Link to="/learner/calendar" className="rounded-lg px-2.5 py-1.5 text-sm font-medium whitespace-nowrap text-primary-600 transition-smooth hover:bg-primary-50 hover:text-primary-700">
                     Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </a>
+                  </Link>
                 </div>
                 <MiniCalendar kind={kind} id={id} />
               </div>
@@ -1415,9 +1418,9 @@ export default function LearnerOverview() {
               <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Learner Journey</h2>
-                  <a href={kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules'} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <Link to={kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules'} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                     Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </a>
+                  </Link>
                 </div>
                 <MiniJourney
                   real={real}
@@ -1437,9 +1440,9 @@ export default function LearnerOverview() {
               <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-4 md:mb-5">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">This Week's Learning Journey</h2>
-                  <a href="/learner/training-plan" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <Link to="/learner/training-plan" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                     View full plan <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </a>
+                  </Link>
                 </div>
                 <div className="relative">
                   <div className="absolute left-[19px] top-3 bottom-3 w-px bg-background-200" />
@@ -1463,9 +1466,9 @@ export default function LearnerOverview() {
               <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Upcoming</h2>
-                  <a href="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <Link to="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                     View Calendar <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </a>
+                  </Link>
                 </div>
                 <div className="space-y-3">
                   {upcomingEvents.map((event, i) => (
@@ -1481,9 +1484,9 @@ export default function LearnerOverview() {
               <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
-                  <a href="/learner/monthly-coaching" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <Link to="/learner/monthly-coaching" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                     View All Activity <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </a>
+                  </Link>
                 </div>
                 <div className="space-y-3">
                   {activityFeed.map((item, i) => (
@@ -1495,9 +1498,9 @@ export default function LearnerOverview() {
               <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-base font-heading font-semibold text-foreground-900">Achievements</h2>
-                  <a href="/learner/rewards" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
+                  <Link to="/learner/rewards" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
                     View Rewards <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </a>
+                  </Link>
                 </div>
                 <div className="space-y-2.5">
                   {achievements.map((ach, i) => (
@@ -1592,9 +1595,9 @@ function HealthCard({ icon, label, value, detail, status, progress, href, badgeL
 
   if (href) {
     return (
-      <a href={href} className="block h-full">
+      <Link to={href} className="block h-full">
         {Card}
-      </a>
+      </Link>
     );
   }
 
@@ -1664,8 +1667,8 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
       </div>
 
       {/* Card content */}
-      <a
-        href={`/learner/training-plan`}
+      <Link
+        to={`/learner/training-plan`}
         className="flex-1 min-w-0 block"
       >
         <div className={`relative rounded-xl border p-4 transition-smooth card-premium cursor-pointer hover:border-primary-300/60 hover:shadow-sm ${isCompleted ? 'border-foreground-200/50 bg-background-50' : 'border-foreground-200/50 bg-background-50'}`}>
@@ -1719,7 +1722,7 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
             </div>
           </div>
         </div>
-      </a>
+      </Link>
     </div>
   );
 }
@@ -1733,7 +1736,7 @@ function UpcomingEventCard({ date, title, type, urgent, countdown, icon }: {
   icon: string;
 }) {
   return (
-    <a href="/learner/calendar" className="block">
+    <Link to="/learner/calendar" className="block">
       <div className={`flex items-start gap-3 p-3 rounded-lg transition-smooth cursor-pointer relative overflow-hidden ${
         urgent
           ? 'bg-background-50 border border-foreground-200/50'
@@ -1777,7 +1780,7 @@ function UpcomingEventCard({ date, title, type, urgent, countdown, icon }: {
           </div>
         </div>
       </div>
-    </a>
+    </Link>
   );
 }
 

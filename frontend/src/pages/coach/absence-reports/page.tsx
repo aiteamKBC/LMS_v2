@@ -6,6 +6,7 @@ import { coachFetch } from '@/lib/coachFetch';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import type { AbsenceReport } from '@/mocks/absence-reports';
+import { TableBodySkeleton } from '@/components/feature/Skeletons';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/absence-reports';
@@ -493,15 +494,20 @@ export default function CoachAbsenceReports() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-foreground-100">
-                {paginatedData.length === 0 ? (
+                {/* Loading is its own branch now: the block below doubles as the
+                    empty and error state, and a spinner inside an "0 results"
+                    layout says the wrong thing while rows are still coming. */}
+                {loadingReports ? (
+                  <TableBodySkeleton rows={6} columns={9} />
+                ) : paginatedData.length === 0 ? (
                   <tr>
                     <td colSpan={9} className="px-4 py-16 text-center">
                       <div className="flex flex-col items-center gap-3">
                         <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center">
-                          <AppIcon className={`${loadingReports ? 'ri-loader-4-line animate-spin' : reportsError ? 'ri-error-warning-line' : 'ri-inbox-line'} text-foreground-300 text-xl`}></AppIcon>
+                          <AppIcon className={`${reportsError ? 'ri-error-warning-line' : 'ri-inbox-line'} text-foreground-300 text-xl`}></AppIcon>
                         </span>
-                        <p className="text-[13px] text-foreground-400 font-medium">{loadingReports ? 'Loading absence reports...' : reportsError || 'No absence reports found'}</p>
-                        {!loadingReports && !reportsError && <p className="text-[11px] text-foreground-300">Try adjusting your search or filters</p>}
+                        <p className="text-[13px] text-foreground-400 font-medium">{reportsError || 'No absence reports found'}</p>
+                        {!reportsError && <p className="text-[11px] text-foreground-300">Try adjusting your search or filters</p>}
                         {hasActiveFilters && (
                           <button onClick={clearFilters} className="px-3 py-1.5 bg-background-100 text-foreground-500 rounded-lg text-[11px] font-medium hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
                             <AppIcon className="ri-close-line mr-1"></AppIcon>Clear Filters

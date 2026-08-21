@@ -6,6 +6,7 @@ import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerCalendarEvents, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -246,7 +247,7 @@ export function ProgressReviewsListPage() {
             <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-file-list-3-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Progress review sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Check each review status and open the full PR record.</p></div></div>
             <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
           </div>
-          {loading ? <div className="p-10 text-center text-sm text-foreground-400">Loading progress reviews...</div> : reviews.length === 0 ? <div className="p-5"><Empty>No progress review sessions were found.</Empty></div> : (
+          {loading ? <div className="p-5"><RowsSkeleton rows={4} /></div> : reviews.length === 0 ? <div className="p-5"><Empty>No progress review sessions were found.</Empty></div> : (
             <>
               <div className="divide-y divide-background-200 md:hidden">
                 {visibleReviews.map((review) => {

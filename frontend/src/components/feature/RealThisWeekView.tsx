@@ -11,6 +11,7 @@ import {
 } from '@/utils/learnerJourney';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -109,7 +110,7 @@ export function RealThisWeekView({
         <LmsSourceLibrary real={real} />
 
         {loading ? (
-          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="Loading…" /></div>
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} /></div>
         ) : loadError ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text={loadError} /></div>
         ) : journey.length === 0 ? (

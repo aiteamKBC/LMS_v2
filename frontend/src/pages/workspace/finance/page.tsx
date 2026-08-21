@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { financeNavItems } from '@/mocks/navigation';
@@ -117,7 +118,7 @@ export default function FinanceWorkspace() {
                   <h3 className="text-[14px] font-heading font-semibold text-foreground-900">
                     {activeTab === 'invoices' ? 'All Invoices' : 'Recent Invoices'}
                   </h3>
-                  <a href="/finance/invoices" className="text-[12px] text-primary-600 font-medium hover:text-primary-700">View all</a>
+                  <Link to="/finance/invoices" className="text-[12px] text-primary-600 font-medium hover:text-primary-700">View all</Link>
                 </div>
                 <table className="w-full text-[13px]">
                   <thead>
@@ -155,7 +156,7 @@ export default function FinanceWorkspace() {
               <div className="bg-background-50 border border-foreground-200 rounded-xl overflow-hidden">
                 <div className="flex items-center justify-between px-5 py-3.5 border-b border-background-100">
                   <h3 className="text-[14px] font-heading font-semibold text-foreground-900">Funding per Programme</h3>
-                  <a href="/finance/funding" className="text-[12px] text-primary-600 font-medium hover:text-primary-700">View all</a>
+                  <Link to="/finance/funding" className="text-[12px] text-primary-600 font-medium hover:text-primary-700">View all</Link>
                 </div>
                 <table className="w-full text-[13px]">
                   <thead>

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { CardGridSkeleton } from '@/components/feature/CurriculumSkeletons';
+import { CardGridSkeleton } from '@/components/feature/Skeletons';
 import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';

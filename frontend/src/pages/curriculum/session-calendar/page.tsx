@@ -2,7 +2,7 @@ import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumSessions } from '@/hooks/useCurriculumSessions';
 import { fetchCurriculumHolidays, tutorConflictMessage, updateCurriculumSession, type CurriculumHoliday, type CurriculumSession } from '@/lib/curriculumApi';

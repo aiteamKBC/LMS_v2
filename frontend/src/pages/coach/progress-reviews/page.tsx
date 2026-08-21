@@ -4,6 +4,7 @@ import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerQ
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
+import { CardSkeleton } from '@/components/feature/Skeletons';
 import {
   PROGRESS_REVIEW_SECTIONS,
   REQUIRED_PROGRESS_REVIEW_RESPONSE_IDS,
@@ -928,7 +929,7 @@ export default function CoachProgressReviews() {
           </div>
 
           <div className="grid gap-3 bg-background-100/55 p-3 sm:p-5 xl:grid-cols-2">
-            {loading && <div className="xl:col-span-2"><EmptyState icon="ri-loader-4-line" title="Loading progress reviews..." /></div>}
+            {loading && Array.from({ length: 4 }).map((_, index) => <CardSkeleton key={index} />)}
             {!loading && !error && data.length === 0 && <div className="xl:col-span-2"><EmptyState icon="ri-file-chart-line" title="No progress reviews found." /></div>}
             {!loading && !error && data.length > 0 && filteredData.length === 0 && <div className="xl:col-span-2"><EmptyState icon="ri-user-search-line" title="No learner matches this search." /></div>}
 

@@ -7,6 +7,7 @@
 // to see them all at once is to look across learners.
 // ============================================================================
 import { useCallback, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchAdminDocuments } from '@/api/platformAdmin';
@@ -145,9 +146,9 @@ export default function AdminDocumentsPage() {
                       </div>
                     </td>
                     <td className="px-4 py-2.5">
-                      <a href={`/users/${doc.learnerKind}/${doc.learnerId}`} className="text-[12px] text-primary-600 hover:text-primary-700 cursor-pointer">
+                      <Link to={`/users/${doc.learnerKind}/${doc.learnerId}`} className="text-[12px] text-primary-600 hover:text-primary-700 cursor-pointer">
                         {doc.learnerName || `Learner ${doc.learnerId}`}
-                      </a>
+                      </Link>
                     </td>
                     <td className="px-4 py-2.5 text-[11px] text-foreground-600">{docTypeLabel(doc.docType)}</td>
                     <td className="px-4 py-2.5">

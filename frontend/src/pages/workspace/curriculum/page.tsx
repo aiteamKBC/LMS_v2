@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { ListSkeleton, TableRowsSkeleton } from '@/components/feature/CurriculumSkeletons';
+import { ListSkeleton, TableRowsSkeleton } from '@/components/feature/Skeletons';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { roleNavMap } from '@/mocks/navigation';

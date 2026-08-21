@@ -1,4 +1,5 @@
 import { ATTENDANCE_STATS } from '@/mocks/attendance';
+import { Link } from 'react-router-dom';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 
 interface AttendanceHeroProps {
@@ -53,12 +54,12 @@ export default function AttendanceHero({ missedCount, attendedCount, onReportAbs
             >
               <AppIcon className="ri-calendar-close-line text-xs"></AppIcon> Report Absence
             </button>
-            <a href="/learner/catchup" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10">
+            <Link to="/learner/catchup" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10">
               <AppIcon className="ri-timer-flash-line text-xs"></AppIcon> Catch-Up Hub
-            </a>
-            <a href="/learner/profile" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10">
+            </Link>
+            <Link to="/learner/profile" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white/90 text-xs font-medium hover:bg-white/20 transition-all whitespace-nowrap cursor-pointer border border-white/10">
               <AppIcon className="ri-user-line text-xs"></AppIcon> Profile
-            </a>
+            </Link>
           </div>
         </div>
 

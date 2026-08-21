@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { roleNavMap } from '@/mocks/navigation';
 import { coachFetch } from '@/lib/coachFetch';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter';
 type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn' | 'ready-to-enrol' | 'unknown';
@@ -1193,9 +1194,8 @@ export default function CoachCaseload() {
             {coachRagSaveError && <div className="border-b border-red-100 bg-red-50 px-4 py-2 text-[11px] text-red-700">{coachRagSaveError}</div>}
 
             {loading ? (
-              <div className="py-20 text-center">
-                <AppIcon className="ri-loader-4-line mb-2 block animate-spin text-3xl text-primary-500"></AppIcon>
-                <p className="text-sm text-foreground-400">Loading learners...</p>
+              <div className="p-4">
+                <RowsSkeleton rows={6} />
               </div>
             ) : error ? (
               <div className="py-20 text-center text-sm text-red-600">{error}</div>
@@ -1325,9 +1325,8 @@ export default function CoachCaseload() {
             </div>
           )}
           {loading ? (
-            <div className="py-12 text-center">
-              <AppIcon className="ri-loader-4-line text-primary-500 text-3xl mb-2 block animate-spin"></AppIcon>
-              <p className="text-sm text-foreground-500">Loading live learner data...</p>
+            <div className="p-4">
+              <RowsSkeleton rows={5} />
             </div>
           ) : error ? (
             <div className="py-12 text-center">

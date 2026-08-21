@@ -5,6 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -86,6 +87,14 @@ export default function AttendancePage() {
 function HeroStat({ colour, value, label }: { colour: string; value: number; label: string }) { return <div className="flex items-center gap-2 text-xs text-white/55"><span className={`h-2 w-2 rounded-full ${colour}`}></span><strong className="text-white">{value}</strong>{label}</div>; }
 function StatCard({ icon, label, value, colour }: { icon: string; label: string; value: number; colour: string }) { return <article className="rounded-2xl border border-background-200 bg-white p-4 shadow-sm"><span className={`flex h-9 w-9 items-center justify-center rounded-xl ${colour}`}><AppIcon className={icon}></AppIcon></span><p className="mt-3 text-2xl font-bold text-foreground-900">{value}</p><p className="mt-1 text-[10px] text-foreground-400">{label}</p></article>; }
 function InfoBox({ icon, label, value }: { icon: string; label: string; value: string }) { return <div className="flex items-center gap-3 rounded-2xl border border-background-200 p-4"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className={icon}></AppIcon></span><div><p className="text-[9px] uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-semibold text-foreground-700">{value}</p></div></div>; }
-function Loading() { return <div className="rounded-3xl border border-background-200 bg-white p-16 text-center text-sm text-foreground-400"><AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600"></AppIcon>Loading verified Teams attendance…</div>; }
+function Loading() {
+  // Skeleton rather than a spinner: this stands in for the page's own
+  // content, so it should hold that shape while it loads.
+  return (
+    <div className="rounded-3xl border border-background-200 bg-white p-5">
+      <RowsSkeleton rows={5} />
+    </div>
+  );
+}
 function ErrorState({ message }: { message: string }) { return <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2"></AppIcon>{message}</div>; }
 function EmptyState() { return <div className="rounded-3xl border border-dashed border-foreground-300 bg-white px-6 py-16 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary-50 text-primary-500"><AppIcon className="ri-calendar-check-line text-xl"></AppIcon></span><h2 className="mt-3 text-sm font-bold text-foreground-800">No verified attendance yet</h2><p className="mt-1 text-xs text-foreground-400">Attendance will appear after a completed live session has been synced with its Microsoft Teams attendance report.</p></div>; }

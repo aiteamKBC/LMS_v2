@@ -7,6 +7,7 @@
 // spotting. Authoring happens in the curriculum workspace; this page reports.
 // ============================================================================
 import { useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { AdminPage, DataPanel, SourceNote } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
 import { fetchAdminCurriculum } from '@/api/platformAdmin';
@@ -77,9 +78,9 @@ export default function AdminProgrammesPage() {
                         : <span className="font-medium text-foreground-800">{p.learners}</span>}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <a href={`/admin/cohorts?programme=${encodeURIComponent(p.name)}`} className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
+                      <Link to={`/admin/cohorts?programme=${encodeURIComponent(p.name)}`} className="text-[11px] text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap cursor-pointer">
                         Cohorts <AppIcon className="ri-arrow-right-line text-[10px]"></AppIcon>
-                      </a>
+                      </Link>
                     </td>
                   </tr>
                 ))}

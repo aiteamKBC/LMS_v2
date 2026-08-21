@@ -1,4 +1,4 @@
-import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 
 // Skeleton placeholders for the engagement pages, shaped to mirror the real
 // cards they stand in for so the swap-in on load isn't jarring. Built on the

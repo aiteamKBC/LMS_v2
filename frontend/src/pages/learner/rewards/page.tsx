@@ -10,6 +10,7 @@ import {
   fetchVoucherClaims,
 } from '@/api/engagement';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 type Reward = Awaited<ReturnType<typeof fetchRewards>>[number];
@@ -139,5 +140,13 @@ function ListSection({ title, subtitle, children }: { title: string; subtitle: s
 function ClaimRow({ claim }: { claim: Claim }) { return <article className="flex flex-col gap-3 rounded-2xl border border-background-200 bg-white p-4 shadow-sm sm:flex-row sm:items-center"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className="ri-coupon-3-line"></AppIcon></span><div className="min-w-0 flex-1"><h3 className="text-sm font-bold text-foreground-900">{claim.reward}</h3><p className="mt-1 text-xs text-foreground-400">Requested {new Date(claim.requestedAt).toLocaleDateString('en-GB')} · {claim.points.toLocaleString()} points</p></div><span className={`w-fit rounded-full px-2.5 py-1 text-[10px] font-bold capitalize ring-1 ring-inset ${claimStyle[claim.status] || 'bg-background-100 text-foreground-600 ring-background-200'}`}>{claim.status}</span></article>; }
 function RecognitionCard({ recognition }: { recognition: Recognition }) { return <article className="rounded-2xl border border-background-200 bg-white p-5 shadow-sm"><div className="flex items-start gap-3"><span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-50 text-amber-600"><AppIcon className="ri-medal-line text-lg"></AppIcon></span><div><p className="text-[10px] font-bold uppercase tracking-wider text-primary-600">{recognition.type}</p><h3 className="mt-1 text-sm font-bold text-foreground-900">{recognition.title}</h3></div></div><p className="mt-3 text-sm leading-6 text-foreground-500">{recognition.description}</p><div className="mt-4 flex flex-wrap items-center gap-3 border-t border-background-200 pt-3 text-[10px] text-foreground-400"><span><AppIcon className="ri-user-star-line mr-1"></AppIcon>{recognition.awardedBy}</span><span><AppIcon className="ri-calendar-line mr-1"></AppIcon>{recognition.awardedAt}</span>{recognition.points > 0 && <span className="font-bold text-primary-600">+{recognition.points} points</span>}</div></article>; }
 function GrantRow({ grant }: { grant: Grant }) { return <article className="flex items-center gap-3 rounded-2xl border border-background-200 bg-white p-4 shadow-sm"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600"><AppIcon className="ri-add-circle-line"></AppIcon></span><div className="min-w-0 flex-1"><h3 className="text-sm font-bold text-foreground-900">{grant.rule}</h3><p className="mt-1 text-xs text-foreground-400">{grant.category || 'Points award'} · {grant.awardedAt}</p></div><span className="text-sm font-bold text-emerald-600">+{grant.points.toLocaleString()}</span></article>; }
-function Loading() { return <div className="rounded-2xl border border-background-200 bg-white px-4 py-10 text-center text-sm text-foreground-400 sm:p-14"><AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600"></AppIcon>Loading rewards from the database…</div>; }
+function Loading() {
+  // Skeleton rather than a spinner: this stands in for the page's own
+  // content, so it should hold that shape while it loads.
+  return (
+    <div className="rounded-2xl border border-background-200 bg-white p-4 sm:p-5">
+      <RowsSkeleton rows={5} />
+    </div>
+  );
+}
 function Empty({ icon, title }: { icon: string; title: string }) { return <div className="rounded-2xl border border-dashed border-foreground-300 bg-white px-4 py-10 text-center sm:px-6 sm:py-14"><span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-primary-50 text-primary-500"><AppIcon className={`${icon} text-xl`}></AppIcon></span><p className="mt-3 text-sm font-semibold text-foreground-700">{title}</p></div>; }

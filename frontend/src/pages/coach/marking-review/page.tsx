@@ -6,6 +6,7 @@ import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
+import { PanelSkeleton } from '@/components/feature/Skeletons';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/marking-queue';
@@ -232,7 +233,7 @@ export default function CoachMarkingReviewPage() {
         </header>
 
         {loading ? (
-          <div className="p-20 text-center text-foreground-400"><AppIcon className="ri-loader-4-line mr-2 animate-spin" />Loading review...</div>
+          <PanelSkeleton lines={6} />
         ) : error && !selected ? (
           <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div>
         ) : !selected ? (

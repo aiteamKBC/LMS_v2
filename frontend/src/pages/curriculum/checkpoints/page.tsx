@@ -1,4 +1,5 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { roleNavMap } from '@/mocks/navigation';
@@ -253,6 +254,7 @@ function quizToCheckpoint(quiz: QuizPackageResponse): MonthlyCheckpoint {
 }
 
 export default function CheckpointsPage() {
+  const navigate = useNavigate();
   const checkpointFileInputRef = useRef<HTMLInputElement | null>(null);
   const [checkpoints, setCheckpoints] = useState(initialCheckpoints);
   const [loading, setLoading] = useState(true);
@@ -341,7 +343,9 @@ export default function CheckpointsPage() {
   };
 
   const openCheckpointEditor = (checkpoint: MonthlyCheckpoint) => {
-    window.location.href = `/curriculum/quiz-xml/${checkpoint.id}/edit`;
+    // navigate, not window.location: the latter reloaded the SPA, which threw
+    // away this page's loaded state and re-fetched every route chunk.
+    navigate(`/curriculum/quiz-xml/${checkpoint.id}/edit`);
   };
 
   const updateCheckpointStatus = async (checkpoint: MonthlyCheckpoint, status: CheckpointStatus) => {

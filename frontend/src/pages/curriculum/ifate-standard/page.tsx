@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { SkeletonBlock } from '@/components/feature/CurriculumSkeletons';
+import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { fetchCurriculumStandardDetail, type CurriculumStandard, type CurriculumStandardKsb } from '@/lib/curriculumApi';
 import { curriculumNavItems } from '@/mocks/navigation';
 

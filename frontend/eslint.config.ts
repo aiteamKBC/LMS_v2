@@ -4,6 +4,7 @@ import reactHooks from 'eslint-plugin-react-hooks'
 import reactRefresh from 'eslint-plugin-react-refresh'
 import tseslint from 'typescript-eslint'
 import routeElementPlugin from './eslint-rules/route-element-jsx.js'
+import noRawInternalAnchorPlugin from './eslint-rules/no-raw-internal-anchor.js'
 
 const autoImportGlobals = {
   // React
@@ -100,6 +101,19 @@ export default [
     },
     rules: {
       'local-route/route-element-jsx': 'error',
+    },
+  },
+  // Anywhere a page or component links to an in-app route. Excludes the audit
+  // sub-apps, which run their own TanStack router and do not use react-router's
+  // <Link>, and the mock data modules, which hold hrefs as plain strings.
+  {
+    files: ['src/pages/**/*.tsx', 'src/components/**/*.tsx'],
+    ignores: ['src/features/audit/**'],
+    plugins: {
+      'local-nav': noRawInternalAnchorPlugin,
+    },
+    rules: {
+      'local-nav/no-raw-internal-anchor': 'error',
     },
   },
 ]

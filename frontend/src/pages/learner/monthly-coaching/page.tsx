@@ -7,6 +7,7 @@ import { fetchLearnerCalendarEvents, type LearnerCalendarEvent } from '@/api/lea
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { monthlyCoachingAnswers } from '@/pages/shared/monthlyCoachingForm';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
 
@@ -188,7 +189,7 @@ export function MonthlyCoachingListPage() {
             <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-50 text-primary-700"><AppIcon className="ri-calendar-event-line" /></span><div><h2 className="text-base font-bold text-foreground-900">Coaching sessions</h2><p className="mt-0.5 text-xs text-foreground-500">Open a session to review its 30-day learning summary.</p></div></div>
             <Link to="/learner/calendar" className="inline-flex h-9 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 text-xs font-bold text-primary-700 transition hover:bg-primary-100"><AppIcon className="ri-calendar-2-line" />Open calendar</Link>
           </div>
-          {loading ? <div className="p-10 text-center text-sm text-foreground-400">Loading monthly coaching sessions...</div> : sessions.length === 0 ? <div className="p-5"><Empty>No monthly coaching sessions were found.</Empty></div> : (
+          {loading ? <div className="p-5"><RowsSkeleton rows={4} /></div> : sessions.length === 0 ? <div className="p-5"><Empty>No monthly coaching sessions were found.</Empty></div> : (
             <>
               <div className="divide-y divide-background-200 md:hidden">
                 {visibleSessions.map((session) => {
@@ -302,7 +303,7 @@ export default function MonthlyCoachingPage() {
       <div className="space-y-4 p-4 md:p-6">
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}</div>}
         <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching sessions</button>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-10 text-center text-sm text-foreground-400">Loading coaching session...</div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : (
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
               <div className="bg-gradient-to-r from-primary-950 to-primary-800 p-5 text-white sm:p-6"><span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-bold text-white/80">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-accent-300">30-day coaching session</p><h1 className="mt-1 text-xl font-bold text-white">Monthly Coaching #{selected.sequence}</h1><p className="mt-1 text-sm text-white/60">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-white px-4 py-2 text-xs font-bold text-primary-800"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
