@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
+import { WorkspaceSwitcher } from '@/components/feature/WorkspaceSwitcher';
 
 interface HeaderProps {
   pageTitle: string;
@@ -202,6 +203,12 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
           Quick Create / Help / Settings icons were removed from the header.
           Their destinations are still routed and still reachable from the
           sidebar, so this removes the header entry points, not the features. */}
+
+      {/* Workspace switcher — administrators only, and the reason the Super
+          Admin dashboard no longer carries a Workspaces panel: from here every
+          section is one click away on every page, rather than five sections
+          reachable only from the dashboard. */}
+      <WorkspaceSwitcher />
 
       {/* Profile — kept: it is the only route to Sign Out. */}
       <div className="flex items-center gap-0.5">

@@ -83,6 +83,7 @@ import {
   LogOut,
   Mail,
   Map,
+  Megaphone,
   MessageCircle,
   Mic,
   Minus,
@@ -139,6 +140,17 @@ function resolveIcon(name: string): LucideIcon {
   const key = name.replace(/^ri-/, '').toLowerCase();
 
   if (/loader|loading/.test(key)) return Loader2;
+  // These three sit above the generic branches deliberately. Further down,
+  // `/search/` claims anything containing "search" and `/add/` claims anything
+  // containing "add", which shadowed the specific branches meant for these
+  // names — so `ri-file-search-*` rendered a bare magnifier (the `file-search`
+  // branch below is unreachable), `ri-user-add-*` a bare plus, and
+  // `ri-megaphone-*` a telephone, because /phone/ matches inside "megaphone".
+  // All three are used across the workspace switcher, the audit workspace, the
+  // learner clubs feed and the enrolment console.
+  if (/file-search/.test(key)) return FileSearch;
+  if (/user-add|user-received/.test(key)) return UserPlus;
+  if (/megaphone/.test(key)) return Megaphone;
   // Sign-out sits in the header and on the access-required screen; without
   // this it fell through every branch below and rendered a bare circle.
   if (/logout|log-out|sign-out|signout/.test(key)) return LogOut;

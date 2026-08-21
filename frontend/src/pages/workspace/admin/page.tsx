@@ -17,7 +17,6 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { PORTAL_WORKSPACES } from '@/lib/portalWorkspaces';
 import { ResendInvitationButton, canResendInvitation } from '@/pages/admin/_shared/ResendInvitation';
 import { useAuth } from '@/hooks/useAuth';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
@@ -236,38 +235,6 @@ export default function AdminDashboard() {
             <MiniStat loading={loading} label="Cohorts" value={overview.curriculum.cohorts} sub="in the curriculum schema" icon="ri-group-2-line" color="secondary" href="/admin/platform-report" />
           </>}
         </div>
-
-        {/* ============================================================ */}
-        {/* Workspaces — jump into any section                            */}
-        {/* ============================================================ */}
-        {/* Super Admin access means every workspace, so these navigate
-            straight there: unlike the public launcher, there is no demo
-            account to assume. The list is shared with that launcher
-            (lib/portalWorkspaces) so the two cannot drift apart. */}
-        <section className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-          <div className="flex items-center justify-between mb-1">
-            <h2 className="text-base font-heading font-semibold text-foreground-900">Workspaces</h2>
-            <span className="text-[11px] text-foreground-400">{PORTAL_WORKSPACES.length} sections</span>
-          </div>
-          <p className="text-[11px] text-foreground-400 mb-4">
-            Open any section directly — your access covers all of them.
-          </p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            {PORTAL_WORKSPACES.map(ws => (
-              <Link
-                key={ws.slug}
-                to={ws.path}
-                className="group flex flex-col items-start gap-2 p-3.5 rounded-xl border border-foreground-200/60 hover:border-primary-300 hover:bg-primary-50/40 transition-smooth cursor-pointer"
-              >
-                <span className="w-9 h-9 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center shrink-0 group-hover:bg-primary-200 transition-smooth">
-                  <AppIcon className={`${ws.icon} text-base`}></AppIcon>
-                </span>
-                <span className="text-[13px] font-semibold text-foreground-900">{ws.label}</span>
-                <span className="text-[10px] text-foreground-400 leading-snug">{ws.blurb}</span>
-              </Link>
-            ))}
-          </div>
-        </section>
 
         {/* ============================================================ */}
         {/* Main grid                                                     */}

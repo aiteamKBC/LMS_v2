@@ -8,7 +8,7 @@ import { PORTAL_WORKSPACES } from '@/lib/portalWorkspaces';
 // ── Workspaces shown as launch buttons on the home page ──
 // Each maps to a demo account so entering a section signs you in as the
 // matching role (no password). Sections without a dedicated demo user reuse
-// the closest account — the same mapping the in-app RoleSwitcher uses.
+// the closest account. `demoEmail` on the shared list is that mapping.
 interface WorkspaceSection {
   slug: string;
   label: string;
@@ -19,8 +19,8 @@ interface WorkspaceSection {
   highlighted?: boolean;
 }
 
-// Built from the shared list so the launcher and the Super Admin dashboard's
-// Workspaces card always offer the same five sections.
+// Built from the shared list so this launcher and the administrator's top-bar
+// workspace switcher always offer the same five sections.
 const WORKSPACE_SECTIONS: WorkspaceSection[] = PORTAL_WORKSPACES.map((w) => ({
   slug: w.slug,
   label: w.label,
