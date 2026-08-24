@@ -1,4 +1,4 @@
-import type { CurriculumKsbEntry, CurriculumModule } from '@/lib/curriculumApi';
+import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
 import {
   componentTypeGroups,
   componentTypes,
@@ -51,6 +51,12 @@ export interface AdvancedModuleDetails {
 export interface ModuleComponent {
   id: string;
   sourceId?: string;
+  /**
+   * The component this one was copied from, when it came out of the reuse
+   * library. Provenance only - a copy is fully independent of its source.
+   * Distinct from `sourceId`, which maps a delivery row back to its catalogue.
+   */
+  copiedFromId?: string;
   moduleId?: string;
   weekId: string;
   type: ModuleComponentType;
@@ -497,6 +503,61 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
   } catch (err) {
     throw err;
   }
+}
+
+/**
+ * Copy a component out of the reuse library into a week, as a snapshot.
+ *
+ * Every id is regenerated so the copy is fully independent: editing or deleting
+ * it never touches the source, and vice versa. The one thing deliberately
+ * *shared* is `settings.linkedQuizId` - quizzes are standalone rows that carry
+ * learner attempts, so duplicating one would fragment reporting.
+ *
+ * The copy is applied to client state and persisted by the normal
+ * full-structure save. A per-component write would not survive it:
+ * `save_module_authoring_structure` soft-deletes every component of the module
+ * and re-upserts from the payload it is given.
+ */
+export function copyComponentIntoWeek(
+  source: LibraryComponent,
+  targetWeekId: string,
+  targetModuleId: string,
+): ModuleComponent {
+  // `componentType` is the authoring type; `type` is a shared human label.
+  const type = (source.componentType || 'reading') as ModuleComponentType;
+  const definition = getComponentDefinition(type);
+  return {
+    id: makeAuthoringId('component'),
+    copiedFromId: source.id,
+    moduleId: targetModuleId,
+    weekId: targetWeekId,
+    type,
+    title: source.title || definition.label,
+    description: source.description || '',
+    expectedOtjh: Number(source.expectedOtjh ?? definition.defaultOtjh) || 0,
+    points: Number(source.points ?? definition.defaultPoints) || 0,
+    reflectionRequired: Boolean(source.reflectionRequired ?? definition.reflectionDefault),
+    workplaceEvidenceRequired: Boolean(source.workplaceEvidenceRequired ?? definition.workplaceEvidenceDefault),
+    tutorValidationRequired: Boolean(source.tutorValidationRequired ?? definition.tutorValidationDefault),
+    ksbMappings: (source.ksbMappings || []).map(mapping => {
+      const type = (mapping.type || mapping.classification || 'secondary') as KsbMappingType;
+      const weightClass = (mapping.weightClass || mapping.weight_class || 'soft') as KsbWeightClass;
+      return {
+        ...mapping,
+        id: makeAuthoringId('ksb'),
+        type,
+        // The API widens these to string; narrow both spellings together so the
+        // copy carries the same classification the source had.
+        classification: type,
+        weightClass,
+        weight_class: weightClass,
+      };
+    }),
+    settings: normaliseComponentSettings(type, {
+      ...getDefaultComponentSettings(type),
+      ...((source.settings || {}) as ComponentSettings),
+    }),
+  };
 }
 
 export async function deleteModuleStructure(moduleCatalogueId: string) {

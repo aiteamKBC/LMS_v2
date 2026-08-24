@@ -2604,6 +2604,108 @@ def authoring_soft_delete(table, where_sql, params=None, *, via_parent='', delet
     return soft_delete_rows(table, where_sql, params or [], via_parent=via_parent, deleted_by=deleted_by, extra=extra)
 
 
+# A detached row's parent id. These columns are NOT NULL, so an unattached row
+# carries the empty string rather than NULL - which is also precisely what
+# ``repair_curriculum_parent_links`` already skips, so the orphan sweeper cannot
+# destroy library content.
+LIBRARY_STATE_DETACHED = 'library'
+DETACHED_PARENT_SENTINEL = ''
+
+
+def detach_to_library_payload(
+    table,
+    *,
+    origin_module_id='',
+    origin_module_title='',
+    origin_week_id='',
+    origin_week_label='',
+):
+    """Columns that turn an owned row into an unattached, reusable one.
+
+    A library item is deliberately *not* a deleted item: the soft-delete stamps
+    are cleared, because the row is no longer archived-under-a-parent, it simply
+    has no parent. Origin is denormalised because the whole point is that the
+    parent row is going away and its title would otherwise be unrecoverable.
+
+    Every write is guarded by ``has_column`` in the same style as
+    ``soft_delete_payload``, so an environment that has not yet run migration
+    0053 degrades to a plain detach rather than raising.
+    """
+    payload = {'updated_at': datetime.utcnow()}
+    if has_column(table, 'library_state'):
+        payload['library_state'] = LIBRARY_STATE_DETACHED
+    if has_column(table, 'detached_at'):
+        payload['detached_at'] = datetime.utcnow()
+    if has_column(table, 'origin_module_catalogue_id'):
+        payload['origin_module_catalogue_id'] = clean_str(origin_module_id)
+    if has_column(table, 'origin_module_title'):
+        payload['origin_module_title'] = clean_str(origin_module_title)
+    if has_column(table, 'origin_week_id'):
+        payload['origin_week_id'] = clean_str(origin_week_id)
+    if has_column(table, 'origin_week_label'):
+        payload['origin_week_label'] = clean_str(origin_week_label)
+    # Clear the parent links. Empty string, not NULL: the columns are NOT NULL
+    # and the orphan sweeper's own guards test for ''.
+    if has_column(table, 'module_catalogue_id'):
+        payload['module_catalogue_id'] = DETACHED_PARENT_SENTINEL
+    if has_column(table, 'week_id'):
+        payload['week_id'] = DETACHED_PARENT_SENTINEL
+    # An unattached row is available, not archived.
+    if has_column(table, 'deleted_at'):
+        payload['deleted_at'] = None
+    if has_column(table, 'deleted_by'):
+        payload['deleted_by'] = None
+    if has_column(table, 'deleted_via_parent'):
+        payload['deleted_via_parent'] = None
+    if has_column(table, 'is_programme_deleted'):
+        payload['is_programme_deleted'] = False
+    return payload
+
+
+def detach_rows_to_library(table, where_sql, where_params=None, **origin):
+    """Detach matching rows into the reuse library instead of deleting them."""
+    if not table_exists(table):
+        return []
+    payload = detach_to_library_payload(table, **origin)
+    if not any(column in column_names(table) for column in payload):
+        return []
+    # Already-detached rows keep their original origin stamps: a second detach
+    # would overwrite them with the parent that is being removed now, which is
+    # not where the content actually came from.
+    guarded_where = where_sql
+    if has_column(table, 'library_state'):
+        guarded_where = (
+            f'({where_sql}) and coalesce({quote_ident("library_state")}, %s) <> %s'
+        )
+    params = list(where_params or [])
+    if has_column(table, 'library_state'):
+        params = [*params, '', LIBRARY_STATE_DETACHED]
+    # allow_null_columns is required, not cosmetic: filtered_payload drops None
+    # values, so without it the soft-delete stamps would survive the detach and
+    # a programme-archived component would stay archived forever. The real path
+    # always hits this - a permanent delete is only allowed on an already
+    # archived programme, whose children are all stamped.
+    return update_rows(
+        table, guarded_where, params, payload,
+        allow_null_columns=RESTORE_NULLABLE_COLUMNS,
+    )
+
+
+def is_library_row(row):
+    """True when this week/component is detached and held for reuse."""
+    return clean_str((row or {}).get('library_state')) == LIBRARY_STATE_DETACHED
+
+
+def library_sweep_guard(table, where_sql):
+    """Narrow a destructive sweep so it can never touch detached library rows."""
+    if not has_column(table, 'library_state'):
+        return where_sql
+    return (
+        f"({where_sql}) and coalesce({quote_ident('library_state')}, '') "
+        f"<> '{LIBRARY_STATE_DETACHED}'"
+    )
+
+
 def deleted_sql_condition(table, alias=''):
     prefix = f'{alias}.' if alias else ''
     checks = []
@@ -3868,24 +3970,188 @@ def programme_permanent_delete_plan(identifier, programme=None, config=None):
         curriculum_in_clause('group_id', child['groupIds']),
         curriculum_in_clause('module_catalogue_id', child['moduleIds']),
     ])
+    plan['origins'] = programme_permanent_delete_origins(child)
     plan['blockers'] = programme_permanent_delete_blockers(child)
     plan['learners'] = parse_int(programme_dependency_counts(identifier, config).get('learners'), 0)
     return plan
 
 
+def programme_permanent_delete_origins(child_ids):
+    """Human-readable labels for the parents that are about to be removed.
+
+    Content detached into the library keeps a denormalised note of where it came
+    from, and this is the only moment that note can be taken: once the module
+    and week rows are gone their titles are unrecoverable.
+    """
+    origins = {'modules': {}, 'weeks': {}}
+    module_ids = child_ids.get('moduleIds') or []
+    week_ids = child_ids.get('weekIds') or []
+    if module_ids and table_exists(AUTHORING_MODULES_TABLE):
+        where_sql, params = curriculum_where_any([
+            curriculum_in_clause('module_catalogue_id', module_ids),
+        ])
+        if where_sql:
+            for row in fetch_all(
+                f'select module_catalogue_id, title from {table_name(AUTHORING_MODULES_TABLE)} where {where_sql}',
+                params,
+            ):
+                origins['modules'][clean_str(row.get('module_catalogue_id'))] = clean_str(row.get('title'))
+    if week_ids and table_exists(AUTHORING_WEEKS_TABLE):
+        where_sql, params = curriculum_where_any([curriculum_in_clause('id', week_ids)])
+        if where_sql:
+            for row in fetch_all(
+                f'select id, week_number, title from {table_name(AUTHORING_WEEKS_TABLE)} where {where_sql}',
+                params,
+            ):
+                origins['weeks'][clean_str(row.get('id'))] = component_week_label(row)
+    return origins
+
+
+def detach_programme_content_to_library(plan, removed):
+    """Move authored content out of a dying programme instead of destroying it.
+
+    Weeks and components are the reusable output of Curriculum Studio and an
+    author may well want them again in a different module, so a permanent
+    programme delete detaches them into the library rather than deleting them.
+    They keep a denormalised note of where they came from, taken from
+    ``plan['origins']`` while the parent rows still exist.
+
+    Quizzes are detached too, by clearing their programme and week. They are
+    already standalone rows carrying learner attempts, and their questions and
+    answers hang off them by ``ON DELETE CASCADE`` - a cascade that from here on
+    simply never fires for a programme delete.
+    """
+    child = plan.get('childIds') or {}
+    origins = plan.get('origins') or {}
+    module_titles = origins.get('modules') or {}
+    week_labels = origins.get('weeks') or {}
+    week_ids = child.get('weekIds') or []
+    component_ids = set(child.get('componentIds') or [])
+
+    def count(table, rows):
+        if rows:
+            removed[table] = removed.get(table, 0) + len(rows)
+
+    # Components carry their own week, so detach one week at a time to stamp the
+    # right origin on each. A programme has tens of weeks, not thousands.
+    detached_component_ids = set()
+    if component_ids and table_exists(AUTHORING_COMPONENTS_TABLE):
+        for week_id in week_ids:
+            rows = authoring_fetch_all(
+                AUTHORING_COMPONENTS_TABLE, 'week_id = %s', [week_id],
+            )
+            matching = [row for row in rows if clean_str(row.get('id')) in component_ids]
+            if not matching:
+                continue
+            ids = [clean_str(row.get('id')) for row in matching]
+            # Every component in a week shares its module, so the first matching
+            # row settles it - but read it from a row we are actually detaching.
+            module_id = clean_str(matching[0].get('module_catalogue_id'))
+            placeholders = ', '.join(['%s'] * len(ids))
+            count(AUTHORING_COMPONENTS_TABLE, detach_rows_to_library(
+                AUTHORING_COMPONENTS_TABLE,
+                f'id in ({placeholders})',
+                ids,
+                origin_module_id=module_id,
+                origin_module_title=module_titles.get(module_id, ''),
+                origin_week_id=week_id,
+                origin_week_label=week_labels.get(week_id, ''),
+            ))
+            detached_component_ids.update(ids)
+        # A component attached to the module but to no surviving week still has
+        # to come along, or it would be left pointing at a module that is gone.
+        # Grouped by module so these keep a provenance label too.
+        stragglers = component_ids - detached_component_ids
+        if stragglers:
+            by_module = defaultdict(list)
+            where_sql, params = curriculum_where_any([
+                curriculum_in_clause('id', sorted(stragglers)),
+            ])
+            if where_sql:
+                for row in fetch_all(
+                    f'select id, module_catalogue_id from {table_name(AUTHORING_COMPONENTS_TABLE)} where {where_sql}',
+                    params,
+                ):
+                    by_module[clean_str(row.get('module_catalogue_id'))].append(clean_str(row.get('id')))
+            for module_id, ids in by_module.items():
+                placeholders = ', '.join(['%s'] * len(ids))
+                count(AUTHORING_COMPONENTS_TABLE, detach_rows_to_library(
+                    AUTHORING_COMPONENTS_TABLE,
+                    f'id in ({placeholders})',
+                    ids,
+                    origin_module_id=module_id,
+                    origin_module_title=module_titles.get(module_id, ''),
+                ))
+
+    # Weeks, grouped by the module that is going away.
+    if week_ids and table_exists(AUTHORING_WEEKS_TABLE):
+        weeks_by_module = defaultdict(list)
+        where_sql, params = curriculum_where_any([curriculum_in_clause('id', week_ids)])
+        if where_sql:
+            for row in fetch_all(
+                f'select id, module_catalogue_id from {table_name(AUTHORING_WEEKS_TABLE)} where {where_sql}',
+                params,
+            ):
+                weeks_by_module[clean_str(row.get('module_catalogue_id'))].append(clean_str(row.get('id')))
+        for module_id, ids in weeks_by_module.items():
+            placeholders = ', '.join(['%s'] * len(ids))
+            count(AUTHORING_WEEKS_TABLE, detach_rows_to_library(
+                AUTHORING_WEEKS_TABLE,
+                f'id in ({placeholders})',
+                ids,
+                origin_module_id=module_id,
+                origin_module_title=module_titles.get(module_id, ''),
+            ))
+
+    # Quizzes: unhook from the programme and week, keep the quiz.
+    if table_exists('quizzes'):
+        clauses = [curriculum_in_clause('programme_id', plan.get('candidates') or [])]
+        if week_ids:
+            clauses.append(curriculum_in_clause('week_id', week_ids))
+        where_sql, params = curriculum_where_any(clauses)
+        if where_sql:
+            updates = {}
+            if has_column('quizzes', 'week_id'):
+                updates['week_id'] = DETACHED_PARENT_SENTINEL
+            if has_column('quizzes', 'programme_id'):
+                updates['programme_id'] = DETACHED_PARENT_SENTINEL
+            if updates:
+                count('quizzes', update_rows('quizzes', where_sql, params, updates))
+
+    # Week templates are reusable by definition; unhook rather than delete.
+    template_ids = child.get('weekTemplateIds') or []
+    if template_ids and table_exists(WEEK_TEMPLATES_TABLE):
+        where_sql, params = curriculum_where_any([curriculum_in_clause('id', template_ids)])
+        if where_sql:
+            updates = {'updated_at': datetime.utcnow()}
+            for column in ('programme_id', 'programme_name', 'group_id', 'group_name', 'module_catalogue_id'):
+                if has_column(WEEK_TEMPLATES_TABLE, column):
+                    updates[column] = DETACHED_PARENT_SENTINEL
+            count(WEEK_TEMPLATES_TABLE, update_rows(WEEK_TEMPLATES_TABLE, where_sql, params, updates))
+
+
 def permanently_delete_programme_structure(plan):
-    """Delete an archived programme and every curriculum row beneath it, for real.
+    """Delete an archived programme, and detach the content authored under it.
 
     The order is dictated by the foreign keys migration 0038 added (children
     first, ON DELETE RESTRICT). That ordering is exactly what a hand-written
     ``delete from curriculum.programmes`` cannot supply, which is why Postgres
     answers it with ``cohorts_programme_id_fkey``.
 
-    Where a cascade already exists it is left to do its job: deleting a live
-    session takes its occurrences, attendance, artifacts and recording events,
-    and deleting a quiz takes its questions, answers and links. The link tables
-    are still cleared explicitly first, because a link may point at this
-    programme's module from a quiz that belongs to another programme.
+    Authored content is *not* deleted. Weeks, components, quizzes and week
+    templates are detached into the reuse library by
+    ``detach_programme_content_to_library``; the delivery scaffolding around them
+    - the programme, cohorts, groups, modules, live sessions and link rows - is
+    what actually goes. Deleting a live session still takes its occurrences,
+    attendance, artifacts and recording events with it by cascade.
+
+    The link tables are cleared explicitly first, because a link may point at
+    this programme's module from a quiz that belongs to another programme.
+
+    ``ksb_mappings`` is still wiped, and that loses nothing: since 0042 a
+    component owns its mappings in its own ``ksb_mappings`` JSONB column and
+    that table is a projection of it (``component_ksb_mappings_from_row``
+    prefers the JSONB). Detached components keep their KSBs.
 
     Learner accounts, progress and enrolment rows are never touched. The
     training-plan tables that reference this content are RESTRICT-guarded and
@@ -3909,22 +4175,17 @@ def permanently_delete_programme_structure(plan):
     module_clause = curriculum_in_clause('module_catalogue_id', child.get('moduleIds'))
     week_clause = curriculum_in_clause('week_id', child.get('weekIds'))
     component_clause = curriculum_in_clause('component_id', child.get('componentIds'))
-    template_clause = curriculum_in_clause('id', child.get('weekTemplateIds'))
+
+    # Detach first, while the module and week rows are still here to be read.
+    detach_programme_content_to_library(plan, removed)
 
     wipe(AUTHORING_KSB_MAPPINGS_TABLE, [module_clause, week_clause, component_clause])
     wipe('quiz_component_links', [component_clause])
     wipe('quiz_course_links', [module_clause, week_clause])
-    wipe('quizzes', [programme_clause, week_clause])
     wipe('tutor_module_notifications', [module_clause])
     wipe('module_completion_criteria', [module_clause])
     wipe('module_details', [module_clause])
     wipe(LIVE_SESSIONS_TABLE, [module_clause])
-    wipe(AUTHORING_COMPONENTS_TABLE, [curriculum_in_clause('id', child.get('componentIds'))])
-    wipe(AUTHORING_WEEKS_TABLE, [curriculum_in_clause('id', child.get('weekIds'))])
-    wipe('week_template_components', [
-        curriculum_in_clause('week_template_id', child.get('weekTemplateIds')),
-    ])
-    wipe(WEEK_TEMPLATES_TABLE, [template_clause])
     wipe('free_programme_components', [programme_clause])
     wipe('free_programme_modules', [programme_clause])
     wipe(AUTHORING_MODULES_TABLE, [
@@ -6232,6 +6493,8 @@ def authoring_session_links_by_catalogue(module_catalogue_ids):
             f'module_catalogue_id in ({placeholders})',
             module_catalogue_ids,
             'module_catalogue_id, week_id, display_order, id',
+            # Reads id/title/type/week_id only; settings_json is 24 MB.
+            exclude_columns=COMPONENT_HEAVY_COLUMNS,
         )
     except Exception:
         logger.debug('Unable to batch read authored session links.', exc_info=True)
@@ -8930,12 +9193,40 @@ def identity_ids_conflict(left_id, context_ids):
 
 
 def authoring_component_counts_by_catalogue():
+    """How many live components each module has, counted in the database.
+
+    This used to read every column of every component row - 39 MB and ~175 s
+    against the remote database - and then throw all of it away except the
+    module id. The predicate below is the SQL form of ``active_component_rows``:
+    not soft-deleted, not detached into the library, and not a retired type.
+    """
     counts = Counter()
     try:
-        for row in active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE)):
-            catalogue_id = clean_str(row.get('module_catalogue_id'))
+        ensure_module_authoring_tables()
+        clauses = [f"coalesce({quote_ident('module_catalogue_id')}, '') <> ''"]
+        params = []
+        deleted = deleted_sql_condition(AUTHORING_COMPONENTS_TABLE)
+        if deleted != 'false':
+            clauses.append(f'not ({deleted})')
+        if has_column(AUTHORING_COMPONENTS_TABLE, 'library_state'):
+            clauses.append(f"coalesce({quote_ident('library_state')}, '') <> %s")
+            params.append(LIBRARY_STATE_DETACHED)
+        retired = sorted(RETIRED_COMPONENT_TYPES)
+        if retired:
+            placeholders = ', '.join(['%s'] * len(retired))
+            clauses.append(f'type not in ({placeholders})')
+            params.extend(retired)
+        rows = fetch_all(
+            f'select {quote_ident("module_catalogue_id")} as catalogue_id, count(*) as total '
+            f'from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} '
+            f'where {" and ".join(clauses)} '
+            f'group by {quote_ident("module_catalogue_id")}',
+            params,
+        )
+        for row in rows:
+            catalogue_id = clean_str(row.get('catalogue_id'))
             if catalogue_id:
-                counts[catalogue_id] += 1
+                counts[catalogue_id] = parse_int(row.get('total'), 0)
     except Exception:
         logger.debug('Unable to count authoring components by module.', exc_info=True)
     return counts
@@ -9028,6 +9319,48 @@ def ensure_module_authoring_tables():
         _AUTHORING_TABLES_READY = True
         return
     provision_module_authoring_tables()
+
+
+# Columns that let a week or component be detached from its parent and kept for
+# reuse instead of destroyed. Mirrors migration 0053; kept in sync by hand
+# because these tables are ``managed = False`` and this bootstrap is what the
+# SQLite test runner provisions from.
+LIBRARY_COLUMN_DDL = (
+    ('library_state', "varchar(16) not null default ''"),
+    ('detached_at', 'timestamp with time zone'),
+    ('origin_module_catalogue_id', 'varchar(128)'),
+    ('origin_module_title', 'varchar(500)'),
+    ('origin_week_id', 'varchar(128)'),
+    ('origin_week_label', 'varchar(500)'),
+    ('copied_from_id', 'varchar(128)'),
+)
+
+
+def provision_library_columns(cursor, table):
+    """Add the library/detach columns to a weeks-or-components table.
+
+    The column cache is dropped afterwards: every detach helper decides what to
+    write through ``has_column``, so a cache entry captured before these columns
+    landed would make the detach silently skip them.
+    """
+    if connection.vendor == 'postgresql':
+        for column, column_type in LIBRARY_COLUMN_DDL:
+            cursor.execute(
+                f'alter table {authoring_table_name(table)} '
+                f'add column if not exists {quote_ident(column)} {column_type}'
+            )
+    else:
+        cursor.execute(f'pragma table_info({quote_ident(table)})')
+        existing = {row[1] for row in cursor.fetchall()}
+        for column, column_type in LIBRARY_COLUMN_DDL:
+            if column in existing:
+                continue
+            cursor.execute(
+                f'alter table {authoring_table_name(table)} '
+                f'add column {quote_ident(column)} {column_type}'
+            )
+    _TABLE_COLUMNS_CACHE.pop(table, None)
+    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
 
 
 def provision_module_authoring_tables():
@@ -9147,6 +9480,7 @@ def provision_module_authoring_tables():
             columns = {row[1] for row in cursor.fetchall()}
             if 'is_programme_deleted' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column is_programme_deleted boolean not null default false')
+        provision_library_columns(cursor, AUTHORING_WEEKS_TABLE)
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (
                 id varchar(128) primary key,
@@ -9219,6 +9553,7 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column is_programme_deleted boolean not null default false')
             if 'ksb_mappings' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column ksb_mappings {json_type}')
+        provision_library_columns(cursor, AUTHORING_COMPONENTS_TABLE)
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (
                 id varchar(128) primary key,
@@ -9768,10 +10103,33 @@ def provision_free_programme_tables():
 
 
 @scoped_curriculum_read
-def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensure_tables=True):
+def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensure_tables=True, columns=None, exclude_columns=None):
+    """Read authoring rows. Pass ``columns`` to avoid ``select *``.
+
+    Narrowing matters on ``curriculum.components``: it holds ~18k rows and
+    39 MB, 24 MB of which is ``settings_json``, and the database is remote.
+    A caller that only needs titles and counts pays ~90 s for ``select *``
+    against well under a second for the columns it actually reads. ``columns``
+    is part of the memo key, so a narrow read and a full read never collide.
+
+    ``exclude_columns`` is the inverse and is the safer choice for a caller that
+    reads most of the row: it drops only what is named, so a column added later
+    still arrives.
+    """
     if ensure_tables:
         ensure_module_authoring_tables()
-    query = f'select * from {authoring_table_name(table)}'
+    if columns:
+        wanted = [column for column in columns if has_column(table, column)]
+        select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
+    elif exclude_columns:
+        # Everything but the named columns. Safer than an allow-list for a
+        # caller that reads most of the row: a column added later is included
+        # automatically instead of silently arriving as None.
+        wanted = sorted(column_names(table) - {column for column in exclude_columns})
+        select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
+    else:
+        select_list = '*'
+    query = f'select {select_list} from {authoring_table_name(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
@@ -10287,9 +10645,15 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
         # physically gone. A soft-deleted week/module/component still has its
         # row, so an archived branch of curriculum is never swept up here and
         # historical learner progress stays joinable to it.
-        authoring_delete(AUTHORING_WEEKS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
-        authoring_delete(AUTHORING_COMPONENTS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
-        authoring_delete(AUTHORING_COMPONENTS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")")
+        #
+        # Detached library content is excluded twice over. Its parent ids are
+        # the empty string, which the coalesce guards below already skip, and
+        # the explicit library_state check makes that protection independent of
+        # the sentinel - a detach that forgot to clear a parent id would
+        # otherwise have its content swept away here.
+        authoring_delete(AUTHORING_WEEKS_TABLE, library_sweep_guard(AUTHORING_WEEKS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")"))
+        authoring_delete(AUTHORING_COMPONENTS_TABLE, library_sweep_guard(AUTHORING_COMPONENTS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")"))
+        authoring_delete(AUTHORING_COMPONENTS_TABLE, library_sweep_guard(AUTHORING_COMPONENTS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")"))
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")")
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(component_id, '') <> '' and component_id not in (select id from " + authoring_table_name(AUTHORING_COMPONENTS_TABLE) + ")")
@@ -10335,14 +10699,20 @@ def is_retired_component_type(value):
 
 
 def active_component_rows(rows):
+    # Detached library rows are excluded too. A detach deliberately clears the
+    # soft-delete stamps, so without this they would read as live content and
+    # surface in the component list belonging to no module at all. They are
+    # reachable only through the reuse library.
     return [
         row for row in rows
-        if not is_retired_component_type(row.get('type')) and not programme_deleted_row(row)
+        if not is_retired_component_type(row.get('type'))
+        and not programme_deleted_row(row)
+        and not is_library_row(row)
     ]
 
 
 def active_week_rows(rows):
-    return [row for row in rows if not programme_deleted_row(row)]
+    return [row for row in rows if not programme_deleted_row(row) and not is_library_row(row)]
 
 
 def active_mapping_rows(rows):
@@ -11402,6 +11772,269 @@ def component_builder_rows(module_catalogue_ids=None):
     ]
 
 
+LIBRARY_ORIGIN_ACTIVE = 'active'
+LIBRARY_ORIGIN_ARCHIVED = 'archived'
+LIBRARY_ORIGIN_LIBRARY = 'library'
+LIBRARY_ORIGINS = (LIBRARY_ORIGIN_ACTIVE, LIBRARY_ORIGIN_ARCHIVED, LIBRARY_ORIGIN_LIBRARY)
+
+
+def library_component_origin(row):
+    """Which bucket of the reuse library this component sits in.
+
+    ``library`` wins over ``archived``: a detached row has its soft-delete
+    stamps cleared on purpose, so the two are mutually exclusive in practice,
+    but ordering the checks makes that explicit rather than incidental.
+    """
+    if is_library_row(row):
+        return LIBRARY_ORIGIN_LIBRARY
+    if programme_deleted_row(row):
+        return LIBRARY_ORIGIN_ARCHIVED
+    return LIBRARY_ORIGIN_ACTIVE
+
+
+# Columns the picker list needs. Deliberately excludes settings_json, which
+# holds inlined authoring content - up to 200 kB on a single reading component
+# and 24 MB across the table. The picker shows titles; only the components
+# actually being copied need their settings, and those are fetched by id.
+LIBRARY_LIST_COLUMNS = (
+    'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'display_order',
+    'expected_otjh', 'points', 'reflection_required', 'workplace_evidence_required',
+    'tutor_validation_required', 'updated_at', 'deleted_at', 'is_programme_deleted',
+    'library_state', 'detached_at', 'copied_from_id',
+    'origin_module_catalogue_id', 'origin_module_title',
+    'origin_week_id', 'origin_week_label',
+)
+LIBRARY_PAGE_SIZE_DEFAULT = 50
+LIBRARY_PAGE_SIZE_MAX = 200
+
+
+def library_component_where(*, search='', types=None, origins=None, ids=None):
+    """The SQL predicate for a library search. Everything filters in the database.
+
+    Origin is expressed in SQL rather than in Python so that the LIMIT applies
+    to the rows the caller actually asked for. ``library_state`` and the
+    soft-delete columns are what separate the three buckets.
+    """
+    clauses = []
+    params = []
+    wanted_ids = sorted({clean_str(value) for value in (ids or []) if clean_str(value)})
+    if wanted_ids:
+        placeholders = ', '.join(['%s'] * len(wanted_ids))
+        clauses.append(f'id in ({placeholders})')
+        params.extend(wanted_ids)
+    search = clean_str(search).lower()
+    if search:
+        # lower(...) like ... rather than ilike, so the same SQL runs on the
+        # SQLite test database as on Postgres.
+        clauses.append(
+            "(lower(coalesce(title, '')) like %s or lower(coalesce(description, '')) like %s)"
+        )
+        params.extend([f'%{search}%'] * 2)
+    wanted_types = sorted({normalise_component_type(value) for value in (types or []) if clean_str(value)})
+    if wanted_types:
+        placeholders = ', '.join(['%s'] * len(wanted_types))
+        clauses.append(f'type in ({placeholders})')
+        params.extend(wanted_types)
+    retired = sorted(RETIRED_COMPONENT_TYPES)
+    if retired:
+        # Retired types cannot be authored any more, so reusing one is a dead end.
+        placeholders = ', '.join(['%s'] * len(retired))
+        clauses.append(f'type not in ({placeholders})')
+        params.extend(retired)
+
+    wanted_origins = {clean_str(value).lower() for value in (origins or []) if clean_str(value)}
+    wanted_origins = wanted_origins & set(LIBRARY_ORIGINS) or set(LIBRARY_ORIGINS)
+    if wanted_origins != set(LIBRARY_ORIGINS):
+        # Only the 'library' bucket needs library_state. Active-vs-archived is
+        # decided by the soft-delete columns alone, so this must NOT be gated on
+        # that column: before migration 0053 it made the whole filter a no-op and
+        # unticking a bucket appeared to do nothing at all.
+        if has_column(AUTHORING_COMPONENTS_TABLE, 'library_state'):
+            detached = f"coalesce({quote_ident('library_state')}, '') = '{LIBRARY_STATE_DETACHED}'"
+        else:
+            # No column means nothing can be detached yet.
+            detached = 'false'
+        archived = deleted_sql_condition(AUTHORING_COMPONENTS_TABLE)
+        origin_sql = {
+            LIBRARY_ORIGIN_LIBRARY: f'({detached})',
+            LIBRARY_ORIGIN_ARCHIVED: f'(not ({detached}) and ({archived}))',
+            LIBRARY_ORIGIN_ACTIVE: f'(not ({detached}) and not ({archived}))',
+        }
+        # No placeholders here on purpose: every fragment is built from module
+        # constants, so there is nothing to bind and nothing to get out of order
+        # with the clauses appended above.
+        clauses.append('(' + ' or '.join(
+            origin_sql[origin] for origin in sorted(wanted_origins) if origin in origin_sql
+        ) + ')')
+    return ' and '.join(clauses), params
+
+
+def rows_for_ids(table, column, values):
+    """Fetch just the rows these ids name. No ids means no query at all."""
+    wanted = sorted({clean_str(value) for value in (values or []) if clean_str(value)})
+    if not wanted or not table_exists(table):
+        return []
+    placeholders = ', '.join(['%s'] * len(wanted))
+    return fetch_all(
+        f'select * from {authoring_table_name(table)} where {quote_ident(column)} in ({placeholders})',
+        wanted,
+    )
+
+
+def library_component_rows(*, search='', types=None, programme_ids=None, origins=None,
+                           ids=None, page=1, page_size=LIBRARY_PAGE_SIZE_DEFAULT, detail=False):
+    """Components available for reuse, across every programme ever authored.
+
+    Deliberately does NOT go through ``active_component_rows``: archived and
+    detached content is the point of this read, and that filter is exactly what
+    removes it.
+
+    Every filter and the page window are pushed into SQL, and the list omits
+    ``settings_json``. That is not a micro-optimisation. ``curriculum.components``
+    holds ~18k rows and 39 MB, 24 MB of it ``settings_json``, and the database is
+    remote: reading the table in full measured ~90 s against ~190 ms for a
+    narrow, limited read.
+
+    ``detail=True`` returns the heavy authoring fields (``settings``,
+    ``ksbMappings``) and is meant to be called with ``ids``, for the handful of
+    components actually being copied.
+    """
+    ensure_module_authoring_tables()
+    where_sql, params = library_component_where(search=search, types=types, origins=origins, ids=ids)
+    page = max(1, parse_int(page, 1))
+    page_size = min(LIBRARY_PAGE_SIZE_MAX, max(1, parse_int(page_size, LIBRARY_PAGE_SIZE_DEFAULT)))
+
+    if detail:
+        columns = '*'
+    else:
+        columns = ', '.join(
+            quote_ident(column) for column in LIBRARY_LIST_COLUMNS
+            if has_column(AUTHORING_COMPONENTS_TABLE, column)
+        )
+    query = f'select {columns} from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}'
+    if where_sql:
+        query += f' where {where_sql}'
+    query += ' order by updated_at desc, display_order, id limit %s offset %s'
+    component_rows = fetch_all(query, [*params, page_size, (page - 1) * page_size])
+    if not component_rows:
+        return []
+
+    # Look up only the parents this page refers to. A detached component's module
+    # row may be long gone and an archived one's module is archived too, so these
+    # cannot go through the active-only helpers.
+    module_by_id = {
+        str(row.get('module_catalogue_id')): row
+        for row in rows_for_ids(
+            AUTHORING_MODULES_TABLE, 'module_catalogue_id',
+            {clean_str(row.get('module_catalogue_id')) for row in component_rows},
+        )
+    }
+    week_by_id = {
+        str(row.get('id')): row
+        for row in rows_for_ids(
+            AUTHORING_WEEKS_TABLE, 'id',
+            {clean_str(row.get('week_id')) for row in component_rows},
+        )
+    }
+    mappings_by_component = defaultdict(list)
+    if detail:
+        for row in rows_for_ids(
+            AUTHORING_KSB_MAPPINGS_TABLE, 'component_id',
+            {clean_str(row.get('id')) for row in component_rows},
+        ):
+            mappings_by_component[str(row.get('component_id'))].append(row)
+
+    wanted_programmes = {clean_str(value) for value in (programme_ids or []) if clean_str(value)}
+    results = []
+    for row in component_rows:
+        module = module_by_id.get(str(row.get('module_catalogue_id')), {})
+        week = week_by_id.get(str(row.get('week_id')), {})
+        # Once the parents are gone the denormalised origin stamps are the only
+        # source. Note this cannot be written as ``payload['week'] or fallback``:
+        # component_week_label({}) returns a plausible-looking "Week 1" for a
+        # missing week, which would quietly mislabel every detached component.
+        module_title = clean_str(module.get('title')) if module else clean_str(row.get('origin_module_title'))
+        week_label = component_week_label(week) if week else clean_str(row.get('origin_week_label'))
+        module_id = clean_str(row.get('module_catalogue_id')) or clean_str(row.get('origin_module_catalogue_id'))
+        if wanted_programmes and clean_str(module.get('programme_id')) not in wanted_programmes:
+            continue
+        payload = component_builder_response(row, module_by_id, week_by_id, mappings_by_component)
+        payload.update({
+            'origin': library_component_origin(row),
+            # component_builder_response puts a human label in `type`
+            # ("Self-study"), which cannot be copied into a new component.
+            # The authoring type is the hyphenated machine value.
+            'componentType': frontend_component_type(row.get('type')),
+            'originModuleCatalogueId': module_id,
+            'originModuleTitle': module_title,
+            'originWeekId': clean_str(row.get('week_id')) or clean_str(row.get('origin_week_id')),
+            'originWeekLabel': week_label,
+            'detachedAt': row.get('detached_at'),
+            'copiedFromId': clean_str(row.get('copied_from_id')),
+            'module': module_title,
+            'week': week_label,
+            'weekTitle': clean_str(week.get('title')) if week else week_label,
+        })
+        results.append(payload)
+    return results
+
+
+@csrf_exempt
+def curriculum_component_library(request):
+    """Read-only search over every component that could be reused.
+
+    Two modes. Without ``ids`` this is the picker list: narrow columns, one page
+    at a time. With ``ids`` it returns full authoring detail for those
+    components only - what a caller needs to copy them. The split exists because
+    ``settings_json`` is 24 MB across this table and the list never shows it.
+
+    Paging is applied in SQL here, so the response is built without going
+    through ``paginate_curriculum_results`` (which slices an already-built list).
+    """
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    ids = csv_param(request, 'ids', 'id')
+    page = parse_int(request.GET.get('page'), 1)
+    page_size = parse_int(
+        request.GET.get('page_size') or request.GET.get('pageSize'),
+        LIBRARY_PAGE_SIZE_DEFAULT,
+    )
+    try:
+        rows = library_component_rows(
+            search=request.GET.get('search') or request.GET.get('q') or '',
+            types=csv_param(request, 'types', 'type'),
+            programme_ids=csv_param(request, 'programme_ids', 'programmeIds'),
+            origins=csv_param(request, 'origins', 'origin'),
+            ids=ids,
+            page=page,
+            # An ids request wants exactly those rows, not a page of them.
+            page_size=len(ids) if ids else page_size,
+            detail=bool(ids) or truthy(request.GET.get('detail')),
+        )
+    except Exception:
+        logger.exception('Unable to load the component reuse library.')
+        return json_error('Unable to load the component library.', status=500)
+    return JsonResponse({
+        'schema': CURRICULUM_SCHEMA,
+        'count': len(rows),
+        'results': rows,
+        'page': max(1, page),
+        'pageSize': page_size,
+        # A full page back suggests there is more; the alternative is a count(*)
+        # over the same predicate on every keystroke.
+        'hasNext': not ids and len(rows) >= min(LIBRARY_PAGE_SIZE_MAX, max(1, page_size)),
+    })
+
+
+def csv_param(request, *names):
+    """Read a repeated-or-comma-separated query parameter."""
+    values = []
+    for name in names:
+        for raw in request.GET.getlist(name):
+            values.extend(clean_str(part) for part in str(raw).split(',') if clean_str(part))
+    return values
+
+
 def save_component_builder_payload(payload, component_id=None):
     if is_retired_component_type(payload.get('type')):
         raise ModuleAuthoringValidationError([{
@@ -12329,11 +12962,28 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
     return payloads
 
 
+# Every component column authoring_catalogue_summaries() reads, plus the three
+# the active-row filters need (deleted_at, is_programme_deleted, library_state).
+# settings_json and ksb_mappings are excluded on purpose - see the call site.
+CATALOGUE_SUMMARY_COMPONENT_COLUMNS = (
+    'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'description',
+    'expected_otjh', 'points', 'display_order',
+    'reflection_required', 'workplace_evidence_required', 'tutor_validation_required',
+    'deleted_at', 'is_programme_deleted', 'library_state',
+)
+
+
 def authoring_catalogue_summaries(include_programme_deleted=False):
     try:
         module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, order_sql='updated_at desc, title')
         week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE))
-        component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE))
+        # Narrow deliberately. This builds per-module summaries and week outlines
+        # and never reads settings_json (24 MB across this table) or ksb_mappings
+        # - the summary sets 'ksbMappings': [] outright. With select * this one
+        # call dominated every non-compact overview request.
+        component_rows = active_component_rows(authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE, columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
+        ))
         mapping_rows = active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE))
     except Exception:
         logger.exception('Unable to read module authoring catalogue rows.')
@@ -13344,6 +13994,8 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                 'summary': week.get('summary') or '',
                 'learning_outcomes': json_db_value(week.get('learningOutcomes') or []),
                 'display_order': week_index,
+                # Attached to this module, so never a detached library item.
+                'library_state': '',
                 'deleted_at': None,
                 'deleted_by': None,
                 'deleted_via_parent': None,
@@ -13385,6 +14037,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                     'display_order': component_index,
                     'settings_json': json_db_value(component_settings),
                     'live_sessions_link': clean_str(component_settings.get('liveSessionUrl') or component_settings.get('teamsMeetingUrl')),
+                    'copied_from_id': clean_str(component.get('copiedFromId') or component.get('copied_from_id')) or None,
+                    # A saved component is attached to this module by definition,
+                    # so it is never a library item - and if it was copied out of
+                    # the library, the copy must not inherit that state.
+                    'library_state': '',
                     'deleted_at': None,
                     'deleted_by': None,
                     'deleted_via_parent': None,
@@ -15797,14 +16454,27 @@ def curriculum_uploaded_file(request, path):
         return FileResponse(default_storage.open(relative_path, 'rb'), as_attachment=False, filename=Path(relative_path).name)
 
 
-def authoring_child_rows_for_modules(table, module_ids):
+# The component column that makes this table expensive: inlined authoring
+# content, 24 MB across ~18k rows and up to 200 kB in one row. Anything that
+# does not render a component's body should exclude it.
+COMPONENT_HEAVY_COLUMNS = ('settings_json',)
+
+
+def authoring_child_rows_for_modules(table, module_ids, *, columns=None, exclude_columns=None):
     """Rows of an authoring child table (weeks/components/mappings) for module ids.
 
-    Inside a curriculum_read_scope() the table is read once in full and filtered in
-    memory. build_programmes() asks this question once per programme and the union
-    of those asks is the whole table, so N targeted round trips cost more than one
-    full read. Outside a scope (single-module/week/component endpoints) the targeted
-    query is kept, so one module never pulls the whole table.
+    Inside a curriculum_read_scope() the table is read once in full and filtered
+    in memory. build_programmes() asks this question once per programme and the
+    union of those asks is the whole table, so N targeted round trips cost more
+    than one full read. Outside a scope (single-module/week/component endpoints)
+    the targeted query is kept, so one module never pulls the whole table.
+
+    That trade depends entirely on the full read being narrow. It briefly was
+    not: with ``select *`` on curriculum.components a single scan moved 39 MB
+    and measured 100-175 s, which is why callers must pass ``columns`` or
+    ``exclude_columns`` for that table. With settings_json excluded, one shared
+    ~16 s read beats a targeted ~17 s read per programme, so the memo earns its
+    keep again.
     """
     wanted = {clean_str(value) for value in module_ids if clean_str(value)}
     if not wanted:
@@ -15812,15 +16482,25 @@ def authoring_child_rows_for_modules(table, module_ids):
     if getattr(_CURRICULUM_READ_SCOPE, 'memo', None) is None:
         ids = sorted(wanted)
         placeholders = ', '.join(['%s'] * len(ids))
-        return authoring_fetch_all(table, f'module_catalogue_id in ({placeholders})', ids)
+        return authoring_fetch_all(
+            table, f'module_catalogue_id in ({placeholders})', ids,
+            columns=columns, exclude_columns=exclude_columns,
+        )
     return [
-        row for row in authoring_fetch_all(table)
+        row for row in authoring_fetch_all(table, columns=columns, exclude_columns=exclude_columns)
         if clean_str(row.get('module_catalogue_id')) in wanted
     ]
 
 
 @scoped_curriculum_read
 def authoring_scope_data(scope='', identifier=''):
+    """Module/week/component/mapping rows for a scope.
+
+    The component read excludes settings_json for every caller, deliberately:
+    each one either feeds ksb_coverage.py (which never reads it) or only counts
+    the rows. Keeping one column set means all callers share a single memoised
+    read inside curriculum_read_scope() instead of one scan per variant.
+    """
     ensure_module_authoring_tables()
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
     ident = clean_str(identifier)
@@ -15919,7 +16599,13 @@ def authoring_scope_data(scope='', identifier=''):
         return [], [], [], []
 
     week_rows = active_week_rows(authoring_child_rows_for_modules(AUTHORING_WEEKS_TABLE, module_ids))
-    component_rows = active_component_rows(authoring_child_rows_for_modules(AUTHORING_COMPONENTS_TABLE, module_ids))
+    component_rows = active_component_rows(authoring_child_rows_for_modules(
+        AUTHORING_COMPONENTS_TABLE, module_ids,
+        # ksb_coverage.py never reads settings_json, and it is 24 MB of inlined
+        # authoring content - ~90 s per programme to fetch and discard.
+        # Excluded rather than allow-listed so columns added later still arrive.
+        exclude_columns=COMPONENT_HEAVY_COLUMNS,
+    ))
     mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(AUTHORING_KSB_MAPPINGS_TABLE, module_ids))
 
     if scope in {'programme', 'cohort'}:
@@ -19508,6 +20194,36 @@ def provision_week_template_tables():
                 updated_at timestamp not null default current_timestamp
             )
         ''')
+        # week_templates was left out of migration 0041's list, so it had no
+        # soft-delete columns at all. It needs them for its DELETE to archive
+        # rather than destroy a reusable template. Mirrors migration 0053.
+        if connection.vendor == 'postgresql':
+            for column, column_type in (
+                ('deleted_at', 'timestamp with time zone'),
+                ('deleted_by', 'varchar(255)'),
+                ('deleted_via_parent', 'varchar(255)'),
+            ):
+                cursor.execute(
+                    f'alter table {authoring_table_name(WEEK_TEMPLATES_TABLE)} '
+                    f'add column if not exists {quote_ident(column)} {column_type}'
+                )
+        else:
+            cursor.execute(f'pragma table_info({quote_ident(WEEK_TEMPLATES_TABLE)})')
+            existing = {row[1] for row in cursor.fetchall()}
+            for column, column_type in (
+                ('deleted_at', 'timestamp with time zone'),
+                ('deleted_by', 'varchar(255)'),
+                ('deleted_via_parent', 'varchar(255)'),
+            ):
+                if column not in existing:
+                    cursor.execute(
+                        f'alter table {authoring_table_name(WEEK_TEMPLATES_TABLE)} '
+                        f'add column {quote_ident(column)} {column_type}'
+                    )
+    # soft_delete_rows() decides what to write through has_column, so a cache
+    # entry taken before those columns landed would make the archive a no-op.
+    _TABLE_COLUMNS_CACHE.pop(WEEK_TEMPLATES_TABLE, None)
+    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{WEEK_TEMPLATES_TABLE}', None)
     _WEEK_TEMPLATE_TABLES_READY = True
 
 
@@ -19541,17 +20257,26 @@ def week_template_scope_fields(payload, course_type):
     }
 
 
-def get_week_template_rows(where_sql='', params=None):
+def get_week_template_rows(where_sql='', params=None, *, include_deleted=False):
+    """Week template rows, archived ones excluded unless asked for.
+
+    This is the single read funnel for the table, so filtering here is what
+    keeps an archived template out of every list and picker at once. DELETE is
+    a soft archive, so without this a deleted template would keep showing up.
+    """
     ensure_week_template_tables()
     query = f'select * from {table_name(WEEK_TEMPLATES_TABLE)}'
     if where_sql:
         query += f' where {where_sql}'
     query += ' order by updated_at desc'
-    return fetch_all(query, params or [])
+    rows = fetch_all(query, params or [])
+    if include_deleted:
+        return rows
+    return [row for row in rows if not curriculum_row_effectively_deleted(row)]
 
 
-def get_week_template_row(template_id):
-    rows = get_week_template_rows('id = %s', [template_id])
+def get_week_template_row(template_id, *, include_deleted=False):
+    rows = get_week_template_rows('id = %s', [template_id], include_deleted=include_deleted)
     return rows[0] if rows else None
 
 
@@ -19734,10 +20459,13 @@ def curriculum_week_template_detail(request, identifier):
         return week_template_detail_response(identifier)
 
     if request.method == 'DELETE':
-        delete_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [identifier])
-        delete_rows(WEEK_TEMPLATES_TABLE, 'id = %s', [identifier])
+        # Archive, never destroy: a week template is reusable content by
+        # definition, and this used to be the one hard delete in the authoring
+        # surface. Its components are left attached to it so a future restore
+        # gets a whole template back rather than an empty shell.
+        soft_delete_rows(WEEK_TEMPLATES_TABLE, 'id = %s', [identifier], deleted_by='week-template-delete')
         invalidate_curriculum_cache()
-        return JsonResponse({'deleted': True, 'id': identifier})
+        return JsonResponse({'deleted': True, 'permanent': False, 'id': identifier})
 
     payload = json_body(request)
     if payload is None:

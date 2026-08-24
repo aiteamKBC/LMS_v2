@@ -20,6 +20,7 @@ import {
   type CurriculumHoliday,
   type CurriculumKsbSet,
   type CurriculumProgramme,
+  type LibraryComponent,
   type CurriculumStaffProfile,
   type CurriculumSession,
   type CurriculumStandard,
@@ -34,10 +35,12 @@ import { formatDateLabel, moduleIdentity } from '../shared/entities/model';
 // dedicated form, shared with the Group and Module workspaces. It replaced the
 // six-step structure wizard this page used to open for both jobs.
 import { ModuleFormDrawer, type ModuleFormTarget } from '../shared/entities/moduleForm';
+import { ComponentLibraryModal } from './ComponentLibraryModal';
 import {
   calculateQualityChecklist,
   componentTypeGroups,
   componentTypes,
+  copyComponentIntoWeek,
   createEmptyComponent,
   createTeamsMeeting,
   createEmptyWeek,
@@ -254,6 +257,7 @@ export default function ModuleBuilder() {
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
   const [templatePickerWeekId, setTemplatePickerWeekId] = useState<string | null>(null);
+  const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
@@ -916,6 +920,25 @@ export default function ModuleBuilder() {
     setWeekTemplateImportOpen(false);
   }, [updateWorkingModule]);
 
+  // Copy components chosen from the reuse library into an existing week. The
+  // copies land in client state and are persisted by the normal module save -
+  // a per-component write would be undone by it, because saving re-upserts the
+  // module's whole week structure.
+  const addLibraryComponentsToWeek = useCallback((weekId: string, picked: LibraryComponent[]) => {
+    let lastComponentId = '';
+    updateWorkingModule(module => ({
+      ...module,
+      weekStructure: module.weekStructure.map(week => {
+        if (week.id !== weekId) return week;
+        const copies = picked.map(source => copyComponentIntoWeek(source, week.id, module.id));
+        if (copies.length) lastComponentId = copies[copies.length - 1].id;
+        return { ...week, components: [...week.components, ...copies] };
+      }),
+    }));
+    if (lastComponentId) setSelection({ kind: 'component', weekId, componentId: lastComponentId });
+    setReusePickerWeekId(null);
+  }, [updateWorkingModule]);
+
   const confirmDeleteWeek = async (weekId: string) => {
     if (!workingModule) return;
     const week = workingModule.weekStructure.find(item => item.id === weekId);
@@ -940,6 +963,7 @@ export default function ModuleBuilder() {
         setDragState(null);
         if (lessonPickerWeekId === weekId) setLessonPickerWeekId(null);
         if (templatePickerWeekId === weekId) setTemplatePickerWeekId(null);
+        if (reusePickerWeekId === weekId) setReusePickerWeekId(null);
         if (selection?.weekId === weekId) {
           setSelection(nextSelectedWeek ? { kind: 'week', weekId: nextSelectedWeek.id } : null);
         }
@@ -1328,6 +1352,7 @@ export default function ModuleBuilder() {
               onSelectWeek={weekId => { void requestSelectionChange({ kind: 'week', weekId }); }}
               onSelectComponent={(weekId, componentId) => { void requestSelectionChange({ kind: 'component', weekId, componentId }); }}
               onAddWeekFromTemplate={() => setWeekTemplateImportOpen(true)}
+              onReuseComponents={weekId => setReusePickerWeekId(weekId)}
               onAddWeek={() => {
                 const week = createEmptyWeek(workingModule.id, workingModule.weekStructure.length + 1);
                 updateWorkingModule(module => ({ ...module, weekStructure: [...module.weekStructure, week] }));
@@ -1415,6 +1440,7 @@ export default function ModuleBuilder() {
                   onAddLesson={() => {
                     setLessonPickerWeekId(selectedWeek.id);
                   }}
+                  onReuseComponents={() => setReusePickerWeekId(selectedWeek.id)}
                 />
               ) : (
                 <EmptyEditor onAddWeek={() => {
@@ -1530,6 +1556,16 @@ export default function ModuleBuilder() {
             scope={{ programmeId: workingModule.programmeId, programmeName: workingModule.programmeName }}
             onClose={() => setWeekTemplateImportOpen(false)}
             onImport={importWeekTemplateAsNewWeek}
+          />
+        )}
+        {reusePickerWeekId && (
+          <ComponentLibraryModal
+            weekLabel={(() => {
+              const week = workingModule.weekStructure.find(item => item.id === reusePickerWeekId);
+              return week ? `Week ${week.weekNumber}${week.title ? ` — ${week.title}` : ''}` : 'this week';
+            })()}
+            onClose={() => setReusePickerWeekId(null)}
+            onAddMany={picked => addLibraryComponentsToWeek(reusePickerWeekId, picked)}
           />
         )}
         {openingModule && (
@@ -1989,7 +2025,7 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModul
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onDeleteWeek, onDropReorder, onComponentsChange, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -2002,6 +2038,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onDeleteWeek: (weekId: string) => void;
   onDropReorder: (targetWeekId: string) => void;
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
+  onReuseComponents: (weekId: string) => void;
   pointsByType: Partial<Record<ModuleComponentType, number>>;
   expandedWeekIds: Set<string>;
   onExpandedWeekIdsChange: (next: Set<string>) => void;
@@ -2157,6 +2194,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                     pointsByType={pointsByType}
                     variant="nested"
                     weekSessionDate={week.sessionDate}
+                    onReuseComponents={() => onReuseComponents(week.id)}
                   />
                 </div>
               )}
@@ -2401,12 +2439,13 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // CourseStructure's accordion (WeekComponentRail, variant="nested") — this
 // panel just keeps the week-level header actions (Apply template, Session
 // KSB Mapping, bulk Add component) and the summary/KSB-coverage inspector.
-function ModuleWeekPanel({ week, onChange, onApplyTemplate, onOpenSessionKsbMapping, onAddLesson }: {
+function ModuleWeekPanel({ week, onChange, onApplyTemplate, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
   week: ModuleWeek;
   onChange: (updates: Partial<ModuleWeek>) => void;
   onApplyTemplate: () => void;
   onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
+  onReuseComponents: () => void;
 }) {
   const totalOtjh = week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0);
 
@@ -2427,6 +2466,10 @@ function ModuleWeekPanel({ week, onChange, onApplyTemplate, onOpenSessionKsbMapp
           <button onClick={onApplyTemplate} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <AppIcon className="ri-sparkling-2-line"></AppIcon>
             Apply template
+          </button>
+          <button onClick={onReuseComponents} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
+            <AppIcon className="ri-file-copy-line"></AppIcon>
+            Reuse
           </button>
           <button onClick={onAddLesson} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600">
             <AppIcon className="ri-add-line"></AppIcon>

@@ -25,6 +25,7 @@ import {
 } from '../shared/entities/ui';
 import { useDrawerState } from '../shared/entities/useDrawerState';
 import { HolidayTypeControl, type HolidayTypeOption } from './HolidayTypeControl';
+import { DatePickerField } from '@/components/feature/DatePickerField';
 
 // Holidays used to be reachable only from inside the structure wizard, which
 // made a calendar-wide concern a side effect of editing one programme. They are
@@ -408,12 +409,19 @@ export default function CurriculumHolidaysPage() {
           <TextControl value={drawer.form.label} onChange={value => drawer.patch({ label: value })} placeholder="e.g. Christmas closure" />
         </FormField>
         <div className="grid gap-4 sm:grid-cols-2">
-          <FormField label="Start date" required>
-            <TextControl type="date" value={drawer.form.startDate} onChange={value => drawer.patch({ startDate: value })} />
-          </FormField>
-          <FormField label="End date" hint="Leave blank for a single day.">
-            <TextControl type="date" value={drawer.form.endDate} onChange={value => drawer.patch({ endDate: value })} />
-          </FormField>
+          <DatePickerField
+            label="Start date"
+            required
+            value={drawer.form.startDate}
+            onChange={value => drawer.patch({ startDate: value })}
+          />
+          <DatePickerField
+            label="End date"
+            value={drawer.form.endDate}
+            onChange={value => drawer.patch({ endDate: value })}
+            min={drawer.form.startDate || undefined}
+            helper="Leave blank for a single day."
+          />
         </div>
         <HolidayTypeControl
           types={typeOptions}

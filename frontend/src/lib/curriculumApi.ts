@@ -272,6 +272,31 @@ export interface CurriculumComponent {
   settings?: Record<string, unknown>;
 }
 
+/** Where a reusable component currently lives. */
+export type LibraryComponentOrigin = 'active' | 'archived' | 'library';
+
+/**
+ * A component offered for reuse. Same shape as a normal component plus its
+ * provenance, because the parent module may no longer exist: `originModuleTitle`
+ * and `originWeekLabel` are stamped on the row at detach time and are the only
+ * labels available for detached content.
+ */
+export interface LibraryComponent extends CurriculumComponent {
+  origin: LibraryComponentOrigin;
+  /**
+   * The authoring type (`live-session`, `reading`, …). Distinct from `type`,
+   * which the component endpoints fill with a human label ("Self-study") that
+   * several activity types share and which cannot be copied.
+   */
+  componentType: string;
+  originModuleCatalogueId?: string;
+  originModuleTitle?: string;
+  originWeekId?: string;
+  originWeekLabel?: string;
+  detachedAt?: string | null;
+  copiedFromId?: string;
+}
+
 export interface CurriculumKsbActivity {
   activityType: string;
   weight: number;
@@ -1559,6 +1584,51 @@ export function fetchCurriculumComponents(signal?: AbortSignal, options: { modul
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchCollection<CurriculumComponent>(`/curriculum/components/${suffix}`, { signal, skipCache: options.skipCache });
+}
+
+/**
+ * Search components available for reuse, across all programmes.
+ *
+ * Returns list rows only: no `settings`, no `ksbMappings`. Those are 24 MB
+ * across the components table, the picker does not show them, and fetching
+ * them for a whole page would dominate the request. Call
+ * `fetchComponentLibraryDetail` for the handful actually being copied.
+ *
+ * Deliberately not cached: a filtered search changes with every keystroke,
+ * unlike the stable snapshot `fetchCurriculumComponents` serves.
+ */
+export function fetchComponentLibrary(options: {
+  search?: string;
+  types?: string[];
+  programmeIds?: string[];
+  origins?: LibraryComponentOrigin[];
+  page?: number;
+  pageSize?: number;
+} = {}, signal?: AbortSignal): Promise<LibraryComponent[]> {
+  const query = new URLSearchParams();
+  const search = (options.search || '').trim();
+  if (search) query.set('search', search);
+  const types = (options.types || []).filter(Boolean);
+  if (types.length) query.set('types', types.join(','));
+  const programmeIds = (options.programmeIds || []).filter(Boolean);
+  if (programmeIds.length) query.set('programme_ids', programmeIds.join(','));
+  const origins = (options.origins || []).filter(Boolean);
+  if (origins.length) query.set('origins', origins.join(','));
+  if (options.page) query.set('page', String(options.page));
+  if (options.pageSize) query.set('page_size', String(options.pageSize));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchCollection<LibraryComponent>(`/curriculum/components/library/${suffix}`, { signal, skipCache: true });
+}
+
+/**
+ * Full authoring detail for specific components — `settings` and `ksbMappings`
+ * included. Call this with the ids being copied, never with a whole page.
+ */
+export function fetchComponentLibraryDetail(ids: string[], signal?: AbortSignal): Promise<LibraryComponent[]> {
+  const wanted = ids.filter(Boolean);
+  if (!wanted.length) return Promise.resolve([]);
+  const query = new URLSearchParams({ ids: wanted.join(',') });
+  return fetchCollection<LibraryComponent>(`/curriculum/components/library/?${query.toString()}`, { signal, skipCache: true });
 }
 
 export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOverview['stats']> {
