@@ -62,22 +62,24 @@ describe('WorkspaceSwitcher', () => {
     expect(screen.queryByTitle('Switch workspace')).toBeNull();
   });
 
-  it('offers exactly the five curated workspaces', async () => {
+  it('offers every curated workspace, Super Admin included', async () => {
     signedIn();
     const user = userEvent.setup();
-    renderAt('/workspace/admin');
+    renderAt('/workspace/coach');
     await user.click(trigger());
 
     // Scoped to the menu: the trigger also carries the current section's label.
     const menu = within(screen.getByRole('menu'));
-    expect(menu.getAllByRole('menuitem')).toHaveLength(5);
-    expect(PORTAL_WORKSPACES).toHaveLength(5);
+    expect(menu.getAllByRole('menuitem')).toHaveLength(PORTAL_WORKSPACES.length);
     for (const workspace of PORTAL_WORKSPACES) {
       expect(menu.getByText(workspace.label)).toBeTruthy();
     }
+    // Named explicitly: the switcher was lifted out of the Super Admin
+    // dashboard, and for a while that was the one place it could not return to.
+    expect(menu.getByText('Super Admin')).toBeTruthy();
   });
 
-  it('has no filter box or group headings — five rows need neither', async () => {
+  it('has no filter box or group headings — a list this short needs neither', async () => {
     signedIn();
     const user = userEvent.setup();
     renderAt('/workspace/admin');
@@ -94,9 +96,17 @@ describe('WorkspaceSwitcher', () => {
     expect(trigger().textContent).toContain('Enrolment');
   });
 
-  it('falls back to a neutral label outside the five sections', () => {
+  it('names the Super Admin workspace when you are in it', () => {
     signedIn();
     renderAt('/workspace/admin');
+    expect(trigger().textContent).toContain('Super Admin');
+  });
+
+  it('falls back to a neutral label outside the listed sections', () => {
+    signedIn();
+    // Leadership is routable but not a listed workspace. /admin/roles would do
+    // as well: those pages sit under the Super Admin sidebar, not its route.
+    renderAt('/workspace/leadership');
     expect(trigger().textContent).toContain('Workspaces');
   });
 
@@ -136,7 +146,8 @@ describe('WorkspaceSwitcher', () => {
   it('wraps the highlight around the ends of the list', async () => {
     signedIn();
     const user = userEvent.setup();
-    renderAt('/workspace/coach');
+    // Start on the first row — Super Admin — so Up has somewhere to wrap from.
+    renderAt('/workspace/admin');
     await user.click(trigger());
     // Up from the first row is the last one: AUDIT.
     await user.keyboard('{ArrowUp}{Enter}');

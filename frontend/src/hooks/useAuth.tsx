@@ -9,6 +9,7 @@ import { clearChatSession } from '@/api/chat';
 import { apiLogin, apiLogout, apiMe, type AuthUser, type Role } from '@/api/auth';
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
 import { clearCoachViewAs, syncCoachViewAsAccount } from '@/lib/coachViewAs';
+import { clearTutorViewAs, syncTutorViewAsAccount } from '@/lib/tutorViewAs';
 
 // ============================================================
 // Types
@@ -102,6 +103,9 @@ function stateFromAccount(account: AuthUser): AuthState {
   // resolves is not the admin who made it — otherwise a coach signing in on
   // that browser would request somebody else's caseload and be refused.
   syncCoachViewAsAccount(account);
+  // The tutor workspace's picker stores its choice the same way, so it needs the
+  // same guard — see lib/tutorViewAs.
+  syncTutorViewAsAccount(account);
 
   const roles = (ROLE_TO_RBAC_IDS[account.role] ?? [])
     .map(id => ALL_ROLES.find(r => r.id === id))
@@ -255,6 +259,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void apiLogout().catch(() => undefined);
     localStorage.removeItem(AUTH_STORAGE_KEY);
     clearCoachViewAs();
+    clearTutorViewAs();
     setAuth(SIGNED_OUT);
     navigate('/login');
   }, [navigate]);

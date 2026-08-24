@@ -20,15 +20,24 @@ interface WorkspaceSection {
 }
 
 // Built from the shared list so this launcher and the administrator's top-bar
-// workspace switcher always offer the same five sections.
-const WORKSPACE_SECTIONS: WorkspaceSection[] = PORTAL_WORKSPACES.map((w) => ({
-  slug: w.slug,
-  label: w.label,
-  icon: w.icon,
-  email: w.demoEmail,
-  workspacePath: w.path,
-  highlighted: true,
-}));
+// workspace switcher cannot drift apart on labels, icons or paths.
+//
+// Workspaces with no demo account are filtered out rather than rendered with a
+// dead button: entering a section here signs the visitor in as that account with
+// no password, so Super Admin — which has no demoEmail — is offered by the
+// switcher to an authenticated administrator and by nothing on this page.
+const WORKSPACE_SECTIONS: WorkspaceSection[] = PORTAL_WORKSPACES.flatMap((w) =>
+  w.demoEmail
+    ? [{
+        slug: w.slug,
+        label: w.label,
+        icon: w.icon,
+        email: w.demoEmail,
+        workspacePath: w.path,
+        highlighted: true,
+      }]
+    : [],
+);
 
 function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: { end: number; suffix?: string; prefix?: string; duration?: number; label: string }) {
   const { ref, isInView } = useInView();

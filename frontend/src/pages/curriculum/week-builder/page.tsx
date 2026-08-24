@@ -41,6 +41,8 @@ import {
 } from './weekTemplateData';
 import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
+import { resolveDocEmbed } from '@/lib/docEmbed';
+import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
 // load of this page and of module-builder, which imports from this module.
@@ -1621,11 +1623,51 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
 
 const POWERPOINT_SOURCE_TYPES_WEEK = ['External Link', 'Uploaded File'] as const;
 
+/** Authoring preview of a linked deck. The Office Online viewer downloads the
+ * file from Microsoft's side, so a relative path or a local dev origin can
+ * never render — say so instead of showing the viewer's own error page. */
+/** Preview of an uploaded deck, rendered by the same component the learner
+ * page uses — an author sees exactly what the learner will. */
+function UploadedDeckPreview({ url }: { url: string }) {
+  const embed = resolveDocEmbed(url);
+  if (embed.mode !== 'deck') {
+    return (
+      <p className="rounded-lg border border-background-200 bg-background-50 px-3 py-4 text-center text-[11px] text-foreground-500">
+        {embed.mode === 'unavailable' ? embed.reason : 'This file is previewed for learners, but not here.'}
+      </p>
+    );
+  }
+  return (
+    <SlideDeckViewer
+      src={embed.src}
+      title="Uploaded deck"
+      fallback={reason => (
+        <p className="rounded-lg border border-background-200 bg-background-50 px-3 py-4 text-center text-[11px] text-foreground-500">{reason}</p>
+      )}
+    />
+  );
+}
+
+
+function PowerPointLinkPreview({ url }: { url: string }) {
+  const embed = resolveDocEmbed(url);
+  if (embed.mode === 'unavailable') {
+    return <p className="rounded-lg border border-background-200 bg-background-50 px-3 py-4 text-center text-[11px] text-foreground-500">{embed.reason}</p>;
+  }
+  return (
+    <iframe
+      src={embed.src}
+      className="aspect-video w-full rounded-lg border border-background-200"
+      title="PowerPoint preview"
+    />
+  );
+}
+
 // Bespoke PowerPoint editor — a link to an online deck (with a best-effort
 // Office Online preview, which only renders once the link is reachable over
-// the public internet) or an uploaded file (no live preview — there's no
-// in-house slide renderer, so it's a "slide range" hint field instead of
-// real slicing).
+// the public internet) or an uploaded file, which is previewed by the same
+// in-house renderer the learner sees. Slicing is still a "slide range" hint
+// field rather than a real range.
 function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceType = (POWERPOINT_SOURCE_TYPES_WEEK as readonly string[]).includes(s('powerpointSource')) ? s('powerpointSource') : 'External Link';
@@ -1648,11 +1690,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
             {s('presentationUrl') && (
               <div className="mt-3">
                 <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <iframe
-                  src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(s('presentationUrl'))}`}
-                  className="aspect-video w-full rounded-lg border border-background-200"
-                  title="PowerPoint preview"
-                />
+                <PowerPointLinkPreview url={s('presentationUrl')} />
                 <p className="mt-1 text-[11px] text-foreground-400">Uses Microsoft's Office Online viewer — it only renders once this link is reachable over the public internet, so it won't load from a local dev URL.</p>
               </div>
             )}
@@ -1671,7 +1709,13 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
                 settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
               })}
             />
-            <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. No preview for uploaded files — there's no in-house slide renderer.</p>
+            <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
+            {s('uploadedFileUrl') && (
+              <div className="mt-3">
+                <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
+                <UploadedDeckPreview url={s('uploadedFileUrl')} />
+              </div>
+            )}
           </div>
         )}
 

@@ -210,7 +210,12 @@ def overview(request):
                  WHERE "Used_at" IS NULL AND "Expires_at" > now())                            AS pending_invites,
               (SELECT count(*) FROM login."Invitations"
                  WHERE "Used_at" IS NULL AND "Expires_at" <= now())                           AS expired_invites,
-              (SELECT count(*) FROM login."Invitations" WHERE "Send_error" IS NOT NULL)       AS failed_invites
+              -- Acknowledged failures are excluded on purpose: this figure drives
+              -- the dashboard's attention strip, and an administrator who has
+              -- dealt with a bounce should not be told about it for ever. The
+              -- row keeps its Send_error; only the alert goes away.
+              (SELECT count(*) FROM login."Invitations"
+                 WHERE "Send_error" IS NOT NULL AND "Acknowledged_at" IS NULL)               AS failed_invites
             """
         )
         login_ok = True
@@ -797,7 +802,11 @@ def email_log(request):
             return []
         qs = model.objects.all()
         if status == "failed":
-            qs = qs.filter(send_error__isnull=False)
+            # "Failed" means "still needs attention". Acknowledged failures have
+            # their own filter rather than sitting in this one.
+            qs = qs.filter(send_error__isnull=False, acknowledged_at__isnull=True)
+        elif status == "acknowledged":
+            qs = qs.filter(send_error__isnull=False, acknowledged_at__isnull=False)
         elif status == "delivered":
             qs = qs.filter(send_error__isnull=True, sent_at__isnull=False)
         elif status == "pending":
@@ -814,8 +823,13 @@ def email_log(request):
             "expiresAt": _iso(r.expires_at),
             "createdAt": _iso(r.created_at),
             "error": r.send_error,
+            "acknowledgedAt": _iso(r.acknowledged_at),
+            "acknowledgedBy": r.acknowledged_by,
+            # Acknowledged is checked before failed: it is a failure that has
+            # been dealt with, and the badge should say the later thing.
             "status": (
-                "failed" if r.send_error
+                "acknowledged" if r.send_error and r.acknowledged_at
+                else "failed" if r.send_error
                 else "accepted" if r.used_at
                 else "delivered" if r.sent_at
                 else "queued"
@@ -838,6 +852,10 @@ def email_log(request):
           (SELECT count(*) FROM login."Password_resets" WHERE "Send_error" IS NOT NULL)
                                                                                      AS resets_failed,
           (SELECT count(*) FROM login."Invitations"
+             WHERE "Send_error" IS NOT NULL AND "Acknowledged_at" IS NOT NULL)        AS invites_acked,
+          (SELECT count(*) FROM login."Password_resets"
+             WHERE "Send_error" IS NOT NULL AND "Acknowledged_at" IS NOT NULL)        AS resets_acked,
+          (SELECT count(*) FROM login."Invitations"
              WHERE "Created_at" > now() - interval '30 days')                        AS invites_30d,
           (SELECT count(*) FROM login."Password_resets"
              WHERE "Created_at" > now() - interval '30 days')                        AS resets_30d
@@ -850,7 +868,13 @@ def email_log(request):
         row.pop("_sort", None)
 
     sent = stats.get("invites_sent", 0) + stats.get("resets_sent", 0)
+    # Two different questions, and conflating them would let one click rewrite
+    # history: `failed` is everything that ever failed to send, which is what the
+    # delivery rate is a statement about, while `outstanding` is what still needs
+    # somebody's attention. Acknowledging moves a row between those, not out of
+    # the first one.
     failed = stats.get("invites_failed", 0) + stats.get("resets_failed", 0)
+    acknowledged = stats.get("invites_acked", 0) + stats.get("resets_acked", 0)
 
     return JsonResponse({
         "count": len(merged),
@@ -859,6 +883,8 @@ def email_log(request):
         "stats": {
             "sent": sent,
             "failed": failed,
+            "outstanding": max(failed - acknowledged, 0),
+            "acknowledged": acknowledged,
             "last30d": stats.get("invites_30d", 0) + stats.get("resets_30d", 0),
             "invitations": stats.get("invites_sent", 0),
             "resets": stats.get("resets_sent", 0),
@@ -870,6 +896,79 @@ def email_log(request):
             "missing": email_azure.missing_settings(),
         },
         "results": window,
+    })
+
+
+@csrf_exempt
+@require_POST
+@require_role(ROLE_ADMIN)
+def email_acknowledge(request, kind, pk):
+    """Mark one failed email as dealt with, or put it back.
+
+    Body: ``{"acknowledged": true}`` (or false to undo).
+
+    An invitation that could not be sent keeps its ``Send_error`` for ever, so
+    until now the Super Admin dashboard raised an alert about it that nothing
+    could clear — the administrator re-sent the invitation by hand and the banner
+    stayed. This is how that alert is closed: the row is marked, not deleted,
+    because the send really was attempted and this table is the record of what
+    the platform tried to do. The delivery-rate figures still count it.
+
+    Undo exists for the same reason the dashboard's dismissal can be undone: a
+    misclick here would otherwise silence a real failure permanently, and there
+    would be nowhere to see that it had happened.
+    """
+    blocked = _reject_cross_site(request)
+    if blocked:
+        return blocked
+
+    model = {"invitation": Invitation, "reset": PasswordReset}.get(kind)
+    if model is None:
+        return _error(f"Unknown email kind: {kind!r}", 400)
+
+    try:
+        payload = json.loads(request.body or b"{}")
+    except ValueError:
+        return _error("Request body must be valid JSON.", 400)
+    if not isinstance(payload, dict):
+        return _error("Request body must be a JSON object.", 400)
+    acknowledged = payload.get("acknowledged", True) is not False
+
+    actor = getattr(request, "login_account", None)
+    try:
+        with transaction.atomic(using="enrolment"):
+            row = model.objects.filter(pk=pk).first()
+            if row is None:
+                return _error("That email is no longer in the log.", 404)
+            # Only a failure can be acknowledged. Acknowledging a delivered email
+            # would record a decision about a problem that never existed.
+            if not row.send_error:
+                return _error("That email did not fail to send.", 400)
+
+            row.acknowledged_at = timezone.now() if acknowledged else None
+            row.acknowledged_by = (actor.email if actor else "admin") if acknowledged else None
+            row.save(update_fields=["acknowledged_at", "acknowledged_by"])
+
+            # Same trail as the other administrative actions: this one suppresses
+            # a platform alert, so who did it is worth keeping.
+            LoginAudit.objects.create(
+                event="admin_email_ack" if acknowledged else "admin_email_unack",
+                email=row.email,
+                account_id=row.account_id,
+                succeeded=True,
+                reason=f"{kind} #{pk} by {actor.email if actor else 'admin'}",
+                ip_address=client_ip(request),
+                user_agent=user_agent(request),
+            )
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    return JsonResponse({
+        "id": f"{kind}-{pk}",
+        "acknowledged": acknowledged,
+        "acknowledgedAt": _iso(row.acknowledged_at),
+        "acknowledgedBy": row.acknowledged_by,
+        "status": "acknowledged" if acknowledged else "failed",
     })
 
 

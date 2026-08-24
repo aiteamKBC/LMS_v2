@@ -219,6 +219,14 @@ class Invitation(models.Model):
     # so an invitation that was created but never delivered is visible.
     send_error = models.TextField(db_column="Send_error", null=True, blank=True)
 
+    # An administrator has seen this failure and dealt with it (re-sent the
+    # invitation, corrected the address, or judged it not worth chasing). The row
+    # stays — the send really was attempted and this table is the record of it —
+    # but an acknowledged failure stops counting as something needing attention
+    # on the Super Admin dashboard. Null means nobody has acknowledged it.
+    acknowledged_at = models.DateTimeField(db_column="Acknowledged_at", null=True, blank=True)
+    acknowledged_by = models.TextField(db_column="Acknowledged_by", null=True, blank=True)
+
     created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
     created_ip = models.TextField(db_column="Created_ip", null=True, blank=True)
 
@@ -260,6 +268,14 @@ class PasswordReset(models.Model):
 
     sent_at = models.DateTimeField(db_column="Sent_at", null=True, blank=True)
     send_error = models.TextField(db_column="Send_error", null=True, blank=True)
+
+    # An administrator has seen this failure and dealt with it (re-sent the
+    # invitation, corrected the address, or judged it not worth chasing). The row
+    # stays — the send really was attempted and this table is the record of it —
+    # but an acknowledged failure stops counting as something needing attention
+    # on the Super Admin dashboard. Null means nobody has acknowledged it.
+    acknowledged_at = models.DateTimeField(db_column="Acknowledged_at", null=True, blank=True)
+    acknowledged_by = models.TextField(db_column="Acknowledged_by", null=True, blank=True)
 
     created_at = models.DateTimeField(db_column="Created_at", auto_now_add=True)
     created_ip = models.TextField(db_column="Created_ip", null=True, blank=True)

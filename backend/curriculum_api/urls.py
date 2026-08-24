@@ -45,6 +45,7 @@ urlpatterns = [
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/', views.curriculum_teams_meeting_artifacts, name='curriculum-teams-meeting-artifacts'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/<str:artifact_id>/content/', views.curriculum_teams_meeting_artifact_content, name='curriculum-teams-meeting-artifact-content'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/<str:artifact_id>/recording-events/', views.curriculum_teams_recording_events, name='curriculum-teams-recording-events'),
+    path('curriculum/presentations/slides/', views.curriculum_presentation_slides, name='curriculum-presentation-slides'),
     path('curriculum/uploads/<path:path>', views.curriculum_uploaded_file, name='curriculum-uploaded-file'),
     path('curriculum/weeks/<str:week_id>/ksb-coverage/', views.curriculum_week_ksb_coverage, name='curriculum-week-ksb-coverage'),
     path('curriculum/ksb-mappings/<str:mapping_id>/', views.curriculum_ksb_mapping_detail, name='curriculum-ksb-mapping-detail'),
@@ -70,6 +71,10 @@ urlpatterns = [
     path('curriculum/staffing/<str:identifier>/', views.curriculum_staffing_detail, name='curriculum-staffing-detail'),
     path('curriculum/holidays/', views.curriculum_holiday_collection, name='curriculum-holidays'),
     path('curriculum/holidays/<str:identifier>/', views.curriculum_holiday_detail, name='curriculum-holiday-detail'),
+    # The tutor workspace's own read: assigned modules + the next live session.
+    # Declared before the <identifier> route below, which would otherwise
+    # capture 'tutor-workspace' as a tutor id.
+    path('curriculum/tutor-workspace/', views.curriculum_tutor_workspace, name='curriculum-tutor-workspace'),
     path('curriculum/tutors/', views.curriculum_tutors, name='curriculum-tutors'),
     path('curriculum/tutors/<str:identifier>/', views.curriculum_tutor_detail, name='curriculum-tutor-detail'),
     path('curriculum/coaches/', views.curriculum_coaches, name='curriculum-coaches'),

@@ -161,54 +161,24 @@ export const coachNavItems: SidebarNavItem[] = [
 ];
 
 // ============================================================================
-// TUTOR WORKSPACE — Grouped sidebar
+// TUTOR WORKSPACE — one page.
+//
+// The rail used to carry Teaching, Marking & Evidence, Progress, Communication,
+// Resources and Reports: sixteen items over eleven pages, every one of them
+// rendering mock counters that read from nothing. A queue badge saying 14
+// assignments await marking, when no assignment is behind it, is worse than an
+// absent page — it looks like work owed.
+//
+// What the tutor workspace shows now is the two things there is real data for:
+// the modules they are assigned to, and their next live session. So the rail is
+// the one page plus the shared support links every workspace gets.
+//
+// The eleven page files and their /tutor/* routes still exist and still resolve
+// by URL; they are simply no longer offered here. Nothing links to them.
 // ============================================================================
 export const tutorNavItems: SidebarNavItem[] = [
-  { id: 'tutor-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/tutor' },
-  {
-    id: 'tutor-group-sessions',
-    label: 'Teaching',
-    icon: 'ri-presentation-line',
-    href: '',
-    children: [
-      { id: 'tutor-sessions', label: 'Teaching Sessions', icon: 'ri-presentation-line', href: '/tutor/sessions', badge: 3 },
-      { id: 'tutor-learners', label: 'Learners', icon: 'ri-user-line', href: '/tutor/learners' },
-    ],
-  },
-  {
-    id: 'tutor-group-marking',
-    label: 'Marking & Evidence',
-    icon: 'ri-edit-line',
-    href: '',
-    children: [
-      { id: 'tutor-evidence-review', label: 'Evidence Review', icon: 'ri-file-search-line', href: '/tutor/evidence-review', badge: 9 },
-      { id: 'tutor-assignment-marking', label: 'Assignment Marking', icon: 'ri-edit-line', href: '/tutor/assignment-marking', badge: 14 },
-      { id: 'tutor-quiz-results', label: 'Quiz Results', icon: 'ri-bar-chart-line', href: '/tutor/quiz-results' },
-      { id: 'tutor-feedback-queue', label: 'Feedback Queue', icon: 'ri-chat-3-line', href: '/tutor/feedback-queue', badge: 11 },
-      { id: 'tutor-ai-marking', label: 'AI Marking', icon: 'ri-robot-line', href: '/tutor/ai-marking' },
-    ],
-  },
-  {
-    id: 'tutor-group-progress',
-    label: 'Progress',
-    icon: 'ri-bar-chart-2-line',
-    href: '',
-    children: [
-      { id: 'tutor-ksb-validation', label: 'KSB Validation', icon: 'ri-checkbox-circle-line', href: '/tutor/ksb-validation' },
-      { id: 'tutor-otjh-validation', label: 'OTJH Validation', icon: 'ri-time-line', href: '/tutor/otjh-validation', badge: 6 },
-    ],
-  },
-  {
-    id: 'tutor-group-comms',
-    label: 'Communication',
-    icon: 'ri-mail-line',
-    href: '',
-    children: [
-      { id: 'tutor-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', badge: 3 },
-    ],
-  },
-  { id: 'tutor-resources', label: 'Resources', icon: 'ri-folder-line', href: '/tutor/resources' },
-  { id: 'tutor-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/tutor/reports' },
+  { id: 'tutor-dashboard', label: 'My Teaching', icon: 'ri-presentation-line', href: '/workspace/tutor' },
+  { id: 'tutor-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages' },
 ];
 
 // ============================================================================

@@ -36,6 +36,12 @@ urlpatterns = [
     path("admin/audit/", platform_admin.audit, name="admin-audit"),
     path("admin/roles/", platform_admin.roles, name="admin-roles"),
     path("admin/email-log/", platform_admin.email_log, name="admin-email-log"),
+    # kind is "invitation" or "reset" — the two tables the log merges.
+    path(
+        "admin/email-log/<str:kind>/<int:pk>/acknowledge/",
+        platform_admin.email_acknowledge,
+        name="admin-email-acknowledge",
+    ),
     path("admin/system/", platform_admin.system, name="admin-system"),
     path("admin/documents/", platform_admin.documents, name="admin-documents"),
     path("admin/curriculum/", platform_admin.curriculum, name="admin-curriculum"),
