@@ -32,6 +32,7 @@ from learner_api.progress_rules import (
     progress_counts_as_achieved,
 )
 
+from . import pptx_slides
 from . import schema_gate
 from . import tutor_notifications
 from .schema_gate import SchemaNotProvisioned
@@ -14849,6 +14850,79 @@ def curriculum_week_component_upload(request, component_id):
     return JsonResponse({'uploaded': True, 'componentId': component_id, 'file': metadata}, status=201)
 
 
+def uploads_relative_path(src):
+    """Storage-relative path for a `/curriculum_api/curriculum/uploads/...` reference.
+
+    Accepts what the authoring settings actually store — a site-relative path —
+    as well as an absolute URL pointing at the same route, and returns None for
+    anything that is not an upload of ours. Rendered slide assets are excluded:
+    they are output, never a render input.
+    """
+    text = clean_str(src)
+    if not text:
+        return None
+    path = urlparse(text).path
+    marker = '/curriculum_api/curriculum/uploads/'
+    if marker not in path:
+        return None
+    tail = urllib_parse.unquote(path.split(marker, 1)[1]).strip('/')
+    if not tail or tail.startswith(f'{pptx_slides.RENDER_DIR_NAME}/'):
+        return None
+    if '..' in tail.split('/'):
+        return None
+    return f'{COMPONENT_UPLOAD_ROOT}/{tail}'
+
+
+def uploads_absolute_path(relative_path):
+    """The on-disk path for a storage-relative upload, or None if it escapes MEDIA_ROOT."""
+    try:
+        absolute_path = Path(default_storage.path(relative_path)).resolve()
+    except (NotImplementedError, ValueError):
+        return None
+    media_root = Path(settings.MEDIA_ROOT).resolve()
+    if not str(absolute_path).startswith(str(media_root)):
+        return None
+    return absolute_path
+
+
+@require_GET
+def curriculum_presentation_slides(request):
+    """The slide model for an uploaded PowerPoint deck, for inline display.
+
+    Microsoft's Office Online viewer can only preview a file it can download
+    from the public internet, so uploads on a private or local deployment had no
+    preview at all. This renders the deck in-house instead — see
+    curriculum_api.pptx_slides for what the model does and does not carry.
+    """
+    relative_path = uploads_relative_path(request.GET.get('src'))
+    if not relative_path:
+        return json_error('A slide deck upload path is required.', status=400)
+    absolute_path = uploads_absolute_path(relative_path)
+    if absolute_path is None or not absolute_path.is_file():
+        # The upload has gone, but a deck that was viewed once left its rendered
+        # model behind. Showing that beats a dead end: uploads live under
+        # MEDIA_ROOT, which is neither version-controlled nor backed up, so the
+        # file can disappear while the render survives — and the render is the
+        # only remaining copy of the slides.
+        #
+        # `sourceMissing` travels with it so a caller can say the deck needs
+        # re-uploading; the download and open-in-a-new-tab links point at the
+        # raw file and stay broken until somebody does.
+        cached = pptx_slides.cached_deck_model(relative_path)
+        if cached is not None:
+            return JsonResponse({**cached, 'sourceMissing': True})
+        return json_error(
+            'The slide deck file is not on the server any more. Re-upload it in the '
+            'module builder, or open the original link below.',
+            status=404,
+        )
+    try:
+        deck = pptx_slides.render_uploaded_deck(relative_path, absolute_path)
+    except pptx_slides.UnsupportedDeck as error:
+        return json_error(str(error), status=415)
+    return JsonResponse(deck)
+
+
 @require_GET
 def curriculum_uploaded_file(request, path):
     relative_path = f'{COMPONENT_UPLOAD_ROOT}/{path}'
@@ -18447,6 +18521,287 @@ def curriculum_tutor_detail(request, identifier):
 @csrf_exempt
 def curriculum_coach_detail(request, identifier):
     return curriculum_staff_profile_detail(request, 'coach', identifier)
+
+
+# ---------------------------------------------------------------------------
+# Tutor workspace
+#
+# What a signed-in tutor needs and nothing else: the modules they are assigned
+# to, and when their next live session is.
+#
+# The tutor is identified from their login account by email first, then by name.
+# The account lives in enrolment."Staff_users" and the profile in
+# curriculum.tutors, and neither table references the other, so the match is on
+# whatever the two happen to share. Email is the stronger key; name is the
+# fallback that makes it work at all, because the curriculum studio's tutor form
+# treats email as optional and a profile without one would otherwise be
+# unreachable.
+#
+# Assignments are read from two places and merged: the profile's
+# ``assigned_module_ids``, and ``curriculum.modules.tutor_name`` — the tutor
+# recorded on the module's own delivery row. Either side can carry an assignment
+# the other does not, and a tutor should see a module that names them however it
+# was set.
+#
+# An account matching neither a profile nor a module is reported as
+# ``linked: false`` rather than as an empty module list: "we cannot tell which
+# tutor you are" and "you have no modules yet" need different wording.
+#
+# Sessions come from live_sessions joined to its occurrences. The series row
+# carries the module link and the meeting details; the occurrence rows carry the
+# actual per-session times, because a weekly series is one live_sessions row and
+# N occurrence rows. The next session is therefore the earliest occurrence still
+# ahead of now across every assigned module.
+# ---------------------------------------------------------------------------
+
+def iso_or_blank(value):
+    """A date/datetime as ISO text, passing strings through and nulls to ''."""
+    if value is None:
+        return ''
+    return value.isoformat() if hasattr(value, 'isoformat') else clean_str(value)
+
+
+def tutor_profile_for_identity(email, name):
+    """The tutor profile for a login account, and how it was found.
+
+    Returns ``(row, matched_by)`` where matched_by is 'email', 'name' or ''.
+
+    Email is tried first because it is the stronger key: two colleagues can
+    share a name, and a rename does not change an address. Name is the fallback
+    because in practice the profiles are created in the curriculum studio where
+    the email field is optional, so a profile that has never been given one
+    would otherwise be unreachable — which is exactly the state the only tutor
+    profile here was in.
+
+    Both comparisons ignore case and surrounding space: the account is created
+    from a form ("test TUTOR" from a first/last name pair) while the profile is
+    typed by hand, so they routinely differ in capitalisation alone.
+
+    A blank stored email never matches, or every caller without a match would
+    collide with it.
+    """
+    rows = get_staff_profile_rows('tutor', include_archived=False)
+
+    wanted_email = clean_str(email).lower()
+    if wanted_email:
+        for row in rows:
+            if clean_str(row.get('email')).lower() == wanted_email:
+                return row, 'email'
+
+    wanted_name = clean_str(name).lower()
+    if wanted_name:
+        for row in rows:
+            if clean_str(row.get('name')).lower() == wanted_name:
+                return row, 'name'
+
+    return None, ''
+
+
+def module_ids_for_tutor_name(name):
+    """Modules whose delivery row names this tutor.
+
+    ``curriculum.modules.tutor_name`` is the assignment as the module itself
+    records it, which is what the curriculum builder writes when a module is
+    given a tutor. It is read alongside the profile's ``assigned_module_ids``
+    rather than instead of it: either can carry an assignment the other does not
+    have, and a tutor should see a module that names them regardless of which
+    side it was set from.
+    """
+    wanted = clean_str(name).lower()
+    if not wanted:
+        return []
+    rows = authoring_fetch_all(
+        AUTHORING_MODULES_TABLE,
+        'lower(trim(coalesce(tutor_name, %s))) = %s and deleted_at is null',
+        ['', wanted],
+        'start_date, title',
+    )
+    return [clean_str(row.get('module_catalogue_id')) for row in rows if clean_str(row.get('module_catalogue_id'))]
+
+
+def tutor_workspace_module_payload(row):
+    """One assigned module, as the workspace shows it."""
+    return {
+        'moduleCatalogueId': clean_str(row.get('module_catalogue_id')),
+        'title': clean_str(row.get('title')),
+        'description': clean_str(row.get('description')),
+        'programmeName': clean_str(row.get('programme_name')),
+        'cohortName': clean_str(row.get('cohort_name')),
+        'groupName': clean_str(row.get('group_name')),
+        'colour': clean_str(row.get('color')),
+        'totalOtjh': row.get('total_otjh'),
+        'sessionsNumber': row.get('sessions_number'),
+        'startDate': iso_or_blank(row.get('start_date')),
+        'endDate': iso_or_blank(row.get('end_date')),
+        # The planned weekly slot, which is the module's intent. The live
+        # sessions are the meetings actually scheduled against it.
+        'sessionWeekDay': clean_str(row.get('session_week_day')),
+        'sessionStartTime': clean_str(row.get('session_start_time')),
+        'sessionEndTime': clean_str(row.get('session_end_time')),
+    }
+
+
+def tutor_workspace_next_session(module_ids):
+    """The soonest upcoming occurrence across ``module_ids``, or None."""
+    by_module = tutor_workspace_next_session_by_module(module_ids)
+    if not by_module:
+        return None
+    return min(by_module.values(), key=lambda session: session['scheduledStart'])
+
+
+def tutor_workspace_next_session_by_module(module_ids):
+    """``{module_catalogue_id: next session}``, earliest upcoming one per module.
+
+    Superseded series are excluded: rescheduling writes a new series row and
+    marks the old one superseded, so including them would offer a meeting whose
+    invitation no longer exists. Cancelled occurrences go for the same reason.
+
+    Every upcoming occurrence is fetched in one query and reduced per module in
+    Python rather than with ``distinct on``, which is PostgreSQL-only — this
+    module also runs against SQLite under test. The volume is a handful of rows
+    per module, so the difference is not worth the portability.
+    """
+    if not module_ids:
+        return {}
+    ensure_live_session_tracking_tables()
+
+    sessions_table = authoring_table_name(LIVE_SESSIONS_TABLE)
+    occurrences_table = authoring_table_name(LIVE_SESSION_OCCURRENCES_TABLE)
+    placeholders = ', '.join(['%s'] * len(module_ids))
+    query = f"""
+        select
+            occurrence.scheduled_start,
+            occurrence.scheduled_end,
+            occurrence.session_number,
+            occurrence.status as occurrence_status,
+            coalesce(nullif(occurrence.join_url, ''), session.join_url) as join_url,
+            session.id as live_session_id,
+            session.module_catalogue_id,
+            session.module_title,
+            session.timezone,
+            session.duration_minutes,
+            session.repeat_pattern,
+            session.repeat_occurrences
+        from {occurrences_table} as occurrence
+        join {sessions_table} as session
+          on session.id = occurrence.live_session_id
+        where session.module_catalogue_id in ({placeholders})
+          and coalesce(session.status, '') <> 'superseded'
+          and coalesce(occurrence.status, '') <> 'cancelled'
+          and occurrence.scheduled_start >= %s
+        order by occurrence.scheduled_start
+    """
+    with connection.cursor() as cursor:
+        cursor.execute(query, [*module_ids, datetime.utcnow()])
+        rows = rows_as_dicts(cursor)
+
+    # Ordered by start, so the first row seen for a module is its next session.
+    earliest = {}
+    for row in rows:
+        module_id = clean_str(row.get('module_catalogue_id'))
+        if module_id and module_id not in earliest:
+            earliest[module_id] = tutor_workspace_session_payload(row)
+    return earliest
+
+
+def tutor_workspace_session_payload(row):
+    return {
+        'liveSessionId': clean_str(row.get('live_session_id')),
+        'moduleCatalogueId': clean_str(row.get('module_catalogue_id')),
+        'moduleTitle': clean_str(row.get('module_title')),
+        'sessionNumber': row.get('session_number'),
+        'scheduledStart': iso_or_blank(row.get('scheduled_start')),
+        'scheduledEnd': iso_or_blank(row.get('scheduled_end')),
+        # The stored timestamps are naive; this is the zone they were entered in,
+        # so the page can name it rather than guess the reader's.
+        'timezone': clean_str(row.get('timezone')),
+        'durationMinutes': row.get('duration_minutes'),
+        'repeatPattern': clean_str(row.get('repeat_pattern')),
+        'repeatOccurrences': row.get('repeat_occurrences'),
+        'joinUrl': clean_str(row.get('join_url')),
+        'status': clean_str(row.get('occurrence_status')),
+    }
+
+
+@require_GET
+def curriculum_tutor_workspace(request):
+    """The tutor workspace's whole payload.
+
+        GET /curriculum_api/curriculum/tutor-workspace/?email=<account email>
+
+    Ungated, matching every other read in this module. The email is the only
+    input, so this discloses one tutor's module assignments to any caller who
+    knows their address — the same exposure as the tutors collection endpoint it
+    reads through, not a new one.
+    """
+    email = clean_str(request.GET.get('email'))
+    name = clean_str(request.GET.get('name'))
+    if not email and not name:
+        return json_error('An email or a name is required.')
+
+    profile, matched_by = tutor_profile_for_identity(email, name)
+
+    # The name to look for on the modules themselves: the profile's own, when
+    # one was found, so a profile whose name differs from the account's still
+    # picks up the modules it is actually named on.
+    module_name = clean_str(profile.get('name')) if profile else name
+
+    module_ids = list(staff_profile_assignment_ids('tutor', profile)) if profile else []
+    for module_id in module_ids_for_tutor_name(module_name):
+        if module_id not in module_ids:
+            module_ids.append(module_id)
+            if not matched_by:
+                matched_by = 'module-name'
+
+    if not profile and not module_ids:
+        # Not an error: an account that matches no profile and no module is the
+        # ordinary state until somebody assigns them something, or fills in the
+        # email on Curriculum > Staff profiles.
+        return JsonResponse({
+            'linked': False,
+            'matchedBy': '',
+            'tutor': None,
+            'modules': [],
+            'nextSession': None,
+        })
+
+    sessions_by_module = tutor_workspace_next_session_by_module(module_ids)
+
+    modules = []
+    if module_ids:
+        placeholders = ', '.join(['%s'] * len(module_ids))
+        for row in authoring_fetch_all(
+            AUTHORING_MODULES_TABLE,
+            f'module_catalogue_id in ({placeholders}) and deleted_at is null',
+            module_ids,
+            'start_date, title',
+        ):
+            payload = tutor_workspace_module_payload(row)
+            # Each module carries its own next session, so opening one does not
+            # need a second request to find out when it next runs.
+            payload['nextSession'] = sessions_by_module.get(payload['moduleCatalogueId'])
+            modules.append(payload)
+
+    headline = min(
+        sessions_by_module.values(),
+        key=lambda session: session['scheduledStart'],
+        default=None,
+    )
+
+    return JsonResponse({
+        'linked': True,
+        # Which key resolved the tutor, so the page can say so and a support
+        # question about "why can this account see these modules" is answerable.
+        'matchedBy': matched_by,
+        'tutor': {
+            'id': clean_str(profile.get('id')) if profile else '',
+            'name': clean_str(profile.get('name')) if profile else name,
+            'email': clean_str(profile.get('email')) if profile else email,
+            'jobTitle': clean_str(profile.get('job_title')) if profile else '',
+        },
+        'modules': modules,
+        'nextSession': headline,
+    })
 
 
 # ---------------------------------------------------------------------------

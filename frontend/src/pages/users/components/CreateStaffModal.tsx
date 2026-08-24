@@ -1,21 +1,65 @@
 import { useState } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useToast } from '@/hooks/useToast';
-import { ADMIN_POSITION, createStaffUser } from '@/api/staffUsers';
-import type { StaffUserRow } from '@/api/staffUsers';
+import { ADMIN_POSITION, TUTOR_POSITION, createStaffUser } from '@/api/staffUsers';
+import type { StaffAccess, StaffUserRow } from '@/api/staffUsers';
 import { Modal } from './Modal';
 import { inputClass, btnPrimary, btnSecondary } from './ui';
 
 // ============================================================================
-// Create admin — Aptem-shaped "Add user" form for staff accounts.
+// Create staff — the Aptem-shaped "Add user" form, in two variants.
 //
 // Mirrors Aptem's admin variant of the Add-user screen: the user type is fixed
 // (this form only creates staff), and email is entered twice to catch typos in
 // an address the account holder will need to sign in with.
 //
 // Writes to enrolment."Staff_users" via createStaffUser — staff are not learners,
-// so they never touch Enrolment_Users / Commercial_users. The position asked for
-// at the foot of the form is the staff role.
+// so they never touch Enrolment_Users / Commercial_users.
+//
+// One component, not one per role: the two variants differ by a position, an
+// access grant and some wording, and every field, validation rule and
+// invitation-outcome branch below is identical. Copying the file per role is how
+// those branches drift.
 // ============================================================================
+
+export type StaffVariant = 'admin' | 'tutor';
+
+interface VariantConfig {
+  /** Shown in the fixed "User type" row and in the toasts. */
+  noun: string;
+  icon: string;
+  position: string;
+  /**
+   * Granted at creation, or undefined to leave the account with no access.
+   *
+   * Admin deliberately has none: 'Admin' is a job title, and what such an
+   * account may actually reach is decided on the Accounts page — granting
+   * anything here would hand out access nobody chose.
+   *
+   * A tutor is the opposite case. 'Tutor access' exists for exactly one
+   * workspace, so withholding it would create an account whose only possible
+   * destination is /access-required — broken on arrival, and quietly, since
+   * nothing prompts anyone to finish the job.
+   */
+  access?: StaffAccess;
+  /** Where this account lands on first sign-in, for the invitation note. */
+  landsOn?: string;
+}
+
+const VARIANTS: Record<StaffVariant, VariantConfig> = {
+  admin: {
+    noun: 'Admin',
+    icon: 'ri-shield-user-line',
+    position: ADMIN_POSITION,
+  },
+  tutor: {
+    noun: 'Tutor',
+    icon: 'ri-presentation-line',
+    position: TUTOR_POSITION,
+    access: 'tutor',
+    landsOn: 'the Tutor workspace',
+  },
+};
 
 type FieldType = 'text' | 'email' | 'tel' | 'date' | 'radio';
 
@@ -45,13 +89,14 @@ const FIELDS: FieldDef[] = [
   { name: 'organization', label: 'Organisation', type: 'text', placeholder: 'e.g. Kent Business College' },
 ];
 
-export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; onCreated: (row: StaffUserRow) => void }) {
+export function CreateStaffModal({ variant, onClose, onCreated }: {
+  variant: StaffVariant;
+  onClose: () => void;
+  onCreated: (row: StaffUserRow) => void;
+}) {
+  const config = VARIANTS[variant];
   const { success, error } = useToast();
   const [formData, setFormData] = useState<Record<string, string>>({});
-  // Every account created here is an Admin. What the account may actually reach
-  // is its Access grant, set from the Accounts page after creation — a position
-  // chooser here only ever produced a job title that no longer decides anything.
-  const position = ADMIN_POSITION;
   const [submitting, setSubmitting] = useState(false);
 
   const setField = (name: string, value: string) => setFormData((prev) => ({ ...prev, [name]: value }));
@@ -77,9 +122,11 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
       const row = await createStaffUser({
         username: name,
         email,
-        position,
+        position: config.position,
+        access: config.access,
         // Staff share the learner tables' Type/Status vocabulary; "Admin" marks
-        // the row as a non-learner, and the position carries the actual role.
+        // the row as a non-learner. The directory's Type column shows the
+        // position, so a tutor still reads as a Tutor there.
         type: 'Admin',
         status: 'FullUser',
         phone: formData.phone,
@@ -87,41 +134,49 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
         gender: formData.gender,
         organization: formData.organization,
       });
-      // Creating an admin always invites them. The API reports the invitation's
-      // outcome separately from the record's creation: the admin exists either
-      // way, and the failures differ — "no account" means nobody can sign in at
-      // all, while a mail failure leaves a link that can still be re-sent.
+      // Creating a colleague always invites them. The API reports the
+      // invitation's outcome separately from the record's creation: the person
+      // exists either way, and the failures differ — "no account" means nobody
+      // can sign in at all, while a mail failure leaves a link that can still
+      // be re-sent.
       const invite = row.invitation;
-      const created = `${row.name || name} was created as an Admin.`;
+      const label = `${config.noun} created`;
+      const created = `${row.name || name} was created as a ${config.noun}.`;
       if (!invite) {
-        success('Admin created', created);
+        success(label, created);
       } else if (invite.forbidden) {
         // No login account exists. Say so plainly rather than implying a
         // transient mail problem — somebody with the right role must re-invite.
-        success('Admin created', created);
+        success(label, created);
         error(
           'Not permitted to invite',
           invite.error || 'You do not have permission to invite this person.',
         );
       } else if (!invite.invited) {
-        success('Admin created', created);
+        success(label, created);
         error(
           'No account created',
           invite.error || 'They have no sign-in account yet, so they cannot log in.',
         );
       } else if (!invite.emailSent) {
-        success('Admin created', created);
+        success(label, created);
         error(
           'Invitation email not sent',
           invite.error || 'The invitation exists and can be re-sent, but the email did not go out.',
         );
       } else {
-        success('Admin created and invited', `${row.name || name} was emailed a link to set their password.`);
+        success(
+          `${config.noun} created and invited`,
+          `${row.name || name} was emailed a link to set their password.`,
+        );
       }
       onCreated(row);
       onClose();
     } catch (err) {
-      error('Could not create admin', err instanceof Error ? err.message : 'Unexpected error');
+      error(
+        `Could not create ${config.noun.toLowerCase()}`,
+        err instanceof Error ? err.message : 'Unexpected error',
+      );
     } finally {
       setSubmitting(false);
     }
@@ -137,7 +192,7 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
           index % 2 === 1 ? 'bg-background-100/40' : ''
         }`}
       >
-        <label htmlFor={`ca-${field.name}`} className="text-[12px] font-medium text-foreground-600 sm:py-2 leading-snug">
+        <label htmlFor={`cs-${field.name}`} className="text-[12px] font-medium text-foreground-600 sm:py-2 leading-snug">
           {field.label}
           {field.required ? <span className="text-red-500 ml-0.5">*</span> : <span className="text-foreground-300 ml-1">(O)</span>}
         </label>
@@ -148,7 +203,7 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
                 <label key={opt.value} className="flex items-center gap-1.5 text-[13px] text-foreground-700 cursor-pointer">
                   <input
                     type="radio"
-                    name={`ca-${field.name}`}
+                    name={`cs-${field.name}`}
                     checked={value === opt.value}
                     onChange={() => setField(field.name, opt.value)}
                     className="accent-primary-500"
@@ -159,7 +214,7 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
             </div>
           ) : (
             <input
-              id={`ca-${field.name}`}
+              id={`cs-${field.name}`}
               type={field.type}
               value={value}
               placeholder={field.placeholder}
@@ -181,7 +236,7 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
         <>
           <button type="button" className={btnSecondary} onClick={onClose} disabled={submitting}>Close</button>
           <button type="button" className={btnPrimary} onClick={() => handleSubmit()} disabled={submitting}>
-            {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className="ri-shield-user-line" />Create</>}
+            {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Saving…</> : <><AppIcon className={config.icon} />Create</>}
           </button>
         </>
       }
@@ -189,21 +244,22 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
       <form onSubmit={handleSubmit} className="space-y-5">
         <section className="rounded-xl border border-foreground-200/70 overflow-hidden">
           <header className="flex items-center gap-2 px-4 py-2.5 bg-background-100/70 border-b border-foreground-200/60">
-            <AppIcon className="ri-shield-user-line text-primary-500" />
+            <AppIcon className={`${config.icon} text-primary-500`} />
             <h3 className="text-[12px] font-semibold uppercase tracking-wider text-foreground-600">Identity</h3>
           </header>
           <div className="divide-y divide-foreground-100">
-            {/* Fixed, not a picker: this form only creates staff accounts. */}
+            {/* Fixed, not a picker: each variant of this form creates one kind
+                of staff account. */}
             <div className="grid grid-cols-1 sm:grid-cols-[minmax(160px,240px)_1fr] gap-1 sm:gap-4 px-4 py-2.5 items-start">
               <span className="text-[12px] font-medium text-foreground-600 sm:py-2">User type</span>
-              <p className="text-[13px] font-semibold text-primary-700 sm:py-2">Admin</p>
+              <p className="text-[13px] font-semibold text-primary-700 sm:py-2">{config.noun}</p>
             </div>
             {FIELDS.map(renderField)}
           </div>
         </section>
 
-        {/* Invitation — always sent on save. Stated, not asked: an admin with no
-            account is a record nobody can sign in as. */}
+        {/* Invitation — always sent on save. Stated, not asked: an account with
+            no credential is a record nobody can sign in as. */}
         <section className="rounded-xl border border-foreground-200 overflow-hidden">
           <header className="flex items-center gap-2 px-4 py-2.5 bg-background-100 border-b border-foreground-200/60">
             <AppIcon className="ri-mail-send-line text-primary-500" />
@@ -218,6 +274,18 @@ export function CreateAdminModal({ onClose, onCreated }: { onClose: () => void; 
             <p className="text-[12px] text-foreground-500 mt-0.5">
               A single-use link to set their own password. They cannot sign in until they do.
             </p>
+            {/* Only the variants that grant access can promise a destination.
+                An admin's access is chosen afterwards, so saying where they land
+                would be a guess. */}
+            {config.landsOn && (
+              <p className="text-[12px] text-foreground-500 mt-2 flex items-start gap-1.5">
+                <AppIcon className="ri-arrow-right-circle-line text-primary-500 mt-0.5 shrink-0" />
+                <span>
+                  They are granted <strong className="font-semibold text-foreground-700">Tutor access</strong> and
+                  will land in {config.landsOn}. Change it any time from the Accounts page.
+                </span>
+              </p>
+            )}
           </div>
         </section>
 

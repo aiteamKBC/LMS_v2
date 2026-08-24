@@ -145,6 +145,8 @@ class Command(BaseCommand):
                         "Invited_by"  text,
                         "Sent_at"     timestamptz,
                         "Send_error"  text,
+                        "Acknowledged_at" timestamptz,
+                        "Acknowledged_by" text,
                         "Created_at"  timestamptz NOT NULL DEFAULT now(),
                         "Created_ip"  text
                     )
@@ -166,6 +168,8 @@ class Command(BaseCommand):
                         "Used_at"     timestamptz,
                         "Sent_at"     timestamptz,
                         "Send_error"  text,
+                        "Acknowledged_at" timestamptz,
+                        "Acknowledged_by" text,
                         "Created_at"  timestamptz NOT NULL DEFAULT now(),
                         "Created_ip"  text
                     )
@@ -179,6 +183,23 @@ class Command(BaseCommand):
                     f'CREATE INDEX IF NOT EXISTS password_resets_email_created_idx '
                     f'ON "{SCHEMA}"."Password_resets" (lower(btrim("Email")), "Created_at" DESC)'
                 )
+
+                # --- acknowledged send failures (added after first release) ---
+                # A failed invitation or reset raises an alert on the Super Admin
+                # dashboard, and until now nothing could clear it: the row keeps
+                # its Send_error for ever, so the alert was permanent. These
+                # columns record that an administrator dealt with it. The row is
+                # marked rather than deleted — the send really was attempted, and
+                # this table is the record of what the platform tried to do.
+                for table in ("Invitations", "Password_resets"):
+                    cur.execute(
+                        f'ALTER TABLE "{SCHEMA}"."{table}" '
+                        f'ADD COLUMN IF NOT EXISTS "Acknowledged_at" timestamptz'
+                    )
+                    cur.execute(
+                        f'ALTER TABLE "{SCHEMA}"."{table}" '
+                        f'ADD COLUMN IF NOT EXISTS "Acknowledged_by" text'
+                    )
 
                 # --- audit ----------------------------------------------------
                 # No FK to Login_accounts: a failed attempt against an address

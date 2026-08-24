@@ -1,5 +1,8 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+// Imported rather than left to unplugin-auto-import: vitest.config.ts omits that
+// plugin, so a component relying on the global cannot be rendered in a test.
+import { AppIcon } from '@/components/feature/AppIcon';
 
 interface ModalProps {
   title: ReactNode;

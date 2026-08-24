@@ -6,7 +6,7 @@ import { Modal } from './Modal';
 import { inputClass, btnPrimary, btnSecondary } from './ui';
 
 // ============================================================================
-// Edit admin / caseowner — the counterpart to CreateAdminModal.
+// Edit admin / caseowner — the counterpart to CreateStaffModal.
 //
 // Staff accounts have no learner profile or wizard, so their row in the users
 // directory is the only place they exist in the UI. This modal is that row's

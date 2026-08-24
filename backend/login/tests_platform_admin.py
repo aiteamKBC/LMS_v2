@@ -368,3 +368,137 @@ class ResendInvitationTests(LoginTestBase):
             f"/login_api/admin/accounts/{invitee.id}/", {"action": "resend-invitation"}
         )
         self.assertEqual(response.status_code, 403)
+
+
+class EmailAcknowledgementTests(LoginTestBase):
+    """Closing the alert a failed invitation raises.
+
+    A send failure keeps its ``Send_error`` for ever, so before this existed the
+    Super Admin dashboard's "1 invitation email failed to send" could not be
+    cleared by any amount of fixing it. Acknowledging is how that ends — and the
+    two things it must NOT do are the point of most of these: it must not delete
+    the row, and it must not rewrite the delivery-rate history.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.account = self.make_account(access="super-admin")
+        self.post("/login_api/login/", {"email": self.email, "password": self.password})
+
+    def make_failed_invitation(self):
+        """An invitation whose email the transport refused."""
+        invitation = Invitation.objects.create(
+            account_id=self.account.id,
+            token_hash=uuid.uuid4().hex + uuid.uuid4().hex[:32],
+            email=self.account.email,
+            expires_at=timezone.now() + timezone.timedelta(days=7),
+            send_error="[Errno 11001] getaddrinfo failed",
+        )
+        self.addCleanup(lambda: Invitation.objects.filter(pk=invitation.pk).delete())
+        return invitation
+
+    def ack(self, invitation, acknowledged=True):
+        return self.post(
+            f"/login_api/admin/email-log/invitation/{invitation.pk}/acknowledge/",
+            {"acknowledged": acknowledged},
+        )
+
+    def test_acknowledging_marks_the_row_without_deleting_it(self):
+        invitation = self.make_failed_invitation()
+        response = self.ack(invitation)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "acknowledged")
+        invitation.refresh_from_db()
+        self.assertIsNotNone(invitation.acknowledged_at)
+        self.assertEqual(invitation.acknowledged_by, self.account.email)
+        # The failure itself is still on the record.
+        self.assertEqual(invitation.send_error, "[Errno 11001] getaddrinfo failed")
+
+    def test_acknowledging_clears_it_from_the_dashboard_alert(self):
+        invitation = self.make_failed_invitation()
+        before = self.client.get("/login_api/admin/overview/", **XHR).json()
+        self.ack(invitation)
+        after = self.client.get("/login_api/admin/overview/", **XHR).json()
+
+        self.assertEqual(
+            after["invitations"]["failed"], before["invitations"]["failed"] - 1
+        )
+
+    def test_undo_puts_it_back(self):
+        invitation = self.make_failed_invitation()
+        self.ack(invitation)
+        response = self.ack(invitation, acknowledged=False)
+
+        self.assertEqual(response.json()["status"], "failed")
+        invitation.refresh_from_db()
+        self.assertIsNone(invitation.acknowledged_at)
+        self.assertIsNone(invitation.acknowledged_by)
+
+    def test_the_delivery_rate_still_counts_the_failure(self):
+        """Otherwise one click would turn 90.9% delivery into 100%."""
+        invitation = self.make_failed_invitation()
+        before = self.client.get("/login_api/admin/email-log/", **XHR).json()["stats"]
+        self.ack(invitation)
+        after = self.client.get("/login_api/admin/email-log/", **XHR).json()["stats"]
+
+        self.assertEqual(after["failed"], before["failed"])
+        self.assertEqual(after["deliveryRate"], before["deliveryRate"])
+        # What does change is how much still needs attention.
+        self.assertEqual(after["outstanding"], before["outstanding"] - 1)
+        self.assertEqual(after["acknowledged"], before["acknowledged"] + 1)
+
+    def test_the_log_moves_it_between_the_two_filters(self):
+        invitation = self.make_failed_invitation()
+        self.ack(invitation)
+
+        failed = self.client.get("/login_api/admin/email-log/?status=failed", **XHR).json()
+        acked = self.client.get("/login_api/admin/email-log/?status=acknowledged", **XHR).json()
+        row_id = f"invitation-{invitation.pk}"
+
+        self.assertNotIn(row_id, [r["id"] for r in failed["results"]])
+        self.assertIn(row_id, [r["id"] for r in acked["results"]])
+
+    def test_a_delivered_email_cannot_be_acknowledged(self):
+        """Recording a decision about a problem that never happened."""
+        delivered = Invitation.objects.create(
+            account_id=self.account.id,
+            token_hash=uuid.uuid4().hex + uuid.uuid4().hex[:32],
+            email=self.account.email,
+            expires_at=timezone.now() + timezone.timedelta(days=7),
+            sent_at=timezone.now(),
+        )
+        self.addCleanup(lambda: Invitation.objects.filter(pk=delivered.pk).delete())
+
+        response = self.ack(delivered)
+        self.assertEqual(response.status_code, 400)
+
+    def test_it_is_recorded_against_whoever_did_it(self):
+        invitation = self.make_failed_invitation()
+        self.ack(invitation)
+        self.assertTrue(
+            LoginAudit.objects.filter(
+                event="admin_email_ack", email=invitation.email
+            ).exists()
+        )
+
+    def test_a_staff_session_cannot_acknowledge(self):
+        """Suppressing a platform alert is an administrator's decision."""
+        invitation = self.make_failed_invitation()
+        self.client.post("/login_api/logout/", **XHR)
+
+        staff_email = f"qa-staff-{uuid.uuid4().hex[:8]}@kbc.invalid"
+        staff = StaffUser.objects.create(
+            username="Plain Staff", email=staff_email, position="Admin",
+            access="enrolment", type="Admin", status="FullUser",
+        )
+        staff_account, _ = identity.ensure_account("staff", staff.id, subject=staff)
+        staff_account.password_hash = hash_password(self.password)
+        staff_account.password_set_at = timezone.now()
+        staff_account.save()
+        self._accounts.append(staff_account)
+        self.addCleanup(lambda: StaffUser.objects.filter(pk=staff.id).delete())
+        self.addCleanup(lambda: LoginAudit.objects.filter(email=staff_email).delete())
+
+        self.post("/login_api/login/", {"email": staff_email, "password": self.password})
+        self.assertEqual(self.ack(invitation).status_code, 403)
