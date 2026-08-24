@@ -1,5 +1,5 @@
 // ============================================================================
-// The five workspaces the platform offers as a launcher.
+// The workspaces the platform offers as a launcher.
 //
 // One definition, two consumers:
 //   * components/feature/WorkspaceSwitcher — the top-bar switcher an
@@ -10,13 +10,20 @@
 //   * pages/home            — the public "Explore your portal" launcher, which
 //                             enters each one as its demo account (previewAs).
 //
+// The two consumers do NOT show the same rows. Super Admin is in the switcher,
+// because an administrator moving to it is ordinary navigation, but it has no
+// `demoEmail` and so never appears on the public launcher: that launcher signs
+// anyone in as the named account with no password, and the one account that
+// must not be handed out that way is the one that administers the platform.
+// A null demoEmail is the whole rule — see the filter in pages/home.
+//
 // Kept here rather than in either place so the two cannot drift, and every
 // `path` is a real route in router/config.tsx — a launcher offering a section
 // that leads nowhere is worse than one that omits it.
 //
-// Deliberately five, not sixteen. The sidebar's roleNavMap knows every role the
-// app has, but this is the curated set of sections worth switching between; a
-// switcher listing everything routable is a directory, not a shortcut.
+// Curated, not exhaustive. The sidebar's roleNavMap knows every role the app
+// has; this is the set of sections worth switching between. A switcher listing
+// everything routable is a directory, not a shortcut.
 //
 // This list also replaced `components/feature/RoleSwitcher.tsx`, a dead
 // component carrying its own copy of the same mapping. A real administrator
@@ -30,13 +37,28 @@ export interface PortalWorkspace {
   icon: string;
   /** Where this workspace lives. A real route. */
   path: string;
-  /** Demo account the public launcher signs in as. Unused by the switcher. */
-  demoEmail: string;
+  /**
+   * Demo account the public launcher signs in as, or null for a workspace the
+   * launcher must not offer. Unused by the switcher, which never signs anybody
+   * in — it navigates an administrator who is already authenticated.
+   */
+  demoEmail: string | null;
   /** One line of context, shown in the switcher and on the launcher. */
   blurb: string;
 }
 
 export const PORTAL_WORKSPACES: PortalWorkspace[] = [
+  {
+    // First because it is the hub the others hang off — and because this is the
+    // dashboard the switcher itself was lifted out of, which until now was the
+    // one section the switcher could not take you back to.
+    slug: 'admin',
+    label: 'Super Admin',
+    icon: 'ri-shield-user-line',
+    path: '/workspace/admin',
+    demoEmail: null,
+    blurb: 'Accounts, access control and platform health',
+  },
   {
     slug: 'coach',
     label: 'Coach',
@@ -62,6 +84,16 @@ export const PORTAL_WORKSPACES: PortalWorkspace[] = [
     path: '/workspace/engagement',
     demoEmail: 'compliance@kbc.test',
     blurb: 'Attendance, absence and communications',
+  },
+  {
+    // Tutors deliver the teaching; coaches carry the caseload. Two grants
+    // (ACCESS_TUTOR / ACCESS_COACH), two workspaces, listed next to each other.
+    slug: 'tutor',
+    label: 'Tutor',
+    icon: 'ri-presentation-line',
+    path: '/workspace/tutor',
+    demoEmail: 'tutor@kbc.test',
+    blurb: 'Teaching sessions, marking and evidence review',
   },
   {
     slug: 'curriculum',
@@ -92,9 +124,11 @@ export const PORTAL_WORKSPACES: PortalWorkspace[] = [
  *
  * The segment boundary matters too: `/users-report` is not inside `/users`.
  *
- * Returns null anywhere outside these five sections — the Super Admin dashboard,
- * Leadership, an admin settings page — which the switcher renders as a neutral
- * "Workspaces" label rather than claiming you are somewhere you are not.
+ * Returns null anywhere outside these sections — Leadership, an admin settings
+ * page such as /admin/roles — which the switcher renders as a neutral
+ * "Workspaces" label rather than claiming you are somewhere you are not. Note
+ * that /admin/* is not inside /workspace/admin: those pages are reached from the
+ * Super Admin sidebar but are not the workspace's own route.
  */
 export function activeWorkspace(pathname: string): PortalWorkspace | null {
   let best: PortalWorkspace | null = null;

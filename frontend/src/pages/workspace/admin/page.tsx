@@ -15,11 +15,15 @@
 // ============================================================================
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+// Explicit, though vite auto-imports it: vitest.config.ts deliberately omits
+// unplugin-auto-import, so without this the page cannot be rendered in a test.
+import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { ResendInvitationButton, canResendInvitation } from '@/pages/admin/_shared/ResendInvitation';
 import { useAuth } from '@/hooks/useAuth';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
+import { readDismissed, dismiss, restoreAll } from '@/lib/adminAlertDismissals';
 import {
   fetchAuditLog,
   fetchPlatformOverview,
@@ -71,6 +75,12 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [auditTick, setAuditTick] = useState(0);
+  // Alerts this administrator has waved away. Read once per account rather than
+  // on every render, and re-read if the signed-in account changes under us —
+  // dismissals belong to the person, not to the tab.
+  const accountId = auth.account?.id ?? null;
+  const [dismissed, setDismissed] = useState<Set<string>>(() => readDismissed(accountId));
+  useEffect(() => setDismissed(readDismissed(accountId)), [accountId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,13 +112,18 @@ export default function AdminDashboard() {
     : 'Loading platform records…';
 
   // Things that genuinely warrant attention, derived from real rows only.
-  const attention: { tone: 'critical' | 'warning'; text: string; href: string }[] = [];
+  //
+  // `signature` is what a dismissal is recorded against, and it carries the
+  // count for exactly that reason: dismissing "1 invitation email failed" must
+  // not also hide the day a second one does. See lib/adminAlertDismissals.
+  const attention: { tone: 'critical' | 'warning'; text: string; href: string; signature: string }[] = [];
   if (overview) {
     if (acc && acc.locked > 0) {
       attention.push({
         tone: 'critical',
         text: `${acc.locked} account${acc.locked === 1 ? ' is' : 's are'} locked out after repeated failed sign-ins.`,
         href: '/admin/users?status=locked',
+        signature: `accounts-locked:${acc.locked}`,
       });
     }
     if (overview.authActivity.failedSignIns24h > 0) {
@@ -116,6 +131,7 @@ export default function AdminDashboard() {
         tone: 'warning',
         text: `${overview.authActivity.failedSignIns24h} failed sign-in attempt${overview.authActivity.failedSignIns24h === 1 ? '' : 's'} in the last 24 hours.`,
         href: '/admin/access-logs?outcome=failure',
+        signature: `sign-ins-failed:${overview.authActivity.failedSignIns24h}`,
       });
     }
     if (overview.invitations.failed > 0) {
@@ -123,6 +139,7 @@ export default function AdminDashboard() {
         tone: 'critical',
         text: `${overview.invitations.failed} invitation email${overview.invitations.failed === 1 ? '' : 's'} failed to send.`,
         href: '/admin/notifications?status=failed',
+        signature: `invites-failed:${overview.invitations.failed}`,
       });
     }
     if (overview.invitations.expired > 0) {
@@ -130,13 +147,25 @@ export default function AdminDashboard() {
         tone: 'warning',
         text: `${overview.invitations.expired} invitation${overview.invitations.expired === 1 ? ' has' : 's have'} expired without being accepted.`,
         href: '/admin/notifications',
+        signature: `invites-expired:${overview.invitations.expired}`,
       });
     }
     if (system && system.configuredCount < system.totalCount) {
       const missing = system.checks.filter(c => !c.configured).map(c => c.name).join(', ');
-      attention.push({ tone: 'warning', text: `Not configured: ${missing}.`, href: '/admin/system' });
+      attention.push({
+        tone: 'warning',
+        text: `Not configured: ${missing}.`,
+        href: '/admin/system',
+        signature: `system-unconfigured:${system.totalCount - system.configuredCount}`,
+      });
     }
   }
+
+  const visibleAttention = attention.filter(a => !dismissed.has(a.signature));
+  const hiddenCount = attention.length - visibleAttention.length;
+
+  const dismissAlert = (signature: string) =>
+    setDismissed(dismiss(accountId, signature, attention.map(a => a.signature)));
 
   return (
     <WorkspaceShell
@@ -184,26 +213,61 @@ export default function AdminDashboard() {
         {/* ============================================================ */}
         {/* Attention — only real conditions, only when they hold        */}
         {/* ============================================================ */}
-        {attention.length > 0 && (
+        {visibleAttention.length > 0 && (
           <div className="space-y-2">
-            {attention.map((a, i) => (
-              <Link
-                key={i}
-                to={a.href}
-                className={`rounded-xl p-3.5 flex items-start gap-3 cursor-pointer transition-smooth ${
+            {/* The card is the wrapper, not the link: a <button> cannot live
+                inside an <a>, and nesting one would also mean every dismiss
+                click had to cancel a navigation it had already started. */}
+            {visibleAttention.map((a) => (
+              <div
+                key={a.signature}
+                className={`rounded-xl flex items-stretch transition-smooth ${
                   a.tone === 'critical'
-                    ? 'bg-red-50 border border-red-200/60 hover:bg-red-100/70'
-                    : 'bg-amber-50 border border-amber-200/60 hover:bg-amber-100/70'
+                    ? 'bg-red-50 border border-red-200/60'
+                    : 'bg-amber-50 border border-amber-200/60'
                 }`}
               >
-                <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${a.tone === 'critical' ? 'bg-red-100' : 'bg-amber-100'}`}>
-                  <AppIcon className={`${a.tone === 'critical' ? 'ri-error-warning-fill text-red-600' : 'ri-alert-line text-amber-600'} text-sm`}></AppIcon>
-                </span>
-                <p className={`text-[13px] font-medium flex-1 ${a.tone === 'critical' ? 'text-red-900' : 'text-amber-900'}`}>{a.text}</p>
-                <AppIcon className={`ri-arrow-right-line text-sm shrink-0 ${a.tone === 'critical' ? 'text-red-400' : 'text-amber-400'}`}></AppIcon>
-              </Link>
+                <Link
+                  to={a.href}
+                  className={`flex flex-1 min-w-0 items-start gap-3 rounded-l-xl p-3.5 cursor-pointer transition-smooth ${
+                    a.tone === 'critical' ? 'hover:bg-red-100/70' : 'hover:bg-amber-100/70'
+                  }`}
+                >
+                  <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${a.tone === 'critical' ? 'bg-red-100' : 'bg-amber-100'}`}>
+                    <AppIcon className={`${a.tone === 'critical' ? 'ri-error-warning-fill text-red-600' : 'ri-alert-line text-amber-600'} text-sm`}></AppIcon>
+                  </span>
+                  <p className={`text-[13px] font-medium flex-1 ${a.tone === 'critical' ? 'text-red-900' : 'text-amber-900'}`}>{a.text}</p>
+                  <AppIcon className={`ri-arrow-right-line text-sm shrink-0 ${a.tone === 'critical' ? 'text-red-400' : 'text-amber-400'}`}></AppIcon>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => dismissAlert(a.signature)}
+                  title="Dismiss for me — it returns if this changes"
+                  aria-label={`Dismiss: ${a.text}`}
+                  className={`flex w-10 shrink-0 items-center justify-center rounded-r-xl transition-smooth cursor-pointer ${
+                    a.tone === 'critical'
+                      ? 'text-red-400 hover:bg-red-100/70 hover:text-red-700'
+                      : 'text-amber-400 hover:bg-amber-100/70 hover:text-amber-700'
+                  }`}
+                >
+                  <AppIcon className="ri-close-line text-sm"></AppIcon>
+                </button>
+              </div>
             ))}
           </div>
+        )}
+
+        {/* The way back. Without it a dismissal is irreversible and the count is
+            simply gone, which is a worse dashboard than one that nags. */}
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setDismissed(restoreAll(accountId))}
+            className="flex items-center gap-2 text-[12px] text-foreground-400 hover:text-foreground-700 transition-smooth cursor-pointer"
+          >
+            <AppIcon className="ri-eye-off-line text-[13px]"></AppIcon>
+            {hiddenCount} alert{hiddenCount === 1 ? '' : 's'} dismissed · show {hiddenCount === 1 ? 'it' : 'them'} again
+          </button>
         )}
 
         {!loading && overview && attention.length === 0 && (

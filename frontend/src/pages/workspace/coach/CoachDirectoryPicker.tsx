@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { fetchCoachDirectory, type DirectoryCoach } from '@/api/coachDirectory';
 
 const EMPTY_VALUE = '--';
@@ -59,7 +60,7 @@ export function CoachDirectoryPicker({ onSelect }: { onSelect: (coach: Directory
   const filtered = useMemo(() => coaches.filter(coach => matches(coach, search)), [coaches, search]);
 
   return (
-    <section className="rounded-[24px] border border-foreground-200/70 bg-background-50/95 p-4 md:p-6 shadow-[0_24px_60px_-36px_rgba(15,23,42,0.28)]">
+    <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm md:p-6">
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-lg font-heading font-semibold text-foreground-900">Open a coach workspace</h2>
@@ -88,19 +89,24 @@ export function CoachDirectoryPicker({ onSelect }: { onSelect: (coach: Directory
       )}
 
       {!loading && error && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">{error}</div>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-800">{error}</div>
       )}
 
       {!loading && !error && !coaches.length && (
-        <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-6 text-center text-sm text-foreground-400">
-          No accounts have Coach access yet. Grant it from the Users directory and they will appear here.
-        </div>
+        <EmptyState
+          variant="empty"
+          icon="ri-group-line"
+          title="No coach accounts yet"
+          description="Grant Coach access from the Users directory and they will appear here."
+        />
       )}
 
       {!loading && !error && coaches.length > 0 && !filtered.length && (
-        <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-6 text-center text-sm text-foreground-400">
-          No coach matches "{search.trim()}".
-        </div>
+        <EmptyState
+          variant="no-matches"
+          title="No coach matches your search"
+          description={`Nobody matches "${search.trim()}". Try a different name or email.`}
+        />
       )}
 
       {!loading && !error && filtered.length > 0 && (
@@ -111,7 +117,7 @@ export function CoachDirectoryPicker({ onSelect }: { onSelect: (coach: Directory
                 key={coach.email}
                 type="button"
                 onClick={() => onSelect(coach)}
-                className="group flex cursor-pointer flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary-300 hover:shadow-[0_18px_40px_-28px_rgba(15,23,42,0.35)] focus:outline-none focus-visible:border-primary-400 focus-visible:ring-2 focus-visible:ring-primary-200"
+                className="group flex cursor-pointer flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-300 focus:outline-none focus-visible:border-primary-400 focus-visible:ring-2 focus-visible:ring-primary-200"
               >
                 <div className="flex items-start gap-3">
                   <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">
@@ -119,12 +125,12 @@ export function CoachDirectoryPicker({ onSelect }: { onSelect: (coach: Directory
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-foreground-900">{coach.name || coach.email}</p>
-                    <p className="truncate text-[11px] text-foreground-400">{coach.email}</p>
+                    <p className="truncate text-[12px] text-foreground-400">{coach.email}</p>
                   </div>
                   <AppIcon className="ri-arrow-right-line mt-1 shrink-0 text-foreground-300 transition-colors group-hover:text-primary-500" />
                 </div>
 
-                <div className="flex items-center gap-4 border-t border-foreground-200/50 pt-3 text-[11px] text-foreground-500">
+                <div className="flex items-center gap-4 border-t border-foreground-200/50 pt-3 text-[12px] text-foreground-500">
                   <span className="flex items-center gap-1.5">
                     <AppIcon className="ri-group-line text-foreground-400" />
                     <strong className="font-semibold text-foreground-800">
@@ -145,7 +151,7 @@ export function CoachDirectoryPicker({ onSelect }: { onSelect: (coach: Directory
           </div>
 
           {!countsAvailable && (
-            <p className="mt-4 text-[11px] text-foreground-400">
+            <p className="mt-4 text-[12px] text-foreground-400">
               Caseload numbers are unavailable right now. The coach list itself is current.
             </p>
           )}

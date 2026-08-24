@@ -7,6 +7,15 @@ import { roleNavMap } from '@/mocks/navigation';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { fetchEvidence, getEvidenceDownloadUrl, type EvidenceRecord } from '@/api/evidence';
 import { PanelSkeleton } from '@/components/feature/Skeletons';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { PageTabs } from '@/components/ui/PageTabs';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
+import { Panel } from '@/components/ui/Panel';
+import { SectionHeader } from '@/components/ui/SectionHeader';
+import { statusTone } from '@/lib/statusTone';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/marking-queue';
@@ -66,6 +75,17 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** A bordered detail section inside the review page — Panel + SectionHeader
+ * standing in for what used to be a one-off wrapper repeated per section. */
+function ReviewBlock({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
+  return (
+    <Panel>
+      <SectionHeader title={title} icon={icon} />
+      <div className="mt-3">{children}</div>
+    </Panel>
+  );
 }
 
 export default function CoachMarkingReviewPage() {
@@ -207,6 +227,9 @@ export default function CoachMarkingReviewPage() {
   const unresolvedEvidenceFiles = selected
     ? selected.evidenceFiles.filter(name => !submissionEvidenceRecords.some(record => record.filename === name))
     : [];
+  const mappedKsbWeight = selected
+    ? Object.values(selected.ksbWeights || {}).reduce((total, weight) => total + Number(weight || 0), 0)
+    : 0;
 
   return (
     <WorkspaceShell
@@ -219,27 +242,37 @@ export default function CoachMarkingReviewPage() {
       userName={coach.name}
       userRole="Progress Coach"
     >
-      <div className="mx-auto w-full max-w-[1680px] p-5 md:p-8 lg:px-12">
-        <button onClick={() => navigate(-1)} className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-foreground-600 hover:text-primary-700">
-          <AppIcon className="ri-arrow-left-line" /> Back to marking queue
-        </button>
-
-        <header className="mb-8 border-b border-foreground-200 pb-7">
-          <p className="text-sm font-semibold uppercase tracking-[0.28em] text-primary-700">AI-assisted marking</p>
-          <h1 className="mt-2 text-4xl font-bold tracking-tight text-foreground-950">Review, adjust, validate</h1>
-          <p className="mt-3 text-base text-foreground-500">
-            Suggestions are clearly labelled. The coach retains final professional judgement on every decision.
-          </p>
-        </header>
+      <PageContainer>
+        <PageHeader
+          icon="ri-sparkling-line"
+          title="Review, adjust, validate"
+          description="AI-assisted suggestions are clearly labelled. The coach retains final professional judgement on every decision."
+          backTo={{ to: '/coach/marking-queue', label: 'Back to Marking Queue' }}
+        />
 
         {loading ? (
           <PanelSkeleton lines={6} />
         ) : error && !selected ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}</div>
+          <EmptyState
+            variant="error"
+            title="Unable to load this submission"
+            description={error}
+            action={<EmptyStateAction label="Retry" icon="ri-refresh-line" onClick={() => void load()} />}
+          />
         ) : !selected ? (
-          <div className="rounded-xl border border-foreground-200 bg-white p-12 text-center">
-            <p className="font-semibold text-foreground-700">Submission not found.</p>
-          </div>
+          <EmptyState
+            variant="empty"
+            icon="ri-file-search-line"
+            title="Submission not found"
+            description="This submission may already have been reviewed, or the link is out of date."
+            action={
+              <EmptyStateAction
+                label="Back to Marking Queue"
+                icon="ri-arrow-left-line"
+                onClick={() => navigate('/coach/marking-queue')}
+              />
+            }
+          />
         ) : (
           <div className="grid items-start gap-7 lg:grid-cols-[330px_minmax(0,1fr)]">
             <aside className="space-y-3">
@@ -247,10 +280,10 @@ export default function CoachMarkingReviewPage() {
                 <button
                   key={item.id}
                   onClick={() => navigate(`/coach/marking-queue/${item.id}`)}
-                  className={`w-full rounded-xl border p-5 text-left transition-colors ${
+                  className={`w-full rounded-lg border p-4 text-left transition-colors ${
                     item.id === selected.id
                       ? 'border-primary-500 bg-primary-50'
-                      : 'border-foreground-200 bg-white hover:border-primary-200'
+                      : 'border-foreground-200 bg-background-50 hover:border-primary-200'
                   }`}
                 >
                   <p className="text-base font-semibold text-foreground-900">{item.learner}</p>
@@ -263,18 +296,16 @@ export default function CoachMarkingReviewPage() {
             </aside>
 
             <main className="flex min-w-0 flex-col gap-6">
-              <section className="order-1 rounded-2xl border border-foreground-200 bg-white p-7 shadow-sm">
+              <Panel className="order-1" padding="lg">
                 <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
                   <div>
-                    <p className="text-sm font-semibold uppercase tracking-wider text-primary-700">{selected.activityType} submission</p>
-                    <h2 className="mt-2 text-2xl font-bold text-foreground-950">{selected.activityTitle}</h2>
+                    <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">{selected.activityType} submission</p>
+                    <h3 className="mt-1 text-sm font-heading font-bold text-foreground-900">{selected.activityTitle}</h3>
                     <p className="mt-2 text-base text-foreground-500">
                       {selected.learner} · {[selected.module, selected.week].filter(Boolean).join(' · ')} · Submitted {selected.submittedDisplay}
                     </p>
                   </div>
-                  <span className="w-fit rounded-full bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-700">
-                    {statusLabel(selected.status)}
-                  </span>
+                  <StatusBadge status={selected.status} label={statusLabel(selected.status)} size="sm" className="w-fit" />
                 </div>
 
                 <div className="mt-5">
@@ -283,7 +314,7 @@ export default function CoachMarkingReviewPage() {
                     {selected.ksbCodes.map(code => (
                       <span key={code} className="inline-flex items-center gap-2 rounded-lg bg-primary-50 px-3.5 py-1.5 text-sm font-semibold text-primary-800">
                         {code}
-                        <span className="rounded-md bg-white px-1.5 py-0.5 text-[10px] text-primary-600 shadow-sm">
+                        <span className="rounded-md bg-background-50 px-1.5 py-0.5 text-[12px] text-primary-600 shadow-sm">
                           {selected.ksbWeights?.[code] ?? 0}% weight
                         </span>
                       </span>
@@ -292,44 +323,40 @@ export default function CoachMarkingReviewPage() {
                 </div>
 
                 <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <ReviewMetric label="Quality score" value={`${selected.qualityScore}/100`} />
-                  <ReviewMetric
-                    label="Mapped KSB weight"
-                    value={`${Object.values(selected.ksbWeights || {}).reduce((total, weight) => total + Number(weight || 0), 0)}%`}
+                  <MetricCard label="Quality score" value={`${selected.qualityScore}/100`} />
+                  <MetricCard label="Mapped KSB weight" value={`${mappedKsbWeight}%`} />
+                  <MetricCard label="Actual OTJH" value={`${selected.actualTimeHours || '0'}h`} />
+                  <MetricCard
+                    label="Marking status"
+                    value={statusLabel(selected.status)}
+                    tone={statusTone(selected.status)}
                   />
-                  <ReviewMetric label="Actual OTJH" value={`${selected.actualTimeHours || '0'}h`} />
-                  <ReviewMetric label="Marking status" value={statusLabel(selected.status)} />
                 </div>
 
-                <div className="mt-6 rounded-xl border border-primary-200 bg-primary-50/40 p-6">
+                <div className="mt-6 rounded-lg border border-primary-200 bg-primary-50/40 p-5">
                   <p className="text-sm font-semibold text-primary-700"><AppIcon className="ri-sparkling-line mr-2" />AI-assisted suggestion · requires coach validation</p>
                   <p className="mt-4 text-base leading-7 text-foreground-800"><strong>Submission summary:</strong> {suggestion}</p>
                   <p className="mt-3 text-base leading-7 text-foreground-800">
                     <strong>Suggested action:</strong> Review the KSB explanations, workplace application and uploaded evidence, then accept or request resubmission.
                   </p>
                 </div>
-              </section>
+              </Panel>
 
-              <section className="order-2 rounded-2xl border border-foreground-200 bg-white p-7 shadow-sm">
+              <Panel className="order-2" padding="lg">
                 <div className="mb-5">
                   <h3 className="text-lg font-bold text-foreground-950">Full submission details</h3>
                   <p className="mt-1 text-sm text-foreground-500">Review the learner’s responses and supporting evidence before finalising your decision.</p>
                 </div>
-                <div className="flex flex-wrap gap-1 rounded-xl bg-background-100 p-1">
-                  {([
-                    ['overview', 'Overview'],
-                    ['learning', 'Learning & KSBs'],
-                    ['evidence', 'Evidence & OTJH'],
-                  ] as [ReviewTab, string][]).map(([key, label]) => (
-                    <button
-                      key={key}
-                      onClick={() => setTab(key)}
-                      className={`rounded-lg px-4 py-2 text-xs font-semibold ${tab === key ? 'bg-white text-foreground-900 shadow-sm' : 'text-foreground-500'}`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+                <PageTabs
+                  label="View submission sections"
+                  value={tab}
+                  onChange={(next) => setTab(next as ReviewTab)}
+                  items={[
+                    { value: 'overview', label: 'Overview' },
+                    { value: 'learning', label: 'Learning & KSBs' },
+                    { value: 'evidence', label: 'Evidence & OTJH' },
+                  ]}
+                />
 
                 {tab === 'overview' && (
                   <div className="mt-5 grid gap-4 md:grid-cols-2">
@@ -339,7 +366,7 @@ export default function CoachMarkingReviewPage() {
                     </ReviewBlock>
                     <ReviewBlock title="Employer benefit" icon="ri-building-line">
                       <div className="flex flex-wrap gap-1.5">
-                        {selected.selectedBenefits.map(benefit => <span key={benefit} className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] text-primary-700">{benefit}</span>)}
+                        {selected.selectedBenefits.map(benefit => <span key={benefit} className="rounded-full bg-primary-50 px-2.5 py-1 text-[12px] text-primary-700">{benefit}</span>)}
                       </div>
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground-700">{selected.benefitExplanation}</p>
                     </ReviewBlock>
@@ -365,7 +392,7 @@ export default function CoachMarkingReviewPage() {
                   <div className="mt-5 grid gap-4 md:grid-cols-2">
                     <ReviewBlock title="Uploaded evidence" icon="ri-attachment-2">
                       {evidenceLoading && (
-                        <div className="flex items-center gap-2 rounded-xl bg-background-100 px-3 py-3 text-xs text-foreground-500">
+                        <div className="flex items-center gap-2 rounded-lg bg-background-100 px-3 py-3 text-xs text-foreground-500">
                           <AppIcon className="ri-loader-4-line animate-spin" /> Loading uploaded evidence...
                         </div>
                       )}
@@ -378,23 +405,23 @@ export default function CoachMarkingReviewPage() {
                             key={record.id}
                             disabled={!canOpen || isOpening}
                             onClick={() => void openEvidence(record)}
-                            className={`mb-2 flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition ${
+                            className={`mb-2 flex w-full items-center gap-3 rounded-lg border px-3 py-3 text-left transition ${
                               canOpen
                                 ? 'border-primary-100 bg-primary-50/50 hover:border-primary-300 hover:bg-primary-50 hover:shadow-sm'
                                 : 'cursor-not-allowed border-foreground-100 bg-background-100 opacity-70'
                             }`}
                           >
-                            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${canOpen ? 'bg-white text-primary-700 shadow-sm' : 'bg-background-200 text-foreground-400'}`}>
+                            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${canOpen ? 'bg-background-50 text-primary-700 shadow-sm' : 'bg-background-200 text-foreground-400'}`}>
                               <AppIcon className={isOpening ? 'ri-loader-4-line animate-spin' : 'ri-file-line'} />
                             </span>
                             <span className="min-w-0 flex-1">
                               <span className="block truncate text-xs font-semibold text-foreground-800">{record.filename}</span>
-                              <span className="mt-0.5 block text-[10px] text-foreground-400">
+                              <span className="mt-0.5 block text-[12px] text-foreground-400">
                                 {[formatFileSize(record.sizeBytes), canOpen ? 'Ready to view' : record.status === 'pending' ? 'Security scan in progress' : 'File unavailable'].filter(Boolean).join(' · ')}
                               </span>
                             </span>
                             {canOpen && (
-                              <span className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-bold text-primary-700 shadow-sm">
+                              <span className="inline-flex items-center gap-1 rounded-lg bg-background-50 px-2.5 py-1.5 text-[12px] font-bold text-primary-700 shadow-sm">
                                 View <AppIcon className="ri-external-link-line" />
                               </span>
                             )}
@@ -402,11 +429,11 @@ export default function CoachMarkingReviewPage() {
                         );
                       })}
                       {!evidenceLoading && unresolvedEvidenceFiles.map(file => (
-                        <div key={file} className="mb-2 flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/60 px-3 py-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-amber-600 shadow-sm"><AppIcon className="ri-file-warning-line" /></span>
+                        <div key={file} className="mb-2 flex items-center gap-3 rounded-lg border border-amber-100 bg-amber-50/60 px-3 py-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background-50 text-amber-600 shadow-sm"><AppIcon className="ri-file-warning-line" /></span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-xs font-semibold text-foreground-800">{file}</span>
-                            <span className="mt-0.5 block text-[10px] text-amber-700">The file record could not be found.</span>
+                            <span className="mt-0.5 block text-[12px] text-amber-700">The file record could not be found.</span>
                           </span>
                         </div>
                       ))}
@@ -428,9 +455,9 @@ export default function CoachMarkingReviewPage() {
                     </ReviewBlock>
                   </div>
                 )}
-              </section>
+              </Panel>
 
-              <section className="order-3 rounded-2xl border border-foreground-200 bg-white p-7 shadow-sm">
+              <Panel className="order-3" padding="lg">
                 <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
                   <div>
                     <h3 className="text-lg font-bold text-foreground-950">Your feedback to learner</h3>
@@ -455,53 +482,35 @@ export default function CoachMarkingReviewPage() {
                   value={feedback}
                   onChange={event => setFeedback(event.target.value)}
                   rows={7}
-                  className="mt-6 w-full resize-none rounded-xl border border-foreground-200 p-4 text-base leading-7 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
+                  className="mt-6 w-full resize-none rounded-lg border border-foreground-200 p-4 text-base leading-7 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100"
                   placeholder="Write clear, actionable coach feedback for the learner..."
                 />
                 {error && <p className="mt-2 text-xs font-semibold text-red-600">{error}</p>}
                 <div className="mt-4 flex flex-wrap items-center gap-2.5">
-                  <button disabled={saving} onClick={() => void saveDecision('accepted')} className="rounded-xl bg-[#102d52] px-5 py-3 text-base font-semibold text-white shadow-sm disabled:opacity-50">
+                  <button disabled={saving} onClick={() => void saveDecision('accepted')} className="rounded-lg bg-primary-900 px-5 py-3 text-base font-semibold text-white shadow-sm disabled:opacity-50">
                     <AppIcon className="ri-check-line mr-2" />Accept &amp; award KSBs
                   </button>
-                  <button disabled={saving} onClick={() => void saveDecision('partial')} className="rounded-xl border border-foreground-200 bg-white px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
+                  <button disabled={saving} onClick={() => void saveDecision('partial')} className="rounded-lg border border-foreground-200 bg-background-50 px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
                     <AppIcon className="ri-edit-line mr-2" />Partial award
                   </button>
-                  <button disabled={saving} onClick={() => void saveDecision('referred')} className="rounded-xl border border-foreground-200 bg-white px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
+                  <button disabled={saving} onClick={() => void saveDecision('referred')} className="rounded-lg border border-foreground-200 bg-background-50 px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
                     <AppIcon className="ri-arrow-go-back-line mr-2" />Request resubmission
                   </button>
-                  <button disabled={saving} onClick={() => void saveDecision('escalated')} className="rounded-xl border border-foreground-200 bg-white px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
+                  <button disabled={saving} onClick={() => void saveDecision('escalated')} className="rounded-lg border border-foreground-200 bg-background-50 px-5 py-3 text-base font-semibold text-foreground-800 shadow-sm disabled:opacity-50">
                     <AppIcon className="ri-shield-line mr-2" />Escalate
                   </button>
-                  <button disabled={saving} onClick={() => void saveDecision('rejected')} className="rounded-xl px-4 py-3 text-base font-semibold text-red-600 disabled:opacity-50">
+                  <button disabled={saving} onClick={() => void saveDecision('rejected')} className="rounded-lg px-4 py-3 text-base font-semibold text-red-600 disabled:opacity-50">
                     <AppIcon className="ri-close-line mr-2" />Reject
                   </button>
                 </div>
                 <p className="mt-4 text-xs text-foreground-400">
                   Every decision is audit-trailed with feedback, reviewer and timestamp.
                 </p>
-              </section>
+              </Panel>
             </main>
           </div>
         )}
-      </div>
+      </PageContainer>
     </WorkspaceShell>
-  );
-}
-
-function ReviewBlock({ title, icon, children }: { title: string; icon: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border border-foreground-200 bg-background-50 p-4">
-      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground-900"><AppIcon className={`${icon} text-primary-600`} />{title}</h3>
-      {children}
-    </div>
-  );
-}
-
-function ReviewMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl border border-foreground-200 bg-background-50 px-4 py-3">
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p>
-      <p className="mt-1 text-base font-bold text-foreground-900">{value}</p>
-    </div>
   );
 }

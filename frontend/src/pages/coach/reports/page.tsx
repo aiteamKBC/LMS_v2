@@ -1,7 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { SectionHeader } from '@/components/ui/SectionHeader';
+import { Panel, PanelDivider } from '@/components/ui/Panel';
+import { CompactMetric } from '@/components/ui/MetricCard';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { cn } from '@/lib/cn';
+import { statusTone, toneStyle } from '@/lib/statusTone';
 import {
   fetchLearnerDetail,
   type LearnerDetail,
@@ -19,6 +28,7 @@ import {
   formatDateLabel,
   parseLocalDate,
 } from '../shared/calendarEvents';
+import { LearnerCombobox } from './components/LearnerCombobox';
 import type { GeneratedReport, ReportSection } from './types';
 
 const coachNav = roleNavMap.coach;
@@ -67,7 +77,7 @@ interface InclusionOption {
   scope: 'all' | 'single';
 }
 
-interface LearnerSelectOption {
+export interface LearnerSelectOption {
   value: string;
   label: string;
   searchText: string;
@@ -2003,17 +2013,17 @@ function MiniChart({ chart }: { chart?: GeneratedReport['sections'][number]['cha
   const maxValue = Math.max(1, ...chart.datasets.flatMap(dataset => dataset.values));
 
   return (
-    <div className="space-y-4 rounded-2xl border border-foreground-200/60 bg-white p-4 shadow-sm">
+    <Panel className="space-y-4">
       {chart.datasets.map((dataset) => (
         <div key={dataset.label} className="space-y-2">
-          <p className="text-[11px] font-semibold text-foreground-700">{dataset.label}</p>
+          <p className="text-[12px] font-semibold text-foreground-700">{dataset.label}</p>
           <div className="space-y-2">
             {chart.labels.map((label, index) => (
               <div key={`${dataset.label}-${label}`} className="flex items-center gap-3">
-                <span className="w-24 shrink-0 truncate text-[10px] text-foreground-500">{label}</span>
+                <span className="w-24 shrink-0 truncate text-[12px] text-foreground-500">{label}</span>
                 <div className="h-6 flex-1 overflow-hidden rounded-full bg-background-200">
                   <div
-                    className="flex h-full items-center justify-end rounded-full px-2 text-[9px] font-bold text-white"
+                    className="flex h-full items-center justify-end rounded-full px-2 text-[12px] font-bold text-white"
                     style={{ width: `${Math.max(8, (dataset.values[index] / maxValue) * 100)}%`, backgroundColor: dataset.color }}
                   >
                     {dataset.values[index]}
@@ -2024,53 +2034,21 @@ function MiniChart({ chart }: { chart?: GeneratedReport['sections'][number]['cha
           </div>
         </div>
       ))}
-    </div>
+    </Panel>
   );
 }
 
-function toneForValue(value: string) {
-  const normalized = displayValue(value).toLowerCase();
-  if (
-    normalized === 'red'
-    || normalized === 'at risk'
-    || normalized === 'pending'
-    || normalized === 'unavailable'
-    || normalized === 'awaiting'
-    || normalized === 'needs-work'
-  ) {
-    return 'border-red-200 bg-red-50 text-red-700';
-  }
-  if (
-    normalized === 'amber'
-    || normalized === 'need attention'
-    || normalized === 'developing'
-    || normalized === 'partial'
-    || normalized === 'optional'
-  ) {
-    return 'border-amber-200 bg-amber-50 text-amber-700';
-  }
-  if (
-    normalized === 'green'
-    || normalized === 'on track'
-    || normalized === 'complete'
-    || normalized === 'completed'
-    || normalized === 'validated'
-    || normalized === 'strong'
-    || normalized === 'yes'
-    || normalized === 'signed'
-    || normalized === 'active'
-  ) {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-700';
-  }
-  return 'border-foreground-200 bg-background-100 text-foreground-600';
-}
-
-function textToneForValue(value: string) {
-  const tone = toneForValue(value);
-  if (tone.includes('text-red-700')) return 'font-semibold text-red-600';
-  if (tone.includes('text-amber-700')) return 'font-semibold text-amber-600';
-  if (tone.includes('text-emerald-700')) return 'font-semibold text-emerald-600';
-  return 'text-foreground-700';
+/**
+ * A table cell whose value is a recognised status word ("On Track", "Pending",
+ * "Red"...) renders as a `StatusBadge`, using the same tone table as every
+ * other screen. Anything `statusTone` does not recognise resolves to `neutral`
+ * and stays plain text, exactly as the old keyword-matching left unrecognised
+ * values uncoloured.
+ */
+function ValueCell({ value }: { value: string }) {
+  const tone = statusTone(value);
+  if (tone === 'neutral') return <span className="text-foreground-700">{value}</span>;
+  return <StatusBadge tone={tone} label={value} size="sm" dot={false} />;
 }
 
 function normalizeApprovalAction(
@@ -2095,25 +2073,20 @@ function visibleApprovalActions(
 }
 
 function PreviewStatusCard({ section }: { section: ReportSection }) {
+  const tone = toneStyle('caution');
   return (
-    <article className="rounded-2xl border border-amber-200 bg-white p-5 shadow-sm">
+    <article className={cn('rounded-2xl border p-5 shadow-sm', tone.bg, tone.border)}>
       <div className="flex items-start gap-3">
-        <span className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+        <span className={cn('mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', tone.bg, tone.text)}>
           <AppIcon className="ri-alert-line text-lg"></AppIcon>
         </span>
         <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-amber-900">{section.title}</h3>
-          {section.content && <p className="mt-1 text-xs leading-6 text-amber-800/90">{section.content}</p>}
+          <h3 className={cn('text-sm font-semibold', tone.text)}>{section.title}</h3>
+          {section.content && <p className="mt-1 text-[12px] leading-6 text-foreground-600">{section.content}</p>}
           {section.table?.rows?.length ? (
             <div className="mt-3 flex flex-wrap gap-2">
               {section.table.rows.map(([source, status]) => (
-                <span
-                  key={`${source}-${status}`}
-                  className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-white/80 px-3 py-1 text-[11px] font-medium text-amber-900"
-                >
-                  <span className="h-2 w-2 rounded-full bg-amber-500"></span>
-                  {source}: {status}
-                </span>
+                <StatusBadge key={`${source}-${status}`} tone="caution" label={`${source}: ${status}`} size="sm" />
               ))}
             </div>
           ) : null}
@@ -2131,7 +2104,7 @@ function PreviewDetailCard({
   section: ReportSection;
 }) {
   return (
-    <article className="overflow-hidden rounded-2xl border border-primary-800/15 bg-white shadow-[0_12px_34px_rgba(48,24,90,0.1)]">
+    <Panel padding="none" className="overflow-hidden">
       <div className="border-b border-primary-100/80 bg-primary-50/60 px-6 py-5">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-4">
@@ -2154,16 +2127,13 @@ function PreviewDetailCard({
       </div>
 
       {section.metrics?.length ? (
-        <div className="grid gap-3 p-6 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-4 p-6 sm:grid-cols-2 xl:grid-cols-3">
           {section.metrics.map(metric => (
-            <div key={metric.label} className="rounded-2xl border border-foreground-200/70 bg-white px-4 py-4 shadow-sm">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-400">{metric.label}</p>
-              <p className="mt-2 text-lg font-semibold leading-7 text-foreground-900">{metric.value}</p>
-            </div>
+            <CompactMetric key={metric.label} label={metric.label} value={metric.value} />
           ))}
         </div>
       ) : null}
-    </article>
+    </Panel>
   );
 }
 
@@ -2186,58 +2156,51 @@ function PreviewSectionCard({
   const [approvalChecked, setApprovalChecked] = useState(false);
 
   return (
-    <article className="rounded-2xl border border-foreground-200/60 bg-white p-5 shadow-sm">
+    <Panel padding="lg">
       <div className="mb-4 flex items-center gap-3">
         <span className="flex h-9 min-w-9 items-center justify-center rounded-xl bg-primary-100 px-3 text-sm font-semibold text-primary-700">
           {index}
         </span>
         <div>
           <h3 className="text-sm font-semibold text-foreground-900">{section.title}</h3>
-          {section.content && !isCoachSummary ? <p className="mt-1 text-[11px] leading-5 text-foreground-500">{section.content}</p> : null}
+          {section.content && !isCoachSummary ? <p className="mt-1 text-[12px] leading-5 text-foreground-500">{section.content}</p> : null}
         </div>
       </div>
 
       {section.metrics && (
-        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {section.metrics.map(metric => (
-            <div key={metric.label} className="rounded-2xl border border-foreground-200/60 bg-background-100/45 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">{metric.label}</p>
-              <p className="mt-2 text-xl font-heading font-bold text-foreground-900">{metric.value}</p>
-            </div>
+            <CompactMetric key={metric.label} label={metric.label} value={metric.value} />
           ))}
         </div>
       )}
 
       {isKeyValueTable && section.table ? (
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2">
           {section.table.rows.map(([label, value]) => (
-            <div key={`${section.title}-${label}`} className="rounded-2xl border border-foreground-200/60 bg-background-100/45 px-4 py-3">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">{label}</p>
-              <p className="mt-2 text-sm font-medium leading-6 text-foreground-800">{value}</p>
-            </div>
+            <CompactMetric key={`${section.title}-${label}`} label={label} value={value} />
           ))}
         </div>
       ) : null}
 
       {isRiskSection && section.table ? (
-        <div className="space-y-3">
+        <div>
           {section.table.rows.map(([severity, flag, action], rowIndex) => (
-            <div key={`${section.title}-${rowIndex}`} className="rounded-2xl border border-foreground-200/60 bg-background-100/45 px-4 py-4">
+            <div key={`${section.title}-${rowIndex}`}>
+              {rowIndex > 0 ? <PanelDivider className="my-3" /> : null}
               <div className="flex flex-wrap items-center gap-3">
-                <span className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-semibold ${toneForValue(severity)}`}>
-                  {severity}
-                </span>
+                <StatusBadge tone={statusTone(severity)} label={severity} size="sm" />
                 <p className="text-sm font-medium text-foreground-900">{flag}</p>
               </div>
-              <p className="mt-3 text-sm leading-6 text-foreground-600">{action}</p>
+              <p className="mt-2 text-sm leading-6 text-foreground-600">{action}</p>
             </div>
           ))}
         </div>
       ) : null}
 
       {section.table && !isKeyValueTable && !isRiskSection ? (
-        <div className="overflow-x-auto rounded-2xl border border-foreground-200/60 bg-white">
-          <table className="min-w-full text-left text-[11px]">
+        <div className="overflow-x-auto rounded-xl border border-foreground-200/60">
+          <table className="min-w-full text-left text-[12px]">
             <thead className="bg-background-100/80 text-foreground-600">
               <tr>
                 {section.table.headers.map(header => (
@@ -2246,14 +2209,14 @@ function PreviewSectionCard({
               </tr>
             </thead>
             <tbody>
-              {section.table.rows.map((row, index) => (
-                <tr key={`${section.title}-${index}`} className={index % 2 === 1 ? 'bg-background-100/35' : ''}>
+              {section.table.rows.map((row, rowIdx) => (
+                <tr key={`${section.title}-${rowIdx}`} className={rowIdx % 2 === 1 ? 'bg-background-100/35' : ''}>
                   {row.map((cell, cellIndex) => (
                     <td
-                      key={`${section.title}-${index}-${cellIndex}`}
-                      className={`px-4 py-3 whitespace-nowrap ${textToneForValue(cell)}`}
+                      key={`${section.title}-${rowIdx}-${cellIndex}`}
+                      className="px-4 py-3 whitespace-nowrap"
                     >
-                      {cell}
+                      <ValueCell value={cell} />
                     </td>
                   ))}
                 </tr>
@@ -2298,7 +2261,7 @@ function PreviewSectionCard({
       ) : null}
 
       {isCoachSummary ? (
-        <div className="rounded-2xl border border-foreground-200/70 bg-background-100/45 p-4">
+        <div className="rounded-xl bg-background-100/60 p-4">
           <div className="max-h-56 overflow-y-auto pr-2 text-sm leading-7 text-foreground-700">
             {section.content}
           </div>
@@ -2307,7 +2270,7 @@ function PreviewSectionCard({
 
       {isApprovalSection && section.approval ? (
         <div className="space-y-4">
-          <div className="rounded-2xl border border-foreground-200/70 bg-background-100/45 p-4">
+          <div className="rounded-xl bg-background-100/60 p-4">
             <label className="flex items-start gap-3">
               <input
                 type="checkbox"
@@ -2350,7 +2313,7 @@ function PreviewSectionCard({
       ) : null}
 
       {section.chart && <div className="mt-4"><MiniChart chart={section.chart} /></div>}
-    </article>
+    </Panel>
   );
 }
 
@@ -2397,10 +2360,6 @@ export default function CoachReports() {
   const [generatedReport, setGeneratedReport] = useState<GeneratedReport | null>(null);
   const [generatedSignature, setGeneratedSignature] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState<ExportFormat | null>(null);
-  const [learnerMenuOpen, setLearnerMenuOpen] = useState(false);
-  const [learnerSearch, setLearnerSearch] = useState('');
-  const learnerSelectRef = useRef<HTMLDivElement | null>(null);
-  const learnerSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [options, setOptions] = useState<ReportOptions>({
     learnerId: '',
     reportType: 'monthly-otjh',
@@ -2539,17 +2498,6 @@ export default function CoachReports() {
     () => learnerOptions.find(learner => displayValue(learner.id) === options.learnerId) || null,
     [learnerOptions, options.learnerId],
   );
-  const selectedLearnerOption = useMemo(
-    () => learnerSelectOptions.find(option => option.value === options.learnerId) || learnerSelectOptions[0] || null,
-    [learnerSelectOptions, options.learnerId],
-  );
-  const filteredLearnerOptions = useMemo(() => {
-    const query = learnerSearch.trim().toLowerCase();
-    if (!query) return learnerSelectOptions;
-    return learnerSelectOptions.filter(option => (
-      option.label.toLowerCase().includes(query) || option.searchText.includes(query)
-    ));
-  }, [learnerSearch, learnerSelectOptions]);
   const reportTypeMeta = REPORT_TYPE_META[options.reportType];
   const reportSignature = useMemo(() => JSON.stringify({
     learnerId: options.learnerId,
@@ -2580,34 +2528,6 @@ export default function CoachReports() {
       bodySections: generatedReport.sections.filter(section => section.title !== 'Source status' && section.title !== 'Report details'),
     };
   }, [generatedReport]);
-
-  useEffect(() => {
-    if (!learnerMenuOpen) return undefined;
-
-    learnerSearchInputRef.current?.focus();
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!learnerSelectRef.current?.contains(target)) {
-        setLearnerMenuOpen(false);
-        setLearnerSearch('');
-      }
-    };
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setLearnerMenuOpen(false);
-        setLearnerSearch('');
-      }
-    };
-
-    document.addEventListener('pointerdown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [learnerMenuOpen]);
 
   useEffect(() => {
     if (!generatedReport || !generatedSignature) return;
@@ -2738,6 +2658,9 @@ export default function CoachReports() {
     }
   }
 
+  const liveSourcesTone = warnings.length ? toneStyle('caution') : toneStyle('neutral');
+  const loadingTone = toneStyle('neutral');
+
   return (
     <WorkspaceShell
       role="coach"
@@ -2749,116 +2672,49 @@ export default function CoachReports() {
       userName={ownerName}
       userRole="Progress Coach"
     >
-      <main className="min-h-screen bg-[#f7f6fb] p-4 md:p-6">
-        <div className="w-full space-y-4">
-          <section className="overflow-hidden rounded-2xl border border-primary-800/15 bg-white shadow-[0_12px_34px_rgba(48,24,90,0.1)]">
-            <div
-              className="px-6 py-7 text-white md:px-8 md:py-8"
-              style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
-            >
-              <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/15 text-xl backdrop-blur-sm">
-                      <AppIcon className="ri-file-chart-line"></AppIcon>
-                    </span>
-                    <span className="rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-white/85">
-                      Compliance & Evidence
-                    </span>
-                  </div>
-                  <h1 className="mt-5 text-[30px] font-heading font-bold tracking-tight text-white md:text-[36px]">OTJH report generator</h1>
-                  <p className="mt-3 max-w-4xl text-sm leading-7 text-white/80 md:text-[15px]">
-                    Build a Department for Education-compliant off-the-job training evidence report covering logged hours, KSB progression, coaching activity, review milestones and source availability across your caseload.
-                  </p>
-                </div>
+      <PageContainer>
+        <PageHeader
+          title="OTJH report generator"
+          description="Build a Department for Education-compliant off-the-job training evidence report covering logged hours, KSB progression, coaching activity and review milestones across your caseload."
+          icon="ri-file-chart-line"
+          meta={
+            <>
+              <CompactMetric
+                label="Live sources"
+                value={warnings.length ? `${warnings.length} unavailable` : 'All connected'}
+                tone={warnings.length ? 'caution' : 'positive'}
+              />
+              <CompactMetric label="Report period" value={formatReportPeriod(options.fromDate, options.toDate)} tone="brand" />
+              <CompactMetric label="Caseload" value={`${caseloadLearners.length} learner${caseloadLearners.length === 1 ? '' : 's'}`} />
+            </>
+          }
+        />
 
-                <div className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-[12px] text-white/80 backdrop-blur-sm">
-                  Generate, preview, and export using the same coach workspace data you already have.
-                </div>
-              </div>
-            </div>
+        {loading || warnings.length > 0 ? (
+          <div className={cn(
+            'rounded-xl border px-4 py-3 text-[12px]',
+            loading ? cn(loadingTone.bg, loadingTone.border, loadingTone.text) : cn(liveSourcesTone.bg, liveSourcesTone.border, liveSourcesTone.text),
+          )}>
+            {loading ? 'Loading OTJH sources...' : `Some OTJH sources are unavailable right now: ${warnings.join(', ')}. Preview values will show ${EMPTY_VALUE} where needed.`}
+          </div>
+        ) : null}
 
-          {(loading || warnings.length > 0) && (
-            <div className={`mx-4 mt-4 rounded-xl border px-4 py-3 text-[12px] md:mx-5 ${warnings.length ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-foreground-200/60 bg-background-100/70 text-foreground-500'}`}>
-              {loading ? 'Loading OTJH sources...' : `Some OTJH sources are unavailable right now: ${warnings.join(', ')}. Preview values will show ${EMPTY_VALUE} where needed.`}
-            </div>
-          )}
+        <section className="space-y-3">
+          <SectionHeader
+            title="Report parameters"
+            description="Select scope, period and inclusions for the OTJH preview, then generate or export."
+            icon="ri-settings-4-line"
+          />
 
-            <div className="bg-background-100/30 p-4 md:p-5">
-              <div className="grid grid-cols-1 gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
-                <aside className="rounded-2xl border border-foreground-200/60 bg-white p-6 shadow-sm">
-              <div className="mb-6">
-                <h2 className="text-2xl font-heading font-semibold text-foreground-950">Report parameters</h2>
-                <p className="mt-2 text-sm leading-6 text-foreground-500">Select scope, period and inclusions for the OTJH preview.</p>
-              </div>
-
-              <div className="space-y-5">
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
+            <Panel padding="lg" className="space-y-5">
                 <label className="block">
                   <span className="mb-2 block text-sm font-medium text-foreground-700">Learner</span>
-                  <div ref={learnerSelectRef} className="relative">
-                    <button
-                      type="button"
-                      aria-haspopup="listbox"
-                      aria-expanded={learnerMenuOpen}
-                      onClick={() => {
-                        setLearnerMenuOpen(current => !current);
-                        setLearnerSearch('');
-                      }}
-                      className="flex w-full items-center justify-between gap-3 rounded-xl border border-foreground-200 bg-white px-4 py-3 text-left text-[15px] text-foreground-900 shadow-sm outline-none transition focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
-                    >
-                      <span className="truncate">{selectedLearnerOption?.label || 'Select learner'}</span>
-                      <AppIcon className={`ri-arrow-down-s-line text-lg text-foreground-500 transition-transform ${learnerMenuOpen ? 'rotate-180' : ''}`}></AppIcon>
-                    </button>
-
-                    {learnerMenuOpen && (
-                      <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 rounded-2xl border border-foreground-200/70 bg-white p-2 shadow-xl shadow-foreground-950/10">
-                        <div className="relative mb-2">
-                          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
-                          <input
-                            ref={learnerSearchInputRef}
-                            type="text"
-                            value={learnerSearch}
-                            onChange={(event) => setLearnerSearch(event.target.value)}
-                            placeholder="Search learner, cohort, group..."
-                            className="w-full rounded-xl border border-foreground-200 bg-white py-2.5 pl-9 pr-3 text-[14px] text-foreground-900 outline-none transition focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
-                          />
-                        </div>
-
-                        <div role="listbox" aria-label="Choose learner" className="max-h-64 overflow-y-auto rounded-xl">
-                          {filteredLearnerOptions.map((option) => {
-                            const active = option.value === options.learnerId;
-                            return (
-                              <button
-                                key={option.value}
-                                type="button"
-                                role="option"
-                                aria-selected={active}
-                                onClick={() => {
-                                  updateOption('learnerId', option.value);
-                                  setLearnerMenuOpen(false);
-                                  setLearnerSearch('');
-                                }}
-                                className={`flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${
-                                  active
-                                    ? 'bg-primary-50 font-semibold text-primary-700'
-                                    : 'text-foreground-700 hover:bg-background-100'
-                                }`}
-                              >
-                                <span className="truncate">{option.label}</span>
-                                {active ? <AppIcon className="ri-check-line text-base"></AppIcon> : null}
-                              </button>
-                            );
-                          })}
-
-                          {!filteredLearnerOptions.length && (
-                            <div className="px-3 py-4 text-center text-[12px] text-foreground-400">
-                              No learners match your search.
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <LearnerCombobox
+                    options={learnerSelectOptions}
+                    value={options.learnerId}
+                    onChange={(value) => updateOption('learnerId', value)}
+                  />
                 </label>
 
                 <label className="block">
@@ -2898,7 +2754,7 @@ export default function CoachReports() {
                 <div className="border-t border-foreground-200/70 pt-5">
                   <div className="mb-3 flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Inclusions</p>
+                      <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Inclusions</p>
                       <p className="mt-1 text-xs leading-5 text-foreground-500">
                         {selectedInclusionCount} sections selected
                         {hiddenSingleLearnerCount ? ` · ${hiddenSingleLearnerCount} detailed sections unlock when you pick one learner` : ''}
@@ -2906,7 +2762,7 @@ export default function CoachReports() {
                     </div>
                   </div>
                   {hiddenSingleLearnerCount ? (
-                    <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/70 px-3 py-3 text-[11px] leading-5 text-primary-800">
+                    <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/70 px-3 py-3 text-[12px] leading-5 text-primary-800">
                       Select a single learner to include learner reflections, evidence links, quiz results, and checkpoint results in the export.
                     </div>
                   ) : null}
@@ -2921,7 +2777,7 @@ export default function CoachReports() {
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block text-sm font-medium text-foreground-800">{option.label}</span>
-                          <span className="mt-1 block text-[11px] text-foreground-500">
+                          <span className="mt-1 block text-[12px] text-foreground-500">
                             {option.scope === 'single'
                               ? `Live from ${option.sourceLabel} · single learner detail`
                               : `Live from ${option.sourceLabel}`}
@@ -2979,21 +2835,26 @@ export default function CoachReports() {
                   <AppIcon className={loading || buildingReport ? 'ri-loader-4-line animate-spin' : 'ri-file-chart-line'}></AppIcon>
                   {loading ? 'Loading OTJH sources' : buildingReport ? 'Generating OTJH report' : 'Generate OTJH evidence report'}
                 </button>
-              </div>
-            </aside>
+            </Panel>
 
-                <section className="min-h-[720px] rounded-2xl border border-foreground-200/60 bg-white p-6 shadow-sm">
-              {!generatedReport ? (
-                <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-primary-200 bg-primary-50/25 px-6 py-12 text-center">
-                  <span className="flex h-24 w-24 items-center justify-center rounded-full bg-primary-100 text-primary-500">
-                    <AppIcon className="ri-file-transfer-line text-5xl"></AppIcon>
-                  </span>
-                  <h2 className="mt-8 text-3xl font-heading font-semibold text-foreground-950">{reportTypeMeta.title}</h2>
-                  <p className="mt-4 max-w-2xl text-base leading-8 text-foreground-500">
-                    Configure the parameters on the left, then click <span className="font-semibold text-foreground-700">Generate OTJH evidence report</span> to preview it, or choose a format below to generate and download immediately.
-                  </p>
-                  <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-                    {(Object.keys(EXPORT_FORMAT_META) as ExportFormat[]).map(format => (
+            <Panel padding="lg" className="flex min-h-[720px] flex-col">
+              {!loading && !caseloadLearners.length ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <EmptyState
+                    variant="empty"
+                    icon="ri-team-line"
+                    title="No learners in your caseload yet"
+                    description="Once learners are assigned to you, you'll be able to build OTJH evidence reports for them here."
+                  />
+                </div>
+              ) : !generatedReport ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <EmptyState
+                    variant="empty"
+                    icon="ri-file-transfer-line"
+                    title={reportTypeMeta.title}
+                    description="Configure the parameters on the left, then generate to preview it, or choose a format below to generate and download immediately."
+                    action={(Object.keys(EXPORT_FORMAT_META) as ExportFormat[]).map(format => (
                       <ExportChip
                         key={format}
                         format={format}
@@ -3002,17 +2863,17 @@ export default function CoachReports() {
                         onClick={() => { void handleDownload(format); }}
                       />
                     ))}
-                  </div>
+                  />
                 </div>
               ) : (
                 <div className="flex h-full flex-col">
                   <div className="mb-5 flex flex-col gap-4 border-b border-foreground-200/70 pb-5 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-primary-700">
+                        <span className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.16em] text-primary-700">
                           {reportTypeMeta.label}
                         </span>
-                        <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-500">
+                        <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-500">
                           {generatedReport.period}
                         </span>
                       </div>
@@ -3033,7 +2894,7 @@ export default function CoachReports() {
                     </div>
                   </div>
 
-                  <div className="mb-5 flex flex-wrap items-center gap-2 text-[11px] text-foreground-500">
+                  <div className="mb-5 flex flex-wrap items-center gap-2 text-[12px] text-foreground-500">
                     <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 shadow-sm"><AppIcon className="ri-user-line mr-1 text-primary-500"></AppIcon>{generatedReport.coach}</span>
                     <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 shadow-sm"><AppIcon className="ri-calendar-line mr-1 text-primary-500"></AppIcon>{generatedReport.period}</span>
                     <span className="rounded-full border border-foreground-200 bg-white px-3 py-1 shadow-sm"><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>{generatedReport.generatedAt}</span>
@@ -3058,12 +2919,10 @@ export default function CoachReports() {
                   </div>
                 </div>
               )}
-                </section>
-              </div>
-            </div>
-          </section>
-        </div>
-      </main>
+            </Panel>
+          </div>
+        </section>
+      </PageContainer>
     </WorkspaceShell>
   );
 }

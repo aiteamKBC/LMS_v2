@@ -263,13 +263,20 @@ export interface EmailLogRow {
   expiresAt: string | null;
   createdAt: string | null;
   error: string | null;
-  status: 'failed' | 'accepted' | 'delivered' | 'queued';
+  /** When an administrator marked this failure as dealt with, and who. */
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+  status: 'failed' | 'acknowledged' | 'accepted' | 'delivered' | 'queued';
 }
 
 export interface EmailLogResponse extends Paged<EmailLogRow> {
   stats: {
     sent: number;
+    /** Everything that ever failed to send. What deliveryRate is a claim about. */
     failed: number;
+    /** Failures nobody has acknowledged yet — what still needs attention. */
+    outstanding: number;
+    acknowledged: number;
     last30d: number;
     invitations: number;
     resets: number;
@@ -283,6 +290,33 @@ export function fetchEmailLog(
   query: { status?: string; kind?: string; page?: number; pageSize?: number } = {},
 ): Promise<EmailLogResponse> {
   return request<EmailLogResponse>(`${BASE}/email-log/${qs(query)}`);
+}
+
+export interface EmailAcknowledgement {
+  id: string;
+  acknowledged: boolean;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+  status: EmailLogRow['status'];
+}
+
+/**
+ * Mark a failed email as dealt with — or, with `acknowledged: false`, put it
+ * back. This is what clears the Super Admin dashboard's alert about it; the row
+ * itself is marked rather than deleted, so the delivery history is unchanged.
+ *
+ * Takes the kind and the numeric id rather than the row's composite `id`
+ * ("invitation-15"), which is a display key and not something to parse.
+ */
+export function acknowledgeEmail(
+  kind: EmailLogRow['kind'],
+  id: number,
+  acknowledged = true,
+): Promise<EmailAcknowledgement> {
+  return request<EmailAcknowledgement>(`${BASE}/email-log/${kind}/${id}/acknowledge/`, {
+    method: 'POST',
+    body: JSON.stringify({ acknowledged }),
+  });
 }
 
 /* -------------------------------------------------------------------------- */

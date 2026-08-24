@@ -19,6 +19,8 @@ import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { resolveDocEmbed } from '@/lib/docEmbed';
+import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
   loadTeamsMeetingArtifacts,
   syncTeamsMeetingArtifacts,
@@ -501,25 +503,26 @@ function isDirectAudioUrl(url: string): boolean {
   return AUDIO_FILE_RE.test(url);
 }
 
-/** Google Slides "/edit" or "/present" link -> its embeddable "/embed" form, else null. */
-function googleSlidesEmbedUrl(url: string): string | null {
-  const m = url.match(/docs\.google\.com\/presentation\/d\/([^/]+)/);
-  return m ? `https://docs.google.com/presentation/d/${m[1]}/embed` : null;
-}
-
-/** Google Docs "/edit" link -> its embeddable "/preview" form, else null. */
-function googleDocsEmbedUrl(url: string): string | null {
-  const m = url.match(/docs\.google\.com\/document\/d\/([^/]+)/);
-  return m ? `https://docs.google.com/document/d/${m[1]}/preview` : null;
-}
-
-/** Best-effort inline embed URL for a slide-deck/document link: native Google
- * Slides/Docs embeds render directly; anything else (PowerPoint/Word files,
- * a hosted PDF) is handed to Microsoft's Office viewer, which fetches and
- * renders the file itself rather than sending the learner off-site. */
-function embeddableDocUrl(url: string): string {
-  return googleSlidesEmbedUrl(url) || googleDocsEmbedUrl(url)
-    || `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
+/** A slide deck / document shown inline where that is possible, and an honest
+ * "open it instead" card where it is not — an uploaded .pptx can only be
+ * previewed by Microsoft's Office viewer, which cannot reach a file that isn't
+ * published on the public internet. See @/lib/docEmbed. */
+function DocumentEmbed({ url, title, noun }: { url: string; title: string; noun: string }) {
+  const embed = resolveDocEmbed(url);
+  const unavailable = (reason: string) => (
+    <div className="rounded-xl border border-background-300 bg-background-50 p-5 text-center">
+      <AppIcon className="ri-file-download-line text-2xl text-foreground-400" />
+      <p className="mt-2 text-sm font-semibold text-foreground-800">This {noun} can&apos;t be shown here</p>
+      <p className="mx-auto mt-1 max-w-md text-xs text-foreground-500">{reason} Open or download it below, then come back to record your reflection.</p>
+    </div>
+  );
+  if (embed.mode === 'unavailable') return unavailable(embed.reason);
+  if (embed.mode === 'deck') return <SlideDeckViewer src={embed.src} title={title} fallback={unavailable} />;
+  return (
+    <div className="rounded-xl overflow-hidden border border-background-300" style={{ aspectRatio: '4 / 3' }}>
+      <iframe title={title} src={embed.src} className="w-full h-full" />
+    </div>
+  );
 }
 
 /** Reading content authored through a plain textarea sometimes lands
@@ -796,11 +799,9 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           />
         ) : component.resourceUrl ? (
           <>
-            {/* Reading material stored as an external link/file — fetch and
-                show it inline via the same embeddable-doc viewer PowerPoint uses. */}
-            <div className="rounded-xl overflow-hidden border border-background-300" style={{ aspectRatio: '4 / 3' }}>
-              <iframe title={title} src={embeddableDocUrl(component.resourceUrl)} className="w-full h-full" />
-            </div>
+            {/* Reading material stored as an external link/file — shown inline
+                through the same document embed PowerPoint uses. */}
+            <DocumentEmbed url={component.resourceUrl} title={title} noun="document" />
             <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
           </>
         ) : (
@@ -824,9 +825,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Review the slide deck, then finish and reflect below.</p></div>
         </div>
         {component.resourceUrl ? (
-          <div className="rounded-xl overflow-hidden border border-background-300" style={{ aspectRatio: '4 / 3' }}>
-            <iframe title={title} src={embeddableDocUrl(component.resourceUrl)} className="w-full h-full" />
-          </div>
+          <DocumentEmbed url={component.resourceUrl} title={title} noun="slide deck" />
         ) : (
           <p className="text-sm text-foreground-500">{component.fileName ? <>Slide deck: <span className="font-semibold text-foreground-700">{component.fileName}</span>. </> : ''}Review your slide deck for this week, then record your reflection below.</p>
         )}

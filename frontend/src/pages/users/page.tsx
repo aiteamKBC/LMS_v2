@@ -11,7 +11,7 @@ import { listEmployers, type EmployerRow } from '@/api/employers';
 import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, Hero, StatCard, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { CreateUserModal } from './components/CreateUserModal';
-import { CreateAdminModal } from './components/CreateAdminModal';
+import { CreateStaffModal } from './components/CreateStaffModal';
 import { CreateEmployerModal } from './components/CreateEmployerModal';
 import { CreateOrganisationModal } from './components/CreateOrganisationModal';
 import { EditStaffModal } from './components/EditStaffModal';
@@ -165,6 +165,7 @@ export default function UsersListPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [createAdminOpen, setCreateAdminOpen] = useState(false);
+  const [createTutorOpen, setCreateTutorOpen] = useState(false);
   const [createEmployerOpen, setCreateEmployerOpen] = useState(false);
   const [createOrgOpen, setCreateOrgOpen] = useState(false);
   const createRef = useRef<HTMLDivElement>(null);
@@ -412,6 +413,7 @@ export default function UsersListPage() {
                   >
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateModalOpen(true); }}><i className="ri-user-add-line mr-2 text-foreground-400" />Create user</button>
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateAdminOpen(true); }}><i className="ri-shield-user-line mr-2 text-foreground-400" />Create admin</button>
+                    <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateTutorOpen(true); }}><i className="ri-presentation-line mr-2 text-foreground-400" />Create tutor</button>
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateEmployerOpen(true); }}><i className="ri-briefcase-line mr-2 text-foreground-400" />Create employer profile</button>
                     <button className="w-full text-left px-3 py-2 text-[13px] text-foreground-700 hover:bg-background-100 cursor-pointer" onClick={() => { setCreateOpen(false); setCreateOrgOpen(true); }}><i className="ri-building-line mr-2 text-foreground-400" />Create organisation profile</button>
                   </div>,
@@ -620,7 +622,8 @@ export default function UsersListPage() {
       </div>
 
       {createModalOpen && <CreateUserModal onClose={() => setCreateModalOpen(false)} onCreated={load} />}
-      {createAdminOpen && <CreateAdminModal onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
+      {createAdminOpen && <CreateStaffModal variant="admin" onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
+      {createTutorOpen && <CreateStaffModal variant="tutor" onClose={() => setCreateTutorOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}
       {planFor && (
         <LearningPlanModal

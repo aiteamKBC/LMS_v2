@@ -1,659 +1,67 @@
+// ============================================================================
+// Monthly Cycle — what each learner did this month.
+//
+// Hierarchy, top to bottom: the month itself (header + navigator), the
+// monthly coaching-delivery health (MCR/MCM, Progress Review, Catch-up,
+// Support — booked vs completed vs cancelled vs needing a schedule), then the
+// Learner Month Log itself, one card per learner, expandable into that
+// learner's day-by-day timeline. A card's "Overview" opens the same data in a
+// drawer with room for the full activity list and a PDF export.
+//
+// Data contract, unchanged from before this refactor:
+//   GET /coach_api/coach/monthly-activity?month=YYYY-MM
+//
+// This component owns state, data fetching and every handler. Anything that
+// renders lives in ./components; the pure data/formatting helpers and the PDF
+// export live in ./lib.
+// ============================================================================
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { jsPDF } from 'jspdf';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { CompactMetric } from '@/components/ui/MetricCard';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
+import { SearchInput } from '@/components/ui/FilterToolbar';
+import { SectionHeader } from '@/components/ui/SectionHeader';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
-import { formatDateLabel } from '@/pages/coach/shared/calendarEvents';
-import { RowsSkeleton } from '@/components/feature/Skeletons';
+
+import { CoachingDeliveryPanel } from './components/CoachingDeliveryPanel';
+import { LearnerMonthCard } from './components/LearnerMonthCard';
+import { LearnerOverviewPanel } from './components/LearnerOverviewPanel';
+import { MonthNavigator } from './components/MonthNavigator';
+import { MonthSidebar } from './components/MonthSidebar';
+import { MonthlyCycleError, MonthlyCycleLoading, NoActiveLearners, NoLearnerMatches } from './components/MonthlyCycleStates';
+import { COACHING_DELIVERY_CONFIG, COACHING_DELIVERY_ORDER, EMPTY_LEARNERS, EMPTY_SUMMARY, LEARNERS_PER_PAGE } from './lib/constants';
+import {
+  coachingDeliveryEventKey,
+  coachingDeliveryFocusSource,
+  coachingDeliveryKind,
+  coachingDeliveryScheduleSource,
+  coachingDeliveryScheduledTime,
+  coachingDeliveryStatusKey,
+  currentMonthKey,
+  emptyCoachingDeliverySummary,
+  formatMonthLabel,
+  formatNumber,
+  monthlyActivityEndpoint,
+  normalizeSearch,
+  readJson,
+  shiftMonthKey,
+} from './lib/monthly';
+import { downloadLearnerMonthlyCyclePdf } from './lib/pdf';
+import type {
+  CoachingDeliveryItem,
+  CoachingDeliverySummary,
+  InlineActivityFilter,
+  MonthlyActivityResponse,
+  MonthlyLearnerActivity,
+} from './types';
 
 const coachNav = roleNavMap.coach;
-
-type MonthlyStatus = 'on-track' | 'need-attention' | 'at-risk';
-type ActivityTone = 'primary' | 'emerald' | 'amber' | 'red';
-type InlineActivityFilter = 'all' | 'learning' | 'quiz' | 'video' | 'coaching' | 'evidence';
-type CoachingDeliveryKind = 'mcr' | 'pr' | 'catch-up' | 'support';
-type CoachingDeliveryStatus = 'booked' | 'completed' | 'cancelled' | 'needs-schedule';
-
-interface MonthlyActivityItem {
-  id: string;
-  date: string;
-  type: string;
-  title: string;
-  detail: string;
-  tone: ActivityTone;
-  source: string;
-  status?: string;
-  timeLabel?: string;
-}
-
-interface MonthlyLearnerActivity {
-  id: string;
-  name: string;
-  initials: string;
-  email?: string | null;
-  cohortName: string;
-  group: string;
-  programme: string;
-  status: MonthlyStatus;
-  otjhStatus: string;
-  lastActivityDate?: string | null;
-  lastActivityLabel: string;
-  learning: {
-    total: number;
-    quizzes: number;
-    videos: number;
-    components: number;
-    reflections: number;
-  };
-  coaching: {
-    total: number;
-    booked: number;
-    needsSchedule: number;
-    mcm: number;
-    progressReviews: number;
-    catchups: number;
-  };
-  evidence: {
-    submitted: number;
-    latestDate?: string | null;
-  };
-  ksb: {
-    touched: number;
-    codes: string[];
-  };
-  otjh: {
-    monthlyHours: number;
-    monthlyHoursLabel: string;
-    monthlyTarget: number;
-    progress: number;
-    completed: number;
-    target: number;
-  };
-  needsAction: string[];
-  activities: MonthlyActivityItem[];
-}
-
-interface MonthlySummary {
-  activeLearners: number;
-  timelineItems: number;
-  learningActivities: number;
-  quizzes: number;
-  videos: number;
-  components: number;
-  coachingSessions: number;
-  bookedSessions: number;
-  needsSchedule: number;
-  evidence: number;
-  ksbTouched: number;
-  otjhHours: number;
-  needsAction: number;
-  onTrack: number;
-  needAttention: number;
-  atRisk: number;
-}
-
-interface MonthlyActivityResponse {
-  owner?: {
-    name?: string;
-    email?: string;
-  };
-  month: string;
-  monthLabel: string;
-  summary: MonthlySummary;
-  learners: MonthlyLearnerActivity[];
-}
-
-interface CoachingDeliveryItem {
-  id: string;
-  eventKey?: string;
-  learnerId: string;
-  learnerName: string;
-  learnerStatus: MonthlyStatus;
-  programme: string;
-  cohort: string;
-  group: string;
-  kind: CoachingDeliveryKind;
-  label: string;
-  title: string;
-  detail: string;
-  date: string;
-  status: CoachingDeliveryStatus;
-  timeLabel: string;
-}
-
-type CoachingDeliveryScheduleSource = 'mcr' | 'progress-review' | 'catch-up';
-type CoachingDeliveryFocusSource = 'mcr' | 'progress-review' | 'catch-up' | 'student-support';
-
-interface CoachingDeliverySummary {
-  byKind: Record<CoachingDeliveryKind, {
-    items: CoachingDeliveryItem[];
-    counts: Record<CoachingDeliveryStatus, number>;
-  }>;
-}
-
-const EMPTY_SUMMARY: MonthlySummary = {
-  activeLearners: 0,
-  timelineItems: 0,
-  learningActivities: 0,
-  quizzes: 0,
-  videos: 0,
-  components: 0,
-  coachingSessions: 0,
-  bookedSessions: 0,
-  needsSchedule: 0,
-  evidence: 0,
-  ksbTouched: 0,
-  otjhHours: 0,
-  needsAction: 0,
-  onTrack: 0,
-  needAttention: 0,
-  atRisk: 0,
-};
-const EMPTY_LEARNERS: MonthlyLearnerActivity[] = [];
-const LEARNERS_PER_PAGE = 10;
-
-const statusConfig: Record<MonthlyStatus, { label: string; pill: string; border: string; soft: string }> = {
-  'on-track': {
-    label: 'On Track',
-    pill: 'bg-emerald-100 text-emerald-700 ring-emerald-200',
-    border: 'border-emerald-200',
-    soft: 'bg-emerald-50 text-emerald-700',
-  },
-  'need-attention': {
-    label: 'Need Attention',
-    pill: 'bg-amber-100 text-amber-700 ring-amber-200',
-    border: 'border-amber-200',
-    soft: 'bg-amber-50 text-amber-700',
-  },
-  'at-risk': {
-    label: 'Priority',
-    pill: 'bg-red-100 text-red-700 ring-red-200',
-    border: 'border-red-200',
-    soft: 'bg-red-50 text-red-700',
-  },
-};
-
-const toneConfig: Record<ActivityTone, { icon: string; badge: string; dot: string }> = {
-  primary: {
-    icon: 'bg-primary-100 text-primary-700',
-    badge: 'bg-primary-50 text-primary-700',
-    dot: 'bg-primary-500',
-  },
-  emerald: {
-    icon: 'bg-emerald-100 text-emerald-700',
-    badge: 'bg-emerald-50 text-emerald-700',
-    dot: 'bg-emerald-500',
-  },
-  amber: {
-    icon: 'bg-amber-100 text-amber-700',
-    badge: 'bg-amber-50 text-amber-700',
-    dot: 'bg-amber-500',
-  },
-  red: {
-    icon: 'bg-red-100 text-red-700',
-    badge: 'bg-red-50 text-red-700',
-    dot: 'bg-red-500',
-  },
-};
-
-const INLINE_FILTERS: { key: InlineActivityFilter; label: string; icon: string }[] = [
-  { key: 'all', label: 'All', icon: 'ri-pulse-line' },
-  { key: 'learning', label: 'Learning', icon: 'ri-checkbox-circle-line' },
-  { key: 'video', label: 'Videos', icon: 'ri-play-circle-line' },
-  { key: 'quiz', label: 'Quizzes', icon: 'ri-question-answer-line' },
-  { key: 'coaching', label: 'Coaching', icon: 'ri-calendar-check-line' },
-  { key: 'evidence', label: 'Evidence', icon: 'ri-folder-upload-line' },
-];
-
-const COACHING_DELIVERY_CONFIG: Record<CoachingDeliveryKind, { label: string; shortLabel: string; icon: string; tone: ActivityTone }> = {
-  mcr: { label: 'MCR / MCM', shortLabel: 'MCR', icon: 'ri-user-voice-line', tone: 'emerald' },
-  pr: { label: 'Progress Reviews', shortLabel: 'PR', icon: 'ri-file-list-3-line', tone: 'primary' },
-  'catch-up': { label: 'Catch-ups', shortLabel: 'Catch-up', icon: 'ri-chat-check-line', tone: 'amber' },
-  support: { label: 'Support', shortLabel: 'Support', icon: 'ri-hand-heart-line', tone: 'red' },
-};
-const COACHING_DELIVERY_ORDER: CoachingDeliveryKind[] = ['mcr', 'pr', 'catch-up', 'support'];
-const COACHING_DELIVERY_STATUS_CONFIG: Record<CoachingDeliveryStatus, { label: string; className: string }> = {
-  booked: { label: 'Booked', className: 'bg-sky-50 text-sky-700 ring-sky-100' },
-  completed: { label: 'Completed', className: 'bg-emerald-50 text-emerald-700 ring-emerald-100' },
-  cancelled: { label: 'Cancelled', className: 'bg-red-50 text-red-700 ring-red-100' },
-  'needs-schedule': { label: 'Needs schedule', className: 'bg-amber-50 text-amber-700 ring-amber-100' },
-};
-const COACHING_DELIVERY_STATUS_ORDER: CoachingDeliveryStatus[] = ['booked', 'completed', 'cancelled', 'needs-schedule'];
-
-async function readJson<T>(response: Response): Promise<T> {
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = typeof data.detail === 'string' ? data.detail : `Request failed with ${response.status}`;
-    throw new Error(detail);
-  }
-  return data as T;
-}
-
-function currentMonthKey(date = new Date()) {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function shiftMonthKey(monthKey: string, offset: number) {
-  const [year, month] = monthKey.split('-').map(Number);
-  const date = new Date(year, month - 1 + offset, 1);
-  return currentMonthKey(date);
-}
-
-function formatMonthLabel(monthKey: string) {
-  const [year, month] = monthKey.split('-').map(Number);
-  return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1));
-}
-
-function monthlyActivityEndpoint(monthKey: string) {
-  const params = new URLSearchParams({ month: monthKey });
-  return `/coach_api/coach/monthly-activity?${params.toString()}`;
-}
-
-function activityIcon(type: string) {
-  const normalized = type.toLowerCase();
-  if (normalized.includes('quiz')) return 'ri-question-answer-line';
-  if (normalized.includes('video')) return 'ri-play-circle-line';
-  if (normalized.includes('evidence')) return 'ri-folder-upload-line';
-  if (normalized.includes('support')) return 'ri-hand-heart-line';
-  if (normalized.includes('mcm') || normalized.includes('mcr') || normalized.includes('catch') || normalized.includes('pr')) return 'ri-calendar-check-line';
-  return 'ri-checkbox-circle-line';
-}
-
-function formatSourceLabel(source: string) {
-  return source
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ');
-}
-
-function inlineActivityCategory(type: string): InlineActivityFilter {
-  const normalized = type.toLowerCase();
-  if (normalized.includes('quiz')) return 'quiz';
-  if (normalized.includes('video')) return 'video';
-  if (normalized.includes('evidence')) return 'evidence';
-  if (normalized.includes('mcm') || normalized.includes('mcr') || normalized.includes('catch') || normalized.includes('pr') || normalized.includes('support') || normalized.includes('welfare') || normalized.includes('coaching') || normalized.includes('review')) return 'coaching';
-  return 'learning';
-}
-
-function coachingDeliveryKind(activity: MonthlyActivityItem): CoachingDeliveryKind | null {
-  const type = activity.type.trim().toLowerCase();
-  const text = `${activity.type} ${activity.title} ${activity.detail} ${activity.source}`.toLowerCase();
-  if (type === 'mcm' || type === 'mcr' || text.includes('monthly coaching')) return 'mcr';
-  if (type === 'pr' || text.includes('progress review') || text.includes('progress-review')) return 'pr';
-  if (text.includes('catch-up') || text.includes('catch up') || text.includes('catchup')) return 'catch-up';
-  if (text.includes('student support') || text.includes('support') || text.includes('welfare')) return 'support';
-  return null;
-}
-
-function coachingDeliveryStatus(activity: MonthlyActivityItem) {
-  return activity.detail.split(' - ')[0]?.trim() || 'Captured';
-}
-
-function coachingDeliveryStatusKey(activity: MonthlyActivityItem): CoachingDeliveryStatus {
-  const rawStatus = normalizeSearch(activity.status || coachingDeliveryStatus(activity));
-  if (rawStatus.includes('completed')) return 'completed';
-  if (rawStatus.includes('cancelled') || rawStatus.includes('canceled')) return 'cancelled';
-  if (rawStatus.includes('not-scheduled') || rawStatus.includes('needs schedule') || rawStatus.includes('need schedule')) return 'needs-schedule';
-  return 'booked';
-}
-
-function coachingDeliveryScheduleSource(kind: CoachingDeliveryKind): CoachingDeliveryScheduleSource | null {
-  if (kind === 'mcr') return 'mcr';
-  if (kind === 'pr') return 'progress-review';
-  if (kind === 'catch-up') return 'catch-up';
-  return null;
-}
-
-function coachingDeliveryFocusSource(kind: CoachingDeliveryKind): CoachingDeliveryFocusSource {
-  if (kind === 'pr') return 'progress-review';
-  if (kind === 'support') return 'student-support';
-  return kind;
-}
-
-function coachingDeliveryEventKey(activityId: string) {
-  return activityId.startsWith('event:') ? activityId.slice('event:'.length) : undefined;
-}
-
-function coachingDeliveryScheduledTime(timeLabel: string) {
-  const match = timeLabel.match(/\b\d{2}:\d{2}\b/);
-  return match?.[0];
-}
-
-function emptyCoachingDeliveryCounts(): Record<CoachingDeliveryStatus, number> {
-  return {
-    booked: 0,
-    completed: 0,
-    cancelled: 0,
-    'needs-schedule': 0,
-  };
-}
-
-function emptyCoachingDeliverySummary(): CoachingDeliverySummary {
-  return {
-    byKind: COACHING_DELIVERY_ORDER.reduce((acc, kind) => {
-      acc[kind] = {
-        items: [],
-        counts: emptyCoachingDeliveryCounts(),
-      };
-      return acc;
-    }, {} as CoachingDeliverySummary['byKind']),
-  };
-}
-
-function groupActivitiesByDate(activities: MonthlyActivityItem[]) {
-  const groups = new Map<string, MonthlyActivityItem[]>();
-  activities.forEach((activity) => {
-    const items = groups.get(activity.date) || [];
-    groups.set(activity.date, [...items, activity]);
-  });
-  return Array.from(groups.entries());
-}
-
-function uniqueActivityDays(activities: MonthlyActivityItem[]) {
-  return new Set(activities.map((activity) => activity.date)).size;
-}
-
-function safeTone(tone: ActivityTone) {
-  return toneConfig[tone] || toneConfig.primary;
-}
-
-function safeStatus(status: MonthlyStatus) {
-  return statusConfig[status] || statusConfig['need-attention'];
-}
-
-function formatNumber(value: number) {
-  return new Intl.NumberFormat('en-GB').format(value);
-}
-
-function formatHours(value: number) {
-  const rounded = Math.round(value * 10) / 10;
-  return `${Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(1)}h`;
-}
-
-function normalizeSearch(value: string) {
-  return value.trim().toLowerCase();
-}
-
-const PDF_MARGIN = 14;
-const PDF_PAGE_WIDTH = 210;
-const PDF_PAGE_HEIGHT = 297;
-const PDF_CONTENT_WIDTH = PDF_PAGE_WIDTH - (PDF_MARGIN * 2);
-
-function pdfFileNameSegment(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'learner';
-}
-
-function ensurePdfSpace(doc: jsPDF, y: number, heightNeeded: number) {
-  if (y + heightNeeded <= PDF_PAGE_HEIGHT - PDF_MARGIN) return y;
-  doc.addPage();
-  return PDF_MARGIN;
-}
-
-function addPdfDivider(doc: jsPDF, y: number) {
-  const lineY = ensurePdfSpace(doc, y, 2);
-  doc.setDrawColor(226, 232, 240);
-  doc.line(PDF_MARGIN, lineY, PDF_PAGE_WIDTH - PDF_MARGIN, lineY);
-  return lineY + 4;
-}
-
-function addPdfText(
-  doc: jsPDF,
-  {
-    text,
-    y,
-    x = PDF_MARGIN,
-    maxWidth = PDF_CONTENT_WIDTH,
-    fontSize = 10,
-    fontStyle = 'normal',
-    textColor = [17, 24, 39],
-    lineHeight = 5,
-  }: {
-    text: string;
-    y: number;
-    x?: number;
-    maxWidth?: number;
-    fontSize?: number;
-    fontStyle?: 'normal' | 'bold';
-    textColor?: [number, number, number];
-    lineHeight?: number;
-  },
-) {
-  doc.setFont('helvetica', fontStyle);
-  doc.setFontSize(fontSize);
-  doc.setTextColor(textColor[0], textColor[1], textColor[2]);
-
-  const lines = doc.splitTextToSize(text, maxWidth) as string[];
-  const neededHeight = Math.max(lineHeight, lines.length * lineHeight);
-  const nextY = ensurePdfSpace(doc, y, neededHeight);
-
-  doc.text(lines, x, nextY);
-  return nextY + neededHeight;
-}
-
-function downloadLearnerMonthlyCyclePdf(learner: MonthlyLearnerActivity, monthLabel: string, monthKey: string) {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  const learningActivities = learner.activities.filter((activity) => ['learning', 'quiz', 'video'].includes(inlineActivityCategory(activity.type)));
-  const counts = {
-    quiz: learner.activities.filter((activity) => inlineActivityCategory(activity.type) === 'quiz').length,
-    video: learner.activities.filter((activity) => inlineActivityCategory(activity.type) === 'video').length,
-    learning: learningActivities.length,
-    coaching: learner.activities.filter((activity) => inlineActivityCategory(activity.type) === 'coaching').length,
-    evidence: learner.activities.filter((activity) => inlineActivityCategory(activity.type) === 'evidence').length,
-  };
-  const generatedDate = formatDateLabel(new Date().toISOString());
-  const pageBottom = PDF_PAGE_HEIGHT - 18;
-  const colors = {
-    text: [15, 23, 42] as [number, number, number],
-    muted: [100, 116, 139] as [number, number, number],
-    border: [226, 232, 240] as [number, number, number],
-    panel: [248, 250, 252] as [number, number, number],
-    accent: [84, 32, 138] as [number, number, number],
-    emerald: [16, 185, 129] as [number, number, number],
-    amber: [245, 158, 11] as [number, number, number],
-    red: [239, 68, 68] as [number, number, number],
-    white: [255, 255, 255] as [number, number, number],
-  };
-  const summaryMetrics = [
-    { label: 'Total events', value: formatNumber(learner.activities.length) },
-    { label: 'Active days', value: formatNumber(uniqueActivityDays(learner.activities)) },
-    { label: 'Time logged', value: learner.otjh.monthlyHoursLabel },
-    { label: 'OTJ completed', value: formatHours(learner.otjh.completed) },
-    { label: 'OTJ target', value: formatHours(learner.otjh.target) },
-    { label: 'KSBs evidenced', value: formatNumber(learner.ksb.touched) },
-    { label: 'Learning', value: formatNumber(counts.learning) },
-    { label: 'Videos', value: formatNumber(counts.video) },
-    { label: 'Quizzes', value: formatNumber(counts.quiz) },
-    { label: 'Coaching', value: formatNumber(counts.coaching) },
-    { label: 'Evidence', value: formatNumber(counts.evidence) },
-  ];
-  const detailRows = [
-    { label: 'Programme', value: learner.programme || '--' },
-    { label: 'Cohort / Group', value: `${learner.cohortName || '--'} / ${learner.group || '--'}` },
-    { label: 'OTJ completed', value: formatHours(learner.otjh.completed) },
-    { label: 'OTJ target', value: formatHours(learner.otjh.target) },
-    { label: 'OTJH status', value: learner.otjhStatus || '--' },
-    { label: 'Last captured', value: learner.lastActivityLabel || 'No activity captured' },
-  ];
-  const tableColumns = [
-    { label: 'Date', width: 24 },
-    { label: 'Type', width: 22 },
-    { label: 'Activity', width: 68 },
-    { label: 'Details', width: PDF_CONTENT_WIDTH - 24 - 22 - 68 },
-  ];
-  const setFill = (color: [number, number, number]) => doc.setFillColor(color[0], color[1], color[2]);
-  const setStroke = (color: [number, number, number]) => doc.setDrawColor(color[0], color[1], color[2]);
-  const setText = (fontSize: number, fontStyle: 'normal' | 'bold' = 'normal', color: [number, number, number] = colors.text) => {
-    doc.setFont('helvetica', fontStyle);
-    doc.setFontSize(fontSize);
-    doc.setTextColor(color[0], color[1], color[2]);
-  };
-  let y = PDF_MARGIN;
-  let tableRowIndex = 0;
-
-  function drawTableHeader(startY: number) {
-    setFill(colors.panel);
-    setStroke(colors.border);
-    doc.rect(PDF_MARGIN, startY, PDF_CONTENT_WIDTH, 8, 'FD');
-    let cursorX = PDF_MARGIN;
-    tableColumns.forEach((column, index) => {
-      if (index > 0) doc.line(cursorX, startY, cursorX, startY + 8);
-      setText(8, 'bold', colors.muted);
-      doc.text(column.label.toUpperCase(), cursorX + 2.5, startY + 5.2);
-      cursorX += column.width;
-    });
-    return startY + 8;
-  }
-
-  const ensureSpace = (heightNeeded: number, redrawTableHeader = false) => {
-    if (y + heightNeeded <= pageBottom) return;
-    doc.addPage();
-    y = PDF_MARGIN;
-    if (redrawTableHeader) {
-      y = drawTableHeader(y);
-    }
-  };
-  const addFooter = () => {
-    const pageCount = doc.getNumberOfPages();
-    for (let page = 1; page <= pageCount; page += 1) {
-      doc.setPage(page);
-      setStroke(colors.border);
-      doc.line(PDF_MARGIN, PDF_PAGE_HEIGHT - 13, PDF_PAGE_WIDTH - PDF_MARGIN, PDF_PAGE_HEIGHT - 13);
-      setText(8, 'normal', colors.muted);
-      doc.text(`Generated ${generatedDate}`, PDF_MARGIN, PDF_PAGE_HEIGHT - 8);
-      doc.text(`Page ${page} of ${pageCount}`, PDF_PAGE_WIDTH - PDF_MARGIN, PDF_PAGE_HEIGHT - 8, { align: 'right' });
-    }
-  };
-  const drawSectionTitle = (title: string) => {
-    y = addPdfDivider(doc, y);
-    y = addPdfText(doc, { text: title, y, fontSize: 11.5, fontStyle: 'bold', lineHeight: 6 });
-  };
-  const drawDetailRow = (label: string, value: string) => {
-    const safeValue = value || '--';
-    const labelWidth = 34;
-    const valueLines = doc.splitTextToSize(safeValue, PDF_CONTENT_WIDTH - labelWidth - 8) as string[];
-    const rowHeight = Math.max(9, (valueLines.length * 4) + 4);
-    ensureSpace(rowHeight);
-    setStroke(colors.border);
-    doc.rect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, rowHeight);
-    doc.line(PDF_MARGIN + labelWidth, y, PDF_MARGIN + labelWidth, y + rowHeight);
-    setText(8, 'bold', colors.muted);
-    doc.text(label.toUpperCase(), PDF_MARGIN + 3, y + 5.2);
-    setText(9, 'normal', colors.text);
-    doc.text(valueLines, PDF_MARGIN + labelWidth + 3, y + 5.2);
-    y += rowHeight;
-  };
-  const drawMetricCell = (x: number, cellY: number, width: number, label: string, value: string) => {
-    setText(8, 'bold', colors.muted);
-    doc.text(label.toUpperCase(), x + 3, cellY + 4.6);
-    setText(11, 'bold', colors.text);
-    doc.text(value, x + width - 3, cellY + 6.2, { align: 'right' });
-  };
-
-  setText(16, 'bold', colors.text);
-  doc.text('Monthly Activity Summary', PDF_MARGIN, y + 4);
-  setText(9, 'normal', colors.muted);
-  doc.text(monthLabel, PDF_MARGIN, y + 10);
-
-  y += 16;
-  setStroke(colors.border);
-  doc.line(PDF_MARGIN, y, PDF_PAGE_WIDTH - PDF_MARGIN, y);
-  y += 8;
-
-  setText(18, 'bold', colors.text);
-  doc.text(learner.name, PDF_MARGIN, y);
-  setText(9, 'normal', colors.muted);
-  doc.text(`${learner.programme || '--'} - ${monthLabel}`, PDF_MARGIN, y + 6);
-  y += 12;
-
-  drawSectionTitle('Learner details');
-  detailRows.forEach((row) => drawDetailRow(row.label, row.value));
-
-  drawSectionTitle('Monthly summary');
-  const metricGap = 4;
-  const metricWidth = (PDF_CONTENT_WIDTH - metricGap) / 2;
-  for (let index = 0; index < summaryMetrics.length; index += 2) {
-    ensureSpace(10);
-    setStroke(colors.border);
-    doc.rect(PDF_MARGIN, y, metricWidth, 10);
-    drawMetricCell(PDF_MARGIN, y, metricWidth, summaryMetrics[index].label, summaryMetrics[index].value);
-
-    const secondMetric = summaryMetrics[index + 1];
-    if (secondMetric) {
-      const secondX = PDF_MARGIN + metricWidth + metricGap;
-      doc.rect(secondX, y, metricWidth, 10);
-      drawMetricCell(secondX, y, metricWidth, secondMetric.label, secondMetric.value);
-    }
-    y += 10;
-  }
-
-  if (learner.needsAction.length > 0) {
-    drawSectionTitle('Attention needed');
-    learner.needsAction.forEach((item) => {
-      const bulletLines = doc.splitTextToSize(item, PDF_CONTENT_WIDTH - 9) as string[];
-      const rowHeight = Math.max(8, (bulletLines.length * 4) + 3);
-      ensureSpace(rowHeight);
-      setText(9, 'bold', colors.text);
-      doc.text('-', PDF_MARGIN + 2, y + 5);
-      setText(8.8, 'normal', colors.text);
-      doc.text(bulletLines, PDF_MARGIN + 6, y + 5);
-      y += rowHeight;
-    });
-  }
-
-  drawSectionTitle('Activity log');
-
-  if (!learner.activities.length) {
-    ensureSpace(14);
-    setStroke(colors.border);
-    doc.rect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, 12);
-    setText(9, 'normal', colors.muted);
-    doc.text(`No activity captured for ${monthLabel}.`, PDF_MARGIN + 3, y + 7);
-    y += 12;
-  } else {
-    y = drawTableHeader(y);
-    learner.activities.forEach((activity) => {
-      const detailText = [formatSourceLabel(activity.source), activity.detail].filter(Boolean).join(' - ') || '--';
-      const dateLines = doc.splitTextToSize(formatDateLabel(activity.date), tableColumns[0].width - 5) as string[];
-      const typeLines = doc.splitTextToSize(activity.type || '--', tableColumns[1].width - 5) as string[];
-      const titleLines = doc.splitTextToSize(activity.title || 'Untitled activity', tableColumns[2].width - 5) as string[];
-      const detailLines = doc.splitTextToSize(detailText, tableColumns[3].width - 5) as string[];
-      const lineCount = Math.max(dateLines.length, typeLines.length, titleLines.length, detailLines.length);
-      const rowHeight = Math.max(10, 4 + (lineCount * 4));
-
-      ensureSpace(rowHeight, true);
-      setFill(tableRowIndex % 2 === 0 ? colors.white : colors.panel);
-      setStroke(colors.border);
-      doc.rect(PDF_MARGIN, y, PDF_CONTENT_WIDTH, rowHeight, 'FD');
-
-      let cursorX = PDF_MARGIN;
-      tableColumns.forEach((column, index) => {
-        if (index > 0) doc.line(cursorX, y, cursorX, y + rowHeight);
-        cursorX += column.width;
-      });
-
-      const textY = y + 5;
-      setText(8.5, 'normal', colors.text);
-      doc.text(dateLines, PDF_MARGIN + 2.5, textY);
-      doc.text(typeLines, PDF_MARGIN + tableColumns[0].width + 2.5, textY);
-      doc.text(titleLines, PDF_MARGIN + tableColumns[0].width + tableColumns[1].width + 2.5, textY);
-      setText(8.2, 'normal', colors.muted);
-      doc.text(detailLines, PDF_MARGIN + tableColumns[0].width + tableColumns[1].width + tableColumns[2].width + 2.5, textY);
-
-      y += rowHeight;
-      tableRowIndex += 1;
-    });
-  }
-
-  addFooter();
-  doc.save(`monthly-cycle-${pdfFileNameSegment(learner.name)}-${monthKey}.pdf`);
-}
 
 export default function CoachMonthlyCycle() {
   const navigate = useNavigate();
@@ -860,272 +268,109 @@ export default function CoachMonthlyCycle() {
   return (
     <>
       <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Monthly Cycle" pageSubtitle="See what each learner did this month" userName={data?.owner?.name || coach.name} userRole="Progress Coach">
-        <div className="p-6 space-y-6">
-          <section className="rounded-3xl overflow-hidden shadow-sm border border-primary-900/20" style={{ background: 'linear-gradient(135deg, #070211 0%, #17032d 52%, #2a0754 100%)' }}>
-            <div className="p-6 sm:p-8">
-              <div className="flex flex-col lg:flex-row lg:items-center gap-6">
-                <div className="flex items-start gap-5 flex-1">
-                  <div className="w-14 h-14 rounded-2xl bg-white/12 ring-1 ring-white/15 flex items-center justify-center shrink-0">
-                    <AppIcon className="ri-radar-line text-white text-2xl"></AppIcon>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-primary-200 mb-2">Monthly learner activity</p>
-                    <h2 className="text-2xl font-heading font-bold text-white">Monthly Cycle - {monthLabel}</h2>
-                    <p className="text-sm text-white/72 mt-2 max-w-2xl">
-                      Track every learner touchpoint in the selected month: learning completions, coaching and reviews, evidence, KSBs, and OTJH logged.
-                    </p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3 w-full lg:w-auto">
-                  <HeroStat label="Learners" value={summary.activeLearners} />
-                  <HeroStat label="Activities" value={summary.timelineItems} />
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <div className="flex flex-col xl:flex-row xl:items-center gap-4 justify-between">
-            <div className="flex items-center gap-2 bg-background-50 border border-foreground-200/70 rounded-2xl p-1 shadow-sm w-fit">
-              <button type="button" onClick={() => setSelectedMonth((value) => shiftMonthKey(value, -1))} className="w-9 h-9 rounded-xl text-foreground-500 hover:bg-background-100 hover:text-primary-700 transition-smooth cursor-pointer">
-                <AppIcon className="ri-arrow-left-s-line text-lg"></AppIcon>
-              </button>
-              <input
-                type="month"
+        <PageContainer>
+          <PageHeader
+            icon="ri-radar-line"
+            title={`Monthly Cycle — ${monthLabel}`}
+            description="Track every learner touchpoint this month: learning completions, coaching and reviews, evidence, KSBs, and OTJH logged."
+            meta={(
+              <>
+                <CompactMetric label="Learners" value={formatNumber(summary.activeLearners)} />
+                <CompactMetric label="Activities" value={formatNumber(summary.timelineItems)} />
+                <span className="text-[12px] text-foreground-400">
+                  Source: learner progress log, activity feed, and coach calendar for {monthLabel}.
+                </span>
+              </>
+            )}
+            actions={(
+              <MonthNavigator
                 value={selectedMonth}
-                onChange={(event) => setSelectedMonth(event.target.value || currentMonthKey())}
-                className="h-9 px-3 rounded-xl bg-background-100 border border-transparent text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                onShift={(offset) => setSelectedMonth((value) => shiftMonthKey(value, offset))}
+                onChange={(value) => setSelectedMonth(value || currentMonthKey())}
               />
-              <button type="button" onClick={() => setSelectedMonth((value) => shiftMonthKey(value, 1))} className="w-9 h-9 rounded-xl text-foreground-500 hover:bg-background-100 hover:text-primary-700 transition-smooth cursor-pointer">
-                <AppIcon className="ri-arrow-right-s-line text-lg"></AppIcon>
-              </button>
-            </div>
-            <p className="text-xs text-foreground-500">
-              Source: learner progress log, activity feed, and coach calendar for {monthLabel}.
-            </p>
-          </div>
+            )}
+          />
 
           {!loading && !error && (
-            <CoachDeliveryPanel
+            <CoachingDeliveryPanel
               delivery={coachingDelivery}
               monthLabel={monthLabel}
               onOpenCalendarItem={handleOpenCalendarItem}
             />
           )}
 
-          {loading && (
-            <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5 shadow-sm">
-              <RowsSkeleton rows={5} />
-            </div>
-          )}
-
-          {!loading && error && (
-            <div className="bg-red-50 border border-red-200 rounded-2xl p-8 text-center">
-              <AppIcon className="ri-error-warning-line text-red-500 text-3xl block mb-3"></AppIcon>
-              <p className="text-sm font-semibold text-red-700">Unable to load monthly activity</p>
-              <p className="text-xs text-red-600 mt-1">{error}</p>
-            </div>
-          )}
+          {loading && <MonthlyCycleLoading />}
+          {!loading && error && <MonthlyCycleError message={error} />}
 
           {!loading && !error && (
             <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-5">
               <section className="space-y-4">
-                <div className="flex flex-col 2xl:flex-row 2xl:items-end gap-4 justify-between">
-                  <div>
-                    <h3 className="text-lg font-heading font-bold text-foreground-900">Learner Month Log</h3>
-                    <p className="text-sm text-foreground-500">Each learner card shows the monthly cycle summary; use the arrow to open the detailed timeline.</p>
-                  </div>
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full 2xl:w-auto">
-                    <div className="relative w-full sm:w-80">
-                      <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                      <input
-                        type="search"
+                <SectionHeader
+                  title="Learner Month Log"
+                  description="Each learner card shows the monthly cycle summary; use the arrow to open the detailed timeline."
+                  actions={(
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full 2xl:w-auto">
+                      <SearchInput
                         value={learnerSearch}
-                        onChange={(event) => setLearnerSearch(event.target.value)}
+                        onChange={setLearnerSearch}
                         placeholder="Search learner name..."
-                        aria-label="Search learner name"
-                        className="w-full h-10 pl-9 pr-9 rounded-xl bg-background-50 border border-foreground-200/80 text-sm text-foreground-900 placeholder:text-foreground-400 focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-200 shadow-sm"
+                        ariaLabel="Search learner name"
+                        className="w-full sm:w-80"
                       />
-                      {learnerSearch && (
-                        <button
-                          type="button"
-                          onClick={() => setLearnerSearch('')}
-                          aria-label="Clear learner search"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
-                        >
-                          <AppIcon className="ri-close-line text-base"></AppIcon>
-                        </button>
-                      )}
+                      <span className="px-3 py-1 rounded-full bg-background-50 border border-foreground-200 text-[12px] font-semibold text-foreground-600 w-fit">
+                        Showing {filteredLearners.length === 0 ? 0 : pageStartIndex + 1}-{pageEndIndex} of {filteredLearners.length}
+                      </span>
                     </div>
-                    <span className="px-3 py-1 rounded-full bg-background-50 border border-foreground-200 text-[11px] font-semibold text-foreground-600 w-fit">
-                      Showing {filteredLearners.length === 0 ? 0 : pageStartIndex + 1}-{pageEndIndex} of {filteredLearners.length}
-                    </span>
-                  </div>
-                </div>
+                  )}
+                />
 
-                {learners.length === 0 && (
-                  <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 text-center shadow-sm">
-                    <AppIcon className="ri-user-search-line text-foreground-300 text-3xl block mb-3"></AppIcon>
-                    <p className="text-sm font-semibold text-foreground-700">No active learners found</p>
-                    <p className="text-xs text-foreground-400 mt-1">There are no active learners assigned to this coach for the selected month.</p>
-                  </div>
-                )}
+                {learners.length === 0 && <NoActiveLearners />}
 
                 {learners.length > 0 && filteredLearners.length === 0 && (
-                  <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-10 text-center shadow-sm">
-                    <AppIcon className="ri-user-search-line text-foreground-300 text-3xl block mb-3"></AppIcon>
-                    <p className="text-sm font-semibold text-foreground-700">No learners match this search</p>
-                    <p className="text-xs text-foreground-400 mt-1">Try a different learner name for {monthLabel}.</p>
-                  </div>
+                  <NoLearnerMatches monthLabel={monthLabel} onClear={() => setLearnerSearch('')} />
                 )}
 
-                {paginatedLearners.map((learner) => {
-                  const selected = selectedLearnerId === learner.id;
-                  const expanded = expandedLearnerId === learner.id;
-                  const status = safeStatus(learner.status);
-                  return (
-                    <article key={learner.id} className={`relative overflow-hidden rounded-2xl border bg-[linear-gradient(135deg,#ffffff_0%,#fbfaff_62%,#f7f3ff_100%)] ${selected ? `${status.border} shadow-md ring-1 ring-primary-100` : 'border-primary-100/80 shadow-sm'} transition-smooth`}>
-                      <div className="absolute inset-y-0 left-0 w-1.5 bg-primary-600"></div>
-                      <div className="p-5 pl-7">
-                        <div className="flex flex-col lg:flex-row lg:items-start gap-4">
-                          <button type="button" onClick={() => handleOpenLearnerOverview(learner.id)} className="flex items-start gap-4 text-left flex-1 min-w-0 cursor-pointer">
-                            <div className="w-12 h-12 rounded-2xl bg-primary-100 text-primary-700 ring-1 ring-primary-200 flex items-center justify-center text-sm font-bold shrink-0">
-                              {learner.initials}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <h4 className="font-heading font-bold text-foreground-900 truncate">{learner.name}</h4>
-                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full ring-1 text-[10px] font-semibold ${status.pill}`}>{status.label}</span>
-                              </div>
-                              <p className="text-xs text-foreground-500 mt-1 truncate">{learner.cohortName} - {learner.group}</p>
-                            </div>
-                          </button>
-                          <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                            <button type="button" onClick={() => handleOpenLearnerOverview(learner.id)} className="px-3 py-2 rounded-xl border border-primary-200 bg-primary-50 text-primary-700 text-[11px] font-semibold hover:bg-primary-100 transition-smooth cursor-pointer">
-                              <AppIcon className="ri-layout-right-line mr-1.5"></AppIcon>
-                              Overview
-                            </button>
-                            <button type="button" onClick={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`)} className="px-3 py-2 rounded-xl bg-primary-600 text-white text-[11px] font-semibold hover:bg-primary-700 transition-smooth cursor-pointer">
-                              View File
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleToggleLearnerTimeline(learner.id)}
-                              aria-label={expanded ? 'Collapse learner monthly cycle' : 'Open learner monthly cycle'}
-                              className="w-9 h-9 rounded-xl border border-foreground-200 text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer"
-                            >
-                              <AppIcon className={`${expanded ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-lg`}></AppIcon>
-                            </button>
-                          </div>
-                        </div>
-
-                        <CoachLearnerMonthlyCycleSummary
-                          learner={learner}
-                          monthLabel={monthLabel}
-                          monthKey={selectedMonth}
-                        />
-                      </div>
-
-                      {expanded && (
-                        <CoachLearnerMonthlyCycleInline
-                          learner={learner}
-                          monthLabel={monthLabel}
-                          filter={inlineFilter}
-                          query={inlineSearch}
-                          onFilterChange={setInlineFilter}
-                          onQueryChange={setInlineSearch}
-                        />
-                      )}
-                    </article>
-                  );
-                })}
+                {paginatedLearners.map((learner) => (
+                  <LearnerMonthCard
+                    key={learner.id}
+                    learner={learner}
+                    monthLabel={monthLabel}
+                    monthKey={selectedMonth}
+                    selected={selectedLearnerId === learner.id}
+                    expanded={expandedLearnerId === learner.id}
+                    inlineFilter={inlineFilter}
+                    inlineSearch={inlineSearch}
+                    onOpenOverview={() => handleOpenLearnerOverview(learner.id)}
+                    onOpenCaseFile={() => navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`)}
+                    onToggleTimeline={() => handleToggleLearnerTimeline(learner.id)}
+                    onInlineFilterChange={setInlineFilter}
+                    onInlineSearchChange={setInlineSearch}
+                  />
+                ))}
 
                 {filteredLearners.length > LEARNERS_PER_PAGE && (
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 px-4 py-3 shadow-sm">
-                    <p className="text-xs font-semibold text-foreground-600">
-                      Page {visibleLearnerPage} of {totalLearnerPages} - showing {pageStartIndex + 1}-{pageEndIndex} of {filteredLearners.length} learners
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => handleLearnerPageChange(visibleLearnerPage - 1)}
-                        disabled={visibleLearnerPage === 1}
-                        className="h-9 px-3 rounded-xl border border-foreground-200 bg-white text-xs font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                      >
-                        <AppIcon className="ri-arrow-left-s-line mr-1"></AppIcon>
-                        Previous
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleLearnerPageChange(visibleLearnerPage + 1)}
-                        disabled={visibleLearnerPage === totalLearnerPages}
-                        className="h-9 px-3 rounded-xl border border-foreground-200 bg-white text-xs font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                      >
-                        Next
-                        <AppIcon className="ri-arrow-right-s-line ml-1"></AppIcon>
-                      </button>
-                    </div>
-                  </div>
+                  <Pagination
+                    page={visibleLearnerPage}
+                    totalPages={totalLearnerPages}
+                    total={filteredLearners.length}
+                    pageSize={LEARNERS_PER_PAGE}
+                    onPageChange={handleLearnerPageChange}
+                    noun="learners"
+                    className="rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm"
+                  />
                 )}
               </section>
 
-              <aside className="space-y-5">
-                <div className="bg-background-50 rounded-2xl border border-foreground-200/70 p-5 shadow-sm">
-                  <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4">Month Health</h3>
-                  <div className="space-y-3">
-                    <HealthRow label="On Track" value={summary.onTrack} total={summary.activeLearners} color="bg-emerald-500" />
-                    <HealthRow label="Need Attention" value={summary.needAttention} total={summary.activeLearners} color="bg-amber-500" />
-                    <HealthRow label="Priority" value={summary.atRisk} total={summary.activeLearners} color="bg-red-500" />
-                  </div>
-                </div>
-
-                <div className="bg-background-50 rounded-2xl border border-foreground-200/70 p-5 shadow-sm">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-sm font-heading font-bold text-foreground-900">Action Queue</h3>
-                    <span className="text-[10px] font-semibold text-foreground-400">{learnersNeedingAction.length} learner{learnersNeedingAction.length === 1 ? '' : 's'}</span>
-                  </div>
-                  {learnersNeedingAction.length === 0 ? (
-                    <div className="rounded-2xl bg-emerald-50 p-4 text-center">
-                      <AppIcon className="ri-check-double-line text-emerald-600 text-2xl block mb-2"></AppIcon>
-                      <p className="text-xs font-semibold text-emerald-800">No action gaps for this month.</p>
-                    </div>
-                  ) : (
-                    <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
-                      {learnersNeedingAction.map((learner) => (
-                        <button key={learner.id} type="button" onClick={() => handleOpenLearnerOverview(learner.id)} className="w-full text-left rounded-2xl bg-background-100 hover:bg-background-200/60 border border-foreground-200/50 p-3 transition-smooth cursor-pointer">
-                          <p className="text-xs font-bold text-foreground-900">{learner.name}</p>
-                          <p className="text-[11px] text-foreground-500 mt-1">{learner.needsAction[0]}</p>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div className="bg-background-50 rounded-2xl border border-foreground-200/70 p-5 shadow-sm">
-                  <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4">Latest Captured</h3>
-                  {latestActivities.length === 0 ? (
-                    <p className="text-xs text-foreground-400">No captured activity yet for {monthLabel}.</p>
-                  ) : (
-                    <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
-                      {latestActivities.map((activity) => {
-                        const tone = safeTone(activity.tone);
-                        return (
-                          <div key={`${activity.learnerName}-${activity.id}`} className="flex gap-3">
-                            <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${tone.dot}`}></span>
-                            <div className="min-w-0">
-                              <p className="text-xs font-semibold text-foreground-900 truncate">{activity.learnerName}</p>
-                              <p className="text-[11px] text-foreground-500 truncate">{activity.title}</p>
-                              <p className="text-[10px] text-foreground-400">{formatDateLabel(activity.date)}</p>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              </aside>
+              <MonthSidebar
+                summary={summary}
+                learnersNeedingAction={learnersNeedingAction}
+                latestActivities={latestActivities}
+                monthLabel={monthLabel}
+                onOpenLearner={handleOpenLearnerOverview}
+              />
             </div>
           )}
-        </div>
+        </PageContainer>
       </WorkspaceShell>
 
       <RightSlidePanel
@@ -1145,572 +390,5 @@ export default function CoachMonthlyCycle() {
         )}
       </RightSlidePanel>
     </>
-  );
-}
-
-function CoachDeliveryPanel({
-  delivery,
-  monthLabel,
-  onOpenCalendarItem,
-}: {
-  delivery: CoachingDeliverySummary;
-  monthLabel: string;
-  onOpenCalendarItem: (item: CoachingDeliveryItem) => void;
-}) {
-  const totalCaptured = COACHING_DELIVERY_ORDER.reduce(
-    (sum, kind) => sum + COACHING_DELIVERY_STATUS_ORDER.reduce((kindSum, status) => kindSum + delivery.byKind[kind].counts[status], 0),
-    0,
-  );
-
-  return (
-    <section className="rounded-3xl border border-foreground-200/80 bg-background-50 p-4 shadow-sm">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <span className="inline-flex items-center gap-2 rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-700">
-            <AppIcon className="ri-user-voice-line text-emerald-600"></AppIcon>
-            Coaching session status
-          </span>
-          <h3 className="mt-2 text-lg font-heading font-bold text-foreground-900">MCR, PR, catch-up and support in {monthLabel}</h3>
-          <p className="mt-1 max-w-3xl text-xs leading-5 text-foreground-500">Booked, completed, cancelled, and not-yet-scheduled sessions for the selected month.</p>
-        </div>
-        <span className="inline-flex w-fit items-center gap-2 rounded-full border border-foreground-200 bg-white px-3 py-2 text-xs font-semibold text-foreground-500 shadow-sm">
-          <span className="text-base font-heading font-bold text-foreground-900">{formatNumber(totalCaptured)}</span>
-          captured sessions
-        </span>
-      </div>
-
-      <div className="mt-4 grid items-start gap-3 xl:grid-cols-2">
-        {COACHING_DELIVERY_ORDER.map((kind) => (
-          <CoachDeliveryKindCard
-            key={kind}
-            kind={kind}
-            items={delivery.byKind[kind].items}
-            counts={delivery.byKind[kind].counts}
-            monthLabel={monthLabel}
-            onOpenCalendarItem={onOpenCalendarItem}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function CoachDeliveryKindCard({
-  kind,
-  items,
-  counts,
-  monthLabel,
-  onOpenCalendarItem,
-}: {
-  kind: CoachingDeliveryKind;
-  items: CoachingDeliveryItem[];
-  counts: Record<CoachingDeliveryStatus, number>;
-  monthLabel: string;
-  onOpenCalendarItem: (item: CoachingDeliveryItem) => void;
-}) {
-  const config = COACHING_DELIVERY_CONFIG[kind];
-  const tone = safeTone(config.tone);
-  const total = COACHING_DELIVERY_STATUS_ORDER.reduce((sum, status) => sum + counts[status], 0);
-
-  return (
-    <article className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-white shadow-sm">
-      <div className={`h-1 ${config.tone === 'emerald' ? 'bg-emerald-500' : config.tone === 'amber' ? 'bg-amber-500' : config.tone === 'red' ? 'bg-red-500' : 'bg-primary-500'}`}></div>
-      <div className="p-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone.icon}`}>
-              <AppIcon className={`${config.icon} text-base`}></AppIcon>
-            </span>
-            <div>
-              <h4 className="text-sm font-heading font-bold text-foreground-900">{config.label}</h4>
-              <p className="mt-0.5 text-[11px] text-foreground-500">{formatNumber(total)} item{total === 1 ? '' : 's'}</p>
-            </div>
-          </div>
-          <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badge}`}>{config.shortLabel}</span>
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          {COACHING_DELIVERY_STATUS_ORDER.map((status) => (
-            <CoachDeliveryStatusStat key={status} status={status} value={counts[status]} />
-          ))}
-        </div>
-
-        {items.length === 0 ? (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-dashed border-foreground-200 bg-background-50 px-3 py-3">
-            <AppIcon className={`${config.icon} text-lg text-foreground-300`}></AppIcon>
-            <p className="text-xs font-semibold text-foreground-700">No {config.label.toLowerCase()} activity in {monthLabel}.</p>
-          </div>
-        ) : (
-          <div className="mt-3 max-h-[340px] space-y-2 overflow-y-auto pr-1">
-            {items.map((item) => (
-              <CoachDeliveryRecentItem key={item.id} item={item} onOpenCalendarItem={onOpenCalendarItem} />
-            ))}
-          </div>
-        )}
-      </div>
-    </article>
-  );
-}
-
-function CoachDeliveryStatusStat({ status, value }: { status: CoachingDeliveryStatus; value: number }) {
-  const config = COACHING_DELIVERY_STATUS_CONFIG[status];
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-semibold ring-1 ${config.className}`}>
-      <span className="text-sm font-heading font-bold">{formatNumber(value)}</span>
-      {config.label}
-    </span>
-  );
-}
-
-function CoachDeliveryRecentItem({
-  item,
-  onOpenCalendarItem,
-}: {
-  item: CoachingDeliveryItem;
-  onOpenCalendarItem: (item: CoachingDeliveryItem) => void;
-}) {
-  const status = COACHING_DELIVERY_STATUS_CONFIG[item.status];
-  const handleClick = () => onOpenCalendarItem(item);
-
-  return (
-    <button
-      type="button"
-      onClick={handleClick}
-      className="w-full rounded-xl border border-foreground-200/60 bg-background-50 px-3 py-2 text-left transition-smooth hover:border-primary-200 hover:bg-primary-50/30 cursor-pointer"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ring-1 ${status.className}`}>{status.label}</span>
-            <span className="text-[10px] text-foreground-400">{formatDateLabel(item.date)}</span>
-            <span className="text-[10px] text-foreground-400">{item.timeLabel}</span>
-          </div>
-          <p className="mt-1 truncate text-xs font-bold text-foreground-900">{item.learnerName}</p>
-          <p className="mt-0.5 truncate text-[11px] text-foreground-500">{item.title}</p>
-        </div>
-        <AppIcon className="ri-arrow-right-s-line shrink-0 text-lg text-foreground-300"></AppIcon>
-      </div>
-    </button>
-  );
-}
-
-function CoachLearnerMonthlyCycleSummary({
-  learner,
-  monthLabel,
-  monthKey,
-}: {
-  learner: MonthlyLearnerActivity;
-  monthLabel: string;
-  monthKey: string;
-}) {
-  return (
-    <section className="mt-5 border-t border-primary-100/80 pt-5">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-primary-700">
-            <AppIcon className="ri-sparkling-2-line text-primary-600"></AppIcon>
-            Learner monthly cycle
-          </span>
-          <h4 className="mt-3 text-xl font-heading font-bold text-foreground-900">{monthLabel} activity</h4>
-          <p className="mt-1 text-sm text-foreground-500">Monthly activity summary and captured evidence.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => downloadLearnerMonthlyCyclePdf(learner, monthLabel, monthKey)}
-          className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-white px-4 text-xs font-bold text-primary-700 shadow-sm transition-smooth hover:bg-primary-50 cursor-pointer"
-        >
-          <AppIcon className="ri-file-pdf-line text-sm"></AppIcon>
-          Download PDF
-        </button>
-      </div>
-
-      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MonthlyCycleStat icon="ri-pulse-line" label="Total events" value={learner.activities.length} tone="primary" />
-        <MonthlyCycleStat icon="ri-calendar-check-line" label="Active days" value={uniqueActivityDays(learner.activities)} tone="emerald" />
-        <MonthlyCycleStat icon="ri-time-line" label="Time logged" value={learner.otjh.monthlyHoursLabel} tone="amber" />
-        <MonthlyCycleStat icon="ri-award-line" label="KSBs evidenced" value={learner.ksb.touched} tone="primary" />
-      </div>
-    </section>
-  );
-}
-
-function CoachLearnerMonthlyCycleInline({
-  learner,
-  monthLabel,
-  filter,
-  query,
-  onFilterChange,
-  onQueryChange,
-}: {
-  learner: MonthlyLearnerActivity;
-  monthLabel: string;
-  filter: InlineActivityFilter;
-  query: string;
-  onFilterChange: (value: InlineActivityFilter) => void;
-  onQueryChange: (value: string) => void;
-}) {
-  const status = safeStatus(learner.status);
-  const filteredActivities = useMemo(() => {
-    const needle = normalizeSearch(query);
-    return learner.activities.filter((activity) => {
-      const category = inlineActivityCategory(activity.type);
-      if (filter !== 'all' && category !== filter) return false;
-      if (!needle) return true;
-      return [activity.type, activity.title, activity.detail, activity.source]
-        .some((value) => normalizeSearch(String(value || '')).includes(needle));
-    });
-  }, [filter, learner.activities, query]);
-  const groupedActivities = useMemo(() => groupActivitiesByDate(filteredActivities), [filteredActivities]);
-  const filterCounts = useMemo(() => {
-    const counts = INLINE_FILTERS.reduce((acc, item) => ({ ...acc, [item.key]: 0 }), {} as Record<InlineActivityFilter, number>);
-    learner.activities.forEach((activity) => {
-      counts.all += 1;
-      counts[inlineActivityCategory(activity.type)] += 1;
-    });
-    return counts;
-  }, [learner.activities]);
-
-  return (
-    <div className="border-t border-primary-100/80 bg-primary-50/25 p-5 pl-7">
-      <section className="rounded-2xl border border-primary-100/80 bg-white/80 p-3 shadow-sm">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="flex gap-2 overflow-x-auto pb-1 xl:pb-0">
-            {INLINE_FILTERS.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => onFilterChange(item.key)}
-                className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition-smooth cursor-pointer ${filter === item.key ? 'bg-primary-600 text-white shadow-sm' : 'bg-background-100 text-foreground-600 hover:bg-primary-50 hover:text-primary-700'}`}
-              >
-                <AppIcon className={`${item.icon} text-sm`}></AppIcon>
-                {item.label}
-                <span className={filter === item.key ? 'text-white/70' : 'text-foreground-400'}>{filterCounts[item.key]}</span>
-              </button>
-            ))}
-          </div>
-          <div className="relative w-full xl:w-72">
-            <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-            <input
-              value={query}
-              onChange={(event) => onQueryChange(event.target.value)}
-              placeholder="Search this month..."
-              className="h-10 w-full rounded-xl border border-foreground-200 bg-background-50 pl-9 pr-9 text-sm outline-none transition-shadow focus:border-primary-400 focus:ring-4 focus:ring-primary-100"
-            />
-            {query && (
-              <button
-                type="button"
-                onClick={() => onQueryChange('')}
-                aria-label="Clear monthly cycle search"
-                className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-lg text-foreground-400 hover:text-foreground-700 hover:bg-background-100 transition-smooth cursor-pointer"
-              >
-                <AppIcon className="ri-close-line text-base"></AppIcon>
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="mt-3 flex items-start gap-2 rounded-xl bg-primary-50/70 px-3 py-2 text-xs text-primary-800">
-          <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
-          <p><span className="font-semibold">{filter === 'all' ? 'All activity' : INLINE_FILTERS.find((item) => item.key === filter)?.label}:</span> {filteredActivities.length} matching item{filteredActivities.length === 1 ? '' : 's'} in {monthLabel}.</p>
-        </div>
-      </section>
-
-      <section className="mt-5">
-        {groupedActivities.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-foreground-300 bg-background-50 px-6 py-12 text-center">
-            <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-background-100 text-foreground-400"><AppIcon className="ri-calendar-line text-xl"></AppIcon></span>
-            <h4 className="mt-3 text-sm font-semibold text-foreground-800">No matching activity</h4>
-            <p className="mt-1 text-xs text-foreground-500">Try another filter or search.</p>
-          </div>
-        ) : (
-          <div className="space-y-5">
-            {groupedActivities.map(([day, activities]) => (
-              <div key={day} className="grid gap-3 lg:grid-cols-[150px_1fr]">
-                <div className="lg:pt-1">
-                  <div className="inline-flex items-center gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-3 py-2 shadow-sm">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100 text-lg font-bold text-primary-700">{new Date(`${day}T12:00:00`).getDate()}</span>
-                    <div>
-                      <p className="text-xs font-semibold text-foreground-800">{new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long' })}</p>
-                      <p className="mt-0.5 text-[10px] text-foreground-400">{new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })} - {activities.length} item{activities.length === 1 ? '' : 's'}</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="relative space-y-3 border-l-2 border-primary-100 pl-4 before:absolute before:-left-[5px] before:top-4 before:h-2 before:w-2 before:rounded-full before:bg-primary-500 before:ring-4 before:ring-primary-100">
-                  {activities.map((activity) => (
-                    <InlineActivityCard key={activity.id} activity={activity} />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="mt-4 flex justify-end">
-          <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${status.soft}`}>{status.label}</span>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function MonthlyCycleStat({ icon, label, value, tone }: { icon: string; label: string; value: number | string; tone: ActivityTone }) {
-  const palette = safeTone(tone);
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border border-foreground-200/70 bg-white p-3 shadow-[0_1px_8px_rgba(15,23,42,0.035)]">
-      <span className={`hidden h-9 w-9 shrink-0 items-center justify-center rounded-xl sm:flex ${palette.icon}`}>
-        <AppIcon className={`${icon} text-sm`}></AppIcon>
-      </span>
-      <div>
-        <p className="text-xl font-bold text-foreground-900">{typeof value === 'number' ? formatNumber(value) : value}</p>
-        <p className="text-[11px] text-foreground-500">{label}</p>
-      </div>
-    </div>
-  );
-}
-
-function InlineActivityCard({ activity }: { activity: MonthlyActivityItem }) {
-  const tone = safeTone(activity.tone);
-  return (
-    <article className={`rounded-2xl border border-l-[3px] border-foreground-200/70 bg-background-50 p-4 shadow-[0_2px_10px_rgba(25,12,56,0.035)] transition-smooth hover:border-foreground-300 hover:shadow-md ${activity.tone === 'amber' ? 'border-l-amber-400' : activity.tone === 'red' ? 'border-l-red-400' : activity.tone === 'emerald' ? 'border-l-emerald-400' : 'border-l-primary-500'}`}>
-      <div className="flex items-start gap-3">
-        <span className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${tone.icon}`}>
-          <AppIcon className={`${activityIcon(activity.type)} text-base`}></AppIcon>
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${tone.badge}`}>{activity.type}</span>
-                <span className="text-xs text-foreground-400">{formatSourceLabel(activity.source)}</span>
-              </div>
-              <h4 className="mt-1 text-sm font-semibold text-foreground-900">{activity.title}</h4>
-            </div>
-            <span className="shrink-0 text-xs font-medium text-foreground-500">{formatDateLabel(activity.date)}</span>
-          </div>
-          {activity.detail && <p className="mt-1 text-xs leading-5 text-foreground-500">{activity.detail}</p>}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function LearnerOverviewPanel(
-  {
-    learner,
-    monthLabel,
-    isExporting,
-    onExport,
-  }: {
-    learner: MonthlyLearnerActivity;
-    monthLabel: string;
-    isExporting: boolean;
-    onExport: () => void;
-  },
-) {
-  const status = safeStatus(learner.status);
-  const coachingCoverage = learner.coaching.total > 0
-    ? Math.round((learner.coaching.booked / learner.coaching.total) * 100)
-    : learner.coaching.needsSchedule > 0 ? 0 : 100;
-
-  return (
-    <div className="space-y-5">
-      <section className="rounded-3xl overflow-hidden border border-primary-100 shadow-sm">
-        <div className="p-5 bg-[linear-gradient(145deg,#faf7ff_0%,#f4f3ff_52%,#eef6ff_100%)]">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-4 min-w-0">
-              <div className="w-14 h-14 rounded-2xl bg-primary-100 text-primary-700 ring-1 ring-primary-200 flex items-center justify-center text-base font-bold shrink-0">
-                {learner.initials}
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h4 className="text-lg font-heading font-bold text-foreground-900">{learner.name}</h4>
-                  <span className={`inline-flex items-center px-2.5 py-1 rounded-full ring-1 text-[10px] font-semibold ${status.pill}`}>{status.label}</span>
-                </div>
-                <p className="text-sm text-foreground-700 mt-1">{learner.programme || '--'}</p>
-                <p className="text-[11px] text-foreground-500 mt-1">{learner.cohortName} - {learner.group}</p>
-                <p className="text-[11px] text-foreground-500 mt-3">Monthly cycle snapshot for {monthLabel}</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={onExport}
-              disabled={isExporting}
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-red-600 px-4 text-[12px] font-semibold text-white hover:bg-red-700 transition-smooth cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed sm:ml-auto"
-            >
-              <AppIcon className={`${isExporting ? 'ri-loader-4-line animate-spin' : 'ri-file-pdf-line'} text-sm`}></AppIcon>
-              {isExporting ? 'Preparing PDF...' : 'Download PDF'}
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="rounded-2xl bg-white/80 border border-white/70 p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Last captured</p>
-              <p className="text-sm font-semibold text-foreground-900 mt-1">{learner.lastActivityLabel}</p>
-              <p className="text-[11px] text-foreground-500 mt-1">{learner.lastActivityDate ? formatDateLabel(learner.lastActivityDate) : 'No date captured'}</p>
-            </div>
-            <div className="rounded-2xl bg-white/80 border border-white/70 p-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">OTJH status</p>
-              <p className="text-sm font-semibold text-foreground-900 mt-1">{learner.otjhStatus}</p>
-              <p className="text-[11px] text-foreground-500 mt-1">{learner.activities.length} captured item{learner.activities.length === 1 ? '' : 's'}</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <OverviewMonthlyCycleSummary learner={learner} monthLabel={monthLabel} />
-
-      <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h4 className="text-sm font-heading font-bold text-foreground-900">Month Health</h4>
-            <p className="text-[11px] text-foreground-500 mt-1">Quick read on logged hours and coaching coverage for the selected month.</p>
-          </div>
-          <span className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${status.soft}`}>{status.label}</span>
-        </div>
-
-        <div className="space-y-4 mt-4">
-          <OverviewProgressRow label="OTJH monthly target" value={learner.otjh.progress} detail={`${learner.otjh.monthlyHoursLabel} logged of ${formatHours(learner.otjh.monthlyTarget)}`} color="bg-primary-500" />
-          <OverviewProgressRow label="Coaching coverage" value={coachingCoverage} detail={`${learner.coaching.booked} booked - ${learner.coaching.total} total touchpoints`} color="bg-emerald-500" />
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-        <h4 className="text-sm font-heading font-bold text-foreground-900">Action Flags</h4>
-        <p className="text-[11px] text-foreground-500 mt-1">Anything needing follow-up for this learner this month.</p>
-        {learner.needsAction.length === 0 ? (
-          <div className="mt-4 rounded-2xl bg-emerald-50 border border-emerald-100 p-4 text-center">
-            <AppIcon className="ri-check-double-line text-emerald-600 text-2xl block mb-2"></AppIcon>
-            <p className="text-xs font-semibold text-emerald-800">No action gaps recorded.</p>
-          </div>
-        ) : (
-          <div className="flex flex-wrap gap-2 mt-4">
-            {learner.needsAction.map((action) => (
-              <span key={action} className={`px-3 py-1.5 rounded-full text-[10px] font-semibold ${status.soft}`}>
-                {action}
-              </span>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h4 className="text-sm font-heading font-bold text-foreground-900">Activity Timeline</h4>
-            <p className="text-[11px] text-foreground-500 mt-1">{learner.activities.length} captured item{learner.activities.length === 1 ? '' : 's'} in {monthLabel}</p>
-          </div>
-          <span className="text-[10px] font-semibold text-foreground-400 uppercase tracking-wide">{learner.otjhStatus}</span>
-        </div>
-
-        {learner.activities.length === 0 ? (
-          <div className="mt-4 rounded-2xl border border-dashed border-foreground-200 bg-background-100 p-6 text-center">
-            <AppIcon className="ri-inbox-line text-foreground-300 text-2xl block mb-2"></AppIcon>
-            <p className="text-xs font-semibold text-foreground-700">No activity captured for {monthLabel}</p>
-            <p className="text-[11px] text-foreground-400 mt-1">This learner has no progress log, activity feed, or coach calendar item in the selected month.</p>
-          </div>
-        ) : (
-          <div className="space-y-3 mt-4">
-            {learner.activities.map((activity) => {
-              const tone = safeTone(activity.tone);
-              return (
-                <div key={activity.id} className="rounded-2xl bg-background-100/70 border border-foreground-200/60 p-4">
-                  <div className="flex items-start gap-3">
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tone.icon}`}>
-                      <AppIcon className={`${activityIcon(activity.type)} text-base`}></AppIcon>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wide ${tone.badge}`}>{activity.type}</span>
-                        <span className="text-[10px] text-foreground-400">{formatDateLabel(activity.date)}</span>
-                      </div>
-                      <p className="text-sm font-semibold text-foreground-900 mt-2">{activity.title}</p>
-                      <p className="text-[12px] text-foreground-600 mt-1 leading-relaxed">{activity.detail}</p>
-                      <p className="text-[10px] text-foreground-400 mt-2">Source: {formatSourceLabel(activity.source)}</p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
-function HeroStat({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="rounded-2xl bg-white/10 ring-1 ring-white/15 px-4 py-3 text-center backdrop-blur-sm">
-      <p className="text-2xl font-bold text-white">{typeof value === 'number' ? formatNumber(value) : value}</p>
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-white/60">{label}</p>
-    </div>
-  );
-}
-
-function OverviewMonthlyCycleSummary({ learner, monthLabel }: { learner: MonthlyLearnerActivity; monthLabel: string }) {
-  return (
-    <section className="relative overflow-hidden rounded-3xl border border-primary-100/80 bg-[linear-gradient(135deg,#ffffff_0%,#fbfaff_62%,#f7f3ff_100%)] shadow-sm">
-      <div className="absolute inset-y-0 left-0 w-1.5 bg-primary-600"></div>
-      <div className="p-5 pl-6">
-        <span className="inline-flex items-center gap-2 rounded-full border border-primary-100 bg-primary-50 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-primary-700">
-          <AppIcon className="ri-sparkling-2-line text-primary-600"></AppIcon>
-          Monthly cycle summary
-        </span>
-        <h4 className="mt-3 text-lg font-heading font-bold text-foreground-900">{monthLabel} activity</h4>
-        <p className="mt-1 text-xs leading-5 text-foreground-500">Same headline numbers shown on the learner card.</p>
-
-        <div className="mt-4 grid grid-cols-2 gap-3">
-          <MonthlyCycleStat icon="ri-pulse-line" label="Total events" value={learner.activities.length} tone="primary" />
-          <MonthlyCycleStat icon="ri-calendar-check-line" label="Active days" value={uniqueActivityDays(learner.activities)} tone="emerald" />
-          <MonthlyCycleStat icon="ri-time-line" label="Time logged" value={learner.otjh.monthlyHoursLabel} tone="amber" />
-          <MonthlyCycleStat icon="ri-award-line" label="KSBs evidenced" value={learner.ksb.touched} tone="primary" />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function SummaryCard({ icon, label, value, detail, accent }: { icon: string; label: string; value: number | string; detail: string; accent: ActivityTone }) {
-  const tone = safeTone(accent);
-  return (
-    <div className="bg-background-50 rounded-2xl border border-foreground-200/70 p-4 shadow-sm">
-      <div className={`w-9 h-9 rounded-xl flex items-center justify-center mb-4 ${tone.icon}`}>
-        <AppIcon className={`${icon} text-base`}></AppIcon>
-      </div>
-      <p className="text-[11px] font-semibold text-foreground-500">{label}</p>
-      <p className="text-2xl font-heading font-bold text-foreground-900 mt-1">{typeof value === 'number' ? formatNumber(value) : value}</p>
-      <p className="text-[10px] text-foreground-400 mt-2 leading-relaxed">{detail}</p>
-    </div>
-  );
-}
-
-function OverviewProgressRow({ label, value, detail, color }: { label: string; value: number; detail: string; color: string }) {
-  const percentage = Math.max(0, Math.min(100, value));
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3 mb-1.5">
-        <div>
-          <p className="text-xs font-semibold text-foreground-800">{label}</p>
-          <p className="text-[10px] text-foreground-400 mt-0.5">{detail}</p>
-        </div>
-        <span className="text-xs font-bold text-foreground-900">{percentage}%</span>
-      </div>
-      <div className="h-2 rounded-full bg-background-200 overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${percentage}%` }}></div>
-      </div>
-    </div>
-  );
-}
-
-function HealthRow({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
-  const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs font-semibold text-foreground-700">{label}</span>
-        <span className="text-xs font-bold text-foreground-900">{value}</span>
-      </div>
-      <div className="h-2 rounded-full bg-background-200 overflow-hidden">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${percentage}%` }}></div>
-      </div>
-    </div>
   );
 }

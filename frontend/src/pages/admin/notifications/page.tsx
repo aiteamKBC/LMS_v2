@@ -12,9 +12,11 @@
 // ============================================================================
 import { useCallback, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
-import { fetchEmailLog, type EmailLogRow } from '@/api/platformAdmin';
+import { useToast } from '@/hooks/useToast';
+import { acknowledgeEmail, fetchEmailLog, type EmailLogRow } from '@/api/platformAdmin';
 
 const PAGE_SIZE = 25;
 
@@ -22,6 +24,9 @@ const STATUS_TONE: Record<EmailLogRow['status'], 'ok' | 'bad' | 'warn' | 'neutra
   accepted: 'ok',
   delivered: 'ok',
   failed: 'bad',
+  // Neutral, not bad: it still failed, but somebody has dealt with it, and a red
+  // badge would keep asking for attention that has already been given.
+  acknowledged: 'neutral',
   queued: 'warn',
 };
 
@@ -29,6 +34,7 @@ const STATUS_LABEL: Record<EmailLogRow['status'], string> = {
   accepted: 'accepted',
   delivered: 'sent',
   failed: 'failed',
+  acknowledged: 'acknowledged',
   queued: 'not sent',
 };
 
@@ -41,9 +47,13 @@ function fmtDateTime(iso: string | null): string {
 
 export default function AdminEmailDeliveryPage() {
   const [params, setParams] = useSearchParams();
+  const toast = useToast();
   const status = params.get('status') || '';
   const [kind, setKind] = useState('');
   const [page, setPage] = useState(1);
+  // The row currently being written, so its button can say so and cannot be
+  // pressed twice.
+  const [acking, setAcking] = useState<string | null>(null);
 
   const { data, loading, error, reload } = useAdminData(
     useCallback(() => fetchEmailLog({ status, kind, page, pageSize: PAGE_SIZE }), [status, kind, page]),
@@ -53,6 +63,37 @@ export default function AdminEmailDeliveryPage() {
   const rows = data?.results ?? [];
   const stats = data?.stats;
   const transport = data?.transport;
+
+  /**
+   * Acknowledge a failure, or put it back.
+   *
+   * Reloads rather than patching the row in place: acknowledging also moves the
+   * counts above and, when the Failed filter is on, the row itself out of the
+   * list — so a local edit would leave three things on screen disagreeing.
+   */
+  const setAcknowledged = async (row: EmailLogRow, acknowledged: boolean) => {
+    setAcking(row.id);
+    try {
+      // The row id is a display key ("invitation-15"); the endpoint wants the
+      // kind and the number separately.
+      const numericId = Number(row.id.slice(row.kind.length + 1));
+      await acknowledgeEmail(row.kind, numericId, acknowledged);
+      toast.success(
+        acknowledged ? 'Acknowledged' : 'Moved back to failed',
+        acknowledged
+          ? `${row.email} no longer counts as needing attention.`
+          : `${row.email} is listed as a failure again.`,
+      );
+      reload();
+    } catch (err) {
+      toast.error(
+        'Could not update this email',
+        err instanceof Error ? err.message : 'Unexpected error',
+      );
+    } finally {
+      setAcking(null);
+    }
+  };
 
   return (
     <AdminPage
@@ -91,7 +132,16 @@ export default function AdminEmailDeliveryPage() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           <Tile label="Invitations sent" value={stats.invitations} icon="ri-mail-send-line" tone="neutral" />
           <Tile label="Resets sent" value={stats.resets} icon="ri-lock-password-line" tone="neutral" />
-          <Tile label="Failed to send" value={stats.failed} icon="ri-mail-close-line" tone={stats.failed > 0 ? 'bad' : 'ok'} />
+          {/* Outstanding, not the historical total: this tile answers "is there
+              anything to do", and an acknowledged failure is done. The total is
+              still what the delivery rate in the header is calculated from. */}
+          <Tile
+            label="Failed to send"
+            value={stats.outstanding}
+            icon="ri-mail-close-line"
+            tone={stats.outstanding > 0 ? 'bad' : 'ok'}
+            sub={stats.acknowledged > 0 ? `${stats.acknowledged} acknowledged` : undefined}
+          />
           <Tile label="Last 30 days" value={stats.last30d} icon="ri-calendar-line" tone="neutral" />
         </div>
       )}
@@ -120,6 +170,7 @@ export default function AdminEmailDeliveryPage() {
           <option value="">Any status</option>
           <option value="delivered">Sent</option>
           <option value="failed">Failed</option>
+          <option value="acknowledged">Acknowledged</option>
           <option value="pending">Not yet used</option>
         </select>
       </div>
@@ -142,6 +193,7 @@ export default function AdminEmailDeliveryPage() {
                   <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Sent</th>
                   <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Used</th>
                   <th className="text-left px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Expires</th>
+                  <th className="text-right px-4 py-2.5 text-foreground-400 font-medium text-[10px] uppercase tracking-wider">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -160,6 +212,36 @@ export default function AdminEmailDeliveryPage() {
                     <td className="px-4 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{fmtDateTime(row.sentAt)}</td>
                     <td className="px-4 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{fmtDateTime(row.usedAt)}</td>
                     <td className="px-4 py-2.5 text-[11px] text-foreground-500 whitespace-nowrap">{fmtDateTime(row.expiresAt)}</td>
+                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                      {row.status === 'failed' && (
+                        <button
+                          type="button"
+                          disabled={acking === row.id}
+                          onClick={() => setAcknowledged(row, true)}
+                          title="Stop this counting as something needing attention. The record stays."
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[11px] font-semibold text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                        >
+                          <AppIcon className={acking === row.id ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
+                          {acking === row.id ? 'Saving...' : 'Acknowledge'}
+                        </button>
+                      )}
+                      {row.status === 'acknowledged' && (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="text-[10px] text-foreground-400">
+                            {row.acknowledgedBy ? `by ${row.acknowledgedBy}` : 'acknowledged'}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={acking === row.id}
+                            onClick={() => setAcknowledged(row, false)}
+                            title="Put this back among the failures needing attention"
+                            className="text-[11px] font-semibold text-foreground-400 hover:text-foreground-700 disabled:opacity-60 cursor-pointer"
+                          >
+                            Undo
+                          </button>
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -172,12 +254,14 @@ export default function AdminEmailDeliveryPage() {
       <SourceNote>
         Only the hash of each emailed link is stored, so a link cannot be recovered from here — re-issue
         the invitation from the account instead. &ldquo;Accepted&rdquo; means the recipient used the link.
+        Acknowledging a failure clears it from the dashboard alert and from the count above; the row and
+        its error stay here, and the delivery rate still counts it.
       </SourceNote>
     </AdminPage>
   );
 }
 
-function Tile({ label, value, icon, tone }: { label: string; value: number; icon: string; tone: 'ok' | 'bad' | 'neutral' }) {
+function Tile({ label, value, icon, tone, sub }: { label: string; value: number; icon: string; tone: 'ok' | 'bad' | 'neutral'; sub?: string }) {
   const map = { ok: 'bg-emerald-100 text-emerald-600', bad: 'bg-red-100 text-red-600', neutral: 'bg-primary-100 text-primary-600' };
   return (
     <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 card-premium">
@@ -186,6 +270,7 @@ function Tile({ label, value, icon, tone }: { label: string; value: number; icon
       </span>
       <p className="text-2xl font-heading font-semibold text-foreground-900">{value}</p>
       <p className="text-[11px] text-foreground-400 mt-1">{label}</p>
+      {sub && <p className="text-[10px] text-foreground-300 mt-0.5">{sub}</p>}
     </div>
   );
 }

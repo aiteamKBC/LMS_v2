@@ -22,16 +22,26 @@ export const POSITION_OPTIONS = [
   'Enrolment',
   'Curriculum team',
   'Operations team',
+  'Tutor',
 ];
 
 /**
- * The position every account created from the console gets. The create form no
- * longer asks: it sends this, and access is granted separately afterwards.
+ * The position the Create admin form sends. It does not ask: access is the thing
+ * that decides anything, and it is granted separately from the Accounts page.
  */
 export const ADMIN_POSITION = 'Admin';
 
-/** The four access grants. Mirrors ACCESS_CHOICES in learner_api/constants.py. */
-export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'super-admin';
+/**
+ * The position the Create tutor form sends.
+ *
+ * Unlike the admin form, that one grants `access: 'tutor'` at the same time —
+ * a tutor created without a grant lands on /access-required, so leaving it to a
+ * second step would mean every tutor is broken until somebody notices.
+ */
+export const TUTOR_POSITION = 'Tutor';
+
+/** The five access grants. Mirrors ACCESS_CHOICES in learner_api/constants.py. */
+export type StaffAccess = 'enrolment' | 'curriculum' | 'coach' | 'tutor' | 'super-admin';
 
 /**
  * What each access permits, and where it lands on sign-in.
@@ -69,6 +79,13 @@ export const ACCESS_OPTIONS: {
     description: 'The coach workspace — their caseload, reviews and evidence validation.',
     home: '/workspace/coach',
     icon: 'ri-user-star-line',
+  },
+  {
+    id: 'tutor',
+    label: 'Tutor access',
+    description: 'The tutor workspace — their teaching groups and session delivery.',
+    home: '/workspace/tutor',
+    icon: 'ri-presentation-line',
   },
   {
     id: 'super-admin',
