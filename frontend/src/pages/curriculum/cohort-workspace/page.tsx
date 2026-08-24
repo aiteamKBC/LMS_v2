@@ -7,7 +7,6 @@ import type { CurriculumGroup } from '@/lib/curriculumApi';
 import {
   cleanText,
   cohortProgramme,
-  cohortHolidayExtensionDays,
   findCohort,
   formatDateLabel,
   moduleIdentity,
@@ -70,10 +69,6 @@ export default function CohortWorkspacePage() {
     const ids = new Set((cohort?.holidayIds || []).map(holidayId => normaliseKey(holidayId)));
     return holidays.filter(holiday => ids.has(normaliseKey(holiday.id)));
   }, [cohort, holidays]);
-
-  // Days the applied holidays added to this cohort's practical end date. Zero
-  // when nothing moved, so the annotations below simply do not render.
-  const holidayExtensionDays = cohort ? cohortHolidayExtensionDays(cohort) : 0;
 
   const coachNames = useMemo(() => {
     const names = new Set<string>();
@@ -177,37 +172,10 @@ export default function CohortWorkspacePage() {
 
         {tab === 'overview' && (
           <div className="grid gap-5 xl:grid-cols-2">
-            <WorkspacePanel title="Dates" description="Calculated by the same rules the rest of the LMS uses.">
+            <WorkspacePanel title="Dates" description="Contract dates stay fixed; selected holidays only affect clashing module sessions.">
               <DetailRow label="Start" value={formatDateLabel(cohort?.startDate)} />
-              <DetailRow
-                label="Duration"
-                value={(
-                  <span>
-                    {cohort?.durationMonths ? `${cohort.durationMonths} months` : '—'}
-                    {/* The contracted duration is unchanged by holidays, so the
-                        practical end date below lands later than it implies.
-                        Saying so here stops the two reading as a contradiction. */}
-                    {holidayExtensionDays > 0 && (
-                      <span className="ml-1.5 text-[10px] font-bold uppercase text-amber-600">
-                        + {holidayExtensionDays} holiday {holidayExtensionDays === 1 ? 'day' : 'days'}
-                      </span>
-                    )}
-                  </span>
-                )}
-              />
-              <DetailRow
-                label="Practical end"
-                value={(
-                  <span>
-                    {formatDateLabel(cohort?.practicalEndDate || cohort?.endDate)}
-                    {holidayExtensionDays > 0 && (
-                      <span className="ml-1.5 text-[10px] font-bold uppercase text-amber-600">
-                        Extended from {formatDateLabel(cohort?.baseEndDate)}
-                      </span>
-                    )}
-                  </span>
-                )}
-              />
+              <DetailRow label="Duration" value={cohort?.durationMonths ? `${cohort.durationMonths} months` : '-'} />
+              <DetailRow label="Practical end" value={formatDateLabel(cohort?.practicalEndDate || cohort?.endDate)} />
               <DetailRow label="EPA period" value={cohort?.epaMonths == null ? 'Not recorded' : `${cohort.epaMonths} months`} />
               <DetailRow
                 label="Apprenticeship end"

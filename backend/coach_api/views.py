@@ -65,6 +65,7 @@ from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
 from curriculum_api.views import (
     actual_cohort_identity,
     actual_group_identity,
+    apply_teams_meeting_options,
     AUTHORING_COMPONENTS_TABLE,
     AUTHORING_MODULES_TABLE,
     AUTHORING_WEEKS_TABLE,
@@ -72,6 +73,7 @@ from curriculum_api.views import (
     authoring_modules_as_training_rows,
     build_module_session_plan,
     COHORT_AUTHORING_DETAILS_TABLE,
+    delivery_days_per_week,
     get_program_config_rows,
     get_training_rows,
     is_operational_training_row,
@@ -3488,6 +3490,13 @@ TEAMS_SYNC_PERMISSION_MESSAGE = (
     "The event was saved locally only; reconnect Microsoft Calendar or ask an admin to refresh access."
 )
 TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = "Teams calendar sync is not configured. The event was saved locally only."
+# A coach session is recorded and transcribed like a taught one: the recording is
+# the learner's catch-up route and the transcript is what the audit trail reads.
+# A calendar event alone only ever opens at the tenant defaults -- nothing
+# recording, nothing transcribed -- so every event this app creates has these
+# applied to the Teams meeting behind it.
+COACH_MEETING_RECORDING = "record-transcribe"
+COACH_MEETING_LOBBY_BYPASS = "invited"
 TEAMS_SYNC_TEMPORARY_MESSAGE = (
     "Teams calendar sync could not be completed. "
     "The event was saved locally only; try again later or ask an admin to check Microsoft permissions."
@@ -4160,6 +4169,29 @@ def sync_calendar_event_to_graph(record: CoachCalendarEvent, base_event: dict) -
     record.meeting_provider = "Microsoft Teams" if (response_event_id or response_join_url or response_web_link) else ""
     record.meeting_link = response_join_url or response_web_link
     record.graph_web_link = response_web_link
+
+    # The booking is already saved and invited by this point. These options are
+    # the difference between a session that records and transcribes itself and one
+    # that opens with nothing running, so they are applied on every sync -- Graph
+    # hands out a new online meeting whenever the event gets one, at the tenant
+    # defaults. A deployment without OnlineMeetings.ReadWrite.All and an
+    # application access policy is logged, not surfaced: the meeting itself works.
+    if response_join_url:
+        applied, _meeting, option_warnings = apply_teams_meeting_options(
+            organizer_mailbox,
+            response_join_url,
+            recording=COACH_MEETING_RECORDING,
+            lobby_bypass=COACH_MEETING_LOBBY_BYPASS,
+            attendees=[
+                clean_text((attendee.get("emailAddress") or {}).get("address"))
+                for attendee in payload.get("attendees") or []
+            ],
+        )
+        if not applied:
+            logger.warning(
+                "Coach Teams meeting created without its recording options: %s",
+                "; ".join(clean_text(warning.get("message")) for warning in option_warnings),
+            )
     return ""
 
 
@@ -4349,14 +4381,20 @@ def coach_staff_display_name(owner_email: str) -> str:
     return clean_text(getattr(row, "username", None))
 
 
-def fetch_cohort_holidays_in_range(cohort_id: str) -> list[dict]:
+def fetch_cohort_selected_holidays(cohort_id: str) -> list[dict]:
+    """The holidays actually ticked on a cohort, not every one in its period.
+
+    Curriculum's own generator plans sessions around this same selection, and a
+    cohort's end date is extended by it, so reading the wider in-range list here
+    would put the coach's calendar on dates the cohort itself never planned.
+    """
     for cohort in authoring_fetch_all(
         COHORT_AUTHORING_DETAILS_TABLE,
         'cohort_id = %s',
         [cohort_id],
         ensure_tables=False,
     ):
-        return parse_json_value(cohort.get("holidays_in_range"), [])
+        return parse_json_value(cohort.get("selected_holidays"), [])
     return []
 
 
@@ -4438,13 +4476,16 @@ def collect_live_session_events(
 
         module_catalogue_id = clean_text(row.get("_meta", {}).get("module_catalogue_id"))
         module_weeks = weeks_by_module.get(module_catalogue_id) or []
-        session_count = len(module_weeks) or parse_int(row.get("sessions_number"), 0)
+        # The stored session count leads: this builds a SESSION calendar, and a
+        # module delivered Mon+Thu runs two sessions per authored week, so
+        # counting week rows showed the coach half its live sessions.
+        session_count = parse_int(row.get("sessions_number"), 0) or len(module_weeks)
         if session_count <= 0:
             continue
 
         cohort_id = clean_text(row.get("_meta", {}).get("cohort_id"))
         if cohort_id not in holidays_by_cohort_id:
-            holidays_by_cohort_id[cohort_id] = fetch_cohort_holidays_in_range(cohort_id)
+            holidays_by_cohort_id[cohort_id] = fetch_cohort_selected_holidays(cohort_id)
         cohort_holidays = holidays_by_cohort_id[cohort_id]
 
         delivery_day_name = clean_text(row.get("session_week_day")) or parse_date(module_start).strftime("%A")
@@ -4453,6 +4494,7 @@ def collect_live_session_events(
             continue
 
         ordered_weeks = sorted(module_weeks, key=lambda week: parse_int(week.get("week_number"), 0))
+        delivery_days = delivery_days_per_week(row)
         tracked_series = active_series_by_module.get(module_catalogue_id) or {}
         tracked_series_id = clean_text(tracked_series.get("id"))
         for session in plan["sessions"]:
@@ -4463,7 +4505,10 @@ def collect_live_session_events(
             effective_date = tracked_start.date() if isinstance(tracked_start, datetime) else date.fromisoformat(session["date"])
             if effective_date < today:
                 continue
-            week = ordered_weeks[session["sessionNumber"] - 1] if session["sessionNumber"] - 1 < len(ordered_weeks) else None
+            # Sessions fold into weeks by the delivery days: for a Mon+Thu module
+            # sessions 1 and 2 are both taught inside week 1.
+            week_index = (session["sessionNumber"] - 1) // delivery_days
+            week = ordered_weeks[week_index] if week_index < len(ordered_weeks) else None
             events.append(
                 build_live_session_calendar_event(
                     row,

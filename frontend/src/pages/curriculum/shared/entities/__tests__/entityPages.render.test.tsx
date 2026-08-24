@@ -28,14 +28,14 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
   closeCurriculumLoading: vi.fn(),
 }));
 
-// Counted rather than stubbed away: the sessions tab used to set its own loading
-// flag and watch it in the same dependency list, so every render tore down the
-// request it had just started and began another -- a visible flicker on screen.
-const fetchCurriculumSessions = vi.fn(async () => []);
+// Counted rather than stubbed away: a tab that sets its own loading flag and
+// watches it in the same dependency list tears down the request it has just
+// started and begins another -- a visible flicker on screen.
+const fetchCurriculumModuleKsbCoverage = vi.fn(async () => null);
 
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
-  fetchCurriculumSessions: (...args: unknown[]) => fetchCurriculumSessions(...(args as [])),
+  fetchCurriculumModuleKsbCoverage: (...args: unknown[]) => fetchCurriculumModuleKsbCoverage(...(args as [])),
   previewModuleSessionPlan: vi.fn(async () => ({ sessions: [], finalEndDate: '', warnings: [] })),
 }));
 
@@ -43,6 +43,12 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
 // Module Builder's data layer; neither is under test here.
 vi.mock('@/pages/curriculum/module-builder/moduleAuthoringData', () => ({
   loadModuleStructure: vi.fn(async () => null),
+  loadTeamsMeetingConfiguration: vi.fn(async () => ({
+    configured: false,
+    defaultOrganizer: '',
+    timeZone: 'GMT Standard Time',
+    timeZoneIana: 'Europe/London',
+  })),
   loadTeamsMeetingArtifacts: vi.fn(async () => ({ series: {}, occurrences: [] })),
   restoreModuleTeamsMeeting: vi.fn(async () => ({ restored: true, updatedComponents: 0, meeting: {}, module: {} })),
   syncTeamsMeetingArtifacts: vi.fn(async () => ({ synced: {}, errors: [], partial: false })),
@@ -174,15 +180,15 @@ describe('entity pages render', () => {
     expect(screen.getAllByText('Data Analyst / Sept 2026 / Group A').length).toBeGreaterThan(0);
   });
 
-  it('Module workspace asks for its sessions once instead of looping', async () => {
-    fetchCurriculumSessions.mockClear();
-    await renderAt(() => import('../../../module-workspace/page'), '/curriculum/modules/MOD-1?tab=sessions', '/curriculum/modules/:id');
+  it('Module workspace asks for its KSB coverage once instead of looping', async () => {
+    fetchCurriculumModuleKsbCoverage.mockClear();
+    await renderAt(() => import('../../../module-workspace/page'), '/curriculum/modules/MOD-1?tab=ksbs', '/curriculum/modules/:id');
     expect(await screen.findByRole('heading', { name: 'Data Foundations' })).toBeInTheDocument();
 
-    await waitFor(() => expect(fetchCurriculumSessions).toHaveBeenCalled());
+    await waitFor(() => expect(fetchCurriculumModuleKsbCoverage).toHaveBeenCalled());
     // Long enough for a self-retriggering effect to have fired many more times.
     await new Promise(resolve => { setTimeout(resolve, 120); });
-    expect(fetchCurriculumSessions).toHaveBeenCalledTimes(1);
+    expect(fetchCurriculumModuleKsbCoverage).toHaveBeenCalledTimes(1);
   });
 
   it('Module workspace refuses to invent a record that does not exist', async () => {

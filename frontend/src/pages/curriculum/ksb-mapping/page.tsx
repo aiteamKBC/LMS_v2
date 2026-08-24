@@ -17,6 +17,7 @@ import {
   fetchCurriculumProgrammeKsbCoverage,
   fetchCurriculumProgrammes,
   type CurriculumKsbCoverageItem,
+  type CurriculumKsbCoverageSource,
   type CurriculumKsbTraceMapping,
   type CurriculumProgramme,
 } from '@/lib/curriculumApi';
@@ -124,9 +125,10 @@ function compareCodes(a: string, b: string) {
   return restA.localeCompare(restB);
 }
 
-// The backend sends the code as the title when a KSB has no description. Showing
-// "K15" twice on one row is noise, so the description column falls back to an
-// explicit placeholder instead of repeating the code.
+// The coverage endpoint puts the KSB's code in `title` and its wording in
+// `description`, so the wording is what this column reads. When a KSB genuinely
+// has none, `description` comes back as the code -- showing "K15" twice on one
+// row is noise, so it falls back to an explicit placeholder instead.
 function descriptionOf(title: string, code: string) {
   const trimmed = title.trim();
   if (!trimmed || trimmed.toLowerCase() === code.trim().toLowerCase()) return '';
@@ -155,7 +157,7 @@ function buildRows(items: CurriculumKsbCoverageItem[]): KsbRow[] {
         key: item.coverage_key || item.coverageKey || item.ksb_id || item.ksbId || code,
         code,
         type: String(item.ksb_type || item.ksbType || '').toLowerCase(),
-        title: String(item.title || item.description || ''),
+        title: String(item.description || item.title || ''),
         placements,
         totalWeight: placements.reduce((sum, placement) => sum + placement.weight, 0),
         // Only component-level placements carry OTJH, so this is the teaching
@@ -164,6 +166,39 @@ function buildRows(items: CurriculumKsbCoverageItem[]): KsbRow[] {
       };
     })
     .sort((a, b) => compareCodes(a.code, b.code));
+}
+
+// The required set has to come from somewhere, and which somewhere decides
+// every figure on this page. When no source is set for the programme the backend
+// stands the union of every profile in, which looks like a working page listing
+// KSBs the programme does not teach -- so that case is named, not implied.
+function KsbSourceNotice({ source }: { source: CurriculumKsbCoverageSource }) {
+  const name = String(source.source_name || source.sourceName || source.id || '');
+  const count = Number(source.required_count ?? source.requiredCount ?? 0);
+  if (source.origin === 'all-profiles') {
+    return (
+      <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+        <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-sm" />
+        <p>
+          <span className="font-bold">No KSB source is set for this programme.</span>{' '}
+          These {count} KSBs are every active profile&apos;s put together, so they are not the
+          programme&apos;s required set. Set its KSB source on the Programmes page.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-foreground-100 pt-3 text-[11px] text-foreground-500">
+      <AppIcon className="ri-file-list-3-line text-sm text-foreground-400" />
+      <span>
+        Required set from{' '}
+        <span className="font-bold text-foreground-800">{name || 'an unnamed source'}</span>
+        {source.origin === 'programme-name' && ' (matched by programme name)'}
+        {source.origin === 'module' && ' (set on this programme\u2019s modules)'}
+        {' '}&middot; {count} KSB{count === 1 ? '' : 's'}
+      </span>
+    </div>
+  );
 }
 
 function SummaryStat({ icon, label, value, detail, tone = 'default' }: {
@@ -212,6 +247,10 @@ export default function KSBMapping() {
   const [programmes, setProgrammes] = useState<CurriculumProgramme[]>([]);
   const [programmeId, setProgrammeId] = useState(searchParams.get('programme') || '');
   const [rows, setRows] = useState<KsbRow[]>([]);
+  // Which KSB source these rows are the required set of. Named on screen so a
+  // programme with no source set reads as that, rather than as a long list of
+  // KSBs from every profile in the system.
+  const [source, setSource] = useState<CurriculumKsbCoverageSource | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -256,11 +295,13 @@ export default function KSBMapping() {
       .then(result => {
         if (controller.signal.aborted) return;
         setRows(buildRows(result?.items || []));
+        setSource(result?.source || null);
       })
       .catch(err => {
         if (controller.signal.aborted) return;
         setError(err instanceof Error ? err.message : 'Unable to load KSB mappings');
         setRows([]);
+        setSource(null);
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -426,6 +467,8 @@ export default function KSBMapping() {
               )}
             </div>
           )}
+
+          {source && !loading && <KsbSourceNotice source={source} />}
         </section>
 
         {/* Summary */}

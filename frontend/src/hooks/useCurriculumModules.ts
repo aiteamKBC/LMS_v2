@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchCurriculumModules, type CurriculumModule } from '@/lib/curriculumApi';
 
 type LoadOptions = {
@@ -18,50 +18,56 @@ export function useCurriculumModules({ autoLoad = true, skipCache = false, compa
   const [modules, setModules] = useState<CurriculumModule[]>([]);
   const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
-  const load = useCallback((options: LoadOptions = {}) => {
-    const controller = new AbortController();
-    let mounted = true;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
+  // Callers rely on this promise to know when `modules` has actually been
+  // updated (e.g. re-showing an edit form right after a save), so it must
+  // resolve only once the fetch has settled and state has been written.
+  const performLoad = useCallback((options: LoadOptions, signal: AbortSignal): Promise<void> => {
     if (!options.silent) {
       setLoading(true);
       setError(null);
     }
 
-    const request = (retry: boolean): Promise<CurriculumModule[]> => fetchCurriculumModules(controller.signal, { compact, skipCache: options.skipCache ?? skipCache })
+    const request = (retry: boolean): Promise<CurriculumModule[]> => fetchCurriculumModules(signal, { compact, skipCache: options.skipCache ?? skipCache })
       .catch(error => {
-        if (controller.signal.aborted || retry) throw error;
+        if (signal.aborted || retry) throw error;
         return new Promise<CurriculumModule[]>((resolve, reject) => {
-          retryTimer = setTimeout(() => {
-            retryTimer = null;
-            fetchCurriculumModules(controller.signal, { compact, skipCache: options.skipCache ?? skipCache }).then(resolve, reject);
+          setTimeout(() => {
+            fetchCurriculumModules(signal, { compact, skipCache: options.skipCache ?? skipCache }).then(resolve, reject);
           }, MODULE_LOAD_RETRY_DELAY_MS);
         });
       });
 
-    request(false)
+    return request(false)
       .then(result => {
-        if (!mounted) return;
+        if (!mountedRef.current || signal.aborted) return;
         setModules(result);
         setError(null);
       })
       .catch(err => {
-        if (!mounted || controller.signal.aborted) return;
+        if (!mountedRef.current || signal.aborted) return;
         setError(err instanceof Error ? err.message : 'Unable to load curriculum modules');
       })
       .finally(() => {
-        if (mounted) setLoading(false);
+        if (mountedRef.current && !signal.aborted) setLoading(false);
       });
-
-    return () => {
-      mounted = false;
-      if (retryTimer !== null) clearTimeout(retryTimer);
-      controller.abort();
-    };
   }, [compact, skipCache]);
 
-  const reload = useCallback((options?: LoadOptions) => load(options), [load]);
+  const load = useCallback((options: LoadOptions = {}) => {
+    const controller = new AbortController();
+    void performLoad(options, controller.signal);
+    return () => controller.abort();
+  }, [performLoad]);
+
+  const reload = useCallback((options?: LoadOptions) => {
+    const controller = new AbortController();
+    return performLoad(options ?? {}, controller.signal);
+  }, [performLoad]);
 
   useEffect(() => {
     if (!autoLoad) return;
