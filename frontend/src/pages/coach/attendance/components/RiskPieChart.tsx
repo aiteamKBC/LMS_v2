@@ -118,7 +118,7 @@ export default function RiskPieChart({
             >
               {hoveredIndex !== null ? slices[hoveredIndex].value : total}
             </p>
-            <p className="mt-1 text-[10px] text-foreground-500 font-medium leading-tight">
+            <p className="mt-1 text-[12px] text-foreground-500 font-medium leading-tight">
               {hoveredIndex !== null ? slices[hoveredIndex].label : 'Learners'}
             </p>
           </div>
@@ -135,8 +135,8 @@ export default function RiskPieChart({
             onMouseLeave={() => setHoveredIndex(null)}
           >
             <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: slice.color }}></span>
-            <span className="text-[11px] text-foreground-600 font-medium whitespace-nowrap">{slice.label}</span>
-            <span className="text-[11px] font-semibold text-foreground-900">{slice.value}</span>
+            <span className="text-[12px] text-foreground-600 font-medium whitespace-nowrap">{slice.label}</span>
+            <span className="text-[12px] font-semibold text-foreground-900">{slice.value}</span>
           </div>
         ))}
       </div>

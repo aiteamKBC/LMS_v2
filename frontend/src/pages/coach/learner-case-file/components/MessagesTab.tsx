@@ -1,5 +1,8 @@
 import { useMemo } from 'react';
-import { EmptyState } from '@/pages/users/components/ui';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { Panel } from '@/components/ui/Panel';
+import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import { type CaseFileTabProps } from '../data';
 
 interface ContactRow {
@@ -8,7 +11,6 @@ interface ContactRow {
   role: string;
   primary: string;
   secondary: string;
-  tone: string;
   target: string;
 }
 
@@ -22,7 +24,6 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
       role: 'Learner',
       primary: data.email || '--',
       secondary: data.detail?.phone || data.programme || '--',
-      tone: 'bg-accent-100 text-accent-700',
       target: data.email || data.displayName,
     });
 
@@ -33,7 +34,6 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
         role: 'Coach',
         primary: data.coachEmail || '--',
         secondary: data.cohort ? `Cohort ${data.cohort}` : '--',
-        tone: 'bg-primary-100 text-primary-700',
         target: data.coachEmail || data.coachName,
       });
     }
@@ -45,7 +45,6 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
         role: 'Employer',
         primary: data.employerEmail || '--',
         secondary: data.employerPhone || '--',
-        tone: 'bg-secondary-100 text-secondary-700',
         target: data.employerEmail || data.employer,
       });
     }
@@ -72,10 +71,10 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
   return (
     <div className="space-y-5">
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard icon="ri-contacts-book-2-line" label="Live Contacts" value={String(contacts.length)} tone="primary" />
-        <StatCard icon="ri-chat-1-line" label="Last Contact" value={data.snapshot?.lastContact || '--'} tone="accent" />
-        <StatCard icon="ri-calendar-schedule-line" label="Next Coaching" value={data.snapshot?.nextCoaching || '--'} tone="emerald" />
-        <StatCard icon="ri-file-chart-line" label="Next Review" value={data.snapshot?.nextReview || '--'} tone="amber" />
+        <MetricCard icon="ri-contacts-book-2-line" label="Live Contacts" value={contacts.length} tone="brand" />
+        <MetricCard icon="ri-chat-1-line" label="Last Contact" value={data.snapshot?.lastContact || '--'} tone="upcoming" />
+        <MetricCard icon="ri-calendar-schedule-line" label="Next Coaching" value={data.snapshot?.nextCoaching || '--'} tone="positive" />
+        <MetricCard icon="ri-file-chart-line" label="Next Review" value={data.snapshot?.nextReview || '--'} tone="caution" />
       </section>
 
       <section className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
@@ -84,32 +83,35 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
               <AppIcon className="ri-mail-line text-primary-500"></AppIcon> Communication Contacts
             </h2>
-            <span className="text-[11px] text-foreground-400">Live learner context only</span>
+            <span className="text-[12px] text-foreground-400">Live learner context only</span>
           </div>
           {contacts.length === 0 ? (
-            <EmptyState text="No contact records were returned for this learner." />
+            <EmptyState
+              variant="empty"
+              size="sm"
+              title="No contacts"
+              description="No contact records were returned for this learner."
+            />
           ) : (
             <div className="space-y-3">
               {contacts.map((contact) => (
                 <div key={contact.id} className="rounded-xl border border-foreground-200/60 bg-background-100/50 p-4">
                   <div className="flex flex-col md:flex-row md:items-center gap-3">
-                    <div className={`w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${contact.tone}`}>
-                      {initials(contact.name)}
-                    </div>
+                    <LearnerAvatar name={contact.name} size="lg" />
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-[13px] font-semibold text-foreground-900">{contact.name}</p>
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-background-50 text-foreground-500 border border-background-200">
+                        <span className="text-[12px] font-semibold px-2 py-0.5 rounded-full bg-background-50 text-foreground-500 border border-background-200">
                           {contact.role}
                         </span>
                       </div>
-                      <p className="text-[11px] text-foreground-500 mt-1">{contact.primary}</p>
-                      <p className="text-[10px] text-foreground-400 mt-1">{contact.secondary}</p>
+                      <p className="text-[12px] text-foreground-500 mt-1">{contact.primary}</p>
+                      <p className="text-[12px] text-foreground-400 mt-1">{contact.secondary}</p>
                     </div>
                     <button
                       onClick={() => handleEmailContact(contact)}
                       disabled={!contact.target.includes('@')}
-                      className="px-3 py-2 rounded-full bg-primary-500 text-background-50 dark:text-foreground-950 text-[11px] font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
+                      className="px-3 py-2 rounded-full bg-primary-500 text-background-50 dark:text-foreground-950 text-[12px] font-semibold hover:bg-primary-600 transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5"
                     >
                       <AppIcon className="ri-mail-line text-xs"></AppIcon> Email
                     </button>
@@ -127,10 +129,15 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
               <AppIcon className="ri-time-line text-accent-500"></AppIcon> Communication Snapshot
             </h2>
-            <span className="text-[11px] text-foreground-400">{communicationRows.length} dated item(s)</span>
+            <span className="text-[12px] text-foreground-400">{communicationRows.length} dated item(s)</span>
           </div>
           {communicationRows.length === 0 ? (
-            <EmptyState text="No communication dates were returned for this learner yet." />
+            <EmptyState
+              variant="empty"
+              size="sm"
+              title="No communication dates"
+              description="No communication dates were returned for this learner yet."
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {communicationRows.map((row) => (
@@ -155,42 +162,6 @@ export default function MessagesTab({ data }: CaseFileTabProps) {
   );
 }
 
-function initials(value: string) {
-  const parts = value.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '--';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: string;
-  label: string;
-  value: string;
-  tone: 'primary' | 'accent' | 'emerald' | 'amber';
-}) {
-  const toneMap = {
-    primary: 'bg-primary-100 text-primary-600',
-    accent: 'bg-accent-100 text-accent-600',
-    emerald: 'bg-emerald-100 text-emerald-600',
-    amber: 'bg-amber-100 text-amber-600',
-  } as const;
-
-  return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${toneMap[tone]}`}>
-        <AppIcon className={`${icon} text-base`}></AppIcon>
-      </div>
-      <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
-      <p className="text-[11px] text-foreground-400">{label}</p>
-    </div>
-  );
-}
-
 function DetailCard({
   title,
   value,
@@ -203,15 +174,15 @@ function DetailCard({
   icon: string;
 }) {
   return (
-    <div className="rounded-xl border border-background-200/70 bg-background-100/50 p-4">
+    <Panel padding="md">
       <div className="flex items-center gap-2 mb-2">
-        <span className="w-8 h-8 rounded-lg bg-background-50 border border-background-200 flex items-center justify-center">
+        <span className="w-8 h-8 rounded-lg bg-background-100 border border-foreground-200/60 flex items-center justify-center">
           <AppIcon className={`${icon} text-sm text-foreground-600`}></AppIcon>
         </span>
         <p className="text-[12px] font-semibold text-foreground-900">{title}</p>
       </div>
       <p className="text-lg font-heading font-bold text-foreground-900">{value}</p>
-      <p className="text-[11px] text-foreground-400 mt-1">{detail}</p>
-    </div>
+      <p className="text-[12px] text-foreground-400 mt-1">{detail}</p>
+    </Panel>
   );
 }

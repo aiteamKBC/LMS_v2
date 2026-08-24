@@ -124,6 +124,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '',
     children: [
       { id: 'coach-attendance', label: 'Attendance & Catch-up', icon: 'ri-calendar-check-line', href: '/coach/attendance' },
+      { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
       { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
     ],
   },
@@ -156,6 +157,7 @@ export const coachNavItems: SidebarNavItem[] = [
     children: [
       { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
       { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
+      { id: 'coach-reports', label: 'Reports', icon: 'ri-file-chart-2-line', href: '/coach/reports' },
     ],
   },
 ];

@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { EmptyState } from '@/pages/users/components/ui';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { CompactMetric, MetricRow } from '@/components/ui/MetricCard';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import type { JourneyComponent, JourneyModule, JourneyWeek } from '@/utils/learnerJourney';
 import {
   flattenJourney,
@@ -27,14 +30,14 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
 
   return (
     <div className="space-y-5">
-      <section className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
-        <StatCard icon="ri-pie-chart-line" label="Overall Progress" value={formatPercent(data.overallProgress)} tone="primary" />
-        <StatCard icon="ri-calendar-check-line" label="Attendance" value={formatPercent(data.attendanceRate)} tone="amber" />
-        <StatCard icon="ri-time-line" label="OTJH Logged" value={formatHours(data.otjhCompleted)} tone="secondary" />
-        <StatCard icon="ri-line-chart-line" label="Programme Total" value={formatHours(data.totalExpectedOtjh || null)} tone="emerald" />
-        <StatCard icon="ri-award-line" label="Mapped KSBs" value={String(data.detail?.ksbs.length || 0)} tone="accent" />
-        <StatCard icon="ri-folder-upload-line" label="Evidence Count" value={String(data.evidenceCount ?? '--')} tone="primary" />
-      </section>
+      <MetricRow>
+        <CompactMetric label="Overall Progress" value={formatPercent(data.overallProgress)} tone="brand" />
+        <CompactMetric label="Attendance" value={formatPercent(data.attendanceRate)} tone="caution" />
+        <CompactMetric label="OTJH Logged" value={formatHours(data.otjhCompleted)} tone="info" />
+        <CompactMetric label="Programme Total" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
+        <CompactMetric label="Mapped KSBs" value={data.detail?.ksbs.length || 0} tone="upcoming" />
+        <CompactMetric label="Evidence Count" value={data.evidenceCount ?? '--'} tone="brand" />
+      </MetricRow>
 
       <section className="bg-background-50 rounded-xl border border-background-200/50 overflow-hidden">
         <div className="p-5 md:p-6">
@@ -58,7 +61,7 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-3xl border border-background-200 bg-background-50 shadow-[0_10px_30px_rgba(31,14,59,0.05)]">
+      <section className="overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-sm">
         <div className="flex flex-col gap-3 border-b border-background-200 bg-background-100/45 p-5 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-sm font-heading font-bold text-foreground-950 flex items-center gap-2">
@@ -80,7 +83,12 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
 
         {totalWeeks === 0 ? (
           <div className="p-6">
-            <EmptyState text="No structured plan has been saved for this learner yet." />
+            <EmptyState
+              variant="empty"
+              size="sm"
+              title="No structured plan"
+              description="No structured plan has been saved for this learner yet."
+            />
           </div>
         ) : (
           <div className="max-h-[680px] overflow-y-auto bg-background-100/35 p-4 md:p-5">
@@ -95,45 +103,46 @@ export default function OverviewTab({ data }: CaseFileTabProps) {
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
               <AppIcon className="ri-question-answer-line text-secondary-500"></AppIcon> Recent Assessments
             </h2>
-            <span className="text-[11px] text-foreground-400">{data.detail?.quizAttempts.length || 0} total attempt(s)</span>
+            <span className="text-[12px] text-foreground-400">{data.detail?.quizAttempts.length || 0} total attempt(s)</span>
           </div>
           {latestAttempts.length === 0 ? (
-            <EmptyState text="No quiz attempts have been recorded for this learner yet." />
+            <EmptyState
+              variant="empty"
+              size="sm"
+              title="No quiz attempts"
+              description="No quiz attempts have been recorded for this learner yet."
+            />
           ) : (
             <div className="space-y-3">
-              {latestAttempts.map((attempt, index) => (
-                <div
-                  key={`${attempt.quizId}-${attempt.attempt ?? 0}-${attempt.submittedAt}-${index}`}
-                  className="flex items-center gap-4 p-3 rounded-xl bg-background-100/60 border border-foreground-200/60"
-                >
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                    attempt.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-700'
-                  }`}>
-                    <AppIcon className="ri-questionnaire-line text-base"></AppIcon>
+              {latestAttempts.map((attempt, index) => {
+                const tone: StatusTone = attempt.passed ? 'positive' : 'caution';
+                const style = toneStyle(tone);
+                return (
+                  <div
+                    key={`${attempt.quizId}-${attempt.attempt ?? 0}-${attempt.submittedAt}-${index}`}
+                    className="flex items-center gap-4 p-3 rounded-xl bg-background-100/60 border border-foreground-200/60"
+                  >
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${style.bg} ${style.text}`}>
+                      <AppIcon className="ri-questionnaire-line text-base"></AppIcon>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-semibold text-foreground-900">{resolveQuizAttemptTitle(data.detail, attempt)}</p>
+                      <p className="text-[12px] text-foreground-400">
+                        {resolveQuizAttemptModule(data.detail, attempt) || 'Quiz'} - Submitted {formatDisplayDate(attempt.submittedAt)}
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <StatusBadge tone={tone} label={attempt.passed ? 'Passed' : 'Submitted'} />
+                      <p className="text-[12px] font-semibold text-foreground-900 mt-1">
+                        {[formatAttemptGrade(attempt), formatQuizAttemptScore(attempt)].filter(Boolean).join(' - ') || '--'}
+                      </p>
+                      <p className="text-[12px] text-foreground-400">
+                        {attempt.ksbs?.length ? `${attempt.ksbs.length} KSB link(s)` : `${quizGradeValue(attempt)}%`}
+                      </p>
+                    </div>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[13px] font-semibold text-foreground-900">{resolveQuizAttemptTitle(data.detail, attempt)}</p>
-                    <p className="text-[11px] text-foreground-400">
-                      {resolveQuizAttemptModule(data.detail, attempt) || 'Quiz'} - Submitted {formatDisplayDate(attempt.submittedAt)}
-                    </p>
-                  </div>
-                  <div className="text-right shrink-0">
-                    <span className={`text-[10px] font-semibold px-2.5 py-0.5 rounded-full border ${
-                      attempt.passed
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                        : 'bg-amber-50 text-amber-700 border-amber-200'
-                    }`}>
-                      {attempt.passed ? 'Passed' : 'Submitted'}
-                    </span>
-                    <p className="text-[12px] font-semibold text-foreground-900 mt-1">
-                      {[formatAttemptGrade(attempt), formatQuizAttemptScore(attempt)].filter(Boolean).join(' - ') || '--'}
-                    </p>
-                    <p className="text-[10px] text-foreground-400">
-                      {attempt.ksbs?.length ? `${attempt.ksbs.length} KSB link(s)` : `${quizGradeValue(attempt)}%`}
-                    </p>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -181,7 +190,7 @@ function CoachModuleSection({
   const moduleOtjh = module.weeks.reduce((total, week) => total + (week.otjh || 0), 0);
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 shadow-[0_10px_26px_rgba(31,14,59,0.04)]">
+    <article className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 shadow-sm">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -191,11 +200,11 @@ function CoachModuleSection({
           <AppIcon className="ri-book-2-line text-base"></AppIcon>
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-[10px] font-bold uppercase tracking-[0.16em] text-primary-600">
+          <span className="block text-[12px] font-bold uppercase tracking-[0.16em] text-primary-600">
             Module {String(moduleIndex + 1).padStart(2, '0')}
           </span>
           <span className="block truncate text-sm font-heading font-bold text-foreground-950">{module.module}</span>
-          <span className="mt-0.5 block text-[11px] text-foreground-400">
+          <span className="mt-0.5 block text-[12px] text-foreground-400">
             {weekCount} {weekCount === 1 ? 'week' : 'weeks'} - {componentCount} {componentCount === 1 ? 'component' : 'components'}
           </span>
         </span>
@@ -259,7 +268,7 @@ function CoachWeekCard({
           </span>
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-heading font-bold text-foreground-800">{week.week}</span>
-            <span className="mt-0.5 block text-[11px] text-foreground-400">
+            <span className="mt-0.5 block text-[12px] text-foreground-400">
               {componentCount} {componentCount === 1 ? 'component' : 'components'}
             </span>
           </span>
@@ -304,35 +313,32 @@ function CoachComponentRow({ component, completed }: { component: JourneyCompone
         <AppIcon className={`${display.icon} ${display.color} text-[13px]`}></AppIcon>
       </span>
       <div className="min-w-0 flex-1">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{display.label}</p>
+        <p className="text-[12px] font-semibold uppercase tracking-wider text-foreground-400">{display.label}</p>
         <p className="text-sm font-semibold leading-snug text-foreground-900">{display.title}</p>
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {component.isQuiz && component.quizMeta?.questions != null && (
-          <span className="hidden items-center gap-1 text-[11px] text-foreground-400 sm:inline-flex">
-            <AppIcon className="ri-questionnaire-line text-[10px]"></AppIcon>
+          <span className="hidden items-center gap-1 text-[12px] text-foreground-400 sm:inline-flex">
+            <AppIcon className="ri-questionnaire-line text-[12px]"></AppIcon>
             {component.quizMeta.questions} {component.quizMeta.questions === 1 ? 'question' : 'questions'}
           </span>
         )}
         {!component.isQuiz && component.expectedOtjh != null && component.expectedOtjh > 0 && (
-          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground-400">
-            <AppIcon className="ri-time-line text-[10px]"></AppIcon>
+          <span className="inline-flex items-center gap-1 text-[12px] font-medium text-foreground-400">
+            <AppIcon className="ri-time-line text-[12px]"></AppIcon>
             {formatHours(component.expectedOtjh)}
           </span>
         )}
         {latestAttempt && (
-          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-            latestAttempt.passed ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-          }`}>
-            <AppIcon className={latestAttempt.passed ? 'ri-checkbox-circle-line text-[10px]' : 'ri-close-circle-line text-[10px]'}></AppIcon>
-            {formatAttemptGrade(latestAttempt)} {latestAttempt.passed ? 'Passed' : 'Failed'}
-          </span>
+          <StatusBadge
+            tone={latestAttempt.passed ? 'positive' : 'critical'}
+            label={`${formatAttemptGrade(latestAttempt)} ${latestAttempt.passed ? 'Passed' : 'Failed'}`}
+            size="sm"
+            showIcon
+          />
         )}
         {completed && !component.isQuiz && (
-          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-            <AppIcon className="ri-checkbox-circle-line text-[10px]"></AppIcon>
-            Done
-          </span>
+          <StatusBadge tone="positive" label="Done" size="sm" showIcon />
         )}
       </div>
     </div>
@@ -357,7 +363,7 @@ const COMPONENT_TYPE_STYLES: Record<string, ComponentStyle> = {
   evidence: { label: 'Evidence', icon: 'ri-file-add-line', bg: 'bg-emerald-50', color: 'text-emerald-600' },
   'workplace evidence': { label: 'Workplace Evidence', icon: 'ri-file-add-line', bg: 'bg-emerald-50', color: 'text-emerald-600' },
   'live session': { label: 'Live Session', icon: 'ri-vidicon-line', bg: 'bg-rose-50', color: 'text-rose-600' },
-  'recording placeholder': { label: 'Recording Placeholder', icon: 'ri-record-circle-line', bg: 'bg-slate-50', color: 'text-slate-600' },
+  'recording placeholder': { label: 'Recording Placeholder', icon: 'ri-record-circle-line', bg: 'bg-background-100', color: 'text-foreground-500' },
 };
 
 const DEFAULT_COMPONENT_STYLE: ComponentStyle = {
@@ -388,7 +394,7 @@ function componentDisplay(component: JourneyComponent) {
 
 function splitComponentTitle(title: string) {
   const dotParts = title
-    .replace(/\u00C2?\u00B7/g, '|')
+    .replace(/Â?·/g, '|')
     .split('|')
     .map((part) => part.trim())
     .filter(Boolean);
@@ -426,44 +432,10 @@ function humanizeComponentType(value?: string | null) {
 function SummaryPill({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-50 font-semibold text-foreground-700 shadow-sm ${
-      compact ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5 text-[12px]'
+      compact ? 'px-2.5 py-1 text-[12px]' : 'px-3 py-1.5 text-[12px]'
     }`}>
       <span className="text-foreground-400">{label}</span>
       {value}
     </span>
-  );
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: string;
-  label: string;
-  value: string;
-  tone: 'primary' | 'accent' | 'emerald' | 'secondary' | 'amber';
-}) {
-  const toneMap = {
-    primary: 'bg-primary-100 text-primary-600',
-    accent: 'bg-accent-100 text-accent-600',
-    emerald: 'bg-emerald-100 text-emerald-600',
-    secondary: 'bg-secondary-100 text-secondary-600',
-    amber: 'bg-amber-100 text-amber-600',
-  } as const;
-
-  return (
-    <div className="rounded-2xl border border-background-200 bg-background-50 p-4 shadow-[0_8px_24px_rgba(31,14,59,0.04)]">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">{label}</p>
-          <p className="mt-2 text-lg font-heading font-bold text-foreground-950">{value}</p>
-        </div>
-        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${toneMap[tone]}`}>
-          <AppIcon className={`${icon} text-base`}></AppIcon>
-        </div>
-      </div>
-    </div>
   );
 }

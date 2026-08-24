@@ -4,13 +4,26 @@ import Swal from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
 import type { ReactNode } from 'react';
 import { useLocation } from 'react-router-dom';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Panel } from '@/components/ui/Panel';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { ThemedSelect } from '@/components/feature/ThemedSelect';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
+import { initialsFor } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
-import { bookCoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
+import {
+  bookCoachCalendarEvent,
+  statusLabel,
+  statusPillClass,
+} from '@/pages/coach/shared/calendarEvents';
+import { LearnerAvatar, LearnerIdentity } from '@/pages/coach/shared/LearnerIdentity';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
+import { EventDetailLine } from './components/EventDetailLine';
+import { EventDetailTile } from './components/EventDetailTile';
+import { TimetableSurfaceSkeleton } from './components/TimetableSurfaceSkeleton';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/timetable';
@@ -319,23 +332,19 @@ function eventConfig(event: TimetableEvent) {
   return sourceTheme || typeConfig(event.type);
 }
 
+// Fill kept at the -50/-700/-200 scale used across the workspace's status
+// colour, so a priority pill and a status pill never read as two different
+// visual languages next to each other.
 function priorityBadge(p: TimetableEvent['priority']) {
-  if (p === 'urgent') return 'bg-red-100 text-red-700 border-red-200';
-  if (p === 'high') return 'bg-amber-100 text-amber-700 border-amber-200';
-  return 'bg-background-100 text-foreground-500 border-background-200';
+  if (p === 'urgent') return 'bg-red-50 text-red-700 border-red-200';
+  if (p === 'high') return 'bg-amber-50 text-amber-700 border-amber-200';
+  return 'bg-background-50 text-foreground-500 border-background-200';
 }
 
 function formatTime(h: number) {
   const hh = Math.floor(h);
   const mm = Math.round((h - hh) * 60);
   return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
-}
-
-function buildInitials(value: string) {
-  const parts = value.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return '--';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
 }
 
 function parseEventDate(event: Pick<TimetableEvent, 'date' | 'year' | 'month' | 'dayOfMonth'>) {
@@ -433,31 +442,21 @@ function formatEventDateLabel(event: TimetableEvent) {
   return `${DAYS_OF_WEEK[event.dayOfWeek]}, ${event.dayOfMonth} ${MONTH_NAMES[event.month]}`;
 }
 
-function statusBadge(status: TimetableEvent['status']) {
-  if (status === 'completed' || status === 'confirmed') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  if (status === 'scheduled' || status === 'pending' || status === 'not-scheduled') return 'bg-amber-50 text-amber-700 border-amber-200';
-  if (status === 'in-progress') return 'bg-primary-50 text-primary-700 border-primary-200';
-  if (status === 'awaiting-signature') return 'bg-violet-50 text-violet-700 border-violet-200';
-  return 'bg-red-50 text-red-700 border-red-200';
-}
-
+// Status pill fill and label now come from the shared coach calendar helper
+// (`@/pages/coach/shared/calendarEvents`) — the same module meetings/ and
+// progress-reviews/ read status from — instead of a third local copy at a
+// different fill scale. `statusDot` stays local: it is a solid marker for the
+// month/week grid, and the shared module has no dot export, only the pill.
+// Its hue split mirrors `statusPillClass` exactly (including the
+// pending/not-scheduled -> orange branch that this page used to fold into
+// "scheduled" amber) so the two never disagree on what colour a status is.
 function statusDot(status: TimetableEvent['status']) {
   if (status === 'completed' || status === 'confirmed') return 'bg-emerald-500';
-  if (status === 'scheduled' || status === 'pending' || status === 'not-scheduled') return 'bg-amber-500';
+  if (status === 'scheduled') return 'bg-amber-500';
   if (status === 'in-progress') return 'bg-primary-500';
   if (status === 'awaiting-signature') return 'bg-violet-500';
-  return 'bg-red-500';
-}
-
-function statusLabel(status: TimetableEvent['status']) {
-  if (status === 'completed') return 'Completed';
-  if (status === 'scheduled') return 'Scheduled';
-  if (status === 'not-scheduled') return 'Needs Schedule';
-  if (status === 'in-progress') return 'In Progress';
-  if (status === 'awaiting-signature') return 'Awaiting Signature';
-  if (status === 'confirmed') return 'Confirmed';
-  if (status === 'pending') return 'Pending';
-  return 'Cancelled';
+  if (status === 'cancelled') return 'bg-red-500';
+  return 'bg-orange-500'; // pending / not-scheduled
 }
 
 function buildSummaryMetrics(events: TimetableEvent[], referenceDate = new Date()): TimetableSummaryMetrics {
@@ -814,63 +813,6 @@ function matchesSearchTerm(event: TimetableEvent, searchTerm: string) {
     .split(/\s+/)
     .filter(Boolean)
     .every(token => searchableText.includes(token));
-}
-
-function EventDetailTile({ icon, label, value, sub }: { icon: string; label: string; value: ReactNode; sub?: ReactNode }) {
-  return (
-    <div className="rounded-xl border border-background-200 bg-background-50 px-3 py-2.5">
-      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
-        <AppIcon className={`${icon} text-[11px]`}></AppIcon>
-        {label}
-      </div>
-      <div className="truncate text-[12px] font-bold text-foreground-950">{value}</div>
-      {sub && <div className="mt-0.5 truncate text-[10px] font-medium text-foreground-500">{sub}</div>}
-    </div>
-  );
-}
-
-function EventDetailLine({ icon, children }: { icon: string; children: ReactNode }) {
-  return (
-    <div className="flex min-w-0 items-center gap-2 rounded-xl border border-background-100 bg-white px-3 py-2 text-[11px] font-medium text-foreground-600">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
-        <AppIcon className={icon}></AppIcon>
-      </span>
-      <div className="min-w-0 flex-1 truncate">{children}</div>
-    </div>
-  );
-}
-
-function TimetableSurfaceSkeleton() {
-  return (
-    <div className="pointer-events-none absolute inset-0 z-20 rounded-[28px] bg-background-50/94 backdrop-blur-[1px]">
-      <div className="space-y-5">
-        <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
-          <div className="grid gap-3 xl:grid-cols-[auto_minmax(260px,360px)] xl:items-center xl:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="h-11 w-[176px] animate-pulse rounded-xl bg-background-100"></div>
-              <div className="h-11 w-[220px] animate-pulse rounded-xl bg-background-100"></div>
-            </div>
-            <div className="h-10 w-full animate-pulse rounded-xl bg-background-100"></div>
-          </div>
-          <div className="mt-3 grid gap-3 xl:grid-cols-2">
-            <div className="h-20 animate-pulse rounded-xl bg-background-100"></div>
-            <div className="h-20 animate-pulse rounded-xl bg-background-100"></div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)]">
-          <div className="space-y-4">
-            <div className="h-[520px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]"></div>
-            <div className="h-[156px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]"></div>
-          </div>
-          <div className="space-y-4">
-            <div className="h-[430px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]"></div>
-            <div className="h-[220px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]"></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -1776,87 +1718,45 @@ export default function CoachTimetablePage() {
       pageTitle="Calendar" pageSubtitle="Your coaching schedule, sessions, and meetings - all in one place"
       userName={coach.name} userRole="Progress Coach"
     >
-      <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+      <PageContainer>
 
-        {/* â•â•â•â•â•â•â•â•â•â•â• HERO BANNER â•â•â•â•â•â•â•â•â•â•â• */}
-        <section
-          className="relative overflow-hidden rounded-[28px] border border-white/10 shadow-[0_22px_60px_-32px_rgba(27,9,68,0.9)]"
-          style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 42%, oklch(var(--primary-800)) 100%)' }}
-        >
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div
-              className="absolute opacity-25"
-              style={{ width: '52%', height: '44%', left: '-5%', top: '-12%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.32) 0%, transparent 70%)', filter: 'blur(60px)' }}
-            />
-            <div
-              className="absolute opacity-20"
-              style={{ width: '44%', height: '42%', right: '-6%', top: '4%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.28) 0%, transparent 72%)', filter: 'blur(58px)' }}
-            />
-          </div>
-          <div className="relative flex min-h-[220px] flex-col gap-6 px-5 py-5 md:px-7 md:py-6 lg:flex-row lg:items-center">
-            <div className="min-w-0 flex-1">
-              <div className="mb-3 flex flex-wrap items-center gap-3">
-                <span className="rounded-full border border-accent-300/20 bg-accent-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-accent-200">Progress Coach</span>
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] font-semibold text-white/90">{MONTH_NAMES[viewMonth]} {viewYear}</span>
-              </div>
-              <h1 className="max-w-xl text-[28px] font-heading font-bold tracking-tight text-white md:text-[34px]">My Calendar</h1>
-              <p className="mt-3 max-w-xl text-sm font-medium leading-6 text-white/80 md:text-[15px]">
-                Plan monthly coaching reviews, progress reviews, catch-up sessions, and learner support from one clean scheduling workspace.
-              </p>
-              <div className="mt-5 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={openCreateSessionModal}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-primary-800 shadow-lg shadow-foreground-950/20 transition-smooth hover:-translate-y-0.5 hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-white/40 cursor-pointer"
-                >
-                  <AppIcon className="ri-add-circle-line text-base"></AppIcon>
-                  Create Session
-                </button>
-                <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-[12px] text-white/75 backdrop-blur-sm">
-                  Create a <span className="font-semibold text-white">catch-up or support session</span> and add it straight to the learner calendar.
-                </div>
-              </div>
-            </div>
+        <PageHeader
+          icon="ri-calendar-2-line"
+          title="My Calendar"
+          description="Plan coaching reviews, progress reviews, catch-up sessions, and learner support from one scheduling workspace."
+          meta={(
+            <>
+              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-foreground-500">
+                <AppIcon className="ri-time-line text-[13px] text-foreground-400"></AppIcon>
+                {todayWeekdayLabel}, {todayMonthLabel} {String(todayDay).padStart(2, '0')}
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-foreground-500">
+                <AppIcon className="ri-calendar-event-line text-[13px] text-foreground-400"></AppIcon>
+                Viewing {MONTH_NAMES[viewMonth]} {viewYear}
+              </span>
+            </>
+          )}
+          actions={(
+            <button
+              type="button"
+              onClick={openCreateSessionModal}
+              className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-3.5 py-2 text-[13px] font-semibold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-200 cursor-pointer"
+            >
+              <AppIcon className="ri-add-circle-line text-base"></AppIcon>
+              Create session
+            </button>
+          )}
+        />
 
-            <div className="flex shrink-0 items-center justify-center lg:w-[380px]">
-              <div className="relative">
-                <div className="rounded-[28px] border border-white/10 bg-white/10 p-3 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md">
-                  <div className="relative w-[150px] overflow-hidden rounded-[24px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] md:w-[168px]">
-                    <div className="bg-[#ef4444] px-3 pb-3 pt-2.5">
-                      <div className="flex items-center justify-between">
-                        {[0, 1, 2, 3, 4, 5].map(index => (
-                          <span key={index} className="relative flex h-5 w-2.5 items-start justify-center">
-                            <span className="absolute top-0 h-3.5 w-1 rounded-full bg-slate-700"></span>
-                            <span className="absolute top-1 h-4.5 w-2 rounded-full border border-black/15 bg-white/85 shadow-sm"></span>
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="px-4 pb-4 pt-3 text-center">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayMonthLabel}</p>
-                      <p className="mt-2 text-5xl font-heading font-bold leading-none text-foreground-950 md:text-6xl">
-                        {String(todayDay).padStart(2, '0')}
-                      </p>
-                      <p className="mt-2.5 text-[10px] font-semibold uppercase tracking-[0.34em] text-foreground-500">{todayWeekdayLabel}</p>
-                    </div>
-                    <div className="pointer-events-none absolute bottom-0 right-0 h-14 w-14 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.94),_rgba(226,232,240,0.82)_42%,_rgba(148,163,184,0.3)_72%,_transparent_74%)] opacity-95"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* â•â•â•â•â•â•â•â•â•â•â• CONTROLS BAR â•â•â•â•â•â•â•â•â•â•â• */}
         {showNavigationSkeleton && (
-          <div className="overflow-hidden rounded-[24px] border border-primary-200/70 bg-gradient-to-r from-primary-50 via-background-50 to-primary-50 shadow-sm">
-            <div className="flex flex-col gap-4 px-4 py-4 md:flex-row md:items-center md:justify-between md:px-5">
+          <Panel padding="md">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="flex items-start gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary-500 text-white shadow-md shadow-primary-500/20">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-500 text-white">
                   <AppIcon className="ri-loader-4-line animate-spin text-lg"></AppIcon>
                 </span>
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-primary-500">Syncing timetable</p>
+                  <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-primary-500">Syncing timetable</p>
                   <p className="mt-1 text-sm font-heading font-semibold text-foreground-900">
                     {navigationSkeletonMode === 'schedule'
                       ? 'Opening the scheduling queue'
@@ -1874,16 +1774,16 @@ export default function CoachTimetablePage() {
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2 md:min-w-[240px]">
-                <div className="h-14 rounded-2xl border border-primary-100/80 bg-white/70 animate-pulse"></div>
-                <div className="h-14 rounded-2xl border border-primary-100/80 bg-white/70 animate-pulse"></div>
-                <div className="h-14 rounded-2xl border border-primary-100/80 bg-white/70 animate-pulse"></div>
+                {[0, 1, 2].map(index => (
+                  <div key={index} className="h-14 rounded-lg border border-primary-100/80 bg-white/70 animate-pulse"></div>
+                ))}
               </div>
             </div>
-          </div>
+          </Panel>
         )}
 
         {error && (
-          <div className="rounded-xl border border-red-200/70 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <div className="rounded-lg border border-red-200/70 bg-red-50 px-4 py-3 text-sm text-red-800">
             {error}
           </div>
         )}
@@ -1897,7 +1797,7 @@ export default function CoachTimetablePage() {
         <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm ring-1 ring-black/[0.02]">
           <div className="grid gap-3 xl:grid-cols-[auto_minmax(260px,360px)] xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1 rounded-xl bg-background-100 p-1">
+              <div className="flex items-center gap-1 rounded-lg bg-background-100 p-1">
                 {([
                   { key: 'month' as ViewMode, label: 'Month', icon: 'ri-calendar-2-line' },
                   { key: 'week' as ViewMode, label: 'Week', icon: 'ri-calendar-view' },
@@ -1908,9 +1808,9 @@ export default function CoachTimetablePage() {
                     aria-pressed={viewMode === v.key}
                     data-timetable-view-active={viewMode === v.key ? 'true' : 'false'}
                     onClick={() => { setViewMode(v.key); if (v.key === 'month') setSelectedDay(todayDay); }}
-                    className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold transition-smooth whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 ${
+                    className={`inline-flex h-9 items-center justify-center gap-1.5 rounded-lg px-3 text-[12px] font-bold transition-smooth whitespace-nowrap cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary-200 ${
                       viewMode === v.key
-                        ? 'bg-primary-600 text-[#ffffff] shadow-md shadow-primary-600/25'
+                        ? 'bg-primary-600 text-[#ffffff] shadow-sm'
                         : 'text-foreground-600 hover:bg-white hover:text-foreground-900'
                     }`}
                   >
@@ -1918,7 +1818,7 @@ export default function CoachTimetablePage() {
                   </button>
                 ))}
               </div>
-              <div className="flex items-center gap-1.5 rounded-xl border border-background-200 bg-background-50 p-1">
+              <div className="flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 p-1">
                 <button
                   onClick={handlePrev}
                   className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-foreground-700 transition-smooth cursor-pointer hover:bg-white hover:text-primary-700 hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
@@ -1926,7 +1826,7 @@ export default function CoachTimetablePage() {
                 >
                   <AppIcon className="ri-arrow-left-s-line h-4 w-4 shrink-0"></AppIcon>
                 </button>
-                <button onClick={handleToday} className="inline-flex h-9 items-center justify-center rounded-lg bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth cursor-pointer whitespace-nowrap hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-200">Today</button>
+                <button onClick={handleToday} className="inline-flex h-9 items-center justify-center rounded-lg bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth cursor-pointer whitespace-nowrap hover:bg-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-200">Today</button>
                 <div className="relative">
                   <button
                     type="button"
@@ -1938,11 +1838,11 @@ export default function CoachTimetablePage() {
                     <AppIcon className={`ri-arrow-down-s-line h-4 w-4 shrink-0 transition-transform ${datePickerOpen ? 'rotate-180' : ''}`}></AppIcon>
                   </button>
                   {datePickerOpen && (
-                    <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-2xl border border-background-200 bg-background-50 p-3 shadow-xl shadow-foreground-900/10">
+                    <div className="absolute left-1/2 top-full z-30 mt-2 w-72 -translate-x-1/2 rounded-2xl border border-background-200 bg-background-50 p-3 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <div>
                           <p className="text-xs font-heading font-bold text-foreground-900">Jump to date</p>
-                          <p className="text-[10px] text-foreground-400">
+                          <p className="text-[12px] text-foreground-400">
                             {viewMode === 'month' ? 'Choose month and year' : 'Choose a specific day'}
                           </p>
                         </div>
@@ -1958,11 +1858,11 @@ export default function CoachTimetablePage() {
                       {viewMode === 'month' ? (
                         <div className="grid grid-cols-[1fr_96px] gap-2">
                           <label className="block">
-                            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Month</span>
+                            <span className="mb-1 block text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Month</span>
                             <select
                               value={viewMonth}
                               onChange={(event) => handleMonthPickerChange(Number(event.target.value))}
-                              className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                              className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
                             >
                               {MONTH_NAMES.map((monthName, index) => (
                                 <option key={monthName} value={index}>{monthName}</option>
@@ -1970,25 +1870,25 @@ export default function CoachTimetablePage() {
                             </select>
                           </label>
                           <label className="block">
-                            <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Year</span>
+                            <span className="mb-1 block text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Year</span>
                             <input
                               type="number"
                               value={viewYear}
                               min={1900}
                               max={2200}
                               onChange={(event) => handleYearPickerChange(Number(event.target.value))}
-                              className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                              className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
                             />
                           </label>
                         </div>
                       ) : (
                         <label className="block">
-                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Date</span>
+                          <span className="mb-1 block text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Date</span>
                           <input
                             type="date"
                             value={datePickerValue}
                             onChange={(event) => handleDatePickerChange(event.target.value)}
-                            className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-xs font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-200"
                           />
                         </label>
                       )}
@@ -2009,16 +1909,16 @@ export default function CoachTimetablePage() {
               <input
                 type="text" placeholder="Search events or learner names..." value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="h-10 w-full rounded-xl border border-background-200 bg-background-50 pl-9 pr-3 text-xs font-medium text-foreground-900 placeholder:text-foreground-400 transition-all focus:outline-none focus:ring-2 focus:ring-primary-200"
+                className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-xs font-medium text-foreground-900 placeholder:text-foreground-400 transition-all focus:outline-none focus:ring-2 focus:ring-primary-200"
               />
             </div>
           </div>
 
           <div className="mt-3 flex flex-wrap items-start gap-x-8 gap-y-4 border-t border-background-100 pt-4">
-            <div className="min-w-[360px] flex-1 rounded-xl bg-background-50 px-3 py-2.5">
+            <div className="min-w-[360px] flex-1 rounded-lg bg-background-50 px-3 py-2.5">
               <div className="mb-2 flex items-center gap-2">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Source</p>
-                <span className="text-[10px] font-bold text-foreground-400">{sourceFilteredVisibleRangeEvents.length} events</span>
+                <p className="text-[12px] font-bold uppercase tracking-wide text-foreground-400">Source</p>
+                <span className="text-[12px] font-bold text-foreground-400">{sourceFilteredVisibleRangeEvents.length} events</span>
               </div>
               <div className="flex flex-wrap gap-x-2.5 gap-y-2">
                 {sourceFilterOptions.map(option => {
@@ -2029,9 +1929,9 @@ export default function CoachTimetablePage() {
                       type="button"
                       onClick={() => setFilterSource(isActive ? 'all' : option.value)}
                       title={`${option.label} (${option.count})`}
-                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-bold transition-smooth cursor-pointer whitespace-nowrap ${
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12px] font-bold transition-smooth cursor-pointer whitespace-nowrap ${
                         isActive
-                          ? 'border-primary-300 bg-primary-500 text-white shadow-md shadow-primary-500/20'
+                          ? 'border-primary-300 bg-primary-500 text-white shadow-sm'
                           : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'
                       }`}
                     >
@@ -2043,10 +1943,10 @@ export default function CoachTimetablePage() {
                 })}
               </div>
             </div>
-            <div className="min-w-[480px] flex-[1.4] rounded-xl bg-background-50 px-3 py-2.5">
+            <div className="min-w-[480px] flex-[1.4] rounded-lg bg-background-50 px-3 py-2.5">
               <div className="mb-2 flex items-center gap-2">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Status</p>
-                <span className="truncate text-[10px] font-bold text-foreground-400">{activeFilterLabel}</span>
+                <p className="text-[12px] font-bold uppercase tracking-wide text-foreground-400">Status</p>
+                <span className="truncate text-[12px] font-bold text-foreground-400">{activeFilterLabel}</span>
               </div>
               <div className="flex flex-wrap gap-x-2.5 gap-y-2">
                 {STATUS_FILTER_ORDER.map(status => {
@@ -2057,9 +1957,9 @@ export default function CoachTimetablePage() {
                       type="button"
                       onClick={() => setFilterStatus(isActive ? 'all' : status)}
                       title={`${STATUS_FILTER_LABELS[status]} (${statusFilterCounts[status]})`}
-                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[10px] font-bold transition-smooth cursor-pointer whitespace-nowrap ${
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-[12px] font-bold transition-smooth cursor-pointer whitespace-nowrap ${
                         isActive
-                          ? 'border-primary-300 bg-primary-500 text-white shadow-md shadow-primary-500/20'
+                          ? 'border-primary-300 bg-primary-500 text-white shadow-sm'
                           : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'
                       }`}
                     >
@@ -2085,7 +1985,7 @@ export default function CoachTimetablePage() {
                 <div className="grid grid-cols-7 border-b border-background-200 bg-background-100/70">
                   {DAYS_OF_WEEK.map(d => (
                     <div key={d} className="px-2 py-3 text-center">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-foreground-500">{d}</span>
+                      <span className="text-[12px] font-bold uppercase tracking-[0.18em] text-foreground-500">{d}</span>
                     </div>
                   ))}
                 </div>
@@ -2112,7 +2012,7 @@ export default function CoachTimetablePage() {
                         onClick={() => handleDayClick(day)}
                         className={`group relative flex min-h-[118px] flex-col border-b border-r p-2.5 text-left transition-all duration-200 ease-out xl:min-h-[132px] ${
                           isSel
-                            ? 'z-10 border-primary-300 bg-primary-50/60 shadow-[inset_0_0_0_1px_rgba(124,58,237,0.28)]'
+                            ? 'z-10 border-primary-300 bg-primary-50/60 ring-1 ring-inset ring-primary-300'
                             : isWeekend
                               ? 'border-background-200 bg-background-100/20 hover:bg-primary-50/20'
                               : 'border-background-200 bg-white hover:bg-primary-50/15'
@@ -2121,7 +2021,7 @@ export default function CoachTimetablePage() {
                         <div className="mb-2 flex items-center justify-between gap-2">
                           <span className={`flex h-7 min-w-7 items-center justify-center rounded-full px-2 text-sm font-bold transition-all duration-200 ${
                             isTdy
-                              ? 'bg-primary-500 text-white shadow-md shadow-primary-500/20'
+                              ? 'bg-primary-500 text-white shadow-sm'
                               : isSel
                                 ? 'bg-primary-100 text-primary-800'
                                 : isPast
@@ -2131,7 +2031,7 @@ export default function CoachTimetablePage() {
                             {day}
                           </span>
                           {hasEvents && (
-                            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
+                            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">
                               {eventsForDay.length}
                             </span>
                           )}
@@ -2143,7 +2043,7 @@ export default function CoachTimetablePage() {
                               <div
                                 key={ev.id}
                                 onClick={(e) => { e.stopPropagation(); focusEventOnCalendar(ev); }}
-                                className={`w-full rounded-lg border ${tc.border} ${tc.bg} px-2 py-1.5 text-[11px] font-semibold ${tc.text} shadow-sm transition-all duration-150 hover:-translate-y-0.5 hover:shadow-md`}
+                                className={`w-full rounded-lg border ${tc.border} ${tc.bg} px-2 py-1.5 text-[12px] font-semibold ${tc.text} shadow-sm transition-all duration-150 hover:-translate-y-0.5`}
                                 title={ev.title}
                               >
                                 <div className="flex min-w-0 items-center gap-1.5">
@@ -2156,7 +2056,7 @@ export default function CoachTimetablePage() {
                                   ></span>
                                 </div>
                                 {(ev.learner || ev.programme) && (
-                                  <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">
+                                  <p className="mt-0.5 truncate text-[12px] font-medium opacity-75">
                                     {ev.learner || ev.programme}
                                   </p>
                                 )}
@@ -2164,7 +2064,7 @@ export default function CoachTimetablePage() {
                             );
                           })}
                           {eventsForDay.length > 3 && (
-                            <span className="rounded-md bg-background-100 px-2 py-1 text-[10px] font-semibold text-foreground-500">
+                            <span className="rounded-md bg-background-100 px-2 py-1 text-[12px] font-semibold text-foreground-500">
                               +{eventsForDay.length - 3} more
                             </span>
                           )}
@@ -2181,7 +2081,7 @@ export default function CoachTimetablePage() {
 
             {/* WEEK VIEW */}
             {viewMode === 'week' && (
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+              <div className="bg-background-50 rounded-lg border border-foreground-200/60 overflow-hidden">
                 <div className="grid grid-cols-8 border-b border-foreground-200/60">
                   <div className="px-2 py-2.5 bg-background-100/50"></div>
                   {weekDates.map(wd => {
@@ -2209,7 +2109,7 @@ export default function CoachTimetablePage() {
                     return (
                       <div key={`h-${hour}`} className={`grid grid-cols-8 border-b border-background-100/50 min-h-[56px] ${isCurrentRow ? 'bg-primary-50/20' : ''}`}>
                         <div className="px-3 py-2 text-right border-r border-background-100/50">
-                          <span className="text-[11px] font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
+                          <span className="text-[12px] font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                         {weekDates.map(wd => {
                           const eventsInSlot = filteredEvents.filter(ev => {
@@ -2235,17 +2135,17 @@ export default function CoachTimetablePage() {
                                     className={`${tc.bg} ${tc.border} border rounded-md px-1.5 py-1 mb-0.5 cursor-pointer transition-all duration-150 hover:brightness-95`}
                                     style={{ minHeight: `${heightPx}px` }}
                                   >
-                                    <p className={`text-[9px] font-semibold leading-tight truncate ${tc.text}`}>{ev.title}</p>
-                                    <p className="flex items-center gap-1.5 text-[8px] text-foreground-400 truncate">
+                                    <p className={`text-[12px] font-semibold leading-tight truncate ${tc.text}`}>{ev.title}</p>
+                                    <p className="flex items-center gap-1.5 text-[12px] text-foreground-400 truncate">
                                       <span>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
                                       <span
                                         className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusDot(ev.status)}`}
                                         title={statusLabel(ev.status)}
                                       ></span>
                                     </p>
-                                    {ev.learner && <p className="text-[8px] text-foreground-400 truncate font-medium">{ev.learner}</p>}
+                                    {ev.learner && <p className="text-[12px] text-foreground-400 truncate font-medium">{ev.learner}</p>}
                                     {ev.priority !== 'normal' && (
-                                      <span className={`text-[7px] px-1 py-0.5 rounded-full border font-semibold ${priorityBadge(ev.priority)}`}>
+                                      <span className={`text-[12px] px-1 py-0.5 rounded-full border font-semibold ${priorityBadge(ev.priority)}`}>
                                         {ev.priority === 'urgent' ? '!' : 'High'}
                                       </span>
                                     )}
@@ -2264,7 +2164,7 @@ export default function CoachTimetablePage() {
 
             {/* DAY VIEW */}
             {viewMode === 'day' && (
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
+              <div className="bg-background-50 rounded-lg border border-foreground-200/60 overflow-hidden">
                 <div className="px-4 py-3 border-b border-foreground-200/60 flex items-center gap-3">
                   <span className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${isToday(selectedDay, viewMonth, viewYear) ? 'bg-primary-500 text-white' : 'bg-primary-100 text-primary-700'}`}>
                     {selectedDay}
@@ -2273,7 +2173,7 @@ export default function CoachTimetablePage() {
                     <p className="text-sm font-heading font-bold text-foreground-900">
                       {DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, {MONTH_NAMES[viewMonth]} {selectedDay}
                     </p>
-                    <p className="text-[11px] text-foreground-400">{selectedDayEvents.length} events</p>
+                    <p className="text-[12px] text-foreground-400">{selectedDayEvents.length} events</p>
                   </div>
                 </div>
                 <div className="overflow-y-auto max-h-[600px]">
@@ -2286,7 +2186,7 @@ export default function CoachTimetablePage() {
                     return (
                       <div key={`dh-${hour}`} className={`flex items-start border-b border-background-100/50 min-h-[64px] ${isCurrentRow ? 'bg-primary-50/20' : ''}`}>
                         <div className="w-16 shrink-0 px-3 py-3 text-right border-r border-background-100/50">
-                          <span className="text-[11px] font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
+                          <span className="text-[12px] font-semibold text-foreground-400">{hour.toString().padStart(2, '0')}:00</span>
                         </div>
                         <div className="flex-1 py-2 px-3 relative">
                           {isCurrentRow && <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-primary-400 rounded-full" />}
@@ -2303,11 +2203,11 @@ export default function CoachTimetablePage() {
                                     <span className={`text-sm font-semibold ${tc.text}`}>{ev.title}</span>
                                     <div className="flex items-center gap-1.5">
                                       {ev.priority !== 'normal' && (
-                                        <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${priorityBadge(ev.priority)}`}>
+                                        <span className={`text-[12px] font-semibold px-1.5 py-0.5 rounded-full border ${priorityBadge(ev.priority)}`}>
                                           {ev.priority === 'urgent' ? 'Urgent' : 'High'}
                                         </span>
                                       )}
-                                      <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full border ${statusBadge(ev.status)}`}>
+                                      <span className={`text-[12px] font-semibold px-1.5 py-0.5 rounded-full ${statusPillClass(ev.status)}`}>
                                         {statusLabel(ev.status)}
                                       </span>
                                     </div>
@@ -2325,7 +2225,7 @@ export default function CoachTimetablePage() {
                             })}
                             {eventsInSlot.length === 0 && isCurrentRow && (
                               <div className="py-1 px-2">
-                                <span className="text-[10px] text-primary-500 font-medium">Now</span>
+                                <span className="text-[12px] text-primary-500 font-medium">Now</span>
                               </div>
                             )}
                           </div>
@@ -2341,15 +2241,15 @@ export default function CoachTimetablePage() {
             {viewMode === 'month' && selectedDayEvents.length === 0 && (
               <div className="flex flex-col gap-3 rounded-2xl border border-background-200 bg-white px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-background-100 text-foreground-400">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
                     <AppIcon className="ri-calendar-2-line"></AppIcon>
                   </span>
                   <div>
                     <p className="text-sm font-heading font-bold text-foreground-950">{selectedDayLabel}</p>
-                    <p className="text-[11px] font-medium text-foreground-400">No events scheduled</p>
+                    <p className="text-[12px] font-medium text-foreground-400">No events scheduled</p>
                   </div>
                 </div>
-                <button onClick={() => setViewMode('day')} className="text-[11px] font-bold text-primary-600 transition-smooth hover:text-primary-700 cursor-pointer whitespace-nowrap">
+                <button onClick={() => setViewMode('day')} className="text-[12px] font-bold text-primary-600 transition-smooth hover:text-primary-700 cursor-pointer whitespace-nowrap">
                   Day view <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                 </button>
               </div>
@@ -2361,7 +2261,7 @@ export default function CoachTimetablePage() {
                   <h3 className="text-sm font-heading font-bold text-foreground-950">
                     {selectedDayLabel}
                   </h3>
-                  <button onClick={() => setViewMode('day')} className="text-[11px] font-bold text-primary-600 transition-smooth hover:text-primary-700 cursor-pointer whitespace-nowrap">
+                  <button onClick={() => setViewMode('day')} className="text-[12px] font-bold text-primary-600 transition-smooth hover:text-primary-700 cursor-pointer whitespace-nowrap">
                     Day view <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
                   </button>
                 </div>
@@ -2372,20 +2272,20 @@ export default function CoachTimetablePage() {
                       <div
                         key={ev.id}
                         onClick={() => focusEventOnCalendar(ev)}
-                        className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition-smooth hover:-translate-y-0.5 hover:shadow-sm ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
+                        className={`flex items-center gap-3 rounded-lg border p-3 cursor-pointer transition-smooth hover:-translate-y-0.5 hover:shadow-sm ${tc.bg} ${tc.border} ${selectedEvent?.id === ev.id ? 'ring-2 ring-primary-400 ring-offset-1' : ''}`}
                       >
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-white/70 ${tc.text}`}>
+                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 bg-white/70 ${tc.text}`}>
                           <AppIcon className={tc.icon}></AppIcon>
                         </div>
                         <div className="flex-1 min-w-0">
                           <p className={`text-sm font-bold ${tc.text}`}>{ev.title}</p>
-                          <div className="flex items-center gap-2 mt-0.5 text-[11px] text-foreground-500">
+                          <div className="flex items-center gap-2 mt-0.5 text-[12px] text-foreground-500">
                             <span>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
                             {ev.learner && <span className="truncate text-foreground-400">· {ev.learner}</span>}
                             {ev.employer && <span className="truncate text-foreground-400">· {ev.employer}</span>}
                           </div>
                         </div>
-                        <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[9px] font-semibold ${statusBadge(ev.status)}`}>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[12px] font-semibold ${statusPillClass(ev.status)}`}>
                           {statusLabel(ev.status)}
                         </span>
                       </div>
@@ -2404,12 +2304,12 @@ export default function CoachTimetablePage() {
                 <div className="p-4 md:p-5">
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <h3 className="flex items-center gap-2 text-sm font-heading font-bold text-foreground-950">
-                      <span className={`flex h-8 w-8 items-center justify-center rounded-xl ${eventConfig(selectedEvent).bg} ${eventConfig(selectedEvent).text}`}>
+                      <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${eventConfig(selectedEvent).bg} ${eventConfig(selectedEvent).text}`}>
                         <AppIcon className={eventConfig(selectedEvent).icon}></AppIcon>
                       </span>
                       Event Details
                     </h3>
-                    <button onClick={() => setSelectedEvent(null)} className="flex h-8 w-8 items-center justify-center rounded-xl text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Clear selected event">
+                    <button onClick={() => setSelectedEvent(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Clear selected event">
                       <AppIcon className="ri-close-line"></AppIcon>
                     </button>
                   </div>
@@ -2418,17 +2318,17 @@ export default function CoachTimetablePage() {
                       <div className="mb-3 flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="mb-2 flex flex-wrap items-center gap-2">
-                            <span className={`inline-flex items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-bold ${eventConfig(selectedEvent).text}`}>
+                            <span className={`inline-flex items-center gap-1.5 rounded-full bg-white/80 px-2.5 py-1 text-[12px] font-bold ${eventConfig(selectedEvent).text}`}>
                               <AppIcon className={eventConfig(selectedEvent).icon}></AppIcon>
                               {eventConfig(selectedEvent).label}
                             </span>
-                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-[10px] font-semibold ${statusBadge(selectedEvent.status)}`}>
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-[12px] font-semibold ${statusPillClass(selectedEvent.status)}`}>
                               {statusLabel(selectedEvent.status)}
                             </span>
                           </div>
                           <h4 className={`text-lg font-heading font-bold leading-snug ${eventConfig(selectedEvent).text}`}>{selectedEvent.title}</h4>
                         </div>
-                        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[9px] font-bold ${priorityBadge(selectedEvent.priority)}`}>
+                        <span className={`shrink-0 rounded-full border px-2.5 py-1 text-[12px] font-bold ${priorityBadge(selectedEvent.priority)}`}>
                           {selectedEvent.priority === 'urgent' ? 'Urgent' : selectedEvent.priority === 'high' ? 'High' : 'Normal'}
                         </span>
                       </div>
@@ -2456,10 +2356,18 @@ export default function CoachTimetablePage() {
                       </EventDetailLine>
                     )}
                     {selectedEvent.learner && (
-                      <EventDetailLine icon="ri-user-line">
-                        <span className="font-bold text-foreground-900">{selectedEvent.learner}</span>
-                        {selectedEvent.programme && <span className="text-foreground-400"> · {selectedEvent.programme}</span>}
-                      </EventDetailLine>
+                      <div className="rounded-lg border border-background-100 bg-white px-3 py-2">
+                        <LearnerIdentity
+                          name={selectedEvent.learner}
+                          programme={selectedEvent.programme}
+                          size="sm"
+                          meta={selectedEvent.platform && selectedEvent.platform !== '--'
+                            ? [selectedEvent.platform, selectedEvent.location && selectedEvent.location !== '--' ? selectedEvent.location : null]
+                                .filter(Boolean)
+                                .join(' · ')
+                            : undefined}
+                        />
+                      </div>
                     )}
                     {selectedEvent.employer && (
                       <EventDetailLine icon="ri-building-2-line">
@@ -2471,7 +2379,9 @@ export default function CoachTimetablePage() {
                         Tutor: <span className="font-bold text-foreground-900">{selectedEvent.tutor}</span>
                       </EventDetailLine>
                     )}
-                    {selectedEvent.platform && selectedEvent.platform !== '--' && (
+                    {/* When there is a learner, the platform is already shown as the
+                        LearnerIdentity block's meta line above, so it is not repeated here. */}
+                    {!selectedEvent.learner && selectedEvent.platform && selectedEvent.platform !== '--' && (
                       <EventDetailLine icon="ri-video-line">
                         <span className="font-bold text-foreground-900">{selectedEvent.platform}</span>
                         {selectedEvent.location && selectedEvent.location !== '--' && <span className="text-foreground-400"> · {selectedEvent.location}</span>}
@@ -2487,45 +2397,45 @@ export default function CoachTimetablePage() {
                         href={selectedEventMeetingUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="group flex items-center justify-between gap-3 rounded-xl border border-primary-100 bg-gradient-to-r from-primary-50 via-white to-background-50 px-3.5 py-3 text-left transition-smooth hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm"
+                        className="group flex items-center justify-between gap-3 rounded-lg border border-primary-100 bg-gradient-to-r from-primary-50 via-white to-background-50 px-3.5 py-3 text-left transition-smooth hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-sm"
                       >
                         <div className="flex min-w-0 items-center gap-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700 ring-1 ring-primary-100 transition-smooth group-hover:bg-primary-600 group-hover:text-[#ffffff]">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700 ring-1 ring-primary-100 transition-smooth group-hover:bg-primary-600 group-hover:text-[#ffffff]">
                             <AppIcon className="ri-video-chat-line h-4 w-4"></AppIcon>
                           </span>
                           <div className="min-w-0">
-                            <p className="truncate text-[11px] font-bold text-foreground-950">
+                            <p className="truncate text-[12px] font-bold text-foreground-950">
                               Join {selectedEventMeetingProvider}
                             </p>
-                            <p className="mt-0.5 truncate text-[10px] font-medium text-foreground-500">
+                            <p className="mt-0.5 truncate text-[12px] font-medium text-foreground-500">
                               {selectedEventMeetingHost ? `${selectedEventMeetingHost} · opens in a new tab` : 'Opens in a new tab'}
                             </p>
                           </div>
                         </div>
-                        <span className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 text-[10px] font-bold text-primary-700 transition-smooth group-hover:border-primary-600 group-hover:bg-primary-600 group-hover:text-[#ffffff]">
+                        <span className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 text-[12px] font-bold text-primary-700 transition-smooth group-hover:border-primary-600 group-hover:bg-primary-600 group-hover:text-[#ffffff]">
                           Open
                           <AppIcon className="ri-external-link-line h-3.5 w-3.5"></AppIcon>
                         </span>
                       </a>
                     )}
                     {selectedEventNotes && (
-                      <div className="rounded-xl border border-background-100 bg-background-50 p-3">
-                        <p className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-foreground-400">
+                      <div className="rounded-lg border border-background-100 bg-background-50 p-3">
+                        <p className="mb-1 flex items-center gap-1.5 text-[12px] font-bold uppercase tracking-wide text-foreground-400">
                           <AppIcon className="ri-sticky-note-line"></AppIcon>
                           Notes
                         </p>
-                        <p className="text-[11px] leading-5 text-foreground-700">{selectedEventNotes}</p>
+                        <p className="text-[12px] leading-5 text-foreground-700">{selectedEventNotes}</p>
                       </div>
                     )}
                   </div>
                   {selectedEventFeedback && (
-                    <div className={`mt-4 rounded-lg border px-3 py-2 text-[11px] ${eventActionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                    <div className={`mt-4 rounded-lg border px-3 py-2 text-[12px] ${eventActionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                       {selectedEventFeedback}
                     </div>
                   )}
                   {isLiveSessionEvent(selectedEvent) && (
                     <div className="mt-4 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3">
-                      <p className="text-[11px] text-sky-800">
+                      <p className="text-[12px] text-sky-800">
                         Live sessions are managed from the curriculum delivery schedule, so they cannot be rescheduled from the coach timetable.
                       </p>
                       {(selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
@@ -2533,7 +2443,7 @@ export default function CoachTimetablePage() {
                           <button
                             onClick={handleJoinSelectedMeeting}
                             disabled={eventActionBusy}
-                            className="rounded-xl bg-emerald-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-emerald-500/20 transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                            className="rounded-lg bg-emerald-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                           >
                             <i className="ri-play-circle-line mr-1"></i>Join Session
                           </button>
@@ -2544,41 +2454,41 @@ export default function CoachTimetablePage() {
                   {!isLiveSessionEvent(selectedEvent) && !['completed', 'confirmed', 'awaiting-signature'].includes(selectedEvent.status) && (
                     <div className="mt-4 rounded-2xl border border-background-200 bg-white p-4 shadow-sm">
                       <div className="mb-3 flex items-center justify-between gap-3">
-                        <h4 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-foreground-700">
+                        <h4 className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wide text-foreground-700">
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
                             <AppIcon className="ri-calendar-schedule-line"></AppIcon>
                           </span>
                           Schedule Meeting
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
-                          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-bold text-amber-700">Needs scheduling</span>
+                          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[12px] font-bold text-amber-700">Needs scheduling</span>
                         )}
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <label className="block">
-                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Date</span>
+                          <span className="mb-1 block text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Date</span>
                           <input
                             type="date"
                             value={scheduleDate}
                             onChange={(e) => setScheduleDate(e.target.value)}
-                            className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2.5 text-[11px] font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-[12px] font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
                           />
                         </label>
                         <label className="block">
-                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Time</span>
+                          <span className="mb-1 block text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Time</span>
                           <input
                             type="time"
                             value={scheduleTime}
                             onChange={(e) => setScheduleTime(e.target.value)}
-                            className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2.5 text-[11px] font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-[12px] font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
                           />
                         </label>
                         <label className="block">
-                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Duration</span>
+                          <span className="mb-1 block text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Duration</span>
                           <select
                             value={scheduleDuration}
                             onChange={(e) => setScheduleDuration(Number(e.target.value))}
-                            className="w-full rounded-xl border border-background-200 bg-background-50 px-3 py-2.5 text-[11px] font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
+                            className="w-full rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-[12px] font-semibold text-foreground-900 focus:outline-none focus:ring-2 focus:ring-primary-300"
                           >
                             {[30, 45, 60, 90].map(minutes => (
                               <option key={minutes} value={minutes}>{minutes} min</option>
@@ -2590,7 +2500,7 @@ export default function CoachTimetablePage() {
                         <button
                           onClick={handleScheduleSave}
                           disabled={eventActionBusy}
-                          className="rounded-xl bg-primary-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-primary-500/20 transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                          className="rounded-lg bg-primary-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
                           <AppIcon className="ri-calendar-check-line mr-1"></AppIcon>
                           {selectedEvent.status === 'cancelled' ? 'Schedule Again' : selectedEvent.status === 'scheduled' || selectedEvent.status === 'in-progress' ? 'Reschedule' : 'Schedule'}
@@ -2599,7 +2509,7 @@ export default function CoachTimetablePage() {
                         <button
                           onClick={() => handleEventAction('start')}
                           disabled={eventActionBusy || (selectedEvent.source !== 'catch-up' && !(selectedEvent.meetingLink || selectedEvent.graphWebLink))}
-                          className="rounded-xl bg-emerald-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-emerald-500/20 transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                          className="rounded-lg bg-emerald-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
                           <AppIcon className="ri-play-circle-line mr-1"></AppIcon>Start
                           </button>
@@ -2608,7 +2518,7 @@ export default function CoachTimetablePage() {
                           <button
                             onClick={handleJoinSelectedMeeting}
                             disabled={eventActionBusy}
-                            className="rounded-xl bg-emerald-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-emerald-500/20 transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                            className="rounded-lg bg-emerald-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                           >
                             <AppIcon className="ri-video-on-line mr-1"></AppIcon>Join
                           </button>
@@ -2617,7 +2527,7 @@ export default function CoachTimetablePage() {
                           <button
                             onClick={selectedEvent.source === 'progress-review' ? openSelectedProgressReviewForm : () => handleEventAction('complete')}
                             disabled={eventActionBusy}
-                            className="rounded-xl bg-secondary-500 px-3.5 py-2.5 text-[11px] font-bold text-white shadow-sm shadow-secondary-500/20 transition-smooth hover:bg-secondary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                            className="rounded-lg bg-secondary-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-secondary-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                           >
                             <AppIcon className={`${selectedEvent.source === 'progress-review' ? 'ri-file-edit-line' : 'ri-check-double-line'} mr-1`}></AppIcon>
                             {selectedEvent.source === 'progress-review' ? 'Open review form' : 'Complete'}
@@ -2627,7 +2537,7 @@ export default function CoachTimetablePage() {
                           <button
                             onClick={() => handleEventAction('cancel')}
                             disabled={eventActionBusy}
-                            className="rounded-xl border border-red-200 bg-white px-3.5 py-2.5 text-[11px] font-bold text-red-700 transition-smooth hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                            className="rounded-lg border border-red-200 bg-white px-3.5 py-2.5 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                           >
                             <AppIcon className="ri-close-circle-line mr-1"></AppIcon>Cancel
                           </button>
@@ -2637,18 +2547,18 @@ export default function CoachTimetablePage() {
                   )}
                   {selectedEvent.status === 'awaiting-signature' && selectedEvent.source === 'progress-review' && (
                     <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-violet-700">
                         <AppIcon className="ri-pen-nib-line"></AppIcon>
                       </span>
                       <div className="flex-1">
                         <p className="text-xs font-bold text-violet-900">Waiting for line manager signature</p>
-                        <p className="mt-1 text-[11px] text-violet-700">The review form has been submitted. Confirm the manager signature to complete this PR.</p>
+                        <p className="mt-1 text-[12px] text-violet-700">The review form has been submitted. Confirm the manager signature to complete this PR.</p>
                       </div>
                       <button
                         type="button"
                         onClick={() => handleEventAction('sign')}
                         disabled={eventActionBusy}
-                        className="whitespace-nowrap rounded-xl bg-violet-700 px-4 py-2.5 text-[11px] font-bold text-white transition hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="whitespace-nowrap rounded-lg bg-violet-700 px-4 py-2.5 text-[12px] font-bold text-white transition hover:bg-violet-800 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <AppIcon className="ri-quill-pen-line mr-1.5"></AppIcon>Confirm Signature
                       </button>
@@ -2659,34 +2569,31 @@ export default function CoachTimetablePage() {
                 <div className="p-4 md:p-5">
                   <div className="mb-4 flex items-center justify-between gap-3">
                     <h3 className="flex items-center gap-2 text-sm font-heading font-bold text-foreground-950">
-                      <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
                         <AppIcon className="ri-information-line"></AppIcon>
                       </span>
                       Event Details
                     </h3>
-                    <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">
+                    <span className="rounded-full bg-background-100 px-2.5 py-1 text-[12px] font-semibold text-foreground-500">
                       {selectedDayEvents.length} today
                     </span>
                   </div>
-                  <div className="rounded-2xl border border-dashed border-background-300 bg-gradient-to-br from-background-50 to-primary-50/50 px-4 py-6 text-center">
-                    <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-primary-500 shadow-sm">
-                      <AppIcon className="ri-calendar-event-line text-lg"></AppIcon>
-                    </span>
-                    <p className="text-sm font-heading font-bold text-foreground-900">No event selected</p>
-                    <p className="mx-auto mt-1 max-w-[240px] text-[11px] leading-5 text-foreground-500">
-                      {selectedDayEvents.length > 0
-                        ? `${selectedDayEvents.length} event${selectedDayEvents.length === 1 ? '' : 's'} on the selected day.`
-                        : 'The selected day has no scheduled events.'}
-                    </p>
-                    <div className="mt-4 grid grid-cols-2 gap-2 text-left">
-                      <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Selected Day</p>
-                        <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{selectedDayEvents.length}</p>
-                      </div>
-                      <div className="rounded-xl border border-background-200 bg-white px-3 py-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Next 7 Days</p>
-                        <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{upcomingEvents.length}</p>
-                      </div>
+                  <EmptyState
+                    size="sm"
+                    icon="ri-calendar-event-line"
+                    title="No event selected"
+                    description={selectedDayEvents.length > 0
+                      ? `${selectedDayEvents.length} event${selectedDayEvents.length === 1 ? '' : 's'} on the selected day.`
+                      : 'The selected day has no scheduled events.'}
+                  />
+                  <div className="mt-1 grid grid-cols-2 gap-2 text-left">
+                    <div className="rounded-lg border border-background-200 bg-white px-3 py-2">
+                      <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Selected Day</p>
+                      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{selectedDayEvents.length}</p>
+                    </div>
+                    <div className="rounded-lg border border-background-200 bg-white px-3 py-2">
+                      <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Next 7 Days</p>
+                      <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{upcomingEvents.length}</p>
                     </div>
                   </div>
                 </div>
@@ -2697,12 +2604,12 @@ export default function CoachTimetablePage() {
             <div className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm ring-1 ring-black/[0.02]">
               <div className="flex items-center justify-between gap-3 border-b border-background-100 bg-background-50/80 px-4 py-3 md:px-5">
                 <h3 className="flex items-center gap-2 text-sm font-heading font-bold text-foreground-950">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
                     <AppIcon className="ri-calendar-todo-line"></AppIcon>
                   </span>
                   Next 7 Days
                 </h3>
-                <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-semibold text-foreground-500 shadow-sm">
+                <span className="rounded-full bg-white px-2.5 py-1 text-[12px] font-semibold text-foreground-500 shadow-sm">
                   {upcomingEvents.length}
                 </span>
               </div>
@@ -2717,32 +2624,35 @@ export default function CoachTimetablePage() {
                       <button
                         key={ev.id}
                         onClick={() => focusEventOnCalendar(ev)}
-                        className={`group flex w-full items-stretch gap-3 rounded-xl border p-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${
+                        className={`group flex w-full items-stretch gap-3 rounded-lg border p-2.5 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm ${
                           selectedEvent?.id === ev.id
                             ? 'border-primary-300 bg-primary-50/60 ring-2 ring-primary-100'
                             : 'border-background-200 bg-white hover:border-primary-200 hover:bg-primary-50/20'
                         }`}
                       >
-                        <div className="flex w-12 shrink-0 flex-col overflow-hidden rounded-xl border border-background-200 bg-background-50 text-center">
-                          <span className="bg-background-100 px-1 py-1 text-[9px] font-bold uppercase tracking-wide text-foreground-500">
+                        <div className="flex w-12 shrink-0 flex-col overflow-hidden rounded-lg border border-background-200 bg-background-50 text-center">
+                          <span className="bg-background-100 px-1 py-1 text-[12px] font-bold uppercase tracking-wide text-foreground-500">
                             {MONTH_NAMES[ev.month].slice(0, 3)}
                           </span>
                           <span className="px-1 py-1.5 text-lg font-heading font-bold leading-none text-foreground-950">
                             {ev.dayOfMonth}
                           </span>
                         </div>
+                        {ev.learner ? (
+                          <LearnerAvatar name={ev.learner} size="sm" className="mt-0.5 shrink-0" />
+                        ) : null}
                         <div className="min-w-0 flex-1">
                           <div className="mb-1 flex items-center gap-1.5">
                             <span className={`h-2 w-2 shrink-0 rounded-full ${tc.dot}`}></span>
-                            <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tc.bg} ${tc.text}`}>
+                            <span className={`rounded-full px-2 py-0.5 text-[12px] font-bold ${tc.bg} ${tc.text}`}>
                               {sourceLabel}
                             </span>
-                            <span className={`rounded-full border px-2 py-0.5 text-[9px] font-semibold ${statusBadge(ev.status)}`}>
+                            <span className={`rounded-full px-2 py-0.5 text-[12px] font-semibold ${statusPillClass(ev.status)}`}>
                               {statusLabel(ev.status)}
                             </span>
                           </div>
                           <p className="truncate text-[12px] font-heading font-bold leading-tight text-foreground-950">{ev.title}</p>
-                          <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] font-medium text-foreground-500">
+                          <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[12px] font-medium text-foreground-500">
                             <AppIcon className="ri-time-line text-foreground-400"></AppIcon>
                             <span className="shrink-0">{formatTime(ev.startHour)}</span>
                             {(ev.learner || ev.programme) && (
@@ -2760,13 +2670,12 @@ export default function CoachTimetablePage() {
                     );
                   })}
                 {upcomingEvents.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-background-300 bg-background-50 px-4 py-8 text-center">
-                    <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-white text-foreground-300">
-                      <AppIcon className="ri-calendar-check-line text-lg"></AppIcon>
-                    </span>
-                    <p className="text-sm font-heading font-bold text-foreground-800">No upcoming events in the next 7 days</p>
-                    <p className="mt-1 text-[11px] text-foreground-500">Nothing is scheduled over the next 7 days.</p>
-                  </div>
+                  <EmptyState
+                    size="sm"
+                    icon="ri-calendar-check-line"
+                    title="No upcoming events in the next 7 days"
+                    description="Nothing is scheduled over the next 7 days."
+                  />
                 )}
               </div>
             </div>
@@ -2777,13 +2686,13 @@ export default function CoachTimetablePage() {
       {createSessionOpen && (
         <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={closeCreateSessionModal}>
           <div
-            className="w-full max-w-[700px] max-h-[90vh] overflow-y-auto rounded-[24px] border border-background-200 bg-background-50 shadow-[0_24px_60px_-32px_rgba(15,8,40,0.32)]"
+            className="w-full max-w-[700px] max-h-[90vh] overflow-y-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm"
             onClick={event => event.stopPropagation()}
           >
             <div className="border-b border-background-200/70 bg-background-50 px-4 py-4 md:px-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[10px] font-semibold text-primary-700">
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[12px] font-semibold text-primary-700">
                     <AppIcon className="ri-user-star-line"></AppIcon>
                     Coach Calendar
                   </div>
@@ -2795,7 +2704,7 @@ export default function CoachTimetablePage() {
                 <button
                   type="button"
                   onClick={closeCreateSessionModal}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-background-200 text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-background-200 text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer"
                   aria-label="Close create session modal"
                 >
                   <AppIcon className="ri-close-line text-base"></AppIcon>
@@ -2807,23 +2716,27 @@ export default function CoachTimetablePage() {
               <section>
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Learner</p>
+                    <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Learner</p>
                     <p className="mt-1 text-[12px] text-foreground-500">Choose who this session is for.</p>
                   </div>
-                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">
+                  <span className="rounded-full bg-background-100 px-2.5 py-1 text-[12px] font-semibold text-foreground-500">
                     {createSessionLearnerOptions.length} learner{createSessionLearnerOptions.length === 1 ? '' : 's'}
                   </span>
                 </div>
                 <div className="relative">
-                  <div className={`rounded-[18px] border bg-white shadow-sm transition-smooth ${
+                  <div className={`rounded-lg border bg-white shadow-sm transition-smooth ${
                     createSessionLearnerPickerOpen
                       ? 'border-primary-300 ring-4 ring-primary-100/80'
                       : 'border-background-200 hover:border-primary-200'
                   }`}>
                     <div className="flex min-h-[56px] items-center gap-3 px-3 py-2">
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-50 text-[12px] font-bold text-primary-700 ring-1 ring-primary-100">
-                        {selectedCreateSessionLearner ? buildInitials(selectedCreateSessionLearner.name) : <AppIcon className="ri-search-line text-base"></AppIcon>}
-                      </span>
+                      {selectedCreateSessionLearner ? (
+                        <LearnerAvatar name={selectedCreateSessionLearner.name} size="md" />
+                      ) : (
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-primary-700 ring-1 ring-primary-100">
+                          <AppIcon className="ri-search-line text-base"></AppIcon>
+                        </span>
+                      )}
                       <input
                         type="text"
                         value={createSessionLearnerPickerOpen ? createSessionLearnerSearch : (selectedCreateSessionLearner?.label || '')}
@@ -2872,7 +2785,7 @@ export default function CoachTimetablePage() {
                   </div>
 
                   {createSessionLearnerPickerOpen && (
-                    <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-[110] overflow-hidden rounded-[18px] border border-background-200 bg-white shadow-2xl shadow-foreground-900/12">
+                    <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-[110] overflow-hidden rounded-lg border border-background-200 bg-white shadow-sm">
                       <div className="max-h-[260px] overflow-y-auto p-2">
                         {filteredCreateSessionLearners.length > 0 ? (
                           filteredCreateSessionLearners.map(option => {
@@ -2891,14 +2804,14 @@ export default function CoachTimetablePage() {
                                   isSelected ? 'bg-primary-50 text-primary-800' : 'text-foreground-800 hover:bg-background-100'
                                 }`}
                               >
-                                <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[12px] font-bold ${
-                                  isSelected ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-600'
-                                }`}>
-                                  {buildInitials(option.name)}
-                                </span>
+                                <LearnerAvatar
+                                  name={option.name}
+                                  size="md"
+                                  className={isSelected ? 'bg-primary-100 text-primary-700 ring-primary-200' : 'bg-background-100 text-foreground-600 ring-transparent'}
+                                />
                                 <span className="min-w-0 flex-1">
                                   <span className="block truncate text-sm font-semibold">{option.name}</span>
-                                  <span className="mt-0.5 block truncate text-[11px] text-foreground-500">
+                                  <span className="mt-0.5 block truncate text-[12px] text-foreground-500">
                                     {[option.programme, option.cohort, option.email].filter(value => value && value !== '--').join(' · ') || 'No extra details'}
                                   </span>
                                 </span>
@@ -2908,11 +2821,11 @@ export default function CoachTimetablePage() {
                           })
                         ) : (
                           <div className="px-4 py-8 text-center">
-                            <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-background-100 text-foreground-300">
+                            <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-background-100 text-foreground-300">
                               <AppIcon className="ri-search-line text-lg"></AppIcon>
                             </span>
                             <p className="text-sm font-semibold text-foreground-800">No learners found</p>
-                            <p className="mt-1 text-[11px] text-foreground-500">Try another name, email, or programme.</p>
+                            <p className="mt-1 text-[12px] text-foreground-500">Try another name, email, or programme.</p>
                           </div>
                         )}
                       </div>
@@ -2920,12 +2833,12 @@ export default function CoachTimetablePage() {
                   )}
                 </div>
                 {createSessionLearnerOptions.length === 0 && (
-                  <p className="mt-2 text-[11px] text-amber-700">No active learners are available in this coach caseload right now.</p>
+                  <p className="mt-2 text-[12px] text-amber-700">No active learners are available in this coach caseload right now.</p>
                 )}
               </section>
 
               <section>
-                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Session Type</p>
+                <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Session Type</p>
                 <p className="mt-1 text-[12px] text-foreground-500">Choose the kind of session you want to create.</p>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   {[
@@ -2938,13 +2851,13 @@ export default function CoachTimetablePage() {
                         key={sessionType.value}
                         type="button"
                         onClick={() => setCreateSessionType(sessionType.value)}
-                        className={`rounded-[20px] border px-4 py-4 text-left transition-smooth cursor-pointer ${
+                        className={`rounded-2xl border px-4 py-4 text-left transition-smooth cursor-pointer ${
                           isActive
                             ? 'border-primary-300 bg-primary-50 shadow-sm ring-2 ring-primary-100'
                             : 'border-background-200 bg-white hover:border-primary-200 hover:bg-primary-50/40'
                         }`}
                       >
-                        <span className={`mb-3 flex h-10 w-10 items-center justify-center rounded-xl ${isActive ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}>
+                        <span className={`mb-3 flex h-10 w-10 items-center justify-center rounded-lg ${isActive ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}>
                           <AppIcon className={`${sessionType.icon} text-base`}></AppIcon>
                         </span>
                         <p className="text-[18px] font-heading font-semibold text-foreground-950">{sessionType.label}</p>
@@ -2957,34 +2870,34 @@ export default function CoachTimetablePage() {
 
               <section className="grid gap-3 md:grid-cols-2">
                 <label className="block">
-                  <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Date</span>
+                  <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Date</span>
                   <input
                     type="date"
                     value={createSessionDate}
                     min={todayInputValue}
                     onChange={event => setCreateSessionDate(event.target.value)}
-                    className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                    className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                   />
                 </label>
 
                 <label className="block">
-                  <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Time</span>
+                  <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Time</span>
                   <input
                     type="time"
                     value={createSessionTime}
                     onChange={event => setCreateSessionTime(event.target.value)}
-                    className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                    className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                   />
                 </label>
               </section>
 
               <section>
                 <label className="block">
-                  <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Duration</span>
+                  <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Duration</span>
                   <select
                     value={createSessionDuration}
                     onChange={event => setCreateSessionDuration(Number(event.target.value))}
-                    className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                    className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                   >
                     {[30, 45, 60, 90].map(minutes => (
                       <option key={minutes} value={minutes}>{minutes === 60 ? '1 hour' : `${minutes} minutes`}</option>
@@ -2995,16 +2908,16 @@ export default function CoachTimetablePage() {
 
               <section>
                 <label className="block">
-                  <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Notes (Optional)</span>
+                  <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Notes (Optional)</span>
                   <textarea
                     value={createSessionNotes}
                     onChange={event => setCreateSessionNotes(event.target.value.slice(0, 500))}
                     placeholder="Add anything the learner should know before the session..."
                     rows={4}
-                    className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm placeholder:text-foreground-400 focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none"
+                    className="w-full rounded-lg border border-background-200 bg-white px-4 py-3 text-sm font-medium text-foreground-900 shadow-sm placeholder:text-foreground-400 focus:outline-none focus:ring-2 focus:ring-primary-200 resize-none"
                   />
                 </label>
-                <p className="mt-1 text-[10px] text-foreground-400">{createSessionNotes.length}/500</p>
+                <p className="mt-1 text-[12px] text-foreground-400">{createSessionNotes.length}/500</p>
               </section>
 
               {createSessionError && (
@@ -3017,7 +2930,7 @@ export default function CoachTimetablePage() {
                 <button
                   type="button"
                   onClick={closeCreateSessionModal}
-                  className="rounded-[18px] border border-background-200 px-4 py-2.5 text-sm font-semibold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer"
+                  className="rounded-lg border border-background-200 px-4 py-2.5 text-sm font-semibold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -3025,7 +2938,7 @@ export default function CoachTimetablePage() {
                   type="button"
                   onClick={handleCreateSession}
                   disabled={createSessionBusy || !createSessionLearnerId || !createSessionDate || !createSessionTime}
-                  className="inline-flex items-center gap-2 rounded-[18px] bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <AppIcon className={`${createSessionBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></AppIcon>
                   {createSessionBusy ? 'Booking...' : 'Book Session'}
@@ -3036,18 +2949,18 @@ export default function CoachTimetablePage() {
         </div>
       )}
           </div>
-        </div>
+      </PageContainer>
 
       {scheduleModalOpen && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={closeScheduleModal}>
           <div
-            className="w-full max-w-[720px] max-h-[88vh] overflow-y-auto rounded-[24px] border border-background-200 bg-background-50 shadow-[0_24px_60px_-32px_rgba(15,8,40,0.32)]"
+            className="w-full max-w-[720px] max-h-[88vh] overflow-y-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm"
             onClick={event => event.stopPropagation()}
           >
             <div className="border-b border-background-200/70 bg-background-50 px-4 py-4 md:px-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[10px] font-semibold text-primary-700">
+                  <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[12px] font-semibold text-primary-700">
                     <AppIcon className="ri-calendar-schedule-line"></AppIcon>
                     Coach Scheduler
                   </div>
@@ -3059,7 +2972,7 @@ export default function CoachTimetablePage() {
                 <button
                   type="button"
                   onClick={closeScheduleModal}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl border border-background-200 text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-background-200 text-foreground-400 transition-smooth hover:bg-background-100 hover:text-foreground-700 cursor-pointer"
                   aria-label="Close scheduler"
                 >
                   <AppIcon className="ri-close-line text-base"></AppIcon>
@@ -3071,7 +2984,7 @@ export default function CoachTimetablePage() {
               <section>
                 <div className="mb-2">
                   <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Source</p>
+                    <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-foreground-400">Source</p>
                     <p className="mt-1 text-[12px] text-foreground-500">Pick the queue.</p>
                   </div>
                 </div>
@@ -3084,22 +2997,22 @@ export default function CoachTimetablePage() {
                         key={source}
                         type="button"
                         onClick={() => setScheduleModalType(source)}
-                        className={`rounded-[18px] border px-3.5 py-3 text-left transition-smooth cursor-pointer ${
+                        className={`rounded-lg border px-3.5 py-3 text-left transition-smooth cursor-pointer ${
                           isActive
                             ? 'border-primary-300 bg-primary-50 shadow-sm ring-2 ring-primary-100'
                             : 'border-background-200 bg-white hover:border-primary-200 hover:bg-primary-50/40'
                         }`}
                       >
                         <div className="flex items-center justify-between gap-3">
-                          <span className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br ${meta.surface} ${meta.accent}`}>
+                          <span className={`flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br ${meta.surface} ${meta.accent}`}>
                             <AppIcon className={`${meta.icon} text-base`}></AppIcon>
                           </span>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isActive ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-500'}`}>
+                          <span className={`rounded-full px-2 py-0.5 text-[12px] font-semibold ${isActive ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-500'}`}>
                             {scheduleSourceCounts[source]}
                           </span>
                         </div>
                         <p className="mt-2 text-[15px] font-heading font-semibold text-foreground-950">{SOURCE_FILTER_LABELS[source]}</p>
-                        <p className="mt-0.5 text-[11px] leading-5 text-foreground-500">{meta.description}</p>
+                        <p className="mt-0.5 text-[12px] leading-5 text-foreground-500">{meta.description}</p>
                       </button>
                     );
                   })}
@@ -3107,12 +3020,12 @@ export default function CoachTimetablePage() {
               </section>
 
               {scheduleTypeEvents.length === 0 ? (
-                <div className="rounded-[20px] border border-dashed border-background-300 bg-background-100/60 px-4 py-8 text-center">
-                  <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-background-50 text-foreground-300">
+                <div className="rounded-2xl border border-dashed border-background-300 bg-background-100/60 px-4 py-8 text-center">
+                  <span className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-background-50 text-foreground-300">
                     <AppIcon className="ri-inbox-archive-line text-lg"></AppIcon>
                   </span>
                   <p className="text-sm font-semibold text-foreground-800">No {SOURCE_FILTER_LABELS[scheduleModalType].toLowerCase()} items are available right now.</p>
-                  <p className="mt-1 text-[11px] text-foreground-500">
+                  <p className="mt-1 text-[12px] text-foreground-500">
                     Switch source or come back when a learner item is ready to be placed on the calendar.
                   </p>
                 </div>
@@ -3121,18 +3034,18 @@ export default function CoachTimetablePage() {
                   <section>
                     <div className="mb-2 flex items-center justify-between gap-3">
                       <div>
-                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Selection</p>
+                        <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Selection</p>
                         <p className="mt-1 text-[12px] text-foreground-500">Choose learner first, then the session.</p>
                       </div>
-                      <span className="rounded-full bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-500">
+                      <span className="rounded-full bg-background-100 px-2.5 py-1 text-[12px] font-semibold text-foreground-500">
                         {scheduleLearnerOptions.length} learner{scheduleLearnerOptions.length === 1 ? '' : 's'}
                       </span>
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
                         <div className="mb-2 flex items-center justify-between gap-2">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Learner</p>
-                          <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
+                          <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Learner</p>
+                          <span className="rounded-full bg-background-100 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">
                             {scheduleLearnerOptions.length}
                           </span>
                         </div>
@@ -3142,14 +3055,14 @@ export default function CoachTimetablePage() {
                           onChange={setScheduleModalLearnerKey}
                           placeholder="Choose learner"
                           className="w-full"
-                          buttonClassName="h-[50px] rounded-[18px] border-background-200 px-4 text-sm font-medium shadow-sm hover:border-primary-200 focus:border-primary-300 focus:ring-primary-100"
-                          menuClassName="rounded-[18px] border-background-200 py-2 shadow-2xl shadow-foreground-900/10"
+                          buttonClassName="h-[50px] rounded-lg border-background-200 px-4 text-sm font-medium shadow-sm hover:border-primary-200 focus:border-primary-300 focus:ring-primary-100"
+                          menuClassName="rounded-lg border-background-200 py-2 shadow-sm"
                         />
                       </div>
                       <div>
                         <div className="mb-2 flex items-center justify-between gap-2">
-                          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Session</p>
-                          <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
+                          <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Session</p>
+                          <span className="rounded-full bg-background-100 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">
                             {scheduleEventOptions.length}
                           </span>
                         </div>
@@ -3160,22 +3073,22 @@ export default function CoachTimetablePage() {
                           placeholder="Choose session"
                           disabled={!scheduleModalLearnerKey || scheduleEventSelectOptions.length === 0}
                           className="w-full"
-                          buttonClassName="h-[50px] rounded-[18px] border-background-200 px-4 text-sm font-medium shadow-sm hover:border-primary-200 focus:border-primary-300 focus:ring-primary-100"
-                          menuClassName="rounded-[18px] border-background-200 py-2 shadow-2xl shadow-foreground-900/10"
+                          buttonClassName="h-[50px] rounded-lg border-background-200 px-4 text-sm font-medium shadow-sm hover:border-primary-200 focus:border-primary-300 focus:ring-primary-100"
+                          menuClassName="rounded-lg border-background-200 py-2 shadow-sm"
                         />
                       </div>
                     </div>
                     {selectedScheduleEvent && (
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <span className="rounded-full border border-background-200 bg-background-50 px-3 py-1 text-[11px] font-semibold text-foreground-900">
+                          <span className="rounded-full border border-background-200 bg-background-50 px-3 py-1 text-[12px] font-semibold text-foreground-900">
                             {selectedScheduleEvent.learner || 'Learner'}
                           </span>
                           {selectedScheduleEvent.programme && (
-                            <span className="rounded-full border border-background-200 bg-background-50 px-3 py-1 text-[11px] text-foreground-600">
+                            <span className="rounded-full border border-background-200 bg-background-50 px-3 py-1 text-[12px] text-foreground-600">
                               {selectedScheduleEvent.programme}
                             </span>
                           )}
-                          <span className="rounded-full border border-background-200 bg-background-50 px-3 py-1 text-[11px] text-foreground-600">
+                          <span className="rounded-full border border-background-200 bg-background-50 px-3 py-1 text-[12px] text-foreground-600">
                             Due {formatCompactDate(selectedScheduleEvent.targetDate || selectedScheduleEvent.date)}
                           </span>
                       </div>
@@ -3184,38 +3097,38 @@ export default function CoachTimetablePage() {
 
                   <section>
                     <div className="mb-2">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Schedule Details</p>
+                      <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Schedule Details</p>
                       <p className="mt-1 text-[12px] text-foreground-500">Set date, time, and duration.</p>
                     </div>
                   </section>
 
                   <section className="grid gap-3 md:grid-cols-3">
                     <label className="block">
-                      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Date</span>
+                      <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Date</span>
                       <input
                         type="date"
                         value={scheduleModalDate}
                         onChange={event => setScheduleModalDate(event.target.value)}
-                        className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                       />
                     </label>
 
                     <label className="block">
-                      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Start Time</span>
+                      <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Start Time</span>
                       <input
                         type="time"
                         value={scheduleModalTime}
                         onChange={event => setScheduleModalTime(event.target.value)}
-                        className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                       />
                     </label>
 
                     <label className="block">
-                      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Duration</span>
+                      <span className="mb-2 block text-[12px] font-semibold uppercase tracking-[0.16em] text-foreground-400">Duration</span>
                       <select
                         value={scheduleModalDuration}
                         onChange={event => setScheduleModalDuration(Number(event.target.value))}
-                        className="w-full rounded-[18px] border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
+                        className="w-full rounded-lg border border-background-200 bg-white px-4 py-2.5 text-sm font-medium text-foreground-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-200"
                       >
                         {[30, 45, 60, 90].map(minutes => (
                           <option key={minutes} value={minutes}>{minutes} minutes</option>
@@ -3225,8 +3138,8 @@ export default function CoachTimetablePage() {
                   </section>
 
                   {selectedScheduleEvent && (
-                    <section className="rounded-[18px] border border-primary-200/70 bg-primary-50/60 px-3.5 py-3">
-                      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-foreground-700">
+                    <section className="rounded-lg border border-primary-200/70 bg-primary-50/60 px-3.5 py-3">
+                      <div className="flex flex-wrap items-center gap-1.5 text-[12px] text-foreground-700">
                         <span className="rounded-full bg-white px-2.5 py-1 font-semibold text-foreground-900">{SOURCE_FILTER_LABELS[scheduleModalType]}</span>
                         <span className="rounded-full bg-white px-2.5 py-1">{selectedScheduleEvent.learner || 'Learner'}</span>
                         <span className="rounded-full bg-white px-2.5 py-1">{scheduleModalDate || 'Choose date'}</span>
@@ -3234,7 +3147,7 @@ export default function CoachTimetablePage() {
                         <span className="rounded-full bg-white px-2.5 py-1">{scheduleModalDuration} min</span>
                       </div>
                       {selectedScheduleEventNotes && (
-                        <p className="mt-2 text-[11px] leading-5 text-foreground-500">
+                        <p className="mt-2 text-[12px] leading-5 text-foreground-500">
                           {selectedScheduleEventNotes}
                         </p>
                       )}
@@ -3254,14 +3167,14 @@ export default function CoachTimetablePage() {
               )}
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-background-200/70 pt-3">
-                <p className="text-[11px] text-foreground-500">
+                <p className="text-[12px] text-foreground-500">
                   The original learner item stays linked to its source record.
                 </p>
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
                     onClick={closeScheduleModal}
-                    className="rounded-[18px] border border-background-200 px-4 py-2.5 text-sm font-semibold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer"
+                    className="rounded-lg border border-background-200 px-4 py-2.5 text-sm font-semibold text-foreground-600 transition-smooth hover:bg-background-100 cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -3269,7 +3182,7 @@ export default function CoachTimetablePage() {
                     type="button"
                     onClick={handleModalScheduleSave}
                     disabled={scheduleModalBusy || !selectedScheduleEvent}
-                    className="inline-flex items-center gap-2 rounded-[18px] bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-primary-500/20 transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="inline-flex items-center gap-2 rounded-lg bg-primary-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-smooth hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <AppIcon className={`${scheduleModalBusy ? 'ri-loader-4-line animate-spin' : 'ri-calendar-check-line'} text-base`}></AppIcon>
                     {scheduleModalBusy ? 'Scheduling...' : 'Place on Calendar'}

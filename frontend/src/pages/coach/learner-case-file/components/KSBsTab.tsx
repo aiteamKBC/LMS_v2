@@ -1,5 +1,9 @@
 import { useMemo, useState } from 'react';
-import { EmptyState } from '@/pages/users/components/ui';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { Panel } from '@/components/ui/Panel';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import { formatDisplayDate, formatPercent, type CaseFileTabProps } from '../data';
 
 type KsbCoverageStatus = 'passed-link' | 'attempt-link' | 'unlinked';
@@ -56,19 +60,24 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
 
   if (rows.length === 0) {
     return (
-      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-6">
-        <EmptyState text="No KSB definitions were returned for this learner yet." />
-      </div>
+      <Panel padding="lg">
+        <EmptyState
+          variant="empty"
+          size="md"
+          title="No KSBs defined"
+          description="No KSB definitions were returned for this learner yet."
+        />
+      </Panel>
     );
   }
 
   return (
     <div className="space-y-5">
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard icon="ri-stack-line" label="Defined KSBs" value={String(rows.length)} tone="primary" />
-        <StatCard icon="ri-links-line" label="Progress Linked" value={String(linkedCount)} tone="accent" />
-        <StatCard icon="ri-check-double-line" label="Passed Quiz Link" value={String(passedCount)} tone="emerald" />
-        <StatCard icon="ri-focus-3-line" label="Unlinked" value={String(uncoveredCount)} tone="amber" />
+        <MetricCard icon="ri-stack-line" label="Defined KSBs" value={rows.length} tone="brand" />
+        <MetricCard icon="ri-links-line" label="Progress Linked" value={linkedCount} tone="upcoming" />
+        <MetricCard icon="ri-check-double-line" label="Passed Quiz Link" value={passedCount} tone="positive" />
+        <MetricCard icon="ri-focus-3-line" label="Unlinked" value={uncoveredCount} tone="caution" />
       </section>
 
       <section className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
@@ -82,7 +91,7 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
                 {formatPercent(coveragePercent)} of programme KSBs have at least one learner progress link.
               </p>
             </div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800 max-w-xl">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800 max-w-xl">
               Validation is not exposed by the current backend. The statuses below reflect live learner progress, while
               the passed state still comes from quiz results only.
             </div>
@@ -93,12 +102,12 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
               <div key={row.category} className="rounded-xl border border-background-200/70 bg-background-100/50 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-[13px] font-semibold text-foreground-900">{row.category}</p>
-                  <span className="text-[11px] text-foreground-500">{row.linked}/{row.total}</span>
+                  <span className="text-[12px] text-foreground-500">{row.linked}/{row.total}</span>
                 </div>
                 <div className="w-full h-2 rounded-full bg-background-200 overflow-hidden mt-3">
                   <div className="h-full rounded-full bg-primary-500" style={{ width: `${row.percent}%` }}></div>
                 </div>
-                <p className="text-[11px] text-foreground-400 mt-2">{formatPercent(row.percent)} linked via learner activity</p>
+                <p className="text-[12px] text-foreground-400 mt-2">{formatPercent(row.percent)} linked via learner activity</p>
               </div>
             ))}
           </div>
@@ -124,43 +133,48 @@ export default function KSBsTab({ data }: CaseFileTabProps) {
           </div>
 
           {filteredRows.length === 0 ? (
-            <EmptyState text={`No KSBs matched "${searchTerm.trim()}".`} />
+            <EmptyState
+              variant="no-matches"
+              size="sm"
+              title={`No KSBs match "${searchTerm.trim()}"`}
+            />
           ) : (
             <div className="space-y-3">
-              {filteredRows.map((row) => (
-                <div key={row.code} className="rounded-xl border border-foreground-200/60 bg-background-100/50 p-4">
-                  <div className="flex flex-col md:flex-row md:items-start gap-3">
-                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 font-heading font-bold ${categoryTone(row.category)}`}>
-                      {row.code}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-[13px] font-semibold text-foreground-900">{row.description}</p>
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-background-50 text-foreground-500 border border-background-200">
-                          {row.category}
-                        </span>
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${statusBadge(row.status)}`}>
-                          {statusLabel(row.status)}
-                        </span>
+              {filteredRows.map((row) => {
+                const catStyle = categoryTone(row.category);
+                return (
+                  <div key={row.code} className="rounded-xl border border-foreground-200/60 bg-background-100/50 p-4">
+                    <div className="flex flex-col md:flex-row md:items-start gap-3">
+                      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 font-heading font-bold ${catStyle.bg} ${catStyle.text}`}>
+                        {row.code}
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-foreground-500">
-                        <span>{row.linkCount} progress link(s)</span>
-                        <span>{row.passedCount} passed link(s)</span>
-                        <span>{row.latestSeen ? `Latest seen ${formatDisplayDate(row.latestSeen)}` : 'No linked activity date yet'}</span>
-                      </div>
-                      {row.modules.length > 0 && (
-                        <div className="flex flex-wrap gap-2 mt-3">
-                          {row.modules.map((module) => (
-                            <span key={`${row.code}-${module}`} className="text-[10px] px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200">
-                              {module}
-                            </span>
-                          ))}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-[13px] font-semibold text-foreground-900">{row.description}</p>
+                          <span className="text-[12px] font-medium px-2 py-0.5 rounded-full bg-background-50 text-foreground-500 border border-background-200">
+                            {row.category}
+                          </span>
+                          <StatusBadge tone={ksbStatusTone(row.status)} label={statusLabel(row.status)} />
                         </div>
-                      )}
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[12px] text-foreground-500">
+                          <span>{row.linkCount} progress link(s)</span>
+                          <span>{row.passedCount} passed link(s)</span>
+                          <span>{row.latestSeen ? `Latest seen ${formatDisplayDate(row.latestSeen)}` : 'No linked activity date yet'}</span>
+                        </div>
+                        {row.modules.length > 0 && (
+                          <div className="flex flex-wrap gap-2 mt-3">
+                            {row.modules.map((module) => (
+                              <span key={`${row.code}-${module}`} className="text-[12px] px-2 py-0.5 rounded-full bg-primary-50 text-primary-700 border border-primary-200">
+                                {module}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -285,44 +299,15 @@ function statusLabel(status: KsbCoverageStatus) {
   return 'No progress link';
 }
 
-function statusBadge(status: KsbCoverageStatus) {
-  if (status === 'passed-link') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  if (status === 'attempt-link') return 'bg-amber-50 text-amber-700 border-amber-200';
-  return 'bg-background-50 text-foreground-500 border-background-200';
+function ksbStatusTone(status: KsbCoverageStatus): StatusTone {
+  if (status === 'passed-link') return 'positive';
+  if (status === 'attempt-link') return 'caution';
+  return 'neutral';
 }
 
 function categoryTone(category: string) {
-  if (category === 'Knowledge') return 'bg-primary-100 text-primary-700';
-  if (category === 'Skills') return 'bg-accent-100 text-accent-700';
-  if (category === 'Behaviours') return 'bg-secondary-100 text-secondary-700';
-  return 'bg-background-100 text-foreground-600';
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: string;
-  label: string;
-  value: string;
-  tone: 'primary' | 'accent' | 'emerald' | 'amber';
-}) {
-  const toneMap = {
-    primary: 'bg-primary-100 text-primary-600',
-    accent: 'bg-accent-100 text-accent-600',
-    emerald: 'bg-emerald-100 text-emerald-600',
-    amber: 'bg-amber-100 text-amber-600',
-  } as const;
-
-  return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${toneMap[tone]}`}>
-        <AppIcon className={`${icon} text-base`}></AppIcon>
-      </div>
-      <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
-      <p className="text-[11px] text-foreground-400">{label}</p>
-    </div>
-  );
+  if (category === 'Knowledge') return toneStyle('brand');
+  if (category === 'Skills') return toneStyle('upcoming');
+  if (category === 'Behaviours') return toneStyle('info');
+  return toneStyle('neutral');
 }

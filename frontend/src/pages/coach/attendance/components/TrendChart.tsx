@@ -210,7 +210,7 @@ export default function TrendChart({
                     x={margin.left - 10}
                     y={y + 3}
                     textAnchor="end"
-                    className="text-[10px] fill-foreground-400"
+                    className="text-[12px] fill-foreground-400"
                   >
                     {tick}%
                   </text>
@@ -228,7 +228,7 @@ export default function TrendChart({
                 x={x}
                 y={margin.top + innerHeight + 20}
                 textAnchor="middle"
-                className="text-[10px] fill-foreground-400"
+                className="text-[12px] fill-foreground-400"
               >
                 {d.label}
               </text>
@@ -342,10 +342,10 @@ export default function TrendChart({
             <div className="px-3.5 py-3">
               {/* Header row */}
               <div className="flex items-center gap-2 mb-2 pb-2 border-b border-foreground-200">
-                <span className="text-[10px] font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+                <span className="text-[12px] font-semibold bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
                   {getTooltipPeriodLabel(tooltip)}
                 </span>
-                <span className="text-[10px] text-foreground-500">
+                <span className="text-[12px] text-foreground-500">
                   {tooltip.month || tooltip.label}
                   {tooltip.sessionDate ? ` · ${tooltip.sessionDate}` : ''}
                 </span>
@@ -356,7 +356,7 @@ export default function TrendChart({
                 <span className="text-[22px] font-bold text-red-600">
                   {tooltip.value}%
                 </span>
-                <span className="text-[11px] text-foreground-500 font-medium">
+                <span className="text-[12px] text-foreground-500 font-medium">
                   absence rate
                 </span>
               </div>
@@ -364,19 +364,19 @@ export default function TrendChart({
               {/* Breakdown grid */}
               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-background-200/50">
                 <div className="text-center">
-                  <p className="text-[10px] text-foreground-400 mb-0.5">Attended</p>
+                  <p className="text-[12px] text-foreground-400 mb-0.5">Attended</p>
                   <p className="text-[13px] font-semibold text-emerald-600">
                     {tooltip.attended !== undefined ? tooltip.attended : '—'}
                   </p>
                 </div>
                 <div className="text-center">
-                  <p className="text-[10px] text-foreground-400 mb-0.5">Absent</p>
+                  <p className="text-[12px] text-foreground-400 mb-0.5">Absent</p>
                   <p className="text-[13px] font-semibold text-red-600">
                     {tooltip.absent !== undefined ? tooltip.absent : '—'}
                   </p>
                 </div>
                 <div className="text-center">
-                  <p className="text-[10px] text-foreground-400 mb-0.5">On Break</p>
+                  <p className="text-[12px] text-foreground-400 mb-0.5">On Break</p>
                   <p className="text-[13px] font-semibold text-amber-600">
                     {tooltip.onBreak !== undefined ? tooltip.onBreak : '—'}
                   </p>
