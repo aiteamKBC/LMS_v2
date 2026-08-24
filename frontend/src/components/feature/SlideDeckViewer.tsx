@@ -1,0 +1,385 @@
+// ============================================================================
+// SlideDeckViewer — draws an uploaded PowerPoint deck inline, one slide at a
+// time, from the model produced by /curriculum_api/curriculum/presentations/.
+//
+// Each slide is laid out on a stage of the deck's real pixel size (1280×720 for
+// a 16:9 deck) with every shape absolutely positioned, then the whole stage is
+// CSS-scaled to the available width. That keeps one set of coordinates —
+// PowerPoint's — and lets the browser do the fitting, so the deck stays
+// readable from a phone to a wide monitor.
+// ============================================================================
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
+import {
+  fetchSlideDeck,
+  type Slide,
+  type SlideDeck,
+  type SlideParagraph,
+  type SlideShape,
+  type SlideTableCell,
+} from '@/api/slideDeck';
+
+/** Indent per outline level, in stage pixels (PowerPoint's default is 0.25"). */
+const INDENT_PX = 24;
+
+interface SlideDeckViewerProps {
+  /** The deck's authored resource URL (a site-relative upload path). */
+  src: string;
+  title: string;
+  /** Shown instead of the deck when the server cannot render it. */
+  fallback: (reason: string) => React.ReactNode;
+}
+
+export function SlideDeckViewer({ src, title, fallback }: SlideDeckViewerProps) {
+  const [deck, setDeck] = useState<SlideDeck | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [index, setIndex] = useState(0);
+  const [showNotes, setShowNotes] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setDeck(null);
+    setError(null);
+    setIndex(0);
+    fetchSlideDeck(src, controller.signal)
+      .then(setDeck)
+      .catch((cause: unknown) => {
+        if (cause instanceof DOMException && cause.name === 'AbortError') return;
+        setError(cause instanceof Error ? cause.message : 'The slides could not be loaded.');
+      });
+    return () => controller.abort();
+  }, [src]);
+
+  const slideCount = deck?.slides.length ?? 0;
+  const step = useCallback((delta: number) => {
+    setIndex(current => Math.min(Math.max(current + delta, 0), Math.max(slideCount - 1, 0)));
+  }, [slideCount]);
+
+  if (error) return <>{fallback(error)}</>;
+  if (!deck) {
+    return (
+      <div
+        className="rounded-xl border border-background-300 bg-background-100 animate-pulse"
+        style={{ aspectRatio: '16 / 9' }}
+        role="status"
+        aria-label={`Loading ${title}`}
+      />
+    );
+  }
+  if (!slideCount) return <>{fallback('This deck has no slides to show.')}</>;
+
+  const slide = deck.slides[Math.min(index, slideCount - 1)];
+  return (
+    <div>
+      {/* Arrow keys page through the deck once the viewer has focus — a global
+          listener would fight the page's own scrolling. */}
+      <div
+        tabIndex={0}
+        role="group"
+        aria-label={`${title}: slide ${slide.number} of ${slideCount}`}
+        onKeyDown={event => {
+          if (event.key === 'ArrowRight' || event.key === 'PageDown') { step(1); event.preventDefault(); }
+          if (event.key === 'ArrowLeft' || event.key === 'PageUp') { step(-1); event.preventDefault(); }
+        }}
+        className="rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-orange-500"
+      >
+        <SlideStage slide={slide} widthPx={deck.slideWidthPx} heightPx={deck.slideHeightPx} />
+      </div>
+
+      {deck.sourceMissing && (
+        <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <AppIcon className="ri-error-warning-line mt-0.5 shrink-0" />
+          <span>
+            These slides are a saved copy — the original file is no longer on the server, so the
+            open and download links below won&apos;t work until the deck is uploaded again.
+          </span>
+        </p>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => step(-1)}
+            disabled={index === 0}
+            className="w-9 h-9 rounded-lg border border-background-300 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-transparent"
+            aria-label="Previous slide"
+          >
+            <AppIcon className="ri-arrow-left-s-line text-lg" />
+          </button>
+          <button
+            type="button"
+            onClick={() => step(1)}
+            disabled={index >= slideCount - 1}
+            className="w-9 h-9 rounded-lg border border-background-300 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:hover:bg-transparent"
+            aria-label="Next slide"
+          >
+            <AppIcon className="ri-arrow-right-s-line text-lg" />
+          </button>
+        </div>
+        <p className="text-xs font-semibold text-foreground-600" aria-live="polite">
+          Slide {slide.number} of {slideCount}
+        </p>
+        {slide.notes && (
+          <button
+            type="button"
+            onClick={() => setShowNotes(value => !value)}
+            className="ml-auto inline-flex items-center gap-1.5 text-xs font-semibold text-orange-600 hover:text-orange-700"
+          >
+            <AppIcon className="ri-sticky-note-line" />
+            {showNotes ? 'Hide speaker notes' : 'Speaker notes'}
+          </button>
+        )}
+      </div>
+
+      {slide.notes && showNotes && (
+        <p className="mt-2 whitespace-pre-wrap rounded-lg border border-background-200 bg-background-50 p-3 text-xs leading-relaxed text-foreground-600">
+          {slide.notes}
+        </p>
+      )}
+
+      {/* A strip of slide numbers beats scrubbing with the arrows on a long deck. */}
+      {slideCount > 1 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {deck.slides.map((entry, entryIndex) => (
+            <button
+              key={entry.number}
+              type="button"
+              onClick={() => setIndex(entryIndex)}
+              aria-current={entryIndex === index}
+              className={`h-7 min-w-7 rounded-md px-1.5 text-[11px] font-semibold transition-colors ${
+                entryIndex === index
+                  ? 'bg-orange-500 text-white'
+                  : 'border border-background-300 text-foreground-500 hover:bg-background-100'
+              }`}
+            >
+              {entry.number}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One slide, drawn at its real size and scaled to fit the container width. */
+function SlideStage({ slide, widthPx, heightPx }: { slide: Slide; widthPx: number; heightPx: number }) {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(0);
+
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const measure = () => setScale(frame.clientWidth / widthPx);
+    measure();
+    // ResizeObserver is absent in jsdom, so tests fall back to the one measure.
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, [widthPx]);
+
+  const background = slide.background ?? {};
+  return (
+    <div
+      ref={frameRef}
+      className="relative w-full overflow-hidden rounded-xl border border-background-300"
+      style={{
+        aspectRatio: `${widthPx} / ${heightPx}`,
+        backgroundColor: background.color || '#ffffff',
+        backgroundImage: background.image ? `url(${background.image})` : undefined,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }}
+    >
+      <div
+        style={{
+          width: widthPx,
+          height: heightPx,
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+          // Until the frame has been measured the stage would flash at full
+          // size, overflowing the card.
+          visibility: scale ? 'visible' : 'hidden',
+        }}
+      >
+        {slide.shapes.map((shape, shapeIndex) => (
+          <ShapeView key={shapeIndex} shape={shape} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ShapeView({ shape }: { shape: SlideShape }) {
+  const box: React.CSSProperties = {
+    position: 'absolute',
+    left: shape.x,
+    top: shape.y,
+    width: shape.w,
+    height: shape.h,
+  };
+
+  if (shape.kind === 'image') {
+    return (
+      <img
+        src={shape.src}
+        alt={shape.alt}
+        style={{
+          ...box,
+          objectFit: 'contain',
+          transform: shape.rotation ? `rotate(${shape.rotation}deg)` : undefined,
+        }}
+      />
+    );
+  }
+
+  if (shape.kind === 'note') {
+    return (
+      <div
+        style={{ ...box, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        className="rounded-lg border border-dashed border-foreground-300 bg-background-50/70"
+      >
+        <span className="text-sm font-semibold text-foreground-400">{shape.label}</span>
+      </div>
+    );
+  }
+
+  if (shape.kind === 'table') return <TableView shape={shape} box={box} />;
+
+  const justify = shape.valign === 'middle' ? 'center' : shape.valign === 'bottom' ? 'flex-end' : 'flex-start';
+  const framed = Boolean(shape.fill || shape.line);
+  return (
+    <div
+      style={{
+        ...box,
+        // PowerPoint lets text spill past a plain text box, and the sizes here
+        // are approximations, so clipping would cut real words off. A filled or
+        // outlined shape has a visible edge, and text must stay inside it.
+        overflow: framed ? 'hidden' : 'visible',
+        color: shape.defaultTextColor,
+        // A freeform shape draws its own outline below, so the box stays bare.
+        backgroundColor: shape.path ? undefined : shape.fill || undefined,
+        borderRadius: shape.radius || undefined,
+        border: !shape.path && shape.line ? `${shape.lineWidthPx || 1}px solid ${shape.line}` : undefined,
+        transform: shape.rotation ? `rotate(${shape.rotation}deg)` : undefined,
+      }}
+    >
+      {shape.path && (
+        // Stretched to the shape's box, exactly as PowerPoint scales the path
+        // it stored in its own coordinate space.
+        <svg
+          viewBox={`0 0 ${shape.path.vbW} ${shape.path.vbH}`}
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+        >
+          <path
+            d={shape.path.d}
+            fill={shape.fill || 'none'}
+            stroke={shape.line || 'none'}
+            strokeWidth={shape.line ? (shape.lineWidthPx || 1) * (shape.path.vbW / (shape.w || 1)) : undefined}
+          />
+        </svg>
+      )}
+      {/* Positioned so the text paints above the outline, not under it. */}
+      <div
+        style={{
+          position: 'relative',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: justify,
+        }}
+      >
+        {shape.paragraphs.map((paragraph, paragraphIndex) => (
+          <ParagraphView key={paragraphIndex} paragraph={paragraph} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TableView({ shape, box }: { shape: Extract<SlideShape, { kind: 'table' }>; box: React.CSSProperties }) {
+  return (
+    <table
+      style={{
+        ...box,
+        borderCollapse: 'collapse',
+        tableLayout: 'fixed',
+      }}
+    >
+      <colgroup>
+        {shape.colFractions.map((fraction, columnIndex) => (
+          <col key={columnIndex} style={{ width: `${fraction * 100}%` }} />
+        ))}
+      </colgroup>
+      <tbody>
+        {shape.rows.map((row, rowIndex) => (
+          <tr key={rowIndex} style={{ height: (shape.rowFractions[rowIndex] ?? 0) * shape.h }}>
+            {row.map((cell, cellIndex) => (
+              <CellView key={cellIndex} cell={cell} />
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function CellView({ cell }: { cell: SlideTableCell }) {
+  return (
+    <td
+      colSpan={cell.colSpan > 1 ? cell.colSpan : undefined}
+      rowSpan={cell.rowSpan > 1 ? cell.rowSpan : undefined}
+      style={{
+        backgroundColor: cell.fill || undefined,
+        verticalAlign: cell.valign === 'middle' ? 'middle' : cell.valign === 'bottom' ? 'bottom' : 'top',
+        padding: '4px 8px',
+        overflow: 'hidden',
+      }}
+    >
+      {cell.paragraphs.map((paragraph, paragraphIndex) => (
+        <ParagraphView key={paragraphIndex} paragraph={paragraph} />
+      ))}
+    </td>
+  );
+}
+
+function ParagraphView({ paragraph }: { paragraph: SlideParagraph }) {
+  const runs = paragraph.runs.map((run, runIndex) => (
+    <span
+      key={runIndex}
+      style={{
+        fontSize: run.sizePx,
+        fontWeight: run.bold ? 700 : 400,
+        fontStyle: run.italic ? 'italic' : undefined,
+        textDecoration: run.underline ? 'underline' : undefined,
+        color: run.color || undefined,
+        // The deck's own font if the reader happens to have it, then the app's.
+        fontFamily: run.font ? `'${run.font}', var(--font-sans, sans-serif)` : undefined,
+        whiteSpace: 'pre-wrap',
+      }}
+    >
+      {run.text}
+    </span>
+  ));
+  const style: React.CSSProperties = {
+    margin: 0,
+    textAlign: paragraph.align || undefined,
+    lineHeight: paragraph.lineHeightPx ? `${paragraph.lineHeightPx}px` : (paragraph.lineSpacing || 1.25),
+    paddingLeft: paragraph.level * INDENT_PX,
+  };
+
+  if (!paragraph.bullet) return <p style={style}>{runs}</p>;
+  // A bulleted paragraph hangs its text off the glyph, so wrapped lines line up
+  // with the first line instead of sliding back under the bullet.
+  return (
+    <p style={{ ...style, display: 'flex', gap: '0.5em', textAlign: undefined }}>
+      <span aria-hidden="true" style={{ fontSize: paragraph.runs[0]?.sizePx, lineHeight: 'inherit' }}>
+        {paragraph.bullet}
+      </span>
+      <span style={{ flex: 1, textAlign: paragraph.align || undefined }}>{runs}</span>
+    </p>
+  );
+}

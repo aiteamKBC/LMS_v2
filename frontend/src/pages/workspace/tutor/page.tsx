@@ -1,404 +1,587 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { useAuth } from '@/hooks/useAuth';
+import { useTutorIdentity } from '@/hooks/useTutorIdentity';
+import { clearTutorViewAs, setTutorViewAs } from '@/lib/tutorViewAs';
+import { TutorDirectoryPicker } from './TutorDirectoryPicker';
+import {
+  fetchModuleStructure,
+  fetchTutorWorkspace,
+  type ModuleComponent,
+  type ModuleWeek,
+  type TutorModule,
+  type TutorNextSession,
+  type TutorWorkspace,
+} from '@/api/tutorWorkspace';
+
+/* ═══════════════════════════════════════════════════════
+   TUTOR WORKSPACE
+
+   Two things, both real: the modules this tutor is assigned
+   to deliver, and when their next live session is.
+
+   It replaced a dashboard of mock counters — assignment
+   marking queues, evidence review totals, KSB validation
+   tiles — none of which read from anything. Numbers that do
+   not come from data are worse than an empty page, because
+   they look like work waiting to be done.
+
+   The tutor is resolved from their signed-in account by email
+   first, then by name — the login account and the curriculum
+   tutor profile are separate records with no key in common, so
+   the match is on whatever they share. Modules come from the
+   profile's assignments and from the tutor named on the module
+   itself, merged. An account matching none of that is told
+   exactly that rather than shown an empty timetable — see the
+   unlinked state below.
+   ═══════════════════════════════════════════════════════ */
 
 const tutorNav = roleNavMap.tutor;
 
-type TabKey = 'sessions' | 'learners' | 'evidence' | 'marking' | 'ksb';
-
-interface TutorLearner {
-  name: string;
-  programme: string;
-  cohort: string;
-  progress: number;
-  evidenceSubmitted: number;
-  evidencePending: number;
-  lastSubmission: string;
-  attendance: number;
+/** "Saturday 09:00–11:00", or whichever parts the module actually has. */
+function weeklySlot(module: TutorModule): string {
+  const time = [module.sessionStartTime, module.sessionEndTime].filter(Boolean).join('–');
+  return [module.sessionWeekDay, time].filter(Boolean).join(' ') || 'Not scheduled';
 }
 
-const TUTOR_LEARNERS: TutorLearner[] = [
-  { name: 'Sophie Williams', programme: 'Marketing Executive L4', cohort: 'Cohort C — BA', progress: 42, evidenceSubmitted: 12, evidencePending: 3, lastSubmission: '8 Jun', attendance: 86 },
-  { name: 'Sarah Mitchell', programme: 'Business Admin L3', cohort: 'Cohort A — BA', progress: 68, evidenceSubmitted: 22, evidencePending: 0, lastSubmission: '6 Jun', attendance: 94 },
-  { name: 'James Okonkwo', programme: 'Data Analyst L4', cohort: 'Cohort D — DT', progress: 28, evidenceSubmitted: 5, evidencePending: 4, lastSubmission: '7 Jun', attendance: 78 },
-  { name: 'Emily Watson', programme: 'Digital Marketer L3', cohort: 'Cohort B — DM', progress: 85, evidenceSubmitted: 28, evidencePending: 0, lastSubmission: '5 Jun', attendance: 100 },
-  { name: 'Aisha Patel', programme: 'Accountancy L3', cohort: 'Cohort C — BA', progress: 31, evidenceSubmitted: 4, evidencePending: 3, lastSubmission: '6 Jun', attendance: 83 },
-  { name: 'David Chen', programme: 'Software Developer L4', cohort: 'Cohort F — SWE', progress: 55, evidenceSubmitted: 16, evidencePending: 1, lastSubmission: '4 Jun', attendance: 94 },
-  { name: 'Liam Foster', programme: 'Project Manager L4', cohort: 'Cohort A — BA', progress: 60, evidenceSubmitted: 18, evidencePending: 1, lastSubmission: '4 Jun', attendance: 91 },
-  { name: 'Maya Kapoor', programme: 'HR Consultant L5', cohort: 'Cohort E — EYE', progress: 12, evidenceSubmitted: 2, evidencePending: 2, lastSubmission: '1 Jun', attendance: 100 },
-];
+/** A YYYY-MM-DD date as "1 Aug 2026". Blank stays blank. */
+function shortDate(value: string): string {
+  if (!value) return '';
+  const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
+}
 
-const TUTOR_SESSIONS = [
-  { date: '11 Jun', day: 'Wed', time: '09:00–11:00', module: 'Business Communication', cohort: 'Cohort A — BA', learners: 14, status: 'upcoming' as const },
-  { date: '12 Jun', day: 'Thu', time: '09:00–11:00', module: 'Programming Fundamentals', cohort: 'Cohort F — SWE', learners: 6, status: 'upcoming' as const },
-  { date: '13 Jun', day: 'Fri', time: '09:00–11:00', module: 'Business Admin Practice', cohort: 'Cohort A — BA', learners: 14, status: 'upcoming' as const },
-  { date: '16 Jun', day: 'Mon', time: '09:00–11:00', module: 'Business Communication', cohort: 'Cohort A — BA', learners: 14, status: 'scheduled' as const },
-  { date: '18 Jun', day: 'Wed', time: '09:00–11:00', module: 'Business Communication', cohort: 'Cohort A — BA', learners: 14, status: 'scheduled' as const },
-  { date: '20 Jun', day: 'Fri', time: '09:00–11:00', module: 'Business Admin Practice', cohort: 'Cohort A — BA', learners: 14, status: 'scheduled' as const },
-];
+/**
+ * A naive ISO stamp as "Friday 28 August 2026" + "07:30".
+ *
+ * Parsed as local deliberately: the stored value has no offset and the series
+ * carries its own `timezone`, which is shown beside the time rather than used to
+ * convert. Converting would mean guessing which zone the stamp was naive in.
+ */
+function sessionMoment(iso: string): { day: string; time: string } {
+  if (!iso) return { day: '', time: '' };
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return { day: iso, time: '' };
+  return {
+    day: new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(date),
+    time: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date),
+  };
+}
 
-const MARKING_QUEUE = [
-  { id: 'mk-01', learner: 'Sophie Williams', assignment: 'Campaign Segmentation Worksheet', module: 'Marketing Planning', submitted: '8 Jun', type: 'Assignment', status: 'pending' as const, wordCount: 1200 },
-  { id: 'mk-02', learner: 'James Okonkwo', assignment: 'Data Visualisation Report', module: 'Data Analysis', submitted: '7 Jun', type: 'Report', status: 'pending' as const, wordCount: 1800 },
-  { id: 'mk-03', learner: 'Aisha Patel', assignment: 'Financial Statement Analysis', module: 'Financial Accounting', submitted: '6 Jun', type: 'Assignment', status: 'pending' as const, wordCount: 950 },
-  { id: 'mk-04', learner: 'Sarah Mitchell', assignment: 'Board Meeting Minutes & Reflection', module: 'Business Admin', submitted: '5 Jun', type: 'Workplace Evidence', status: 'pending' as const, wordCount: 1500 },
-  { id: 'mk-05', learner: 'Liam Foster', assignment: 'Risk Register & Mitigation Plan', module: 'Risk Management', submitted: '4 Jun', type: 'Project Evidence', status: 'pending' as const, wordCount: 2100 },
-  { id: 'mk-06', learner: 'David Chen', assignment: 'Code Review & Documentation', module: 'Software Development', submitted: '3 Jun', type: 'Documentation', status: 'pending' as const, wordCount: 800 },
-  { id: 'mk-07', learner: 'Emily Watson', assignment: 'Social Media Strategy Proposal', module: 'Digital Channels', submitted: '2 Jun', type: 'Report', status: 'marked' as const, wordCount: 1600 },
-  { id: 'mk-08', learner: 'Maya Kapoor', assignment: 'HR Policy Review Reflection', module: 'HR Induction', submitted: '1 Jun', type: 'Reflection', status: 'pending' as const, wordCount: 600 },
-];
+/** "in 6 days" / "today" / "tomorrow", from now to the session. */
+function countdown(iso: string): string {
+  if (!iso) return '';
+  const start = new Date(iso).getTime();
+  if (Number.isNaN(start)) return '';
+  const days = Math.round((start - Date.now()) / 86_400_000);
+  if (days <= 0) return 'today';
+  if (days === 1) return 'tomorrow';
+  if (days < 7) return `in ${days} days`;
+  const weeks = Math.round(days / 7);
+  return weeks === 1 ? 'in a week' : `in ${weeks} weeks`;
+}
 
-const EVIDENCE_REVIEW = [
-  { id: 'evr-01', learner: 'Sophie Williams', title: 'Workplace Reflection — Segmentation', type: 'Reflection', date: '8 Jun', ksbRefs: 'K5, K6, S8', status: 'pending' as const },
-  { id: 'evr-02', learner: 'James Okonkwo', title: 'Data Cleaning Report', type: 'Report', date: '7 Jun', ksbRefs: 'K10, S12', status: 'pending' as const },
-  { id: 'evr-03', learner: 'Aisha Patel', title: 'Month-end Reconciliation', type: 'Workplace Evidence', date: '6 Jun', ksbRefs: 'K8, S6', status: 'pending' as const },
-  { id: 'evr-04', learner: 'Sarah Mitchell', title: 'Meeting Minutes — Board Prep', type: 'Workplace Evidence', date: '3 Jun', ksbRefs: 'K3, S4, B2', status: 'reviewed' as const },
-  { id: 'evr-05', learner: 'Emily Watson', title: 'Social Media Campaign Results', type: 'Campaign Evidence', date: '5 Jun', ksbRefs: 'K7, S10, S11', status: 'pending' as const },
-  { id: 'evr-06', learner: 'Liam Foster', title: 'Project Risk Register', type: 'Project Evidence', date: '4 Jun', ksbRefs: 'K14, S18', status: 'pending' as const },
-];
-
-const KSB_VALIDATION = [
-  { id: 'ksbv-01', learner: 'Sophie Williams', ksb: 'K5 — Segmentation Principles', evidence: 2, status: 'Ready', risk: 'low' as const },
-  { id: 'ksbv-02', learner: 'James Okonkwo', ksb: 'S12 — Data Analysis Tools', evidence: 1, status: 'Insufficient', risk: 'high' as const },
-  { id: 'ksbv-03', learner: 'Aisha Patel', ksb: 'K8 — Financial Principles', evidence: 2, status: 'Ready', risk: 'low' as const },
-  { id: 'ksbv-04', learner: 'Sarah Mitchell', ksb: 'S4 — Business Communication', evidence: 3, status: 'Ready', risk: 'low' as const },
-  { id: 'ksbv-05', learner: 'Liam Foster', ksb: 'S18 — Risk Mitigation', evidence: 1, status: 'Insufficient', risk: 'medium' as const },
-  { id: 'ksbv-06', learner: 'Emily Watson', ksb: 'B5 — Professional Development', evidence: 4, status: 'Exceeds', risk: 'low' as const },
-];
-
-export default function TutorDashboard() {
-  const [activeTab, setActiveTab] = useState<TabKey>('sessions');
-
-  const pendingMarking = MARKING_QUEUE.filter(m => m.status === 'pending').length;
-  const pendingEvidence = EVIDENCE_REVIEW.filter(e => e.status === 'pending').length;
-  const pendingKSB = KSB_VALIDATION.filter(k => k.status === 'Ready').length;
-  const atRiskLearners = TUTOR_LEARNERS.filter(l => l.attendance < 85).length;
-
+function NextSessionCard({ session }: { session: TutorNextSession }) {
+  const { day, time } = sessionMoment(session.scheduledStart);
+  const end = sessionMoment(session.scheduledEnd).time;
   return (
-    <WorkspaceShell
-      role="tutor" roleLabel={tutorNav.label} navItems={tutorNav.items} workspaceLabel={tutorNav.workspaceLabel}
-      pageTitle="Tutor Workspace" pageSubtitle="Session management, learner tracking, evidence review, assignment marking, and KSB validation"
-      userName="Rachel Myers" userRole="Business Admin Tutor"
-    >
-      <div className="p-6 space-y-6">
-        {/* Hero Banner */}
-        <div className="relative rounded-2xl overflow-hidden h-36 md:h-40" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
-          <div className="absolute bottom-0 left-0 right-0 h-px bg-black/10"></div>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-            <div className="absolute opacity-10" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
+    <section className="overflow-hidden rounded-2xl border border-primary-200/70 shadow-sm">
+      <div className="bg-gradient-to-r from-primary-600 to-primary-500 px-5 py-4 text-white">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/80">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> Next session
+            </span>
+            <h2 className="mt-1 truncate font-heading text-lg font-bold leading-tight">{day || 'Scheduled'}</h2>
+            <p className="truncate text-[12px] text-white/75">{session.moduleTitle || 'Module'}</p>
           </div>
-          <div className="relative h-full flex flex-col justify-center px-6 md:px-8">
-            <h2 className="text-2xl md:text-3xl font-heading font-bold text-white tracking-tight mb-1.5">Good morning, Rachel</h2>
-            <p className="text-[13px] text-white/50">
-              {TUTOR_SESSIONS.filter(s => s.status === 'upcoming').length} sessions this week &middot; {pendingMarking} to mark &middot; {pendingEvidence} evidence to review
+          <div className="shrink-0 text-right">
+            <p className="font-heading text-2xl font-bold leading-none tabular-nums">
+              {time}{end ? `–${end}` : ''}
             </p>
+            <p className="mt-0.5 text-[11px] text-white/75">{countdown(session.scheduledStart)}</p>
           </div>
         </div>
-
-        {/* Stat Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <TutorStatCard label="Sessions This Week" value={String(TUTOR_SESSIONS.filter(s => s.status === 'upcoming').length)} sub={`${TUTOR_SESSIONS.length} total`} icon="ri-presentation-line" color="primary" />
-          <TutorStatCard label="Assignment Marking" value={String(pendingMarking)} sub={`${MARKING_QUEUE.length} in queue`} icon="ri-edit-line" color="accent" />
-          <TutorStatCard label="Evidence Review" value={String(pendingEvidence)} sub="awaiting review" icon="ri-file-search-line" color="secondary" />
-          <TutorStatCard label="KSB Validation" value={String(pendingKSB)} sub="ready for validation" icon="ri-checkbox-circle-line" color="primary" />
-        </div>
-
-        {/* Tabs */}
-        <div className="flex items-center gap-1 bg-background-100 rounded-xl p-1 overflow-x-auto">
-          {([
-            { key: 'sessions' as TabKey, label: 'Sessions', icon: 'ri-presentation-line', badge: TUTOR_SESSIONS.filter(s => s.status === 'upcoming').length },
-            { key: 'learners' as TabKey, label: 'Learners', icon: 'ri-user-line', badge: TUTOR_LEARNERS.length },
-            { key: 'evidence' as TabKey, label: 'Evidence Review', icon: 'ri-file-search-line', badge: pendingEvidence },
-            { key: 'marking' as TabKey, label: 'Marking Queue', icon: 'ri-edit-line', badge: pendingMarking },
-            { key: 'ksb' as TabKey, label: 'KSB Validation', icon: 'ri-checkbox-circle-line', badge: pendingKSB },
-          ]).map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[12px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${
-                activeTab === tab.key ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-500 hover:text-foreground-700'
-              }`}
-            >
-              <AppIcon className={`${tab.icon} text-sm`}></AppIcon>
-              {tab.label}
-              {tab.badge != null && tab.badge > 0 && (
-                <span className="bg-primary-100 text-primary-700 text-[10px] px-1.5 py-0.5 rounded-full leading-none">{tab.badge}</span>
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Sessions */}
-        {activeTab === 'sessions' && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">Teaching Sessions</h3>
-                <p className="text-[11px] text-foreground-400 mt-0.5">Your upcoming and scheduled sessions — Cohort A (BA)</p>
-              </div>
-              <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                <AppIcon className="ri-add-line mr-1"></AppIcon> Create Session
-              </button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {TUTOR_SESSIONS.map((s, i) => (
-                <div key={i} className={`bg-background-50 rounded-xl border p-4 card-premium ${s.status === 'upcoming' ? 'border-primary-200/50' : 'border-foreground-200/60'}`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-semibold text-foreground-400 uppercase">{s.day}</span>
-                      <span className="text-[8px] text-foreground-300">&middot;</span>
-                      <span className="text-[10px] text-foreground-400">{s.date}</span>
-                    </div>
-                    <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-                      s.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : 'bg-foreground-100 text-foreground-500'
-                    }`}>{s.status === 'upcoming' ? 'This Week' : 'Scheduled'}</span>
-                  </div>
-                  <h4 className="text-sm font-semibold text-foreground-900 mb-2">{s.module}</h4>
-                  <div className="space-y-1 text-[11px] text-foreground-400 mb-3">
-                    <p><AppIcon className="ri-time-line mr-1 text-[10px]"></AppIcon> {s.time}</p>
-                    <p><AppIcon className="ri-group-line mr-1 text-[10px]"></AppIcon> {s.cohort} — {s.learners} learners</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap flex-1">
-                      <AppIcon className="ri-video-line mr-1"></AppIcon> Join Teams
-                    </button>
-                    <button className="px-3 py-1.5 bg-background-50 border border-background-200 rounded-lg text-[10px] font-medium text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
-                      <AppIcon className="ri-settings-3-line"></AppIcon>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Learners */}
-        {activeTab === 'learners' && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">My Learners</h3>
-                <p className="text-[11px] text-foreground-400 mt-0.5">All learners in your assigned cohorts</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-foreground-400 bg-background-100 px-2 py-0.5 rounded-full">{TUTOR_LEARNERS.length} learners</span>
-                <span className="text-[10px] text-foreground-400 bg-red-50 text-red-600 px-2 py-0.5 rounded-full">{atRiskLearners} at risk</span>
-              </div>
-            </div>
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-              <div className="divide-y divide-background-200/30">
-                {TUTOR_LEARNERS.map((l, i) => (
-                  <div key={i} className={`p-4 flex flex-col sm:flex-row sm:items-center gap-4 ${l.attendance < 85 ? 'bg-red-50/20' : ''}`}>
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-sm font-bold ${
-                        l.attendance < 85 ? 'bg-red-100 text-red-700' : l.progress >= 80 ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-100 text-primary-700'
-                      }`}>{l.name.charAt(0)}</div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-foreground-900">{l.name}</p>
-                        <p className="text-[11px] text-foreground-400">{l.programme} · {l.cohort}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-4 text-[11px] shrink-0 flex-wrap">
-                      <div className="flex items-center gap-1">
-                        <div className="w-16 bg-background-200 rounded-full h-1.5">
-                          <div className={`h-1.5 rounded-full ${l.progress >= 80 ? 'bg-emerald-500' : l.progress >= 50 ? 'bg-accent-500' : l.progress >= 30 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${l.progress}%` }}></div>
-                        </div>
-                        <span className="text-foreground-400 w-8">{l.progress}%</span>
-                      </div>
-                      <span className="text-foreground-400">Evidence: <strong className="text-foreground-700">{l.evidenceSubmitted}</strong></span>
-                      <span className={`${l.attendance < 85 ? 'text-red-600 font-semibold' : 'text-foreground-400'}`}>Att: {l.attendance}%</span>
-                      <span className="text-foreground-400">{l.lastSubmission}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* Evidence Review */}
-        {activeTab === 'evidence' && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">Evidence Review Queue</h3>
-                <p className="text-[11px] text-foreground-400 mt-0.5">Review learner evidence against KSB criteria</p>
-              </div>
-              <span className="text-[10px] text-foreground-400 bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">{pendingEvidence} pending</span>
-            </div>
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-              <div className="divide-y divide-background-200/30">
-                {EVIDENCE_REVIEW.map(item => (
-                  <div key={item.id} className="p-3.5 flex flex-col sm:flex-row sm:items-center gap-3">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                        item.status === 'reviewed' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
-                      }`}>
-                        <AppIcon className="ri-file-search-line text-sm"></AppIcon>
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-[13px] font-medium text-foreground-900 truncate">{item.title}</p>
-                        <div className="flex items-center gap-x-2 gap-y-1 mt-0.5 flex-wrap">
-                          <span className="text-[11px] text-foreground-400">{item.learner}</span>
-                          <span className="text-[8px] text-foreground-300">&middot;</span>
-                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-background-100 text-foreground-500">{item.type}</span>
-                          <span className="text-[8px] text-foreground-300">&middot;</span>
-                          <span className="text-[11px] text-foreground-400">KSB: {item.ksbRefs}</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[10px] text-foreground-400">{item.date}</span>
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-                        item.status === 'reviewed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                      }`}>{item.status === 'reviewed' ? 'Reviewed' : 'Pending'}</span>
-                      {item.status === 'pending' && (
-                        <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          Review
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* Marking Queue */}
-        {activeTab === 'marking' && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">Assignment Marking Queue</h3>
-                <p className="text-[11px] text-foreground-400 mt-0.5">Grade and provide feedback on learner assignments</p>
-              </div>
-              <span className="text-[10px] text-foreground-400 bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full">{pendingMarking} to mark</span>
-            </div>
-            <div className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
-              <div className="divide-y divide-background-200/30">
-                {MARKING_QUEUE.map(item => (
-                  <div key={item.id} className={`p-4 flex flex-col sm:flex-row sm:items-center gap-4 ${item.status === 'pending' ? 'hover:bg-background-100/50' : ''}`}>
-                    <div className={`rounded-lg px-3 py-2 text-center shrink-0 min-w-[60px] ${
-                      item.status === 'marked' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      <p className="text-[9px] font-medium uppercase">{item.type}</p>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] font-semibold text-foreground-900">{item.assignment}</p>
-                      <div className="flex items-center gap-x-2 gap-y-1 mt-1 flex-wrap">
-                        <span className="text-[11px] text-foreground-400">{item.learner}</span>
-                        <span className="text-[8px] text-foreground-300">&middot;</span>
-                        <span className="text-[11px] text-foreground-400">{item.module}</span>
-                        <span className="text-[8px] text-foreground-300">&middot;</span>
-                        <span className="text-[11px] text-foreground-400">{item.wordCount} words</span>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-[10px] text-foreground-400">{item.submitted}</span>
-                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-                        item.status === 'marked' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-                      }`}>{item.status === 'marked' ? 'Marked' : 'Pending'}</span>
-                      {item.status === 'pending' && (
-                        <button className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-[10px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap">
-                          <AppIcon className="ri-edit-line mr-1"></AppIcon> Mark
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* KSB Validation */}
-        {activeTab === 'ksb' && (
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">KSB Validation Queue</h3>
-                <p className="text-[11px] text-foreground-400 mt-0.5">Validate KSB claims against learner evidence</p>
-              </div>
-              <span className="text-[10px] text-foreground-400 bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">{pendingKSB} ready</span>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {KSB_VALIDATION.map(item => (
-                <div key={item.id} className={`bg-background-50 rounded-xl border p-4 card-premium ${item.risk === 'high' ? 'border-red-200/50 bg-red-50/20' : 'border-foreground-200/60'}`}>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-                      item.status === 'Ready' ? 'bg-emerald-100 text-emerald-700' :
-                      item.status === 'Exceeds' ? 'bg-accent-100 text-accent-700' :
-                      'bg-red-100 text-red-700'
-                    }`}>{item.status}</span>
-                    {item.risk === 'high' && (
-                      <span className="text-[9px] font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">High Risk</span>
-                    )}
-                  </div>
-                  <h4 className="text-sm font-semibold text-foreground-900 mb-1">{item.ksb}</h4>
-                  <p className="text-[11px] text-foreground-400 mb-3">{item.learner} · {item.evidence} evidence item{item.evidence > 1 ? 's' : ''}</p>
-                  <button className={`w-full px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-smooth cursor-pointer whitespace-nowrap ${
-                    item.status === 'Ready' ? 'bg-primary-500 text-white hover:bg-primary-600' :
-                    item.status === 'Exceeds' ? 'bg-emerald-600 text-white hover:bg-emerald-700' :
-                    'bg-background-50 border border-background-200 text-foreground-600 hover:bg-background-100'
-                  }`}>
-                    {item.status === 'Ready' ? 'Validate KSB' :
-                     item.status === 'Exceeds' ? 'View Exceeded KSB' :
-                     'Request More Evidence'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* Quick Actions */}
-        <section className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {[
-            { label: 'Start Session', icon: 'ri-presentation-line' },
-            { label: 'Mark Assignments', icon: 'ri-edit-line' },
-            { label: 'Review Evidence', icon: 'ri-file-search-line' },
-            { label: 'Validate KSBs', icon: 'ri-checkbox-circle-line' },
-            { label: 'Feedback Queue', icon: 'ri-chat-3-line' },
-            { label: 'AI Marking', icon: 'ri-robot-line' },
-            { label: 'Resources', icon: 'ri-folder-line' },
-            { label: 'Quiz Results', icon: 'ri-bar-chart-line' },
-            { label: 'OTJH Validation', icon: 'ri-time-line' },
-            { label: 'Learner Reports', icon: 'ri-bar-chart-box-line' },
-            { label: 'Record Session', icon: 'ri-video-line' },
-            { label: 'Upload Resources', icon: 'ri-upload-cloud-line' },
-          ].map(link => (
-            <button
-              key={link.label}
-              className="flex items-center gap-2 px-3 py-2.5 bg-background-50 rounded-xl border border-foreground-200/60 text-[11px] font-medium text-foreground-600 hover:bg-primary-50 hover:text-primary-700 hover:border-primary-200/50 transition-smooth cursor-pointer whitespace-nowrap"
-            >
-              <AppIcon className={`${link.icon} text-sm`}></AppIcon>
-              {link.label}
-            </button>
-          ))}
-        </section>
       </div>
-    </WorkspaceShell>
+
+      <div className="bg-background-50 p-4 md:p-5">
+        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <Fact label="Session" value={session.sessionNumber != null ? `${session.sessionNumber}${session.repeatOccurrences ? ` of ${session.repeatOccurrences}` : ''}` : '—'} />
+          <Fact label="Duration" value={session.durationMinutes ? `${session.durationMinutes} min` : '—'} />
+          {/* The zone is named, not applied: the stored times have no offset. */}
+          <Fact label="Time zone" value={session.timezone || '—'} />
+          <Fact label="Repeats" value={session.repeatPattern || 'Once'} />
+        </dl>
+        {session.joinUrl && (
+          <a
+            href={session.joinUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary-600 px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-primary-700"
+          >
+            <AppIcon className="ri-vidicon-line text-[14px]" /> Join the meeting
+          </a>
+        )}
+      </div>
+    </section>
   );
 }
 
-function TutorStatCard({ label, value, sub, icon, color }: { label: string; value: string; sub: string; icon: string; color: string }) {
-  const iconBg = color === 'primary' ? 'bg-primary-100 text-primary-600'
-    : color === 'accent' ? 'bg-accent-50 text-accent-700'
-    : 'bg-secondary-100 text-secondary-600';
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{label}</dt>
+      <dd className="mt-0.5 truncate text-[13px] font-semibold text-foreground-800">{value}</dd>
+    </div>
+  );
+}
+
+/** Component types, as the curriculum builder names them, to icon and label. */
+const COMPONENT_META: Record<string, { icon: string; label: string }> = {
+  powerpoint: { icon: 'ri-slideshow-line', label: 'Slides' },
+  reading: { icon: 'ri-book-open-line', label: 'Reading' },
+  video: { icon: 'ri-play-circle-line', label: 'Video' },
+  podcast: { icon: 'ri-mic-line', label: 'Podcast' },
+  quiz: { icon: 'ri-questionnaire-line', label: 'Quiz' },
+  assignment: { icon: 'ri-edit-line', label: 'Assignment' },
+  activity: { icon: 'ri-lightbulb-line', label: 'Activity' },
+  reflection: { icon: 'ri-chat-quote-line', label: 'Reflection' },
+  live_session: { icon: 'ri-vidicon-line', label: 'Live session' },
+  'workplace-evidence': { icon: 'ri-briefcase-line', label: 'Workplace evidence' },
+};
+
+function componentMeta(type: string) {
+  return COMPONENT_META[type] || { icon: 'ri-file-line', label: type || 'Component' };
+}
+
+function ComponentRow({ component }: { component: ModuleComponent }) {
+  const meta = componentMeta(component.type);
+  // Only the requirements that are actually set, so a plain component stays plain.
+  const requirements = [
+    component.reflectionRequired && 'Reflection',
+    component.workplaceEvidenceRequired && 'Evidence',
+    component.tutorValidationRequired && 'Your validation',
+  ].filter(Boolean) as string[];
 
   return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 card-premium cursor-pointer">
-      <div className="flex items-start justify-between mb-3">
-        <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${iconBg}`}>
-          <AppIcon className={`${icon} text-sm`}></AppIcon>
+    <li className="flex items-start gap-3 rounded-xl border border-foreground-100 bg-background-100/40 px-3 py-2.5">
+      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-50 text-foreground-500">
+        <AppIcon className={`${meta.icon} text-[13px]`} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[13px] font-semibold text-foreground-800">{component.title || meta.label}</p>
+        <p className="text-[10.5px] uppercase tracking-wider text-foreground-400">{meta.label}</p>
+        {requirements.length > 0 && (
+          <p className="mt-1 flex flex-wrap gap-1.5">
+            {requirements.map((requirement) => (
+              <span key={requirement} className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-semibold text-primary-700">
+                {requirement}
+              </span>
+            ))}
+          </p>
+        )}
+      </div>
+      <span className="shrink-0 text-right">
+        {component.expectedOtjh != null && component.expectedOtjh > 0 && (
+          <span className="block text-[11px] font-semibold tabular-nums text-foreground-600">{component.expectedOtjh}h</span>
+        )}
+        {component.points != null && component.points > 0 && (
+          <span className="block text-[10px] text-foreground-400">{component.points} pts</span>
+        )}
+      </span>
+    </li>
+  );
+}
+
+function WeekBlock({ week }: { week: ModuleWeek }) {
+  const components = week.components;
+  const hours = components.reduce((total, component) => total + (component.expectedOtjh || 0), 0);
+  return (
+    <div className="rounded-xl border border-foreground-100 bg-background-50 p-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <h5 className="truncate text-[13px] font-bold text-foreground-800">
+          {week.title || `Week ${week.weekNumber}`}
+        </h5>
+        <span className="shrink-0 text-[10.5px] text-foreground-400">
+          {components.length === 0
+            ? 'Nothing added yet'
+            : `${components.length} item${components.length === 1 ? '' : 's'}${hours > 0 ? ` · ${hours}h` : ''}`}
         </span>
       </div>
-      <p className="text-[11px] text-foreground-400 mb-1">{label}</p>
-      <p className="text-2xl font-heading font-semibold text-foreground-900">{value}</p>
-      <p className="text-[11px] text-foreground-400 mt-1">{sub}</p>
+      {week.summary && <p className="mt-1 text-[12px] leading-snug text-foreground-500">{week.summary}</p>}
+      {components.length > 0 && (
+        <ul className="mt-2.5 space-y-1.5">
+          {components.map((component) => (
+            <ComponentRow key={component.id} component={component} />
+          ))}
+        </ul>
+      )}
     </div>
+  );
+}
+
+/** The module's own next session, inside its opened card. */
+function ModuleSessionLine({ session }: { session: TutorNextSession }) {
+  const { day, time } = sessionMoment(session.scheduledStart);
+  const end = sessionMoment(session.scheduledEnd).time;
+  return (
+    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-primary-200/70 bg-primary-50/50 px-3.5 py-3">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-500 text-white">
+        <AppIcon className="ri-calendar-event-line text-sm" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-primary-700">Next live session</p>
+        <p className="truncate text-[13px] font-semibold text-foreground-800">
+          {day}{time ? ` · ${time}${end ? `–${end}` : ''}` : ''}
+        </p>
+        <p className="truncate text-[11px] text-foreground-500">
+          {[
+            session.sessionNumber != null
+              ? `Session ${session.sessionNumber}${session.repeatOccurrences ? ` of ${session.repeatOccurrences}` : ''}`
+              : '',
+            session.timezone,
+            countdown(session.scheduledStart),
+          ].filter(Boolean).join(' · ')}
+        </p>
+      </div>
+      {session.joinUrl && (
+        <a
+          href={session.joinUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="shrink-0 inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-primary-700"
+        >
+          <AppIcon className="ri-vidicon-line text-[13px]" /> Join
+        </a>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One assigned module, opening to its weeks and components.
+ *
+ * The structure is fetched when the card is first opened, not with the module
+ * list: a tutor with several modules would otherwise wait on every module's
+ * weeks to see any of them. Once fetched it is kept, so reopening is instant.
+ */
+function ModuleCard({ module }: { module: TutorModule }) {
+  const deliveryWindow = [shortDate(module.startDate), shortDate(module.endDate)].filter(Boolean).join(' → ');
+  const [open, setOpen] = useState(false);
+  const [weeks, setWeeks] = useState<ModuleWeek[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // `loading` is deliberately neither guarded on nor a dependency: it is set
+    // inside this effect, so including it re-ran the effect, and the first run's
+    // cleanup then aborted the request it had just started. `weeks !== null` is
+    // what stops a refetch, and nothing else here changes mid-flight.
+    if (!open || weeks !== null) return undefined;
+    const controller = new AbortController();
+    setLoading(true);
+    setError(null);
+    fetchModuleStructure(module.moduleCatalogueId, controller.signal)
+      .then((structure) => setWeeks(structure.weeks))
+      .catch((cause) => {
+        if (controller.signal.aborted) return;
+        setError(cause instanceof Error ? cause.message : 'Could not load this module.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [open, weeks, module.moduleCatalogueId]);
+
+  return (
+    <article className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
+      <button
+        type="button"
+        onClick={() => setOpen((wasOpen) => !wasOpen)}
+        aria-expanded={open}
+        className="w-full cursor-pointer p-4 text-left transition-smooth hover:bg-primary-50/30 md:p-5"
+      >
+        <div className="flex items-start gap-3">
+          {/* The module's own colour from the curriculum builder, so the card is
+              recognisable against the same module there. */}
+          <span
+            className="mt-0.5 h-9 w-1.5 shrink-0 rounded-full"
+            style={{ backgroundColor: module.colour || 'var(--primary-500, #7c3aed)' }}
+          />
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate font-heading text-[15px] font-bold text-foreground-900">{module.title || 'Untitled module'}</h3>
+            <p className="mt-0.5 truncate text-[12px] text-foreground-500">
+              {[module.programmeName, module.cohortName, module.groupName].filter(Boolean).join(' · ') || 'No delivery context set'}
+            </p>
+          </div>
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-400">
+            <AppIcon className={`ri-arrow-down-s-line text-sm transition-transform ${open ? 'rotate-180' : ''}`} />
+          </span>
+        </div>
+
+        {module.description && (
+          <p className="mt-3 line-clamp-2 text-[12.5px] leading-relaxed text-foreground-600">{module.description}</p>
+        )}
+
+        <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-foreground-100 pt-3 sm:grid-cols-4">
+          <Fact label="Weekly slot" value={weeklySlot(module)} />
+          <Fact label="Sessions" value={module.sessionsNumber != null ? String(module.sessionsNumber) : '—'} />
+          <Fact label="OTJ hours" value={module.totalOtjh != null && Number(module.totalOtjh) > 0 ? `${Number(module.totalOtjh)}h` : '—'} />
+          <Fact label="Delivery window" value={deliveryWindow || '—'} />
+        </dl>
+      </button>
+
+      {open && (
+        <div className="space-y-3 border-t border-foreground-100 bg-background-100/30 p-4 md:p-5">
+          {module.nextSession ? (
+            <ModuleSessionLine session={module.nextSession} />
+          ) : (
+            <p className="rounded-xl border border-foreground-100 bg-background-50 px-3.5 py-2.5 text-[12px] text-foreground-500">
+              No live session is scheduled against this module yet.
+            </p>
+          )}
+
+          <div>
+            <h4 className="mb-2 text-[10px] font-bold uppercase tracking-widest text-foreground-400">
+              Weeks and components
+            </h4>
+            {loading ? (
+              <RowsSkeleton rows={3} avatar={false} />
+            ) : error ? (
+              <p className="rounded-xl border border-red-200 bg-red-50/70 px-3.5 py-2.5 text-[12px] text-red-800">{error}</p>
+            ) : !weeks || weeks.length === 0 ? (
+              <p className="rounded-xl border border-foreground-100 bg-background-50 px-3.5 py-2.5 text-[12px] text-foreground-500">
+                No weeks have been built for this module yet.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {weeks.map((week) => (
+                  <WeekBlock key={week.id || week.weekNumber} week={week} />
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+/**
+ * Shown when nothing identifies the tutor being asked about.
+ *
+ * `viewingAsTutor` changes who "this" is: an admin who picked a tutor from the
+ * directory is being told about that tutor, not about their own account, and
+ * the difference decides whether the fix is theirs to make.
+ */
+function UnlinkedNotice({ email, name, viewingAsTutor = false }: { email: string; name: string; viewingAsTutor?: boolean }) {
+  return (
+    <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-6 text-center">
+      <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+        <AppIcon className="ri-link-unlink text-xl" />
+      </span>
+      <h2 className="font-heading text-base font-bold text-foreground-900">
+        {viewingAsTutor ? 'No modules are linked to this tutor yet' : 'No modules are linked to this account yet'}
+      </h2>
+      <p className="mx-auto mt-2 max-w-xl text-[13px] leading-relaxed text-foreground-600">
+        Nothing matches{' '}
+        <strong className="font-semibold text-foreground-800">{name || email || 'this account'}</strong>
+        {name && email ? <> or <strong className="font-semibold text-foreground-800">{email}</strong></> : null}
+        {' '}— no tutor profile carries that name or address, and no module names them as its tutor.
+      </p>
+      <p className="mx-auto mt-2 max-w-xl text-[12.5px] leading-relaxed text-foreground-500">
+        An administrator can fix this in <strong className="font-semibold text-foreground-700">Curriculum → Staff profiles</strong>,
+        by matching the tutor’s name to this account or setting its email, and by
+        assigning them a module.
+      </p>
+    </section>
+  );
+}
+
+export default function TutorDashboard() {
+  const { auth, isInitialized } = useAuth();
+  const tutor = useTutorIdentity();
+  const adminEmail = String(auth.account?.email || '').trim().toLowerCase();
+
+  // Whose workspace to load. An administrator has no teaching of their own, so
+  // they pick a tutor and the page asks about that identity instead — the same
+  // email/name pair, just somebody else's. A tutor's own account is unchanged.
+  const email = tutor.isViewingAsTutor ? tutor.viewingEmail : auth.account?.email || '';
+  // The name a curriculum tutor profile and a module's tutor_name are matched
+  // against when no email lines up. For a tutor added under Curriculum with no
+  // address, it is the only thing that identifies them.
+  const accountName = tutor.isViewingAsTutor ? tutor.name : auth.account?.displayName || '';
+
+  const [data, setData] = useState<TutorWorkspace | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isInitialized) return undefined;
+    // An admin who has not picked yet is about to be shown the directory, so
+    // there is nobody to ask about — and asking about the admin's own account
+    // would spend a request to be told what the picker already knows.
+    if (tutor.canChooseTutor && !tutor.isViewingAsTutor) {
+      setData(null);
+      setLoading(false);
+      return undefined;
+    }
+    if (!email && !accountName) {
+      setData(null);
+      setLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError(null);
+    fetchTutorWorkspace({ email, name: accountName }, controller.signal)
+      .then((payload) => setData(payload))
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError(error instanceof Error ? error.message : 'Could not load your workspace.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [email, accountName, isInitialized, tutor.canChooseTutor, tutor.isViewingAsTutor]);
+
+  const heading = useMemo(() => {
+    const name = data?.tutor?.name || auth.account?.displayName || 'Tutor';
+    return name.split(' ')[0] || name;
+  }, [data, auth.account]);
+
+  const modules = data?.modules ?? [];
+
+  // Before a tutor is chosen there is nothing to load: an admin gets one card
+  // per tutor rather than their own empty workspace and the "not linked"
+  // notice, which is true of the admin's account but useless to them.
+  if (tutor.canChooseTutor && !tutor.isViewingAsTutor) {
+    return (
+      <WorkspaceShell
+        role="tutor"
+        roleLabel={tutorNav.label}
+        navItems={tutorNav.items}
+        workspaceLabel={tutorNav.workspaceLabel}
+        pageTitle="Tutor Workspace"
+        pageSubtitle="Choose a tutor to open their workspace"
+        userName={auth.account?.displayName || auth.user?.fullName || 'Administrator'}
+        userRole="Administrator"
+      >
+        <div className="mx-auto max-w-5xl space-y-5 p-3 md:p-6">
+          <TutorDirectoryPicker
+            onSelect={selected => setTutorViewAs({ email: selected.email, name: selected.name }, adminEmail)}
+          />
+        </div>
+      </WorkspaceShell>
+    );
+  }
+
+  return (
+    <WorkspaceShell
+      role="tutor"
+      roleLabel={tutorNav.label}
+      navItems={tutorNav.items}
+      workspaceLabel={tutorNav.workspaceLabel}
+      pageTitle={loading ? 'Loading your modules…' : `Good morning, ${heading}`}
+      pageSubtitle={
+        modules.length
+          ? `${modules.length} module${modules.length === 1 ? '' : 's'} assigned to you`
+          : 'Your assigned modules and next session'
+      }
+      userName={data?.tutor?.name || auth.account?.displayName || 'Tutor'}
+      userRole="Tutor"
+    >
+      <div className="mx-auto max-w-5xl space-y-5 p-3 md:p-6">
+        {/* Whose workspace this is, and the way back to the other cards. The
+            modules below are that tutor's own — the admin is reading their
+            workspace, not a copy of it. */}
+        {tutor.isViewingAsTutor && (
+          <div className="flex items-center gap-3 rounded-xl border border-primary-200/70 bg-primary-50/60 p-3">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-600">
+              <AppIcon className="ri-eye-line text-sm" />
+            </span>
+            <p className="min-w-0 flex-1 text-[12.5px] text-primary-900">
+              Viewing <strong className="font-semibold">{tutor.name || tutor.viewingEmail}</strong>&rsquo;s
+              workspace. Read-only.
+            </p>
+            <button
+              type="button"
+              onClick={clearTutorViewAs}
+              className="shrink-0 cursor-pointer rounded-lg border border-primary-300 px-2.5 py-1 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100"
+            >
+              All tutors
+            </button>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
+            <RowsSkeleton rows={3} />
+          </div>
+        ) : loadError ? (
+          <section className="rounded-2xl border border-red-200 bg-red-50/70 p-6 text-center">
+            <span className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-red-100 text-red-600">
+              <AppIcon className="ri-error-warning-line text-xl" />
+            </span>
+            <h2 className="font-heading text-base font-bold text-foreground-900">Could not load your workspace</h2>
+            <p className="mx-auto mt-2 max-w-md text-[13px] text-foreground-600">{loadError}</p>
+          </section>
+        ) : !data?.linked ? (
+          <UnlinkedNotice email={email} name={accountName} viewingAsTutor={tutor.isViewingAsTutor} />
+        ) : (
+          <>
+            {data.nextSession ? (
+              <NextSessionCard session={data.nextSession} />
+            ) : (
+              <section className="rounded-2xl border border-foreground-200/60 bg-background-50 p-5">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background-100 text-foreground-400">
+                    <AppIcon className="ri-calendar-line text-lg" />
+                  </span>
+                  <div className="min-w-0">
+                    <h2 className="font-heading text-[15px] font-bold text-foreground-900">No upcoming session scheduled</h2>
+                    <p className="mt-1 text-[12.5px] leading-relaxed text-foreground-500">
+                      {modules.length
+                        ? 'None of your modules has a future live session on its schedule. Sessions are created against a module in the curriculum builder.'
+                        : 'You have no modules assigned yet, so there is nothing scheduled.'}
+                    </p>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            <section>
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="font-heading text-base font-semibold text-foreground-900">Your modules</h2>
+                {modules.length > 0 && (
+                  <span className="text-[11px] text-foreground-400">
+                    {modules.length} assigned
+                  </span>
+                )}
+              </div>
+              {modules.length === 0 ? (
+                <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-6 text-center">
+                  <p className="text-[13px] text-foreground-500">
+                    No modules are assigned to you yet. An administrator assigns them
+                    in Curriculum → Staff profiles.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {modules.map((module) => (
+                    <ModuleCard key={module.moduleCatalogueId} module={module} />
+                  ))}
+                </div>
+              )}
+            </section>
+          </>
+        )}
+      </div>
+    </WorkspaceShell>
   );
 }

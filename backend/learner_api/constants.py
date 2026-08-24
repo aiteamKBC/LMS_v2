@@ -38,6 +38,7 @@ POSITION_CHOICES = [
     "Enrolment",
     "Curriculum team",
     "Operations team",
+    "Tutor",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -57,6 +58,7 @@ POSITION_CHOICES = [
 ACCESS_ENROLMENT = "enrolment"
 ACCESS_CURRICULUM = "curriculum"
 ACCESS_COACH = "coach"
+ACCESS_TUTOR = "tutor"
 ACCESS_SUPER_ADMIN = "super-admin"
 
 #: Canonical order — also the order the console offers them in.
@@ -64,6 +66,7 @@ ACCESS_CHOICES = [
     ACCESS_ENROLMENT,
     ACCESS_CURRICULUM,
     ACCESS_COACH,
+    ACCESS_TUTOR,
     ACCESS_SUPER_ADMIN,
 ]
 
@@ -72,6 +75,7 @@ ACCESS_LABELS = {
     ACCESS_ENROLMENT: "Enrolment access",
     ACCESS_CURRICULUM: "Curriculum access",
     ACCESS_COACH: "Coach access",
+    ACCESS_TUTOR: "Tutor access",
     ACCESS_SUPER_ADMIN: "Super Admin access",
 }
 
@@ -83,6 +87,7 @@ ACCESS_DESCRIPTIONS = {
     ),
     ACCESS_CURRICULUM: "The curriculum workspace — programmes, modules and their content.",
     ACCESS_COACH: "The coach workspace — their caseload, reviews and evidence validation.",
+    ACCESS_TUTOR: "The tutor workspace — their teaching groups and session delivery.",
     ACCESS_SUPER_ADMIN: "Everything, including this console. Can edit any data on the platform.",
 }
 
@@ -101,6 +106,7 @@ ACCESS_HOME_ROUTES = {
     ACCESS_ENROLMENT: "/users",
     ACCESS_CURRICULUM: "/workspace/curriculum",
     ACCESS_COACH: "/workspace/coach",
+    ACCESS_TUTOR: "/workspace/tutor",
     ACCESS_SUPER_ADMIN: "/workspace/admin",
 }
 
@@ -111,6 +117,7 @@ ACCESS_NAV_ROLES = {
     ACCESS_ENROLMENT: "compliance",
     ACCESS_CURRICULUM: "curriculum",
     ACCESS_COACH: "coach",
+    ACCESS_TUTOR: "tutor",
     ACCESS_SUPER_ADMIN: "admin",
 }
 
