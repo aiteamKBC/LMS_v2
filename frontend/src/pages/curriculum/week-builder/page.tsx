@@ -943,9 +943,13 @@ export interface WeekComponentRailProps {
   // The week's own calendar date, for a live-session row that has not been
   // given its own date yet. Unset for a template, which has no calendar date.
   weekSessionDate?: string;
+  // Opens the caller's reuse picker. Optional because the rail is shared: the
+  // module builder owns the picker and the copy, and a surface without one (a
+  // week template, say) simply does not pass it and shows no Reuse action.
+  onReuseComponents?: () => void;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, onReuseComponents }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const sensors = useSensors(
@@ -998,13 +1002,25 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
           <span className="text-[11px] text-foreground-400 tabular-nums">{components.length} {components.length === 1 ? 'part' : 'parts'}</span>
         </div>
       )}
+      {nested && onReuseComponents && (
+        <div className="flex justify-end">
+          <ReuseComponentsButton onClick={onReuseComponents} />
+        </div>
+      )}
 
       {components.length === 0 && pickerIndex === null ? (
-        <button onClick={() => setPickerIndex(0)} className="mt-3 w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
-          <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
-          <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first part</p>
-          <p className="text-[11px] text-foreground-400">Live sessions, videos, readings, quizzes…</p>
-        </button>
+        <div className="mt-3">
+          <button onClick={() => setPickerIndex(0)} className="w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
+            <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
+            <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first part</p>
+            <p className="text-[11px] text-foreground-400">Live sessions, videos, readings, quizzes…</p>
+          </button>
+          {onReuseComponents && (
+            <div className="mt-2 flex justify-center">
+              <ReuseComponentsButton onClick={onReuseComponents} label="Or reuse an existing component" />
+            </div>
+          )}
+        </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDragId(null)} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
           <SortableContext items={components.map(c => c.id)} strategy={verticalListSortingStrategy}>
@@ -1033,6 +1049,19 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
         </DndContext>
       )}
     </div>
+  );
+}
+
+function ReuseComponentsButton({ onClick, label = 'Reuse' }: { onClick: () => void; label?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100"
+    >
+      <AppIcon className="ri-file-copy-line text-[12px]"></AppIcon>
+      {label}
+    </button>
   );
 }
 

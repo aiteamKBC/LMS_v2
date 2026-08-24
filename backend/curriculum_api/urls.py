@@ -36,6 +36,9 @@ urlpatterns = [
     path('curriculum/week-templates/', views.curriculum_week_template_collection, name='curriculum-week-templates'),
     path('curriculum/week-templates/<str:identifier>/', views.curriculum_week_template_detail, name='curriculum-week-template-detail'),
     path('curriculum/week-components/<str:component_id>/upload/', views.curriculum_week_component_upload, name='curriculum-week-component-upload'),
+    # Must precede curriculum/components/<component_id>/, or "library" would be
+    # captured as a component id.
+    path('curriculum/components/library/', views.curriculum_component_library, name='curriculum-component-library'),
     path('curriculum/components/', views.curriculum_component_collection, name='curriculum-components'),
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
