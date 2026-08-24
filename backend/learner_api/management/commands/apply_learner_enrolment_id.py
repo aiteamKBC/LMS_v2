@@ -213,16 +213,47 @@ class Command(BaseCommand):
                     )
 
                 # ---- 4. programme ids ---------------------------------
+                # Only names that identify exactly ONE programme are resolved.
+                # A name shared by several programmes -- an archived one and the
+                # replacement created under the same name -- cannot be resolved
+                # from the learner row, and an unqualified UPDATE ... FROM would
+                # silently attach the learner to whichever row the planner
+                # happened to join. Those are reported for a human instead.
                 self.stdout.write(self.style.MIGRATE_HEADING("\n4. Resolving programme ids"))
                 cur.execute(
                     f'UPDATE "{SCHEMA}"."learners" AS l '
                     '   SET "programme_id" = p.programme_id '
-                    "  FROM curriculum.programmes AS p "
+                    "  FROM ("
+                    "         SELECT lower(btrim(coalesce(name, ''))) AS name_key, "
+                    "                min(programme_id) AS programme_id "
+                    "           FROM curriculum.programmes "
+                    "          WHERE lower(btrim(coalesce(name, ''))) <> '' "
+                    "          GROUP BY 1 "
+                    "         HAVING count(*) = 1"
+                    "       ) AS p "
                     " WHERE lower(btrim(coalesce(l.programme, ''))) <> '' "
-                    "   AND lower(btrim(l.programme)) = lower(btrim(coalesce(p.name, ''))) "
+                    "   AND lower(btrim(l.programme)) = p.name_key "
                     '   AND l."programme_id" IS DISTINCT FROM p.programme_id'
                 )
                 self.stdout.write(f"   resolved {cur.rowcount} programme id(s)")
+
+                cur.execute(
+                    f'SELECT l.id, l.programme, count(p.programme_id) '
+                    f'  FROM "{SCHEMA}"."learners" AS l '
+                    "  JOIN curriculum.programmes AS p "
+                    "    ON lower(btrim(l.programme)) = lower(btrim(coalesce(p.name, ''))) "
+                    ' WHERE l."programme_id" IS NULL '
+                    " GROUP BY l.id, l.programme "
+                    "HAVING count(p.programme_id) > 1 "
+                    " ORDER BY l.id"
+                )
+                for pid, prog, matches in cur.fetchall():
+                    self.stdout.write(
+                        self.style.WARNING(
+                            f"      learners.id={pid:<5} programme {prog!r} matches "
+                            f"{matches} programmes - left NULL, assign it by hand"
+                        )
+                    )
 
                 # ---- 5. what could not be matched ---------------------
                 self.stdout.write(
@@ -240,10 +271,18 @@ class Command(BaseCommand):
                 else:
                     self.stdout.write("   every profile is linked")
 
+                # Names matching several programmes are already reported in
+                # step 4; listing them here as matching none would contradict it.
                 cur.execute(
-                    f"SELECT id, coalesce(programme,'') FROM \"{SCHEMA}\".\"learners\" "
-                    " WHERE \"programme_id\" IS NULL AND btrim(coalesce(programme,'')) <> '' "
-                    " ORDER BY id"
+                    f"SELECT l.id, coalesce(l.programme,'') "
+                    f'  FROM "{SCHEMA}"."learners" AS l '
+                    ' WHERE l."programme_id" IS NULL '
+                    "   AND btrim(coalesce(l.programme,'')) <> '' "
+                    "   AND NOT EXISTS ("
+                    "         SELECT 1 FROM curriculum.programmes AS p "
+                    "          WHERE lower(btrim(l.programme)) = lower(btrim(coalesce(p.name, '')))"
+                    "       ) "
+                    " ORDER BY l.id"
                 )
                 for pid, prog in cur.fetchall():
                     self.stdout.write(

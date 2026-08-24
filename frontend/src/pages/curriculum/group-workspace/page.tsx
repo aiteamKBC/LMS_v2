@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
@@ -40,7 +40,6 @@ const SESSION_GRID = 'grid grid-cols-[110px_minmax(170px,1.4fr)_minmax(140px,1fr
 
 export default function GroupWorkspacePage() {
   const { id = '' } = useParams();
-  const navigate = useNavigate();
   const {
     programmes, cohorts, groups, modules, coaches, tutors, holidays, loading, loaded, error, reload,
   } = useCurriculumEntities({ includeStaff: true, includeHolidays: true });
@@ -309,8 +308,7 @@ export default function GroupWorkspacePage() {
       />
 
       {/* Same form the Module Builder opens, with this group's parents fixed.
-          Authoring the weeks and components carries on in the Module Builder,
-          which is where a freshly created module lands. */}
+          Authoring weeks and components stays behind the explicit Edit components action. */}
       <ModuleFormDrawer
         open={moduleDrawerOpen}
         defaults={{
@@ -325,9 +323,8 @@ export default function GroupWorkspacePage() {
         tutorNames={tutorNames}
         lockGroup
         onClose={() => setModuleDrawerOpen(false)}
-        onSaved={async saved => {
+        onSaved={async () => {
           await reload({ silent: true });
-          if (saved.catalogueId) navigate(`/curriculum/module-builder?module=${encodeURIComponent(saved.catalogueId)}`);
         }}
       />
     </WorkspaceShell>

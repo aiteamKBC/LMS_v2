@@ -266,7 +266,12 @@ export function Sidebar({
       const target = e.target as HTMLElement;
       const dropdown = document.getElementById(`dropdown-${activeDropdown}`);
       const button = document.getElementById(`nav-btn-${activeDropdown}`);
-      if (dropdown && !dropdown.contains(target) && button && !button.contains(target)) {
+      // A missing element means its owner already unmounted (e.g. a rail/expanded
+      // mode switch), not that the click landed inside it - treat that as outside
+      // too, or a stale dropdown id could never be closed by clicking anywhere.
+      const clickedInsideDropdown = dropdown?.contains(target) ?? false;
+      const clickedInsideButton = button?.contains(target) ?? false;
+      if (!clickedInsideDropdown && !clickedInsideButton) {
         setActiveDropdown(null);
       }
     };
@@ -290,7 +295,19 @@ export function Sidebar({
     return items.find(item => item.href?.includes('?') && item.href === current)?.href ?? '';
   }, [filteredNavItems, location.pathname, location.search]);
 
-  const openGroup = useCallback((id: string) => setActiveDropdown(id), []);
+  // Opening a rail group's flyout always promotes the whole sidebar to its
+  // expanded layout too. Mouse hover usually does this on its own (the enter
+  // bubbles from the icon up to the container), but keyboard focus never
+  // touches isHovering, and a slow/interrupted hover can register on the icon
+  // without the container's own handler keeping up - leaving the flyout
+  // floating by itself over a rail that never expanded. Driving both from one
+  // place means that state can't happen: the flyout's anchor unmounts the
+  // instant the panel switches, so only the full expanded panel is ever seen.
+  const openGroup = useCallback((id: string) => {
+    setActiveDropdown(id);
+    setIsHovering(true);
+    onHoverChange?.(true);
+  }, [onHoverChange]);
   const closeGroup = useCallback((id: string) => {
     setActiveDropdown(prev => prev === id ? null : prev);
   }, []);
@@ -360,6 +377,19 @@ export function Sidebar({
   // Pinned wins over hover, so the panel does not flicker back to a rail when
   // the pointer leaves a sidebar the user deliberately kept open.
   const desktopExpanded = pinned || isHovering;
+
+  // Rail and expanded render different components for a grouped item (RailGroup's
+  // flyout vs ExpandedGroup's inline disclosure), so a mode switch unmounts
+  // whichever one was showing. If a flyout's close was still pending when that
+  // happened, its 120ms timer is cancelled by the unmounting component's own
+  // cleanup before it can clear activeDropdown - leaving it stuck open in state
+  // with no live button/dropdown element for the outside-click handler to find.
+  // Next time that item's RailGroup remounts, it reads the stale id and pops its
+  // flyout open with no hover to justify it. Clearing on every mode switch closes
+  // that gap: neither variant should ever inherit a dropdown intent from the other.
+  useEffect(() => {
+    setActiveDropdown(null);
+  }, [desktopExpanded]);
 
   /** One panel, rendered either as the rail or expanded. */
   const panel = (variant: 'rail' | 'expanded', options?: { showPin?: boolean }) => (

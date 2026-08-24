@@ -1,13 +1,97 @@
 import json
 import os
 import threading
+from datetime import date, timezone
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from django.db import connection
 from django.test import Client, RequestFactory, SimpleTestCase, TestCase
 
 from . import tutor_notifications, views
 from .ksb_coverage import build_coverage
+
+
+class ModuleAuthoringValidationTests(SimpleTestCase):
+    def test_component_row_ksb_mappings_are_serialised_for_structure_payloads(self):
+        row = {
+            'ksb_mappings': json.dumps([{
+                'id': 'MAP-1',
+                'ksbId': 'K7',
+                'code': 'K7',
+                'description': 'Understand safe escalation.',
+                'classification': 'main',
+                'weightClass': 'hard',
+                'weight': 50,
+            }]),
+        }
+
+        mappings = [
+            views.component_ksb_mapping_api_item(mapping)
+            for mapping in views.component_ksb_mappings_from_row(row, [])
+        ]
+
+        self.assertEqual(mappings[0]['code'], 'K7')
+        self.assertEqual(mappings[0]['weight'], 50)
+        self.assertEqual(mappings[0]['weightClass'], 'hard')
+
+    def test_uploaded_podcast_resource_url_is_valid_for_authoring_save(self):
+        payload = {
+            'title': 'Module',
+            'weekStructure': [{
+                'title': 'Week 1',
+                'components': [{
+                    'title': 'Uploaded podcast',
+                    'type': 'podcast',
+                    'expectedOtjh': 2,
+                    'points': 15,
+                    'reflectionRequired': False,
+                    'workplaceEvidenceRequired': False,
+                    'settings': {
+                        'podcastSource': 'Audio File',
+                        'podcastUrl': '/curriculum_api/curriculum/uploads/week-template/show.mp3',
+                        'uploadedFileUrl': '/curriculum_api/curriculum/uploads/week-template/show.mp3',
+                        'uploadedFileName': 'show.mp3',
+                    },
+                }],
+            }],
+        }
+
+        errors = views.validate_module_authoring_payload(payload)
+
+        self.assertFalse(
+            any(item['path'] == 'weekStructure.0.components.0.settings.podcastUrl' for item in errors),
+            errors,
+        )
+
+    def test_uploaded_reading_resource_url_is_valid_for_authoring_save(self):
+        payload = {
+            'title': 'Module',
+            'weekStructure': [{
+                'title': 'Week 1',
+                'components': [{
+                    'title': 'Uploaded reading',
+                    'type': 'reading',
+                    'expectedOtjh': 2,
+                    'points': 15,
+                    'reflectionRequired': False,
+                    'workplaceEvidenceRequired': False,
+                    'settings': {
+                        'readingSource': 'File',
+                        'resourceUrl': '/curriculum_api/curriculum/uploads/week-template/reading.pdf',
+                        'uploadedFileUrl': '/curriculum_api/curriculum/uploads/week-template/reading.pdf',
+                        'uploadedFileName': 'reading.pdf',
+                    },
+                }],
+            }],
+        }
+
+        errors = views.validate_module_authoring_payload(payload)
+
+        self.assertFalse(
+            any(item['path'] == 'weekStructure.0.components.0.settings.resourceUrl' for item in errors),
+            errors,
+        )
 
 
 class ComponentOwnedKsbMappingTests(TestCase):
@@ -157,12 +241,10 @@ class CurriculumGroupModuleMatchingTests(SimpleTestCase):
 
     def test_blank_staff_profiles_are_not_returned_even_with_assignments(self):
         tutor_profiles = views.build_staff_profiles(
-            [],
             [{
                 'id': 'TUTOR-BLANK',
                 'name': 'EMPTY_STRING',
                 'email': 'EMPTY_STRING',
-                'assigned_module_ids': ['MOD-1'],
                 'is_archived': False,
             }],
             'tutor',
@@ -170,12 +252,10 @@ class CurriculumGroupModuleMatchingTests(SimpleTestCase):
             groups=[],
         )
         coach_profiles = views.build_staff_profiles(
-            [],
             [{
                 'id': 'COACH-BLANK',
                 'name': 'EMPTY_STRING',
                 'email': 'EMPTY_STRING',
-                'assigned_group_ids': ['GROUP-1'],
                 'is_archived': False,
             }],
             'coach',
@@ -184,6 +264,66 @@ class CurriculumGroupModuleMatchingTests(SimpleTestCase):
         )
         self.assertEqual(tutor_profiles, [])
         self.assertEqual(coach_profiles, [])
+
+    def test_staff_user_profile_source_maps_access_row_to_curriculum_profile(self):
+        source = views.staff_user_profile_source(
+            {
+                'id': 7,
+                'uuid': '76d901ea-885f-4aa0-83d1-111111111111',
+                'Username': 'Tutor One',
+                'Email': 'tutor.one@example.com',
+                'Phone_number': '07700 900123',
+                'Position': 'Tutor',
+                ' Status': 'FullUser',
+                'Access': 'Tutor',
+            },
+            'tutor',
+        )
+
+        self.assertEqual(source['id'], '76d901ea-885f-4aa0-83d1-111111111111')
+        self.assertEqual(source['staffUserId'], '7')
+        self.assertEqual(source['name'], 'Tutor One')
+        self.assertEqual(source['email'], 'tutor.one@example.com')
+        self.assertEqual(source['phone'], '07700 900123')
+        self.assertEqual(source['job_title'], 'Tutor')
+        self.assertEqual(source['access'], 'tutor')
+        self.assertFalse(source['is_archived'])
+
+    @patch('curriculum_api.views.build_cohorts_and_groups', return_value=([], []))
+    @patch('curriculum_api.views.get_program_config_rows', return_value=[])
+    @patch('curriculum_api.views.get_module_rows', return_value=[])
+    @patch('curriculum_api.views.get_training_rows', return_value=[])
+    @patch('curriculum_api.views.fetch_staff_users_by_access')
+    def test_staff_profile_collection_reads_staff_users_access(
+        self,
+        fetch_staff_users,
+        _training_rows,
+        _module_rows,
+        _program_rows,
+        _cohort_rows,
+    ):
+        fetch_staff_users.return_value = [
+            {
+                'id': 8,
+                'uuid': 'a4832ae2-3b9e-43c5-b622-222222222222',
+                'Username': 'Coach One',
+                'Email': 'coach.one@example.com',
+                'Phone_number': '',
+                'Position': 'Coach',
+                ' Status': 'FullUser',
+                'Access': 'coach',
+            },
+        ]
+
+        profiles = views.build_staff_user_profile_collection('coach')
+
+        fetch_staff_users.assert_called_once_with('coach')
+        self.assertEqual(len(profiles), 1)
+        self.assertEqual(profiles[0]['id'], 'a4832ae2-3b9e-43c5-b622-222222222222')
+        self.assertEqual(profiles[0]['role'], 'coach')
+        self.assertEqual(profiles[0]['name'], 'Coach One')
+        self.assertEqual(profiles[0]['access'], 'coach')
+        self.assertEqual(profiles[0]['staffUserId'], '8')
 
     def test_module_belongs_to_group_uses_stored_module_ids(self):
         group = {
@@ -236,6 +376,16 @@ class CurriculumGroupModuleMatchingTests(SimpleTestCase):
         self.assertEqual([module['moduleCatalogueId'] for module in filtered], ['MOD-KEEP', 'MOD-STALE'])
 
 
+#: The stored holidays the cohort fixture below ticks two of. Christmas 27 closes
+#: the Saturdays of 19 and 26 December, which is what pushes that module into the
+#: new year.
+CURRICULUM_HOLIDAY_ROWS = [
+    {'id': 1080, 'label': 'Christmas 27', 'start_date': date(2026, 12, 19), 'end_date': date(2027, 1, 1), 'type': 'bank-holidays'},
+    {'id': 1082, 'label': 'Easter 27', 'start_date': date(2027, 3, 21), 'end_date': date(2027, 3, 29), 'type': 'bank-holidays'},
+    {'id': 1083, 'label': 'June 27', 'start_date': date(2027, 5, 30), 'end_date': date(2027, 6, 5), 'type': 'workshop'},
+]
+
+
 class CurriculumTeamsMeetingTests(TestCase):
     def setUp(self):
         self.client = Client()
@@ -243,6 +393,16 @@ class CurriculumTeamsMeetingTests(TestCase):
         views.ensure_module_authoring_tables()
         views.ensure_live_sessions_table()
         views.authoring_delete(views.LIVE_SESSIONS_TABLE)
+        # `.env` is read into os.environ at startup, and a deployment that pins
+        # its Teams organizer would outrank the one every test below passes in.
+        # Unpinned is the default here; the tests that mean to exercise a pinned
+        # organizer set it themselves.
+        organizer_env = patch.dict(os.environ, {
+            'MICROSOFT_TEAMS_ORGANIZER_EMAIL': '',
+            'MICROSOFT_ORGANIZER_EMAIL': '',
+        })
+        organizer_env.start()
+        self.addCleanup(organizer_env.stop)
 
     @patch('coach_api.views.microsoft_graph_request')
     @patch('coach_api.views.has_graph_credentials', return_value=True)
@@ -393,9 +553,13 @@ class CurriculumTeamsMeetingTests(TestCase):
             'repeat_occurrences': 6,
             'join_url': 'https://teams.microsoft.com/l/meetup-join/example',
             'web_link': 'https://outlook.office.com/calendar/item',
+            'lobby_bypass': 'invited',
+            'recording': 'record-transcribe',
+            'spoken_language': 'en-GB',
             'status': 'active',
         })
         instance_reads = {'count': 0}
+        recreated_join_url = 'https://teams.microsoft.com/l/meetup-join/recreated'
 
         def graph_side_effect(method, path, payload=None):
             if method == 'PATCH' and path == 'users/tutor%40example.com/events/event-1':
@@ -427,6 +591,15 @@ class CurriculumTeamsMeetingTests(TestCase):
             # already sit on wanted dates and are deliberately left alone.
             if method == 'PATCH' and path.endswith('/instance-4'):
                 raise RuntimeError('ErrorOccurrenceCrossingBoundary')
+            # The recreated occurrence is a new event, so Teams gives it a Teams
+            # link -- and an online meeting -- of its own.
+            if method == 'POST' and path == 'users/tutor%40example.com/events':
+                return {
+                    'id': 'event-recreated',
+                    'onlineMeeting': {'joinUrl': recreated_join_url},
+                }
+            if method == 'GET' and 'onlineMeetings?' in path:
+                return {'value': [{'id': 'meeting-recreated' if 'recreated' in path else 'meeting-1'}]}
             if method in {'PATCH', 'POST', 'DELETE'}:
                 return {}
             raise AssertionError(f'Unexpected Graph call: {method} {path}')
@@ -483,6 +656,25 @@ class CurriculumTeamsMeetingTests(TestCase):
             '2026-10-14',
         ])
 
+        # The recreated session runs on a meeting of its own, so the series'
+        # options never reached it: automatic recording and transcription have to
+        # be applied to that meeting too, or the one session that moved is the one
+        # that records nothing.
+        recreated_patch = next(
+            call.kwargs.get('payload') or call.args[2]
+            for call in graph_request.call_args_list
+            if call.args[:2] == ('PATCH', 'users/tutor%40example.com/onlineMeetings/meeting-recreated')
+        )
+        self.assertTrue(recreated_patch['recordAutomatically'])
+        self.assertTrue(recreated_patch['allowTranscription'])
+        self.assertEqual(recreated_patch['lobbyBypassSettings']['scope'], 'invited')
+        # ...and the session points at the event and meeting it actually has, so
+        # learners join the right call and its transcript is looked for where it is.
+        moved = [row for row in occurrences if views.clean_str(row.get('online_meeting_id'))]
+        self.assertEqual([row['online_meeting_id'] for row in moved], ['meeting-recreated'])
+        self.assertEqual(moved[0]['graph_event_id'], 'event-recreated')
+        self.assertEqual(moved[0]['join_url'], recreated_join_url)
+
     @patch('coach_api.views.microsoft_graph_request')
     @patch('coach_api.views.has_graph_credentials', return_value=True)
     def test_artifact_sync_backfills_online_meeting_id_from_join_url(self, _credentials, graph_request):
@@ -492,6 +684,8 @@ class CurriculumTeamsMeetingTests(TestCase):
             'organizer_email': 'tutor@example.com',
             'join_url': 'https://teams.microsoft.com/l/meetup-join/example',
             'online_meeting_id': '',
+            'recording': 'record-transcribe',
+            'lobby_bypass': 'invited',
             'status': 'active',
         })
         graph_request.side_effect = [
@@ -501,6 +695,7 @@ class CurriculumTeamsMeetingTests(TestCase):
                     'meetingOptionsWebUrl': 'https://teams.microsoft.com/meetingOptions/recovered',
                 }],
             },
+            {},
             {'value': []},
             {'value': []},
             {'value': []},
@@ -524,10 +719,197 @@ class CurriculumTeamsMeetingTests(TestCase):
             'https://teams.microsoft.com/meetingOptions/recovered',
         )
         self.assertIn('users/tutor%40example.com/onlineMeetings?', graph_request.call_args_list[0].args[1])
+        # The lookup that failed at creation is the same one that gates the patch,
+        # so a series that only just became resolvable is a series whose recording
+        # was never switched on. Resolving it is the first chance to fix that, and
+        # it has to be taken here -- otherwise granting the access policy repairs
+        # the tracking and leaves every meeting still recording nothing.
         self.assertEqual(
-            graph_request.call_args_list[1].args[1],
+            graph_request.call_args_list[1].args[:2],
+            ('PATCH', 'users/tutor%40example.com/onlineMeetings/meeting-recovered'),
+        )
+        reapplied = graph_request.call_args_list[1].kwargs['payload']
+        self.assertTrue(reapplied['allowRecording'])
+        self.assertTrue(reapplied['recordAutomatically'])
+        self.assertTrue(reapplied['allowTranscription'])
+        self.assertEqual(
+            graph_request.call_args_list[2].args[1],
             'users/tutor%40example.com/onlineMeetings/meeting-recovered/attendanceReports',
         )
+
+    @patch('coach_api.views.microsoft_graph_request')
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
+    @patch('coach_api.views.get_graph_settings', return_value={
+        'tenant_id': 'tenant',
+        'client_id': 'client',
+        'client_secret': 'secret',
+        'scope': 'https://graph.microsoft.com/.default',
+        'base_url': 'https://graph.microsoft.com/v1.0',
+        'timezone': 'GMT Standard Time',
+    })
+    def test_configured_organizer_outranks_the_one_the_caller_asks_for(
+        self, _settings, _credentials, graph_request,
+    ):
+        # Recording and transcription are set on the online meeting behind the
+        # event, and that route is gated by a Teams application access policy
+        # granted to one mailbox. A meeting created on any other mailbox is
+        # refused with 403 and opens at the tenant defaults, recording nothing --
+        # so the configured organizer has to win, however the caller asks.
+        def graph_side_effect(method, path, payload=None):
+            if method == 'POST' and path.endswith('/events'):
+                return {
+                    'id': 'event-pinned',
+                    'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/pinned'},
+                }
+            if method == 'GET' and 'onlineMeetings' in path:
+                return {'value': [{'id': 'meeting-pinned'}]}
+            return {}
+
+        graph_request.side_effect = graph_side_effect
+        with patch.dict(os.environ, {'MICROSOFT_TEAMS_ORGANIZER_EMAIL': 'organizer@example.com'}):
+            response = self.client.post(
+                '/curriculum_api/curriculum/teams-meetings/',
+                data=json.dumps({
+                    'title': 'Risk workshop',
+                    'organizerEmail': 'tutor@example.com',
+                    'attendees': ['student1@example.com'],
+                    'presenters': ['tutor@example.com'],
+                    'localStartDateTime': '2026-07-30T15:30',
+                    'startDateTimeUtc': '2026-07-30T12:30:00.000Z',
+                    'durationMinutes': 60,
+                    'repeat': 'none',
+                    'recording': 'record-transcribe',
+                }),
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()['meeting']['organizerEmail'], 'organizer@example.com')
+        self.assertEqual(
+            graph_request.call_args_list[0].args[:2],
+            ('POST', 'users/organizer%40example.com/events'),
+        )
+        # The tutor is still on the meeting -- as a presenter, which is the role
+        # that lets them share and record. They just do not own the calendar.
+        self.assertIn(
+            'tutor@example.com',
+            [entry['emailAddress']['address']
+             for entry in graph_request.call_args_list[0].kwargs['payload']['attendees']],
+        )
+        self.assertTrue(
+            any(call.args[:2] == ('PATCH', 'users/organizer%40example.com/onlineMeetings/meeting-pinned')
+                for call in graph_request.call_args_list)
+        )
+
+    @patch('coach_api.views.microsoft_graph_request')
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
+    @patch('coach_api.views.get_graph_settings', return_value={
+        'tenant_id': 'tenant',
+        'client_id': 'client',
+        'client_secret': 'secret',
+        'scope': 'https://graph.microsoft.com/.default',
+        'base_url': 'https://graph.microsoft.com/v1.0',
+        'timezone': 'GMT Standard Time',
+    })
+    def test_record_and_transcribe_switches_on_all_three_graph_flags(
+        self, _settings, _credentials, graph_request,
+    ):
+        # `allowRecording` alone only permits a human to press Record.
+        # `recordAutomatically` is what starts it without anyone in the room
+        # remembering to, and `allowTranscription` is what produces the transcript
+        # the module's evidence relies on. All three, or the session is lost.
+        def graph_side_effect(method, path, payload=None):
+            if method == 'POST' and path.endswith('/events'):
+                return {
+                    'id': 'event-rec',
+                    'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/rec'},
+                }
+            if method == 'GET' and 'onlineMeetings' in path:
+                return {'value': [{'id': 'meeting-rec'}]}
+            return {}
+
+        graph_request.side_effect = graph_side_effect
+        response = self.client.post(
+            '/curriculum_api/curriculum/teams-meetings/',
+            data=json.dumps({
+                'title': 'Recorded session',
+                'organizerEmail': 'tutor@example.com',
+                'attendees': ['student1@example.com'],
+                'localStartDateTime': '2026-07-30T15:30',
+                'startDateTimeUtc': '2026-07-30T12:30:00.000Z',
+                'durationMinutes': 60,
+                'repeat': 'none',
+                'recording': 'record-transcribe',
+                'spokenLanguage': 'en-GB',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(response.json()['meeting']['settingsApplied'])
+        patch_payload = next(
+            call.kwargs['payload']
+            for call in graph_request.call_args_list
+            if call.args[:2] == ('PATCH', 'users/tutor%40example.com/onlineMeetings/meeting-rec')
+        )
+        self.assertTrue(patch_payload['allowRecording'])
+        self.assertTrue(patch_payload['recordAutomatically'])
+        self.assertTrue(patch_payload['allowTranscription'])
+        self.assertEqual(patch_payload['meetingSpokenLanguageTag'], 'en-GB')
+
+    @patch('coach_api.views.microsoft_graph_request')
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
+    @patch('coach_api.views.get_graph_settings', return_value={
+        'tenant_id': 'tenant',
+        'client_id': 'client',
+        'client_secret': 'secret',
+        'scope': 'https://graph.microsoft.com/.default',
+        'base_url': 'https://graph.microsoft.com/v1.0',
+        'timezone': 'GMT Standard Time',
+    })
+    def test_schedule_update_keeps_the_organizer_the_series_was_created_on(
+        self, _settings, _credentials, graph_request,
+    ):
+        # Pinning an organizer must not repoint a series that already exists: this
+        # event lives on one mailbox, and asking Graph for it on another is a 404
+        # that would strand a live series mid-programme.
+        live_session_id = 'LIVE-STORED-ORGANIZER'
+        views.ensure_live_session_tracking_tables()
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': live_session_id,
+            'organizer_email': 'previous.tutor@example.com',
+            'graph_event_id': 'event-existing',
+            'online_meeting_id': 'meeting-existing',
+            'module_title': 'Risk module',
+            'start_datetime': '2026-09-02T08:30:00Z',
+            'duration_minutes': 60,
+            'repeat_pattern': 'none',
+            'repeat_occurrences': 1,
+            'join_url': 'https://teams.microsoft.com/l/meetup-join/existing',
+            'recording': 'record-transcribe',
+            'status': 'active',
+        })
+        graph_request.return_value = {}
+
+        with patch.dict(os.environ, {'MICROSOFT_TEAMS_ORGANIZER_EMAIL': 'organizer@example.com'}):
+            response = self.client.patch(
+                f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/schedule/',
+                data=json.dumps({
+                    'title': 'Risk module',
+                    'organizerEmail': 'someone.else@example.com',
+                    'localStartDateTime': '2026-09-09T09:30',
+                    'startDateTimeUtc': '2026-09-09T08:30:00.000Z',
+                    'durationMinutes': 60,
+                    'repeat': 'none',
+                }),
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        paths = [call.args[1] for call in graph_request.call_args_list]
+        self.assertTrue(all('previous.tutor%40example.com' in path for path in paths), paths)
+        self.assertFalse(any('organizer%40example.com' in path for path in paths), paths)
+        self.assertFalse(any('someone.else' in path for path in paths), paths)
 
     @patch('coach_api.views.has_graph_credentials', return_value=True)
     @patch('coach_api.views.get_graph_settings', return_value={
@@ -548,6 +930,656 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('Organizer email is required', response.json()['error'])
 
+    @patch('coach_api.views.microsoft_graph_request')
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
+    @patch('coach_api.views.get_graph_settings', return_value={
+        'tenant_id': 'tenant',
+        'client_id': 'client',
+        'client_secret': 'secret',
+        'scope': 'https://graph.microsoft.com/.default',
+        'base_url': 'https://graph.microsoft.com/v1.0',
+        'timezone': 'GMT Standard Time',
+    })
+    def test_schedule_update_can_correct_who_presents(self, _settings, _credentials, graph_request):
+        # Presenters are the one meeting option that used to be answerable only
+        # at creation, which left a mis-invited series with no way back short of
+        # recreating it. The dates here are unchanged on purpose.
+        live_session_id = 'LIVE-PRESENTERS'
+        views.ensure_live_session_tracking_tables()
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': live_session_id,
+            'organizer_email': 'tutor@example.com',
+            'graph_event_id': 'event-1',
+            'online_meeting_id': 'meeting-1',
+            'module_title': 'Risk module',
+            'start_datetime': '2026-09-02T08:30:00Z',
+            'duration_minutes': 120,
+            'repeat_pattern': 'weekly',
+            'repeat_occurrences': 2,
+            'join_url': 'https://teams.microsoft.com/l/meetup-join/example',
+            'attendees': views.json_db_value(['learner@example.com']),
+            'presenters': views.json_db_value([]),
+            'status': 'active',
+        })
+
+        def graph_side_effect(method, path, payload=None):
+            if method == 'PATCH' and path == 'users/tutor%40example.com/events/event-1':
+                return {
+                    'id': 'event-1',
+                    'webLink': 'https://outlook.office.com/calendar/item',
+                    'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'},
+                }
+            if method == 'GET' and '/instances?' in path:
+                return {'value': []}
+            if method in {'PATCH', 'POST', 'DELETE'}:
+                return {}
+            raise AssertionError(f'Unexpected Graph call: {method} {path}')
+
+        graph_request.side_effect = graph_side_effect
+
+        response = self.client.patch(
+            f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/schedule/',
+            data=json.dumps({
+                'title': 'Risk module',
+                'organizerEmail': 'tutor@example.com',
+                'eventId': 'event-1',
+                'localStartDateTime': '2026-09-02T09:30',
+                'startDateTimeUtc': '2026-09-02T08:30:00Z',
+                'durationMinutes': 120,
+                'repeat': 'weekly',
+                'repeatOccurrences': 2,
+                'attendees': ['learner@example.com'],
+                'presenters': ['tutor@example.com'],
+                'scheduledOccurrences': [
+                    {'sessionNumber': 1, 'startDateTimeUtc': '2026-09-02T08:30:00Z', 'durationMinutes': 120},
+                    {'sessionNumber': 2, 'startDateTimeUtc': '2026-09-09T08:30:00Z', 'durationMinutes': 120},
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        result = response.json()
+        self.assertEqual(result['meeting']['presenters'], ['tutor@example.com'])
+        self.assertEqual(result['warnings'], [])
+        series = views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]
+        self.assertEqual(views.as_json_value(series['presenters'], []), ['tutor@example.com'])
+
+        # The invitation went out on the calendar event, and the presenter role
+        # was applied to the onlineMeeting behind it.
+        event_patch = next(
+            call.kwargs.get('payload') or call.args[2]
+            for call in graph_request.call_args_list
+            if call.args[:2] == ('PATCH', 'users/tutor%40example.com/events/event-1')
+        )
+        self.assertEqual(
+            [attendee['emailAddress']['address'] for attendee in event_patch['attendees']],
+            ['tutor@example.com', 'learner@example.com'],
+        )
+        meeting_patch = next(
+            call.kwargs.get('payload') or call.args[2]
+            for call in graph_request.call_args_list
+            if call.args[0] == 'PATCH' and 'onlineMeetings' in call.args[1]
+        )
+        self.assertEqual(meeting_patch['allowedPresenters'], 'roleIsPresenter')
+        self.assertEqual(
+            {item['upn']: item['role'] for item in meeting_patch['participants']['attendees']},
+            {'tutor@example.com': 'presenter', 'learner@example.com': 'attendee'},
+        )
+
+    @patch('coach_api.views.microsoft_graph_request')
+    @patch('coach_api.views.has_graph_credentials', return_value=True)
+    @patch('coach_api.views.get_graph_settings', return_value={
+        'tenant_id': 'tenant',
+        'client_id': 'client',
+        'client_secret': 'secret',
+        'scope': 'https://graph.microsoft.com/.default',
+        'base_url': 'https://graph.microsoft.com/v1.0',
+        'timezone': 'GMT Standard Time',
+    })
+    def test_schedule_update_keeps_stored_people_when_they_are_not_sent(self, _settings, _credentials, graph_request):
+        live_session_id = 'LIVE-DATES-ONLY'
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': live_session_id,
+            'organizer_email': 'tutor@example.com',
+            'graph_event_id': 'event-2',
+            'module_title': 'Risk module',
+            'start_datetime': '2026-09-02T08:30:00Z',
+            'duration_minutes': 120,
+            'repeat_pattern': 'weekly',
+            'repeat_occurrences': 1,
+            'join_url': 'https://teams.microsoft.com/l/meetup-join/example',
+            'attendees': views.json_db_value(['learner@example.com']),
+            'presenters': views.json_db_value(['tutor@example.com']),
+            'lobby_bypass': 'invited',
+            'recording': 'record-transcribe',
+            'spoken_language': 'en-GB',
+            'status': 'active',
+        })
+
+        def graph_side_effect(method, path, payload=None):
+            if method == 'PATCH' and path == 'users/tutor%40example.com/events/event-2':
+                return {'id': 'event-2', 'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/example'}}
+            if method == 'GET' and '/instances?' in path:
+                return {'value': []}
+            if method == 'GET' and 'onlineMeetings?' in path:
+                return {'value': [{'id': 'meeting-2'}]}
+            if method in {'PATCH', 'POST', 'DELETE'}:
+                return {}
+            raise AssertionError(f'Unexpected Graph call: {method} {path}')
+
+        graph_request.side_effect = graph_side_effect
+
+        response = self.client.patch(
+            f'/curriculum_api/curriculum/teams-meetings/{live_session_id}/schedule/',
+            data=json.dumps({
+                'title': 'Risk module',
+                'organizerEmail': 'tutor@example.com',
+                'eventId': 'event-2',
+                'localStartDateTime': '2026-09-16T09:30',
+                'startDateTimeUtc': '2026-09-16T08:30:00Z',
+                'durationMinutes': 120,
+                'repeat': 'none',
+                'repeatOccurrences': 1,
+                'scheduledOccurrences': [
+                    {'sessionNumber': 1, 'startDateTimeUtc': '2026-09-16T08:30:00Z', 'durationMinutes': 120},
+                ],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        series = views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]
+        self.assertEqual(views.as_json_value(series['presenters'], []), ['tutor@example.com'])
+        self.assertEqual(views.as_json_value(series['attendees'], []), ['learner@example.com'])
+        # No invitation list was sent, so the event patch must not rewrite one.
+        event_patch = next(
+            call.kwargs.get('payload') or call.args[2]
+            for call in graph_request.call_args_list
+            if call.args[:2] == ('PATCH', 'users/tutor%40example.com/events/event-2')
+        )
+        self.assertNotIn('attendees', event_patch)
+
+        # Every save re-applies the stored meeting options, not only the saves that
+        # change who is invited. Graph hands out a new online meeting at the tenant
+        # defaults whenever the event gets one, so a series configured once at
+        # creation quietly loses its automatic recording and transcript later.
+        meeting_patch = next(
+            call.kwargs.get('payload') or call.args[2]
+            for call in graph_request.call_args_list
+            if call.args[0] == 'PATCH' and 'onlineMeetings' in call.args[1]
+        )
+        self.assertTrue(meeting_patch['allowRecording'])
+        self.assertTrue(meeting_patch['recordAutomatically'])
+        self.assertTrue(meeting_patch['allowTranscription'])
+        self.assertEqual(meeting_patch['meetingSpokenLanguageTag'], 'en-GB')
+        # The stored invitation list still names the roles, so the meeting knows
+        # these people belong to it rather than being guests who found the link.
+        self.assertEqual(
+            {item['upn']: item['role'] for item in meeting_patch['participants']['attendees']},
+            {'tutor@example.com': 'presenter', 'learner@example.com': 'attendee'},
+        )
+        # The meeting ID the lookup resolved is kept, so the next sync does not
+        # have to resolve it again.
+        self.assertEqual(
+            views.authoring_fetch_all(views.LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]['online_meeting_id'],
+            'meeting-2',
+        )
+
+    def test_restore_gives_each_live_session_component_its_own_session(self):
+        # A learner opening session two has to land in session two, on session
+        # two's date. The series' values are right for the sessions that share
+        # its meeting; a session Graph would only take as an event of its own
+        # carries its own link, and every session carries its own date.
+        views.ensure_live_session_tracking_tables()
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': 'MOD-RESTORE',
+            'programme_id': 'PROG-RESTORE',
+            'programme_name': 'Programme',
+            'title': 'Risk module',
+        })
+        views.authoring_upsert(views.AUTHORING_WEEKS_TABLE, ['id'], {
+            'id': 'WEEK-RESTORE',
+            'module_catalogue_id': 'MOD-RESTORE',
+            'week_number': 1,
+            'title': 'Week 1',
+        })
+        for order, component_id in enumerate(['COMP-LIVE-1', 'COMP-LIVE-2'], start=1):
+            views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+                'id': component_id,
+                'week_id': 'WEEK-RESTORE',
+                'module_catalogue_id': 'MOD-RESTORE',
+                'type': 'live_session',
+                'title': f'Session {order}',
+                'display_order': order,
+            })
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': 'LIVE-RESTORE',
+            'module_catalogue_id': 'MOD-RESTORE',
+            'module_title': 'Risk module',
+            'organizer_email': 'tutor@example.com',
+            'graph_event_id': 'event-series',
+            'online_meeting_id': 'meeting-series',
+            'join_url': 'https://teams.microsoft.com/l/meetup-join/series',
+            'start_datetime': '2026-09-02T08:30:00Z',
+            'duration_minutes': 120,
+            'repeat_pattern': 'weekly',
+            'repeat_occurrences': 2,
+            'status': 'active',
+        })
+        occurrences = [
+            (1, '2026-09-02T08:30:00Z', '2026-09-02T10:30:00Z', '', '', ''),
+            (2, '2026-09-16T08:30:00Z', '2026-09-16T10:00:00Z',
+             'https://teams.microsoft.com/l/meetup-join/moved', 'event-moved', 'meeting-moved'),
+        ]
+        for number, start, end, join_url, event_id, meeting_id in occurrences:
+            views.authoring_upsert(views.LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
+                'id': f'OCC-RESTORE-{number}',
+                'live_session_id': 'LIVE-RESTORE',
+                'session_number': number,
+                'scheduled_start': start,
+                'scheduled_end': end,
+                'join_url': join_url,
+                'graph_event_id': event_id,
+                'online_meeting_id': meeting_id,
+                'status': 'scheduled',
+            })
+
+        response = self.client.post('/curriculum_api/curriculum/modules/MOD-RESTORE/teams-meetings/restore/')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['updatedComponents'], 2)
+
+        rows = {
+            row['id']: row
+            for row in views.authoring_fetch_all(views.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', ['MOD-RESTORE'])
+        }
+        first = views.parse_json_value(rows['COMP-LIVE-1'].get('settings_json'), {})
+        second = views.parse_json_value(rows['COMP-LIVE-2'].get('settings_json'), {})
+
+        # Session one shares the series' meeting, so it keeps the series' link
+        # and gets its own date and length.
+        self.assertEqual(first['liveSessionUrl'], 'https://teams.microsoft.com/l/meetup-join/series')
+        self.assertEqual(first['teamsOnlineMeetingId'], 'meeting-series')
+        self.assertEqual(first['sessionDateTimeUtc'][:10], '2026-09-02')
+        self.assertEqual(first['durationMinutes'], 120)
+        self.assertEqual(first['teamsSessionNumber'], 1)
+
+        # Session two was recreated on its own event, so everything that names a
+        # meeting is its own -- and its shorter slot comes with it.
+        self.assertEqual(second['liveSessionUrl'], 'https://teams.microsoft.com/l/meetup-join/moved')
+        self.assertEqual(rows['COMP-LIVE-2']['live_sessions_link'], 'https://teams.microsoft.com/l/meetup-join/moved')
+        self.assertEqual(second['teamsOnlineMeetingId'], 'meeting-moved')
+        self.assertEqual(second['teamsEventId'], 'event-moved')
+        self.assertEqual(second['sessionDateTimeUtc'][:10], '2026-09-16')
+        self.assertEqual(second['durationMinutes'], 90)
+        self.assertEqual(second['teamsSessionNumber'], 2)
+
+    def _module_with_six_saturday_weeks(self):
+        """A module that runs weekly on Saturdays across a closed Christmas.
+
+        Two of its delivery days are closed, so sessions 2-6 run later than the
+        plain weekly pattern and the module spills out of December into January.
+        That spill is the point: it is what the week list has to be able to say.
+        """
+        views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
+            'cohort_id': 'COHORT-XMAS',
+            'cohort_name': 'C1',
+            'programme_id': 'PROG-RESTORE',
+            'programme_name': 'Programme',
+            'start_date': '2026-08-01',
+            'end_date': '2027-08-31',
+            # The ticked ids are the selection. `selected_holidays` is only a
+            # cache of what they pointed at when the cohort was last written,
+            # and this is what a stale one looks like in production: eight
+            # holidays ticked, one left in the cache, and Christmas missing from
+            # it. Reading the cache first ran the module's sessions straight
+            # through a closed fortnight.
+            'holiday_ids': views.json_db_value(['1080', '1082']),
+            'selected_holidays': views.json_db_value([
+                {'id': 1083, 'label': 'June 27', 'startDate': '2027-05-30', 'endDate': '2027-06-05'},
+            ]),
+        })
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': 'MOD-WEEKS',
+            'programme_id': 'PROG-RESTORE',
+            'programme_name': 'Programme',
+            'cohort_id': 'COHORT-XMAS',
+            'title': 'Fouda-ss',
+            'sessions_number': 6,
+            # A Tuesday: the first session is the Saturday that follows it.
+            'start_date': '2026-12-08',
+            'session_week_day': 'Saturday',
+            'session_start_time': '09:00',
+            'session_end_time': '11:00',
+        })
+        for number in range(1, 7):
+            views.authoring_upsert(views.AUTHORING_WEEKS_TABLE, ['id'], {
+                'id': f'WEEK-{number}',
+                'module_catalogue_id': 'MOD-WEEKS',
+                'week_number': number,
+                'display_order': number,
+                'title': f'Week {number}',
+            })
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': 'LIVE-WEEKS',
+            'module_catalogue_id': 'MOD-WEEKS',
+            'module_title': 'Fouda-ss',
+            'organizer_email': 'tutor@example.com',
+            'graph_event_id': 'event-series',
+            'online_meeting_id': 'meeting-series',
+            'join_url': 'https://teams.microsoft.com/l/meetup-join/series',
+            'start_datetime': '2026-12-12T09:00:00Z',
+            'duration_minutes': 120,
+            'repeat_pattern': 'weekly',
+            'repeat_occurrences': 6,
+            'status': 'active',
+        })
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_structure_payload_dates_every_week_from_the_module_plan(self, _holidays):
+        # The weeks are a timetable, not just a running count: each one carries
+        # the day it actually runs, holiday shifts included, so a reader can see
+        # that this module spills into the new year.
+        self._module_with_six_saturday_weeks()
+
+        payload = views.get_authoring_structure_payload('MOD-WEEKS')
+
+        self.assertEqual(
+            [week['sessionDate'] for week in payload['weekStructure']],
+            ['2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16', '2027-01-23', '2027-01-30'],
+        )
+        self.assertEqual(payload['weekStructure'][0]['sessionDay'], 'Saturday')
+        self.assertEqual(payload['weekStructure'][0]['sessionStartTime'], '09:00')
+        self.assertEqual(payload['weekStructure'][0]['sessionDurationMinutes'], 120)
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_restore_can_give_every_week_its_own_live_session(self, _holidays):
+        # Re-attaching is the one action that finishes the job: a created series
+        # is only in front of the learner once every week has a session to open,
+        # on that week's own date.
+        self._module_with_six_saturday_weeks()
+        views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+            'id': 'COMP-EXISTING',
+            'week_id': 'WEEK-1',
+            'module_catalogue_id': 'MOD-WEEKS',
+            'type': 'live_session',
+            'title': 'Kick-off',
+            'display_order': 1,
+        })
+
+        response = self.client.post(
+            '/curriculum_api/curriculum/modules/MOD-WEEKS/teams-meetings/restore/',
+            data=json.dumps({'createMissingComponents': True}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        result = response.json()
+        # Week 1 already had one; the other five were created rather than left
+        # without a session.
+        self.assertEqual(result['createdComponents'], 5)
+        self.assertEqual(result['updatedComponents'], 1)
+
+        weeks = result['module']['weekStructure']
+        live_sessions = [
+            [component for component in week['components'] if component['type'] == 'live-session']
+            for week in weeks
+        ]
+        self.assertEqual([len(items) for items in live_sessions], [1, 1, 1, 1, 1, 1])
+        self.assertEqual(
+            [items[0]['settings']['sessionDate'] for items in live_sessions],
+            ['2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16', '2027-01-23', '2027-01-30'],
+        )
+        # Every one of them can be joined, and the created ones say when they
+        # start and how long they run.
+        self.assertTrue(all(
+            items[0]['settings']['liveSessionUrl'] == 'https://teams.microsoft.com/l/meetup-join/series'
+            for items in live_sessions
+        ))
+        created = live_sessions[1][0]
+        self.assertEqual(created['settings']['sessionTime'], '09:00')
+        self.assertEqual(created['settings']['durationMinutes'], 120)
+        self.assertEqual(created['expectedOtjh'], 2.0)
+        # Titled after the session, never after the week: a live session named
+        # "Week 2" is read as a generated placeholder and hidden by the authoring
+        # model.
+        self.assertNotIn(created['title'], {'Week 2', ''})
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_session_plan_dates_a_week_that_is_not_saved_yet(self, _holidays):
+        # Module Builder adds a week before anything is written, and week N is
+        # session N -- so a seventh week on a stored six-week module has to be
+        # given the seventh planned date. Asking here is what keeps that date the
+        # one the structure payload will serve after the save.
+        self._module_with_six_saturday_weeks()
+
+        response = self.client.get(
+            '/curriculum_api/curriculum/modules/MOD-WEEKS/session-plan/', {'weeks': 7},
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        plan = response.json()
+        self.assertEqual(
+            [session['date'] for session in plan['sessions']],
+            [
+                '2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16',
+                '2027-01-23', '2027-01-30', '2027-02-06',
+            ],
+        )
+        # The six weeks that already existed keep the dates the structure payload
+        # gave them: adding a week appends to the timetable, it does not shift it.
+        self.assertEqual(plan['sessions'][0]['day'], 'Saturday')
+        self.assertEqual(plan['finalEndDate'], '2027-02-06')
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_session_plan_moves_an_added_week_off_a_closed_holiday(self, _holidays):
+        # The whole point of asking the backend: the fourteenth Saturday of this
+        # module falls inside the Easter the cohort ticked, so the week added to
+        # reach it runs the Saturday after -- and says which day it was moved off.
+        self._module_with_six_saturday_weeks()
+
+        response = self.client.get(
+            '/curriculum_api/curriculum/modules/MOD-WEEKS/session-plan/', {'weeks': 14},
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        plan = response.json()
+        self.assertEqual(len(plan['sessions']), 14)
+        self.assertEqual(plan['sessions'][-1]['date'], '2027-04-03')
+        self.assertEqual(plan['sessions'][-1]['skippedHolidays'], ['2027-03-27'])
+        self.assertEqual(plan['finalEndDate'], '2027-04-03')
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_session_plan_falls_back_to_the_stored_session_count(self, _holidays):
+        self._module_with_six_saturday_weeks()
+
+        response = self.client.get('/curriculum_api/curriculum/modules/MOD-WEEKS/session-plan/')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['weeks'], 6)
+        self.assertEqual(response.json()['finalEndDate'], '2027-01-30')
+
+    def test_session_plan_refuses_a_module_it_cannot_find(self):
+        # An empty plan would read as "these weeks have no dates", which is a
+        # different answer from "there is no such module".
+        response = self.client.get('/curriculum_api/curriculum/modules/MOD-NOPE/session-plan/', {'weeks': 3})
+
+        self.assertEqual(response.status_code, 404, response.content)
+
+    @patch('curriculum_api.views.get_holiday_rows', return_value=CURRICULUM_HOLIDAY_ROWS)
+    def test_restore_without_the_flag_authors_nothing(self, _holidays):
+        # The Module Builder calls this endpoint silently when it opens a module
+        # whose join link went missing. Opening a module must never write
+        # components nobody asked for.
+        self._module_with_six_saturday_weeks()
+
+        response = self.client.post('/curriculum_api/curriculum/modules/MOD-WEEKS/teams-meetings/restore/')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['createdComponents'], 0)
+        self.assertEqual(
+            views.authoring_fetch_all(views.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', ['MOD-WEEKS']),
+            [],
+        )
+
+    def test_recording_events_credit_the_signed_in_account_not_the_body(self):
+        # Who watched a session back is part of that session's record, so it is
+        # read from the request's account. A viewer named in the body is only a
+        # fallback for a request with no session -- and must never override it.
+        views.ensure_live_session_tracking_tables()
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': 'MOD-WATCHED',
+            'programme_id': 'PROG-WATCHED',
+            'programme_name': 'Programme',
+            'title': 'Risk module',
+        })
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': 'LIVE-WATCHED',
+            'module_catalogue_id': 'MOD-WATCHED',
+            'organizer_email': 'tutor@example.com',
+            'status': 'active',
+        })
+        views.authoring_upsert(views.LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
+            'id': 'OCC-WATCHED',
+            'live_session_id': 'LIVE-WATCHED',
+            'session_number': 1,
+            'scheduled_start': '2026-09-02T08:30:00Z',
+            'scheduled_end': '2026-09-02T10:30:00Z',
+            'status': 'held',
+        })
+        views.authoring_upsert(views.LIVE_SESSION_ARTIFACTS_TABLE, ['id'], {
+            'id': 'ART-WATCHED',
+            'occurrence_id': 'OCC-WATCHED',
+            'artifact_type': 'recording',
+            'graph_artifact_id': 'graph-recording-1',
+        })
+
+        # The login middleware attaches the account; the view is called directly
+        # with the same attribute so the test is about the view's own precedence.
+        request = RequestFactory().post(
+            '/curriculum_api/curriculum/teams-meetings/LIVE-WATCHED/artifacts/ART-WATCHED/recording-events/',
+            data=json.dumps({
+                'viewer': {'email': 'someone.else@example.com', 'name': 'Not me'},
+                'events': [
+                    {'type': 'play', 'videoTimeSeconds': 0},
+                    {'type': 'seeked', 'videoTimeSeconds': 600, 'skipFromSeconds': 60, 'skipToSeconds': 600},
+                ],
+            }),
+            content_type='application/json',
+        )
+        request.login_account = SimpleNamespace(
+            id=77,
+            email='reviewer@kentbusinesscollege.com',
+            display_name='Session Reviewer',
+            role='curriculum',
+        )
+        response = views.curriculum_teams_recording_events(request, 'LIVE-WATCHED', 'ART-WATCHED')
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(json.loads(response.content)['saved'], 2)
+        rows = views.authoring_fetch_all(
+            views.LIVE_SESSION_RECORDING_EVENTS_TABLE,
+            'artifact_id = %s',
+            ['ART-WATCHED'],
+            'event_type',
+        )
+        self.assertEqual([row['event_type'] for row in rows], ['play', 'seeked'])
+        self.assertEqual({row['viewer_email'] for row in rows}, {'reviewer@kentbusinesscollege.com'})
+        self.assertEqual({row['viewer_name'] for row in rows}, {'Session Reviewer'})
+        skip = next(row for row in rows if row['event_type'] == 'seeked')
+        self.assertTrue(skip['skipped'])
+        self.assertEqual(skip['skip_delta_seconds'], 540)
+
+    def test_meeting_summary_reports_the_dates_teams_holds_when_asked(self):
+        views.ensure_live_session_tracking_tables()
+        views.authoring_delete(views.LIVE_SESSION_OCCURRENCES_TABLE)
+        views.authoring_upsert(views.AUTHORING_MODULES_TABLE, ['module_catalogue_id'], {
+            'module_catalogue_id': 'MOD-SUMMARY',
+            'programme_id': 'PROG-SUMMARY',
+            'programme_name': 'Programme',
+            'title': 'Risk module',
+        })
+        views.authoring_upsert(views.LIVE_SESSIONS_TABLE, ['id'], {
+            'id': 'LIVE-SUMMARY',
+            'module_catalogue_id': 'MOD-SUMMARY',
+            'module_title': 'Risk module',
+            'organizer_email': 'tutor@example.com',
+            'attendees': views.json_db_value(['learner@example.com']),
+            'presenters': views.json_db_value(['tutor@example.com']),
+            'graph_event_id': 'event-1',
+            'start_datetime': '2026-09-02T08:30:00Z',
+            'duration_minutes': 120,
+            'repeat_pattern': 'weekly',
+            'repeat_occurrences': 2,
+            'status': 'active',
+        })
+        for index, start in enumerate(['2026-09-02T08:30:00Z', '2026-09-16T08:30:00Z'], start=1):
+            views.authoring_upsert(views.LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
+                'id': f'OCC-SUMMARY-{index}',
+                'live_session_id': 'LIVE-SUMMARY',
+                'session_number': index,
+                'scheduled_start': start,
+                'scheduled_end': start,
+                'status': 'scheduled',
+            })
+
+        # Without the flag the payload stays the small counts-only shape the
+        # catalogue pages already read.
+        plain = self.client.get('/curriculum_api/curriculum/teams-meetings/summary/').json()['results']
+        plain_row = next(row for row in plain if row['moduleCatalogueId'] == 'MOD-SUMMARY')
+        self.assertNotIn('occurrenceDates', plain_row)
+        self.assertEqual(plain_row['presenters'], ['tutor@example.com'])
+        self.assertEqual(plain_row['eventId'], 'event-1')
+
+        detailed = self.client.get(
+            '/curriculum_api/curriculum/teams-meetings/summary/?occurrence_dates=1'
+        ).json()['results']
+        detailed_row = next(row for row in detailed if row['moduleCatalogueId'] == 'MOD-SUMMARY')
+        self.assertEqual(
+            [value[:10] for value in detailed_row['occurrenceDates']],
+            ['2026-09-02', '2026-09-16'],
+        )
+        # The occurrence columns are `timestamp without time zone` holding UTC, so
+        # a plain isoformat() hands the browser a time with no offset -- which
+        # JavaScript reads as the *reader's own* local time. Read that way the
+        # same calendar is in sync in London and two hours out in Cairo, so every
+        # instant leaving here names its offset.
+        for value in detailed_row['occurrenceDates']:
+            self.assertRegex(value, r'(Z|[+-]\d{2}:\d{2})$')
+        self.assertEqual(
+            [views.parse_graph_datetime(value).astimezone(timezone.utc).hour
+             for value in detailed_row['occurrenceDates']],
+            [8, 8],
+        )
+        self.assertRegex(detailed_row['nextOccurrence'], r'(Z|[+-]\d{2}:\d{2})$')
+
+
+def staff_user_row(name, email='', access='tutor', row_id=1, status='FullUser'):
+    """One ``enrolment.Staff_users`` row, as curriculum reads it.
+
+    Curriculum has no staff table of its own to seed: a tutor or a coach exists
+    because an administrator invited them and gave them that access, so a test
+    that needs one hands this to ``fetch_staff_users_by_access``.
+    """
+    return {
+        'id': row_id,
+        'uuid': f'{access}-uuid-{row_id}',
+        'Username': name,
+        'Email': email or f'{views.slugify(name)}@example.com',
+        'Phone_number': '',
+        'Position': access.title(),
+        ' Status': status,
+        'Access': access,
+        'Created_at': None,
+        'Updated_at': None,
+    }
+
+
+def staff_directory(*rows):
+    """A ``fetch_staff_users_by_access`` stand-in for the rows given."""
+    def fetch(access):
+        return [row for row in rows if views.clean_str(row.get('Access')).lower() == views.clean_str(access).lower()]
+    return fetch
+
 
 class CurriculumPersistenceHarness(TestCase):
     """Schema setup and payload builders shared by the persistence test suites.
@@ -563,9 +1595,7 @@ class CurriculumPersistenceHarness(TestCase):
         self.ensure_programmes_table()
         self.ensure_ksb_profiles_table()
         views.ensure_module_authoring_tables()
-        views.ensure_staff_profile_tables()
         self.clear_curriculum_tables()
-        self.clear_staff_profile_tables()
         self.seed_ksb_profile()
 
     def ensure_programmes_table(self):
@@ -634,8 +1664,6 @@ class CurriculumPersistenceHarness(TestCase):
             views.AUTHORING_ADVANCED_TABLE,
             views.AUTHORING_MODULES_TABLE,
             views.GROUPS_TABLE,
-            views.STAFF_PROFILE_TABLES['coach'],
-            views.STAFF_PROFILE_TABLES['tutor'],
             views.COHORT_AUTHORING_DETAILS_TABLE,
             'ksb_profiles',
             'programmes',
@@ -643,11 +1671,6 @@ class CurriculumPersistenceHarness(TestCase):
         with connection.cursor() as cursor:
             for table in table_names:
                 cursor.execute(f'delete from {views.authoring_table_name(table)}')
-
-    def clear_staff_profile_tables(self):
-        with connection.cursor() as cursor:
-            cursor.execute(f'delete from {views.table_name("coaches")}')
-            cursor.execute(f'delete from {views.table_name("tutors")}')
 
     def seed_ksb_profile(self):
         with connection.cursor() as cursor:
@@ -1119,57 +2142,6 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
             'https://teams.microsoft.com/l/meetup-join/test-meeting',
         )
 
-    def test_tree_save_syncs_coach_and_each_module_tutor_profile(self):
-        views.authoring_upsert(views.STAFF_PROFILE_TABLES['coach'], ['id'], {
-            'id': 'COACH-ONE',
-            'name': 'Coach One',
-            'email': 'coach.one@example.com',
-            'assigned_group_ids': views.json_db_value([]),
-            'is_archived': False,
-        })
-        views.authoring_upsert(views.STAFF_PROFILE_TABLES['tutor'], ['id'], {
-            'id': 'TUTOR-ONE',
-            'name': 'Tutor One',
-            'email': 'tutor.one@example.com',
-            'assigned_module_ids': views.json_db_value([]),
-            'is_archived': False,
-        })
-        views.authoring_upsert(views.STAFF_PROFILE_TABLES['tutor'], ['id'], {
-            'id': 'TUTOR-TWO',
-            'name': 'Tutor Two',
-            'email': 'tutor.two@example.com',
-            'assigned_module_ids': views.json_db_value([]),
-            'is_archived': False,
-        })
-        payload = self.tree_payload()
-        payload['cohorts'][0]['groups'][0]['modules'].append({
-            'moduleName': 'Applied Dashboards',
-            'catalogueId': 'MOD-DATA-2',
-            'startDate': '2026-09-16',
-            'endDate': '2026-09-23',
-            'sessionsNumber': 2,
-            'weekDays': 'Wednesday',
-            'coach': 'Coach One',
-            'tutor': 'Tutor Two',
-            'weekStructure': [{
-                'id': 'WEEK-DATA-2',
-                'weekNumber': 1,
-                'title': 'Week 1',
-                'components': [],
-            }],
-        })
-
-        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', payload)
-        self.assertEqual(response.status_code, 200, response.content)
-
-        coach = self.row(views.STAFF_PROFILE_TABLES['coach'], 'id', 'COACH-ONE')
-        tutor_one = self.row(views.STAFF_PROFILE_TABLES['tutor'], 'id', 'TUTOR-ONE')
-        tutor_two = self.row(views.STAFF_PROFILE_TABLES['tutor'], 'id', 'TUTOR-TWO')
-        self.assertIn('GROUP-DATA-1', views.as_json_value(coach['assigned_group_ids'], []))
-        self.assertIn('MOD-DATA-1', views.as_json_value(tutor_one['assigned_module_ids'], []))
-        self.assertNotIn('MOD-DATA-2', views.as_json_value(tutor_one['assigned_module_ids'], []))
-        self.assertIn('MOD-DATA-2', views.as_json_value(tutor_two['assigned_module_ids'], []))
-
     def test_global_ksb_coverage_uses_framework_definitions(self):
         response = self.client.get('/curriculum_api/curriculum/ksb-coverage/')
         self.assertEqual(response.status_code, 200, response.content)
@@ -1180,6 +2152,76 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
         self.assertEqual(payload['summary']['overall']['unmapped'], 1)
         self.assertEqual(payload['items'][0]['code'], 'K1')
         self.assertEqual(payload['items'][0]['source_id'], 'KSBP-DATA')
+
+    def seed_second_ksb_profile(self):
+        """A second active profile, so the union of every profile is visibly
+        different from any single one of them."""
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                insert into {views.authoring_table_name('ksb_profiles')}
+                (id, name, programme_name, programme_id, ksb_profile_id, ksb_items, is_active)
+                values (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                [
+                    'KSBP-OTHER',
+                    'Marketing Manager KSBs',
+                    'Marketing Manager',
+                    'PROG-MARKETING',
+                    'KSBP-OTHER',
+                    json.dumps([{'id': 'KSB-S1', 'code': 'S1', 'type': 'skill', 'description': 'Campaign planning'}]),
+                    True,
+                ],
+            )
+        views.invalidate_curriculum_cache()
+
+    def test_programme_coverage_reads_the_ksb_source_stored_on_the_programme(self):
+        """The programme row's own `ksb_profile_source_id` decides the required set.
+
+        It is the value the Programme form writes and the one that cascades onto
+        the programme's modules, but the coverage path used to ignore it and fall
+        back to matching the programme *name* against a profile. A programme
+        whose name matched nothing silently got the union of every profile.
+        """
+        self.seed_second_ksb_profile()
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        self.assertEqual(response.status_code, 200, response.content)
+        views.update_rows('programmes', 'programme_id = %s', ['PROG-DATA'], {
+            'name': 'A name no profile lists',
+            'ksb_profile_source_id': 'KSBP-DATA',
+        })
+        views.invalidate_curriculum_cache()
+
+        payload = self.client.get('/curriculum_api/curriculum/programmes/PROG-DATA/ksb-coverage/').json()
+
+        self.assertEqual(payload['source']['origin'], 'programme')
+        self.assertEqual(payload['source']['id'], 'KSBP-DATA')
+        self.assertEqual(payload['source']['type'], 'framework')
+        # Only the stored profile's KSBs -- the other profile's S1 is not required here.
+        self.assertEqual([item['code'] for item in payload['items']], ['K1'])
+
+    def test_programme_coverage_says_when_no_source_identified_it(self):
+        """With nothing stored and no name to match, the union of every profile
+        still answers -- but the response says that is what happened, so a page
+        can tell "no source set" apart from "this source has these KSBs"."""
+        self.seed_second_ksb_profile()
+        response = self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+        self.assertEqual(response.status_code, 200, response.content)
+        views.update_rows('programmes', 'programme_id = %s', ['PROG-DATA'], {
+            'name': 'A name no profile lists',
+            'ksb_profile_source_id': '',
+        })
+        views.update_authoring_rows(views.AUTHORING_MODULES_TABLE, 'programme_id = %s', ['PROG-DATA'], {
+            'programme_name': 'A name no profile lists',
+            'ksb_profile_source_id': '',
+        })
+        views.invalidate_curriculum_cache()
+
+        payload = self.client.get('/curriculum_api/curriculum/programmes/PROG-DATA/ksb-coverage/').json()
+
+        self.assertEqual(payload['source']['origin'], 'all-profiles')
+        self.assertEqual(payload['source']['id'], '')
+        self.assertEqual(sorted(item['code'] for item in payload['items']), ['K1', 'S1'])
 
     def test_delete_ksb_framework_removes_profile_row(self):
         response = self.client.delete('/curriculum_api/curriculum/ksb-frameworks/KSBP-DATA/')
@@ -1545,19 +2587,16 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
         )
         self.assertEqual(detail['tutor'], 'Unassigned')
 
-    def test_group_staff_assignments_accept_email_identifiers_and_store_canonical_names(self):
+    @patch('curriculum_api.views.fetch_staff_users_by_access')
+    def test_group_staff_assignments_accept_email_identifiers_and_store_canonical_names(self, fetch_staff_users):
+        # A screen can hand over whichever identifier it holds; the name stored
+        # on the curriculum is the one the staff directory has for that person,
+        # so two screens naming them differently still write one name.
+        fetch_staff_users.side_effect = staff_directory(
+            staff_user_row('Coach Two', 'coach.two@example.com', access='coach', row_id=1),
+            staff_user_row('Tutor Two', 'tutor.two@example.com', access='tutor', row_id=2),
+        )
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
-
-        coach = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Two',
-            'email': 'coach.two@example.com',
-        })
-        tutor = self.post_json('/curriculum_api/curriculum/tutors/', {
-            'name': 'Tutor Two',
-            'email': 'tutor.two@example.com',
-        })
-        self.assertEqual(coach.status_code, 201, coach.content)
-        self.assertEqual(tutor.status_code, 201, tutor.content)
 
         response = self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {
             'coach': 'coach.two@example.com',
@@ -1567,153 +2606,114 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
 
         group = self.row(views.GROUPS_TABLE, 'group_id', 'GROUP-DATA-1')
         module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
-        coach_row = views.find_staff_profile_row('coach', 'coach.two@example.com')
-        tutor_row = views.find_staff_profile_row('tutor', 'tutor.two@example.com')
 
         self.assertEqual(group['coach_name'], 'Coach Two')
         # Tutor ownership moved from curriculum.groups to curriculum.modules
         # in migration 0023, which dropped groups.tutor_name.
         self.assertEqual(module['tutor_name'], 'Tutor Two')
         self.assertEqual(module['group_id'], 'GROUP-DATA-1')
-        self.assertIn('GROUP-DATA-1', views.as_json_value(coach_row.get('assigned_group_ids'), []))
-        self.assertIn('MOD-DATA-1', views.as_json_value(tutor_row.get('assigned_module_ids'), []))
-
-    def test_create_coach_profile_is_idempotent_for_duplicate_email(self):
-        first = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Primary',
-            'email': 'coach.duplicate@example.com',
-            'phone': '07123456789',
-        })
-        self.assertEqual(first.status_code, 201, first.content)
-
-        second = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Alias',
-            'email': 'coach.duplicate@example.com',
-            'phone': '07999999999',
-        })
-        self.assertEqual(second.status_code, 200, second.content)
-        self.assertFalse(second.json()['created'])
-        self.assertTrue(second.json()['duplicate'])
-
-        matching = views.staff_profile_rows_by_identity('coach', 'Coach Alias', 'coach.duplicate@example.com', include_archived=True)
-        self.assertEqual(len(matching), 1)
-        self.assertFalse(views.staff_profile_is_archived(matching[0]))
-        self.assertEqual(views.staff_profile_name(matching[0]), 'Coach Primary')
-
-    def test_create_coach_profile_allows_same_name_with_different_email_and_overview_keeps_both(self):
-        first = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Same Name',
-            'email': 'coach.same.one@example.com',
-        })
-        second = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Same Name',
-            'email': 'coach.same.two@example.com',
-        })
-        self.assertEqual(first.status_code, 201, first.content)
-        self.assertEqual(second.status_code, 201, second.content)
-
-        overview = views.build_curriculum_payload('all')
-        matches = [item for item in overview['coaches'] if item['name'] == 'Coach Same Name']
-        self.assertEqual(len(matches), 2)
+        # The assignment lives here and nowhere else: the person's own record is
+        # in Users, and it carries no curriculum of its own to keep in step.
         self.assertEqual(
-            sorted(item['email'] for item in matches),
-            ['coach.same.one@example.com', 'coach.same.two@example.com'],
+            [profile['name'] for profile in views.build_staff_user_profile_collection('coach')],
+            ['Coach Two'],
         )
 
-    def test_create_coach_profile_after_delete_starts_a_fresh_row(self):
-        """A deleted coach is gone, so re-adding them is a create, not a restore."""
-        created = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Restore',
-            'email': 'coach.restore@example.com',
-        })
-        self.assertEqual(created.status_code, 201, created.content)
-        created_id = created.json()['profile']['id']
+class CurriculumStaffAreReadFromTheDirectoryTests(CurriculumPersistenceHarness):
+    """Curriculum reads its tutors and coaches; it never owns them.
 
-        deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
-        self.assertEqual(deleted.status_code, 200, deleted.content)
+    A tutor or a coach is a staff user an administrator invited and gave that
+    access to (``enrolment.Staff_users.Access``). Curriculum used to keep its own
+    ``tutors``/``coaches`` rows as well -- created through this API, and derived
+    from any name typed onto a delivery row -- which meant the same person could
+    exist twice, a tutor could exist whom nobody had granted tutor access, and
+    deleting them in Users left the curriculum copy behind. Now there is one
+    source, and these tests hold that: the list reads the directory, and the
+    write verbs are refused rather than quietly filling a second table.
+    """
 
-        recreated = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Restore Updated',
-            'email': 'coach.restore@example.com',
-            'phone': '07999999999',
-        })
-        self.assertEqual(recreated.status_code, 201, recreated.content)
-        self.assertTrue(recreated.json()['created'])
-        self.assertNotEqual(recreated.json()['profile']['id'], created_id)
-        self.assertEqual(recreated.json()['profile']['name'], 'Coach Restore Updated')
-        self.assertEqual(recreated.json()['profile']['phone'], '07999999999')
-
-        matching = views.staff_profile_rows_by_identity('coach', 'Coach Restore Updated', 'coach.restore@example.com', include_archived=True)
-        self.assertEqual(len(matching), 1)
-        self.assertFalse(views.staff_profile_is_archived(matching[0]))
-
-    def test_delete_coach_removes_all_duplicate_rows_for_same_email(self):
-        created = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Archive All',
-            'email': 'coach.archive@example.com',
-        })
-        self.assertEqual(created.status_code, 201, created.content)
-        created_id = created.json()['profile']['id']
-
-        views.insert_row('coaches', views.staff_profile_payload('coach', {
-            'id': 'COACH-DUP-ARCHIVE-2',
-            'name': 'Coach Archive Alias',
-            'email': 'coach.archive@example.com',
-            'phone': '07000000000',
-        }))
-
-        deleted = self.client.delete(f'/curriculum_api/curriculum/coaches/{created_id}/')
-        self.assertEqual(deleted.status_code, 200, deleted.content)
-        self.assertTrue(deleted.json()['deleted'])
-        self.assertEqual(deleted.json()['count'], 2)
-
-        matching = views.staff_profile_rows_by_identity('coach', 'Coach Archive All', 'coach.archive@example.com', include_archived=True)
-        self.assertEqual(matching, [])
-
-    def test_staff_ids_are_minted_even_when_the_name_looks_like_an_id(self):
-        """Staff ids follow the PROG-/MOD- scheme: prefix plus a UTC timestamp.
-
-        The mirror used to hand the *name* to unique_prefixed_id, whose second
-        argument is a requested id — so a tutor called "tutor-1" was stored as
-        ``TUTOR-1`` while a tutor called "Osama" got a timestamp.
-        """
-        response = self.post_json(
-            '/curriculum_api/curriculum/programmes/tree/', self.tree_payload(tutor='tutor-1'),
+    def directory(self, *rows):
+        patcher = patch(
+            'curriculum_api.views.fetch_staff_users_by_access',
+            side_effect=staff_directory(*rows),
         )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def staff(self, role, visibility=''):
+        path = f'/curriculum_api/curriculum/{"tutors" if role == "tutor" else "coaches"}/'
+        if visibility:
+            path += f'?visibility={visibility}'
+        response = self.client.get(path)
         self.assertEqual(response.status_code, 200, response.content)
+        body = response.json()
+        return body.get('results') if isinstance(body, dict) else body
 
-        tutor = views.find_staff_profile_row('tutor', 'tutor-1', include_archived=True)
-        coach = views.find_staff_profile_row('coach', 'Coach One', include_archived=True)
-        self.assertIsNotNone(tutor)
-        self.assertIsNotNone(coach)
-        self.assertRegex(tutor['id'], r'^TUTOR-\d{14,}$')
-        self.assertRegex(coach['id'], r'^COACH-\d{14,}$')
+    def test_the_list_is_the_staff_who_hold_that_access(self):
+        self.directory(
+            staff_user_row('Tutor One', 'tutor.one@example.com', access='tutor', row_id=1),
+            staff_user_row('Coach One', 'coach.one@example.com', access='coach', row_id=2),
+        )
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+
+        self.assertEqual([item['name'] for item in self.staff('tutor')], ['Tutor One'])
+        self.assertEqual([item['name'] for item in self.staff('coach')], ['Coach One'])
+        # And the curriculum they hold is read off the curriculum itself.
+        tutor = self.staff('tutor')[0]
+        coach = self.staff('coach')[0]
+        self.assertIn('MOD-DATA-1', tutor['assignedModuleIds'])
+        self.assertEqual(tutor['moduleCount'], 1)
+        self.assertIn('GROUP-DATA-1', coach['assignedGroupIds'])
+        self.assertEqual(coach['groupCount'], 1)
+
+    def test_a_name_typed_onto_a_module_does_not_invent_a_tutor(self):
+        # The old derived stand-in: a delivery row naming somebody was enough to
+        # make them a tutor. Access is what makes somebody a tutor now.
+        self.directory()
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+
+        module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
+        self.assertEqual(views.clean_str(module.get('tutor_name')), 'Tutor One')
+        self.assertEqual(self.staff('tutor'), [])
+
+    def test_an_archived_staff_user_is_out_of_the_operational_list(self):
+        self.directory(
+            staff_user_row('Tutor Gone', 'gone@example.com', access='tutor', row_id=3, status='archived'),
+            staff_user_row('Tutor Here', 'here@example.com', access='tutor', row_id=4),
+        )
+
+        self.assertEqual([item['name'] for item in self.staff('tutor')], ['Tutor Here'])
+        self.assertEqual(
+            sorted(item['name'] for item in self.staff('tutor', visibility='all')),
+            ['Tutor Gone', 'Tutor Here'],
+        )
+
+    def test_one_person_can_be_asked_for_by_any_identifier_a_screen_holds(self):
+        self.directory(staff_user_row('Tutor One', 'tutor.one@example.com', access='tutor', row_id=7))
+
+        for identifier in ('tutor-uuid-7', 'tutor.one@example.com', 'Tutor One'):
+            response = self.client.get(f'/curriculum_api/curriculum/tutors/{identifier}/')
+            self.assertEqual(response.status_code, 200, (identifier, response.content))
+            self.assertEqual(response.json()['profile']['name'], 'Tutor One')
+
+        missing = self.client.get('/curriculum_api/curriculum/tutors/nobody@example.com/')
+        self.assertEqual(missing.status_code, 404)
+
+    def test_curriculum_refuses_to_create_change_or_delete_a_staff_member(self):
+        self.directory(staff_user_row('Tutor One', 'tutor.one@example.com', access='tutor', row_id=7))
 
         created = self.post_json('/curriculum_api/curriculum/tutors/', {
-            'name': 'coach-9',
-            'email': 'coach.nine@example.com',
+            'name': 'Tutor Invented',
+            'email': 'invented@example.com',
         })
-        self.assertEqual(created.status_code, 201, created.content)
-        self.assertRegex(created.json()['profile']['id'], r'^TUTOR-\d{14,}$')
+        patched = self.patch_json('/curriculum_api/curriculum/tutors/tutor-uuid-7/', {'name': 'Renamed'})
+        deleted = self.client.delete('/curriculum_api/curriculum/tutors/tutor-uuid-7/')
 
-    def test_patch_coach_profile_rejects_email_change_to_existing_email(self):
-        first = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Rename One',
-            'email': 'coach.one@example.com',
-        })
-        second = self.post_json('/curriculum_api/curriculum/coaches/', {
-            'name': 'Coach Rename Two',
-            'email': 'coach.two@example.com',
-        })
-        self.assertEqual(first.status_code, 201, first.content)
-        self.assertEqual(second.status_code, 201, second.content)
-
-        response = self.patch_json(
-            f'/curriculum_api/curriculum/coaches/{second.json()["profile"]["id"]}/',
-            {'email': 'coach.one@example.com'},
-        )
-        self.assertEqual(response.status_code, 409, response.content)
-        self.assertIn('already exists', response.json()['error'])
+        for response in (created, patched, deleted):
+            self.assertEqual(response.status_code, 405, response.content)
+            self.assertIn('managed in Users', response.json()['error'])
+        # Nothing was written, so the list still answers with the directory.
+        self.assertEqual([item['name'] for item in self.staff('tutor')], ['Tutor One'])
 
 
 class CurriculumCacheTests(SimpleTestCase):
@@ -2324,36 +3324,6 @@ class CurriculumReferenceEtagTests(SimpleTestCase):
         self.assertEqual(response.status_code, 304)
 
 
-class StaffProfileSchemaRepairTests(TestCase):
-    def setUp(self):
-        views._STAFF_PROFILE_TABLES_READY = False
-        views._TABLE_COLUMNS_CACHE.clear()
-        views.invalidate_curriculum_cache()
-
-    def test_ensure_staff_profile_tables_does_not_restore_removed_staff_columns(self):
-        for table in ("coaches", "tutors"):
-            with connection.cursor() as cursor:
-                cursor.execute(f'drop table if exists {views.table_name(table)}')
-                cursor.execute(
-                    f'''
-                    create table {views.table_name(table)} (
-                        id varchar(128) primary key,
-                        name varchar(255) not null,
-                        email varchar(255) not null default ''
-                    )
-                    '''
-                )
-
-        views.ensure_staff_profile_tables()
-
-        self.assertNotIn("status", views.column_names("coaches"))
-        self.assertNotIn("status", views.column_names("tutors"))
-        self.assertNotIn("specialisms", views.column_names("coaches"))
-        self.assertNotIn("specialisms", views.column_names("tutors"))
-        self.assertIn("assigned_group_ids", views.column_names("coaches"))
-        self.assertIn("assigned_module_ids", views.column_names("tutors"))
-
-
 class ProgrammeLearnerKsbProgressTests(TestCase):
     """The programme card's KSB bar reports learner achievement, not design mapping.
 
@@ -2441,30 +3411,48 @@ class ProgrammeConfigSelectionTests(SimpleTestCase):
         self.assertFalse(views.is_archived_program_config(config))
         self.assertEqual(views.programme_config_status(config), 'active')
 
-    def test_build_programmes_returns_every_unarchived_programme_row(self):
+    def test_build_programmes_returns_active_unarchived_programme_rows(self):
         configs = [
             {
                 'programme_id': 'PROG-FOUDA',
                 'name': 'Fouda-Programme',
+                'is_active': True,
                 'is_archived': False,
                 'updated_at': '2026-08-17T15:42:32.000000+00:00',
             },
             {
                 'programme_id': 'PROG-USER-FLOW',
                 'name': 'User Flow',
+                'is_active': True,
                 'is_archived': False,
                 'updated_at': '2026-08-17T16:42:41.350000+00:00',
+            },
+            {
+                'programme_id': 'PROG-MBA',
+                'name': 'MBA',
+                'is_active': False,
+                'is_archived': True,
+                'updated_at': '2026-08-17T17:42:41.350000+00:00',
+            },
+            {
+                'programme_id': 'PROG-DISABLED',
+                'name': 'Disabled Programme',
+                'is_active': False,
+                'is_archived': False,
+                'updated_at': '2026-08-17T18:42:41.350000+00:00',
             },
         ]
 
         with patch('curriculum_api.views.free_programme_fetch_all', return_value=[]), \
              patch('curriculum_api.views.cohort_authoring_detail_rows', return_value=[]), \
-             patch('curriculum_api.views.active_learner_programme_counts', return_value={}), \
+             patch('curriculum_api.views.active_learner_programme_counts', return_value=({}, {})), \
+             patch('curriculum_api.views.programme_learner_ksb_progress', return_value={}), \
              patch('curriculum_api.views.programme_component_ksb_mapping_count', return_value=0):
             programmes = views.build_programmes([], configs, [], include_config_only=False)
 
         self.assertEqual([programme['sourceId'] for programme in programmes], ['PROG-FOUDA', 'PROG-USER-FLOW'])
         self.assertEqual([programme['isArchived'] for programme in programmes], [False, False])
+        self.assertEqual([programme['isActive'] for programme in programmes], [True, True])
 
     def test_active_duplicate_names_are_not_collapsed_for_display(self):
         configs = [
@@ -2790,10 +3778,16 @@ class CohortPracticalEndDateRuleTests(SimpleTestCase):
 
     The editor's preview and the three write paths (the programme tree save, the
     cohort create and the cohort PATCH) used to reach the date by different code.
-    A cohort created through the API with holidays therefore landed on an
-    unextended date while the same cohort created in the UI landed on an extended
-    one -- same inputs, two answers. They now all call
-    ``cohort_practical_end_date``, and these tests hold that rule still.
+    A cohort created through the API therefore landed on a different date from
+    the same cohort created in the UI -- same inputs, two answers. They now all
+    call ``cohort_practical_end_date``, and these tests hold that rule still.
+
+    The rule itself is the contracted one: start plus duration, less a day. A
+    cohort's dates are signed dates, so the holidays ticked on it do not move
+    them -- what a holiday moves is the delivery it clashes with, which is the
+    module session plan (see AuthoringModuleSessionHolidayTests). The selection
+    is still passed in here by every caller, so these tests are what stop it
+    quietly acquiring an effect on the contract date again.
     """
 
     HOLIDAY_ROWS = [
@@ -2803,12 +3797,15 @@ class CohortPracticalEndDateRuleTests(SimpleTestCase):
         {'id': 'HOL-3', 'label': 'Later', 'start_date': '2028-05-01', 'end_date': '2028-05-07'},
     ]
 
-    def test_the_rule_adds_the_selected_holiday_days(self):
+    def test_a_ticked_holiday_does_not_move_the_contracted_date(self):
+        # HOL-1 is a 7 day closure inside the period. The cohort still ends on
+        # the day its duration says: the closure moves the sessions it clashes
+        # with, not the contract.
         self.assertEqual(
             views.format_date(views.cohort_practical_end_date(
                 '2026-02-01', 24, ['HOL-1'], self.HOLIDAY_ROWS,
             )),
-            '2028-02-07',
+            '2028-01-31',
         )
 
     def test_the_rule_matches_the_duration_alone_when_no_holiday_applies(self):
@@ -2819,30 +3816,42 @@ class CohortPracticalEndDateRuleTests(SimpleTestCase):
             '2028-01-31',
         )
 
-    def test_an_empty_selection_applies_every_holiday_in_the_period(self):
-        # The fallback build_module_session_plan and the editor's picker both
-        # state: nothing ticked means all of them. The dates have to agree, or a
-        # cohort nobody ticked anything for carries dates its sessions overrun.
+    def test_an_empty_selection_leaves_the_duration_rule_alone(self):
+        # Nothing ticked means no holiday applies, so the date is start plus
+        # duration, less a day, and nothing else. An end date only moves because
+        # someone picked the holiday that moves it -- the editor's picker and
+        # build_sessions both hold the same rule, so the dates and the sessions
+        # still agree.
         self.assertEqual(
             views.format_date(views.cohort_practical_end_date(
                 '2026-02-01', 24, [], self.HOLIDAY_ROWS,
             )),
-            # HOL-1 (7) + HOL-2 (14) = 21 days; HOL-3 is outside the period.
-            '2028-02-21',
+            '2028-01-31',
+        )
+
+    def test_no_number_of_picks_moves_the_contracted_date(self):
+        # Two closures inside the period, 21 days between them, and the date is
+        # still the one the duration gives. The editor says so in place of the
+        # amber extension hint it used to render.
+        self.assertEqual(
+            views.format_date(views.cohort_practical_end_date(
+                '2026-02-01', 24, ['HOL-1', 'HOL-2'], self.HOLIDAY_ROWS,
+            )),
+            '2028-01-31',
         )
 
     def test_the_rule_is_idempotent(self):
-        # Feeding the result back in must not extend it again: the holidays are
-        # measured over the base period, which does not move.
+        # Asking again with the same inputs answers the same date. Nothing about
+        # a cohort's own dates accumulates, so reopening the drawer cannot creep
+        # the date outwards.
         first = views.format_date(views.cohort_practical_end_date(
             '2026-02-01', 24, ['HOL-1'], self.HOLIDAY_ROWS,
         ))
-        # 24 months from the same start still gives the same base window.
         second = views.format_date(views.cohort_practical_end_date(
             '2026-02-01', 24, ['HOL-1'], self.HOLIDAY_ROWS,
         ))
         self.assertEqual(first, second)
-        self.assertEqual(first, '2028-02-07')
+        self.assertEqual(first, '2028-01-31')
 
     def test_no_start_date_or_duration_has_no_rule_to_apply(self):
         self.assertIsNone(views.cohort_practical_end_date('', 24, ['HOL-1'], self.HOLIDAY_ROWS))
@@ -2882,12 +3891,38 @@ class CohortAppliedHolidaysTests(SimpleTestCase):
         )
         self.assertEqual([item['id'] for item in applied], ['HOL-1'])
 
-    def test_an_empty_selection_means_every_holiday_in_the_period(self):
+    def test_an_empty_selection_applies_no_holiday_at_all(self):
+        # A cohort's dates only move because someone picked the holiday that
+        # moves them, so an untouched cohort keeps the plain duration rule and
+        # its sessions skip nothing.
         applied = views.cohort_applied_holidays(
             [], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
         )
-        # The straddling holiday touches the period, so it is in; the later one is not.
-        self.assertEqual(sorted(item['id'] for item in applied), ['HOL-1', 'HOL-3'])
+        self.assertEqual(applied, [])
+
+    def test_an_untouched_cohort_keeps_the_duration_rule(self):
+        # The end date reads exactly as start plus duration, less a day.
+        self.assertEqual(
+            views.format_date(views.cohort_practical_end_date(
+                '2026-02-01', 24, [], self.HOLIDAY_ROWS,
+            )),
+            '2028-01-31',
+        )
+
+    def test_the_selection_is_read_without_moving_the_cohort_date(self):
+        # The selection is what module scheduling skips onto, so it has to be
+        # readable -- and it has to stay off the cohort's own dates however many
+        # holidays are ticked.
+        applied = views.cohort_applied_holidays(
+            ['HOL-1', 'HOL-3'], self.HOLIDAY_ROWS, '2026-02-01', '2028-01-31',
+        )
+        self.assertEqual([item['id'] for item in applied], ['HOL-1', 'HOL-3'])
+        self.assertEqual(
+            views.format_date(views.cohort_practical_end_date(
+                '2026-02-01', 24, ['HOL-1', 'HOL-3'], self.HOLIDAY_ROWS,
+            )),
+            '2028-01-31',
+        )
 
     def test_a_selected_holiday_outside_the_period_is_dropped(self):
         # It cannot take delivery days out of a period it does not touch.
@@ -2897,19 +3932,116 @@ class CohortAppliedHolidaysTests(SimpleTestCase):
         self.assertEqual(applied, [])
 
 
-class CohortHolidayExtensionTests(SimpleTestCase):
-    """Holidays applied to a cohort push its end dates out.
+class AuthoringModuleSessionHolidayTests(SimpleTestCase):
+    """The session list a module publishes skips its cohort's ticked holidays.
 
-    A holiday stops delivery without reducing the training the cohort owes, so
-    the module sessions shift later (build_module_session_plan keeps the session
-    count and stretches the span) and the practical period has to cover them.
-    The EPA window is then counted from the extended date, so the apprenticeship
-    end date follows on.
+    These are the dates every downstream screen reads: the calendar, the module
+    workspace's schedule, and the Teams Meetings page that sends them to the
+    Microsoft calendar. They used to be generated from the delivery day alone,
+    so a module whose cohort had closed a fortnight still listed sessions inside
+    it -- and the Teams calendar was then built on those dates, while the module
+    form's own preview (which asks the backend with the holidays attached) showed
+    the shifted plan. One module, two answers.
+    """
 
-    The extension is measured against the *base* period -- start date plus
-    duration -- and never against the extended date. Measuring against the
-    extended date would list holidays past the original window, whose selection
-    would extend the date again, and again, without ever settling.
+    HOLIDAY_ROWS = [
+        {'id': 'HOL-XMAS', 'label': 'Christmas 27', 'start_date': '2026-12-19', 'end_date': '2026-12-27'},
+        {'id': 'HOL-OTHER', 'label': 'Not picked', 'start_date': '2027-01-09', 'end_date': '2027-01-09'},
+    ]
+
+    MODULE = {
+        'module_catalogue_id': 'MOD-1',
+        'title': 'Fouda',
+        'status': 'published',
+        'cohort_id': 'COHORT-1',
+        'cohort_name': 'C1',
+        'group_id': 'GROUP-1',
+        'group_name': 'G1-sat',
+        'programme_name': 'MSN',
+        'sessions_number': 6,
+        'start_date': '2026-12-12',
+        'session_week_day': 'Saturday',
+        'session_start_time': '09:00',
+        'session_end_time': '11:00',
+    }
+
+    def holidays_by_cohort(self, holiday_ids):
+        return views.cohort_selected_holidays_by_id(
+            [{'id': 'COHORT-1', 'holidayIds': holiday_ids}],
+            self.HOLIDAY_ROWS,
+        )
+
+    def test_sessions_step_over_the_holidays_the_cohort_selected(self):
+        sessions = views.build_sessions_from_authoring_modules(
+            [self.MODULE], self.holidays_by_cohort(['HOL-XMAS']),
+        )
+        # 19 and 26 Dec fall inside the closure, so session 2 lands on 2 Jan and
+        # the plan keeps all six sessions by running a fortnight longer.
+        self.assertEqual(
+            [session['date'] for session in sessions],
+            ['2026-12-12', '2027-01-02', '2027-01-09', '2027-01-16', '2027-01-23', '2027-01-30'],
+        )
+
+    def test_the_shifted_session_carries_the_dates_it_stepped_over(self):
+        sessions = views.build_sessions_from_authoring_modules(
+            [self.MODULE], self.holidays_by_cohort(['HOL-XMAS']),
+        )
+        # The reader has to be able to see *why* a date moved, which is what the
+        # Teams page and the module form both render from this field.
+        self.assertEqual(sessions[1]['skippedHolidays'], ['2026-12-19', '2026-12-26'])
+        self.assertEqual(
+            [session['skippedHolidays'] for session in sessions if session is not sessions[1]],
+            [[], [], [], [], []],
+        )
+
+    def test_an_unticked_holiday_moves_nothing(self):
+        # The cohort holiday rule: only a ticked holiday skips a session, so a
+        # cohort nobody picked holidays for keeps the plain weekly pattern.
+        sessions = views.build_sessions_from_authoring_modules([self.MODULE], self.holidays_by_cohort([]))
+        self.assertEqual(
+            [session['date'] for session in sessions],
+            ['2026-12-12', '2026-12-19', '2026-12-26', '2027-01-02', '2027-01-09', '2027-01-16'],
+        )
+        self.assertEqual([session['skippedHolidays'] for session in sessions], [[]] * 6)
+
+    def test_only_the_selected_holiday_applies(self):
+        # HOL-OTHER covers 9 Jan and is deliberately left unticked.
+        sessions = views.build_sessions_from_authoring_modules(
+            [self.MODULE], self.holidays_by_cohort(['HOL-XMAS']),
+        )
+        self.assertIn('2027-01-09', [session['date'] for session in sessions])
+
+    def test_a_module_with_no_delivery_day_still_lists_its_weeks(self):
+        # No weekday means no slot to skip onto, so this stays a plain count of
+        # weeks rather than losing its dates entirely.
+        module = {**self.MODULE, 'session_week_day': ''}
+        sessions = views.build_sessions_from_authoring_modules([module], self.holidays_by_cohort(['HOL-XMAS']))
+        self.assertEqual(len(sessions), 6)
+        self.assertEqual(sessions[0]['date'], '2026-12-12')
+        self.assertEqual(sessions[1]['date'], '2026-12-19')
+
+    def test_the_cohort_map_ignores_holidays_nobody_stored(self):
+        self.assertEqual(
+            views.cohort_selected_holidays_by_id(
+                [{'id': 'COHORT-1', 'holidayIds': ['HOL-XMAS', 'HOL-GONE']}],
+                self.HOLIDAY_ROWS,
+            ),
+            {'COHORT-1': [views.serialize_holiday_row(self.HOLIDAY_ROWS[0])]},
+        )
+
+
+class CohortContractDateHolidayTests(SimpleTestCase):
+    """A cohort's dates are contracted dates: its holidays do not move them.
+
+    A ticked holiday used to push the practical end date out, and the EPA window
+    with it. It no longer does. What a closure moves is the delivery it clashes
+    with: the module session plan shifts later (AuthoringModuleSessionHolidayTests)
+    while the signed cohort dates stay exactly where the duration puts them.
+
+    The preview endpoint is where an editor reads those dates, so it is where the
+    rule is held. ``holidayExtensionDays``/``holidayExtensions`` are still in the
+    response for readers that ask for them, and are always empty -- the tests
+    below are what stop an extension quietly growing back into a contract date.
     """
 
     def preview(self, **body):
@@ -2920,9 +4052,10 @@ class CohortHolidayExtensionTests(SimpleTestCase):
         )
         return json.loads(views.curriculum_preview_cohort_end_date(request).content)
 
-    def test_a_holiday_inside_the_period_extends_both_end_dates(self):
-        # A 7 day holiday inside a 24 month cohort: the practical end moves 7
-        # days, and the EPA window is counted from there.
+    def test_a_holiday_inside_the_period_leaves_both_end_dates_alone(self):
+        # A 7 day closure inside a 24 month cohort: the practical end date is
+        # still start plus duration less a day, and the EPA window is counted
+        # from there.
         result = self.preview(
             startDate='2026-02-01',
             durationMonths=24,
@@ -2930,9 +4063,10 @@ class CohortHolidayExtensionTests(SimpleTestCase):
             holidays=[{'startDate': '2027-09-26', 'endDate': '2027-10-02'}],
         )
         self.assertEqual(result['baseEndDate'], '2028-01-31')
-        self.assertEqual(result['holidayExtensionDays'], 7)
-        self.assertEqual(result['practicalEndDate'], '2028-02-07')
-        self.assertEqual(result['apprenticeshipEndDate'], '2028-07-07')
+        self.assertEqual(result['practicalEndDate'], '2028-01-31')
+        self.assertEqual(result['apprenticeshipEndDate'], '2028-06-30')
+        self.assertEqual(result['holidayExtensionDays'], 0)
+        self.assertEqual(result['holidayExtensions'], [])
 
     def test_no_holidays_leaves_the_duration_rule_untouched(self):
         result = self.preview(startDate='2026-02-01', durationMonths=24, epaMonths=5)
@@ -2941,173 +4075,22 @@ class CohortHolidayExtensionTests(SimpleTestCase):
         self.assertEqual(result['baseEndDate'], '2028-01-31')
         self.assertEqual(result['apprenticeshipEndDate'], '2028-06-30')
 
-    def test_a_holiday_outside_the_period_is_not_counted(self):
-        # Past the base end date, so it takes no delivery days out of this cohort.
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            holidays=[{'startDate': '2028-05-01', 'endDate': '2028-05-07'}],
-        )
-        self.assertEqual(result['holidayExtensionDays'], 0)
-        self.assertEqual(result['practicalEndDate'], '2028-01-31')
-
-    def test_a_holiday_straddling_the_end_date_counts_only_its_days_inside(self):
-        # 31 Jan 2028 - 06 Feb 2028 against a period ending 31 Jan 2028: one day
-        # of delivery is lost, not seven. Delivery has stopped for the rest.
+    def test_a_holiday_straddling_the_end_date_moves_nothing_either(self):
+        # The case that used to be arithmetic worth arguing about -- how many of
+        # its days fell inside the period -- now changes nothing at all here.
         result = self.preview(
             startDate='2026-02-01',
             durationMonths=24,
             epaMonths=5,
             holidays=[{'startDate': '2028-01-31', 'endDate': '2028-02-06'}],
         )
-        self.assertEqual(result['holidayExtensionDays'], 1)
-        self.assertEqual(result['practicalEndDate'], '2028-02-01')
+        self.assertEqual(result['practicalEndDate'], '2028-01-31')
+        self.assertEqual(result['holidayExtensionDays'], 0)
 
-    def test_overlapping_holidays_are_not_double_counted(self):
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            holidays=[
-                {'startDate': '2027-09-26', 'endDate': '2027-10-02'},
-                {'startDate': '2027-09-29', 'endDate': '2027-10-05'},
-            ],
-        )
-        # 26 Sept - 05 Oct inclusive is 10 distinct days, not 7 + 7.
-        self.assertEqual(result['holidayExtensionDays'], 10)
-        self.assertEqual(result['practicalEndDate'], '2028-02-10')
-
-    def test_the_extension_is_stable_when_fed_back_in(self):
-        # Re-previewing the same inputs must not move the base window, or the
-        # date would creep further out every time the drawer is reopened.
-        holidays = [{'startDate': '2027-09-26', 'endDate': '2027-10-02'}]
-        first = self.preview(
-            startDate='2026-02-01', durationMonths=24, epaMonths=5, holidays=holidays,
-        )
-        second = self.preview(
-            startDate='2026-02-01', durationMonths=24, epaMonths=5, holidays=holidays,
-        )
-        self.assertEqual(first['practicalEndDate'], second['practicalEndDate'])
-        self.assertEqual(first['baseEndDate'], second['baseEndDate'])
-        self.assertEqual(second['practicalEndDate'], '2028-02-07')
-
-    def test_an_authored_practical_end_date_still_wins_over_the_extension(self):
-        # A human who typed a date has accounted for what they meant to.
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            practicalEndDate='2028-03-01',
-            holidays=[{'startDate': '2027-09-26', 'endDate': '2027-10-02'}],
-        )
-        self.assertEqual(result['practicalEndDate'], '2028-03-01')
-        self.assertEqual(result['apprenticeshipEndDate'], '2028-08-01')
-        # ...but the editor is told what the holidays would have given.
-        self.assertTrue(any('2028-02-07' in warning for warning in result['warnings']))
-
-    def test_the_extension_is_broken_down_per_holiday(self):
-        # A bare total is not checkable. The editor names each holiday and the
-        # days of it that landed inside the period, so this is what it reads.
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            holidays=[
-                {'label': 'Summer 27', 'startDate': '2027-07-25', 'endDate': '2027-08-07'},
-                {'label': 'Oct 27', 'startDate': '2027-09-26', 'endDate': '2027-10-02'},
-            ],
-        )
-        self.assertEqual(result['holidayExtensions'], [
-            {'label': 'Summer 27', 'startDate': '2027-07-25', 'endDate': '2027-08-07', 'days': 14},
-            {'label': 'Oct 27', 'startDate': '2027-09-26', 'endDate': '2027-10-02', 'days': 7},
-        ])
-        self.assertEqual(result['holidayExtensionDays'], 21)
-
-    def test_the_breakdown_reports_only_the_days_inside_the_period(self):
-        # A holiday straddling the end date is listed by the part that counted,
-        # not by its own full span -- otherwise the lines would not sum to the total.
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            holidays=[{'label': 'Feb 28', 'startDate': '2028-01-31', 'endDate': '2028-02-06'}],
-        )
-        self.assertEqual(result['holidayExtensions'], [
-            {'label': 'Feb 28', 'startDate': '2028-01-31', 'endDate': '2028-01-31', 'days': 1},
-        ])
-
-    def test_the_breakdown_lines_sum_to_the_total_when_holidays_overlap(self):
-        # Shared days are attributed once, so the named lines and the date
-        # arithmetic cannot disagree.
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            holidays=[
-                {'label': 'First', 'startDate': '2027-09-26', 'endDate': '2027-10-02'},
-                {'label': 'Second', 'startDate': '2027-09-29', 'endDate': '2027-10-05'},
-            ],
-        )
-        self.assertEqual(
-            sum(item['days'] for item in result['holidayExtensions']),
-            result['holidayExtensionDays'],
-        )
-        self.assertEqual(result['holidayExtensionDays'], 10)
-
-    def test_a_holiday_outside_the_period_is_left_out_of_the_breakdown(self):
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            holidays=[{'label': 'Later', 'startDate': '2028-05-01', 'endDate': '2028-05-07'}],
-        )
-        self.assertEqual(result['holidayExtensions'], [])
-
-    def test_the_contracted_duration_is_reported_alongside_the_effective_one(self):
-        # The duration the user typed is not rewritten by the holidays. What the
-        # editor states next to it is how long the cohort now actually runs.
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            holidays=[{'label': 'Oct 27', 'startDate': '2027-09-26', 'endDate': '2027-10-02'}],
-        )
-        self.assertEqual(result['durationMonths'], 24)
-        self.assertEqual(result['effectiveDurationMonths'], 25)
-        self.assertEqual(result['practicalEndDate'], '2028-02-07')
-
-    def test_no_holidays_leaves_the_effective_duration_equal_to_the_contracted_one(self):
-        result = self.preview(startDate='2026-02-01', durationMonths=24, epaMonths=5)
-        self.assertEqual(result['durationMonths'], 24)
-        self.assertEqual(result['effectiveDurationMonths'], 24)
-
-    def test_weekends_inside_a_holiday_are_counted(self):
-        # The practical period is a calendar span, not a working-day budget: its
-        # end date already includes every weekend inside it, so a two week
-        # holiday has to move it a full 14 days.
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            holidays=[{'startDate': '2027-07-25', 'endDate': '2027-08-07'}],
-        )
-        self.assertEqual(result['holidayExtensionDays'], 14)
-        self.assertEqual(result['practicalEndDate'], '2028-02-14')
-
-    def test_a_single_day_holiday_is_reported_in_the_singular(self):
-        result = self.preview(
-            startDate='2026-02-01',
-            durationMonths=24,
-            epaMonths=5,
-            holidays=[{'startDate': '2027-09-26', 'endDate': '2027-09-26'}],
-        )
-        self.assertEqual(result['holidayExtensionDays'], 1)
-        self.assertEqual(result['holidayExtensions'][0]['days'], 1)
-
-    def test_the_screenshot_cohort_extends_by_all_four_holidays(self):
+    def test_the_screenshot_cohort_keeps_its_contracted_dates(self):
         # The worked case from the delivery team's MBA Feb-2026 cohort: four
-        # holidays, the last straddling the practical end date.
+        # holidays, 37 days between them, and the same two dates it was signed
+        # with. Those 37 days are absorbed by the module schedules instead.
         result = self.preview(
             startDate='2026-02-01',
             durationMonths=24,
@@ -3119,11 +4102,117 @@ class CohortHolidayExtensionTests(SimpleTestCase):
                 {'startDate': '2028-01-31', 'endDate': '2028-02-06'},
             ],
         )
-        # 14 + 7 + 15 + 1 (clamped) = 37 days.
-        self.assertEqual(result['holidayExtensionDays'], 37)
         self.assertEqual(result['baseEndDate'], '2028-01-31')
-        self.assertEqual(result['practicalEndDate'], '2028-03-08')
-        self.assertEqual(result['apprenticeshipEndDate'], '2028-08-08')
+        self.assertEqual(result['practicalEndDate'], '2028-01-31')
+        self.assertEqual(result['apprenticeshipEndDate'], '2028-06-30')
+        self.assertEqual(result['holidayExtensionDays'], 0)
+
+    def test_an_authored_practical_end_date_still_wins(self):
+        # A human who typed a date has accounted for what they meant to, and the
+        # EPA window follows the date they set rather than the rule.
+        result = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            practicalEndDate='2028-03-01',
+            holidays=[{'startDate': '2027-09-26', 'endDate': '2027-10-02'}],
+        )
+        self.assertEqual(result['practicalEndDate'], '2028-03-01')
+        self.assertEqual(result['apprenticeshipEndDate'], '2028-08-01')
+        self.assertTrue(result['practicalEndIsManual'])
+        # The calculated date is still reported, so the editor can offer "reset".
+        self.assertEqual(result['calculatedEndDate'], '2028-01-31')
+
+    def test_the_answer_is_stable_when_fed_back_in(self):
+        # Re-previewing the same inputs must answer the same dates, or the drawer
+        # would move them a little further every time it is reopened.
+        holidays = [{'startDate': '2027-09-26', 'endDate': '2027-10-02'}]
+        first = self.preview(startDate='2026-02-01', durationMonths=24, epaMonths=5, holidays=holidays)
+        second = self.preview(startDate='2026-02-01', durationMonths=24, epaMonths=5, holidays=holidays)
+        self.assertEqual(first['practicalEndDate'], second['practicalEndDate'])
+        self.assertEqual(first['baseEndDate'], second['baseEndDate'])
+        self.assertEqual(second['practicalEndDate'], '2028-01-31')
+
+    def test_the_contracted_duration_is_reported_alongside_the_effective_one(self):
+        # The duration the user typed is never rewritten. What sits next to it is
+        # how long the cohort actually runs -- which now differs only when
+        # somebody authored a date of their own.
+        with_holidays = self.preview(
+            startDate='2026-02-01',
+            durationMonths=24,
+            epaMonths=5,
+            holidays=[{'label': 'Oct 27', 'startDate': '2027-09-26', 'endDate': '2027-10-02'}],
+        )
+        self.assertEqual(with_holidays['durationMonths'], 24)
+        self.assertEqual(with_holidays['effectiveDurationMonths'], 24)
+
+        authored = self.preview(
+            startDate='2026-02-01', durationMonths=24, epaMonths=5, practicalEndDate='2028-03-01',
+        )
+        self.assertEqual(authored['durationMonths'], 24)
+        # 1 Feb 2026 to 1 Mar 2028 is a day into the 26th month, so that is what
+        # the cohort effectively runs -- the typed date is reported by its own
+        # length, never by the duration that was contracted.
+        self.assertEqual(authored['effectiveDurationMonths'], 26)
+
+    def test_the_response_says_where_holidays_do_apply(self):
+        # The rule travels with the answer: a reader who sees an unmoved date is
+        # told what the holidays they ticked actually affect.
+        result = self.preview(startDate='2026-02-01', durationMonths=24, epaMonths=5)
+        self.assertIn('holidays extend clashing module schedules, not cohort dates', result['rule'])
+
+
+class HolidayDayArithmeticTests(SimpleTestCase):
+    """Counting the days a set of closures takes out of a period.
+
+    ``holiday_extension_days``/``holiday_extension_breakdown`` no longer move any
+    cohort date -- they are the shared arithmetic for "how much of this period
+    did these closures cover", and the counting rules are the part worth holding:
+    whole calendar days, clamped to the period, and a shared day counted once.
+    """
+
+    PERIOD = ('2026-02-01', '2028-01-31')
+
+    def days(self, holidays):
+        return views.holiday_extension_days(holidays, *self.PERIOD)
+
+    def breakdown(self, holidays):
+        return views.holiday_extension_breakdown(holidays, *self.PERIOD)
+
+    def test_weekends_inside_a_holiday_are_counted(self):
+        # A calendar span, not a working-day budget: a two week closure covers
+        # fourteen dates whether or not delivery would have run on all of them.
+        self.assertEqual(self.days([{'startDate': '2027-07-25', 'endDate': '2027-08-07'}]), 14)
+
+    def test_only_the_days_inside_the_period_are_counted(self):
+        # 31 Jan 2028 - 06 Feb 2028 against a period ending 31 Jan 2028: one day.
+        self.assertEqual(self.days([{'startDate': '2028-01-31', 'endDate': '2028-02-06'}]), 1)
+        self.assertEqual(self.days([{'startDate': '2028-05-01', 'endDate': '2028-05-07'}]), 0)
+
+    def test_overlapping_holidays_are_not_double_counted(self):
+        overlapping = [
+            {'label': 'First', 'startDate': '2027-09-26', 'endDate': '2027-10-02'},
+            {'label': 'Second', 'startDate': '2027-09-29', 'endDate': '2027-10-05'},
+        ]
+        # 26 Sept - 05 Oct inclusive is 10 distinct days, not 7 + 7.
+        self.assertEqual(self.days(overlapping), 10)
+        # And the named lines add up to exactly that, so a total and its own
+        # explanation cannot disagree.
+        self.assertEqual(sum(item['days'] for item in self.breakdown(overlapping)), 10)
+
+    def test_the_breakdown_names_each_holiday_by_the_days_that_landed_inside(self):
+        self.assertEqual(
+            self.breakdown([
+                {'label': 'Summer 27', 'startDate': '2027-07-25', 'endDate': '2027-08-07'},
+                {'label': 'Feb 28', 'startDate': '2028-01-31', 'endDate': '2028-02-06'},
+                {'label': 'Later', 'startDate': '2028-05-01', 'endDate': '2028-05-07'},
+            ]),
+            [
+                {'label': 'Summer 27', 'startDate': '2027-07-25', 'endDate': '2027-08-07', 'days': 14},
+                # Reported by the part that counted, not by its own full span.
+                {'label': 'Feb 28', 'startDate': '2028-01-31', 'endDate': '2028-01-31', 'days': 1},
+            ],
+        )
 
 
 class CohortEpaPeriodTests(SimpleTestCase):
@@ -3425,29 +4514,38 @@ class TutorAssignmentNotificationTests(TestCase):
         views.reset_schema_ready_flags()
         views.invalidate_curriculum_cache()
         views.ensure_module_authoring_tables()
-        views.ensure_staff_profile_tables()
         with connection.cursor() as cursor:
             for table in (
                 views.AUTHORING_MODULES_TABLE,
                 views.GROUPS_TABLE,
                 views.COHORT_AUTHORING_DETAILS_TABLE,
-                views.STAFF_PROFILE_TABLES['tutor'],
             ):
                 cursor.execute(f'delete from {views.authoring_table_name(table)}')
         # Provisioned against empty tables, so the seed records nothing and every
         # assignment these tests make afterwards counts as new.
         tutor_notifications.ensure_notification_table()
+        # Who the tutors are comes from the staff directory; which module each one
+        # holds comes from the module row. There is no third place to seed.
+        self.directory = []
+        patcher = patch(
+            'curriculum_api.views.fetch_staff_users_by_access',
+            side_effect=lambda access: [
+                row for row in self.directory
+                if views.clean_str(row.get('Access')).lower() == views.clean_str(access).lower()
+            ],
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     # -- fixtures ----------------------------------------------------------
 
-    def seed_tutor(self, name='Amira Hassan', email='amira@example.com', module_ids=None):
-        return views.insert_row(views.STAFF_PROFILE_TABLES['tutor'], {
-            'id': 'TUTOR-1',
-            'name': name,
-            'email': email,
-            'assigned_module_ids': views.json_db_value(module_ids or []),
-            'is_archived': False,
-        })
+    def seed_tutor(self, name='Amira Hassan', email='amira@example.com'):
+        row = staff_user_row(name, email, access='tutor', row_id=1)
+        # An address the directory does not hold is an empty one, not a default.
+        row['Email'] = email
+        self.directory = [row]
+        views.invalidate_curriculum_cache()
+        return row
 
     def seed_delivery(self, module_id='MOD-ALPHA', title='Data Handling', tutor_name=''):
         views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
@@ -3558,10 +4656,7 @@ class TutorAssignmentNotificationTests(TestCase):
         send.assert_not_called()
         self.assertEqual(tutor_notifications.ledger_rows(), [])
 
-        views.update_rows(
-            views.STAFF_PROFILE_TABLES['tutor'], 'id = %s', ['TUTOR-1'],
-            {'email': 'amira@example.com'},
-        )
+        self.seed_tutor(email='amira@example.com')
         with self.sent_mail() as send:
             tutor_notifications.dispatch_assignment_notifications()
         send.assert_called_once()
@@ -3641,13 +4736,13 @@ class TutorAssignmentNotificationTests(TestCase):
         self.assertEqual(rows[0]['status'], 'seeded')
 
     def test_the_wizard_module_step_triggers_the_mail_on_commit(self):
-        """save_tree_group_modules reaches this through sync_module_tutor_profile_links."""
+        """save_tree_group_modules reaches this through notify_staff_assignment_change."""
         self.seed_tutor()
         self.seed_delivery(tutor_name='Amira Hassan')
 
         with self.sent_mail() as send:
             with self.captureOnCommitCallbacks(execute=True):
-                views.sync_module_tutor_profile_links('Amira Hassan', ['MOD-ALPHA'])
+                views.notify_staff_assignment_change()
         send.assert_called_once()
         self.assertEqual(send.call_args.kwargs['to'], 'amira@example.com')
 
@@ -3658,7 +4753,7 @@ class TutorAssignmentNotificationTests(TestCase):
 
         with self.sent_mail() as send:
             with self.captureOnCommitCallbacks(execute=False):
-                views.sync_module_tutor_profile_links('Amira Hassan', ['MOD-ALPHA'])
+                views.notify_staff_assignment_change()
             send.assert_not_called()
 
     def test_the_feature_can_be_switched_off(self):

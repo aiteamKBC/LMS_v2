@@ -25,6 +25,7 @@ import {
   type CurriculumProgramme,
 } from '@/lib/curriculumApi';
 import { cleanText, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, sameFormValues, sameIdentifier } from './model';
+import { createEmptyKsbProfileForProgramme } from './programmeKsbProfile';
 import {
   ColorControl,
   EntityDrawer,
@@ -53,7 +54,13 @@ export function ProgrammeFormDrawer({
   open: boolean;
   programme?: CurriculumProgramme | null;
   onClose: () => void;
-  onSaved: () => unknown | Promise<unknown>;
+  /**
+   * Handed the programme a create just made, and whether it already has the
+   * empty KSB profile a new programme is given. `ksbSourceApplied: false` means
+   * that step failed and is still owed, so the caller should ask for a source.
+   * Absent on an edit.
+   */
+  onSaved: (result?: { programme: CurriculumProgramme; ksbSourceApplied: boolean }) => unknown | Promise<unknown>;
 }) {
   const [name, setName] = useState('');
   const [level, setLevel] = useState('');
@@ -70,7 +77,7 @@ export function ProgrammeFormDrawer({
     if (!open) return;
     const initial = {
       name: cleanText(programme?.name),
-      level: cleanText(programme?.level),
+      level: cleanText(programme?.level).replace(/\D/g, ''),
       description: cleanText(programme?.description),
       color: programme?.color || '#6941c6',
     };
@@ -95,20 +102,40 @@ export function ProgrammeFormDrawer({
       // dropping the fields from the form cannot clear a stored value.
       const payload = {
         name: name.trim(),
-        level: level.trim(),
+        level: level.trim() ? `LVL-${level.trim()}` : '',
         description: description.trim(),
         color,
       };
+      let created: CurriculumProgramme | null = null;
       if (programme) await updateCurriculumProgramme(programmeIdentity(programme), payload);
-      else await createCurriculumProgramme(payload);
+      else created = (await createCurriculumProgramme(payload)).programme || null;
+      // Part of creating a programme, not a follow-up to it: a programme with no
+      // KSB source cannot be mapped or measured, so it is given its own empty
+      // profile here rather than left in that state for someone to notice.
+      let ksbSourceApplied = false;
+      if (created) {
+        try {
+          await createEmptyKsbProfileForProgramme(created);
+          ksbSourceApplied = true;
+        } catch (err) {
+          // The programme itself is saved, so this cannot fail the save. The
+          // caller is told the source is still owed and asks for one instead.
+          console.warn('Unable to create the empty KSB profile for the new programme.', err);
+        }
+      }
       onClose();
-      await onSaved();
+      await onSaved(created ? { programme: created, ksbSourceApplied } : undefined);
       await showCurriculumAlert({
         title: programme ? 'Programme updated' : 'Programme created',
+        // A cohort used to be named as the next step, which is the wrong one:
+        // what a new programme needs is the KSB codes its modules will map to,
+        // and it now has an empty profile of its own waiting for them.
         text: programme
           ? `${payload.name} is saved.`
-          : `${payload.name} is saved. Add a cohort whenever you are ready.`,
-        timer: 2200,
+          : ksbSourceApplied
+            ? `${payload.name} is saved, with an empty KSB profile of its own applied. Add its knowledge, skills and behaviours on the KSB Frameworks page — until they exist there is nothing for its modules to map against.`
+            : `${payload.name} is saved, but its KSB profile could not be created. Apply a KSB source to it before building modules: without one, nothing can be mapped and coverage cannot be measured.`,
+        timer: programme ? 2200 : undefined,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The programme could not be saved.');
@@ -132,8 +159,8 @@ export function ProgrammeFormDrawer({
       <FormField label="Programme name" required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Data Analyst" />
       </FormField>
-      <FormField label="Level">
-        <TextControl value={level} onChange={setLevel} placeholder="e.g. 4" />
+      <FormField label="Level" hint={level ? `Will be saved as LVL-${level}` : 'Numbers only, e.g. 4'}>
+        <TextControl value={level} onChange={value => setLevel(value.replace(/\D/g, ''))} placeholder="e.g. 4" inputMode="numeric" />
       </FormField>
       <FormField label="Description">
         <TextAreaControl value={description} onChange={setDescription} placeholder="What this programme covers" />
@@ -250,31 +277,6 @@ export function CohortFormDrawer({
   // below mirrors whatever comes back.
   const authoredPracticalEnd = practicalEndIsManual ? practicalEndDate : '';
 
-  // The date ranges the practical end date is extended by. An empty tick list
-  // means every holiday in the period applies -- the same fallback the picker
-  // states and the session generator uses -- so an untouched cohort's dates
-  // cannot disagree with the sessions it will actually produce.
-  const selectedHolidayRanges = useMemo(() => {
-    const base = preview?.baseEndDate || '';
-    if (!startDate || !base) return [] as { startDate: string; endDate: string }[];
-    const ticked = new Set(holidayIds.map(normaliseKey));
-    const inPeriod = holidays.filter(holiday => {
-      const holidayStart = cleanText(holiday.startDate);
-      const holidayEnd = cleanText(holiday.endDate) || holidayStart;
-      return Boolean(holidayStart) && holidayStart <= base && holidayEnd >= startDate;
-    });
-    const applied = ticked.size
-      ? inPeriod.filter(holiday => ticked.has(normaliseKey(holiday.id)))
-      : inPeriod;
-    // The label travels with the range so the hint can name the holiday that
-    // moved the date rather than only reporting a total.
-    return applied.map(holiday => ({
-      label: cleanText(holiday.label),
-      startDate: cleanText(holiday.startDate),
-      endDate: cleanText(holiday.endDate) || cleanText(holiday.startDate),
-    }));
-  }, [holidayIds, holidays, preview?.baseEndDate, startDate]);
-
   // The practical end / EPA / apprenticeship end dates come from the backend's
   // own calculation, so the preview cannot drift from what a save will store.
   useEffect(() => {
@@ -287,7 +289,6 @@ export function CohortFormDrawer({
         practicalEndDate: authoredPracticalEnd || null,
         epaMonths: epaMonths === '' ? null : Number(epaMonths),
         apprenticeshipEndOverride: apprenticeshipEndOverride || null,
-        holidays: selectedHolidayRanges,
       })
         .then(result => {
           if (!active) return;
@@ -299,7 +300,7 @@ export function CohortFormDrawer({
         .catch(() => { if (active) setPreview(null); });
     }, 250);
     return () => { active = false; clearTimeout(timer); };
-  }, [apprenticeshipEndOverride, authoredPracticalEnd, durationMonths, epaMonths, open, selectedHolidayRanges, startDate]);
+  }, [apprenticeshipEndOverride, authoredPracticalEnd, durationMonths, epaMonths, open, startDate]);
 
   // Both end dates are shown as the real date the cohort carries, not as blank
   // "override" boxes: the delivery team reads them off the screen, and moving
@@ -320,32 +321,10 @@ export function CohortFormDrawer({
     setPracticalEndDate(calculatedPracticalEnd);
   };
 
-  // What the hint above the dates reports. Null unless holidays actually moved
-  // the practical end date: an authored date wins over the extension, and there
-  // is nothing to explain when the duration rule stands on its own.
-  const holidayExtension = useMemo(() => {
-    const days = preview?.holidayExtensionDays || 0;
-    const items = preview?.holidayExtensions || [];
-    if (!days || !items.length || practicalEndIsManual) return null;
-    return {
-      days,
-      items,
-      baseEndDate: preview?.baseEndDate || '',
-      contractedMonths: preview?.durationMonths || Number(durationMonths) || 0,
-      // Only worth stating when it actually differs from the contracted figure.
-      effectiveMonths:
-        preview?.effectiveDurationMonths && preview.effectiveDurationMonths !== (preview?.durationMonths || 0)
-          ? preview.effectiveDurationMonths
-          : 0,
-    };
-  }, [durationMonths, practicalEndIsManual, preview]);
-
   // The cohort period the holidays below are measured against: start date ->
-  // the *base* practical end, which is start plus duration before any holiday
-  // extension. The extended date must not be used here: it grows with every
-  // holiday picked, which would reveal holidays past the original window whose
-  // selection would grow it again. The backend pins the same base window
-  // (cohort_holiday_details / holiday_extension_days in curriculum_api/views.py).
+  // the practical end from the contracted duration. Holidays are shown inside
+  // that fixed window, then used later by module session planning when a
+  // generated session clashes with one of the selected dates.
   const periodStart = startDate;
   const periodEnd = preview?.baseEndDate || practicalEndDate || preview?.practicalEndDate || preview?.endDate || cohort?.practicalEndDate || cohort?.endDate || '';
   const periodLabel = periodStart && periodEnd ? `${formatDateLabel(periodStart)} – ${formatDateLabel(periodEnd)}` : '';
@@ -442,9 +421,7 @@ export function CohortFormDrawer({
             min={startDate || undefined}
             helper={showPracticalEndReset
               ? 'Set by hand. Clear the field to go back to the calculated date.'
-              : preview?.holidayExtensionDays
-                ? `The start date plus the duration, less a day, plus the ${preview.holidayExtensionDays} day${preview.holidayExtensionDays === 1 ? '' : 's'} the selected holidays take. Pick another date to override it.`
-                : 'The start date plus the duration, less a day. Pick another date to override it.'}
+              : 'The start date plus the contracted duration, less a day. Selected holidays do not move this cohort date.'}
           />
           {showPracticalEndReset && (
             <button
@@ -484,41 +461,15 @@ export function CohortFormDrawer({
       </div>
 
       <div className="rounded-xl border border-primary-100 bg-primary-50/60 p-3.5">
-        <p className="text-[10px] font-bold uppercase tracking-wider text-primary-700">Learner dates</p>
+        <p className="text-[10px] font-bold uppercase tracking-wider text-primary-700">Contract dates</p>
         {startDate && (practicalEndDate || apprenticeshipEndDate) ? (
           <div className="mt-2 space-y-1.5 text-[12px] text-foreground-700">
             <p><span className="font-bold">Practical:</span> {formatDateLabel(startDate)} – {formatDateLabel(practicalEndDate)}</p>
             <p><span className="font-bold">Apprenticeship:</span> {formatDateLabel(startDate)} – {formatDateLabel(apprenticeshipEndDate)}</p>
-            {holidayExtension && (
-              // Why the dates below are not simply start + duration. The
-              // contracted duration is unchanged -- what moved is when the
-              // cohort actually finishes -- so the hint names each holiday and
-              // its dates instead of leaving the reader with a bare total.
-              <div className="mt-2.5 rounded-lg border border-amber-200 bg-amber-50 p-2.5">
-                <p className="flex items-start gap-1.5 text-[11px] font-bold text-amber-800">
-                  <AppIcon name="ri-information-line" className="mt-px shrink-0 text-[13px]" />
-                  <span>
-                    Extended by {holidayExtension.days} day{holidayExtension.days === 1 ? '' : 's'} of holiday.
-                    {holidayExtension.effectiveMonths
-                      ? ` The duration stays ${holidayExtension.contractedMonths} months, but the cohort now runs ${holidayExtension.effectiveMonths} months to its practical end date.`
-                      : ''}
-                  </span>
-                </p>
-                <ul className="mt-1.5 space-y-1 pl-[18px]">
-                  {holidayExtension.items.map(item => (
-                    <li key={`${item.label}-${item.startDate}`} className="text-[11px] text-amber-800">
-                      <span className="font-semibold">{item.label || 'Holiday'}</span>
-                      {' — '}
-                      {formatDateLabel(item.startDate)}
-                      {item.endDate && item.endDate !== item.startDate ? ` – ${formatDateLabel(item.endDate)}` : ''}
-                      {` (+${item.days} day${item.days === 1 ? '' : 's'})`}
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-1.5 pl-[18px] text-[11px] text-amber-700">
-                  Practical end date moved from {formatDateLabel(holidayExtension.baseEndDate)} to {formatDateLabel(practicalEndDate)}.
-                </p>
-              </div>
+            {holidayIds.length > 0 && (
+              <p className="text-[11px] text-foreground-500">
+                Selected holidays are saved for module scheduling. If a module session clashes with one, that module plan is extended; these cohort contract dates stay fixed.
+              </p>
             )}
             {(preview?.warnings || []).map(warning => (
               <p key={warning} className="text-[11px] font-semibold text-amber-700">{warning}</p>
@@ -536,8 +487,8 @@ export function CohortFormDrawer({
       <FormField
         label={periodLabel ? `Holidays in this cohort's period (${periodLabel})` : 'Holidays'}
         hint={periodLabel
-          ? `Only holidays that fall inside ${periodLabel} are listed — the cohort's start date plus its duration, before any holiday extension. Selected holidays are skipped when this cohort's module sessions are generated, and the days they take push the practical and apprenticeship end dates out to match.`
-          : "Set the start date and duration to narrow this list to the holidays inside the cohort's own period. Selected holidays are skipped when this cohort's module sessions are generated, and the days they take push the practical and apprenticeship end dates out to match."}
+          ? `Only holidays that fall inside ${periodLabel} are listed. Tick the ones that apply to this cohort: when a generated module session lands on one of those dates, that session is skipped and the module end date extends by the clash. The cohort practical and apprenticeship end dates stay fixed.`
+          : "Set the start date and duration to narrow this list to the holidays inside the cohort's own period. Ticked holidays are used by module scheduling only: clashing sessions are skipped and the affected module end date extends, while cohort dates stay fixed."}
       >
         <HolidayPicker
           holidays={holidays}
@@ -595,6 +546,17 @@ function HolidayPicker({
       </p>
     );
   }
+  const inPeriodIds = inPeriod.map(holiday => String(holiday.id));
+  const selectedInPeriodCount = inPeriodIds.filter(id => selectedKeys.has(id)).length;
+  const allInPeriodSelected = inPeriodIds.length > 0 && selectedInPeriodCount === inPeriodIds.length;
+  const selectAllInPeriod = () => {
+    const next = Array.from(new Set([...selected.map(String), ...inPeriodIds]));
+    onChange(next);
+  };
+  const clearInPeriod = () => {
+    const inPeriodSet = new Set(inPeriodIds);
+    onChange(selected.map(String).filter(id => !inPeriodSet.has(id)));
+  };
   const toggle = (id: string) => {
     onChange(selected.includes(id) ? selected.filter(item => item !== id) : [...selected, id]);
   };
@@ -632,6 +594,22 @@ function HolidayPicker({
 
   return (
     <div className="space-y-2">
+      {inPeriod.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] font-semibold text-foreground-500">
+            {selectedInPeriodCount} of {inPeriod.length} selected
+          </p>
+          <button
+            type="button"
+            aria-label={allInPeriodSelected ? 'Clear selected holidays' : 'Select all holidays'}
+            onClick={allInPeriodSelected ? clearInPeriod : selectAllInPeriod}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100"
+          >
+            <AppIcon className={allInPeriodSelected ? 'ri-checkbox-blank-line text-sm' : 'ri-checkbox-multiple-line text-sm'}></AppIcon>
+            {allInPeriodSelected ? 'Clear selected holidays' : 'Select all holidays'}
+          </button>
+        </div>
+      )}
       <div className="max-h-56 space-y-1.5 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
         {inPeriod.length ? inPeriod.map(holiday => holidayRow(holiday, false)) : (
           <p className="px-1 py-2 text-[12px] text-foreground-500">
@@ -649,7 +627,7 @@ function HolidayPicker({
       </div>
       {periodLabel && inPeriod.length > 0 && !selected.length && (
         <p className="text-[11px] font-semibold text-amber-700">
-          Nothing ticked: generated sessions fall back to skipping all {inPeriod.length} holidays in this period. Tick the ones that apply to limit that.
+          Nothing ticked: none of the {inPeriod.length} holidays in this period is skipped when module sessions are generated.
         </p>
       )}
     </div>

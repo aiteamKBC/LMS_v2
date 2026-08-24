@@ -106,7 +106,7 @@ def notifications_enabled():
 def ensure_notification_table():
     """Verify the ledger exists; provision it only outside production.
 
-    Mirrors ``views.ensure_staff_profile_tables``: schema is migration-owned, so
+    Schema is migration-owned, so
     a request path that finds it missing gets a named error rather than silently
     issuing DDL.
     """
@@ -199,23 +199,6 @@ def seed_existing_assignments():
 # Current state
 # ---------------------------------------------------------------------------
 
-def _module_handles(views, module_row):
-    """Every id a stored tutor assignment could refer to this module by.
-
-    Stored ids are not always the catalogue id -- older rows hold the delivery
-    row id or a ``training-module-<id>`` handle -- so this reuses the same id
-    expansion the profile serializer matches on. Computed once per module and
-    intersected against each tutor's ids, rather than re-running the matcher
-    (and its regex) for every tutor/module/id combination.
-    """
-    return views.module_assignment_ids({
-        'id': module_row.get('module_catalogue_id'),
-        'moduleId': module_row.get('module_catalogue_id'),
-        'moduleCatalogueId': module_row.get('module_catalogue_id'),
-        'sourceId': module_row.get('source_id'),
-    })
-
-
 def current_assignments():
     """Every live tutor-to-module pair, keyed by tutor identity.
 
@@ -225,13 +208,11 @@ def current_assignments():
     others, and leaving them out keeps the pair out of the ledger so they are
     notified once an address is filled in.
 
-    Two sources are unioned because which one is authoritative depends on the
-    path that wrote it -- ``curriculum.modules.tutor_name`` is what the wizard
-    sets, ``tutors.assigned_module_ids`` is what the staff-profile screen sets,
-    and the mirror rebuild that reconciles them only runs on some paths.
+    The tutors come from the staff directory and the assignment from
+    ``curriculum.modules.tutor_name`` -- the module row is the only thing that
+    says who teaches it, so there is no second list here to disagree with it.
     """
     views = _views()
-    views.ensure_staff_profile_tables()
     tutor_rows = views.get_staff_profile_rows('tutor')
     module_rows = views.safe_authoring_module_rows()
     if not tutor_rows or not module_rows:
@@ -255,9 +236,9 @@ def current_assignments():
         # of the mail; losing the mail costs the tutor the assignment.
         logger.debug('Could not read groups/cohorts for assignment mail.', exc_info=True)
 
-    # Indexed once so the tutor loop below is set arithmetic rather than a
-    # regex per tutor/module pair. Descriptions are built lazily, because only
-    # the handful of modules that actually match ever need one.
+    # Indexed once so the tutor loop below is a name comparison rather than a
+    # row read per pair. Descriptions are built lazily, because only the handful
+    # of modules that actually match ever need one.
     live_modules = []
     for module_row in module_rows:
         module_id = views.clean_str(module_row.get('module_catalogue_id'))
@@ -270,7 +251,6 @@ def current_assignments():
         live_modules.append((
             module_id,
             views.staff_assignment_key(module_row.get('tutor_name')),
-            _module_handles(views, module_row),
             module_row,
         ))
 
@@ -281,12 +261,9 @@ def current_assignments():
         tutor_key = views.staff_assignment_key(name) or email.lower()
         if not tutor_key or tutor_key == 'unassigned' or not email:
             continue
-        stored_ids = set(views.clean_assignment_ids(
-            views.as_json_value(tutor.get('assigned_module_ids'), [])
-        ))
         modules = {}
-        for module_id, module_tutor_key, handles, module_row in live_modules:
-            if module_tutor_key != tutor_key and not (stored_ids & handles):
+        for module_id, module_tutor_key, module_row in live_modules:
+            if module_tutor_key != tutor_key:
                 continue
             modules[module_id] = describe_module(
                 module_row,

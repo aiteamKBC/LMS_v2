@@ -10,8 +10,11 @@ group page, the staffing screen and the structure wizard.
 
 import json
 
+from datetime import date
+from unittest.mock import patch
+
 from curriculum_api import views
-from curriculum_api.tests import CurriculumPersistenceHarness
+from curriculum_api.tests import CurriculumPersistenceHarness, staff_directory, staff_user_row
 
 
 class ClockAndSlotTests(CurriculumPersistenceHarness):
@@ -68,6 +71,22 @@ class ClockAndSlotTests(CurriculumPersistenceHarness):
 
 class TutorConflictHarness(CurriculumPersistenceHarness):
     """Two modules in one group, both able to carry their own tutor and slot."""
+
+    #: The people a picker can choose between. Curriculum reads its tutors from
+    #: the staff directory, so a roster answer only ever covers staff users who
+    #: hold tutor access -- these tests supply that directory rather than
+    #: inventing tutors out of the names typed onto modules.
+    TUTORS = ('Tutor Solo', 'Tutor Busy', 'Tutor Free', 'Tutor Other', 'Tutor One')
+
+    def setUp(self):
+        super().setUp()
+        directory = staff_directory(*[
+            staff_user_row(name, access='tutor', row_id=index + 1)
+            for index, name in enumerate(self.TUTORS)
+        ])
+        patcher = patch('curriculum_api.views.fetch_staff_users_by_access', side_effect=directory)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def seed_group(self):
         response = self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
@@ -654,3 +673,140 @@ class CrossGroupConflictTests(TutorConflictHarness):
         self.assertEqual(deleted.status_code, 200, deleted.content)
 
         self.add_module('Module Beta', tutor='Tutor Solo')
+
+
+class HolidayShiftConflictTests(TutorConflictHarness):
+    """A clash is about the day a session actually runs on.
+
+    A cohort's ticked holidays move the sessions that land on them onto the next
+    delivery day -- what the session list, the Teams series and the module form's
+    own preview all show. Dating a schedule without them left the conflict check
+    answering about a timetable nobody runs: it reported a clash on a closed day,
+    and passed the real collision on the day the session had moved to.
+    """
+
+    #: One closed Wednesday, so a weekly Wednesday module runs a week longer.
+    HOLIDAY_ROWS = [{
+        'id': 2001,
+        'label': 'Autumn close',
+        'start_date': date(2026, 9, 23),
+        'end_date': date(2026, 9, 23),
+        'type': 'closure',
+        'color': '',
+    }]
+
+    def tick_the_closed_wednesday(self, cohort_id='COHORT-DATA-1'):
+        """Tick the holiday on the cohort the tree save has already written."""
+        views.authoring_upsert(views.COHORT_AUTHORING_DETAILS_TABLE, ['cohort_id'], {
+            'cohort_id': cohort_id,
+            'holiday_ids': views.json_db_value(['2001']),
+        })
+
+    def seed_open_group(self):
+        """A group in another programme, whose cohort ticks nothing."""
+        payload = self.tree_payload(
+            programme_id='PROG-OPEN',
+            cohort_id='COHORT-OPEN-1',
+            group_id='GROUP-OPEN-1',
+            module_id='MOD-OPEN-1',
+        )
+        payload['programme']['name'] = 'Open Programme'
+        group = payload['cohorts'][0]['groups'][0]
+        group['tutor'] = 'Unassigned'
+        group['modules'][0]['tutor'] = 'Unassigned'
+        self.assertEqual(
+            self.post_json('/curriculum_api/curriculum/programmes/tree/', payload).status_code,
+            200,
+        )
+
+    @patch('curriculum_api.views.get_holiday_rows')
+    def test_the_day_a_session_shifted_onto_is_taken(self, holidays):
+        """The clash the old dating passed as free."""
+        holidays.return_value = self.HOLIDAY_ROWS
+        self.seed_group()
+        self.tick_the_closed_wednesday()
+        # Four Wednesdays from 16 September, stepping over the closed 23rd, so the
+        # last session runs on 14 October rather than 7 October.
+        self.add_module('Module Alpha', tutor='Tutor Solo')
+
+        self.add_module(
+            'Module Beta',
+            expect=409,
+            startDate='2026-10-14',
+            sessionsNumber=1,
+            tutor='Tutor Solo',
+        )
+
+    @patch('curriculum_api.views.get_holiday_rows')
+    def test_the_closed_day_itself_is_free(self, holidays):
+        """The clash the old dating invented.
+
+        The second module sits in a cohort that ticked nothing, so it really does
+        run on the 23rd -- the day the first module now does not.
+        """
+        holidays.return_value = self.HOLIDAY_ROWS
+        self.seed_group()
+        self.tick_the_closed_wednesday()
+        self.add_module('Module Alpha', tutor='Tutor Solo')
+        self.seed_open_group()
+
+        response = self.post_json('/curriculum_api/curriculum/groups/GROUP-OPEN-1/modules/', {
+            'moduleName': 'Open Module',
+            'startDate': '2026-09-23',
+            'sessionsNumber': 1,
+            'weekDays': 'Wednesday',
+            'startTime': '10:00',
+            'endTime': '12:00',
+            'tutor': 'Tutor Solo',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+
+    @patch('curriculum_api.views.get_holiday_rows')
+    def test_the_preview_dates_the_slot_the_way_the_save_will(self, holidays):
+        """Otherwise the warning names dates the save would never have named."""
+        holidays.return_value = self.HOLIDAY_ROWS
+        self.seed_group()
+        self.tick_the_closed_wednesday()
+        self.add_module('Module Alpha', tutor='Tutor Solo')
+
+        response = self.post_json('/curriculum_api/curriculum/preview/tutor-availability/', {
+            'startDate': '2026-09-16',
+            'sessionsNumber': 4,
+            'weekDays': 'Wednesday',
+            'startTime': '10:00',
+            'endTime': '12:00',
+            'cohortId': 'COHORT-DATA-1',
+            'tutor': 'Tutor Solo',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        result = response.json()
+        self.assertEqual(
+            result['sessionDates'],
+            ['2026-09-16', '2026-09-30', '2026-10-07', '2026-10-14'],
+        )
+        self.assertFalse(result['available'])
+        self.assertEqual(
+            result['conflicts'][0]['dates'],
+            ['2026-09-16', '2026-09-30', '2026-10-07', '2026-10-14'],
+        )
+
+    @patch('curriculum_api.views.get_holiday_rows')
+    def test_holidays_the_caller_sends_are_used(self, holidays):
+        """A form previewing a selection that is not stored yet still gets it right."""
+        holidays.return_value = self.HOLIDAY_ROWS
+        self.seed_group()
+
+        response = self.post_json('/curriculum_api/curriculum/preview/tutor-availability/', {
+            'startDate': '2026-09-16',
+            'sessionsNumber': 4,
+            'weekDays': 'Wednesday',
+            'startTime': '10:00',
+            'endTime': '12:00',
+            'holidays': [{'label': 'Autumn close', 'startDate': '2026-09-23', 'endDate': '2026-09-23'}],
+            'tutor': 'Tutor Solo',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            response.json()['sessionDates'],
+            ['2026-09-16', '2026-09-30', '2026-10-07', '2026-10-14'],
+        )

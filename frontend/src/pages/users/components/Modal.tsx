@@ -1,5 +1,8 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+// Explicit, not auto-imported: vitest.config.ts deliberately leaves
+// unplugin-auto-import out, so a dialog rendered in a test would crash on it.
+import { AppIcon } from '@/components/feature/AppIcon';
 
 interface ModalProps {
   title: ReactNode;

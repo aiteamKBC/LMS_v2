@@ -132,6 +132,7 @@ export interface CurriculumProgramme {
   level: string;
   status?: 'active' | 'draft' | 'archived' | string;
   isArchived?: boolean;
+  isActive?: boolean;
   modules: number;
   freeComponents?: number;
   weeks: number;
@@ -184,6 +185,11 @@ export interface CurriculumModule {
   groupId?: string;
   group?: string;
   isProgrammeDeleted?: boolean;
+  /**
+   * The authored week count — what the week builder holds and what the UI shows
+   * as "N weeks". NOT the number of calendar sessions: a group delivering
+   * Mon+Thu runs two sessions per week, so `sessionsNumber` is twice this.
+   */
   weeks: number;
   weekStructure?: Array<{
     id: string;
@@ -193,6 +199,12 @@ export interface CurriculumModule {
     ksbMappings?: CurriculumComponent['ksbMappings'];
     components?: CurriculumComponent[];
   }>;
+  /**
+   * The calendar session count — `weeks` x the group's delivery days per week.
+   * This is what the session dates, the tutor clash check and the Teams series
+   * are built from. Kept apart from `weeks` because one field meaning both made
+   * every edit round-trip multiply the weeks by the delivery days.
+   */
   sessionsNumber?: number;
   startDate?: string;
   endDate?: string;
@@ -463,9 +475,28 @@ export interface CurriculumKsbCoverageSummaryBucket {
   total_weight: number;
 }
 
+/** Where a coverage response read its required-KSB set from. */
+export interface CurriculumKsbCoverageSource {
+  type: string;
+  id: string;
+  /**
+   * 'programme' (the source stored on the programme row), 'module', 'request',
+   * 'programme-name' (matched by name), 'mappings-only', or 'all-profiles' when
+   * nothing identified a source and every profile's KSBs stood in.
+   */
+  origin: 'programme' | 'module' | 'request' | 'programme-name' | 'mappings-only' | 'all-profiles' | string;
+  required_count: number;
+  requiredCount: number;
+  source_name?: string;
+  sourceName?: string;
+  source_label?: string;
+  sourceLabel?: string;
+}
+
 export interface CurriculumKsbCoverageResponse {
   scope: string;
   identifier: string;
+  source?: CurriculumKsbCoverageSource;
   summary: {
     overall: CurriculumKsbCoverageSummaryBucket;
     knowledge: CurriculumKsbCoverageSummaryBucket;
@@ -835,8 +866,15 @@ export interface CurriculumTeamsMeetingSummary {
   moduleCatalogueId: string;
   liveSessionId: string;
   status: string;
+  moduleTitle?: string;
   joinUrl: string;
+  webLink?: string;
+  meetingOptionsUrl?: string;
+  eventId?: string;
+  onlineMeetingId?: string;
   organizerEmail: string;
+  presenters?: string[];
+  attendees?: string[];
   repeatPattern: string;
   startDateTime: string;
   durationMinutes: number;
@@ -845,6 +883,8 @@ export interface CurriculumTeamsMeetingSummary {
   syncedCount: number;
   nextOccurrence: string;
   updatedAt: string;
+  /** Only present when asked for: the dates Teams currently holds, in order. */
+  occurrenceDates?: string[];
 }
 
 export interface CurriculumHoliday {
@@ -1662,10 +1702,15 @@ export function deleteCurriculumKsbFramework(id: string) {
 
 export function fetchCurriculumTeamsMeetingSummaries(
   signal?: AbortSignal,
-  options: { moduleCatalogueIds?: string[]; skipCache?: boolean } = {},
+  options: { moduleCatalogueIds?: string[]; occurrenceDates?: boolean; skipCache?: boolean } = {},
 ): Promise<CurriculumTeamsMeetingSummary[]> {
   const ids = (options.moduleCatalogueIds || []).filter(Boolean);
-  const suffix = ids.length ? `?module_catalogue_ids=${encodeURIComponent(ids.join(','))}` : '';
+  const query = new URLSearchParams();
+  if (ids.length) query.set('module_catalogue_ids', ids.join(','));
+  // Opt-in: the occurrence dates are only needed by the page that compares them
+  // against the module's stored session plan, and they are the bulk of the payload.
+  if (options.occurrenceDates) query.set('occurrence_dates', '1');
+  const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchCollection<CurriculumTeamsMeetingSummary>(
     `/curriculum/teams-meetings/summary/${suffix}`,
     { signal, skipCache: options.skipCache },
@@ -1683,25 +1728,6 @@ export function fetchCurriculumTutors(signal?: AbortSignal, options: { skipCache
 export function fetchCurriculumCoaches(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumStaffProfile[]> {
   return fetchCollection<CurriculumStaffProfile>('/curriculum/coaches/', { signal, skipCache: options.skipCache, timeoutMs: 15000 });
 }
-
-export type CurriculumStaffProfileInput = {
-  name?: string;
-  email?: string;
-  phone?: string;
-  jobTitle?: string;
-  status?: string;
-  specialisms?: string[];
-  assignedModuleIds?: string[];
-  assignedGroupIds?: string[];
-  notes?: string;
-};
-
-export type CurriculumStaffProfileCreateResponse = {
-  created: boolean;
-  duplicate?: boolean;
-  restored?: boolean;
-  profile: CurriculumStaffProfile;
-};
 
 export function fetchCurriculumHolidays(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumHoliday[]> {
   return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal, skipCache: options.skipCache });
@@ -1762,7 +1788,10 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   // Both are already honoured by PATCH /curriculum/modules/<id>/ — declared here
   // so the module workspace can send them without casting.
   status?: string;
+  /** Calendar sessions (weeks x delivery days per week). See `CurriculumModule`. */
   sessionsNumber?: number;
+  /** Authored weeks. Sent alongside `sessionsNumber`, never instead of it. */
+  weeks?: number;
   /**
    * Book a slot the tutor already holds. Without it the save is refused with a
    * 409 carrying `tutorConflicts` — see `isTutorConflictError`.
@@ -1941,6 +1970,17 @@ export interface CurriculumTutorAvailabilityInput {
   tutor?: string;
   /** The module being edited, so it is not reported as blocking its own slot. */
   moduleCatalogueId?: string;
+  /**
+   * The parent cohort, so the slot is dated the way the calendar dates it — its
+   * ticked holidays move a session onto the next delivery day, and a clash is
+   * about the day the session actually runs on.
+   */
+  cohortId?: string;
+  /**
+   * The ticked holidays themselves, for a form previewing a cohort choice that
+   * is not saved yet. Sent, they win over what `cohortId` would have read back.
+   */
+  holidays?: CurriculumHoliday[];
 }
 
 export interface CurriculumTutorAvailabilityVerdict {
@@ -2031,29 +2071,6 @@ export function deleteStaffingAssignment(id: string) {
   return deleteJson(`/curriculum/staffing/${encodeURIComponent(id)}/`);
 }
 
-export function createCurriculumCoach(input: CurriculumStaffProfileInput) {
-  return postJson<CurriculumStaffProfileCreateResponse>('/curriculum/coaches/', input);
-}
-
-export function updateCurriculumCoach(id: string | number, input: CurriculumStaffProfileInput) {
-  return patchJson<{ updated: boolean; profile: CurriculumStaffProfile }>(`/curriculum/coaches/${encodeURIComponent(String(id))}/`, input);
-}
-
-export function deleteCurriculumCoach(id: string | number) {
-  return deleteJson<{ deleted: boolean; id: string | number; count: number; ids: string[] }>(`/curriculum/coaches/${encodeURIComponent(String(id))}/`);
-}
-
-export function createCurriculumTutor(input: CurriculumStaffProfileInput) {
-  return postJson<CurriculumStaffProfileCreateResponse>('/curriculum/tutors/', input);
-}
-
-export function updateCurriculumTutor(id: string | number, input: CurriculumStaffProfileInput) {
-  return patchJson<{ updated: boolean; profile: CurriculumStaffProfile }>(`/curriculum/tutors/${encodeURIComponent(String(id))}/`, input);
-}
-
-export function deleteCurriculumTutor(id: string | number) {
-  return deleteJson<{ deleted: boolean; id: string | number; count: number; ids: string[] }>(`/curriculum/tutors/${encodeURIComponent(String(id))}/`);
-}
 
 export function createCurriculumHoliday(input: CurriculumHolidayInput) {
   return postJson('/curriculum/holidays/', input);

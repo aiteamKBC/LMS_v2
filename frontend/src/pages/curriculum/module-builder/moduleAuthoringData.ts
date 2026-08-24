@@ -74,6 +74,146 @@ export interface ModuleWeek {
   learningOutcomes: string[];
   components: ModuleComponent[];
   ksbMappings: KsbMapping[];
+  /**
+   * The day this week actually runs, from the module's own dated session plan —
+   * holiday shifts included. Served by the structure payload, never authored
+   * here: the schedule lives on the module, and the weeks read it.
+   */
+  sessionDate?: string;
+  sessionDay?: string;
+  sessionStartTime?: string;
+  sessionDurationMinutes?: number;
+}
+
+export interface ModuleMonthGroup {
+  /** '2026-12', or '' for the weeks whose month is not known yet. */
+  key: string;
+  label: string;
+  weeks: ModuleWeek[];
+}
+
+/**
+ * The module's weeks, split into the months they run in.
+ *
+ * A module is authored as a run of weeks but delivered — and reported on — by
+ * month, so a six-week module that crosses Christmas is really "one week in
+ * December, five in January". Grouping is by each week's own session date, so
+ * the split moves with the holiday shifts rather than assuming four weeks make a
+ * month.
+ *
+ * Returns [] when no week has a date: there is no month to name, and a single
+ * "Unscheduled" heading over the whole list tells a reader nothing.
+ */
+export function groupWeeksByMonth(weeks: ModuleWeek[]): ModuleMonthGroup[] {
+  if (!weeks.some(week => monthKeyOf(week.sessionDate))) return [];
+  const groups: ModuleMonthGroup[] = [];
+  weeks.forEach(week => {
+    const key = monthKeyOf(week.sessionDate);
+    const current = groups[groups.length - 1];
+    // Only ever extends the run in progress, so the weeks stay in module order:
+    // a heading is a stretch of the timetable, not a bucket to file weeks into.
+    // A week with no date of its own is the next week of the run before it.
+    if (current && (!key || current.key === key)) {
+      current.weeks.push(week);
+      return;
+    }
+    groups.push({ key, label: monthLabelOf(key), weeks: [week] });
+  });
+  return groups;
+}
+
+function monthKeyOf(value?: string) {
+  const text = String(value || '').trim();
+  const match = /^(\d{4})-(\d{2})/.exec(text);
+  return match ? `${match[1]}-${match[2]}` : '';
+}
+
+function monthLabelOf(key: string) {
+  if (!key) return 'Not scheduled yet';
+  const parsed = new Date(`${key}-01T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return key;
+  return parsed.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+}
+
+/**
+ * The module's dated session plan, as the backend generates it.
+ *
+ * `skippedHolidays` on a session names the delivery days that were closed on the
+ * way to it, so a date that moved can say why it moved.
+ */
+export interface ModuleWeekSessionPlan {
+  sessions: Array<{ sessionNumber: number; date: string; day: string; skippedHolidays: string[] }>;
+  skippedHolidays: string[];
+  finalEndDate: string;
+  warnings: string[];
+}
+
+/**
+ * The module with every week carrying the day it now runs on.
+ *
+ * The plan is applied by *position*, because week N is session N: a seventh week
+ * added to a six-week module takes the seventh planned date -- the next delivery
+ * day the cohort has not closed for a holiday -- and the weeks before it keep
+ * the dates they already had.
+ *
+ * With `followEndDate`, the module's end date follows the plan only when it *was*
+ * the plan: an end date that is one of the planned session dates was calculated
+ * from a shorter run and moves out to the new last session, while a date set by
+ * hand in the module form is left exactly where the person put it. Dating the
+ * weeks of a module that was just opened passes it off -- nothing about the run
+ * changed there, so nothing about its dates should read as an edit.
+ *
+ * Returns the module unchanged when nothing moved, so applying a plan the weeks
+ * already agree with cannot mark a freshly-loaded module as edited.
+ */
+export function applyModuleWeekSessionPlan(
+  module: ModuleCatalogueItem,
+  plan: ModuleWeekSessionPlan,
+  options: { followEndDate?: boolean } = {},
+): ModuleCatalogueItem {
+  const sessions = plan?.sessions || [];
+  if (!sessions.length) return module;
+  let weeksMoved = false;
+  const weekStructure = module.weekStructure.map((week, index) => {
+    const sessionDate = sessions[index]?.date || '';
+    const sessionDay = sessions[index]?.day || '';
+    if ((week.sessionDate || '') === sessionDate && (week.sessionDay || '') === sessionDay) return week;
+    weeksMoved = true;
+    return { ...week, sessionDate, sessionDay };
+  });
+  const currentEndDate = String(module.endDate || '').trim();
+  const endDateFollowsPlan = options.followEndDate !== false
+    && (!currentEndDate || sessions.some(session => session.date === currentEndDate));
+  const endDate = endDateFollowsPlan && plan.finalEndDate ? plan.finalEndDate : module.endDate;
+  if (!weeksMoved && endDate === module.endDate) return module;
+  return { ...module, weekStructure, endDate };
+}
+
+/**
+ * The same weeks, with the dates back in calendar order.
+ *
+ * Dragging a week to a new place moves what is taught, not when the module
+ * meets: the timetable is the module's, so session 1 is still the first date
+ * whichever week now sits there. Without this the dates travel with the week and
+ * the rail reads as a module that runs backwards until the next save re-derives
+ * them.
+ */
+export function resequenceWeekSessionDates(weeks: ModuleWeek[]): ModuleWeek[] {
+  // Earliest first, undated weeks last: the plan generates dates in order, so
+  // sorting them is enough to put session 1 back at the top of the rail. A week
+  // with no date is one the plan has not reached, which is the end of the run.
+  const dates = weeks
+    .map(week => ({ sessionDate: week.sessionDate, sessionDay: week.sessionDay }))
+    .sort((a, b) => (
+      a.sessionDate && b.sessionDate
+        ? a.sessionDate.localeCompare(b.sessionDate)
+        : (a.sessionDate ? 0 : 1) - (b.sessionDate ? 0 : 1)
+    ));
+  return weeks.map((week, index) => (
+    (week.sessionDate || '') === (dates[index].sessionDate || '')
+      ? week
+      : { ...week, ...dates[index] }
+  ));
 }
 
 export interface ModuleCatalogueItem {
@@ -286,6 +426,8 @@ export async function createNewModule(input: { programme: string; title: string;
         groupName: input.groupName || '',
         status: draft.status || 'draft',
         sessionsNumber: draft.sessionsNumber ?? draft.weeks,
+        // The authored week count, sent apart from the calendar session count.
+        weeksNumber: draft.weeks,
         startDate: draft.startDate || '',
         endDate: draft.endDate || '',
         weekStructure: draft.weekStructure,
@@ -370,6 +512,34 @@ export async function loadModuleStructure(catalogueId: string): Promise<ModuleCa
     const status = err instanceof ApiError ? err.status : 0;
     if (status === 404) return null;
     throw err;
+  }
+}
+
+/**
+ * Where this module's weeks would run if it had `weeks` of them.
+ *
+ * Adding or removing a week in the builder changes the timetable before anything
+ * is saved, and the dates are the backend's to generate -- it is the only place
+ * that knows the delivery day, the cohort's ticked holidays and the shifts they
+ * cause. Asking for them keeps the rail showing the dates the save will store
+ * rather than a second schedule worked out in the browser.
+ *
+ * Returns null for a module the backend has never stored (a local draft), where
+ * there is no schedule to plan from yet.
+ */
+export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks: number): Promise<ModuleWeekSessionPlan | null> {
+  const catalogueId = String(moduleCatalogueId || '').trim();
+  const count = Math.max(0, Math.round(Number(weeks) || 0));
+  if (!catalogueId || !count) return null;
+  try {
+    return await apiJson<ModuleWeekSessionPlan>(
+      `/curriculum/modules/${encodeURIComponent(catalogueId)}/session-plan/?weeks=${count}`,
+    );
+  } catch (err) {
+    // A module with no stored schedule simply has no dates to show. Failing the
+    // add-a-week the person just made would be the worse answer.
+    console.warn('No session plan could be generated for this module.', err);
+    return null;
   }
 }
 
@@ -495,6 +665,10 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     catalogueId,
     programmeId: module.programmeId || module.programme || 'programme',
     programmeName: module.programme || 'Unassigned programme',
+    cohortId: module.cohortId || '',
+    cohort: module.cohort || '',
+    groupId: module.groupId || '',
+    group: module.group || '',
     isProgrammeDeleted: Boolean(module.isProgrammeDeleted),
     title,
     description,
@@ -503,7 +677,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     sourceType: undefined,
     sourceId: undefined,
     deliveryStatus: module.deliveryStatus,
-    ksbProfileSourceId: '',
+    ksbProfileSourceId: module.ksbProfileSourceId || '',
     tutor,
     coach,
     deliveryMetadata: {
@@ -517,7 +691,10 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     sessionsNumber: module.sessionsNumber || module.weeks || module.sessionNames?.length || 0,
     startDate: module.startDate || '',
     endDate: module.endDate || '',
-    weeks: module.weeks || module.sessionNames?.length || 1,
+    // `sessionsNumber` is a last-resort fallback for payloads predating the
+    // weeks/sessions split, where the two were the same number. Current
+    // responses always carry `weeks`, so it is normally never reached.
+    weeks: module.weeks || module.sessionNames?.length || module.sessionsNumber || 1,
     totalOtjh: 0,
     ksbCount: module.ksbCount || module.ksbCodes?.length || 0,
     lessonCount: module.lessons || module.sessionNames?.length || 0,
@@ -546,7 +723,10 @@ export function getDefaultStructure(module: ModuleCatalogueItem): ModuleCatalogu
   if (module.weekStructure.length) return recalculateModule(module);
 
   const source = module.sourceModule;
-  const weekCount = Math.max(1, source?.weeks || source?.sessionNames?.length || module.weeks || 1);
+  // Weeks first: this builds the week skeleton, and `sessionsNumber` is the
+  // delivery-day-multiplied calendar total, which would over-create weeks for
+  // any group running more than one session a week.
+  const weekCount = Math.max(1, module.weeks || source?.weeks || source?.sessionNames?.length || module.sessionsNumber || source?.sessionsNumber || 1);
   const weekStructure = Array.from({ length: weekCount }, (_, index) => {
     const week = createEmptyWeek(module.id, index + 1);
     return week;
@@ -595,7 +775,16 @@ export function recalculateModule(module: ModuleCatalogueItem): ModuleCatalogueI
   return {
     ...module,
     completionCriteria,
-    weeks: module.weekStructure.length,
+    // The authored week count is derived from the structure -- adding a seventh
+    // week makes this a seven-week module, and a save has to carry that rather
+    // than the stale stored number.
+    weeks: hasStructure ? normalisedWeeks.length : (module.weeks || module.sessionsNumber || 0),
+    // NOT re-derived from the weeks. A module delivered twice a week runs two
+    // calendar sessions per authored week, so overwriting this with the week
+    // count silently halved the session plan and the Teams series. It belongs to
+    // the delivery slot, and only the module form (which knows the group's
+    // delivery days) recomputes it.
+    sessionsNumber: module.sessionsNumber,
     totalOtjh,
     declaredTotalOtjh: module.declaredTotalOtjh,
     ksbCount: hasStructure ? componentKsbCodes.size : module.ksbCount,
@@ -722,7 +911,11 @@ export function flattenKsbEntries(entries: CurriculumKsbEntry[] = []): KsbOption
 }
 
 export async function saveModuleStructure(moduleCatalogueId: string, payload: ModuleCatalogueItem) {
-  const body = recalculateModule(payload);
+  const recalculated = recalculateModule(payload);
+  // `weeksNumber` states the authored week count outright. `weeks` cannot carry
+  // it: on this endpoint that name is the legacy alias for the week *list*, and
+  // the backend rejects a number there.
+  const body = { ...recalculated, weeksNumber: recalculated.weekStructure.length || recalculated.weeks };
   return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
     body: JSON.stringify(body),
@@ -809,6 +1002,15 @@ export interface TeamsMeetingResult {
 export interface TeamsMeetingConfiguration {
   configured: boolean;
   defaultOrganizer: string;
+  /**
+   * True when the deployment pins the organizer. Recording and transcription are
+   * set on the online meeting behind the event, and that route is granted to one
+   * mailbox by a Teams application access policy -- so a meeting organized by
+   * anyone else opens with nothing recording. The form shows the organizer
+   * read-only rather than hiding it: which calendar the series lands in still
+   * matters to whoever is creating it.
+   */
+  organizerLocked: boolean;
   timeZone: string;
   timeZoneIana: string;
 }
@@ -838,6 +1040,24 @@ function zoneOffsetMs(instant: Date, timeZone: string) {
   return wallClock - instant.getTime();
 }
 
+/**
+ * A stored timestamp as an instant, reading an offset-less string as UTC.
+ *
+ * `new Date('2026-12-12T09:00:00')` is the *reader's own* local time by
+ * specification, so an API value that omits its offset lands hours away for
+ * everyone outside UTC -- the same calendar reads as in sync in London and two
+ * hours out in Cairo. Every Teams instant is parsed here instead, so what the
+ * page shows depends only on the reader's zone, never on where the string came
+ * from.
+ */
+export function parseUtcInstant(value: unknown): Date {
+  const raw = String(value ?? '').trim();
+  if (!raw) return new Date(NaN);
+  // `YYYY-MM-DDTHH:mm[:ss[.sss]]` with nothing after it: no zone was named.
+  const offsetless = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(raw);
+  return new Date(offsetless ? `${raw.replace(' ', 'T')}Z` : raw);
+}
+
 /** Read a naive `YYYY-MM-DDTHH:mm` wall clock as a time in `timeZone`, as UTC ISO. */
 export function zonedNaiveToUtcIso(naiveLocal: string, timeZone = calendarTimeZone) {
   const [datePart, timePart = '00:00'] = (naiveLocal || '').split('T');
@@ -858,6 +1078,31 @@ export function zonedNaiveToUtcIso(naiveLocal: string, timeZone = calendarTimeZo
   return new Date(instant).toISOString();
 }
 
+/**
+ * A UTC instant as the Microsoft calendar shows it, not as this reader's PC does.
+ *
+ * Every Teams date arrives as a UTC instant, and a reader sitting in another zone
+ * would otherwise see a session that Teams itself lists an hour earlier. The zone
+ * is the one the backend's Graph configuration reports, so it is only right once
+ * `loadTeamsMeetingConfiguration` has run -- which every page showing these dates
+ * does on mount.
+ */
+export function formatCalendarDateTime(value: unknown, timeZone = calendarTimeZone): string {
+  const instant = parseUtcInstant(value);
+  if (Number.isNaN(instant.getTime())) return '—';
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hour12: false,
+    day: 'numeric', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  }).formatToParts(instant).reduce<Record<string, string>>((accumulator, part) => {
+    if (part.type !== 'literal') accumulator[part.type] = part.value;
+    return accumulator;
+  }, {});
+  if (!parts.year || !parts.day) return '—';
+  return `${parts.day} ${parts.month} ${parts.year}, ${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}`;
+}
+
 function clockIn(instant: Date, timeZone: string) {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone, hour: '2-digit', minute: '2-digit', hour12: false,
@@ -873,6 +1118,28 @@ function shortZoneName(timeZone: string) {
  * `viewer` is omitted when both zones show the same clock, so the hint stays quiet
  * for the people it would tell nothing new.
  */
+/**
+ * The reader's own timezone, and how far it sits from the calendar's.
+ *
+ * Teams renders one instant in each viewer's own zone, so a page that prints the
+ * calendar's clock has to say whose clock that is -- otherwise 09:00 here and
+ * 11:00 in the reader's Teams look like two different meetings.
+ */
+export function viewerZoneOffset(instant: Date | null = null) {
+  const viewerZone = Intl.DateTimeFormat().resolvedOptions().timeZone || calendarTimeZone;
+  const at = instant && !Number.isNaN(instant.getTime()) ? instant : new Date();
+  const differenceMinutes = Math.round(
+    (zoneOffsetMs(at, viewerZone) - zoneOffsetMs(at, calendarTimeZone)) / 60000,
+  );
+  return {
+    viewerZone,
+    viewerZoneLabel: shortZoneName(viewerZone),
+    calendarZoneLabel: shortZoneName(calendarTimeZone),
+    /** Zero when both zones show the same clock, so callers can stay quiet. */
+    differenceMinutes,
+  };
+}
+
 export function describeSessionTime(naiveLocal: string) {
   const iso = zonedNaiveToUtcIso(naiveLocal);
   const instant = new Date(iso);
@@ -897,9 +1164,19 @@ export function loadTeamsMeetingConfiguration() {
     });
 }
 
-export function restoreModuleTeamsMeeting(moduleCatalogueId: string) {
-  return apiJson<{ restored: boolean; updatedComponents: number; meeting: Record<string, unknown>; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`, {
+/**
+ * Write a module's tracked Teams meeting back onto its live-session components.
+ *
+ * `createMissingComponents` extends that to the weeks that have no live-session
+ * component at all: each one is given its own, on its own session date. It is
+ * opt-in because the Module Builder also calls this silently when it opens a
+ * module whose join link has gone missing, and a page load must not author
+ * anything the person did not ask for.
+ */
+export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { createMissingComponents?: boolean } = {}) {
+  return apiJson<{ restored: boolean; updatedComponents: number; createdComponents?: number; meeting: Record<string, unknown>; module: ModuleCatalogueItem }>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/`, {
     method: 'POST',
+    body: JSON.stringify({ createMissingComponents: Boolean(options.createMissingComponents) }),
     timeoutMs: 30000,
   }).then(result => ({
     ...result,
@@ -915,7 +1192,12 @@ export function createTeamsMeeting(input: TeamsMeetingInput) {
   });
 }
 
-export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string }) {
+/**
+ * Send a module's own session dates to its Teams series. `attendees`/`presenters`
+ * are optional: omit them to move dates only, pass them to correct who is invited
+ * and who presents without recreating the meeting.
+ */
+export function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & { eventId?: string; attendees?: string[]; presenters?: string[] }) {
   return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify(input),
@@ -959,6 +1241,9 @@ export interface TeamsMeetingOccurrence {
   session_number: number;
   scheduled_start: string;
   scheduled_end: string;
+  /** Set only for a session that runs on a meeting of its own; else the series' own link. */
+  join_url?: string;
+  online_meeting_id?: string;
   actual_start?: string;
   actual_end?: string;
   participant_count: number;
@@ -1002,6 +1287,40 @@ export function teamsMeetingArtifactPreviewUrl(liveSessionId: string, artifactId
 
 export function teamsMeetingRecordingEventsUrl(liveSessionId: string, artifactId: string) {
   return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/recording-events/`;
+}
+
+/** One thing a viewer did to a recording: started it, paused, skipped, finished. */
+export interface TeamsRecordingEventInput {
+  type: 'play' | 'pause' | 'seeked' | 'ended' | 'heartbeat' | 'open' | 'close';
+  videoTimeSeconds: number;
+  previousVideoTimeSeconds?: number;
+  skipFromSeconds?: number;
+  skipToSeconds?: number;
+  watchedSecondsDelta?: number;
+  durationSeconds?: number;
+  playbackRate?: number;
+  eventTime?: string;
+}
+
+/**
+ * Record how a recording was watched. Whoever reviews a session in the LMS is
+ * doing so instead of attending it, so who watched what — and what they skipped
+ * — is part of the session's record rather than a private matter of the player.
+ */
+export function saveTeamsRecordingEvents(
+  liveSessionId: string,
+  artifactId: string,
+  payload: {
+    previewSessionId?: string;
+    viewer?: { id?: string; email?: string; name?: string; role?: string };
+    browser?: { sessionId?: string; viewportWidth?: number; viewportHeight?: number; userAgent?: string; pageUrl?: string };
+    events: TeamsRecordingEventInput[];
+  },
+) {
+  return apiJson<{ saved: number; previewSessionId: string }>(
+    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/recording-events/`,
+    { method: 'POST', body: JSON.stringify(payload), timeoutMs: 20000 },
+  );
 }
 
 class ApiError extends Error {
@@ -1150,6 +1469,11 @@ export function getLegacyDefaultComponentSettings(type: ModuleComponentType): Re
         requirement: 'Required',
         readingSource: 'Written in LMS',
         resourceUrl: '',
+        uploadedFileName: '',
+        uploadedFileUrl: '',
+        uploadedFileSize: 0,
+        uploadedFileContentType: '',
+        uploadSource: '',
         readingContent: '',
         mainLearningOutcomes: '',
         ksbEvidenceNotes: '',

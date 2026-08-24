@@ -193,6 +193,7 @@ class LiveSessionOccurrence(models.Model):
     actual_start = models.DateTimeField(blank=True, null=True)
     actual_end = models.DateTimeField(blank=True, null=True)
     join_url = models.TextField(blank=True, default='')
+    online_meeting_id = models.TextField(blank=True, default='')
     attendance_report_id = models.CharField(max_length=512, blank=True, default='')
     participant_count = models.IntegerField(default=0)
     status = models.CharField(max_length=32, default='scheduled')

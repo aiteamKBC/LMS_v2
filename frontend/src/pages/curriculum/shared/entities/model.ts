@@ -29,6 +29,25 @@ export function cleanText(value: unknown, fallback = ''): string {
   return text || fallback;
 }
 
+/**
+ * A record's notes with the API's bookkeeping lines removed.
+ *
+ * Every module the API returns carries its parent chain appended to `notes` as
+ * hidden `__key:value` lines (`__program_id`, `__cohort_id`, `__group_id`,
+ * `__group_name`, `__module_catalogue_id`, `__module_color`). They are derived
+ * from real columns on every read, so they are never worth showing to a reader
+ * and never worth sending back: a form that echoes them saves them into the
+ * description, and the next read appends its own copy on top.
+ */
+export function visibleNotes(value: unknown, fallback = ''): string {
+  const text = String(value ?? '')
+    .split(/\r?\n/)
+    .filter(line => !line.trim().startsWith('__'))
+    .join('\n')
+    .trim();
+  return text || fallback;
+}
+
 /** Two identifiers refer to the same record. Empty never matches empty. */
 export function sameIdentifier(left: unknown, right: unknown): boolean {
   const a = normaliseKey(left);
@@ -311,7 +330,7 @@ export function formatDateTimeLabel(value: unknown): string {
  * end date already has the holidays folded in.
  */
 export function cohortHolidayExtensionDays(
-  cohort: Pick<CurriculumCohort, 'baseEndDate' | 'endDate' | 'practicalEndDate'>,
+  cohort: Partial<Pick<CurriculumCohort, 'baseEndDate' | 'endDate' | 'practicalEndDate'>>,
 ): number {
   const base = cleanText(cohort.baseEndDate);
   const actual = cleanText(cohort.practicalEndDate) || cleanText(cohort.endDate);
@@ -321,6 +340,61 @@ export function cohortHolidayExtensionDays(
   if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return 0;
   const days = Math.round((to.getTime() - from.getTime()) / 86_400_000);
   return days > 0 ? days : 0;
+}
+
+/**
+ * The date part of a stored value, so an ISO date and an ISO datetime for the
+ * same day compare as equal. `YYYY-MM-DD` sorts as it reads, which is what makes
+ * the window comparisons below plain string comparisons.
+ */
+function dateKey(value: unknown): string {
+  return cleanText(value).slice(0, 10);
+}
+
+/**
+ * The delivery window a module placed in a cohort has to fit inside.
+ *
+ * The practical end date is the boundary, not the apprenticeship end: the EPA
+ * period after it carries no delivery. It already has the ticked holidays folded
+ * in, so a session plan that skips them still lands inside the window.
+ */
+export function cohortDeliveryWindow(
+  cohort: Partial<Pick<CurriculumCohort, 'startDate' | 'endDate' | 'practicalEndDate'>> | null | undefined,
+): { start: string; end: string } {
+  return {
+    start: dateKey(cohort?.startDate),
+    end: dateKey(cohort?.practicalEndDate) || dateKey(cohort?.endDate),
+  };
+}
+
+/**
+ * Why a module's dates are outside its cohort, or null when they are inside.
+ *
+ * The same three refusals the backend enforces, worded the same way, so the
+ * drawer can say it before the save is attempted: a module cannot start before
+ * the cohort opens, cannot start after it has finished, and cannot run past the
+ * end -- which is the one a generated session plan reaches on its own.
+ */
+export function moduleCohortDateError(
+  cohort: Partial<Pick<CurriculumCohort, 'startDate' | 'endDate' | 'practicalEndDate'>> | null | undefined,
+  startDate: unknown,
+  endDate: unknown,
+): string | null {
+  const { start: cohortStart, end: cohortEnd } = cohortDeliveryWindow(cohort);
+  const moduleStart = dateKey(startDate);
+  const moduleEnd = dateKey(endDate);
+
+  if (moduleStart && cohortStart && moduleStart < cohortStart) {
+    return `The module cannot start before the cohort start date (${formatDateLabel(cohortStart)}).`;
+  }
+  if (moduleStart && cohortEnd && moduleStart > cohortEnd) {
+    return `The module cannot start after the cohort end date (${formatDateLabel(cohortEnd)}).`;
+  }
+  if (moduleEnd && cohortEnd && moduleEnd > cohortEnd) {
+    return `The module cannot finish after the cohort end date (${formatDateLabel(cohortEnd)}). `
+      + `It currently finishes ${formatDateLabel(moduleEnd)} - move the start date earlier or reduce the number of sessions.`;
+  }
+  return null;
 }
 
 export function cohortYear(cohort: CurriculumCohort): string {
@@ -340,6 +414,9 @@ export const CURRICULUM_STATUS_TONES: Record<string, string> = {
   active: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   published: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   planned: 'border-sky-200 bg-sky-50 text-sky-700',
+  // A session that has a Teams join link is 'scheduled' — same "ready, not yet
+  // happened" meaning as planned, so it reads with the same tone.
+  scheduled: 'border-sky-200 bg-sky-50 text-sky-700',
   draft: 'border-amber-200 bg-amber-50 text-amber-700',
   review: 'border-amber-200 bg-amber-50 text-amber-700',
   completed: 'border-foreground-200 bg-background-100 text-foreground-600',

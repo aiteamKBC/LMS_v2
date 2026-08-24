@@ -207,10 +207,11 @@ class CohortProgrammeScopeTests(TestCase):
 
     # --------------------------------------------------------- programme ids
 
-    def test_recreating_a_deleted_programme_name_skips_taken_ids(self):
-        # 'PROG-MBA' is written last, so it is the more recently updated of the
-        # two archived rows and therefore the one the name lookup prefers. The
-        # id derived from it ('PROG-MBA-2') is already taken by the other row.
+    def test_recreating_an_archived_programme_name_mints_an_unrelated_id(self):
+        # Reusing an archived programme's name must not produce an id derived
+        # from the archived one. A suffixed id ('PROG-MBA-2') reads as a variant
+        # of the archived record, so lookups that prefix-match or strip the
+        # suffix attach the old programme's children to the new one.
         self._programme('PROG-MBA-2', 'MBA', archived=True)
         self._programme('PROG-MBA', 'MBA', archived=True)
 
@@ -223,4 +224,10 @@ class CohortProgrammeScopeTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         source_id = response.json()['programme']['sourceId']
         self.assertNotIn(source_id, {'PROG-MBA', 'PROG-MBA-2'})
+        for archived_id in ('PROG-MBA', 'PROG-MBA-2'):
+            self.assertFalse(
+                source_id.startswith(f'{archived_id}-'),
+                f'{source_id} is derived from archived id {archived_id}',
+            )
+        self.assertRegex(source_id, r'^PROG-\d{20}$')
         self.assertEqual(len(views.fetch_all(f'select * from {views.table_name("programmes")}')), 3)

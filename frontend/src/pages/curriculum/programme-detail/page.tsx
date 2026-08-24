@@ -1,14 +1,34 @@
-import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-import { programmeIdentity, sameFormValues } from '@/pages/curriculum/shared/entities/model';
-// Adding a cohort, a group or a module from this page opens the same drawer the
-// Cohorts, Groups and Module Builder pages open. One form per record type in the
-// whole studio, so nothing behaves differently depending on the door taken.
-import { CohortFormDrawer, GroupFormDrawer } from '@/pages/curriculum/shared/entities/forms';
+import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+// Editing the programme, or adding a cohort, a group or a module from this page,
+// opens the same drawer that record's own page opens. One form per record type in
+// the whole studio, so nothing behaves differently depending on the door taken.
+import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { ModuleFormDrawer } from '@/pages/curriculum/shared/entities/moduleForm';
+// The same rule applies to reading: the record tables, filter bars and workspace
+// chrome here are the shared ones the Cohort, Group and Module workspaces use, so
+// a programme is a lens on those records rather than a second rendering of them.
+// Anything that belongs to one record — a module's Teams series, a week's
+// components, a cohort's holidays — is reached by opening that record, not
+// re-drawn here.
+import {
+  DetailRow,
+  EntityEmptyState,
+  EntityFilterBar,
+  EntityTable,
+  InlineError,
+  NamedActions,
+  PlainCell,
+  StackedCell,
+  StatusBadge,
+  WorkspaceHeader,
+  WorkspacePanel,
+  WorkspaceTabs,
+} from '@/pages/curriculum/shared/entities/ui';
 import { curriculumNavItems } from '@/mocks/navigation';
 import type {
   CurriculumComponent,
@@ -18,7 +38,6 @@ import type {
   CurriculumOverview,
   CurriculumProgramme,
   CurriculumProgrammeDetail,
-  CurriculumProgrammeInput,
   CurriculumProgrammeLearnerKsbImpactResponse,
   CurriculumProgrammeLearnerRosterResponse,
   CurriculumSession,
@@ -43,16 +62,8 @@ import {
   fetchCurriculumTutors,
   tutorConflictMessage,
   updateCurriculumGroup,
-  updateCurriculumProgramme,
 } from '@/lib/curriculumApi';
-import {
-  type KsbMapping,
-  type ModuleCatalogueItem as AuthoringModule,
-  type TeamsMeetingArtifactsResult,
-  loadTeamsMeetingArtifacts,
-  syncTeamsMeetingArtifacts,
-  teamsMeetingArtifactContentUrl,
-} from '../module-builder/moduleAuthoringData';
+import { type KsbMapping } from '../module-builder/moduleAuthoringData';
 
 // ============================================================
 // Types — Full Programme Hierarchy
@@ -175,6 +186,19 @@ function moduleBuilderUrl(module: Pick<Module, 'id' | 'sourceId' | 'moduleId' | 
   return `/curriculum/module-builder${query ? `?${query}` : ''}`;
 }
 
+/**
+ * The module's own workspace — its schedule, components, KSB weights, Teams
+ * series and sessions. The identity precedence matches `moduleIdentity` in the
+ * shared model, which is what that page resolves the route param with.
+ */
+function moduleWorkspaceUrl(module: Pick<Module, 'id' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId'>) {
+  const identity = clean(module.moduleCatalogueId)
+    || clean(module.catalogueId)
+    || clean(module.moduleId)
+    || clean(module.id);
+  return identity ? `/curriculum/modules/${encodeURIComponent(identity)}` : '';
+}
+
 interface Group {
   id: string;
   name: string;
@@ -223,10 +247,8 @@ interface Programme {
   modules: Module[];
   ksbHeatmap: KsbHeatmapRow[];
   moduleNames: string[];
-  staffing: { coach: string; tutor: string; groups: string; cohorts: string; status: string; role: string }[];
 }
 
-type ProgrammeFormState = Required<Pick<CurriculumProgrammeInput, 'name' | 'standard' | 'level' | 'owner' | 'color' | 'description'>>;
 // A delivery session shown on the Sessions tab, derived from real week-builder
 // components: `live-session` components are Live, `video` components are Recorded.
 type DeliverySessionKind = 'live' | 'recorded';
@@ -268,34 +290,8 @@ function deliveryKindForComponent(component: { type?: string; settings?: Record<
 }
 
 // ============================================================
-// Type badge colours
+// Defaults
 // ============================================================
-
-const componentStatusColors: Record<string, string> = {
-  published: 'bg-emerald-50 text-emerald-700 border-emerald-200/60',
-  scheduled: 'bg-sky-50 text-sky-700 border-sky-200/60',
-  review: 'bg-amber-50 text-amber-700 border-amber-200/60',
-  draft: 'bg-foreground-100 text-foreground-500 border-foreground-200/60',
-};
-
-const moduleStatusColors: Record<string, string> = {
-  published: 'bg-emerald-50 text-emerald-700 border-emerald-200/50',
-  approved: 'bg-sky-50 text-sky-700 border-sky-200/50',
-  'in-review': 'bg-amber-50 text-amber-700 border-amber-200/50',
-  draft: 'bg-foreground-100 text-foreground-500 border-foreground-200/50',
-};
-
-const EMPTY_MODULE: Module = {
-  id: 'no-modules',
-  name: 'No modules found',
-  description: 'No live modules are currently linked to this programme.',
-  weeks: 0,
-  otjh: 0,
-  status: 'draft',
-  ksbTags: [],
-  ksbMapping: [],
-  weeksData: [],
-};
 
 const EMPTY_PROGRAMME: Programme = {
   id: '',
@@ -311,7 +307,6 @@ const EMPTY_PROGRAMME: Programme = {
   modules: [],
   ksbHeatmap: [],
   moduleNames: [],
-  staffing: [],
 };
 
 function clean(value: unknown, fallback = '') {
@@ -325,10 +320,6 @@ function normalise(value: unknown) {
 
 function slugify(value: unknown) {
   return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'item';
-}
-
-function staffProfileName(profile: CurriculumStaffProfile) {
-  return clean(profile.name || profile.Tutor_name || profile.Coach_name || profile.email);
 }
 
 type KsbKind = 'knowledge' | 'skill' | 'behaviour' | 'other';
@@ -348,12 +339,6 @@ function formatKsbCode(code: string) {
   const [, prefix, number] = match;
   if (number.includes('.') || number.length === 1) return `${prefix}${number}`;
   return `${prefix}${number.slice(0, 1)}.${number.slice(1)}`;
-}
-
-function ksbParentCode(code: string) {
-  const formatted = formatKsbCode(code);
-  const match = formatted.match(/^([KSB])(\d+)(?:\.\d+)?$/);
-  return match ? `${match[1]}${match[2]}` : formatted;
 }
 
 function ksbTone(kind: KsbKind) {
@@ -414,14 +399,6 @@ function isInternalGroupIdentifier(value: string) {
 function displayGroupValues(values: unknown[]) {
   const expanded = values.flatMap(value => clean(value).split(',').map(part => part.trim()));
   return uniqueCleanValues(expanded).filter(value => !isInternalGroupIdentifier(value));
-}
-
-function authoringGroupLabels(module: AuthoringModule, component?: { settings?: Record<string, unknown> }) {
-  const settings = component?.settings || {};
-  const names = Array.isArray(settings.selectedGroupNames) ? settings.selectedGroupNames : [];
-  const keys = Array.isArray(settings.selectedGroupKeys) ? settings.selectedGroupKeys : [];
-  const fallback = [module.group, module.groupId];
-  return displayGroupValues([...names, ...(names.length ? [] : keys), ...(names.length || keys.length ? [] : fallback)]);
 }
 
 function ksbKey(code: string) {
@@ -605,45 +582,6 @@ function addKsbRollupMapping(rollup: Map<string, KsbRollupItem>, mapping: Pick<K
     count: current.count + 1,
     evidence: [...current.evidence, evidence],
   });
-}
-
-function collectAuthoringKsbRollup(module: AuthoringModule | null): KsbRollupItem[] {
-  if (!module) return [];
-  const rollup = new Map<string, KsbRollupItem>();
-  const moduleName = clean(module.title, module.catalogueId);
-  module.moduleKsbMappings.forEach(mapping => addKsbRollupMapping(rollup, mapping, {
-    module: moduleName,
-    scope: 'module',
-    classification: mapping.classification || mapping.type,
-    groups: authoringGroupLabels(module),
-    weight: clampCoverageWeight(mapping.weight),
-  }));
-  module.weekStructure.forEach(week => {
-    const weekLabel = `Week ${week.weekNumber}${week.title ? ` - ${week.title}` : ''}`;
-    week.ksbMappings.forEach(mapping => addKsbRollupMapping(rollup, mapping, {
-      module: moduleName,
-      scope: 'week',
-      week: weekLabel,
-      classification: mapping.classification || mapping.type,
-      groups: authoringGroupLabels(module),
-      weight: clampCoverageWeight(mapping.weight),
-    }));
-    week.components.forEach(component => {
-      component.ksbMappings.forEach(mapping => addKsbRollupMapping(rollup, mapping, {
-        module: moduleName,
-        scope: 'component',
-        week: weekLabel,
-        component: clean(component.title, component.type),
-        componentType: component.type,
-        classification: mapping.classification || mapping.type,
-        groups: authoringGroupLabels(module, component),
-        weight: clampCoverageWeight(mapping.weight),
-      }));
-    });
-  });
-  return [...rollup.values()]
-    .map(item => ({ ...item, weight: clampCoverageWeight(item.weight) }))
-    .sort((left, right) => sortKsbCodes(left.ksb, right.ksb));
 }
 
 function collectComponentKsbRollup(components: CurriculumComponent[], moduleName: string): KsbRollupItem[] {
@@ -886,39 +824,12 @@ function useProgrammeDetailData(programmeId: string) {
   return { data, loading, error, reload: () => load() };
 }
 
-function programmeCoverageIdCandidates(programme: Programme, routeId: string) {
-  const withoutRoutePrefix = clean(routeId).replace(/^program-/i, '');
-  const candidates = [
-    programme.sourceId,
-    programme.id,
-    withoutRoutePrefix,
-    routeId,
-    programme.name,
-  ].map(value => clean(value)).filter(Boolean);
-  const seen = new Set<string>();
-  return candidates.filter(candidate => {
-    const key = normalise(candidate);
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
 function rawSkillsStandardIdentifier(programme: Programme) {
   const value = clean(programme.standard);
   if (!value || /^standard not set$/i.test(value)) return '';
   if (/^standard:/i.test(value)) return value.replace(/^standard:/i, '').trim();
   if (/^ST\d+/i.test(value)) return value;
   return '';
-}
-
-function coverageResponseScore(coverage: CurriculumKsbCoverageResponse | null) {
-  if (!coverage) return -1;
-  const rowCount = coverage.heatmap?.rows?.length || coverage.items?.length || 0;
-  const moduleCount = coverage.heatmap?.modules?.length || 0;
-  const mappingCount = (coverage.items || []).reduce((total, item) => total + Number(item.mappingCount ?? item.mapping_count ?? item.mappings?.length ?? 0), 0);
-  const totalWeight = (coverage.items || []).reduce((total, item) => total + Number(item.rawTotalWeight ?? item.raw_total_weight ?? item.coveragePercentage ?? item.coverage_percentage ?? 0), 0);
-  return rowCount * 10000 + moduleCount * 1000 + mappingCount * 100 + totalWeight;
 }
 
 function moduleDeliverySignature(module: Pick<CurriculumModule, 'programme' | 'name' | 'cohort' | 'group' | 'cohortId' | 'groupId'>) {
@@ -1157,7 +1068,7 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       catalogueId: liveModule.catalogueId,
       structureId: liveModule.structureId,
       name: liveModule.name,
-      description: [liveModule.cohort, liveModule.group].filter(Boolean).join(' - ') || liveModule.notes || `${liveModule.name} linked to ${source.name}.`,
+      description: [liveModule.cohort, liveModule.group].filter(Boolean).join(' - ') || visibleNotes(liveModule.notes) || `${liveModule.name} linked to ${source.name}.`,
       cohortId: liveModule.cohortId || '',
       cohort: liveModule.cohort || '',
       groupId: liveModule.groupId || '',
@@ -1223,54 +1134,11 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
     })),
   }));
 
-  const existingCohortKeys = new Set(cohorts.flatMap(cohort => [normalise(cohort.id), normalise(cohort.name)]));
-  const supplementalCohortGroups = new Map<string, { id: string; name: string; modules: Module[] }>();
-  modules.forEach(module => {
-    if (!module.cohort || existingCohortKeys.has(normalise(module.cohortId || module.cohort))) return;
-    const cohortId = module.cohortId || `${source.id}-${slugify(module.cohort)}`;
-    const groupId = module.groupId || `${cohortId}-${slugify(module.group || 'group')}`;
-    const key = `${cohortId}|${module.group || 'Group'}`;
-    const entry = supplementalCohortGroups.get(key) ?? { id: groupId, name: module.group || 'Group', modules: [] };
-    entry.modules.push(module);
-    supplementalCohortGroups.set(key, entry);
-  });
-  const supplementalCohortsById = new Map<string, Cohort>();
-  supplementalCohortGroups.forEach(group => {
-    const firstModule = group.modules[0];
-    const cohortId = firstModule.cohortId || `${source.id}-${slugify(firstModule.cohort || 'cohort')}`;
-    const cohortEntry = supplementalCohortsById.get(cohortId) ?? {
-      id: cohortId,
-      name: firstModule.cohort || 'Cohort',
-      startDate: formatDateLabel(firstModule.weeksData[0]?.startDate || ''),
-      endDate: formatDateLabel(firstModule.weeksData.at(-1)?.endDate || ''),
-      // Synthesized from module rows rather than an authored cohort, so there is
-      // no EPA period to read and no apprenticeship end date to derive.
-      apprenticeshipEndDate: '',
-      apprenticeshipEndIsManual: false,
-      epaMonths: null,
-      status: 'active' as const,
-      learners: 0,
-      holidayIds: [],
-      holidays: [],
-      groups: [],
-    };
-    cohortEntry.groups.push({
-        id: group.id,
-        name: group.name,
-        learners: 0,
-        coach: firstModule.coach || 'Unassigned',
-        tutor: firstModule.tutor || 'Unassigned',
-        startDate: formatDateLabel(firstModule.weeksData[0]?.startDate || ''),
-        endDate: formatDateLabel(firstModule.weeksData.at(-1)?.endDate || ''),
-        status: 'active' as const,
-        schedule: 'TBD',
-        mode: 'Live',
-        modules: group.modules,
-      });
-    supplementalCohortsById.set(cohortId, cohortEntry);
-  });
-  const supplementalCohorts = [...supplementalCohortsById.values()];
-  const allCohorts = [...cohorts, ...supplementalCohorts];
+  // Cohorts are only the programme's cohort records. A module whose stored
+  // cohort is not one of them used to have a cohort synthesized for it here,
+  // which is why this page's cohort count could disagree with the Cohorts
+  // page's for the same programme. Such a module is now reported as the data
+  // problem it is, on the Overview tab, and the count stays honest.
   const deliveryStart = programmeCohorts.map(cohort => clean(cohort.startDate)).filter(Boolean).sort()[0] || '';
   const deliveryEnd = programmeCohorts.map(cohort => clean(cohort.endDate)).filter(Boolean).sort().at(-1) || '';
   const deliveryWindow = [
@@ -1349,15 +1217,6 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       missing: totalOccurrences === 0,
     };
   });
-  const staffMap = new Map<string, { coach: string; tutor: string; groups: Set<string>; cohorts: Set<string> }>();
-  allCohorts.flatMap(cohort => cohort.groups.map(group => ({ cohort, group }))).forEach(({ cohort, group }) => {
-    const key = `${group.coach}|${group.tutor}`;
-    const entry = staffMap.get(key) ?? { coach: group.coach, tutor: group.tutor, groups: new Set<string>(), cohorts: new Set<string>() };
-    entry.groups.add(group.name);
-    entry.cohorts.add(cohort.name);
-    staffMap.set(key, entry);
-  });
-
   return {
     found: true,
     programme: {
@@ -1372,24 +1231,21 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
       color: source.color || '#6941c6',
       description: repairMojibake(source.description || `${deliveryWindow || source.standard} curriculum plan.`),
       duration: deliveryWindow || 'Live curriculum',
-      cohorts: allCohorts,
+      cohorts,
       modules,
       ksbHeatmap,
       moduleNames,
-      staffing: [...staffMap.values()].map(entry => ({
-        coach: entry.coach,
-        tutor: entry.tutor,
-        groups: [...entry.groups].join(', '),
-        cohorts: [...entry.cohorts].join(', '),
-        status: entry.coach === 'Unassigned' || entry.tutor === 'Unassigned' ? 'unassigned' : 'active',
-        role: 'Coach / Tutor',
-      })),
     },
   };
 }
 
 // ============================================================
-// Shared tab UI
+// Programme-level UI
+//
+// Only three things live here. Everything else this page draws — filter bars,
+// record tables, empty states, panels, the header — comes from
+// `shared/entities/ui`, which is what keeps the four Curriculum workspaces
+// looking like one product.
 // ============================================================
 
 // Curriculum treats 'Unassigned' as a sentinel rather than a real staff name, so
@@ -1401,142 +1257,12 @@ function isStaffAssigned(value?: string) {
   return Boolean(name) && normalise(name) !== normalise(UNASSIGNED_STAFF);
 }
 
-// One consistent filter/search shell for every tab. Previously each tab
-// hand-rolled this markup, which is why the toolbars drifted apart visually.
-function TabToolbar({
-  search,
-  onSearch,
-  placeholder,
-  selects = [],
-  onReset,
-  resetDisabled,
-  summary,
-  actions,
-}: {
-  search: string;
-  onSearch: (value: string) => void;
-  placeholder: string;
-  selects?: Array<{ value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }>; label: string }>;
-  onReset: () => void;
-  resetDisabled: boolean;
-  summary: string;
-  actions?: ReactNode;
-}) {
-  return (
-    <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
-        <div className="relative flex-1 min-w-0">
-          <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-          <input
-            value={search}
-            onChange={event => onSearch(event.target.value)}
-            placeholder={placeholder}
-            aria-label={placeholder}
-            className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
-          />
-        </div>
-        {selects.map(select => (
-          <select
-            key={select.label}
-            value={select.value}
-            onChange={event => select.onChange(event.target.value)}
-            aria-label={select.label}
-            className="h-10 cursor-pointer rounded-lg border border-background-200 bg-background-50 px-3 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100 lg:w-[190px]"
-          >
-            {select.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        ))}
-        <button
-          onClick={onReset}
-          disabled={resetDisabled}
-          className="h-10 whitespace-nowrap rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Reset
-        </button>
-        {actions}
-      </div>
-      <p className="mt-3 text-[12px] text-foreground-500">{summary}</p>
-    </div>
-  );
-}
-
-/**
- * The "add one of these" button a records tab carries in its toolbar.
- *
- * The empty state offers the same action, but only while the tab is empty — this
- * is what a tab that already has rows is added from. It replaced the header's
- * single "Manage structure" button, which opened the structure wizard on the
- * step matching the active tab.
- */
-function TabAddButton({ label, icon, onClick }: { label: string; icon: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary-600 px-3.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
-    >
-      <AppIcon className={`${icon} text-sm`}></AppIcon>
-      {label}
-    </button>
-  );
-}
-
-// Shared empty state. Every tab previously ended at a bare "no match" line with
-// no way forward; this always offers the next action when one exists.
-function TabEmptyState({
-  icon,
-  title,
-  message,
-  actionLabel,
-  onAction,
-}: {
-  icon: string;
-  title: string;
-  message: string;
-  actionLabel?: string;
-  onAction?: () => void;
-}) {
-  return (
-    <div className="rounded-2xl border border-dashed border-foreground-200 bg-background-50 p-10 text-center shadow-sm">
-      <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-background-100">
-        <AppIcon className={`${icon} text-xl text-foreground-400`}></AppIcon>
-      </span>
-      <p className="mt-3 text-sm font-bold text-foreground-800">{title}</p>
-      <p className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-foreground-500">{message}</p>
-      {actionLabel && onAction && (
-        <button
-          onClick={onAction}
-          className="mt-4 inline-flex h-9 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
-        >
-          <AppIcon className="ri-add-line"></AppIcon> {actionLabel}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function TabLoadingRows({ rows = 3 }: { rows?: number }) {
-  return (
-    <div className="space-y-3" aria-busy="true" aria-live="polite">
-      <span className="sr-only">Loading</span>
-      {Array.from({ length: rows }).map((_, index) => (
-        <div key={index} className="animate-pulse rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-          <div className="flex items-center gap-4">
-            <div className="h-10 w-10 rounded-xl bg-background-200"></div>
-            <div className="flex-1 space-y-2">
-              <div className="h-3 w-1/3 rounded bg-background-200"></div>
-              <div className="h-2.5 w-1/2 rounded bg-background-200"></div>
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// A staffing slot that shows the assigned person, or an explicit "needs a tutor"
+// A staffing slot that shows the assigned person, or an explicit "needs a coach"
 // affordance that assigns one in place. Reading 'Unassigned' as plain body text
 // was the main complaint: it looked like data rather than a gap to fix.
+//
+// Only ever used for a group's coach. A group has no tutor — that is assigned per
+// module, in the module form — so there is no tutor slot on a group anywhere.
 function StaffSlot({
   role,
   icon,
@@ -1558,7 +1284,7 @@ function StaffSlot({
 
   if (editing && canEdit) {
     return (
-      <div className="flex items-center gap-1.5">
+      <div className="flex min-w-0 items-center gap-1.5 self-center">
         <select
           autoFocus
           defaultValue=""
@@ -1591,25 +1317,22 @@ function StaffSlot({
   }
 
   return (
-    <div className="group/staff flex min-w-0 items-center gap-2">
+    <span className="group/staff flex min-w-0 items-center gap-2 self-center">
       <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${assigned ? 'bg-primary-50 text-primary-600' : 'bg-amber-50 text-amber-600'}`}>
         <AppIcon className={`${icon} text-[11px]`}></AppIcon>
       </span>
-      <span className="min-w-0">
-        <span className="block text-[10px] font-semibold uppercase tracking-wide text-foreground-400">{role}</span>
-        {assigned ? (
-          <span className="block truncate text-[12px] font-semibold text-foreground-800">{clean(name)}</span>
-        ) : canEdit ? (
-          <button
-            onClick={() => setEditing(true)}
-            className="inline-flex items-center gap-1 text-[12px] font-bold text-amber-700 transition-smooth hover:text-amber-800 hover:underline"
-          >
-            <AppIcon className="ri-add-circle-line text-[11px]"></AppIcon> Assign {role.toLowerCase()}
-          </button>
-        ) : (
-          <span className="block text-[12px] font-semibold text-amber-700">Not assigned</span>
-        )}
-      </span>
+      {assigned ? (
+        <span className="min-w-0 truncate text-[12px] font-semibold text-foreground-800">{clean(name)}</span>
+      ) : canEdit ? (
+        <button
+          onClick={() => setEditing(true)}
+          className="inline-flex items-center gap-1 text-[12px] font-bold text-amber-700 transition-smooth hover:text-amber-800 hover:underline"
+        >
+          <AppIcon className="ri-add-circle-line text-[11px]"></AppIcon> Assign {role.toLowerCase()}
+        </button>
+      ) : (
+        <span className="text-[12px] font-semibold text-amber-700">Not assigned</span>
+      )}
       {assigned && canEdit && (
         <button
           onClick={() => setEditing(true)}
@@ -1620,53 +1343,104 @@ function StaffSlot({
           <AppIcon className="ri-pencil-line text-[11px]"></AppIcon>
         </button>
       )}
-    </div>
-  );
-}
-
-// Compact staffing progress used on cohort headers.
-function StaffingMeter({ staffed, total }: { staffed: number; total: number }) {
-  if (total === 0) return null;
-  const pct = Math.round((staffed / total) * 100);
-  const complete = staffed === total;
-  return (
-    <div className="flex items-center gap-2" title={`${staffed} of ${total} groups have both a tutor and a coach`}>
-      <div className="h-1.5 w-20 overflow-hidden rounded-full bg-background-200">
-        <div className={`h-full rounded-full ${complete ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }}></div>
-      </div>
-      <span className={`text-[11px] font-bold ${complete ? 'text-emerald-700' : 'text-amber-700'}`}>{staffed}/{total} staffed</span>
-    </div>
-  );
-}
-
-function StatusChip({ status }: { status: string }) {
-  const key = normalise(status);
-  const tone = key === 'active'
-    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-    : key === 'planned'
-      ? 'bg-accent-50 text-accent-700 border-accent-200'
-      : key === 'completed'
-        ? 'bg-foreground-100 text-foreground-600 border-foreground-200'
-        // Archived is a retired state, not a problem: keep it muted and dashed so
-        // it never reads as the amber "needs attention" tone.
-        : key === 'archived'
-          ? 'bg-background-100 text-foreground-500 border-dashed border-foreground-300'
-          : 'bg-amber-50 text-amber-700 border-amber-200';
-  return <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold capitalize ${tone}`}>{clean(status) || 'unknown'}</span>;
-}
-
-function MetaItem({ icon, children }: { icon: string; children: ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[12px] text-foreground-600">
-      <AppIcon className={`${icon} text-[12px] text-foreground-400`}></AppIcon>
-      {children}
     </span>
   );
 }
 
-// ============================================================
-// Component
-// ============================================================
+/**
+ * One readiness measure on the Overview tab. Deliberately a proportion of
+ * something countable — mapped KSBs, published components — rather than a score,
+ * so the number always has a definition the reader can check.
+ */
+function ReadinessBar({ label, value, detail, color }: { label: string; value: number; detail: string; color: string }) {
+  return (
+    <div>
+      <div className="mb-1.5 flex items-baseline justify-between gap-2">
+        <span className="text-[12px] font-semibold text-foreground-700">{label}</span>
+        <span className="text-[13px] font-heading font-bold text-foreground-950">{value}%</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-background-200">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+      </div>
+      <p className="mt-1 text-[11px] text-foreground-400">{detail}</p>
+    </div>
+  );
+}
+
+/**
+ * One gap worth acting on, with the action attached. This is what the Overview
+ * tab exists for: the programme-level questions ("is anything unstaffed, is
+ * anything unmapped") that no single-record page can answer, each pointing at
+ * the one place the gap is actually fixed.
+ */
+function AttentionRow({ icon, tone, title, detail, action }: {
+  icon: string;
+  tone: 'amber' | 'rose' | 'sky';
+  title: string;
+  detail: string;
+  action: { label: string; onClick: () => void };
+}) {
+  const tones = {
+    amber: 'border-amber-200 bg-amber-50/70 text-amber-700',
+    rose: 'border-rose-200 bg-rose-50/70 text-rose-700',
+    sky: 'border-sky-200 bg-sky-50/70 text-sky-700',
+  } as const;
+  return (
+    <li className={`flex flex-col gap-2 rounded-xl border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${tones[tone]}`}>
+      <span className="flex min-w-0 items-start gap-2.5">
+        <AppIcon className={`${icon} mt-0.5 shrink-0 text-base`}></AppIcon>
+        <span className="min-w-0">
+          <span className="block text-[13px] font-bold">{title}</span>
+          <span className="block text-[11px] font-semibold opacity-80">{detail}</span>
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={action.onClick}
+        className="inline-flex h-9 shrink-0 items-center gap-1.5 self-start rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold transition-smooth hover:bg-background-100 sm:self-center"
+      >
+        {action.label}
+        <AppIcon className="ri-arrow-right-line text-xs"></AppIcon>
+      </button>
+    </li>
+  );
+}
+
+/**
+ * A pointer to the page that owns a record type, carrying this programme's count
+ * of it. The Cohorts, Groups and Module Builder pages are where those records are
+ * managed across the whole curriculum; this workspace scopes them to one
+ * programme, and says so rather than pretending to be a separate catalogue.
+ */
+function RecordHomeLink({ icon, label, count, hint, to }: {
+  icon: string;
+  label: string;
+  count: number;
+  hint: string;
+  to: string;
+}) {
+  return (
+    <Link
+      to={to}
+      className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-100/60 p-3 transition-smooth hover:border-primary-200 hover:bg-primary-50/40"
+    >
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-background-50 text-primary-600">
+        <AppIcon className={`${icon} text-base`}></AppIcon>
+      </span>
+      <span className="min-w-0 flex-1">
+        {/* One text node between the two, so the accessible name reads
+            "3 cohorts" rather than "3cohorts". */}
+        <span className="flex items-baseline gap-1.5">
+          <span className="text-[15px] font-heading font-bold text-foreground-950">{count}</span>
+          {' '}
+          <span className="text-[12px] font-bold text-foreground-700">{label}</span>
+        </span>
+        <span className="block truncate text-[11px] text-foreground-400">{hint}</span>
+      </span>
+      <AppIcon className="ri-arrow-right-line shrink-0 text-sm text-foreground-300"></AppIcon>
+    </Link>
+  );
+}
 
 // Read-only view of the learners the enrolment team placed into a cohort (and
 // optionally a single group). Curriculum owns the delivery structure, not the
@@ -1697,48 +1471,33 @@ function EnrolledLearnersPanel({
   }, [cohortName, groupName, roster]);
 
   return (
-    <div className="rounded-xl border border-background-200/80 bg-background-50 p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div>
-          <p className="text-[12px] font-semibold text-foreground-900">
-            <AppIcon className="ri-graduation-cap-line mr-1.5 text-foreground-500"></AppIcon>
-            Learners assigned by enrolment
-          </p>
-          <p className="text-[10px] text-foreground-500 mt-0.5">
-            Placements are managed by the enrolment team
-          </p>
-        </div>
-        <span className="text-[9px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full bg-background-200/60 text-foreground-500 border border-background-200">
-          Read only
-        </span>
-      </div>
-
-      {loading && <p className="text-[11px] text-foreground-500">Loading assigned learners…</p>}
+    <>
+      {loading && <p className="text-[12px] text-foreground-500">Loading assigned learners…</p>}
 
       {!loading && error && (
-        <p className="rounded-lg border border-amber-200/60 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">{error}</p>
+        <p className="rounded-lg border border-amber-200/60 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">{error}</p>
       )}
 
       {!loading && !error && learners.length === 0 && (
-        <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[11px] text-foreground-500">
+        <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2 text-[12px] text-foreground-500">
           {emptyHint || 'No learners have been assigned here by the enrolment team yet.'}
         </p>
       )}
 
       {!loading && !error && learners.length > 0 && (
-        <div className="space-y-2">
+        <div className="grid gap-2 sm:grid-cols-2">
           {learners.map(learner => (
             <div key={String(learner.id)} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-100 px-3 py-2">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold text-foreground-900 truncate">{learner.name || learner.email || `Learner ${learner.id}`}</p>
-                <p className="text-[10px] text-foreground-500 truncate">
+                <p className="truncate text-[12px] font-semibold text-foreground-900">{learner.name || learner.email || `Learner ${learner.id}`}</p>
+                <p className="truncate text-[11px] text-foreground-500">
                   {learner.email || 'No email on record'}
                   {learner.group ? ` · ${learner.group}` : ''}
                   {learner.coachName ? ` · Coach: ${learner.coachName}` : ''}
                 </p>
               </div>
               {learner.lifecycleStatus && (
-                <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full ${normalise(learner.lifecycleStatus) === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>
+                <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${normalise(learner.lifecycleStatus) === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>
                   {learner.lifecycleStatus}
                 </span>
               )}
@@ -1746,12 +1505,61 @@ function EnrolledLearnersPanel({
           ))}
         </div>
       )}
-    </div>
+    </>
   );
 }
 
+// ============================================================
+// Component
+// ============================================================
+
+/**
+ * The Programme workspace.
+ *
+ * A programme is the top of the curriculum hierarchy — Programme → Cohort →
+ * Group → Module → Week → Component — and each level below it already has a page
+ * that owns it: the Cohorts and Groups lists, the Module Builder catalogue, and
+ * the Cohort / Group / Module workspaces. So this page deliberately answers only
+ * the questions that need the *whole* programme in view:
+ *
+ *   Overview  — is this programme complete and ready to deliver, and what is the
+ *               one gap stopping it? Nothing else aggregates across cohorts.
+ *   Delivery  — the shape of delivery: which cohorts run, which groups sit under
+ *               them, who coaches them. Rows open the real cohort/group workspace.
+ *   Modules   — every module on the programme at once, with its delivery context.
+ *               A module's own content, Teams series and KSB weights live in the
+ *               Module workspace and the Module Builder, and are opened, not
+ *               redrawn.
+ *   Sessions  — every live session and recording across every module, which is
+ *               neither per-module (Module workspace) nor whole-college (Session
+ *               Calendar).
+ *   KSB       — coverage of the programme's KSB source across its modules. The
+ *               only place this roll-up exists.
+ *
+ * Tabs that used to re-render a lower level's own view (a flat Groups list, a
+ * module's week timeline, and a "Review" tab that drew cohorts, groups, modules
+ * and weeks a third time) are gone: they were the same records with different
+ * chrome, and every one of them now has exactly one home.
+ */
+
+type Tab = 'overview' | 'delivery' | 'modules' | 'sessions' | 'ksb';
+
+const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(100px,.8fr)_120px]';
+const GROUP_GRID = 'grid grid-cols-[minmax(160px,1.3fr)_minmax(170px,1.1fr)_minmax(150px,1fr)_80px_80px_130px]';
+const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_120px]';
+const SESSION_GRID = 'grid grid-cols-[minmax(200px,1.6fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_90px_minmax(130px,1fr)_170px]';
+
+const TAB_LABELS: Record<Tab, string> = {
+  overview: 'Overview',
+  delivery: 'Delivery',
+  modules: 'Modules',
+  sessions: 'Sessions',
+  ksb: 'KSB coverage',
+};
+
 export default function ProgrammeDetailPage() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { data, loading, error, reload } = useProgrammeDetailData(id || '');
   const [detailComponents, setDetailComponents] = useState<CurriculumComponent[]>([]);
   const hydratedData = useMemo(() => data ? { ...data, components: detailComponents } : data, [data, detailComponents]);
@@ -1766,7 +1574,6 @@ export default function ProgrammeDetailPage() {
   const [learnerRosterError, setLearnerRosterError] = useState<string | null>(null);
   const [programmeKsbSets, setProgrammeKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [skillsStandards, setSkillsStandards] = useState<CurriculumStandard[]>([]);
-  const [skillsStandardsLoading, setSkillsStandardsLoading] = useState(false);
   const coverageRequestKeyRef = useRef('');
   const rosterRequestKeyRef = useRef('');
   const componentsRequestKeyRef = useRef('');
@@ -1782,46 +1589,30 @@ export default function ProgrammeDetailPage() {
       ksbHeatmap: scopedRows || filterHeatmapRowsByProgrammeSource(liveProgramme.ksbHeatmap, effectiveSource),
     };
   }, [backendCoverage, data, liveProgramme, programmeKsbSets, skillsStandards]);
-  const [tab, setTab] = useState<'cohorts' | 'groups' | 'modules' | 'weeks' | 'sessions' | 'ksb' | 'review'>('cohorts');
-  const [selectedCohort, setSelectedCohort] = useState<string>(PROGRAMME.cohorts[0]?.id || '');
-  const [selectedGroup, setSelectedGroup] = useState<string>('');
-  const [selectedModule, setSelectedModule] = useState<string>(PROGRAMME.modules[0]?.id || '');
-  const [selectedWeek, setSelectedWeek] = useState<string>(PROGRAMME.modules[0]?.weeksData[0]?.id || '');
+
+  const [tab, setTab] = useState<Tab>('overview');
+  // Delivery tab: which cohort's groups are shown, and which group's learners.
+  const [selectedCohort, setSelectedCohort] = useState('');
+  const [selectedGroup, setSelectedGroup] = useState('');
+  const [cohortSearch, setCohortSearch] = useState('');
+  const [cohortStatusFilter, setCohortStatusFilter] = useState('');
+  const [moduleSearch, setModuleSearch] = useState('');
+  const [moduleCohortFilter, setModuleCohortFilter] = useState('');
+  const [moduleGroupFilter, setModuleGroupFilter] = useState('');
   const [sessionKind, setSessionKind] = useState<'live' | 'recorded'>('live');
-  const [cohortSearch, setCohortSearch] = useState<string>('');
-  const [cohortStatusFilter, setCohortStatusFilter] = useState<string>('all');
-  const [groupSearch, setGroupSearch] = useState<string>('');
-  const [groupCohortFilter, setGroupCohortFilter] = useState<string>('all');
-  const [moduleSearch, setModuleSearch] = useState<string>('');
-  const [moduleCohortFilter, setModuleCohortFilter] = useState<string>('all');
-  const [moduleGroupFilter, setModuleGroupFilter] = useState<string>('all');
-  const [sessionSearch, setSessionSearch] = useState<string>('');
-  const [sessionModuleFilter, setSessionModuleFilter] = useState<string>('all');
-  const [sessionPage, setSessionPage] = useState<number>(1);
-  const [sessionPageSize, setSessionPageSize] = useState<number>(25);
-  const [ksbSearch, setKsbSearch] = useState<string>('');
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [sessionModuleFilter, setSessionModuleFilter] = useState('');
+  const [sessionPage, setSessionPage] = useState(1);
+  const [sessionPageSize, setSessionPageSize] = useState(25);
+  const [ksbSearch, setKsbSearch] = useState('');
   const [ksbTraceOpen, setKsbTraceOpen] = useState(false);
-  const [ksbTraceInitialTab, setKsbTraceInitialTab] = useState<'map' | 'coverage' | 'trace'>('coverage');
-  const [expandedCohort, setExpandedCohort] = useState<string | null>(null);
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
-  const [expandedModuleWeek, setExpandedModuleWeek] = useState<string | null>(null);
-  // Which component's KSB chip was clicked. Holds the codes plus the component
-  // name so the popup can say where the mapping was made.
-  const [ksbInspector, setKsbInspector] = useState<{ codes: string[]; componentTitle: string } | null>(null);
-  const [programmeFormOpen, setProgrammeFormOpen] = useState(false);
+  const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [cohortDrawerOpen, setCohortDrawerOpen] = useState(false);
   // The cohort the new group belongs to; '' when the user has not narrowed it.
   const [groupDrawerCohortId, setGroupDrawerCohortId] = useState<string | null>(null);
   const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
-  const [programmeForm, setProgrammeForm] = useState<ProgrammeFormState>({ name: '', standard: '', level: '', owner: '', color: '#6941c6', description: '' });
-  // What the edit form opened with, and whether its discard dialog is already up.
-  const programmeFormBaseline = useRef<ProgrammeFormState | null>(null);
-  const confirmingProgrammeDiscard = useRef(false);
   const [savingAction, setSavingAction] = useState<string | null>(null);
-  const [teamsSyncingId, setTeamsSyncingId] = useState('');
-  const [teamsSyncMessages, setTeamsSyncMessages] = useState<Record<string, string>>({});
-  const [teamsResults, setTeamsResults] = useState<Record<string, TeamsMeetingArtifactsResult>>({});
-  const [teamsResultsOpen, setTeamsResultsOpen] = useState<Record<string, boolean>>({});
+
   const coverageProgrammeIds = useMemo(() => {
     const withoutRoutePrefix = clean(id || '').replace(/^program-/i, '');
     const candidates = [
@@ -1841,7 +1632,7 @@ export default function ProgrammeDetailPage() {
   }, [id, liveProgramme.id, liveProgramme.name, liveProgramme.sourceId]);
   const coverageKsbSource = useMemo(
     () => inferProgrammeKsbCoverageSource(liveProgramme, programmeKsbSets, skillsStandards),
-    [liveProgramme.id, liveProgramme.ksbProfileSourceId, liveProgramme.name, liveProgramme.sourceId, liveProgramme.standard, programmeKsbSets, skillsStandards],
+    [liveProgramme, programmeKsbSets, skillsStandards],
   );
   const coverageKsbSourceLabel = useMemo(
     () => ksbCoverageSourceLabel(coverageKsbSource, data, programmeKsbSets, skillsStandards),
@@ -1879,10 +1670,13 @@ export default function ProgrammeDetailPage() {
       });
   }, [coverageKsbSource, coverageProgrammeIds]);
 
+  // Overview reads the same coverage the KSB tab draws — its readiness figure and
+  // the header's coverage stat are that heatmap counted, not a second calculation
+  // — so landing on the page loads it once and both agree.
+  const needsCoverage = tab === 'overview' || tab === 'ksb' || ksbTraceOpen;
+
   useEffect(() => {
-    // The modules tab needs this too: its per-component KSB chips open an
-    // inspector that reads definitions and placements from the coverage rows.
-    if (tab !== 'ksb' && tab !== 'modules' && !ksbTraceOpen) return;
+    if (!needsCoverage) return;
     const coverageKey = [coverageProgrammeIds.join('|'), coverageKsbSource.sourceType || '', coverageKsbSource.sourceId || ''].join('::');
     if (!coverageKey || coverageRequestKeyRef.current === coverageKey) return;
     coverageRequestKeyRef.current = coverageKey;
@@ -1892,10 +1686,10 @@ export default function ProgrammeDetailPage() {
       controller.abort();
       if (coverageRequestKeyRef.current === coverageKey) coverageRequestKeyRef.current = '';
     };
-  }, [coverageKsbSource.sourceId, coverageKsbSource.sourceType, coverageProgrammeIds, ksbTraceOpen, loadBackendCoverage, tab]);
+  }, [coverageKsbSource.sourceId, coverageKsbSource.sourceType, coverageProgrammeIds, loadBackendCoverage, needsCoverage]);
 
-  // The roster is only needed by the cohort/group views, so it loads lazily and
-  // walks the same programme-id candidates the coverage call uses.
+  // The roster is only needed by the Delivery tab, so it loads lazily and walks
+  // the same programme-id candidates the coverage call uses.
   const loadLearnerRoster = useCallback((signal?: AbortSignal) => {
     if (!coverageProgrammeIds.length) return Promise.resolve();
     setLearnerRosterLoading(true);
@@ -1928,7 +1722,7 @@ export default function ProgrammeDetailPage() {
   }, [coverageProgrammeIds]);
 
   useEffect(() => {
-    if (tab !== 'cohorts' && tab !== 'groups') return;
+    if (tab !== 'delivery') return;
     const rosterKey = coverageProgrammeIds.join('|');
     if (!rosterKey || rosterRequestKeyRef.current === rosterKey) return;
     rosterRequestKeyRef.current = rosterKey;
@@ -1978,7 +1772,7 @@ export default function ProgrammeDetailPage() {
   }, [data]);
 
   useEffect(() => {
-    if (tab !== 'ksb' && !ksbTraceOpen) return undefined;
+    if (!needsCoverage) return undefined;
     if (programmeKsbSets.length) return undefined;
     const controller = new AbortController();
     fetchCurriculumKsbSets(controller.signal)
@@ -1987,90 +1781,99 @@ export default function ProgrammeDetailPage() {
         if (!controller.signal.aborted) console.warn('Unable to load KSB profiles for programme descriptions.', error);
       });
     return () => controller.abort();
-  }, [ksbTraceOpen, programmeKsbSets.length, tab]);
+  }, [needsCoverage, programmeKsbSets.length]);
 
   useEffect(() => {
-    if (tab !== 'ksb' && !ksbTraceOpen) return undefined;
+    if (!needsCoverage) return undefined;
     if (skillsStandards.length) return undefined;
     const controller = new AbortController();
-    setSkillsStandardsLoading(true);
     fetchCurriculumStandards(controller.signal)
       .then(setSkillsStandards)
       .catch(error => {
         if (!controller.signal.aborted) console.warn('Unable to load Skills England standards for programme link.', error);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setSkillsStandardsLoading(false);
       });
     return () => controller.abort();
-  }, [ksbTraceOpen, skillsStandards.length, tab]);
-
-  useEffect(() => {
-    if (PROGRAMME.cohorts.length > 0 && !PROGRAMME.cohorts.some(c => c.id === selectedCohort)) {
-      setSelectedCohort(PROGRAMME.cohorts[0].id);
-    }
-  }, [PROGRAMME.cohorts, selectedCohort]);
-
-  useEffect(() => {
-    if (PROGRAMME.modules.length > 0 && !PROGRAMME.modules.some(m => m.id === selectedModule)) {
-      setSelectedModule(PROGRAMME.modules[0].id);
-      setSelectedWeek(PROGRAMME.modules[0].weeksData[0]?.id || '');
-    }
-  }, [PROGRAMME.modules, selectedModule]);
+  }, [needsCoverage, skillsStandards.length]);
 
   useEffect(() => {
     setSessionPage(1);
   }, [sessionSearch, sessionModuleFilter, sessionKind, sessionPageSize]);
 
-  const cohort = PROGRAMME.cohorts.find(c => c.id === selectedCohort) || PROGRAMME.cohorts[0];
-  const module = PROGRAMME.modules.find(m => m.id === selectedModule) || PROGRAMME.modules[0] || EMPTY_MODULE;
-  const week = module?.weeksData.find(w => w.id === selectedWeek) || module?.weeksData[0];
-  const allGroups = useMemo(() => PROGRAMME.cohorts.flatMap(cohortItem => (
-    cohortItem.groups.map(group => ({ cohort: cohortItem, group }))
-  )), [PROGRAMME.cohorts]);
+  // ---------------------------------------------------------------- delivery
+
   // Archived cohorts are loaded but treated as opt-in: they stay out of the
-  // default list (and out of "All statuses", which means "all live statuses")
-  // so day-to-day delivery views are not padded with retired cohorts. Choosing
+  // default list (and out of "All statuses", which means "all live statuses") so
+  // day-to-day delivery views are not padded with retired cohorts. Choosing
   // "Archived" explicitly is the only way to surface them.
   const archivedCohortCount = useMemo(
     () => PROGRAMME.cohorts.filter(cohortItem => normalise(cohortItem.status) === 'archived').length,
     [PROGRAMME.cohorts],
   );
-  // Headline counts must keep meaning "cohorts you are delivering". Now that
-  // archived rows are fetched, every stat/tab counter reads this instead of the
-  // raw array length, so loading them cannot inflate the programme's numbers.
+  // Headline counts must keep meaning "cohorts you are delivering", so every
+  // stat and tab counter reads this rather than the raw array length.
   const liveCohortCount = PROGRAMME.cohorts.length - archivedCohortCount;
+  const allGroups = useMemo(
+    () => PROGRAMME.cohorts.flatMap(cohortItem => cohortItem.groups.map(group => ({ cohort: cohortItem, group }))),
+    [PROGRAMME.cohorts],
+  );
+  const totalGroups = allGroups.length;
+  const unstaffedGroupCount = allGroups.filter(({ group }) => !isStaffAssigned(group.coach)).length;
+
   const filteredCohorts = useMemo(() => {
     const query = normalise(cohortSearch);
     return PROGRAMME.cohorts.filter(cohortItem => {
       const isArchived = normalise(cohortItem.status) === 'archived';
       if (cohortStatusFilter === 'archived' ? !isArchived : isArchived) return false;
-      const matchesSearch = !query || [cohortItem.name, cohortItem.status, cohortItem.startDate, cohortItem.endDate].some(value => normalise(value).includes(query));
-      const matchesStatus = cohortStatusFilter === 'all' || cohortStatusFilter === 'archived' || cohortItem.status === cohortStatusFilter;
-      return matchesSearch && matchesStatus;
+      const matchesQuery = !query || [cohortItem.name, cohortItem.status, cohortItem.startDate, cohortItem.endDate]
+        .some(value => normalise(value).includes(query));
+      const matchesStatus = !cohortStatusFilter || cohortStatusFilter === 'archived' || cohortItem.status === cohortStatusFilter;
+      return matchesQuery && matchesStatus;
     });
   }, [PROGRAMME.cohorts, cohortSearch, cohortStatusFilter]);
-  const filteredGroups = useMemo(() => {
-    const query = normalise(groupSearch);
-    return allGroups.filter(({ cohort: cohortItem, group }) => {
-      const matchesSearch = !query || [group.name, cohortItem.name, group.coach, group.schedule, group.mode].some(value => normalise(value).includes(query));
-      const matchesCohort = groupCohortFilter === 'all' || cohortItem.id === groupCohortFilter;
-      return matchesSearch && matchesCohort;
-    });
-  }, [allGroups, groupSearch, groupCohortFilter]);
-  const moduleCohorts = useMemo(() => [...new Set(PROGRAMME.modules.map(m => clean(m.cohort)).filter(Boolean))].sort(), [PROGRAMME.modules]);
-  const moduleGroups = useMemo(() => [...new Set(PROGRAMME.modules.map(m => clean(m.group)).filter(Boolean))].sort(), [PROGRAMME.modules]);
+
+  // The groups panel always shows a cohort that is actually in the table above
+  // it, so filtering can never leave it describing a hidden row.
+  useEffect(() => {
+    if (!filteredCohorts.length) {
+      if (selectedCohort) setSelectedCohort('');
+      return;
+    }
+    if (!filteredCohorts.some(cohortItem => cohortItem.id === selectedCohort)) {
+      setSelectedCohort(filteredCohorts[0].id);
+    }
+  }, [filteredCohorts, selectedCohort]);
+
+  const activeCohort = useMemo(
+    () => filteredCohorts.find(cohortItem => cohortItem.id === selectedCohort) || null,
+    [filteredCohorts, selectedCohort],
+  );
+  const activeGroup = useMemo(
+    () => activeCohort?.groups.find(group => group.id === selectedGroup) || null,
+    [activeCohort, selectedGroup],
+  );
+
+  // ----------------------------------------------------------------- modules
+
+  const moduleCohorts = useMemo(
+    () => [...new Set(PROGRAMME.modules.map(mod => clean(mod.cohort)).filter(Boolean))].sort(),
+    [PROGRAMME.modules],
+  );
+  const moduleGroups = useMemo(
+    () => [...new Set(PROGRAMME.modules.map(mod => clean(mod.group)).filter(Boolean))].sort(),
+    [PROGRAMME.modules],
+  );
   const filteredModules = useMemo(() => {
     const query = normalise(moduleSearch);
     return PROGRAMME.modules.filter(mod => {
-      const matchesSearch = !query || [mod.name, mod.description, mod.cohort, mod.group, ...mod.ksbTags].some(value => normalise(value).includes(query));
-      const matchesCohort = moduleCohortFilter === 'all' || clean(mod.cohort) === moduleCohortFilter;
-      const matchesGroup = moduleGroupFilter === 'all' || clean(mod.group) === moduleGroupFilter;
-      return matchesSearch && matchesCohort && matchesGroup;
+      const matchesQuery = !query || [mod.name, mod.description, mod.cohort, mod.group, mod.tutor, ...mod.ksbTags]
+        .some(value => normalise(value).includes(query));
+      const matchesCohort = !moduleCohortFilter || clean(mod.cohort) === moduleCohortFilter;
+      const matchesGroup = !moduleGroupFilter || clean(mod.group) === moduleGroupFilter;
+      return matchesQuery && matchesCohort && matchesGroup;
     });
   }, [PROGRAMME.modules, moduleSearch, moduleCohortFilter, moduleGroupFilter]);
-  const filteredWeeks = module.weeksData;
-  const weekModuleOptions = PROGRAMME.modules;
+
+  // ---------------------------------------------------------------- sessions
 
   const deliverySessions = useMemo<DeliverySession[]>(() => {
     const rows: DeliverySession[] = [];
@@ -2115,50 +1918,71 @@ export default function ProgrammeDetailPage() {
   const liveSessions = useMemo(() => deliverySessions.filter(session => session.kind === 'live'), [deliverySessions]);
   const recordedSessions = useMemo(() => deliverySessions.filter(session => session.kind === 'recorded'), [deliverySessions]);
   const activeSessions = sessionKind === 'live' ? liveSessions : recordedSessions;
-  const sessionModules = useMemo(() => [...new Set(activeSessions.map(session => session.module).filter(Boolean))].sort(), [activeSessions]);
+  const sessionModules = useMemo(
+    () => [...new Set(activeSessions.map(session => session.module).filter(Boolean))].sort(),
+    [activeSessions],
+  );
   const filteredSessions = useMemo(() => {
     const query = normalise(sessionSearch);
     return activeSessions.filter(session => {
-      const matchesModule = sessionModuleFilter === 'all' || session.module === sessionModuleFilter;
-      const matchesSearch = !query || [session.title, session.module, session.weekTitle, session.provider, session.date, session.time, ...session.groups, ...session.ksbRefs].some(value => normalise(value).includes(query));
-      return matchesModule && matchesSearch;
+      const matchesModule = !sessionModuleFilter || session.module === sessionModuleFilter;
+      const matchesQuery = !query || [session.title, session.module, session.weekTitle, session.provider, session.date, session.time, ...session.groups, ...session.ksbRefs]
+        .some(value => normalise(value).includes(query));
+      return matchesModule && matchesQuery;
     });
   }, [activeSessions, sessionModuleFilter, sessionSearch]);
   const sessionPageCount = Math.max(1, Math.ceil(filteredSessions.length / sessionPageSize));
   const currentSessionPage = Math.min(sessionPage, sessionPageCount);
   const sessionStartIndex = (currentSessionPage - 1) * sessionPageSize;
   const pagedSessions = filteredSessions.slice(sessionStartIndex, sessionStartIndex + sessionPageSize);
+  const totalSessions = deliverySessions.length;
+
+  // --------------------------------------------------------------------- KSB
+
   const filteredKsbHeatmap = useMemo(() => {
     const query = normalise(ksbSearch);
-    return PROGRAMME.ksbHeatmap.filter(row => !query || [row.ksb, formatKsbCode(row.ksb), row.title, ksbSourceLabel(row)].some(value => normalise(value).includes(query)));
+    return PROGRAMME.ksbHeatmap.filter(row => !query || [row.ksb, formatKsbCode(row.ksb), row.title, ksbSourceLabel(row)]
+      .some(value => normalise(value).includes(query)));
   }, [PROGRAMME.ksbHeatmap, ksbSearch]);
-  const totalSessions = deliverySessions.length;
-  const allComponents = PROGRAMME.modules.flatMap(m => m.weeksData.flatMap(w => w.components || []));
-  const publishedComponents = allComponents.filter(c => c.status === 'published').length;
-  const contentReadiness = allComponents.length ? Math.round((publishedComponents / allComponents.length) * 100) : 0;
-  const totalOtjh = PROGRAMME.modules.reduce((a, m) => a + m.otjh, 0);
-  const totalLearners = PROGRAMME.cohorts.reduce((a, c) => a + c.learners, 0);
-  const totalGroups = PROGRAMME.cohorts.reduce((a, c) => a + c.groups.length, 0);
-  // Surfaced in the Groups toolbar so an unstaffed group is visible without
-  // expanding every cohort.
-  const unstaffedGroupCount = PROGRAMME.cohorts.reduce(
-    (total, cohortItem) => total + cohortItem.groups.filter(g => !isStaffAssigned(g.coach)).length,
-    0,
-  );
-  const totalWeeks = PROGRAMME.modules.reduce((a, m) => a + m.weeksData.length, 0);
   const mappedKsbCount = PROGRAMME.ksbHeatmap.filter(ksbRowIsMapped).length;
+  const missingKsbCount = PROGRAMME.ksbHeatmap.length - mappedKsbCount;
   const totalKsbWeight = PROGRAMME.ksbHeatmap.reduce((total, row) => total + ksbRowWeight(row), 0);
-  // Percentage of required KSBs that are placed somewhere - not a judgement on
+  const totalKsbOccurrences = PROGRAMME.ksbHeatmap.reduce((total, row) => total + Number(row.totalOccurrences || 0), 0);
+  // Percentage of required KSBs that are placed somewhere — not a judgement on
   // how much weight each one carries.
   const ksbCoverage = PROGRAMME.ksbHeatmap.length
     ? Math.round((mappedKsbCount / PROGRAMME.ksbHeatmap.length) * 100)
     : 0;
-  const missingKsbCount = PROGRAMME.ksbHeatmap.length - mappedKsbCount;
-  const totalKsbOccurrences = PROGRAMME.ksbHeatmap.reduce((total, row) => total + Number(row.totalOccurrences || 0), 0);
-  const openKsbTrace = (initialTab: 'map' | 'coverage' | 'trace') => {
-    setKsbTraceInitialTab(initialTab);
-    setKsbTraceOpen(true);
-  };
+
+  // ---------------------------------------------------------------- readiness
+
+  const allComponents = useMemo(
+    () => PROGRAMME.modules.flatMap(mod => mod.weeksData.flatMap(wk => wk.components || [])),
+    [PROGRAMME.modules],
+  );
+  const publishedComponents = allComponents.filter(component => component.status === 'published').length;
+  const contentReadiness = allComponents.length ? Math.round((publishedComponents / allComponents.length) * 100) : 0;
+  const totalOtjh = PROGRAMME.modules.reduce((total, mod) => total + mod.otjh, 0);
+  const totalLearners = PROGRAMME.cohorts.reduce((total, cohortItem) => total + cohortItem.learners, 0);
+  const totalWeeks = PROGRAMME.modules.reduce((total, mod) => total + mod.weeksData.length, 0);
+  const emptyWeekCount = PROGRAMME.modules
+    .flatMap(mod => mod.weeksData)
+    .filter(wk => !(wk.components || []).length).length;
+  const untutoredModules = PROGRAMME.modules.filter(mod => !isStaffAssigned(mod.tutor));
+  // Modules whose stored cohort is not one of this programme's cohort records.
+  // This page used to invent a cohort row for them, which is why its cohort count
+  // could disagree with the Cohorts page; now it reports them as the data problem
+  // they are and leaves the count honest.
+  const unlinkedModules = useMemo(() => {
+    const cohortKeys = new Set(PROGRAMME.cohorts.flatMap(cohortItem => [normalise(cohortItem.id), normalise(cohortItem.name)]).filter(Boolean));
+    return PROGRAMME.modules.filter(mod => {
+      const key = normalise(mod.cohortId || mod.cohort);
+      return !key || !cohortKeys.has(key);
+    });
+  }, [PROGRAMME.cohorts, PROGRAMME.modules]);
+
+  // ------------------------------------------------------------------ drawers
+
   // This programme as the shared drawers expect it. Used as the programme list
   // when the detail payload has not landed yet, so opening "Add cohort" during a
   // reload still knows which programme it is adding to.
@@ -2183,29 +2007,6 @@ export default function ProgrammeDetailPage() {
     structureType: PROGRAMME.structureType,
   }), [PROGRAMME, liveCohortCount, mappedKsbCount, totalGroups, totalLearners, totalWeeks]);
 
-  // Assign a tutor/coach straight from the Cohorts and Groups tabs. The group
-  // PATCH is the canonical endpoint, so the tutor lands on the group's module
-  // rows and is read back by the group payload.
-  const assignGroupStaff = async (groupId: string, role: 'tutor' | 'coach', value: string) => {
-    const actionKey = `${role}:${groupId}`;
-    setSavingAction(actionKey);
-    try {
-      await updateCurriculumGroup(groupId, { [role]: value });
-      await reload();
-    } catch (updateError) {
-      await showCurriculumAlert({
-        title: `Could not assign ${role}`,
-        // A tutor set here lands on every module in the group, so the refusal
-        // names the module and date that are already taken.
-        text: tutorConflictMessage(updateError)
-          || (updateError instanceof Error ? updateError.message : `The ${role} could not be saved. Please try again.`),
-        icon: 'error',
-      });
-    } finally {
-      setSavingAction(null);
-    }
-  };
-
   // What the shared Cohort / Group / Module drawers need. The programme list is
   // this programme alone, which is what fixes the parent for every record added
   // from here without locking the field out of the form.
@@ -2213,82 +2014,35 @@ export default function ProgrammeDetailPage() {
     () => (data?.programmes?.length ? data.programmes : [pageProgramme]),
     [data, pageProgramme],
   );
+  const drawerProgramme = drawerProgrammes[0];
   const drawerProgrammeId = useMemo(
-    () => (drawerProgrammes[0] ? programmeIdentity(drawerProgrammes[0]) : clean(liveProgramme.sourceId) || clean(liveProgramme.id) || clean(id || '')),
-    [drawerProgrammes, id, liveProgramme.id, liveProgramme.sourceId],
+    () => (drawerProgramme ? programmeIdentity(drawerProgramme) : clean(liveProgramme.sourceId) || clean(liveProgramme.id) || clean(id || '')),
+    [drawerProgramme, id, liveProgramme.id, liveProgramme.sourceId],
   );
   const moduleDrawerDefaults = useMemo(() => {
-    const cohort = (data?.cohorts || []).find(item => normalise(item.name) === normalise(moduleCohortFilter));
-    const group = (data?.groups || []).find(item => normalise(item.name) === normalise(moduleGroupFilter));
+    const cohortRecord = (data?.cohorts || []).find(item => normalise(item.name) === normalise(moduleCohortFilter));
+    const groupRecord = (data?.groups || []).find(item => normalise(item.name) === normalise(moduleGroupFilter));
     return {
       programmeId: drawerProgrammeId,
-      cohortId: cohort?.id || group?.cohortId || undefined,
-      groupId: group?.id || undefined,
+      cohortId: cohortRecord?.id || groupRecord?.cohortId || undefined,
+      groupId: groupRecord?.id || undefined,
     };
   }, [data, drawerProgrammeId, moduleCohortFilter, moduleGroupFilter]);
-
   const drawerCoachNames = useMemo(() => staffNameOptions(data?.coaches, (data?.groups || []).map(group => group.coach)), [data]);
   const drawerTutorNames = useMemo(() => staffNameOptions(data?.tutors, (data?.modules || []).map(module => module.tutor)), [data]);
 
-  const openProgrammeForm = () => {
-    const initial = {
-      name: PROGRAMME.name,
-      standard: PROGRAMME.standard,
-      level: PROGRAMME.level,
-      owner: PROGRAMME.owner,
-      color: PROGRAMME.color,
-      description: PROGRAMME.description,
-    };
-    programmeFormBaseline.current = initial;
-    setProgrammeForm(initial);
-    setProgrammeFormOpen(true);
-  };
-
-  // Cancel, the cross and the backdrop all come through here, so none of them
-  // can throw away edits the user has not saved yet.
-  const closeProgrammeForm = () => {
-    if (savingAction === 'programme') return;
-    if (sameFormValues(programmeForm, programmeFormBaseline.current)) {
-      setProgrammeFormOpen(false);
-      return;
-    }
-    if (confirmingProgrammeDiscard.current) return;
-    confirmingProgrammeDiscard.current = true;
-    void showCurriculumConfirm({
-      title: 'Discard unsaved changes?',
-      text: 'This form has answers that have not been saved. Closing it now throws them away.',
-      icon: 'warning',
-      confirmButtonText: 'Discard changes',
-      cancelButtonText: 'Keep editing',
-      onConfirm: () => { setProgrammeFormOpen(false); },
-    }).finally(() => { confirmingProgrammeDiscard.current = false; });
-  };
-
-  const saveProgramme = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!programmeForm.name.trim()) {
-      await showCurriculumAlert({
-        title: 'Programme name required',
-        text: 'Enter a programme name before saving.',
-        icon: 'warning',
-      });
-      return;
-    }
-    setSavingAction('programme');
+  // Assign a group's coach straight from the Delivery tab. The group PATCH is the
+  // canonical endpoint, so nothing here bypasses the rules the form applies.
+  const assignGroupCoach = async (groupId: string, value: string) => {
+    setSavingAction(`coach:${groupId}`);
     try {
-      await updateCurriculumProgramme(id || PROGRAMME.id, programmeForm);
+      await updateCurriculumGroup(groupId, { coach: value });
+      await reload();
+    } catch (updateError) {
       await showCurriculumAlert({
-        title: 'Programme updated',
-        text: 'The programme header has been refreshed from the database.',
-        icon: 'success',
-        timer: 1600,
-      });
-      setProgrammeFormOpen(false);
-      reload();
-    } catch (err) {
-      await showCurriculumAlert({
-        title: 'Unable to update programme',
-        text: err instanceof Error ? err.message : 'The programme could not be saved.',
+        title: 'Could not assign coach',
+        text: tutorConflictMessage(updateError)
+          || (updateError instanceof Error ? updateError.message : 'The coach could not be saved. Please try again.'),
         icon: 'error',
       });
     } finally {
@@ -2296,32 +2050,24 @@ export default function ProgrammeDetailPage() {
     }
   };
 
-  const tabs = [
-    { key: 'cohorts' as const, label: 'Cohorts', icon: 'ri-group-line' },
-    { key: 'groups' as const, label: 'Groups', icon: 'ri-team-line' },
-    { key: 'modules' as const, label: 'Modules', icon: 'ri-stack-line' },
-    { key: 'weeks' as const, label: 'Weeks', icon: 'ri-calendar-line' },
-    { key: 'sessions' as const, label: 'Sessions', icon: 'ri-time-line' },
-    { key: 'ksb' as const, label: 'KSB Heatmap', icon: 'ri-bar-chart-line' },
-    { key: 'review' as const, label: 'Review', icon: 'ri-checkbox-circle-line' },
-  ];
+  const goToTab = (next: Tab) => {
+    setTab(next);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
-  if (loading) {
+  const moduleBuilderProgrammeUrl = `/curriculum/module-builder?programme=${encodeURIComponent(clean(PROGRAMME.sourceId) || PROGRAMME.name)}`;
+
+  if (loading && !found) {
     return (
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme loading" pageSubtitle="Preparing live curriculum data from the database" userName="Rachel Myers" userRole="Curriculum Designer">
-        <div className="p-6 space-y-6">
-          <div className="flex items-center gap-2 rounded-xl bg-background-100 p-2 overflow-hidden">
-            {['Cohorts', 'Groups', 'Modules', 'Weeks', 'Sessions'].map(label => (
-              <div key={label} className="h-8 w-24 rounded-lg bg-background-50 border border-foreground-200/50 animate-pulse" />
+        <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+          <div className="h-40 animate-pulse rounded-2xl border border-foreground-200/70 bg-background-100" />
+          <div className="flex items-center gap-2 rounded-2xl border border-foreground-200/70 bg-background-50 p-1.5">
+            {Object.values(TAB_LABELS).map(label => (
+              <div key={label} className="h-10 w-28 animate-pulse rounded-xl bg-background-100" />
             ))}
           </div>
-
-          <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5 space-y-4">
-            <div className="h-4 w-40 rounded bg-background-200 animate-pulse" />
-            <div className="h-3 w-full max-w-3xl rounded bg-background-200 animate-pulse" />
-            <div className="h-3 w-full max-w-2xl rounded bg-background-200 animate-pulse" />
-            <div className="h-3 w-full max-w-xl rounded bg-background-200 animate-pulse" />
-          </div>
+          <div className="h-64 animate-pulse rounded-2xl border border-foreground-200/70 bg-background-100" />
         </div>
       </WorkspaceShell>
     );
@@ -2330,75 +2076,271 @@ export default function ProgrammeDetailPage() {
   if (error || !found) {
     return (
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Programme unavailable" pageSubtitle="The requested curriculum programme could not be opened" userName="Rachel Myers" userRole="Curriculum Designer">
-        <div className="flex min-h-[65vh] items-center justify-center bg-[linear-gradient(180deg,#fbfcff_0%,#f4f6fa_100%)] p-6">
-          <div className="w-full max-w-lg rounded-2xl border border-foreground-200/70 bg-background-50 p-7 text-center shadow-sm">
-            <span className={`mx-auto flex h-12 w-12 items-center justify-center rounded-2xl ${error ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'}`}>
-              <AppIcon className={`${error ? 'ri-wifi-off-line' : 'ri-folder-warning-line'} text-xl`}></AppIcon>
-            </span>
-            <h1 className="mt-4 text-lg font-heading font-black text-foreground-950">{error ? 'Unable to load programme data' : 'Programme not found'}</h1>
-            <p className="mt-2 text-[13px] leading-6 text-foreground-500">
-              {error || `There is no live curriculum programme matching "${id || 'this route'}". It may have been renamed or removed.`}
-            </p>
-            <div className="mt-5 flex flex-wrap justify-center gap-2">
-              <button onClick={() => window.history.back()} className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 hover:bg-background-100">
-                <AppIcon className="ri-arrow-left-line"></AppIcon> All programmes
-              </button>
-              {error && (
-                <button onClick={() => void reload()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white hover:bg-primary-700">
-                  <AppIcon className="ri-refresh-line"></AppIcon> Try again
-                </button>
-              )}
-            </div>
+        <div className="min-h-full bg-background-50 p-4 sm:p-6">
+          <EntityEmptyState
+            icon={error ? 'ri-wifi-off-line' : 'ri-folder-warning-line'}
+            title={error ? 'Unable to load programme data' : 'Programme not found'}
+            message={error || `There is no live curriculum programme matching "${id || 'this route'}". It may have been renamed or removed.`}
+            action={error ? { label: 'Try again', onClick: () => void reload() } : undefined}
+          />
+          <div className="mt-4 flex justify-center">
+            <Link
+              to="/curriculum/programmes"
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
+            >
+              <AppIcon className="ri-arrow-left-line"></AppIcon>
+              All programmes
+            </Link>
           </div>
         </div>
       </WorkspaceShell>
     );
   }
 
-  return (
-    <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle={PROGRAMME.name} pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohorts · ${PROGRAMME.modules.length} modules`} userName="Rachel Myers" userRole="Curriculum Designer">
-      <div className="min-h-screen space-y-5 bg-[linear-gradient(180deg,#fbfcff_0%,#f7f8fb_46%,#f3f5f8_100%)] p-5 sm:p-6">
-        {/* Programme Navigation */}
-        <div className="sticky top-0 z-20 flex items-center gap-2 rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
-            {tabs.map(t => (
-              <button key={t.key} onClick={() => setTab(t.key)} className={`group inline-flex min-h-10 items-center gap-2 rounded-xl px-3 py-1.5 text-[12px] font-bold transition-smooth whitespace-nowrap cursor-pointer ${tab === t.key ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-background-100 hover:text-foreground-900'}`}>
-                <span className={`flex h-7 w-7 items-center justify-center rounded-lg ${tab === t.key ? 'bg-white/[0.16] text-white' : 'bg-background-100 text-foreground-500 group-hover:bg-background-50'}`}>
-                  <AppIcon className={`${t.icon} text-[14px]`}></AppIcon>
-                </span>
-                <span>{t.label}</span>
-                {t.key === 'modules' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.modules.length}</span>}
-                {t.key === 'cohorts' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{liveCohortCount}</span>}
-                {t.key === 'groups' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalGroups}</span>}
-                {t.key === 'weeks' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalWeeks}</span>}
-                {t.key === 'sessions' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{totalSessions}</span>}
-                {t.key === 'review' && <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${tab === t.key ? 'bg-white/[0.15] text-white' : 'bg-foreground-100 text-foreground-500'}`}>{PROGRAMME.modules.length}</span>}
-              </button>
-            ))}
-          </div>
-          <div className="flex shrink-0 items-center gap-2 border-l border-background-200 pl-2">
-            <button onClick={() => openKsbTrace('coverage')} className="inline-flex h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700">
-              <AppIcon className="ri-bar-chart-box-line text-sm"></AppIcon>
-              View KSB coverage details
-            </button>
-          </div>
-        </div>
+  const tabs = [
+    { key: 'overview', label: TAB_LABELS.overview, icon: 'ri-dashboard-line' },
+    { key: 'delivery', label: TAB_LABELS.delivery, icon: 'ri-group-line', count: liveCohortCount },
+    { key: 'modules', label: TAB_LABELS.modules, icon: 'ri-stack-line', count: PROGRAMME.modules.length },
+    { key: 'sessions', label: TAB_LABELS.sessions, icon: 'ri-time-line', count: totalSessions },
+    { key: 'ksb', label: TAB_LABELS.ksb, icon: 'ri-bar-chart-line', count: PROGRAMME.ksbHeatmap.length || undefined },
+  ];
 
-        {/* ═══════════════════════════════════════════════════════════════════════
-            TAB: Cohorts
-        ═══════════════════════════════════════════════════════════════════════ */}
-        {tab === 'cohorts' && (
-          <div className="space-y-4">
-            <TabToolbar
+  return (
+    <WorkspaceShell
+      role="curriculum"
+      roleLabel="Curriculum Designer"
+      navItems={curriculumNavItems}
+      workspaceLabel="Curriculum Studio"
+      pageTitle={PROGRAMME.name}
+      pageSubtitle={`${PROGRAMME.duration} · ${liveCohortCount} cohorts · ${PROGRAMME.modules.length} modules`}
+      userName="Rachel Myers"
+      userRole="Curriculum Designer"
+    >
+      <div className="min-h-full space-y-5 bg-background-50 p-4 sm:p-6">
+        {error && <InlineError message={error} onRetry={() => void reload()} />}
+
+        <WorkspaceHeader
+          breadcrumbs={[
+            { label: 'Curriculum', href: '/workspace/curriculum' },
+            { label: 'Programmes', href: '/curriculum/programmes' },
+            { label: PROGRAMME.name },
+          ]}
+          eyebrow="Programme"
+          title={PROGRAMME.name}
+          subtitle={[PROGRAMME.level, PROGRAMME.standard, PROGRAMME.duration].map(value => clean(value)).filter(Boolean).join(' · ')}
+          accentColor={PROGRAMME.color}
+          stats={[
+            { icon: 'ri-group-line', label: 'Cohorts', value: liveCohortCount, detail: archivedCohortCount ? `${archivedCohortCount} archived` : undefined },
+            { icon: 'ri-team-line', label: 'Groups', value: totalGroups, detail: unstaffedGroupCount ? `${unstaffedGroupCount} need a coach` : 'All coached' },
+            { icon: 'ri-stack-line', label: 'Modules', value: PROGRAMME.modules.length, detail: untutoredModules.length ? `${untutoredModules.length} need a tutor` : 'All tutored' },
+            { icon: 'ri-calendar-line', label: 'Weeks', value: totalWeeks, detail: `${allComponents.length} components` },
+            { icon: 'ri-time-line', label: 'OTJH', value: `${formatHours(totalOtjh)}h` },
+            {
+              icon: 'ri-node-tree',
+              label: 'KSB coverage',
+              value: PROGRAMME.ksbHeatmap.length ? `${ksbCoverage}%` : '—',
+              detail: PROGRAMME.ksbHeatmap.length ? `${mappedKsbCount}/${PROGRAMME.ksbHeatmap.length} mapped` : 'No KSB source',
+            },
+          ]}
+          actions={(
+            <>
+              <button
+                type="button"
+                onClick={() => setProgrammeDrawerOpen(true)}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+              >
+                <AppIcon className="ri-edit-line text-sm"></AppIcon>
+                Edit programme
+              </button>
+              <button
+                type="button"
+                onClick={() => setCohortDrawerOpen(true)}
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
+              >
+                <AppIcon className="ri-add-line text-sm"></AppIcon>
+                Add cohort
+              </button>
+            </>
+          )}
+        />
+
+        <WorkspaceTabs tabs={tabs} active={tab} onChange={key => setTab(key as Tab)} />
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            Overview — the only view that spans the whole programme
+        ═══════════════════════════════════════════════════════════════════ */}
+        {tab === 'overview' && (
+          <div className="space-y-5">
+            <div className="grid gap-5 xl:grid-cols-2">
+              <WorkspacePanel title="Programme" description="The details the programme itself owns. Everything else belongs to a record beneath it.">
+                <DetailRow label="Level" value={clean(PROGRAMME.level, 'Not set')} />
+                <DetailRow label="Standard" value={clean(PROGRAMME.standard, 'Not set')} />
+                <DetailRow label="Owner" value={clean(PROGRAMME.owner, 'Not set')} />
+                <DetailRow
+                  label="KSB source"
+                  value={coverageKsbSource.sourceId
+                    ? clean(coverageKsbSourceLabel) || coverageKsbSource.sourceId
+                    : <span className="text-amber-700">No source applied</span>}
+                />
+                <DetailRow label="Delivery window" value={clean(PROGRAMME.duration, 'Not scheduled')} />
+                <DetailRow label="Learners" value={totalLearners} />
+                <DetailRow label="Programme ID" value={<code className="text-[11px]">{clean(PROGRAMME.sourceId) || PROGRAMME.id || '—'}</code>} />
+              </WorkspacePanel>
+
+              <WorkspacePanel
+                title="Readiness"
+                description="Both figures are counts of real records, so they can be checked rather than trusted."
+                actions={(
+                  <button
+                    type="button"
+                    onClick={() => goToTab('ksb')}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+                  >
+                    <AppIcon className="ri-bar-chart-line text-sm"></AppIcon>
+                    Coverage detail
+                  </button>
+                )}
+              >
+                <div className="space-y-4">
+                  <ReadinessBar
+                    label="KSB coverage"
+                    value={ksbCoverage}
+                    color="bg-primary-600"
+                    detail={PROGRAMME.ksbHeatmap.length
+                      ? `${mappedKsbCount} of ${PROGRAMME.ksbHeatmap.length} KSBs are taught somewhere on this programme.`
+                      : backendCoverageLoading ? 'Loading coverage…' : 'No KSB source is applied, so there is nothing to cover yet.'}
+                  />
+                  <ReadinessBar
+                    label="Content published"
+                    value={contentReadiness}
+                    color="bg-emerald-500"
+                    detail={allComponents.length
+                      ? `${publishedComponents} of ${allComponents.length} authored components are published.`
+                      : 'No components have been authored into these modules yet.'}
+                  />
+                  <div className="grid grid-cols-2 gap-2 border-t border-background-200 pt-4 sm:grid-cols-4">
+                    {[
+                      { label: 'Weeks', value: totalWeeks },
+                      { label: 'Components', value: allComponents.length },
+                      { label: 'KSBs unmapped', value: missingKsbCount },
+                      { label: 'Total OTJH', value: `${formatHours(totalOtjh)}h` },
+                    ].map(stat => (
+                      <div key={stat.label} className="rounded-xl border border-background-200 bg-background-100/60 px-3 py-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{stat.label}</p>
+                        <p className="mt-0.5 text-[15px] font-heading font-bold text-foreground-950">{stat.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </WorkspacePanel>
+            </div>
+
+            <WorkspacePanel
+              title="Needs attention"
+              description="Gaps that only show up when the whole programme is in view, each pointing at the one place it is fixed."
+            >
+              {unstaffedGroupCount || untutoredModules.length || unlinkedModules.length || emptyWeekCount || missingKsbCount ? (
+                <ul className="space-y-2">
+                  {unstaffedGroupCount > 0 && (
+                    <AttentionRow
+                      icon="ri-user-search-line"
+                      tone="amber"
+                      title={`${unstaffedGroupCount} ${unstaffedGroupCount === 1 ? 'group has' : 'groups have'} no coach`}
+                      detail="A group without a coach has nobody supporting its learners."
+                      action={{ label: 'Open Delivery', onClick: () => goToTab('delivery') }}
+                    />
+                  )}
+                  {untutoredModules.length > 0 && (
+                    <AttentionRow
+                      icon="ri-user-settings-line"
+                      tone="amber"
+                      title={`${untutoredModules.length} ${untutoredModules.length === 1 ? 'module has' : 'modules have'} no tutor`}
+                      detail="The tutor is set on the module, and its sessions cannot be timetabled without one."
+                      action={{ label: 'Open Modules', onClick: () => goToTab('modules') }}
+                    />
+                  )}
+                  {unlinkedModules.length > 0 && (
+                    <AttentionRow
+                      icon="ri-link-unlink"
+                      tone="rose"
+                      title={`${unlinkedModules.length} ${unlinkedModules.length === 1 ? 'module is' : 'modules are'} not attached to a live cohort`}
+                      detail={`Stored against ${unlinkedModules.slice(0, 2).map(mod => clean(mod.cohort, 'no cohort')).join(', ')}${unlinkedModules.length > 2 ? '…' : ''}, which is not a cohort record on this programme.`}
+                      action={{ label: 'Open Modules', onClick: () => goToTab('modules') }}
+                    />
+                  )}
+                  {emptyWeekCount > 0 && (
+                    <AttentionRow
+                      icon="ri-calendar-close-line"
+                      tone="sky"
+                      title={`${emptyWeekCount} ${emptyWeekCount === 1 ? 'week has' : 'weeks have'} no content`}
+                      detail="A scheduled week with no components gives learners nothing to do."
+                      action={{ label: 'Open Module Builder', onClick: () => navigate(moduleBuilderProgrammeUrl) }}
+                    />
+                  )}
+                  {missingKsbCount > 0 && (
+                    <AttentionRow
+                      icon="ri-node-tree"
+                      tone="sky"
+                      title={`${missingKsbCount} ${missingKsbCount === 1 ? 'KSB is' : 'KSBs are'} not taught anywhere`}
+                      detail="Every KSB in the programme's source has to be mapped to a component before delivery."
+                      action={{ label: 'Open KSB coverage', onClick: () => goToTab('ksb') }}
+                    />
+                  )}
+                </ul>
+              ) : (
+                <p className="rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-[13px] font-semibold text-emerald-700">
+                  <AppIcon className="ri-checkbox-circle-line mr-1.5"></AppIcon>
+                  Every group has a coach, every module has a tutor, every week has content and every KSB is mapped.
+                </p>
+              )}
+            </WorkspacePanel>
+
+            <WorkspacePanel
+              title="Where these records live"
+              description="Cohorts, groups and modules are managed across the whole curriculum on their own pages. This workspace is the programme-scoped view of them, not a second catalogue — these links open the same records filtered to this programme."
+            >
+              <div className="grid gap-3 sm:grid-cols-3">
+                <RecordHomeLink
+                  icon="ri-calendar-event-line"
+                  label={liveCohortCount === 1 ? 'cohort' : 'cohorts'}
+                  count={liveCohortCount}
+                  hint="Cohorts page, filtered to this programme"
+                  to={`/curriculum/cohorts?programme=${encodeURIComponent(drawerProgrammeId)}`}
+                />
+                <RecordHomeLink
+                  icon="ri-team-line"
+                  label={totalGroups === 1 ? 'group' : 'groups'}
+                  count={totalGroups}
+                  hint="Groups page, filtered to this programme"
+                  to={`/curriculum/groups?programme=${encodeURIComponent(drawerProgrammeId)}`}
+                />
+                <RecordHomeLink
+                  icon="ri-stack-line"
+                  label={PROGRAMME.modules.length === 1 ? 'module' : 'modules'}
+                  count={PROGRAMME.modules.length}
+                  hint="Module Builder catalogue, filtered to this programme"
+                  to={moduleBuilderProgrammeUrl}
+                />
+              </div>
+            </WorkspacePanel>
+          </div>
+        )}
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            Delivery — cohorts, and the groups under the one being read
+        ═══════════════════════════════════════════════════════════════════ */}
+        {tab === 'delivery' && (
+          <div className="space-y-5">
+            <EntityFilterBar
               search={cohortSearch}
               onSearch={setCohortSearch}
               placeholder="Search cohorts, dates, status..."
               selects={[{
-                label: 'Filter by status',
+                label: 'Status',
                 value: cohortStatusFilter,
                 onChange: setCohortStatusFilter,
                 options: [
-                  { value: 'all', label: 'All statuses' },
+                  { value: '', label: 'All statuses' },
                   { value: 'planned', label: 'Planned' },
                   { value: 'active', label: 'Active' },
                   { value: 'completed', label: 'Completed' },
@@ -2407,1391 +2349,638 @@ export default function ProgrammeDetailPage() {
                   ...(archivedCohortCount > 0 ? [{ value: 'archived', label: `Archived (${archivedCohortCount})` }] : []),
                 ],
               }]}
-              onReset={() => { setCohortSearch(''); setCohortStatusFilter('all'); }}
-              resetDisabled={!cohortSearch && cohortStatusFilter === 'all'}
-              actions={<TabAddButton label="Add cohort" icon="ri-calendar-event-line" onClick={() => setCohortDrawerOpen(true)} />}
+              onReset={() => { setCohortSearch(''); setCohortStatusFilter(''); }}
               summary={cohortStatusFilter === 'archived'
                 ? `Showing ${filteredCohorts.length} of ${archivedCohortCount} archived cohorts`
                 : `Showing ${filteredCohorts.length} of ${liveCohortCount} cohorts${archivedCohortCount > 0 ? ` · ${archivedCohortCount} archived` : ''}`}
+              trailing={(
+                <button
+                  type="button"
+                  onClick={() => setCohortDrawerOpen(true)}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+                >
+                  <AppIcon className="ri-add-line text-sm"></AppIcon>
+                  Add cohort
+                </button>
+              )}
             />
 
-            {loading && PROGRAMME.cohorts.length === 0 && <TabLoadingRows />}
-
-            {!loading && PROGRAMME.cohorts.length === 0 && (
-              <TabEmptyState
-                icon="ri-group-line"
-                title="No cohorts yet"
-                message="Cohorts define when a group of learners starts and finishes this programme. Add the first one to begin planning delivery."
-                actionLabel="Add cohort"
-                onAction={() => setCohortDrawerOpen(true)}
-              />
-            )}
-
-            {!loading && PROGRAMME.cohorts.length > 0 && filteredCohorts.length === 0 && (
-              <TabEmptyState
-                icon="ri-filter-off-line"
-                title="No cohorts match these filters"
-                message="Try a different search term, or reset the filters to see every cohort on this programme."
-              />
-            )}
-
-            {filteredCohorts.map(c => {
-              const staffedGroups = c.groups.filter(g => isStaffAssigned(g.coach) && isStaffAssigned(g.tutor)).length;
-              const expanded = expandedCohort === c.id;
-              return (
-                <div key={c.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-                  <button
-                    onClick={() => setExpandedCohort(expanded ? null : c.id)}
-                    aria-expanded={expanded}
-                    className="flex w-full cursor-pointer items-center gap-4 p-4 text-left transition-smooth hover:bg-background-100/40"
-                  >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary-100">
-                      <AppIcon className={`ri-arrow-down-s-line text-secondary-700 transition-smooth ${expanded ? 'rotate-180' : ''}`}></AppIcon>
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-bold text-foreground-900">{c.name}</p>
-                        <StatusChip status={c.status} />
-                      </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
-                        <MetaItem icon="ri-calendar-line">Practical: {c.startDate} &ndash; {c.endDate}</MetaItem>
-                        {c.apprenticeshipEndDate ? (
-                          <MetaItem icon="ri-award-line">Apprenticeship ends {c.apprenticeshipEndDate} ({c.apprenticeshipEndIsManual ? 'set manually' : `${c.epaMonths}m EPA`})</MetaItem>
-                        ) : null}
-                        <MetaItem icon="ri-graduation-cap-line">{c.learners} learners</MetaItem>
-                        <MetaItem icon="ri-team-line">{c.groups.length} {c.groups.length === 1 ? 'group' : 'groups'}</MetaItem>
-                      </div>
-                    </div>
-                    <div className="hidden shrink-0 items-center gap-4 sm:flex">
-                      <StaffingMeter staffed={staffedGroups} total={c.groups.length} />
-                    </div>
-                  </button>
-
-                  {expanded && (
-                    <div className="border-t border-background-200/60 px-4 pb-4">
-                      {c.groups.length === 0 ? (
-                        <div className="mt-3">
-                          <TabEmptyState
-                            icon="ri-team-line"
-                            title="This cohort has no groups"
-                            message="Groups hold the weekly timetable and the tutor and coach who deliver it. Add one to start scheduling."
-                            actionLabel="New group"
-                            onAction={() => setGroupDrawerCohortId(c.id)}
-                          />
-                        </div>
-                      ) : (
-                        <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
-                          {c.groups.map(g => {
-                            const groupExpanded = expandedGroup === g.id;
-                            const needsStaff = !isStaffAssigned(g.tutor) || !isStaffAssigned(g.coach);
-                            return (
-                              <div key={g.id} className={`rounded-2xl border bg-background-100 p-4 shadow-sm transition-smooth ${needsStaff ? 'border-amber-200' : 'border-background-200/80'}`}>
-                                <div className="mb-3 flex items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <p className="truncate text-[13px] font-bold text-foreground-900">{g.name}</p>
-                                    <p className="mt-0.5 text-[11px] text-foreground-500">{g.startDate} &ndash; {g.endDate}</p>
-                                  </div>
-                                  <div className="flex shrink-0 items-center gap-1.5">
-                                    <span className="rounded-md bg-background-200/70 px-2 py-0.5 text-[10px] font-semibold text-foreground-600">{g.mode}</span>
-                                  </div>
-                                </div>
-
-                                <div className="mb-3 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                                  <StaffSlot
-                                    role="Tutor"
-                                    icon="ri-user-settings-line"
-                                    name={g.tutor}
-                                    options={data?.tutors || []}
-                                    saving={savingAction === `tutor:${g.id}`}
-                                    onAssign={value => assignGroupStaff(g.id, 'tutor', value)}
-                                  />
-                                  <StaffSlot
-                                    role="Coach"
-                                    icon="ri-heart-line"
-                                    name={g.coach}
-                                    options={data?.coaches || []}
-                                    saving={savingAction === `coach:${g.id}`}
-                                    onAssign={value => assignGroupStaff(g.id, 'coach', value)}
-                                  />
-                                </div>
-
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-background-200/70 pt-3">
-                                  <MetaItem icon="ri-graduation-cap-line">{g.learners} learners</MetaItem>
-                                  <MetaItem icon="ri-calendar-line">{g.schedule}</MetaItem>
-                                  <MetaItem icon="ri-stack-line">{g.modules.length} {g.modules.length === 1 ? 'module' : 'modules'}</MetaItem>
-                                </div>
-
-                                <div className="mt-3 flex items-center gap-2">
-                                  <button
-                                    onClick={() => setExpandedGroup(groupExpanded ? null : g.id)}
-                                    aria-expanded={groupExpanded}
-                                    className="inline-flex h-8 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
-                                  >
-                                    <AppIcon className={`ri-arrow-down-s-line text-[12px] transition-smooth ${groupExpanded ? 'rotate-180' : ''}`}></AppIcon>
-                                    {groupExpanded ? 'Hide details' : 'View full details'}
-                                  </button>
-                                </div>
-
-                                {groupExpanded && (
-                                  <div className="mt-4 rounded-xl border border-primary-200/60 bg-background-50 p-4 shadow-sm">
-                                    {g.modules.length > 0 ? (
-                                      <div className="space-y-2">
-                                        {g.modules.map(moduleItem => (
-                                          <div key={moduleItem.id} className="flex items-center justify-between gap-3 rounded-lg border border-background-200 bg-background-100/60 px-3 py-2">
-                                            <div className="min-w-0">
-                                              <p className="truncate text-[12px] font-semibold text-foreground-900">{moduleItem.name}</p>
-                                              <p className="mt-0.5 text-[11px] text-foreground-500">
-                                                {moduleItem.weeks} weeks &middot; {moduleItem.otjh}h OTJH &middot; {moduleItem.weeksData.reduce((sum, weekItem) => sum + (weekItem.components?.length || 0), 0)} components
-                                              </p>
-                                            </div>
-                                            <button
-                                              onClick={() => { setTab('weeks'); setSelectedModule(moduleItem.id); setSelectedWeek(moduleItem.weeksData[0]?.id || ''); }}
-                                              className="whitespace-nowrap rounded-lg border border-background-200 bg-background-50 px-2.5 py-1.5 text-[11px] font-semibold text-foreground-700 transition-smooth hover:bg-background-200"
-                                            >
-                                              Open weeks
-                                            </button>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    ) : (
-                                      <p className="rounded-lg border border-dashed border-background-200 bg-background-100/60 px-3 py-3 text-[11px] text-foreground-500">
-                                        No modules are linked to this group yet.
-                                      </p>
-                                    )}
-
-                                    <div className="mt-3">
-                                      <EnrolledLearnersPanel
-                                        roster={learnerRoster}
-                                        loading={learnerRosterLoading}
-                                        error={learnerRosterError}
-                                        cohortName={c.name}
-                                        groupName={g.name}
-                                        emptyHint={`No learners have been assigned to ${g.name} by the enrolment team yet.`}
-                                      />
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {/* Learners are always placed into a group, so the group panels
-                          already account for every one of them. A cohort-level roster
-                          alongside them would repeat the same list, so it only appears
-                          when there is no group to hold it. */}
-                      {c.groups.length === 0 && (
-                        <div className="mt-3">
-                          <EnrolledLearnersPanel
-                            roster={learnerRoster}
-                            loading={learnerRosterLoading}
-                            error={learnerRosterError}
-                            cohortName={c.name}
-                            emptyHint={`No learners have been assigned to ${c.name} by the enrolment team yet.`}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ═══════════════════════════════════════════════════════════════════════
-            TAB: Groups
-        ═══════════════════════════════════════════════════════════════════════ */}
-        {tab === 'groups' && (
-          <div className="space-y-4">
-            <TabToolbar
-              search={groupSearch}
-              onSearch={setGroupSearch}
-              placeholder="Search groups, coach, schedule..."
-              selects={[
-                {
-                  label: 'Filter by cohort',
-                  value: groupCohortFilter,
-                  onChange: setGroupCohortFilter,
-                  options: [
-                    { value: 'all', label: 'All cohorts' },
-                    ...PROGRAMME.cohorts.map(cohortItem => ({ value: cohortItem.id, label: cohortItem.name })),
-                  ],
-                },
+            <EntityTable
+              columns={[
+                { label: 'Cohort' },
+                { label: 'Practical period' },
+                { label: 'Apprenticeship end' },
+                { label: 'Learners', align: 'center' },
+                { label: 'Groups', align: 'center' },
+                { label: 'Coached', align: 'center' },
+                { label: 'Actions', align: 'right' },
               ]}
-              onReset={() => { setGroupSearch(''); setGroupCohortFilter('all'); }}
-              resetDisabled={!groupSearch && groupCohortFilter === 'all'}
-              actions={(
-                <TabAddButton
-                  label="Add group"
-                  icon="ri-team-line"
-                  // Filtering to one cohort is already a statement about which
-                  // cohort the user is working in, so it seeds the drawer.
-                  onClick={() => setGroupDrawerCohortId(groupCohortFilter === 'all' ? '' : groupCohortFilter)}
+              gridClass={COHORT_GRID}
+              rows={filteredCohorts}
+              rowKey={cohortItem => cohortItem.id}
+              loading={loading && !PROGRAMME.cohorts.length}
+              empty={(
+                <EntityEmptyState
+                  icon={PROGRAMME.cohorts.length ? 'ri-filter-off-line' : 'ri-group-line'}
+                  title={PROGRAMME.cohorts.length ? 'No cohorts match these filters' : 'No cohorts yet'}
+                  message={PROGRAMME.cohorts.length
+                    ? 'Clear a filter, or search for a different cohort.'
+                    : 'Cohorts define when a group of learners starts and finishes this programme. Add the first one to begin planning delivery.'}
+                  action={PROGRAMME.cohorts.length ? undefined : { label: 'Add cohort', onClick: () => setCohortDrawerOpen(true) }}
                 />
               )}
-              summary={`Showing ${filteredGroups.length} of ${totalGroups} groups${unstaffedGroupCount > 0 ? ` · ${unstaffedGroupCount} still need a coach` : ''}`}
+              renderRow={cohortItem => {
+                const coached = cohortItem.groups.filter(group => isStaffAssigned(group.coach)).length;
+                const selected = cohortItem.id === selectedCohort;
+                return (
+                  <>
+                    <StackedCell
+                      href={`/curriculum/cohorts/${encodeURIComponent(cohortItem.id)}`}
+                      primary={(
+                        <span className="flex items-center gap-2">
+                          {selected && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary-600" aria-hidden="true" />}
+                          {cohortItem.name}
+                        </span>
+                      )}
+                      secondary={cohortItem.status}
+                    />
+                    <PlainCell>{[cohortItem.startDate, cohortItem.endDate].filter(Boolean).join(' – ') || '—'}</PlainCell>
+                    <PlainCell>
+                      {cohortItem.apprenticeshipEndDate || '—'}
+                      {cohortItem.apprenticeshipEndDate && (
+                        <span className="ml-1 text-[10px] font-bold uppercase text-foreground-400">
+                          {cohortItem.apprenticeshipEndIsManual ? 'set' : cohortItem.epaMonths ? `${cohortItem.epaMonths}m EPA` : ''}
+                        </span>
+                      )}
+                    </PlainCell>
+                    <PlainCell align="center">{cohortItem.learners}</PlainCell>
+                    <PlainCell align="center">{cohortItem.groups.length}</PlainCell>
+                    <PlainCell align="center">
+                      <span className={coached === cohortItem.groups.length ? 'font-bold text-emerald-700' : 'font-bold text-amber-700'}>
+                        {coached}/{cohortItem.groups.length}
+                      </span>
+                    </PlainCell>
+                    <NamedActions
+                      actions={[{
+                        icon: selected ? 'ri-eye-line' : 'ri-team-line',
+                        label: 'Groups',
+                        title: selected
+                          ? `${cohortItem.name}'s groups are shown below`
+                          : `Show ${cohortItem.name}'s groups below`,
+                        primary: selected,
+                        disabled: selected,
+                        onClick: () => { setSelectedCohort(cohortItem.id); setSelectedGroup(''); },
+                      }]}
+                    />
+                  </>
+                );
+              }}
             />
 
-            {loading && totalGroups === 0 && <TabLoadingRows />}
-
-            {!loading && totalGroups === 0 && (
-              <TabEmptyState
-                icon="ri-team-line"
-                title="No groups yet"
-                message="A group is the timetabled class that learners attend: it carries the weekly schedule and the coach who supports it. Tutors are assigned per module."
-                actionLabel="Add group"
-                onAction={() => setGroupDrawerCohortId('')}
-              />
-            )}
-
-            {!loading && totalGroups > 0 && filteredGroups.length === 0 && (
-              <TabEmptyState
-                icon="ri-filter-off-line"
-                title="No groups match these filters"
-                message="Try a different search term, or reset the filters to see every group on this programme."
-              />
-            )}
-
-            {PROGRAMME.cohorts.filter(c => c.groups.some(g => filteredGroups.some(item => item.group.id === g.id))).map(c => {
-              const visibleGroups = c.groups.filter(g => filteredGroups.some(item => item.group.id === g.id));
-              return (
-                <div key={c.id} className="space-y-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-secondary-100 px-2.5 py-1 text-[12px] font-bold text-secondary-700">
-                      <AppIcon className="ri-group-line text-[12px]"></AppIcon>
-                      {c.name}
-                    </span>
-                    <span className="text-[11px] text-foreground-500">
-                      {visibleGroups.length} of {c.groups.length} {c.groups.length === 1 ? 'group' : 'groups'} &middot; {c.learners} learners
-                    </span>
+            {activeCohort && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-[13px] font-heading font-bold text-foreground-950">Groups in {activeCohort.name}</h3>
+                    <p className="mt-0.5 text-[12px] text-foreground-500">
+                      A group is the timetabled class learners attend. Its tutor comes from the modules it delivers, so only the coach is set here.
+                    </p>
                   </div>
-
-                  {visibleGroups.map(g => {
-                    const needsStaff = !isStaffAssigned(g.coach);
-                    return (
-                      <div key={g.id} className={`rounded-2xl border bg-background-50 p-4 shadow-sm ${needsStaff ? 'border-amber-200' : 'border-foreground-200/70'}`}>
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-                          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-secondary-100">
-                            <AppIcon className="ri-team-line text-lg text-secondary-700"></AppIcon>
-                          </span>
-
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="text-sm font-bold text-foreground-900">{g.name}</p>
-                              {needsStaff && (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">
-                                  <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon> Needs staffing
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
-                              <MetaItem icon="ri-graduation-cap-line">{g.learners} learners</MetaItem>
-                              <MetaItem icon="ri-calendar-line">{g.schedule}</MetaItem>
-                              <MetaItem icon="ri-map-pin-line">{g.mode}</MetaItem>
-                              <MetaItem icon="ri-stack-line">{g.modules.length} {g.modules.length === 1 ? 'module' : 'modules'}</MetaItem>
-                            </div>
-                          </div>
-
-                          <div className="w-full shrink-0 border-t border-background-200/70 pt-3 lg:w-[190px] lg:border-t-0 lg:pt-0">
-                            <StaffSlot
-                              role="Coach"
-                              icon="ri-heart-line"
-                              name={g.coach}
-                              options={data?.coaches || []}
-                              saving={savingAction === `coach:${g.id}`}
-                              onAssign={value => assignGroupStaff(g.id, 'coach', value)}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  <button
+                    type="button"
+                    onClick={() => setGroupDrawerCohortId(activeCohort.id)}
+                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
+                  >
+                    <AppIcon className="ri-add-line text-sm"></AppIcon>
+                    Add group
+                  </button>
                 </div>
-              );
-            })}
+
+                <EntityTable
+                  columns={[
+                    { label: 'Group' },
+                    { label: 'Coach' },
+                    { label: 'Delivery' },
+                    { label: 'Learners', align: 'center' },
+                    { label: 'Modules', align: 'center' },
+                    { label: 'Actions', align: 'right' },
+                  ]}
+                  gridClass={GROUP_GRID}
+                  rows={activeCohort.groups}
+                  rowKey={group => group.id}
+                  empty={(
+                    <EntityEmptyState
+                      icon="ri-team-line"
+                      title="This cohort has no groups"
+                      message="Groups carry the weekly timetable and the coach who supports it. Add one to start scheduling."
+                      action={{ label: 'Add group', onClick: () => setGroupDrawerCohortId(activeCohort.id) }}
+                    />
+                  )}
+                  renderRow={group => (
+                    <>
+                      <StackedCell
+                        href={`/curriculum/groups/${encodeURIComponent(group.id)}`}
+                        primary={group.name}
+                        secondary={[group.startDate, group.endDate].filter(Boolean).join(' – ') || undefined}
+                      />
+                      <StaffSlot
+                        role="Coach"
+                        icon="ri-heart-line"
+                        name={group.coach}
+                        options={data?.coaches || []}
+                        saving={savingAction === `coach:${group.id}`}
+                        onAssign={value => assignGroupCoach(group.id, value)}
+                      />
+                      <PlainCell>{[group.schedule, group.mode].map(value => clean(value)).filter(Boolean).join(' · ') || '—'}</PlainCell>
+                      <PlainCell align="center">{group.learners}</PlainCell>
+                      <PlainCell align="center">{group.modules.length}</PlainCell>
+                      <NamedActions
+                        actions={[{
+                          icon: group.id === selectedGroup ? 'ri-eye-line' : 'ri-graduation-cap-line',
+                          label: 'Learners',
+                          title: group.id === selectedGroup
+                            ? `${group.name}'s learners are shown below`
+                            : `Show the learners enrolment has assigned to ${group.name}`,
+                          primary: group.id === selectedGroup,
+                          disabled: group.id === selectedGroup,
+                          onClick: () => setSelectedGroup(group.id),
+                        }]}
+                      />
+                    </>
+                  )}
+                />
+
+                {activeGroup && (
+                  <WorkspacePanel
+                    title={`Learners in ${activeGroup.name}`}
+                    description="Placed by the enrolment team. Curriculum owns the delivery structure, not the placements, so this is read-only."
+                    actions={(
+                      <button
+                        type="button"
+                        onClick={() => setSelectedGroup('')}
+                        className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+                      >
+                        <AppIcon className="ri-close-line text-sm"></AppIcon>
+                        Hide
+                      </button>
+                    )}
+                  >
+                    <EnrolledLearnersPanel
+                      roster={learnerRoster}
+                      loading={learnerRosterLoading}
+                      error={learnerRosterError}
+                      cohortName={activeCohort.name}
+                      groupName={activeGroup.name}
+                      emptyHint={`No learners have been assigned to ${activeGroup.name} by the enrolment team yet.`}
+                    />
+                  </WorkspacePanel>
+                )}
+              </div>
+            )}
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════════════
-            TAB: Modules
-        ═══════════════════════════════════════════════════════════════════════ */}
+        {/* ═══════════════════════════════════════════════════════════════════
+            Modules — every module at once; each one opens its own workspace
+        ═══════════════════════════════════════════════════════════════════ */}
         {tab === 'modules' && (
-          <div className="space-y-4">
-            <TabToolbar
+          <div className="space-y-5">
+            <EntityFilterBar
               search={moduleSearch}
               onSearch={setModuleSearch}
-              placeholder="Search modules, cohort, group, KSB..."
+              placeholder="Search modules, cohort, group, tutor, KSB..."
               selects={[
                 {
-                  label: 'Filter by cohort',
+                  label: 'Cohort',
                   value: moduleCohortFilter,
                   onChange: setModuleCohortFilter,
-                  options: [
-                    { value: 'all', label: 'All cohorts' },
-                    ...moduleCohorts.map(cohortName => ({ value: cohortName, label: cohortName })),
-                  ],
+                  options: [{ value: '', label: 'All cohorts' }, ...moduleCohorts.map(name => ({ value: name, label: name }))],
                 },
                 {
-                  label: 'Filter by group',
+                  label: 'Group',
                   value: moduleGroupFilter,
                   onChange: setModuleGroupFilter,
-                  options: [
-                    { value: 'all', label: 'All groups' },
-                    ...moduleGroups.map(groupName => ({ value: groupName, label: groupName })),
-                  ],
+                  options: [{ value: '', label: 'All groups' }, ...moduleGroups.map(name => ({ value: name, label: name }))],
                 },
               ]}
-              onReset={() => { setModuleSearch(''); setModuleCohortFilter('all'); setModuleGroupFilter('all'); }}
-              resetDisabled={!moduleSearch && moduleCohortFilter === 'all' && moduleGroupFilter === 'all'}
-              actions={<TabAddButton label="Add module" icon="ri-stack-line" onClick={() => setModuleDrawerOpen(true)} />}
-              summary={`Showing ${filteredModules.length} of ${PROGRAMME.modules.length} modules`}
-            />
-
-            {loading && PROGRAMME.modules.length === 0 && <TabLoadingRows />}
-
-            {!loading && PROGRAMME.modules.length === 0 && (
-              <TabEmptyState
-                icon="ri-stack-line"
-                title="No modules yet"
-                message="Modules carry the weekly content, sessions and OTJH for this programme. Add the first one to start building the curriculum."
-                actionLabel="Add module"
-                onAction={() => setModuleDrawerOpen(true)}
-              />
-            )}
-
-            {!loading && PROGRAMME.modules.length > 0 && filteredModules.length === 0 && (
-              <TabEmptyState
-                icon="ri-filter-off-line"
-                title="No modules match these filters"
-                message="Try a different search term, or reset the filters to see every module on this programme."
-              />
-            )}
-
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            {filteredModules.map(mod => {
-              const weekCount = mod.weeksData.length || mod.weeks || 0;
-              const componentCount = mod.weeksData.reduce((total, week) => total + (week.components?.length || 0), 0);
-              const mappedKsbCodes = uniqueCleanValues([...mod.ksbTags, ...mod.ksbMapping.map(item => item.ksb)]).sort(sortKsbCodes);
-              const weightedKsbCount = mod.ksbMapping.filter(item => item.source !== 'fallback' && Number(item.weight || 0) > 0).length;
-              const mappingOccurrenceCount = mod.ksbMapping.reduce((total, item) => total + Number(item.count || 0), 0);
-              const deliveryStart = clean(mod.weeksData[0]?.startDate);
-              const deliveryEnd = clean(mod.weeksData.at(-1)?.endDate || mod.weeksData.at(-1)?.startDate);
-              const teamsComponent = mod.weeksData
-                .flatMap(week => week.components || [])
-                .find(component => {
-                  const settings = (component.settings || {}) as Record<string, unknown>;
-                  return Boolean(clean(settings.teamsLiveSessionId));
-                });
-              const teamsSettings = (teamsComponent?.settings || {}) as Record<string, unknown>;
-              const teamsLiveSessionId = clean(teamsSettings.teamsLiveSessionId);
-              const teamsJoinUrl = clean(teamsSettings.liveSessionUrl);
-              const builderUrl = moduleBuilderUrl(mod, PROGRAMME);
-              return (
-              <div key={mod.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-[0_16px_42px_rgba(15,23,42,0.08)] transition-smooth hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.12)]">
-                <div className="border-b border-primary-100 bg-[linear-gradient(135deg,#f8f5ff_0%,#ffffff_54%,#effdf7_100%)] px-5 py-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-3">
-                    <span className="w-11 h-11 rounded-xl bg-primary-600 text-white flex items-center justify-center shrink-0 shadow-sm">
-                      <AppIcon className="ri-stack-line text-sm"></AppIcon>
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-base font-heading font-black text-foreground-950">{mod.name}</p>
-                      </div>
-                      <p className="text-[11px] font-semibold text-foreground-500 mt-0.5">{[mod.cohort || 'No cohort', mod.group || 'No group'].join(' - ')}</p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => window.REACT_APP_NAVIGATE(builderUrl)}
-                    className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[10px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
-                    title="Open this module in Module Builder"
-                  >
-                    <AppIcon className="ri-tools-line text-sm"></AppIcon>
-                    Module Builder
-                  </button>
-                </div>
-                {mod.description && <p className="mt-3 text-[12px] leading-5 text-foreground-500">{mod.description}</p>}
-                </div>
-
-                <div className="p-5">
-
-                <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <ModuleCardMetric tone="purple" icon="ri-calendar-line" label="Weeks" value={weekCount} />
-                  <ModuleCardMetric tone="blue" icon="ri-layout-grid-line" label="Components" value={componentCount} />
-                  <ModuleCardMetric tone="emerald" icon="ri-time-line" label="OTJH" value={`${formatHours(mod.otjh)}h`} />
-                  <ModuleCardMetric tone="amber" icon="ri-node-tree" label="KSBs" value={mappedKsbCodes.length} />
-                </div>
-
-                <div className="mb-4 rounded-xl border border-background-200 bg-background-100/70 p-3">
-                <p className="mb-2 text-[10px] font-black uppercase tracking-wide text-foreground-400">Delivery details</p>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  <ModuleDetailLine icon="ri-calendar-event-line" label="Delivery window" value={[deliveryStart, deliveryEnd].filter(Boolean).join(' - ') || 'Not scheduled'} />
-                  <ModuleDetailLine icon="ri-group-line" label="Cohort / Group" value={[mod.cohort || 'No cohort', mod.group || 'No group'].join(' / ')} />
-                  <ModuleDetailLine icon="ri-user-settings-line" label="Tutor" value={mod.tutor || 'Unassigned'} warnWhenUnassigned />
-                </div>
-                </div>
-
-                {teamsLiveSessionId && (
-                  <div className="mb-4 rounded-xl border border-primary-200 bg-primary-50/60 p-3">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="flex min-w-0 items-start gap-2.5">
-                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
-                          <AppIcon className="ri-microsoft-teams-line text-base"></AppIcon>
-                        </span>
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-black text-foreground-900">Attendance and recordings from Teams</p>
-                          <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">Pulled back from Microsoft Teams after each meeting of this module has run.</p>
-                          {teamsJoinUrl && <a href={teamsJoinUrl} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[10px] font-bold text-primary-700 hover:text-primary-800">Open in Teams</a>}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 flex-wrap items-center gap-2">
-                        <button
-                          title="Ask Microsoft Teams for the attendance, transcripts and recordings of every meeting of this module that has already run."
-                          type="button"
-                          disabled={teamsSyncingId === teamsLiveSessionId}
-                          onClick={async () => {
-                            setTeamsSyncingId(teamsLiveSessionId);
-                            setTeamsSyncMessages(previous => ({ ...previous, [teamsLiveSessionId]: '' }));
-                            try {
-                              const result = await syncTeamsMeetingArtifacts(teamsLiveSessionId);
-                              const details = await loadTeamsMeetingArtifacts(teamsLiveSessionId);
-                              setTeamsResults(previous => ({ ...previous, [teamsLiveSessionId]: details }));
-                              setTeamsResultsOpen(previous => ({ ...previous, [teamsLiveSessionId]: true }));
-                              setTeamsSyncMessages(previous => ({
-                                ...previous,
-                                [teamsLiveSessionId]: `Saved ${result.synced.attendanceRecords} attendance records, ${result.synced.transcripts} transcripts and ${result.synced.recordings} recordings.`,
-                              }));
-                            } catch (error) {
-                              setTeamsSyncMessages(previous => ({
-                                ...previous,
-                                [teamsLiveSessionId]: error instanceof Error ? error.message : 'Unable to fetch the attendance and recordings from Teams.',
-                              }));
-                            } finally {
-                              setTeamsSyncingId('');
-                            }
-                          }}
-                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[10px] font-bold text-white hover:bg-primary-700 disabled:cursor-wait disabled:opacity-50"
-                        >
-                          <AppIcon className={`${teamsSyncingId === teamsLiveSessionId ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}`}></AppIcon>
-                          {teamsSyncingId === teamsLiveSessionId ? 'Fetching...' : 'Fetch attendance & recordings'}
-                        </button>
-                        <button
-                          title="Show what has already been fetched from Teams, meeting by meeting."
-                          type="button"
-                          disabled={teamsSyncingId === teamsLiveSessionId}
-                          onClick={async () => {
-                            if (teamsResults[teamsLiveSessionId]) {
-                              setTeamsResultsOpen(previous => ({ ...previous, [teamsLiveSessionId]: !previous[teamsLiveSessionId] }));
-                              return;
-                            }
-                            setTeamsSyncingId(teamsLiveSessionId);
-                            try {
-                              const details = await loadTeamsMeetingArtifacts(teamsLiveSessionId);
-                              setTeamsResults(previous => ({ ...previous, [teamsLiveSessionId]: details }));
-                              setTeamsResultsOpen(previous => ({ ...previous, [teamsLiveSessionId]: true }));
-                            } catch (error) {
-                              setTeamsSyncMessages(previous => ({
-                                ...previous,
-                                [teamsLiveSessionId]: error instanceof Error ? error.message : 'Unable to load the saved Teams detail.',
-                              }));
-                            } finally {
-                              setTeamsSyncingId('');
-                            }
-                          }}
-                          className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-white px-3 text-[10px] font-bold text-primary-700 hover:bg-primary-50 disabled:cursor-wait disabled:opacity-50"
-                        >
-                          <AppIcon className={teamsResultsOpen[teamsLiveSessionId] ? 'ri-arrow-up-s-line' : 'ri-eye-line'}></AppIcon>
-                          {teamsResultsOpen[teamsLiveSessionId] ? 'Hide per-meeting detail' : 'View per-meeting detail'}
-                        </button>
-                      </div>
-                    </div>
-                    {teamsSyncMessages[teamsLiveSessionId] && <p className="mt-2 rounded-lg bg-white/80 px-2.5 py-2 text-[10px] font-semibold text-foreground-600">{teamsSyncMessages[teamsLiveSessionId]}</p>}
-                    {teamsResultsOpen[teamsLiveSessionId] && teamsResults[teamsLiveSessionId] && (
-                      <TeamsResultsDetails liveSessionId={teamsLiveSessionId} data={teamsResults[teamsLiveSessionId]} />
-                    )}
-                  </div>
-                )}
-
-                <div className="mb-4 rounded-xl border border-primary-100 bg-primary-50/50 px-3 py-2">
-                  <div className="grid grid-cols-3 gap-2 text-center">
-                    <MiniDarkMetric label="Weighted KSBs" value={weightedKsbCount} />
-                    <MiniDarkMetric label="Mappings" value={mappingOccurrenceCount} />
-                    <MiniDarkMetric label="KSB tags" value={mappedKsbCodes.length} />
-                  </div>
-                </div>
-
-                <div className="mb-4">
-                  <p className="text-[11px] font-semibold text-foreground-400 uppercase mb-2">KSBs in this module</p>
-                  <KsbGroupedTags codes={mappedKsbCodes} />
-                </div>
-
-                <div className="mb-4">
-                  <p className="text-[11px] font-semibold text-foreground-400 uppercase mb-2">KSB Coverage</p>
-                  <p className="mb-2 text-[10px] font-medium text-foreground-400">Percentages are saved Module Builder weights. No weight means the KSB is linked, but its weight is 0 or not set yet.</p>
-                  <KsbCoverageGroups mapping={mod.ksbMapping} />
-                </div>
-
-                <div>
-                  <p className="text-[11px] font-semibold text-foreground-400 uppercase mb-2">Week breakdown</p>
-                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-                    {mod.weeksData.map(week => {
-                      const weekComponents = week.components || [];
-                      const weekKsbCount = uniqueCleanValues(weekComponents.flatMap(component => component.ksbRefs || [])).length;
-                      const weekTeamsUrl = clean(
-                        ((weekComponents.find(component => {
-                          const settings = (component.settings || {}) as Record<string, unknown>;
-                          return deliveryKindForComponent(component) === 'live' && clean(settings.liveSessionUrl);
-                        })?.settings || {}) as Record<string, unknown>).liveSessionUrl,
-                      );
-                      const weekKey = `${mod.id}:${week.id}`;
-                      const isWeekOpen = expandedModuleWeek === weekKey;
-                      return (
-                        <div key={week.id} className={`overflow-hidden rounded-lg border bg-background-50 transition-smooth ${isWeekOpen ? 'border-primary-300 shadow-sm sm:col-span-2' : 'border-background-200 hover:border-primary-200'}`}>
-                          <button type="button" onClick={() => setExpandedModuleWeek(isWeekOpen ? null : weekKey)} className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left">
-                            <div className="min-w-0">
-                              <p className="truncate text-[11px] font-bold text-foreground-800">{week.title || `Week ${week.number}`}</p>
-                              <p className="truncate text-[10px] text-foreground-400">{clean(week.startDate) || 'No date'}</p>
-                            {weekTeamsUrl && (
-                              <a href={weekTeamsUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-primary-700 hover:text-primary-800 hover:underline">
-                                <AppIcon className="ri-microsoft-teams-line"></AppIcon>
-                                Join Teams session
-                              </a>
-                            )}
-                            </div>
-                            <div className="flex shrink-0 items-center gap-1.5">
-                              <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700">{formatHours(week.otjh)}h</span>
-                              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{weekComponents.length} comp</span>
-                              <span className="rounded-full bg-secondary-50 px-2 py-0.5 text-[9px] font-bold text-secondary-700">{weekKsbCount} KSB</span>
-                              <AppIcon className={`ri-arrow-down-s-line text-sm text-foreground-400 transition-smooth ${isWeekOpen ? 'rotate-180 text-primary-600' : ''}`}></AppIcon>
-                            </div>
-                          </button>
-                          {isWeekOpen && (
-                            <div className="border-t border-background-200 bg-background-100/60 p-3">
-                              <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                <MiniDarkMetric label="Start" value={clean(week.startDate) || 'TBD'} />
-                                <MiniDarkMetric label="End" value={clean(week.endDate) || 'TBD'} />
-                                <MiniDarkMetric label="Components" value={weekComponents.length} />
-                                <MiniDarkMetric label="KSBs" value={weekKsbCount} />
-                              </div>
-                              <div className="space-y-2">
-                                {weekComponents.length ? weekComponents.map((component, index) => (
-                                  <div key={component.id} className="flex items-center gap-3 rounded-lg border border-background-200 bg-background-50 p-2.5">
-                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-[11px] font-black text-primary-700">{index + 1}</span>
-                                    <div className="min-w-0 flex-1">
-                                      <p className="truncate text-[12px] font-black text-foreground-900">{component.title || 'Untitled component'}</p>
-                                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                        <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(Number(component.expectedOtjh ?? 0))}h OTJH</span>
-                                        {component.duration ? <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{component.duration} min</span> : null}
-                                        {component.ksbRefs?.length ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => setKsbInspector({ codes: component.ksbRefs || [], componentTitle: component.title || 'Untitled component' })}
-                                            className="cursor-pointer rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 transition-smooth hover:bg-amber-100"
-                                          >
-                                            {component.ksbRefs.length} KSBs
-                                          </button>
-                                        ) : null}
-                                      </div>
-                                    </div>
-                                  </div>
-                                )) : (
-                                  <div className="rounded-lg border border-dashed border-background-300 bg-background-50 px-3 py-5 text-center">
-                                    <AppIcon className="ri-inbox-line text-lg text-foreground-300"></AppIcon>
-                                    <p className="mt-1 text-[11px] font-bold text-foreground-500">No components attached to this week yet.</p>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                </div>
-
-              </div>
-              );
-            })}
-            </div>
-          </div>
-        )}
-
-        {/* ═══════════════════════════════════════════════════════════════════════
-            TAB: Weeks
-        ═══════════════════════════════════════════════════════════════════════ */}
-{tab === 'weeks' && PROGRAMME.modules.length === 0 && (
-          loading ? <TabLoadingRows /> : (
-            <TabEmptyState
-              icon="ri-calendar-line"
-              title="No weeks to show yet"
-              message="Weeks belong to a module. Add a module to this programme and its weekly plan will appear here."
-              actionLabel="Add module"
-              onAction={() => setModuleDrawerOpen(true)}
-            />
-          )
-        )}
-
-        {tab === 'weeks' && PROGRAMME.modules.length > 0 && (
-          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
-            <aside className="space-y-4">
-              <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">Module workspace</p>
-                    <h3 className="text-base font-heading font-black text-foreground-950">Choose module</h3>
-                  </div>
-                  <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] font-bold text-primary-700">{weekModuleOptions.length} modules</span>
-                </div>
-                <select
-                  value={selectedModule}
-                  onChange={event => {
-                    const nextModule = PROGRAMME.modules.find(m => m.id === event.target.value);
-                    setSelectedModule(event.target.value);
-                    setSelectedWeek(nextModule?.weeksData[0]?.id || '');
-                  }}
-                  className="mb-3 w-full h-11 rounded-xl border border-primary-200 bg-background-50 px-3 text-[13px] font-bold text-foreground-900 outline-none ring-primary-100 transition-smooth focus:ring-4"
+              onReset={() => { setModuleSearch(''); setModuleCohortFilter(''); setModuleGroupFilter(''); }}
+              summary={`Showing ${filteredModules.length} of ${PROGRAMME.modules.length} modules · content, Teams meetings and KSB weights open in the module`}
+              trailing={(
+                <button
+                  type="button"
+                  onClick={() => setModuleDrawerOpen(true)}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
                 >
-                  {weekModuleOptions.map(option => (
-                    <option key={option.id} value={option.id}>
-                      {option.name} - {[option.cohort, option.group].filter(Boolean).join(' / ') || 'No cohort/group'}
-                    </option>
-                  ))}
-                </select>
-                <div className="space-y-2">
-                  {weekModuleOptions.map(option => {
-                    const optionComponents = option.weeksData.reduce((sum, item) => sum + (item.components?.length ?? 0), 0);
-                    const active = option.id === module.id;
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        onClick={() => {
-                          setSelectedModule(option.id);
-                          setSelectedWeek(option.weeksData[0]?.id || '');
-                        }}
-                        className={`w-full rounded-xl border p-3 text-left transition-smooth ${active ? 'border-primary-300 bg-primary-50 shadow-sm' : 'border-background-200 bg-background-100 hover:border-primary-200 hover:bg-primary-50/40'}`}
-                      >
-                        <div className="flex items-start gap-3">
-                          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${active ? 'bg-primary-600 text-white' : 'bg-background-50 text-primary-600'}`}>
-                            <AppIcon className="ri-stack-line text-sm"></AppIcon>
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[13px] font-black text-foreground-950">{option.name}</p>
-                            <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">{option.cohort || 'No cohort'} / {option.group || 'No group'}</p>
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-primary-700">{option.weeksData.length || option.weeks} weeks</span>
-                              <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-sky-700">{optionComponents} comp</span>
-                              <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(option.otjh)}h</span>
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </aside>
+                  <AppIcon className="ri-add-line text-sm"></AppIcon>
+                  Add module
+                </button>
+              )}
+            />
 
-            <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-              <div className="border-b border-primary-100 bg-[linear-gradient(135deg,#f8f5ff_0%,#ffffff_50%,#ecfdf5_100%)] p-5">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <span className="rounded-full bg-primary-600 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-white">Selected module</span>
-                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-bold ${moduleStatusColors[module.status] || moduleStatusColors.draft}`}>{module.status || 'draft'}</span>
-                    </div>
-                    <h2 className="text-xl font-heading font-black text-foreground-950">{module.name}</h2>
-                    <p className="mt-1 text-[12px] font-semibold text-foreground-500">{module.description || 'No module description configured.'}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => window.REACT_APP_NAVIGATE(moduleBuilderUrl(module, PROGRAMME))}
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-700"
-                  >
-                    <AppIcon className="ri-tools-line text-sm"></AppIcon>
-                    Open Module Builder
-                  </button>
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
-                  <ModuleCardMetric icon="ri-calendar-line" label="Weeks" value={module.weeksData.length || module.weeks} />
-                  <ModuleCardMetric tone="blue" icon="ri-layout-grid-line" label="Components" value={module.weeksData.reduce((sum, item) => sum + (item.components?.length ?? 0), 0)} />
-                  <ModuleCardMetric tone="emerald" icon="ri-time-line" label="OTJH" value={`${formatHours(module.otjh)}h`} />
-                  <ModuleCardMetric tone="amber" icon="ri-node-tree" label="KSBs" value={uniqueCleanValues(module.weeksData.flatMap(item => (item.components || []).flatMap(component => component.ksbRefs || []))).length} />
-                </div>
-              </div>
-
-              <div className="border-b border-background-200 bg-background-50 p-5">
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  <ModuleDetailLine icon="ri-group-line" label="Cohort / Group" value={[module.cohort || 'No cohort', module.group || 'No group'].join(' / ')} />
-                  <ModuleDetailLine icon="ri-user-settings-line" label="Tutor" value={module.tutor || 'Unassigned'} warnWhenUnassigned />
-                </div>
-              </div>
-
-              <div className="p-5">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Week timeline</p>
-                    <h3 className="text-base font-heading font-black text-foreground-950">{module.weeksData.length} scheduled weeks</h3>
-                  </div>
-                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-black text-emerald-700">{formatHours(module.otjh)}h total OTJH</span>
-                </div>
-
-                <div className="relative space-y-3">
-                  <div className="absolute bottom-6 left-[22px] top-6 w-px bg-primary-100" aria-hidden="true" />
-                  {filteredWeeks.map(w => {
-                    const weekComponents = w.components ?? [];
-                    const weekKsbCount = uniqueCleanValues(weekComponents.flatMap(component => component.ksbRefs || [])).length;
-                    const isOpen = selectedWeek === w.id;
-                    return (
-                      <div key={w.id} className={`relative overflow-hidden rounded-2xl border bg-background-50 transition-smooth ${isOpen ? 'border-primary-300 shadow-[0_14px_40px_rgba(105,65,198,0.12)]' : 'border-foreground-200/70 hover:border-primary-200 hover:shadow-sm'}`}>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedWeek(isOpen ? '' : w.id)}
-                          className="flex w-full items-center gap-4 p-4 text-left"
-                        >
-                          <span className={`relative z-10 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[12px] font-black ${isOpen ? 'bg-primary-600 text-white' : 'bg-primary-50 text-primary-700'}`}>
-                            W{w.number}
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <p className="text-sm font-heading font-black text-foreground-950">{w.title || `Week ${w.number}`}</p>
-                              <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{w.startDate} - {w.endDate}</span>
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{formatHours(w.otjh)}h OTJH</span>
-                              <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-bold text-sky-700">{weekComponents.length} components</span>
-                              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">{weekKsbCount} KSBs</span>
-                            </div>
-                          </div>
-                          <AppIcon className={`ri-arrow-down-s-line text-lg text-foreground-400 transition-smooth ${isOpen ? 'rotate-180 text-primary-600' : ''}`}></AppIcon>
-                        </button>
-                        {isOpen && (
-                          <div className="border-t border-background-200 bg-background-100/60 px-4 pb-4 pt-3">
-                            <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                              {weekComponents.length > 0 ? weekComponents.map((component, i) => {
-                                const componentSettings = (component.settings || {}) as Record<string, unknown>;
-                                const componentTeamsUrl = deliveryKindForComponent(component) === 'live'
-                                  ? clean(componentSettings.liveSessionUrl)
-                                  : '';
-                                return (
-                                  <div key={component.id} className="flex items-center gap-3 rounded-xl border border-background-200 bg-background-50 p-3 shadow-sm">
-                                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-[11px] font-black text-primary-700">{i + 1}</span>
-                                    <div className="min-w-0 flex-1">
-                                      <p className="truncate text-[12px] font-black text-foreground-900">{component.title || 'Untitled component'}</p>
-                                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                                        <span className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(Number(component.expectedOtjh ?? 0))}h OTJH</span>
-                                        {component.duration ? <span className="rounded-full bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-500">{component.duration} min</span> : null}
-                                        {component.ksbRefs?.length ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => setKsbInspector({ codes: component.ksbRefs || [], componentTitle: component.title || 'Untitled component' })}
-                                            className="cursor-pointer rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-bold text-amber-700 transition-smooth hover:bg-amber-100"
-                                          >
-                                            {component.ksbRefs.length} KSBs
-                                          </button>
-                                        ) : null}
-                                      </div>
-                                      {componentTeamsUrl && (
-                                        <a href={componentTeamsUrl} target="_blank" rel="noreferrer" className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-lg bg-primary-600 px-2.5 text-[10px] font-bold text-white hover:bg-primary-700">
-                                          <AppIcon className="ri-microsoft-teams-line"></AppIcon>
-                                          Join Teams session
-                                        </a>
-                                      )}
-                                    </div>
-                                    <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${moduleStatusColors[component.status] || moduleStatusColors.draft}`}>{component.status}</span>
-                                  </div>
-                                );
-                              }) : (
-                                <div className="lg:col-span-2 rounded-xl border border-dashed border-background-300 bg-background-50 px-4 py-8 text-center">
-                                  <AppIcon className="ri-inbox-line text-xl text-foreground-300"></AppIcon>
-                                  <p className="mt-2 text-[12px] font-bold text-foreground-500">No components attached to this week yet.</p>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
+            <EntityTable
+              columns={[
+                { label: 'Module' },
+                { label: 'Cohort / Group' },
+                { label: 'Tutor' },
+                { label: 'Weeks', align: 'center' },
+                { label: 'Components', align: 'center' },
+                { label: 'OTJH', align: 'center' },
+                { label: 'KSBs', align: 'center' },
+                { label: 'Actions', align: 'right' },
+              ]}
+              gridClass={MODULE_GRID}
+              rows={filteredModules}
+              rowKey={mod => mod.id}
+              loading={loading && !PROGRAMME.modules.length}
+              empty={(
+                <EntityEmptyState
+                  icon={PROGRAMME.modules.length ? 'ri-filter-off-line' : 'ri-stack-line'}
+                  title={PROGRAMME.modules.length ? 'No modules match these filters' : 'No modules yet'}
+                  message={PROGRAMME.modules.length
+                    ? 'Clear a filter, or search for a different module.'
+                    : 'Modules carry the weekly content, sessions and OTJH for this programme. Add the first one to start building the curriculum.'}
+                  action={PROGRAMME.modules.length ? undefined : { label: 'Add module', onClick: () => setModuleDrawerOpen(true) }}
+                />
+              )}
+              renderRow={mod => {
+                const componentCount = mod.weeksData.reduce((total, wk) => total + (wk.components?.length || 0), 0);
+                const ksbCount = uniqueCleanValues([...mod.ksbTags, ...mod.ksbMapping.map(item => item.ksb)]).length;
+                const workspaceUrl = moduleWorkspaceUrl(mod);
+                const unlinked = unlinkedModules.some(item => item.id === mod.id);
+                return (
+                  <>
+                    <StackedCell
+                      href={workspaceUrl || undefined}
+                      primary={mod.name}
+                      secondary={[
+                        mod.weeksData[0]?.startDate,
+                        mod.weeksData.at(-1)?.endDate || mod.weeksData.at(-1)?.startDate,
+                      ].filter(Boolean).join(' – ') || 'Not scheduled'}
+                    />
+                    <StackedCell
+                      primary={(
+                        <span className="flex items-center gap-1.5">
+                          {clean(mod.cohort, 'No cohort')}
+                          {unlinked && (
+                            <span
+                              title="This cohort is not a cohort record on this programme."
+                              className="rounded-full border border-rose-200 bg-rose-50 px-1.5 text-[9px] font-bold uppercase text-rose-700"
+                            >
+                              unlinked
+                            </span>
+                          )}
+                        </span>
+                      )}
+                      secondary={clean(mod.group, 'No group')}
+                    />
+                    <PlainCell>
+                      {isStaffAssigned(mod.tutor)
+                        ? clean(mod.tutor)
+                        : <span className="font-bold text-amber-700">Unassigned</span>}
+                    </PlainCell>
+                    <PlainCell align="center">{mod.weeksData.length || mod.weeks || 0}</PlainCell>
+                    <PlainCell align="center">{componentCount}</PlainCell>
+                    <PlainCell align="center">{formatHours(mod.otjh)}h</PlainCell>
+                    <PlainCell align="center">{ksbCount}</PlainCell>
+                    <NamedActions
+                      actions={[{
+                        icon: 'ri-tools-line',
+                        label: 'Builder',
+                        title: `Author ${mod.name}'s weeks and components in the Module Builder`,
+                        onClick: () => navigate(moduleBuilderUrl(mod, PROGRAMME)),
+                      }]}
+                    />
+                  </>
+                );
+              }}
+            />
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════════════
-            TAB: Sessions
-        ═══════════════════════════════════════════════════════════════════════ */}
+        {/* ═══════════════════════════════════════════════════════════════════
+            Sessions — every live session and recording across every module
+        ═══════════════════════════════════════════════════════════════════ */}
         {tab === 'sessions' && (
-          <div className="space-y-4">
-            {/* Live / Recorded toggle */}
-            <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-              <div className="inline-flex rounded-xl border border-foreground-200/70 bg-background-100 p-1">
-                <button onClick={() => setSessionKind('live')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold transition-smooth cursor-pointer ${sessionKind === 'live' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:text-foreground-900'}`}>
-                  <AppIcon className="ri-broadcast-line text-sm"></AppIcon>
-                  Live
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${sessionKind === 'live' ? 'bg-white/20 text-white' : 'bg-foreground-100 text-foreground-500'}`}>{liveSessions.length}</span>
-                </button>
-                <button onClick={() => setSessionKind('recorded')} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold transition-smooth cursor-pointer ${sessionKind === 'recorded' ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:text-foreground-900'}`}>
-                  <AppIcon className="ri-film-line text-sm"></AppIcon>
-                  Recorded
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${sessionKind === 'recorded' ? 'bg-white/20 text-white' : 'bg-foreground-100 text-foreground-500'}`}>{recordedSessions.length}</span>
-                </button>
+          <div className="space-y-5">
+            <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="inline-flex rounded-xl border border-background-200 bg-background-100 p-1">
+                {([
+                  { kind: 'live' as const, label: 'Live', icon: 'ri-broadcast-line', count: liveSessions.length },
+                  { kind: 'recorded' as const, label: 'Recorded', icon: 'ri-film-line', count: recordedSessions.length },
+                ]).map(option => (
+                  <button
+                    key={option.kind}
+                    type="button"
+                    onClick={() => setSessionKind(option.kind)}
+                    aria-pressed={sessionKind === option.kind}
+                    className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[12px] font-bold transition-smooth ${
+                      sessionKind === option.kind ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:text-foreground-900'
+                    }`}
+                  >
+                    <AppIcon className={`${option.icon} text-sm`}></AppIcon>
+                    {option.label}
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${sessionKind === option.kind ? 'bg-white/20 text-white' : 'bg-foreground-100 text-foreground-500'}`}>
+                      {option.count}
+                    </span>
+                  </button>
+                ))}
               </div>
               <p className="text-[12px] leading-5 text-foreground-500 sm:max-w-md sm:text-right">
                 {sessionKind === 'live'
-                  ? 'Microsoft Teams sessions with scheduling, attendance and recording information.'
-                  : 'Recorded learning with provider, KSB coverage and watch-time information.'}
+                  ? 'Microsoft Teams sessions across every module on this programme. Attendance and recordings are fetched in the module that owns the meeting.'
+                  : 'Recorded learning across every module on this programme, with its provider and watch requirements.'}
               </p>
             </div>
 
-            <TabToolbar
+            <EntityFilterBar
               search={sessionSearch}
               onSearch={setSessionSearch}
               placeholder={sessionKind === 'live' ? 'Search sessions, dates, groups or KSBs...' : 'Search videos, providers, modules or KSBs...'}
               selects={[{
-                label: 'Filter by module',
+                label: 'Module',
                 value: sessionModuleFilter,
                 onChange: setSessionModuleFilter,
-                options: [
-                  { value: 'all', label: 'All modules' },
-                  ...sessionModules.map(name => ({ value: name, label: name })),
-                ],
+                options: [{ value: '', label: 'All modules' }, ...sessionModules.map(name => ({ value: name, label: name }))],
               }]}
-              onReset={() => { setSessionSearch(''); setSessionModuleFilter('all'); }}
-              resetDisabled={!sessionSearch && sessionModuleFilter === 'all'}
-              summary={`Showing ${filteredSessions.length} of ${activeSessions.length} ${sessionKind === 'live' ? 'live sessions' : 'recorded videos'}`}
-              actions={(
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-[11px] font-semibold uppercase text-foreground-400">Show</span>
+              onReset={() => { setSessionSearch(''); setSessionModuleFilter(''); }}
+              summary={`Showing ${filteredSessions.length === 0 ? 0 : sessionStartIndex + 1}–${Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of ${filteredSessions.length} ${sessionKind === 'live' ? 'live sessions' : 'recordings'}`}
+              trailing={(
+                <label className="flex items-center gap-2">
+                  <span className="text-[11px] font-semibold uppercase text-foreground-400">Rows</span>
                   <select
                     value={sessionPageSize}
                     onChange={event => setSessionPageSize(Number(event.target.value))}
                     aria-label="Rows per page"
-                    className="h-10 cursor-pointer rounded-lg border border-background-200 bg-background-50 px-2 text-[12px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                    className="h-10 cursor-pointer rounded-lg border border-background-200 bg-background-50 px-2 text-[12px] text-foreground-900 outline-none focus:border-primary-300"
                   >
                     {[25, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
                   </select>
-                </div>
+                </label>
               )}
             />
 
-            {activeSessions.length === 0 ? (
-              <EmptyPanel
-                title={sessionKind === 'live' ? 'No live sessions yet' : 'No recorded videos yet'}
-                message={sessionKind === 'live'
-                  ? 'Add a Live Teams Session component to a week in the module builder and it will appear here.'
-                  : 'Add a Video component to a week in the module builder and it will appear here.'}
-              />
-            ) : (
-              <div className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-                <div className="flex flex-col gap-3 border-b border-foreground-200/60 bg-[linear-gradient(135deg,#faf8ff_0%,#ffffff_60%,#f0fdf8_100%)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">{sessionKind === 'live' ? 'Teams delivery schedule' : 'Recorded learning library'}</p>
-                    <p className="mt-1 text-[12px] font-semibold text-foreground-600">
-                      Showing {filteredSessions.length === 0 ? 0 : sessionStartIndex + 1} - {Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of {filteredSessions.length}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <span className="inline-flex items-center gap-1.5 rounded-full border border-primary-100 bg-white px-3 py-1.5 text-[10px] font-bold text-primary-700">
-                      <AppIcon className={sessionKind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'}></AppIcon>
-                      {activeSessions.length} {sessionKind === 'live' ? 'scheduled sessions' : 'recordings'}
-                    </span>
-                    {sessionKind === 'live' && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-100 bg-white px-3 py-1.5 text-[10px] font-bold text-emerald-700">
-                        <AppIcon className="ri-links-line"></AppIcon>
-                        {liveSessions.filter(session => session.url).length} join links ready
+            <EntityTable
+              columns={[
+                { label: sessionKind === 'live' ? 'Session' : 'Recording' },
+                { label: 'Module / Week' },
+                { label: sessionKind === 'live' ? 'Scheduled' : 'Provider' },
+                { label: 'Length', align: 'center' },
+                { label: 'Groups' },
+                { label: 'Actions', align: 'right' },
+              ]}
+              gridClass={SESSION_GRID}
+              rows={pagedSessions}
+              rowKey={session => session.id}
+              loading={loading && !deliverySessions.length}
+              empty={(
+                <EntityEmptyState
+                  icon={activeSessions.length ? 'ri-filter-off-line' : sessionKind === 'live' ? 'ri-broadcast-line' : 'ri-film-line'}
+                  title={activeSessions.length
+                    ? 'No rows match these filters'
+                    : sessionKind === 'live' ? 'No live sessions yet' : 'No recorded videos yet'}
+                  message={activeSessions.length
+                    ? 'Clear a filter, or search for a different session.'
+                    : sessionKind === 'live'
+                      ? 'Add a Live Teams Session component to a week in the Module Builder and it will appear here.'
+                      : 'Add a Video component to a week in the Module Builder and it will appear here.'}
+                />
+              )}
+              renderRow={session => (
+                <>
+                  <StackedCell
+                    primary={(
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${session.kind === 'live' ? 'bg-primary-50 text-primary-600' : 'bg-sky-50 text-sky-700'}`}>
+                          <AppIcon className={`${session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'} text-[11px]`}></AppIcon>
+                        </span>
+                        <span className="min-w-0 truncate">{session.title}</span>
                       </span>
                     )}
-                  </div>
-                </div>
-                <div className="divide-y divide-background-200/60">
-                  {pagedSessions.map(session => (
-                    <article key={session.id} className="grid gap-4 px-5 py-4 transition-smooth hover:bg-primary-50/30 lg:grid-cols-[minmax(260px,1.5fr)_minmax(180px,1fr)_170px_120px_150px] lg:items-center">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${session.kind === 'live' ? 'bg-primary-600 text-white' : 'bg-sky-100 text-sky-700'}`}>
-                          <AppIcon className={session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'}></AppIcon>
-                        </span>
-                        <div className="min-w-0">
-                          <p className="truncate text-[13px] font-black text-foreground-950">{session.title}</p>
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {session.kind === 'live' && session.attendanceRequired && <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold text-primary-700"><AppIcon className="ri-user-follow-line mr-1"></AppIcon>Attendance tracked</span>}
-                            {session.kind === 'live' && session.recordingExpected && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[9px] font-bold text-rose-700"><AppIcon className="ri-record-circle-line mr-1"></AppIcon>Recording enabled</span>}
-                            {session.kind === 'recorded' && session.ksbRefs.slice(0, 3).map(code => <KsbBadge key={code} code={code} compact />)}
-                          </div>
-                        </div>
-                      </div>
+                    secondary={session.kind === 'live'
+                      ? [session.attendanceRequired ? 'Attendance tracked' : '', session.recordingExpected ? 'Recording enabled' : ''].filter(Boolean).join(' · ') || undefined
+                      : session.ksbRefs.slice(0, 4).join(', ') || undefined}
+                  />
+                  <StackedCell primary={session.module} secondary={`Week ${session.week} · ${session.weekTitle}`} />
+                  <StackedCell
+                    primary={session.kind === 'live'
+                      ? formatDateLabel(session.date) || 'Date to be confirmed'
+                      : clean(session.provider, 'Provider not set')}
+                    secondary={session.kind === 'live' ? (session.time || 'Time to be confirmed') : 'Recorded content'}
+                  />
+                  <PlainCell align="center">{session.durationMinutes ? `${session.durationMinutes}m` : '—'}</PlainCell>
+                  <PlainCell>{session.groups.length ? session.groups.join(', ') : 'All assigned groups'}</PlainCell>
+                  <span className="flex items-center justify-end gap-2 self-center">
+                    <StatusBadge status={session.status} />
+                    {session.url && (
+                      <a
+                        href={session.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={session.kind === 'live' ? 'Join this meeting in Microsoft Teams' : 'Open this recording'}
+                        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-primary-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+                      >
+                        <AppIcon className={`${session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-play-circle-line'} text-sm`}></AppIcon>
+                        {session.kind === 'live' ? 'Join' : 'Watch'}
+                      </a>
+                    )}
+                  </span>
+                </>
+              )}
+            />
 
-                      <div className="min-w-0">
-                        <p className="truncate text-[11px] font-bold text-foreground-800">{session.module}</p>
-                        <p className="mt-1 text-[10px] font-semibold text-foreground-400">Week {session.week} · {session.weekTitle || `Week ${session.week}`}</p>
-                        <p className="mt-1 truncate text-[10px] text-foreground-500">
-                          <AppIcon className="ri-group-line mr-1 text-primary-500"></AppIcon>
-                          {session.groups.length ? session.groups.join(', ') : 'All assigned groups'}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl border border-background-200 bg-background-100/70 px-3 py-2">
-                        {session.kind === 'live' ? (
-                          <>
-                            <p className="text-[11px] font-black text-foreground-800">{formatDateLabel(session.date)}</p>
-                            <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">{session.time || 'Time to be confirmed'}</p>
-                          </>
-                        ) : (
-                          <>
-                            <p className="truncate text-[11px] font-black text-foreground-800">{session.provider || 'Provider not set'}</p>
-                            <p className="mt-0.5 text-[10px] font-semibold text-foreground-500">Recorded content</p>
-                          </>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2 lg:flex-col lg:items-start">
-                        <span className="text-[11px] font-bold text-foreground-700"><AppIcon className="ri-time-line mr-1 text-foreground-400"></AppIcon>{session.durationMinutes ? `${session.durationMinutes} min` : 'Duration TBC'}</span>
-                        <span className={`rounded-full border px-2.5 py-1 text-[9px] font-bold capitalize ${componentStatusColors[session.status] || componentStatusColors.draft}`}>{session.status}</span>
-                      </div>
-
-                      <div className="flex lg:justify-end">
-                        {session.url ? (
-                          <a href={session.url} target="_blank" rel="noreferrer" className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[11px] font-black text-white shadow-sm transition-smooth hover:bg-primary-700 lg:w-auto">
-                            <AppIcon className={session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-play-circle-line'}></AppIcon>
-                            {session.kind === 'live' ? 'Join meeting' : 'Open recording'}
-                            <AppIcon className="ri-external-link-line text-[10px] opacity-80"></AppIcon>
-                          </a>
-                        ) : (
-                          <span className="inline-flex h-10 items-center rounded-xl border border-dashed border-background-300 px-3 text-[10px] font-semibold text-foreground-400">Link not available</span>
-                        )}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-                <div className="flex items-center justify-center gap-3 px-4 py-3 border-t border-foreground-200/60">
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setSessionPage(1)} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <AppIcon className="ri-skip-left-line text-xs"></AppIcon>
-                    </button>
-                    <button onClick={() => setSessionPage(page => Math.max(1, page - 1))} disabled={currentSessionPage === 1} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <AppIcon className="ri-arrow-left-s-line text-sm"></AppIcon>
-                    </button>
-                    <span className="px-4 text-[12px] font-semibold text-foreground-800">Page {currentSessionPage} of {sessionPageCount}</span>
-                    <button onClick={() => setSessionPage(page => Math.min(sessionPageCount, page + 1))} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <AppIcon className="ri-arrow-right-s-line text-sm"></AppIcon>
-                    </button>
-                    <button onClick={() => setSessionPage(sessionPageCount)} disabled={currentSessionPage === sessionPageCount} className="w-8 h-8 rounded-lg border border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed">
-                      <AppIcon className="ri-skip-right-line text-xs"></AppIcon>
-                    </button>
-                  </div>
-                </div>
+            {sessionPageCount > 1 && (
+              <div className="flex items-center justify-center gap-1 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => setSessionPage(1)}
+                  disabled={currentSessionPage === 1}
+                  aria-label="First page"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <AppIcon className="ri-skip-left-line text-xs"></AppIcon>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSessionPage(page => Math.max(1, page - 1))}
+                  disabled={currentSessionPage === 1}
+                  aria-label="Previous page"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <AppIcon className="ri-arrow-left-s-line text-sm"></AppIcon>
+                </button>
+                <span className="px-4 text-[12px] font-semibold text-foreground-800">Page {currentSessionPage} of {sessionPageCount}</span>
+                <button
+                  type="button"
+                  onClick={() => setSessionPage(page => Math.min(sessionPageCount, page + 1))}
+                  disabled={currentSessionPage === sessionPageCount}
+                  aria-label="Next page"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <AppIcon className="ri-arrow-right-s-line text-sm"></AppIcon>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSessionPage(sessionPageCount)}
+                  disabled={currentSessionPage === sessionPageCount}
+                  aria-label="Last page"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <AppIcon className="ri-skip-right-line text-xs"></AppIcon>
+                </button>
               </div>
             )}
           </div>
         )}
 
-        {/* ═══════════════════════════════════════════════════════════════════════
-            TAB: KSB Heatmap
-        ═══════════════════════════════════════════════════════════════════════ */}
+        {/* ═══════════════════════════════════════════════════════════════════
+            KSB coverage — the programme-wide roll-up, which exists nowhere else
+        ═══════════════════════════════════════════════════════════════════ */}
         {tab === 'ksb' && (
-          <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
-            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">KSB Coverage Heatmap</h3>
-                <p className="text-[12px] text-foreground-400 mt-1">Rolled up from component KSB mappings into weeks, modules and programme coverage. Empty cells indicate the KSB is not addressed in that module.</p>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="inline-flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700">
-                    <AppIcon className="ri-bookmark-3-line text-sm"></AppIcon>
-                    {coverageKsbSource.sourceId
-                      ? `Showing KSBs from: ${coverageKsbSourceLabel || coverageKsbSource.sourceId}`
-                      : 'No KSB source applied to this programme'}
-                  </span>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={() => window.REACT_APP_NAVIGATE(`/curriculum/module-builder?programme=${encodeURIComponent(PROGRAMME.name)}`)} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700">
-                  <AppIcon className="ri-tools-line text-sm"></AppIcon>
-                  Edit component weights
+          <WorkspacePanel
+            title="KSB coverage heatmap"
+            description="Component KSB mappings rolled up into weeks, modules and programme coverage. An empty cell means the KSB is not addressed in that module."
+            actions={(
+              <>
+                <button
+                  type="button"
+                  onClick={() => setKsbTraceOpen(true)}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+                >
+                  <AppIcon className="ri-bar-chart-box-line text-sm"></AppIcon>
+                  Coverage details
                 </button>
-                <button onClick={() => window.REACT_APP_NAVIGATE('/curriculum/ksb-mapping')} className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 transition-smooth hover:bg-background-100">
+                <button
+                  type="button"
+                  onClick={() => navigate(moduleBuilderProgrammeUrl)}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
+                >
+                  <AppIcon className="ri-tools-line text-sm"></AppIcon>
+                  Edit weights
+                </button>
+                <Link
+                  to="/curriculum/ksb-mapping"
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
+                >
                   <AppIcon className="ri-list-check-3 text-sm"></AppIcon>
                   Global worklist
-                </button>
-              </div>
+                </Link>
+              </>
+            )}
+          >
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-1.5 text-[11px] font-bold text-primary-700">
+                <AppIcon className="ri-bookmark-3-line text-sm"></AppIcon>
+                {coverageKsbSource.sourceId
+                  ? `Showing KSBs from: ${coverageKsbSourceLabel || coverageKsbSource.sourceId}`
+                  : 'No KSB source applied to this programme'}
+              </span>
             </div>
+
             {backendCoverageLoading ? (
               <div className="rounded-xl border border-background-200 bg-background-100 px-4 py-8 text-center text-[12px] font-semibold text-foreground-600">
                 <AppIcon className="ri-loader-4-line mr-2 animate-spin text-primary-600"></AppIcon>
-                Loading backend KSB coverage...
+                Loading KSB coverage…
               </div>
             ) : backendCoverageError ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-4 text-[12px] font-semibold text-red-700">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <span>Unable to load actual backend KSB coverage. No fallback or sample KSB data is being shown. {backendCoverageError}</span>
-                  <button type="button" onClick={() => { void loadBackendCoverage(); }} className="h-9 rounded-lg bg-white px-3 text-[11px] font-bold text-red-700 shadow-sm">Retry</button>
-                </div>
-              </div>
+              <InlineError
+                message={`Unable to load actual backend KSB coverage. No fallback or sample KSB data is being shown. ${backendCoverageError}`}
+                onRetry={() => { void loadBackendCoverage(); }}
+              />
             ) : PROGRAMME.ksbHeatmap.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-background-300 bg-background-100 px-4 py-10 text-center">
-                <p className="text-[13px] font-semibold text-foreground-700">No actual KSB coverage data returned.</p>
-                <p className="mt-1 text-[12px] text-foreground-400">The backend did not return any heatmap rows for this programme, so no fallback or sample KSB data is being shown.</p>
-                <button type="button" onClick={() => { void loadBackendCoverage(); }} className="mt-4 h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 shadow-sm hover:bg-background-100">Retry</button>
-              </div>
+              <EntityEmptyState
+                icon="ri-node-tree"
+                title="No KSB coverage data returned"
+                message="The backend did not return any heatmap rows for this programme, so no fallback or sample KSB data is being shown."
+                action={{ label: 'Retry', onClick: () => { void loadBackendCoverage(); } }}
+              />
             ) : (
               <>
-            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase text-emerald-700">Mapped KSBs</p>
-                <p className="mt-1 text-lg font-heading font-bold text-emerald-900">{mappedKsbCount}</p>
-              </div>
-              <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase text-amber-700">Not mapped</p>
-                <p className="mt-1 text-lg font-heading font-bold text-amber-900">{missingKsbCount}</p>
-              </div>
-              <div className="rounded-xl border border-sky-100 bg-sky-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase text-sky-700">Total weight</p>
-                <p className="mt-1 text-lg font-heading font-bold text-sky-900">{formatHours(totalKsbWeight)}%</p>
-              </div>
-              <div className="rounded-xl border border-primary-100 bg-primary-50 px-4 py-3">
-                <p className="text-[10px] font-bold uppercase text-primary-700">Total occurrences</p>
-                <p className="mt-1 text-lg font-heading font-bold text-primary-900">{totalKsbOccurrences}</p>
-              </div>
-            </div>
-            <div className="mb-4 rounded-2xl border border-background-200/80 bg-background-100 p-4">
-              <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 items-center">
-                <div className="relative">
-                  <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400 text-sm"></AppIcon>
-                  <input value={ksbSearch} onChange={event => setKsbSearch(event.target.value)} placeholder="Search KSB code or title..." className="w-full h-10 pl-9 pr-3 rounded-lg border border-background-200 bg-background-50 text-[13px] text-foreground-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+                <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[
+                    { label: 'Mapped KSBs', value: mappedKsbCount, tone: 'border-emerald-100 bg-emerald-50 text-emerald-700' },
+                    { label: 'Not mapped', value: missingKsbCount, tone: 'border-amber-100 bg-amber-50 text-amber-700' },
+                    { label: 'Total weight', value: `${formatHours(totalKsbWeight)}%`, tone: 'border-sky-100 bg-sky-50 text-sky-700' },
+                    { label: 'Total occurrences', value: totalKsbOccurrences, tone: 'border-primary-100 bg-primary-50 text-primary-700' },
+                  ].map(stat => (
+                    <div key={stat.label} className={`rounded-xl border px-4 py-3 ${stat.tone}`}>
+                      <p className="text-[10px] font-bold uppercase tracking-wider">{stat.label}</p>
+                      <p className="mt-1 text-lg font-heading font-bold">{stat.value}</p>
+                    </div>
+                  ))}
                 </div>
-                <button onClick={() => setKsbSearch('')} disabled={!ksbSearch} className="h-10 px-3 rounded-lg border border-background-200 bg-background-50 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-40 disabled:cursor-not-allowed transition-smooth whitespace-nowrap">Reset</button>
-              </div>
-              <p className="text-[11px] text-foreground-400 mt-3">{filteredKsbHeatmap.length} of {PROGRAMME.ksbHeatmap.length} KSBs</p>
-            </div>
-            <KsbHeatmapLegend />
-            <KsbHeatmapMatrix rows={filteredKsbHeatmap} moduleNames={PROGRAMME.moduleNames} />
-            <div className="hidden overflow-x-auto">
-              <table className="w-full text-[11px]">
-                <thead>
-                  <tr className="border-b border-foreground-400/50">
-                    <th className="text-left py-2 px-3 font-semibold text-foreground-400">KSB</th>
-                    {PROGRAMME.moduleNames.map(mn => (
-                      <th key={mn} className="text-center py-2 px-3 font-semibold text-foreground-400">{mn}</th>
-                    ))}
-                    <th className="text-center py-2 px-3 font-semibold text-foreground-400">Times</th>
-                    <th className="text-center py-2 px-3 font-semibold text-foreground-400">Weight</th>
-                    <th className="text-left py-2 px-3 font-semibold text-foreground-400">Evidence</th>
-                    <th className="text-left py-2 px-3 font-semibold text-foreground-400">Title</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-background-200/30">
-                  {filteredKsbHeatmap.map((row, i) => {
-                    const rowWeight = ksbRowWeight(row);
-                    return (
-                    <tr key={ksbRowId(row) || i} className={`transition-smooth ${ksbRowIsMapped(row) ? 'hover:bg-background-100/30' : 'bg-amber-50/30 hover:bg-amber-50/50'}`}>
-                      <td className="py-2.5 px-3 font-semibold text-foreground-700">
-                        <KsbBadge code={row.ksb} />
-                      </td>
-                      {PROGRAMME.moduleNames.map(mn => {
-                        const val = row.coverage[mn];
-                        const count = row.counts?.[mn] || 0;
-                        return (
-                          <td key={mn} className="py-2.5 px-3 text-center">
-                            {val !== null && val !== undefined ? (
-                              <span className="inline-flex flex-col items-center rounded bg-primary-100 px-2 py-1 text-primary-700">
-                                <span className="text-[10px] font-bold leading-none">{val}%</span>
-                                <span className="mt-0.5 text-[9px] font-semibold leading-none">x{count || 1}</span>
-                              </span>
-                            ) : (
-                              <span className="text-foreground-300">—</span>
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td className="py-2.5 px-3 text-center text-[11px] font-bold text-foreground-700">{row.totalOccurrences || 0}</td>
-                      <td className="py-2.5 px-3 text-center text-[11px] font-bold text-foreground-700">{formatHours(rowWeight)}%</td>
-                      <td className="py-2.5 px-3">
-                        <KsbEvidenceList evidence={row.evidence || {}} />
-                      </td>
-                      <td className="py-2.5 px-3 text-foreground-500">{row.title}</td>
-                    </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+
+                <div className="mb-4 rounded-2xl border border-background-200/80 bg-background-100 p-4">
+                  <div className="grid items-center gap-3 md:grid-cols-[1fr_auto]">
+                    <span className="relative block">
+                      <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
+                      <input
+                        value={ksbSearch}
+                        onChange={event => setKsbSearch(event.target.value)}
+                        placeholder="Search KSB code or title..."
+                        className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-300"
+                      />
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setKsbSearch('')}
+                      disabled={!ksbSearch}
+                      className="h-10 whitespace-nowrap rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                  <p className="mt-3 text-[11px] text-foreground-400">{filteredKsbHeatmap.length} of {PROGRAMME.ksbHeatmap.length} KSBs</p>
+                </div>
+
+                <KsbHeatmapLegend />
+                <KsbHeatmapMatrix rows={filteredKsbHeatmap} moduleNames={PROGRAMME.moduleNames} />
               </>
             )}
-          </div>
-        )}
-
-        {/* ═══════════════════════════════════════════════════════════════════════
-            TAB: Staffing
-        ═══════════════════════════════════════════════════════════════════════ */}
-        {tab === 'review' && (
-          <div className="space-y-4">
-            <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-              <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px]">
-                <div className="border-b border-foreground-200/60 p-5 xl:border-b-0 xl:border-r">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-primary-600 text-white">
-                      <AppIcon className="ri-checkbox-circle-line text-lg"></AppIcon>
-                    </span>
-                    <div>
-                      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-primary-600">Review</p>
-                      <h2 className="text-xl font-heading font-black text-foreground-950">{PROGRAMME.name}</h2>
-                    </div>
-                  </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <span className="rounded-full border border-background-200 bg-background-100 px-3 py-1 text-[11px] font-bold text-foreground-700">{PROGRAMME.duration}</span>
-                    <span className="rounded-full border border-background-200 bg-background-100 px-3 py-1 text-[11px] font-bold text-foreground-700">{PROGRAMME.level || 'Level not set'}</span>
-                    <span className="rounded-full border border-primary-200 bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">KSB source: {coverageKsbSourceLabel || 'No source applied'}</span>
-                  </div>
-                  <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-                    <ReviewMetric icon="ri-group-line" label="Cohorts" value={liveCohortCount} tone="purple" />
-                    <ReviewMetric icon="ri-team-line" label="Groups" value={totalGroups} tone="blue" />
-                    <ReviewMetric icon="ri-stack-line" label="Modules" value={PROGRAMME.modules.length} tone="slate" />
-                    <ReviewMetric icon="ri-time-line" label="OTJH" value={`${formatHours(totalOtjh)}h`} tone="emerald" />
-                  </div>
-                </div>
-                <div className="bg-[linear-gradient(180deg,#fbfffd_0%,#fffaf2_100%)] p-5">
-                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-foreground-400">Readiness</p>
-                  <div className="mt-4 space-y-3">
-                    <ReviewProgress label="KSB coverage" value={ksbCoverage} color="bg-primary-600" />
-                    <ReviewProgress label="Content readiness" value={contentReadiness} color="bg-emerald-500" />
-                  </div>
-                  <div className="mt-5 grid grid-cols-2 gap-2">
-                    <ReviewTinyStat label="Missing KSBs" value={missingKsbCount} />
-                    <ReviewTinyStat label="Components" value={allComponents.length} />
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section className="rounded-2xl border border-foreground-200/70 bg-background-50 p-5 shadow-sm">
-              <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <p className="text-[10px] font-black uppercase tracking-[0.16em] text-foreground-400">Delivery map</p>
-                  <h3 className="text-base font-heading font-black text-foreground-950">Programme structure at a glance</h3>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <span className="rounded-full bg-primary-50 px-3 py-1 text-[11px] font-bold text-primary-700">{totalWeeks} weeks</span>
-                  <span className="rounded-full bg-sky-50 px-3 py-1 text-[11px] font-bold text-sky-700">{allComponents.length} components</span>
-                  <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-bold text-emerald-700">{formatHours(totalOtjh)}h OTJH</span>
-                </div>
-              </div>
-              <div className="space-y-3">
-                {PROGRAMME.cohorts.map(cohortItem => (
-                  <div key={cohortItem.id} className="rounded-xl border border-primary-100 bg-primary-50/30 p-4">
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary-600 text-white"><AppIcon className="ri-calendar-check-line"></AppIcon></span>
-                      <div>
-                        <p className="text-[10px] font-black uppercase text-primary-700">Cohort</p>
-                        <p className="text-sm font-heading font-black text-foreground-950">{cohortItem.name}</p>
-                      </div>
-                      <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-600">{cohortItem.startDate} - {cohortItem.endDate}</span>
-                      <span className="rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-600">{cohortItem.groups.length} groups</span>
-                    </div>
-                    <div className="mt-3 rounded-xl border border-amber-100 bg-amber-50/70 px-3 py-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide text-amber-800">
-                          <AppIcon className="ri-calendar-event-line text-sm"></AppIcon>
-                          Applied holidays
-                        </span>
-                        {cohortItem.holidays?.length ? cohortItem.holidays.map(holiday => (
-                          <span key={String(holiday.id)} className="rounded-full border border-amber-200 bg-background-50 px-2.5 py-1 text-[10px] font-bold text-amber-800">
-                            {holiday.label || 'Holiday'}{holiday.startDate ? ` · ${formatDateLabel(holiday.startDate)}` : ''}
-                          </span>
-                        )) : (
-                          <span className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 text-[10px] font-bold text-foreground-500">No holidays applied</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                      {cohortItem.groups.map(groupItem => {
-                        const groupModules = groupItem.modules.length
-                          ? groupItem.modules
-                          : PROGRAMME.modules.filter(mod => clean(mod.cohort) === cohortItem.name && clean(mod.group) === groupItem.name);
-                        const groupOtjh = groupModules.reduce((sum, mod) => sum + Number(mod.otjh || 0), 0);
-                        const groupComponents = groupModules.reduce((sum, mod) => sum + mod.weeksData.reduce((weekSum, wk) => weekSum + (wk.components?.length || 0), 0), 0);
-                        return (
-                          <div key={groupItem.id} className="rounded-xl border border-background-200 bg-background-50 p-4">
-                            <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <p className="text-[10px] font-black uppercase text-slate-500">Group</p>
-                                <h4 className="text-sm font-heading font-black text-foreground-950">{groupItem.name}</h4>
-                                <p className="mt-1 text-[11px] font-semibold text-foreground-500">{groupItem.schedule} - {groupItem.mode}</p>
-                              </div>
-                              <div className="flex flex-wrap justify-end gap-1.5">
-                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-black text-emerald-700">{formatHours(groupOtjh)}h</span>
-                                <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black text-primary-700">{groupModules.length} modules</span>
-                                <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-black text-sky-700">{groupComponents} comp</span>
-                              </div>
-                            </div>
-                            <div className="mt-3 grid grid-cols-1 gap-2">
-                              <ReviewInfo label="Coach" value={groupItem.coach} icon="ri-heart-line" />
-                            </div>
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {groupModules.map(mod => (
-                                <span key={mod.id} className="inline-flex items-center gap-1.5 rounded-lg border border-background-200 bg-background-100 px-2.5 py-1 text-[11px] font-bold text-foreground-700">
-                                  <AppIcon className="ri-stack-line text-primary-600"></AppIcon>
-                                  {mod.name}
-                                  <span className="text-emerald-700">{formatHours(mod.otjh)}h</span>
-                                </span>
-                              ))}
-                              {groupModules.length === 0 && (
-                                <span className="rounded-lg border border-dashed border-background-300 px-2.5 py-1 text-[11px] font-semibold text-foreground-500">No modules linked</span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {PROGRAMME.modules.map(mod => {
-                const componentCount = mod.weeksData.reduce((sum, wk) => sum + (wk.components?.length || 0), 0);
-const mappedKsbCodes = [...new Set([
-                  ...mod.ksbTags.map(value => clean(value)).filter(Boolean),
-                  ...mod.ksbMapping.map(item => item.ksb),
-                ])];
-                return (
-                  <article key={mod.id} className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
-                    <div className="border-b border-foreground-200/60 bg-background-100/60 p-4">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Module</p>
-                          <h3 className="text-base font-heading font-black text-foreground-950">{mod.name}</h3>
-                          <p className="mt-1 text-[11px] font-bold text-foreground-500">{mod.cohort || 'No cohort'} / {mod.group || 'No group'}</p>
-                        </div>
-                        <span className="rounded-xl bg-emerald-50 px-3 py-2 text-[13px] font-black text-emerald-700">{formatHours(mod.otjh)}h OTJH</span>
-                      </div>
-                    </div>
-                    <div className="space-y-3 p-4">
-                      <div className="grid grid-cols-3 gap-2">
-                        <ReviewTinyStat label="Weeks" value={mod.weeksData.length} />
-                        <ReviewTinyStat label="Components" value={componentCount} />
-                        <ReviewTinyStat label="KSBs" value={mappedKsbCodes.length} />
-                      </div>
-                      <div className="grid grid-cols-1 gap-2">
-                        <ReviewInfo icon="ri-user-settings-line" label="Tutor" value={mod.tutor || 'Unassigned'} />
-                      </div>
-                      <div>
-                        <p className="mb-2 text-[10px] font-black uppercase tracking-wide text-foreground-400">Weeks</p>
-                        <div className="max-h-[300px] space-y-2 overflow-y-auto pr-1">
-                          {mod.weeksData.map(wk => (
-                            <div key={wk.id} className="grid grid-cols-[52px_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-background-200 bg-background-100 px-3 py-2">
-                              <span className="text-[10px] font-black uppercase text-foreground-400">W{wk.number}</span>
-                              <div className="min-w-0">
-                                <p className="truncate text-[11px] font-black text-foreground-900">{wk.title || `Week ${wk.number}`}</p>
-                                <p className="text-[10px] text-foreground-500">{wk.startDate}</p>
-                              </div>
-                              <div className="flex shrink-0 gap-1.5">
-                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">{formatHours(wk.otjh)}h</span>
-                                <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-bold text-sky-700">{wk.components?.length || 0} comp</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </section>
-          </div>
-        )}
-
-        {programmeFormOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={closeProgrammeForm}>
-            <form onSubmit={saveProgramme} className="bg-background-50 rounded-2xl w-full max-w-xl shadow-2xl" onClick={event => event.stopPropagation()}>
-              <div className="px-6 py-4 border-b border-foreground-400/50 flex items-center justify-between">
-                <h3 className="text-sm font-heading font-semibold text-foreground-900">Edit Programme</h3>
-                <button type="button" onClick={closeProgrammeForm} className="w-8 h-8 rounded-lg bg-background-100 flex items-center justify-center hover:bg-background-200 transition-smooth cursor-pointer"><AppIcon className="ri-close-line text-foreground-500"></AppIcon></button>
-              </div>
-              <div className="p-6 space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <label className="block">
-                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Programme name *</span>
-                    <input value={programmeForm.name} onChange={event => setProgrammeForm(prev => ({ ...prev, name: event.target.value }))} required className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
-                  </label>
-                  <label className="block">
-                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Level</span>
-                    <input value={programmeForm.level} onChange={event => setProgrammeForm(prev => ({ ...prev, level: event.target.value }))} placeholder="Example: L4" className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300" />
-                  </label>
-                  <label className="block">
-                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Owner</span>
-                    <input value={programmeForm.owner} onChange={event => setProgrammeForm(prev => ({ ...prev, owner: event.target.value }))} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
-                  </label>
-                  <label className="block">
-                    <span className="text-[10px] font-semibold text-foreground-400 uppercase">Colour</span>
-                    <input type="color" value={programmeForm.color} onChange={event => setProgrammeForm(prev => ({ ...prev, color: event.target.value }))} className="mt-1 w-full h-9 px-2 py-1 bg-background-50 border border-foreground-200/60 rounded-lg focus:outline-none focus:border-primary-300" />
-                  </label>
-                </div>
-                <label className="block">
-                  <span className="text-[10px] font-semibold text-foreground-400 uppercase">Description</span>
-                  <textarea value={programmeForm.description} onChange={event => setProgrammeForm(prev => ({ ...prev, description: event.target.value }))} rows={3} className="mt-1 w-full px-3 py-2 bg-background-50 border border-foreground-200/60 rounded-lg text-[13px] text-foreground-900 focus:outline-none focus:border-primary-300" />
-                </label>
-              </div>
-              <div className="px-6 py-4 border-t border-background-200/60 flex justify-end gap-2">
-                <button type="button" onClick={closeProgrammeForm} disabled={savingAction === 'programme'} className="px-4 py-2 rounded-lg border border-background-200 text-[12px] font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
-                <button type="submit" disabled={savingAction === 'programme'} className="px-4 py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 disabled:opacity-50">{savingAction === 'programme' ? 'Saving...' : 'Save Programme'}</button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        <CohortFormDrawer
-          open={cohortDrawerOpen}
-          defaults={{ programmeId: drawerProgrammeId }}
-          programmes={drawerProgrammes}
-          holidays={data?.holidays || []}
-          onClose={() => setCohortDrawerOpen(false)}
-          onSaved={() => reload()}
-        />
-        <GroupFormDrawer
-          open={groupDrawerCohortId !== null}
-          defaults={{ programmeId: drawerProgrammeId, cohortId: groupDrawerCohortId || undefined }}
-          programmes={drawerProgrammes}
-          cohorts={data?.cohorts || []}
-          coachNames={drawerCoachNames}
-          onClose={() => setGroupDrawerCohortId(null)}
-          onSaved={() => reload()}
-        />
-        <ModuleFormDrawer
-          open={moduleDrawerOpen}
-          defaults={moduleDrawerDefaults}
-          programmes={drawerProgrammes}
-          cohorts={data?.cohorts || []}
-          groups={data?.groups || []}
-          holidays={data?.holidays || []}
-          tutorNames={drawerTutorNames}
-          onClose={() => setModuleDrawerOpen(false)}
-          onSaved={() => reload()}
-        />
-        {ksbTraceOpen && (
-          <KsbTraceModal
-            programme={PROGRAMME}
-            programmeId={coverageProgrammeIds[0] || PROGRAMME.sourceId || PROGRAMME.id}
-            initialTab={ksbTraceInitialTab}
-            onClose={() => setKsbTraceOpen(false)}
-          />
-        )}
-
-        {ksbInspector && (
-          <KsbInspectorModal
-            codes={ksbInspector.codes}
-            componentTitle={ksbInspector.componentTitle}
-            rows={PROGRAMME.ksbHeatmap}
-            onClose={() => setKsbInspector(null)}
-          />
+          </WorkspacePanel>
         )}
       </div>
+
+      <ProgrammeFormDrawer
+        open={programmeDrawerOpen}
+        programme={drawerProgramme}
+        onClose={() => setProgrammeDrawerOpen(false)}
+        onSaved={() => reload()}
+      />
+      <CohortFormDrawer
+        open={cohortDrawerOpen}
+        defaults={{ programmeId: drawerProgrammeId }}
+        programmes={drawerProgrammes}
+        holidays={data?.holidays || []}
+        onClose={() => setCohortDrawerOpen(false)}
+        onSaved={() => reload()}
+      />
+      <GroupFormDrawer
+        open={groupDrawerCohortId !== null}
+        defaults={{ programmeId: drawerProgrammeId, cohortId: groupDrawerCohortId || undefined }}
+        programmes={drawerProgrammes}
+        cohorts={data?.cohorts || []}
+        coachNames={drawerCoachNames}
+        onClose={() => setGroupDrawerCohortId(null)}
+        onSaved={() => reload()}
+      />
+      <ModuleFormDrawer
+        open={moduleDrawerOpen}
+        defaults={moduleDrawerDefaults}
+        programmes={drawerProgrammes}
+        cohorts={data?.cohorts || []}
+        groups={data?.groups || []}
+        holidays={data?.holidays || []}
+        tutorNames={drawerTutorNames}
+        onClose={() => setModuleDrawerOpen(false)}
+        onSaved={() => reload()}
+      />
+      {ksbTraceOpen && (
+        <KsbTraceModal
+          programme={PROGRAMME}
+          programmeId={coverageProgrammeIds[0] || PROGRAMME.sourceId || PROGRAMME.id}
+          onClose={() => setKsbTraceOpen(false)}
+        />
+      )}
     </WorkspaceShell>
   );
 }
@@ -3800,493 +2989,10 @@ const mappedKsbCodes = [...new Set([
 // Helper Components
 // ============================================================
 
-// Answers "what is this KSB and where else is it taught?" for the codes on one
-// component. Definitions and placements both come from the programme's KSB
-// heatmap, which is already loaded for the coverage tab, so opening this costs
-// no extra request.
-function KsbInspectorModal({
-  codes,
-  componentTitle,
-  rows,
-  onClose,
-}: {
-  codes: string[];
-  componentTitle: string;
-  rows: KsbHeatmapRow[];
-  onClose: () => void;
-}) {
-  const entries = useMemo(() => {
-    const wanted = [...new Set(codes.map(code => clean(code)).filter(Boolean))].sort(sortKsbCodes);
-    return wanted.map(code => {
-      // The same code can appear on more than one heatmap row when a mapping was
-      // made against a different KSB source than the programme profile. Those
-      // extra rows carry no definition text, so prefer a row that actually has
-      // one and only fall back to the first match for weights and placements.
-      const matches = rows.filter(item => normalise(formatKsbCode(item.ksb)) === normalise(formatKsbCode(code)));
-      const row = matches.find(item => clean(item.description)) || matches[0];
-      // Placements are grouped per module in `evidence`; flatten them so the
-      // popup can list every place this KSB is taught, not only this component.
-      const placements = row?.evidence
-        ? Object.values(row.evidence).flat().filter(Boolean)
-        : [];
-      return { code, row, placements };
-    });
-  }, [codes, rows]);
-
-  return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="flex items-start justify-between gap-3 border-b border-background-200 px-5 py-4">
-          <div className="min-w-0">
-            <h3 className="truncate text-base font-heading font-bold text-foreground-950">
-              {entries.length === 1 ? formatKsbCode(entries[0].code) : `${entries.length} KSBs`}
-            </h3>
-            <p className="mt-0.5 truncate text-[12px] font-semibold text-foreground-500">Mapped on {componentTitle}</p>
-          </div>
-          <button onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-600 transition-smooth hover:bg-background-200">
-            <AppIcon className="ri-close-line"></AppIcon>
-          </button>
-        </div>
-
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-5">
-          {entries.map(({ code, row, placements }) => (
-            <section key={code} className="rounded-xl border border-background-200 bg-background-100/50 p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <KsbBadge code={code} />
-                {row && !ksbRowIsMapped(row) && (
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">Not mapped</span>
-                )}
-                {typeof row?.totalWeight === 'number' && row.totalWeight > 0 && (
-                  <span className="rounded-full bg-background-200/70 px-2 py-0.5 text-[10px] font-bold text-foreground-600">
-                    {row.totalWeight}% total weight
-                  </span>
-                )}
-              </div>
-
-              {/* title and description usually carry the same sentence, so only
-                  print the title when it genuinely differs from the description. */}
-              {row?.title && normalise(row.title) !== normalise(row.description || '') && (
-                <p className="mt-2 text-[12px] font-semibold text-foreground-900">{row.title}</p>
-              )}
-              {row?.description && <p className="mt-2 text-[11px] leading-5 text-foreground-700">{row.description}</p>}
-              {row && !row.description && !row.title && (
-                <p className="mt-2 text-[11px] text-foreground-500">No description recorded for this KSB.</p>
-              )}
-              {!row && (
-                <p className="mt-1 text-[11px] text-foreground-500">
-                  This code is mapped on the component but is not part of the programme's KSB profile, so no definition is available.
-                </p>
-              )}
-
-              <p className="mt-3 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
-                Taught in {placements.length} {placements.length === 1 ? 'place' : 'places'}
-              </p>
-              {placements.length ? (
-                <div className="mt-1.5 space-y-1.5">
-                  {placements.map((placement, index) => (
-                    <div key={`${code}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-background-200 bg-background-50 px-3 py-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-[11px] font-semibold text-foreground-900">
-                          {placement.component || placement.week || placement.module || 'Module-level mapping'}
-                        </p>
-                        <p className="truncate text-[10px] text-foreground-500">
-                          {[placement.module, placement.week].filter(Boolean).join(' - ') || placement.scope}
-                        </p>
-                      </div>
-                      {placement.weight > 0 && (
-                        <span className="shrink-0 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-600">{placement.weight}%</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-1.5 rounded-lg border border-dashed border-background-300 px-3 py-2 text-[11px] text-foreground-500">
-                  No placement detail was returned for this KSB.
-                </p>
-              )}
-            </section>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function formatHours(value: number | string) {
   const parsed = Number(value || 0);
   if (!Number.isFinite(parsed)) return '0';
   return Number.isInteger(parsed) ? String(parsed) : parsed.toFixed(1).replace(/\.0$/, '');
-}
-
-function ReviewMetric({ icon, label, value, tone }: { icon: string; label: string; value: number | string; tone: 'purple' | 'blue' | 'slate' | 'emerald' }) {
-  const tones = {
-    purple: 'border-primary-100 bg-primary-50 text-primary-700',
-    blue: 'border-sky-100 bg-sky-50 text-sky-700',
-    slate: 'border-slate-200 bg-slate-50 text-slate-700',
-    emerald: 'border-emerald-100 bg-emerald-50 text-emerald-700',
-  };
-  return (
-    <div className={`rounded-xl border p-3 ${tones[tone]}`}>
-      <div className="flex items-center gap-2">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/70">
-          <AppIcon className={`${icon} text-sm`}></AppIcon>
-        </span>
-        <p className="text-xl font-black leading-none">{value}</p>
-      </div>
-      <p className="mt-2 text-[9px] font-black uppercase tracking-wide opacity-80">{label}</p>
-    </div>
-  );
-}
-
-function ReviewProgress({ label, value, color }: { label: string; value: number; color: string }) {
-  const safe = Math.max(0, Math.min(100, Math.round(value || 0)));
-  return (
-    <div>
-      <div className="mb-1 flex items-center justify-between">
-        <span className="text-[11px] font-bold text-foreground-700">{label}</span>
-        <span className="text-[11px] font-black text-foreground-900">{safe}%</span>
-      </div>
-      <div className="h-2 rounded-full bg-background-200">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${safe}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function ReviewTinyStat({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div className="rounded-xl border border-background-200 bg-background-50 px-3 py-2">
-      <p className="text-base font-black leading-tight text-foreground-950">{value}</p>
-      <p className="mt-1 text-[9px] font-black uppercase tracking-wide text-foreground-400">{label}</p>
-    </div>
-  );
-}
-
-function ReviewInfo({ icon, label, value }: { icon: string; label: string; value: string }) {
-  return (
-    <div className="grid grid-cols-[24px_82px_minmax(0,1fr)] items-center gap-2 rounded-lg border border-background-200 bg-background-100 px-3 py-2">
-      <span className="flex h-6 w-6 items-center justify-center rounded-md bg-background-50 text-primary-600">
-        <AppIcon className={`${icon} text-xs`}></AppIcon>
-      </span>
-      <span className="text-[9px] font-black uppercase tracking-wide text-foreground-400">{label}</span>
-      <span className={`min-w-0 truncate text-[11px] font-black ${isStaffAssigned(value) ? 'text-foreground-900' : 'text-amber-700'}`}>{value || 'Not set'}</span>
-    </div>
-  );
-}
-
-function TeamsResultsDetails({ liveSessionId, data }: { liveSessionId: string; data: TeamsMeetingArtifactsResult }) {
-  const [transcripts, setTranscripts] = useState<Record<string, Array<{ start: string; speaker: string; text: string }>>>({});
-  const [transcriptErrors, setTranscriptErrors] = useState<Record<string, string>>({});
-  const completed = data.occurrences.filter(occurrence => (
-    occurrence.attendance.length > 0
-    || occurrence.artifacts.length > 0
-    || Number(occurrence.participant_count) > 0
-  ));
-  const transcriptArtifacts = useMemo(() => data.occurrences.flatMap(occurrence => (
-    occurrence.artifacts.filter(artifact => artifact.artifact_type === 'transcript')
-  )), [data.occurrences]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const parseVtt = (value: string) => {
-      const lines = value.replace(/\r/g, '').split('\n');
-      const cues: Array<{ start: string; speaker: string; text: string }> = [];
-      for (let index = 0; index < lines.length; index += 1) {
-        const timing = lines[index].match(/^(\d{2}:\d{2}:\d{2}\.\d{3})\s+-->/);
-        if (!timing) continue;
-        const textLines: string[] = [];
-        index += 1;
-        while (index < lines.length && lines[index].trim()) {
-          textLines.push(lines[index].trim());
-          index += 1;
-        }
-        const rawText = textLines.join(' ');
-        const speakerMatch = rawText.match(/<v\s+([^>]+)>([\s\S]*?)<\/v>/i);
-        const speaker = speakerMatch?.[1]?.trim() || 'Speaker';
-        const text = (speakerMatch?.[2] || rawText)
-          .replace(/<[^>]+>/g, '')
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .trim();
-        if (text) cues.push({ start: timing[1].replace(/^00:/, ''), speaker, text });
-      }
-      return cues;
-    };
-
-    transcriptArtifacts.forEach(artifact => {
-      fetch(teamsMeetingArtifactContentUrl(liveSessionId, artifact.id))
-        .then(async response => {
-          if (!response.ok) throw new Error(`Transcript returned ${response.status}`);
-          return response.text();
-        })
-        .then(value => {
-          if (!cancelled) {
-            setTranscripts(previous => ({ ...previous, [artifact.id]: parseVtt(value) }));
-          }
-        })
-        .catch(error => {
-          if (!cancelled) {
-            setTranscriptErrors(previous => ({
-              ...previous,
-              [artifact.id]: error instanceof Error ? error.message : 'Unable to load transcript.',
-            }));
-          }
-        });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [liveSessionId, transcriptArtifacts]);
-
-  const formatDateTime = (value?: string) => {
-    if (!value) return 'Date unavailable';
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
-  };
-  const formatDuration = (seconds: number) => {
-    const totalSeconds = Math.max(0, Math.round(Number(seconds || 0)));
-    if (totalSeconds < 60) return `${totalSeconds}s`;
-    const minutes = Math.floor(totalSeconds / 60);
-    const hours = Math.floor(minutes / 60);
-    const remainder = minutes % 60;
-    return hours ? `${hours}h ${remainder}m` : `${remainder}m`;
-  };
-  const attendanceWindow = (intervals?: Array<{ joinDateTime?: string; leaveDateTime?: string }> | string) => {
-    let parsedIntervals: Array<{ joinDateTime?: string; leaveDateTime?: string }> = [];
-    if (Array.isArray(intervals)) {
-      parsedIntervals = intervals;
-    } else if (typeof intervals === 'string' && intervals.trim()) {
-      try {
-        const parsed = JSON.parse(intervals);
-        parsedIntervals = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        parsedIntervals = [];
-      }
-    }
-    const valid = parsedIntervals.filter(interval => interval && (interval.joinDateTime || interval.leaveDateTime));
-    if (!valid.length) return '';
-    const firstJoin = valid[0]?.joinDateTime;
-    const lastLeave = valid.at(-1)?.leaveDateTime;
-    const time = (value?: string) => {
-      if (!value) return '';
-      const parsed = new Date(value);
-      return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    };
-    return [firstJoin ? `Joined ${time(firstJoin)}` : '', lastLeave ? `Left ${time(lastLeave)}` : ''].filter(Boolean).join(' · ');
-  };
-
-  return (
-    <div className="mt-3 space-y-3 border-t border-primary-200 pt-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-wide text-primary-700">Verified Teams attendance</p>
-          <p className="mt-0.5 text-[9px] font-semibold text-foreground-500">Only people recorded in Microsoft Teams attendance reports are shown—not the invitation list.</p>
-        </div>
-        <span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-bold text-foreground-600">
-          {completed.length} meeting{completed.length === 1 ? '' : 's'} with data
-        </span>
-      </div>
-      {completed.length ? completed.map(occurrence => (
-        <div key={occurrence.id} className="overflow-hidden rounded-xl border border-primary-100 bg-white">
-          <div className="flex flex-wrap items-center justify-between gap-2 bg-primary-50/70 px-3 py-2">
-            <div>
-              <p className="text-[11px] font-black text-foreground-900">Meeting {occurrence.session_number}</p>
-              <p className="text-[10px] font-semibold text-foreground-500">
-                {formatDateTime(occurrence.actual_start || occurrence.scheduled_start)}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              <span className="rounded-full bg-sky-100 px-2 py-1 text-[9px] font-bold text-sky-800">
-                {occurrence.attendance.length} attended
-              </span>
-              <span className="rounded-full bg-violet-100 px-2 py-1 text-[9px] font-bold text-violet-800">
-                {occurrence.artifacts.filter(item => item.artifact_type === 'transcript').length} transcript
-              </span>
-              <span className="rounded-full bg-emerald-100 px-2 py-1 text-[9px] font-bold text-emerald-800">
-                {occurrence.artifacts.filter(item => item.artifact_type === 'recording').length} recording
-              </span>
-            </div>
-          </div>
-
-          {occurrence.attendance.length > 0 && (
-            <div className="border-t border-background-200">
-              <div className="grid grid-cols-[minmax(0,1fr)_90px] bg-background-100/70 px-3 py-1.5 text-[9px] font-black uppercase text-foreground-400">
-                <span>Participant</span>
-                <span className="text-right">Attended</span>
-              </div>
-              {occurrence.attendance.map(person => (
-                <div key={person.id} className="grid grid-cols-[minmax(0,1fr)_90px] items-center border-t border-background-100 px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-1.5">
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"></span>
-                      <p className="truncate text-[10px] font-bold text-foreground-800">{person.display_name || person.email || 'Unknown participant'}</p>
-                    </div>
-                    {person.email && <p className="truncate text-[9px] font-medium text-foreground-400">{person.email}</p>}
-                    {attendanceWindow(person.intervals) && <p className="mt-0.5 truncate text-[9px] font-semibold text-foreground-500">{attendanceWindow(person.intervals)}</p>}
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[10px] font-black text-emerald-700">{formatDuration(person.total_attendance_seconds)}</p>
-                    <p className="text-[8px] font-bold uppercase text-emerald-600">{person.total_attendance_seconds > 0 ? 'Attended' : 'Joined'}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {occurrence.artifacts.length > 0 && (
-            <div className="flex flex-wrap gap-2 border-t border-background-200 px-3 py-2.5">
-              {occurrence.artifacts.map(artifact => (
-                <a
-                  key={artifact.id}
-                  href={teamsMeetingArtifactContentUrl(liveSessionId, artifact.id)}
-                  target={artifact.artifact_type === 'transcript' ? '_blank' : undefined}
-                  rel="noreferrer"
-                  download
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[10px] font-bold text-primary-700 hover:bg-primary-100"
-                >
-                  <AppIcon className={artifact.artifact_type === 'recording' ? 'ri-download-cloud-2-line' : 'ri-file-text-line'}></AppIcon>
-                  {artifact.artifact_type === 'recording' ? 'Download recording' : 'Download transcript'}
-                </a>
-              ))}
-            </div>
-          )}
-
-          {occurrence.artifacts.filter(artifact => artifact.artifact_type === 'transcript').map(artifact => (
-            <div key={`${artifact.id}-inline`} className="border-t border-background-200 bg-background-50/60 px-3 py-3">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-[10px] font-black uppercase text-foreground-700">Meeting transcript</p>
-                  <p className="text-[9px] font-semibold text-foreground-400">Speaker-attributed text from Microsoft Teams</p>
-                </div>
-                <AppIcon className="ri-file-text-line text-base text-primary-500"></AppIcon>
-              </div>
-              {transcriptErrors[artifact.id] ? (
-                <p className="rounded-lg bg-red-50 px-3 py-2 text-[10px] font-semibold text-red-700">{transcriptErrors[artifact.id]}</p>
-              ) : transcripts[artifact.id] ? (
-                transcripts[artifact.id].length ? (
-                  <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-background-200 bg-white p-2.5">
-                    {transcripts[artifact.id].map((cue, index) => (
-                      <div key={`${artifact.id}-${cue.start}-${index}`} className="grid grid-cols-[48px_minmax(0,1fr)] gap-2 rounded-lg bg-background-100/70 px-2.5 py-2">
-                        <span className="text-[9px] font-bold text-primary-600">{cue.start}</span>
-                        <div className="min-w-0">
-                          <p className="text-[9px] font-black text-foreground-700">{cue.speaker}</p>
-                          <p className="mt-0.5 whitespace-pre-wrap text-[11px] leading-5 text-foreground-800">{cue.text}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="rounded-lg bg-white px-3 py-2 text-[10px] font-semibold text-foreground-500">The transcript is empty.</p>
-                )
-              ) : (
-                <p className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-[10px] font-semibold text-foreground-500">
-                  <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Loading transcript text...
-                </p>
-              )}
-            </div>
-          ))}
-        </div>
-      )) : (
-        <p className="rounded-lg bg-white px-3 py-3 text-[10px] font-semibold text-foreground-500">
-          Nothing is stored yet. Use Fetch attendance &amp; recordings once a meeting has ended.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function ModuleCardMetric({ icon, label, value, tone = 'purple' }: { icon: string; label: string; value: number | string; tone?: 'purple' | 'blue' | 'emerald' | 'amber' }) {
-  const tones = {
-    purple: 'border-primary-100 bg-primary-50 text-primary-700',
-    blue: 'border-sky-100 bg-sky-50 text-sky-700',
-    emerald: 'border-emerald-100 bg-emerald-50 text-emerald-700',
-    amber: 'border-amber-100 bg-amber-50 text-amber-700',
-  };
-  return (
-    <div className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${tones[tone]}`}>
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-white/70">
-        <AppIcon className={`${icon} text-sm`}></AppIcon>
-      </span>
-      <div className="min-w-0">
-        <p className="truncate text-sm font-black leading-tight text-current">{value}</p>
-        <p className="mt-0.5 text-[9px] font-bold uppercase leading-tight text-foreground-500">{label}</p>
-      </div>
-    </div>
-  );
-}
-
-function ModuleDetailLine({ icon, label, value, warnWhenUnassigned = false }: { icon: string; label: string; value: number | string; warnWhenUnassigned?: boolean }) {
-  const isGap = warnWhenUnassigned && !isStaffAssigned(String(value));
-  return (
-    <div className="grid min-w-0 grid-cols-[24px_112px_minmax(0,1fr)] items-center gap-2 rounded-lg bg-background-50 px-2 py-1.5 text-[11px]">
-      <span className="grid h-6 w-6 place-items-center rounded-md bg-background-100 text-primary-600">
-        <AppIcon className={`${icon} text-xs`}></AppIcon>
-      </span>
-      <span className="font-black uppercase tracking-wide text-foreground-400">{label}</span>
-      {/* An unassigned slot is a gap to fill, so it is toned differently from real data. */}
-      <span className={`w-fit max-w-full min-w-0 truncate rounded-md border px-2 py-1 text-left font-black shadow-[inset_0_0_0_1px_rgba(255,255,255,0.65)] ${isGap ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-background-200 bg-white text-foreground-950'}`}>{value}</span>
-    </div>
-  );
-}
-
-function ProgressRow({ label, value }: { label: string; value: number }) {
-  return (
-    <div>
-      <div className="mb-1.5 flex items-center justify-between gap-3">
-        <span className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">{label}</span>
-        <span className="text-[11px] font-black text-foreground-900">{value}%</span>
-      </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-background-200">
-        <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function MiniDarkMetric({ label, value }: { label: string; value: number | string }) {
-  return (
-    <div>
-      <p className="text-[15px] font-black leading-tight text-foreground-950">{value}</p>
-      <p className="mt-0.5 text-[9px] font-bold uppercase leading-tight text-foreground-400">{label}</p>
-    </div>
-  );
-}
-
-function ModuleTooltipMetric({ icon, label, value }: { icon: string; label: string; value: number | string }) {
-  return (
-    <span className="flex items-center gap-2 rounded-lg bg-background-100 border border-foreground-200/60 px-2.5 py-2">
-      <AppIcon className={`${icon} text-primary-500 text-xs`}></AppIcon>
-      <span className="min-w-0">
-        <span className="block text-[9px] font-bold text-foreground-400 uppercase leading-tight">{label}</span>
-        <span className="block text-[11px] font-semibold text-foreground-800 truncate leading-tight mt-0.5">{value}</span>
-      </span>
-    </span>
-  );
-}
-
-function componentTypeLabel(type: string) {
-  return clean(type, 'Component')
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, letter => letter.toUpperCase());
-}
-
-function ksbClassificationLabel(value?: string) {
-  const classification = clean(value).toLowerCase();
-  if (classification === 'main') return 'Hard';
-  if (classification === 'secondary') return 'Soft';
-  if (classification === 'possible') return 'Possible';
-  return clean(value, 'Soft');
-}
-
-function componentTypeTone(type: string) {
-  const key = normalise(type);
-  if (key.includes('live')) return 'bg-primary-100 text-primary-700';
-  if (key.includes('quiz')) return 'bg-amber-100 text-amber-700';
-  if (key.includes('assignment') || key.includes('evidence')) return 'bg-sky-100 text-sky-700';
-  if (key.includes('reading') || key.includes('selfstudy')) return 'bg-emerald-100 text-emerald-700';
-  if (key.includes('video') || key.includes('podcast')) return 'bg-secondary-100 text-secondary-700';
-  return 'bg-foreground-100 text-foreground-600';
 }
 
 function KsbBadge({ code, compact = false }: { code: string; compact?: boolean }) {
@@ -4294,71 +3000,6 @@ function KsbBadge({ code, compact = false }: { code: string; compact?: boolean }
     <span className={`${compact ? 'text-[9px] px-1.5 py-0.5' : 'text-[10px] px-2 py-0.5'} inline-flex items-center rounded-md border font-semibold ${ksbTone(ksbKind(code))}`}>
       {formatKsbCode(code)}
     </span>
-  );
-}
-
-function KsbGroupedTags({ codes, limit }: { codes: string[]; limit?: number }) {
-  const sorted = [...new Set(codes.map(code => clean(code)).filter(Boolean))].sort(sortKsbCodes);
-  const visible = typeof limit === 'number' ? sorted.slice(0, limit) : sorted;
-  const groups = visible.reduce<Record<string, string[]>>((acc, code) => {
-    const parent = ksbParentCode(code);
-    acc[parent] = [...(acc[parent] ?? []), code];
-    return acc;
-  }, {});
-
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      {Object.entries(groups).map(([parent, children]) => {
-        const childCodes = children.filter(code => formatKsbCode(code) !== parent);
-        return (
-          <div key={parent} className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-1 ${ksbTone(ksbKind(parent))}`}>
-            <div className="text-[9px] font-bold leading-tight">{parent}</div>
-            {childCodes.length > 0 && (
-              <div className="flex items-center gap-0.5 flex-wrap">
-                {childCodes.map(code => <KsbBadge key={code} code={code} compact />)}
-              </div>
-            )}
-          </div>
-        );
-      })}
-      {typeof limit === 'number' && sorted.length > limit && (
-        <span className="text-[10px] font-semibold text-foreground-400 px-2 py-1">+{sorted.length - limit}</span>
-      )}
-    </div>
-  );
-}
-
-function KsbCoverageGroups({ mapping }: { mapping: ModuleKsbMappingSummary[] }) {
-  const sorted = [...mapping].sort((a, b) => sortKsbCodes(a.ksb, b.ksb));
-  if (!sorted.length) {
-    return (
-      <div className="rounded-lg border border-dashed border-background-300 bg-background-100 px-3 py-3 text-[11px] font-semibold text-foreground-400">
-        No KSBs mapped to this module yet.
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      {sorted.map(item => {
-        const hasRealWeight = item.source !== 'fallback' && Number(item.weight || 0) > 0;
-        return (
-          <div key={item.ksb} className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 ${ksbTone(ksbKind(item.ksb))}`} title={hasRealWeight ? 'Weighted in Module Builder' : 'Linked KSB. Weight is 0 or not set yet.'}>
-            <span className="text-[10px] font-bold">{formatKsbCode(item.ksb)}</span>
-            {hasRealWeight ? (
-              <>
-                <span className="w-10 h-1.5 bg-white/70 rounded-full overflow-hidden">
-                  <span className="block h-full bg-current rounded-full" style={{ width: `${item.weight}%` }}></span>
-                </span>
-                <span className="text-[9px] font-semibold">{item.weight}%</span>
-              </>
-            ) : (
-              <span className="text-[9px] font-bold uppercase">No weight</span>
-            )}
-          </div>
-        );
-      })}
-    </div>
   );
 }
 
@@ -4727,7 +3368,6 @@ function KsbEvidenceList({ evidence }: { evidence: Record<string, KsbEvidenceIte
   );
 }
 
-type KsbTraceTab = 'map' | 'coverage' | 'trace';
 // Coverage is reported by weight, so the only filter left is whether a KSB is
 // placed in the curriculum at all.
 type KsbMappedFilter = 'all' | 'mapped' | 'unmapped';
@@ -4785,7 +3425,7 @@ function ksbRowId(row: Pick<KsbHeatmapRow, 'id' | 'ksb' | 'sourceType' | 'source
   return clean(row.id) || [row.sourceType, row.sourceId, row.ksb].map(normalise).join('|') || row.ksb;
 }
 
-function KsbTraceModal({ programme, programmeId, onClose }: { programme: Programme; programmeId: string; initialTab: KsbTraceTab; onClose: () => void }) {
+function KsbTraceModal({ programme, programmeId, onClose }: { programme: Programme; programmeId: string; onClose: () => void }) {
   const [search, setSearch] = useState('');
   // Learner achievement is a separate read from the curriculum mapping: the
   // coverage payload has no learner join at all.
@@ -5118,79 +3758,6 @@ function KsbCoverageSummaryView({ rows, evidenceByCode, learnerAchievement, hasL
   );
 }
 
-function KsbTraceDetailView({ rows, selectedRow, evidence, onSelectCode }: { rows: KsbHeatmapRow[]; selectedRow: KsbHeatmapRow | null; evidence: KsbTraceEvidence[]; onSelectCode: (code: string) => void }) {
-  if (!selectedRow) return <EmptyPanel title="No KSB selected" message="Choose a KSB to inspect its trace." />;
-  const byModule = groupTraceEvidence(evidence);
-  return (
-    <div className="grid grid-cols-1 gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
-      <aside className="rounded-2xl border border-background-200 bg-background-50 p-3">
-        <p className="mb-2 text-[10px] font-bold uppercase text-foreground-400">Select KSB</p>
-        <div className="max-h-[55vh] space-y-1 overflow-y-auto pr-1">
-          {rows.map(row => {
-            const rowId = ksbRowId(row);
-            return (
-            <button key={rowId} type="button" onClick={() => onSelectCode(rowId)} className={`flex w-full items-center justify-between gap-2 rounded-lg px-2 py-2 text-left transition-smooth ${rowId === ksbRowId(selectedRow) ? 'bg-primary-50 text-primary-800' : 'hover:bg-background-100 text-foreground-700'}`}>
-              <span className="min-w-0">
-                <span className="block truncate text-[11px] font-bold">{formatKsbCode(row.ksb)}</span>
-                {ksbSourceLabel(row) && <span className="block truncate text-[9px] font-semibold text-foreground-400">{ksbSourceLabel(row)}</span>}
-              </span>
-              <KsbWeightTotal weight={ksbRowWeight(row)} mapped={ksbRowIsMapped(row)} />
-            </button>
-            );
-          })}
-          {!rows.length && <EmptyPanel title="No KSBs" message="No KSBs match the current filters." compact />}
-        </div>
-      </aside>
-      <section className="rounded-2xl border border-background-200 bg-background-50 p-4">
-        <div className="mb-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <KsbBadge code={selectedRow.ksb} />
-            <KsbWeightTotal weight={ksbRowWeight(selectedRow)} mapped={ksbRowIsMapped(selectedRow)} />
-            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{evidence.length} occurrence{evidence.length === 1 ? '' : 's'}</span>
-            {ksbSourceLabel(selectedRow) && <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{ksbSourceLabel(selectedRow)}</span>}
-          </div>
-          <h4 className="mt-2 text-sm font-heading font-bold text-foreground-950">{selectedRow.title}</h4>
-        </div>
-        {evidence.length ? (
-          <div className="space-y-3">
-            {byModule.map(moduleGroup => (
-              <div key={moduleGroup.module} className="rounded-xl border border-background-200 bg-background-100/45 p-3">
-                <p className="text-[12px] font-bold text-foreground-950">Programme ? {moduleGroup.module}</p>
-                <div className="mt-2 space-y-2">
-                  {moduleGroup.weeks.map(weekGroup => (
-                    <div key={`${moduleGroup.module}-${weekGroup.week}`} className="rounded-lg border border-background-200 bg-background-50 p-3">
-                      <p className="text-[11px] font-bold text-foreground-700">? {weekGroup.week || 'Module-level mapping'}</p>
-                      <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
-                        {weekGroup.items.map((item, index) => (
-                          <div key={`${item.module}-${item.week}-${item.component}-${index}`} className="rounded-lg border border-background-200 bg-background-100 px-3 py-2">
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase text-primary-700">{item.scope}</span>
-                              {item.classification && <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{ksbClassificationLabel(item.classification)}</span>}
-                              <span className="rounded-full bg-background-50 px-2 py-0.5 text-[9px] font-bold text-foreground-600">{item.weight > 0 ? `${item.weight}%` : 'No weight'}</span>
-                            </div>
-                            <p className="mt-2 text-[11px] font-semibold text-foreground-900">? {item.component || item.componentType || 'Component not set'}</p>
-                            {item.componentType && <p className="text-[10px] font-semibold text-foreground-400">{componentTypeLabel(item.componentType)}</p>}
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {item.groups.map(group => <span key={group} className="rounded-full bg-emerald-50 px-2 py-0.5 text-[9px] font-bold text-emerald-700">Group: {group}</span>)}
-                              {!item.groups.length && <span className="text-[10px] font-semibold text-foreground-300">No group attached</span>}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <EmptyPanel title="Missing from mapping" message="This KSB has no mapped module, week, or component in the current programme." />
-        )}
-      </section>
-    </div>
-  );
-}
-
 function ksbDescriptionText(row: KsbHeatmapRow) {
   const code = normalise(row.ksb);
   const title = clean(row.title);
@@ -5312,20 +3879,5 @@ function traceEvidenceForRow(row: KsbHeatmapRow, programme: Programme): KsbTrace
       module: clean(entry.module || module?.name || moduleLabel, moduleLabel),
       groups: displayGroupValues([...(entry.groups || []), ...fallbackGroups]),
     };
-  }));
-}
-
-function groupTraceEvidence(evidence: KsbTraceEvidence[]) {
-  const moduleMap = new Map<string, Map<string, KsbTraceEvidence[]>>();
-  evidence.forEach(item => {
-    const moduleName = clean(item.module, 'Module');
-    const weekName = clean(item.week, item.scope === 'module' ? 'Module-level mapping' : 'Week not set');
-    const weekMap = moduleMap.get(moduleName) || new Map<string, KsbTraceEvidence[]>();
-    weekMap.set(weekName, [...(weekMap.get(weekName) || []), item]);
-    moduleMap.set(moduleName, weekMap);
-  });
-  return [...moduleMap.entries()].map(([module, weekMap]) => ({
-    module,
-    weeks: [...weekMap.entries()].map(([week, items]) => ({ week, items })),
   }));
 }

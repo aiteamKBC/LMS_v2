@@ -23,7 +23,6 @@ const CURRICULUM_ROUTE_IMPORTS: Record<string, () => Promise<unknown>> = {
   '/curriculum/reports': () => import('@/pages/curriculum/reports/page'),
   '/curriculum/version-control': () => import('@/pages/curriculum/version-control/page'),
   '/curriculum/session-calendar': () => import('@/pages/curriculum/session-calendar/page'),
-  '/curriculum/staff-profiles': () => import('@/pages/curriculum/staff-profiles/page'),
   '/curriculum/question-bank': () => import('@/pages/curriculum/question-bank/page'),
   '/curriculum/quiz-xml': () => import('@/pages/curriculum/quiz-xml/page'),
 };

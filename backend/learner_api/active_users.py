@@ -1055,6 +1055,63 @@ def _resolve_programme_id(programme="", training_plan=None):
     return _s(row[0]) if row else ""
 
 
+def _resolve_linkable_programme_id(programme="", training_plan=None):
+    """A programme id safe to PERSIST on the learner row, or ''.
+
+    Deliberately stricter than _resolve_programme_id, which exists to pick a
+    best-effort programme for a KSB lookup and will happily fall back to the
+    most recently updated name match (or to the name itself). Writing that guess
+    onto the learner is what this must not do: when an archived programme and
+    its replacement share a name, the "most recent" row is the wrong one as
+    often as not, and the learner ends up attached to a programme they were
+    never enrolled on.
+
+    So only an unambiguous answer is returned. The module snapshot is already
+    keyed by programme id, so it is trusted outright; a programme *name* is
+    trusted only when it identifies exactly one programme. Anything else
+    resolves to '' and the caller leaves the existing link alone.
+    """
+    module_ids = _plan_module_ids(training_plan)
+    if module_ids:
+        try:
+            with connections["enrolment"].cursor() as cursor:
+                cursor.execute(
+                    "SELECT DISTINCT programme_id FROM curriculum.modules "
+                    "WHERE module_catalogue_id = ANY(%s) "
+                    "  AND programme_id IS NOT NULL AND programme_id <> ''",
+                    [module_ids],
+                )
+                rows = cursor.fetchall()
+        except DatabaseError as exc:
+            logger.warning(
+                "Could not resolve programme id from module snapshot for %s: %s",
+                module_ids,
+                exc,
+            )
+        else:
+            # More than one distinct programme in the snapshot is itself
+            # ambiguous, so it is not a link either.
+            if len(rows) == 1 and _s(rows[0][0]):
+                return _s(rows[0][0])
+
+    programme = _s(programme)
+    if not programme:
+        return ""
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                "SELECT programme_id FROM curriculum.programmes "
+                "WHERE lower(btrim(COALESCE(name, ''))) = lower(btrim(%s)) "
+                "  AND COALESCE(btrim(programme_id), '') <> ''",
+                [programme],
+            )
+            rows = cursor.fetchall()
+    except DatabaseError as exc:
+        logger.warning("Could not resolve a linkable programme id for %s: %s", programme, exc)
+        return ""
+    return _s(rows[0][0]) if len(rows) == 1 else ""
+
+
 # The three KSB lookups below each run their query inside its own savepoint.
 # They already caught DatabaseError and degraded to "no KSBs", which is the right
 # behaviour — but catching an error does not un-abort a Postgres transaction, and
@@ -1300,6 +1357,22 @@ def sync_active_user(source):
             source_uuid = getattr(source, "uuid", None)
             if source_uuid is not None:
                 defaults["uuid"] = source_uuid
+            # Keep the explicit programme link fresh, so curriculum can scope
+            # this learner by id instead of by the programme *name* two
+            # programmes can share. Only set when it resolves unambiguously:
+            # an unresolvable sync must leave whatever link is already there
+            # alone rather than blanking a correct one.
+            training_plan = (
+                hydrate_source_training_plan(source)
+                if status.lower() == ACTIVE_STATUS
+                else None
+            )
+            linkable_programme_id = _resolve_linkable_programme_id(
+                defaults["programme"],
+                training_plan=training_plan,
+            )
+            if linkable_programme_id:
+                defaults["programme_id"] = linkable_programme_id
             if learner is None:
                 # Never force the Created_users primary key into this table:
                 # both sequences are independent after the learner-table merge.
@@ -1309,7 +1382,6 @@ def sync_active_user(source):
                     setattr(learner, field, value)
                 learner.save(update_fields=list(defaults))
             if status.lower() == ACTIVE_STATUS:
-                training_plan = hydrate_source_training_plan(source)
                 replace_training_plan(learner, training_plan)
                 refresh_learner_ksb_snapshot(learner, source, training_plan=training_plan)
         return learner if status.lower() == ACTIVE_STATUS else None

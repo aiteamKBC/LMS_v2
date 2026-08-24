@@ -2566,6 +2566,38 @@ table tbody td:last-child {
   color: oklch(var(--foreground-900)) !important;
 }
 
+/* The card paints every p/span one colour, which is right for its body text and
+   wrong for anything meant to be read as a warning. A programme with no KSB
+   source is unfinished work, so the state it is in keeps its own colour: the
+   blanket rule above was quietly turning the amber alert into ordinary text. */
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-source-button.programme-source-applied .programme-source-label {
+  color: oklch(var(--primary-700)) !important;
+}
+
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-source-button.programme-source-missing :is(.programme-source-label, p:last-child) {
+  color: oklch(var(--accent-800)) !important;
+}
+
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-source-button .programme-source-cta,
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-source-button .programme-source-cta :is(p, span) {
+  color: white !important;
+}
+
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-source-button.programme-source-applied .programme-source-cta {
+  background: transparent !important;
+  color: oklch(var(--primary-600)) !important;
+}
+
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-warning-badge {
+  background: oklch(var(--accent-100)) !important;
+  box-shadow: inset 0 0 0 1px oklch(var(--accent-300)) !important;
+}
+
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-warning-badge,
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-warning-badge :is(p, span) {
+  color: oklch(var(--accent-800)) !important;
+}
+
 .dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-button {
   color: oklch(var(--foreground-800)) !important;
 }
