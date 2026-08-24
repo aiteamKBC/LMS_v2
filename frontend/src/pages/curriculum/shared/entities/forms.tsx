@@ -25,7 +25,6 @@ import {
   type CurriculumProgramme,
 } from '@/lib/curriculumApi';
 import { cleanText, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, sameFormValues, sameIdentifier } from './model';
-import { createEmptyKsbProfileForProgramme } from './programmeKsbProfile';
 import {
   ColorControl,
   EntityDrawer,
@@ -55,12 +54,10 @@ export function ProgrammeFormDrawer({
   programme?: CurriculumProgramme | null;
   onClose: () => void;
   /**
-   * Handed the programme a create just made, and whether it already has the
-   * empty KSB profile a new programme is given. `ksbSourceApplied: false` means
-   * that step failed and is still owed, so the caller should ask for a source.
-   * Absent on an edit.
+   * Handed the programme a create just made, so the caller can carry straight on
+   * to the KSB source it still needs. Absent on an edit.
    */
-  onSaved: (result?: { programme: CurriculumProgramme; ksbSourceApplied: boolean }) => unknown | Promise<unknown>;
+  onSaved: (result?: { programme: CurriculumProgramme }) => unknown | Promise<unknown>;
 }) {
   const [name, setName] = useState('');
   const [level, setLevel] = useState('');
@@ -109,32 +106,18 @@ export function ProgrammeFormDrawer({
       let created: CurriculumProgramme | null = null;
       if (programme) await updateCurriculumProgramme(programmeIdentity(programme), payload);
       else created = (await createCurriculumProgramme(payload)).programme || null;
-      // Part of creating a programme, not a follow-up to it: a programme with no
-      // KSB source cannot be mapped or measured, so it is given its own empty
-      // profile here rather than left in that state for someone to notice.
-      let ksbSourceApplied = false;
-      if (created) {
-        try {
-          await createEmptyKsbProfileForProgramme(created);
-          ksbSourceApplied = true;
-        } catch (err) {
-          // The programme itself is saved, so this cannot fail the save. The
-          // caller is told the source is still owed and asks for one instead.
-          console.warn('Unable to create the empty KSB profile for the new programme.', err);
-        }
-      }
       onClose();
-      await onSaved(created ? { programme: created, ksbSourceApplied } : undefined);
+      await onSaved(created ? { programme: created } : undefined);
       await showCurriculumAlert({
         title: programme ? 'Programme updated' : 'Programme created',
         // A cohort used to be named as the next step, which is the wrong one:
-        // what a new programme needs is the KSB codes its modules will map to,
-        // and it now has an empty profile of its own waiting for them.
+        // nothing beneath a programme can be mapped or measured until it has a
+        // KSB source, so that is what the reader is sent to do. Left unsaid, the
+        // programme sits there looking finished and the omission only surfaces
+        // later, on the KSB mapping page, as an empty screen.
         text: programme
           ? `${payload.name} is saved.`
-          : ksbSourceApplied
-            ? `${payload.name} is saved, with an empty KSB profile of its own applied. Add its knowledge, skills and behaviours on the KSB Frameworks page — until they exist there is nothing for its modules to map against.`
-            : `${payload.name} is saved, but its KSB profile could not be created. Apply a KSB source to it before building modules: without one, nothing can be mapped and coverage cannot be measured.`,
+          : `${payload.name} is saved. It has no KSB source yet — modules under it have nothing to map against and its coverage cannot be measured until one is applied.`,
         timer: programme ? 2200 : undefined,
       });
     } catch (err) {

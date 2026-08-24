@@ -5,7 +5,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardGridSkeleton } from '@/components/feature/Skeletons';
 import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
-import { createEmptyKsbProfileForProgramme } from '@/pages/curriculum/shared/entities/programmeKsbProfile';
+import { ensureSharedEmptyKsbProfile, SHARED_EMPTY_KSB_PROFILE_NAME } from '@/pages/curriculum/shared/entities/programmeKsbProfile';
 import { visibleNotes } from '@/pages/curriculum/shared/entities/model';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
@@ -512,21 +512,29 @@ export default function CurriculumProgrammes() {
     }
   };
 
-  const applyProgrammeKsbSource = async (programme: CurriculumProgramme, sourceValue: string) => {
+  // `options.sets` is for a source that has only just been created: the state
+  // holding the KSB sets cannot have caught up inside the same call, and this
+  // would otherwise fail to find a profile that certainly exists.
+  const applyProgrammeKsbSource = async (
+    programme: CurriculumProgramme,
+    sourceValue: string,
+    options: { sets?: CurriculumKsbSet[] } = {},
+  ) => {
     const [kind, id] = sourceValue.split(':');
     const programmeId = programme.sourceId || programme.id;
     if (!programmeId || !id) return;
+    const availableSets = options.sets || ksbSets;
     setApplyingKsbSource(true);
     try {
       // Compact is safe: this page's only use of curriculumData.modules is the KSB
       // source cascade below, which reads name/colour/notes plus identity fields.
       const modulesForCascade = curriculumData?.modules?.length ? curriculumData.modules : await fetchCurriculumModules(undefined, { compact: true });
       if (kind === 'profile') {
-        const profile = ksbSets.find(set => ksbSourceIdForProgrammeCard(set) === id || set.frameworkId === id || set.ksbProfileId === id);
+        const profile = availableSets.find(set => ksbSourceIdForProgrammeCard(set) === id || set.frameworkId === id || set.ksbProfileId === id);
         if (!profile) throw new Error('Selected KSB profile could not be found.');
         const selectedProfileId = ksbSourceIdForProgrammeCard(profile);
         const programmeCandidates = uniqueTextValues([programmeId, programme.id, programme.sourceId, programme.name]);
-        const previouslyLinkedProfiles = ksbSets.filter(set => {
+        const previouslyLinkedProfiles = availableSets.filter(set => {
           if (ksbSourceIdForProgrammeCard(set) === selectedProfileId) return false;
           const linkedProgrammeIds = uniqueTextValues([set.programmeId, ...(set.programmeIds || [])]);
           return programmeCandidates.some(candidate => linkedProgrammeIds.some(linked => normalise(linked) === normalise(candidate)));
@@ -643,44 +651,36 @@ export default function CurriculumProgrammes() {
     })().catch(err => console.warn('Unable to refresh KSB Source state after unapply.', err));
   };
 
-  // The same profile a new programme is created with, for a programme made
-  // before that was the rule. Its own empty profile is the honest default: the
-  // alternative on offer is borrowing another programme's source, which is only
-  // right when the two genuinely share a standard.
-  const [buildingKsbProfileFor, setBuildingKsbProfileFor] = useState('');
-  const buildEmptyKsbProfile = async (programme: CurriculumProgramme) => {
+  // Park a programme on the one shared empty profile, so it has a source at all
+  // while its real standard is still to be authored. One profile, not one per
+  // programme: the same placeholder is reused, and the assignment goes through
+  // the ordinary apply path so linking and the module cascade behave identically.
+  const [parkingKsbProfileFor, setParkingKsbProfileFor] = useState('');
+  const assignSharedEmptyKsbProfile = async (programme: CurriculumProgramme) => {
     const key = programme.sourceId || programme.id;
-    setBuildingKsbProfileFor(key);
+    setParkingKsbProfileFor(key);
     try {
-      const frameworkId = await createEmptyKsbProfileForProgramme(programme);
-      setProgrammeSourceOverrides(previous => new Map(previous).set(key, `profile:${frameworkId}`));
-      await Promise.all([
-        reload({ skipCache: true, silent: true }),
-        fetchCurriculumKsbSets(undefined, { all: true }).then(setKsbSets),
-      ]);
-      await showProgrammeSwalToast(
-        'Empty KSB profile created',
-        `${programme.name} now has a KSB profile of its own. Add its knowledge, skills and behaviours on the KSB Frameworks page.`,
-        'success',
-      );
+      const { frameworkId, sets } = await ensureSharedEmptyKsbProfile(ksbSets);
+      setKsbSets(sets);
+      await applyProgrammeKsbSource(programme, `profile:${frameworkId}`, { sets });
     } catch (err) {
       await showProgrammeSwalToast(
-        'Unable to create the KSB profile',
-        err instanceof Error ? err.message : 'The KSB profile could not be created.',
+        'Unable to assign the empty KSB profile',
+        err instanceof Error ? err.message : 'The empty KSB profile could not be assigned.',
         'error',
       );
     } finally {
-      setBuildingKsbProfileFor('');
+      setParkingKsbProfileFor('');
     }
   };
 
-  // A new programme is created with an empty KSB profile of its own, so the
-  // usual case needs nothing here — the card will show that its codes are still
-  // to be written. Only when that profile could not be created is the programme
-  // handed to the picker, because then it genuinely has no source at all.
-  const handleProgrammeSaved = async (result?: { programme: CurriculumProgramme; ksbSourceApplied: boolean }) => {
+  // A new programme has no KSB source, and cannot be mapped or measured without
+  // one. So the create hands it straight to the picker — where the shared empty
+  // profile is one of the options — rather than leaving the reader to notice the
+  // gap on the card later. An edit passes nothing and changes nothing.
+  const handleProgrammeSaved = async (result?: { programme: CurriculumProgramme }) => {
     await refreshProgrammeCards();
-    if (result?.programme && !result.ksbSourceApplied) setApplyProgramme(result.programme);
+    if (result?.programme) setApplyProgramme(result.programme);
   };
 
   const openAppliedKsbSourceReview = (programme: CurriculumProgramme, source: ProgrammeAppliedKsbSource) => {
@@ -829,15 +829,15 @@ export default function CurriculumProgrammes() {
                 </p>
                 <p className="mt-0.5 text-[12px] leading-5 text-amber-800">
                   {programmesWithEmptyKsbSource.length === programmesMissingKsbSource.length
-                    ? 'Their KSB profiles are applied but still empty. Add the knowledge, skills and behaviours on the KSB Frameworks page — until they exist there is nothing for their modules to map to and coverage stays at 0%.'
+                    ? `Their applied source holds no KSB codes. Author each programme’s real knowledge, skills and behaviours on the KSB Frameworks page and apply that profile — while they sit on “${SHARED_EMPTY_KSB_PROFILE_NAME}” there is nothing for their modules to map to and coverage stays at 0%.`
                     : 'Until a KSB source is applied and filled in there are no codes for their modules to map to, coverage stays at 0% and learner KSB progress cannot be measured.'}
                 </p>
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-              {/* An empty profile is filled in on the KSB Frameworks page; a
-                  missing source is chosen here. Two different jobs, so the
-                  button goes where the work actually is. */}
+              {/* A programme with no source can be parked on the shared empty
+                  profile here; one already parked there needs a real profile
+                  authored, which is a different page. */}
               {programmesWithEmptyKsbSource.length > 0 && (
                 <button
                   type="button"
@@ -845,7 +845,7 @@ export default function CurriculumProgrammes() {
                   className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[11px] font-bold text-amber-900 transition-smooth hover:bg-amber-100"
                 >
                   <AppIcon className="ri-list-check-2 text-sm"></AppIcon>
-                  Add KSB codes
+                  Author a KSB profile
                 </button>
               )}
               {programmesMissingKsbSource
@@ -855,14 +855,15 @@ export default function CurriculumProgrammes() {
                   <span key={programme.id} className="inline-flex items-center gap-1.5">
                     <button
                       type="button"
-                      disabled={Boolean(buildingKsbProfileFor)}
-                      onClick={() => void buildEmptyKsbProfile(programme)}
+                      disabled={Boolean(parkingKsbProfileFor)}
+                      title={`Park ${programme.name} on the shared "${SHARED_EMPTY_KSB_PROFILE_NAME}" until its real standard is authored.`}
+                      onClick={() => void assignSharedEmptyKsbProfile(programme)}
                       className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-amber-500 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      <AppIcon className={buildingKsbProfileFor === (programme.sourceId || programme.id)
+                      <AppIcon className={parkingKsbProfileFor === (programme.sourceId || programme.id)
                         ? 'ri-loader-4-line animate-spin text-sm'
                         : 'ri-add-line text-sm'}></AppIcon>
-                      Create profile for {programme.name}
+                      Assign empty profile to {programme.name}
                     </button>
                     <button
                       type="button"
@@ -870,7 +871,7 @@ export default function CurriculumProgrammes() {
                       className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[11px] font-bold text-amber-900 transition-smooth hover:bg-amber-100"
                     >
                       <AppIcon className="ri-node-tree text-sm"></AppIcon>
-                      Use an existing source
+                      Choose a source
                     </button>
                   </span>
                 ))}
@@ -942,16 +943,17 @@ export default function CurriculumProgrammes() {
                   type="button"
                   onClick={e => {
                     e.stopPropagation();
-                    // An empty profile has nothing to review, so the panel opens
-                    // the page where its codes are written instead.
-                    if (ksbSourceIsEmpty) navigate('/curriculum/ksb-frameworks');
+                    // An empty source has no KSBs to review. It is a placeholder
+                    // to move off rather than a profile to fill in, so the panel
+                    // offers the choice of a real source instead.
+                    if (ksbSourceIsEmpty) setApplyProgramme(prog);
                     else openAppliedKsbSourceReview(prog, appliedSource);
                   }}
                   className={`programme-source-button mb-2.5 w-full rounded-xl border px-2 py-1.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'programme-source-applied' : 'programme-source-missing'}`}
                   aria-label={!hasAppliedKsbSource
                     ? `Set the KSB source for ${prog.name}`
                     : ksbSourceIsEmpty
-                      ? `Add KSB codes for ${prog.name}`
+                      ? `Choose a real KSB source for ${prog.name}`
                       : `View KSBs for ${appliedSource.title}`}
                 >
                   <div className="flex items-start gap-2">
@@ -970,7 +972,7 @@ export default function CurriculumProgrammes() {
                         {!hasAppliedKsbSource
                           ? 'Modules cannot map KSBs and coverage cannot be measured until one is applied.'
                           : ksbSourceIsEmpty
-                            ? 'No KSB codes in it yet. Add its knowledge, skills and behaviours to make it mappable.'
+                            ? 'A placeholder with no KSB codes in it. Apply the programme’s real profile or standard to make it mappable.'
                             : appliedSource.detail || appliedSource.subtitle}
                       </p>
                     </div>
@@ -980,7 +982,7 @@ export default function CurriculumProgrammes() {
                       ) : (
                         <>
                           <AppIcon className="ri-add-line text-[12px]"></AppIcon>
-                          {ksbSourceIsEmpty ? 'Add KSBs' : 'Set'}
+                          {ksbSourceIsEmpty ? 'Replace' : 'Set'}
                         </>
                       )}
                     </span>
