@@ -4,7 +4,19 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
-import { TableRowsSkeleton } from '@/components/feature/Skeletons';
+import { cn } from '@/lib/cn';
+import { type StatusTone } from '@/lib/statusTone';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { CompactMetric } from '@/components/ui/MetricCard';
+import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
+import { DataTable, type DataColumn } from '@/components/ui/DataTable';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ProgressBar, ProgressMetric } from '@/components/ui/ProgressMetric';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Pagination } from '@/components/ui/Pagination';
+import { RowAction } from '@/components/ui/ActionRow';
+import { LearnerAvatar, LearnerIdentity } from '@/pages/coach/shared/LearnerIdentity';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/caseload';
@@ -153,36 +165,17 @@ function getRiskTone(status: OtjhRowStatus): RiskTone {
   return 'neutral';
 }
 
-function getPaceTone(pace: number): string {
-  if (pace >= 75) return 'text-emerald-600';
-  if (pace >= 50) return 'text-amber-600';
-  return 'text-red-600';
-}
-
-function getBadgeStyle(tone: RiskTone): string {
-  if (tone === 'red') return 'bg-red-50 text-red-700 border-red-200/60';
-  if (tone === 'amber') return 'bg-amber-50 text-amber-700 border-amber-200/60';
-  if (tone === 'green') return 'bg-emerald-50 text-emerald-700 border-emerald-200/60';
-  return 'bg-background-100 text-foreground-500 border-foreground-200/60';
-}
-
-function getAvatarStyle(tone: RiskTone): string {
-  if (tone === 'red') return 'bg-red-100 text-red-700';
-  if (tone === 'amber') return 'bg-amber-100 text-amber-700';
-  if (tone === 'green') return 'bg-emerald-100 text-emerald-700';
-  return 'bg-background-200 text-foreground-500';
-}
-
-function getProgressBarStyle(tone: RiskTone): string {
-  if (tone === 'red') return 'bg-red-500';
-  if (tone === 'amber') return 'bg-amber-500';
-  if (tone === 'green') return 'bg-emerald-500';
-  return 'bg-foreground-300';
+/** The one place an OTJH risk tone becomes a workspace-wide StatusTone. */
+function riskToneOf(risk: RiskTone): StatusTone {
+  if (risk === 'red') return 'critical';
+  if (risk === 'amber') return 'caution';
+  if (risk === 'green') return 'positive';
+  return 'neutral';
 }
 
 function getFocusCardStyle(focus: OtjhDetailFocus, activeFocus: OtjhDetailFocus): string {
   return focus === activeFocus
-    ? 'border-violet-300 bg-violet-50/70 ring-2 ring-violet-200'
+    ? 'border-primary-300 bg-primary-50/70 ring-2 ring-primary-200'
     : 'border-foreground-200/60 bg-background-100/40';
 }
 
@@ -248,15 +241,20 @@ function toOtjhRow(learner: CaseloadApiLearner): OtjhRow {
   };
 }
 
+/**
+ * One planned / target / completed / remaining cell. `emphasis` bolds the
+ * headline figure by weight only — colour stays for risk, never for "this is
+ * the important number".
+ */
 function OtjhValueButton({
   value,
   label,
-  tone = 'slate',
+  emphasis = false,
   onClick,
 }: {
   value: number;
   label: string;
-  tone?: 'slate' | 'purple';
+  emphasis?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -264,49 +262,12 @@ function OtjhValueButton({
       type="button"
       onClick={onClick}
       aria-label={`Open ${label} OTJH details`}
-      className="mx-auto block min-w-16 rounded-xl px-3 py-2 text-center transition hover:bg-violet-50 hover:ring-1 hover:ring-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-300"
+      className="mx-auto block min-w-16 rounded-lg px-3 py-2 text-center transition hover:bg-primary-50 hover:ring-1 hover:ring-primary-100 focus:outline-none focus:ring-2 focus:ring-primary-300"
     >
-      <span className={`text-[12px] font-bold ${tone === 'purple' ? 'text-violet-700' : 'text-slate-600'}`}>
+      <span className={cn('text-[12px] font-bold tabular-nums', emphasis ? 'text-foreground-900' : 'text-foreground-600')}>
         {formatHours(value)}
       </span>
     </button>
-  );
-}
-
-function OtjhTableMessage({ icon, message }: { icon: string; message: string }) {
-  return (
-    <div className="px-5 py-14 text-center">
-      <AppIcon className={`${icon} text-2xl text-slate-400`} />
-      <p className="mt-2 text-xs font-semibold text-slate-500">{message}</p>
-    </div>
-  );
-}
-
-function OtjhPagination({ currentPage, pageCount, total, onChange }: { currentPage: number; pageCount: number; total: number; onChange: (page: number) => void }) {
-  const start = (currentPage - 1) * ROWS_PER_PAGE + 1;
-  const end = Math.min(currentPage * ROWS_PER_PAGE, total);
-
-  return (
-    <div className="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-[11px] font-medium text-slate-500">
-        Showing <span className="font-bold text-slate-800">{start}-{end}</span> of <span className="font-bold text-slate-800">{total}</span>
-      </p>
-      {pageCount > 1 && (
-        <div className="flex items-center gap-1">
-          <button type="button" aria-label="Previous page" disabled={currentPage === 1} onClick={() => onChange(currentPage - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
-            <AppIcon className="ri-arrow-left-s-line" />
-          </button>
-          {Array.from({ length: pageCount }, (_, index) => index + 1).map(page => (
-            <button key={page} type="button" onClick={() => onChange(page)} className={`h-8 min-w-8 rounded-lg px-2 text-[11px] font-bold transition ${currentPage === page ? 'bg-[#21003f] text-white' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-              {page}
-            </button>
-          ))}
-          <button type="button" aria-label="Next page" disabled={currentPage === pageCount} onClick={() => onChange(currentPage + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
-            <AppIcon className="ri-arrow-right-s-line" />
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -387,11 +348,11 @@ export default function CoachOtjhReports() {
     setCurrentPage(1);
   };
 
-  const filterOptions: Array<{ key: FilterKey; label: string; count: number }> = [
-    { key: 'all', label: 'All', count: rows.length },
-    { key: 'behind', label: 'At Risk', count: stats.behind },
-    { key: 'need-attention', label: 'Need Attention', count: stats.needAttention },
-    { key: 'on-track', label: 'On Track', count: stats.onTrack },
+  const filterTabItems: PageTabItem[] = [
+    { value: 'all', label: 'All', count: rows.length },
+    { value: 'behind', label: 'At Risk', count: stats.behind, tone: 'critical' },
+    { value: 'need-attention', label: 'Need Attention', count: stats.needAttention, tone: 'caution' },
+    { value: 'on-track', label: 'On Track', count: stats.onTrack, tone: 'positive' },
   ];
 
   const selectedRow = rows.find(row => row.id === selectedRowId) || null;
@@ -416,118 +377,143 @@ export default function CoachOtjhReports() {
     setSelectedDetailFocus('summary');
   };
 
+  const otjhColumns: DataColumn<OtjhRow>[] = [
+    {
+      key: 'learner',
+      label: 'Learner',
+      widthClass: 'min-w-[220px]',
+      render: (row) => (
+        <LearnerIdentity name={row.learner} meta={row.employer} tone={riskToneOf(row.risk)} />
+      ),
+    },
+    {
+      key: 'programme',
+      label: 'Programme',
+      widthClass: 'w-[160px] min-w-[150px]',
+      render: (row) => (
+        <span className="truncate text-[12px] font-medium text-foreground-600">{row.programme}</span>
+      ),
+    },
+    {
+      key: 'planned',
+      label: 'Planned',
+      align: 'center',
+      widthClass: 'w-[100px] min-w-[100px]',
+      render: (row) => <OtjhValueButton value={row.planned} label="Planned" onClick={() => handleViewDetails(row, 'planned')} />,
+    },
+    {
+      key: 'target',
+      label: 'Target',
+      align: 'center',
+      widthClass: 'w-[100px] min-w-[100px]',
+      render: (row) => <OtjhValueButton value={row.target} label="Target" onClick={() => handleViewDetails(row, 'target')} />,
+    },
+    {
+      key: 'completed',
+      label: 'Completed',
+      align: 'center',
+      widthClass: 'w-[100px] min-w-[100px]',
+      render: (row) => <OtjhValueButton value={row.completed} label="Completed" emphasis onClick={() => handleViewDetails(row, 'completed')} />,
+    },
+    {
+      key: 'remaining',
+      label: 'Remaining',
+      align: 'center',
+      widthClass: 'w-[100px] min-w-[100px]',
+      render: (row) => <OtjhValueButton value={row.remaining} label="Remaining" onClick={() => handleViewDetails(row, 'remaining')} />,
+    },
+    {
+      key: 'progress',
+      label: 'OTJH progress',
+      widthClass: 'w-[200px] min-w-[180px]',
+      render: (row) => (
+        <ProgressMetric
+          value={`${row.pace}%`}
+          percent={row.pace}
+          note={<StatusBadge tone={riskToneOf(row.risk)} label={row.statusLabel} size="sm" />}
+        />
+      ),
+    },
+    {
+      key: 'action',
+      label: '',
+      align: 'center',
+      widthClass: 'w-[100px] min-w-[100px]',
+      render: (row) => (
+        <RowAction label="Details" icon="ri-arrow-right-s-line" onClick={() => handleViewDetails(row)} />
+      ),
+    },
+  ];
+
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="OTJH Reports" pageSubtitle="Monitor Off-The-Job Hours progress and targets" userName={ownerName} userRole="Progress Coach">
-      <div className="min-h-screen w-full space-y-4 bg-[#f7f6fb] p-3 md:p-5">
-        <section className="rounded-2xl border border-white/10 px-5 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)] md:px-7" style={{ background: 'linear-gradient(110deg, #100021 0%, #190034 52%, #2a0752 100%)' }}>
-          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
+      <PageContainer>
+        <PageHeader
+          title="Off-The-Job Hours"
+          description="Monitor completed hours against each learner's target and quickly identify caseload risks."
+          icon="ri-time-line"
+          meta={
+            <>
+              <CompactMetric
+                label={stats.behind ? 'Needs attention' : 'Caseload status'}
+                value={stats.behind ? `${stats.behind} learner${stats.behind === 1 ? '' : 's'} at risk` : 'Everything on track'}
+                tone={stats.behind ? 'critical' : 'positive'}
+              />
+              <CompactMetric label="Overall completion" value={`${stats.completion}%`} tone="brand" />
+              <CompactMetric label="Completed / target hrs" value={`${formatHours(stats.totalCompleted)}/${formatHours(stats.totalTarget)}`} />
+            </>
+          }
+        />
+
+        <section className="space-y-3">
+          <div className="flex flex-col justify-between gap-3 xl:flex-row xl:items-end">
             <div>
-              <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-white/55">
-                <span>Coach Workspace</span>
-                <AppIcon className="ri-arrow-right-s-line text-sm" />
-                <span className="text-white">OTJH Reports</span>
-              </div>
-              <h1 className="font-heading text-2xl font-bold tracking-tight text-white md:text-[28px]">Off-The-Job Hours</h1>
-              <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-white/70">
-                Monitor completed hours against each learner's target and quickly identify caseload risks.
+              <h2 className="flex items-center gap-2 text-[15px] font-semibold text-foreground-900">
+                Learner OTJH progress
+                <span className="text-[15px] font-semibold tabular-nums text-foreground-400">{filteredRows.length}</span>
+              </h2>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-foreground-500">
+                Completed, planned and remaining hours across the active caseload.
               </p>
             </div>
-            <button type="button" onClick={() => changeFilter(stats.behind ? 'behind' : 'on-track')} className="flex min-w-[190px] items-center gap-3 self-start rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-left backdrop-blur-sm transition hover:bg-white/15 md:self-auto">
-              <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${stats.behind ? 'bg-red-400/15 text-red-200' : 'bg-emerald-400/15 text-emerald-200'}`}>
-                <AppIcon className={stats.behind ? 'ri-alarm-warning-line text-xl' : 'ri-checkbox-circle-line text-xl'} />
-              </span>
-              <span>
-                <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-white/55">{stats.behind ? 'Needs attention' : 'Caseload status'}</span>
-                <span className="mt-0.5 block text-sm font-bold">{stats.behind ? `${stats.behind} learner${stats.behind === 1 ? '' : 's'} at risk` : 'Everything on track'}</span>
-              </span>
-            </button>
+            <PageTabs items={filterTabItems} value={filter} onChange={(next) => changeFilter(next as FilterKey)} label="Filter learners by OTJH status" />
           </div>
-        </section>
 
-        <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
-          <div className="border-b border-slate-100 px-4 py-4 md:px-5">
-            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-slate-950">Learner OTJH progress</h2>
-                  <span className="rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-bold text-violet-700">{filteredRows.length} learner{filteredRows.length === 1 ? '' : 's'}</span>
-                </div>
-                <p className="mt-1 text-xs text-slate-500">Completed, planned and remaining hours across the active caseload.</p>
-              </div>
-              <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
-                {filterOptions.map(option => (
-                  <button key={option.key} type="button" onClick={() => changeFilter(option.key)} className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-[11px] font-semibold transition ${filter === option.key ? 'bg-[#21003f] text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-900'}`}>
-                    {option.label}
-                    <span className={`ml-1.5 text-[10px] ${filter === option.key ? 'text-white/65' : 'text-slate-400'}`}>{option.count}</span>
-                  </button>
+          <DataTable
+            columns={otjhColumns}
+            rows={paginatedRows}
+            rowKey={(row) => row.id}
+            stickyFirstColumn
+            minWidthClass="min-w-[1180px]"
+            caption="Learner OTJH progress"
+            loading={loading ? (
+              <div className="space-y-2 p-4">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <div key={index} className="h-12 animate-pulse rounded-lg bg-background-100" />
                 ))}
               </div>
-            </div>
-          </div>
+            ) : undefined}
+            empty={
+              error ? (
+                <EmptyState variant="error" title="Unable to load OTJH data" description={error} />
+              ) : (
+                <EmptyState variant="no-matches" title="No learners match this OTJH filter." description="Try a different OTJH status filter." />
+              )
+            }
+          />
 
-          <div className="overflow-x-auto">
-            <div className="min-w-[1100px]">
-              <div className="grid grid-cols-[minmax(250px,1.5fr)_minmax(150px,0.9fr)_repeat(4,minmax(90px,0.6fr))_minmax(180px,1fr)_minmax(90px,0.5fr)] gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">
-                <span>Learner</span>
-                <span>Programme</span>
-                <span className="text-center">Planned</span>
-                <span className="text-center">Target</span>
-                <span className="text-center">Completed</span>
-                <span className="text-center">Remaining</span>
-                <span>OTJH progress</span>
-                <span className="text-center">Action</span>
-              </div>
-
-              {loading && (
-                <TableRowsSkeleton
-                  rows={6}
-                  columns={8}
-                  gridClass="grid grid-cols-[minmax(250px,1.5fr)_minmax(150px,0.9fr)_repeat(4,minmax(90px,0.6fr))_minmax(180px,1fr)_minmax(90px,0.5fr)]"
-                />
-              )}
-              {!loading && error && <OtjhTableMessage icon="ri-error-warning-line text-red-500" message={error} />}
-              {!loading && !error && filteredRows.length === 0 && <OtjhTableMessage icon="ri-user-search-line text-violet-500" message="No learners match this OTJH filter." />}
-
-              {!loading && !error && paginatedRows.length > 0 && (
-                <div className="divide-y divide-slate-100">
-                  {paginatedRows.map(row => (
-                    <div key={row.id} className="grid grid-cols-[minmax(250px,1.5fr)_minmax(150px,0.9fr)_repeat(4,minmax(90px,0.6fr))_minmax(180px,1fr)_minmax(90px,0.5fr)] items-center gap-3 px-5 py-4 transition hover:bg-violet-50/30">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${getAvatarStyle(row.risk)}`}>{row.initials}</div>
-                        <div className="min-w-0">
-                          <p className="truncate text-[13px] font-bold text-slate-900">{row.learner}</p>
-                          <p className="mt-0.5 truncate text-[10px] text-slate-500">{row.employer}</p>
-                        </div>
-                      </div>
-                      <span className="truncate text-[11px] font-medium text-slate-600">{row.programme}</span>
-                      <OtjhValueButton value={row.planned} label="Planned" onClick={() => handleViewDetails(row, 'planned')} />
-                      <OtjhValueButton value={row.target} label="Target" onClick={() => handleViewDetails(row, 'target')} />
-                      <OtjhValueButton value={row.completed} label="Completed" tone="purple" onClick={() => handleViewDetails(row, 'completed')} />
-                      <OtjhValueButton value={row.remaining} label="Remaining" onClick={() => handleViewDetails(row, 'remaining')} />
-                      <div className="min-w-0">
-                        <div className="mb-1.5 flex items-center justify-between gap-2">
-                          <span className={`text-[11px] font-bold ${getPaceTone(row.pace)}`}>{row.pace}%</span>
-                          <span className={`rounded-full border px-2 py-0.5 text-[8px] font-bold uppercase ${getBadgeStyle(row.risk)}`}>{row.statusLabel}</span>
-                        </div>
-                        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
-                          <div className={`h-full rounded-full ${getProgressBarStyle(row.risk)}`} style={{ width: `${Math.min(row.pace, 100)}%` }} />
-                        </div>
-                      </div>
-                      <div className="text-center">
-                        <button type="button" onClick={() => handleViewDetails(row)} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[10px] font-bold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100">Details</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {!loading && !error && filteredRows.length > 0 && (
-            <OtjhPagination currentPage={activePage} pageCount={pageCount} total={filteredRows.length} onChange={setCurrentPage} />
-          )}
+          {!loading && !error && filteredRows.length > 0 ? (
+            <Pagination
+              page={activePage}
+              totalPages={pageCount}
+              total={filteredRows.length}
+              pageSize={ROWS_PER_PAGE}
+              onPageChange={setCurrentPage}
+              noun="learners"
+            />
+          ) : null}
         </section>
-      </div>
+      </PageContainer>
 
       <RightSlidePanel
         isOpen={selectedRow !== null}
@@ -539,57 +525,48 @@ export default function CoachOtjhReports() {
           <div className="space-y-5">
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <div className="flex items-start gap-3">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-bold shrink-0 ${getAvatarStyle(selectedRow.risk)}`}>
-                  {selectedRow.initials}
-                </div>
+                <LearnerAvatar name={selectedRow.learner} tone={riskToneOf(selectedRow.risk)} size="lg" />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-sm font-heading font-bold text-foreground-900">{selectedRow.learner}</h3>
-                    <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${getBadgeStyle(selectedRow.risk)}`}>
-                      {selectedRow.statusLabel}
-                    </span>
+                    <StatusBadge tone={riskToneOf(selectedRow.risk)} label={selectedRow.statusLabel} size="sm" />
                   </div>
-                  <p className="mt-1 text-[11px] text-foreground-500">{selectedRow.employer}</p>
-                  <p className="mt-0.5 text-[11px] text-foreground-400">{selectedRow.programme}</p>
+                  <p className="mt-1 text-[12px] text-foreground-500">{selectedRow.employer}</p>
+                  <p className="mt-0.5 text-[12px] text-foreground-400">{selectedRow.programme}</p>
                 </div>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className={`rounded-xl border p-3 text-center transition ${getFocusCardStyle('planned', selectedDetailFocus)}`}>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Planned</p>
+              <div className={cn('rounded-lg border p-3 text-center transition', getFocusCardStyle('planned', selectedDetailFocus))}>
+                <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Planned</p>
                 <p className="mt-1 text-xl font-bold text-foreground-900">{formatHours(selectedRow.planned)}</p>
               </div>
-              <div className={`rounded-xl border p-3 text-center transition ${getFocusCardStyle('target', selectedDetailFocus)}`}>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Target</p>
+              <div className={cn('rounded-lg border p-3 text-center transition', getFocusCardStyle('target', selectedDetailFocus))}>
+                <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Target</p>
                 <p className="mt-1 text-xl font-bold text-foreground-900">{formatHours(selectedRow.target)}</p>
               </div>
-              <div className={`rounded-xl border p-3 text-center transition ${getFocusCardStyle('completed', selectedDetailFocus)}`}>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Completed</p>
+              <div className={cn('rounded-lg border p-3 text-center transition', getFocusCardStyle('completed', selectedDetailFocus))}>
+                <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Completed</p>
                 <p className="mt-1 text-xl font-bold text-primary-600">{formatHours(selectedRow.completed)}</p>
               </div>
-              <div className={`rounded-xl border p-3 text-center transition ${getFocusCardStyle('remaining', selectedDetailFocus)}`}>
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Remaining</p>
+              <div className={cn('rounded-lg border p-3 text-center transition', getFocusCardStyle('remaining', selectedDetailFocus))}>
+                <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Remaining</p>
                 <p className="mt-1 text-xl font-bold text-foreground-900">{formatHours(selectedRow.remaining)}</p>
               </div>
             </div>
 
             <div ref={completedBreakdownRef} className="scroll-mt-4 rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
-              <div className="flex items-center justify-between text-[11px] text-foreground-500">
+              <div className="flex items-center justify-between text-[12px] text-foreground-500">
                 <span>OTJH completion against Target</span>
                 <span className="font-semibold text-foreground-900">{formatHours(selectedRow.completed)}/{formatHours(selectedRow.target)}</span>
               </div>
-              <div className="mt-3 h-2 rounded-full bg-background-200 overflow-hidden">
-                <div
-                  className={`h-full rounded-full ${getProgressBarStyle(selectedRow.risk)}`}
-                  style={{ width: `${Math.min(selectedRow.pace, 100)}%` }}
-                />
-              </div>
+              <ProgressBar percent={selectedRow.pace} height="h-2" className="mt-3" />
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Learner & Programme Details</h4>
-              <div className="grid grid-cols-1 gap-2 text-[11px]">
+              <div className="grid grid-cols-1 gap-2 text-[12px]">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-foreground-400">Learner email</span>
                   <span className="max-w-[260px] truncate font-semibold text-foreground-700">{selectedRow.email}</span>
@@ -628,43 +605,43 @@ export default function CoachOtjhReports() {
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">OTJH Source Values</h4>
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Planned</p>
+                <div className="rounded-lg bg-background-100/60 p-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Planned</p>
                   <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.planned)}</p>
                 </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Target</p>
+                <div className="rounded-lg bg-background-100/60 p-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Target</p>
                   <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.target)}</p>
                 </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Minimum</p>
+                <div className="rounded-lg bg-background-100/60 p-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Minimum</p>
                   <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.minimum)}</p>
                 </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Submitted</p>
+                <div className="rounded-lg bg-background-100/60 p-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Submitted</p>
                   <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.submitted)}</p>
                 </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Forecast</p>
+                <div className="rounded-lg bg-background-100/60 p-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Forecast</p>
                   <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.forecast)}</p>
                 </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Expected</p>
+                <div className="rounded-lg bg-background-100/60 p-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Expected</p>
                   <p className="mt-1 text-sm font-bold text-foreground-900">{formatHours(selectedRow.expected)}</p>
                 </div>
               </div>
-              <div className="mt-3 space-y-2 text-[11px]">
+              <div className="mt-3 space-y-2 text-[12px]">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-foreground-400">Progress-Hours</span>
                   <span className="font-semibold text-foreground-700">{selectedRow.progressHours}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-foreground-400">Progress variance</span>
-                  <span className={`font-semibold ${selectedRow.progressVariance.startsWith('-') ? 'text-red-600' : 'text-emerald-600'}`}>{selectedRow.progressVariance}</span>
+                  <span className={cn('font-semibold', selectedRow.progressVariance.startsWith('-') ? 'text-red-600' : 'text-emerald-600')}>{selectedRow.progressVariance}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-foreground-400">OTJHoursStatus</span>
-                  <span className={`font-semibold px-2 py-0.5 rounded-full border ${getBadgeStyle(selectedRow.risk)}`}>{selectedRow.statusLabel}</span>
+                  <StatusBadge tone={riskToneOf(selectedRow.risk)} label={selectedRow.statusLabel} size="sm" />
                 </div>
               </div>
             </div>
@@ -673,9 +650,9 @@ export default function CoachOtjhReports() {
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <h4 className="text-xs font-heading font-semibold text-foreground-900">Completed OTJH Breakdown</h4>
-                  <p className="mt-1 text-[10px] text-foreground-400">Each saved progress entry contributing to the completed hours total.</p>
+                  <p className="mt-1 text-[12px] text-foreground-400">Each saved progress entry contributing to the completed hours total.</p>
                 </div>
-                <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[10px] font-bold text-primary-700">
+                <span className="rounded-full bg-primary-50 px-2.5 py-1 text-[12px] font-bold text-primary-700">
                   {selectedRow.completedEntries.length} entries
                 </span>
               </div>
@@ -683,16 +660,16 @@ export default function CoachOtjhReports() {
               {selectedRow.completedEntries.length > 0 ? (
                 <div className="max-h-[22rem] space-y-2 overflow-y-auto pr-1">
                   {selectedRow.completedEntries.map(entry => (
-                    <div key={entry.id} className="rounded-xl border border-foreground-200/60 bg-background-100/50 p-3">
+                    <div key={entry.id} className="rounded-lg border border-foreground-200/60 bg-background-100/50 p-3">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="truncate text-[11px] font-bold text-foreground-900">{entry.title}</p>
-                            <span className="rounded-full border border-foreground-200/70 bg-white px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide text-foreground-500">
+                            <p className="truncate text-[12px] font-bold text-foreground-900">{entry.title}</p>
+                            <span className="rounded-full border border-foreground-200/70 bg-background-50 px-2 py-0.5 text-[12px] font-bold uppercase tracking-wide text-foreground-500">
                               {entry.typeLabel}
                             </span>
                           </div>
-                          <p className="mt-1 text-[10px] text-foreground-500">
+                          <p className="mt-1 text-[12px] text-foreground-500">
                             {entry.module !== '--' || entry.week !== '--'
                               ? `${entry.module} / ${entry.week}`
                               : entry.detail}
@@ -700,53 +677,51 @@ export default function CoachOtjhReports() {
                         </div>
                         <div className="shrink-0 text-right">
                           <p className="text-sm font-bold text-primary-600">{formatHours(entry.hours)}h</p>
-                          <p className="mt-1 text-[9px] text-foreground-400">{entry.completedDate}</p>
+                          <p className="mt-1 text-[12px] text-foreground-400">{entry.completedDate}</p>
                         </div>
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-foreground-500">
-                        <span className="rounded-full bg-white px-2 py-1">Reported {entry.reportedTime}</span>
+                      <div className="mt-2 flex flex-wrap gap-2 text-[12px] text-foreground-500">
+                        <span className="rounded-full bg-background-50 px-2 py-1">Reported {entry.reportedTime}</span>
                         {entry.ksbs.length > 0 && (
-                          <span className="rounded-full bg-white px-2 py-1">KSBs {entry.ksbs.join(', ')}</span>
+                          <span className="rounded-full bg-background-50 px-2 py-1">KSBs {entry.ksbs.join(', ')}</span>
                         )}
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="rounded-xl border border-dashed border-foreground-200/70 bg-background-100/40 px-4 py-6 text-center text-[11px] text-foreground-500">
-                  No completed OTJH entries are available for this learner yet.
-                </div>
+                <EmptyState size="sm" variant="empty" title="No completed OTJH entries are available for this learner yet." />
               )}
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Related Progress Signals</h4>
               <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Overall</p>
+                <div className="rounded-lg bg-background-100/60 p-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Overall</p>
                   <p className="mt-1 text-sm font-bold text-primary-600">{selectedRow.overallProgress}%</p>
                 </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">KSB</p>
+                <div className="rounded-lg bg-background-100/60 p-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">KSB</p>
                   <p className="mt-1 text-sm font-bold text-foreground-900">{selectedRow.ksbProgress}%</p>
-                  <p className="mt-0.5 text-[9px] text-foreground-400">{selectedRow.ksbStatus}</p>
+                  <p className="mt-0.5 text-[12px] text-foreground-400">{selectedRow.ksbStatus}</p>
                 </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Evidence</p>
+                <div className="rounded-lg bg-background-100/60 p-3">
+                  <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Evidence</p>
                   <p className="mt-1 text-sm font-bold text-foreground-900">{selectedRow.evidenceCount}</p>
                 </div>
               </div>
             </div>
 
             {(selectedRow.status === 'behind' || selectedRow.status === 'need-attention') && (
-              <div className={`rounded-2xl border p-4 ${selectedRow.status === 'behind' ? 'bg-red-50 border-red-200/70' : 'bg-amber-50 border-amber-200/70'}`}>
+              <div className={cn('rounded-2xl border p-4', selectedRow.status === 'behind' ? 'bg-red-50 border-red-200/70' : 'bg-amber-50 border-amber-200/70')}>
                 <div className="flex items-start gap-3">
-                  <AppIcon className={`${selectedRow.status === 'behind' ? 'ri-alarm-warning-line text-red-600' : 'ri-error-warning-line text-amber-600'} text-lg`}></AppIcon>
+                  <AppIcon className={cn(selectedRow.status === 'behind' ? 'ri-alarm-warning-line text-red-600' : 'ri-error-warning-line text-amber-600', 'text-lg')}></AppIcon>
                   <div>
-                    <p className={`text-xs font-heading font-bold ${selectedRow.status === 'behind' ? 'text-red-700' : 'text-amber-700'}`}>
+                    <p className={cn('text-xs font-heading font-bold', selectedRow.status === 'behind' ? 'text-red-700' : 'text-amber-700')}>
                       {selectedRow.statusLabel}
                     </p>
-                    <p className={`mt-1 text-[11px] leading-relaxed ${selectedRow.status === 'behind' ? 'text-red-600' : 'text-amber-600'}`}>
+                    <p className={cn('mt-1 text-[12px] leading-relaxed', selectedRow.status === 'behind' ? 'text-red-600' : 'text-amber-600')}>
                       This learner is behind the current OTJH target. Current variance is {selectedRow.progressVariance}, with {selectedRow.progressHours} recorded in Progress-Hours.
                     </p>
                   </div>

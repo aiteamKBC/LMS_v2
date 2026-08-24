@@ -1,4 +1,9 @@
-import { EmptyState } from '@/pages/users/components/ui';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { Panel } from '@/components/ui/Panel';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
+import { statusTone, type StatusTone } from '@/lib/statusTone';
 import { formatDisplayDate, formatPercent, type CaseFileTabProps } from '../data';
 
 export default function AttendanceTab({ data }: CaseFileTabProps) {
@@ -6,19 +11,24 @@ export default function AttendanceTab({ data }: CaseFileTabProps) {
 
   if (!attendance || !attendance.hasAttendance) {
     return (
-      <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-6">
-        <EmptyState text="Live attendance detail is not available for this learner yet." />
-      </div>
+      <Panel padding="lg">
+        <EmptyState
+          variant="empty"
+          size="md"
+          title="Attendance data unavailable"
+          description="Live attendance detail is not available for this learner yet."
+        />
+      </Panel>
     );
   }
 
   return (
     <div className="space-y-5">
       <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard icon="ri-calendar-check-line" label="Attendance Rate" value={formatPercent(attendance.attendance)} tone={attendanceTone(attendance.attendance)} />
-        <StatCard icon="ri-list-check-3" label="Tracked Sessions" value={String(attendance.sessions ?? '--')} tone="primary" />
-        <StatCard icon="ri-check-double-line" label="Present" value={String(attendance.present ?? '--')} tone="emerald" />
-        <StatCard icon="ri-close-circle-line" label="Absent" value={String(attendance.absent ?? '--')} tone={attendance.absent ? 'red' : 'primary'} />
+        <MetricCard icon="ri-calendar-check-line" label="Attendance Rate" value={formatPercent(attendance.attendance)} tone={attendanceTone(attendance.attendance)} />
+        <MetricCard icon="ri-list-check-3" label="Tracked Sessions" value={attendance.sessions ?? '--'} tone="brand" />
+        <MetricCard icon="ri-check-double-line" label="Present" value={attendance.present ?? '--'} tone="positive" />
+        <MetricCard icon="ri-close-circle-line" label="Absent" value={attendance.absent ?? '--'} tone={attendance.absent ? 'critical' : 'brand'} />
       </section>
 
       <section className="bg-background-50 rounded-xl border border-foreground-200/60 overflow-hidden">
@@ -27,9 +37,7 @@ export default function AttendanceTab({ data }: CaseFileTabProps) {
             <h2 className="text-sm font-heading font-semibold text-foreground-900 flex items-center gap-2">
               <AppIcon className="ri-radar-line text-emerald-500"></AppIcon> Attendance Snapshot
             </h2>
-            <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${riskBadge(attendance.risk)}`}>
-              {riskLabel(attendance.risk)}
-            </span>
+            <StatusBadge tone={statusTone(attendance.risk)} label={riskLabel(attendance.risk)} />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <DetailCard
@@ -81,35 +89,6 @@ export default function AttendanceTab({ data }: CaseFileTabProps) {
   );
 }
 
-function StatCard({
-  icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: string;
-  label: string;
-  value: string;
-  tone: 'primary' | 'emerald' | 'amber' | 'red';
-}) {
-  const toneMap = {
-    primary: 'bg-primary-100 text-primary-600',
-    emerald: 'bg-emerald-100 text-emerald-600',
-    amber: 'bg-amber-100 text-amber-600',
-    red: 'bg-red-100 text-red-600',
-  } as const;
-
-  return (
-    <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4">
-      <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-3 ${toneMap[tone]}`}>
-        <AppIcon className={`${icon} text-base`}></AppIcon>
-      </div>
-      <p className="text-xl font-heading font-bold text-foreground-900">{value}</p>
-      <p className="text-[11px] text-foreground-400">{label}</p>
-    </div>
-  );
-}
-
 function DetailCard({
   title,
   value,
@@ -122,24 +101,24 @@ function DetailCard({
   icon: string;
 }) {
   return (
-    <div className="rounded-xl border border-background-200/70 bg-background-100/50 p-4">
+    <Panel padding="md">
       <div className="flex items-center gap-2 mb-2">
-        <span className="w-8 h-8 rounded-lg bg-background-50 border border-background-200 flex items-center justify-center">
+        <span className="w-8 h-8 rounded-lg bg-background-100 border border-foreground-200/60 flex items-center justify-center">
           <AppIcon className={`${icon} text-sm text-foreground-600`}></AppIcon>
         </span>
         <p className="text-[12px] font-semibold text-foreground-900">{title}</p>
       </div>
       <p className="text-lg font-heading font-bold text-foreground-900">{value}</p>
-      <p className="text-[11px] text-foreground-400 mt-1">{detail}</p>
-    </div>
+      <p className="text-[12px] text-foreground-400 mt-1">{detail}</p>
+    </Panel>
   );
 }
 
-function attendanceTone(value: number | null): 'primary' | 'emerald' | 'amber' | 'red' {
-  if (value === null) return 'primary';
-  if (value >= 90) return 'emerald';
-  if (value >= 80) return 'amber';
-  return 'red';
+function attendanceTone(value: number | null): StatusTone {
+  if (value === null) return 'neutral';
+  if (value >= ATTENDANCE_EXPECTED_RATE) return 'positive';
+  if (value >= ATTENDANCE_MINIMUM_RATE) return 'caution';
+  return 'critical';
 }
 
 function riskLabel(risk: 'red' | 'amber' | 'green' | null) {
@@ -147,13 +126,6 @@ function riskLabel(risk: 'red' | 'amber' | 'green' | null) {
   if (risk === 'amber') return 'Needs Attention';
   if (risk === 'red') return 'At Risk';
   return 'Not Rated';
-}
-
-function riskBadge(risk: 'red' | 'amber' | 'green' | null) {
-  if (risk === 'green') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  if (risk === 'amber') return 'bg-amber-50 text-amber-700 border-amber-200';
-  if (risk === 'red') return 'bg-red-50 text-red-700 border-red-200';
-  return 'bg-background-100 text-foreground-500 border-background-200';
 }
 
 function trendLabel(trend: 'up' | 'down' | 'stable') {

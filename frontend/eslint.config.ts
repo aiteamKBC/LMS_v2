@@ -44,6 +44,10 @@ const autoImportGlobals = {
   // React i18n
   useTranslation: 'readonly',
   Trans: 'readonly',
+  // Auto-imported component. Declared in vite.config.ts alongside the hooks
+  // above; without it here every one of its ~6,500 call sites is a no-undef
+  // error and the lint script is unusable as a gate.
+  AppIcon: 'readonly',
 }
 
 export default [

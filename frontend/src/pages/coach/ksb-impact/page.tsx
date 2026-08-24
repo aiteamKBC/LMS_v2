@@ -4,7 +4,19 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
-import { TableRowsSkeleton } from '@/components/feature/Skeletons';
+import { cn } from '@/lib/cn';
+import { toneStyle, type StatusTone } from '@/lib/statusTone';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { CompactMetric } from '@/components/ui/MetricCard';
+import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
+import { DataTable, type DataColumn } from '@/components/ui/DataTable';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ProgressBar, ProgressMetric } from '@/components/ui/ProgressMetric';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Pagination } from '@/components/ui/Pagination';
+import { RowAction } from '@/components/ui/ActionRow';
+import { LearnerAvatar, LearnerIdentity } from '@/pages/coach/shared/LearnerIdentity';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/caseload';
@@ -167,29 +179,24 @@ function getRiskTone(overall: number): RiskTone {
   return 'amber';
 }
 
-function getMetricTone(value: number): string {
-  if (value >= 80) return 'text-emerald-600';
-  if (value >= 40) return 'text-amber-600';
-  return 'text-red-600';
+/** The one place a KSB risk tone becomes a workspace-wide StatusTone. */
+function riskToneOf(risk: RiskTone): StatusTone {
+  if (risk === 'red') return 'critical';
+  if (risk === 'green') return 'positive';
+  return 'caution';
 }
 
-function getAvatarStyle(tone: RiskTone): string {
-  if (tone === 'red') return 'bg-red-100 text-red-700';
-  if (tone === 'green') return 'bg-accent-100 text-accent-700';
-  return 'bg-primary-100 text-primary-700';
-}
-
-function getStatusStyle(tone: RiskTone): string {
-  if (tone === 'red') return 'bg-red-50 text-red-700 border-red-200/60';
-  if (tone === 'green') return 'bg-emerald-50 text-emerald-700 border-emerald-200/60';
-  return 'bg-amber-50 text-amber-700 border-amber-200/60';
+function ksbStatusLabel(overall: number): string {
+  if (overall < 40) return 'High risk';
+  if (overall >= 80) return 'Ready';
+  return 'On track';
 }
 
 function getKsbTypeStyle(type?: string): string {
   const lowerType = optionalText(type).toLowerCase();
   if (lowerType.includes('skill')) return 'bg-sky-50 text-sky-700 border-sky-100';
   if (lowerType.includes('behaviour') || lowerType.includes('behavior')) return 'bg-emerald-50 text-emerald-700 border-emerald-100';
-  return 'bg-violet-50 text-violet-700 border-violet-100';
+  return 'bg-primary-50 text-primary-700 border-primary-100';
 }
 
 function ksbDetailFilterLabel(filter: KsbDetailFilter): string {
@@ -275,7 +282,14 @@ function toKsbImpactRow(learner: CaseloadApiLearner): KsbImpactRow {
   };
 }
 
-function KsbValue({
+/**
+ * One Knowledge / Skills / Behaviours cell. The three columns share this exact
+ * treatment — a mini ProgressMetric rather than a coloured number — so the KSB
+ * triad reads as one comparable group instead of three separately-styled cells,
+ * and the colour comes from ProgressMetric's own health-derived bar rather than
+ * a page-local tone function.
+ */
+function KsbTriadValue({
   value,
   progress,
   label,
@@ -286,17 +300,10 @@ function KsbValue({
   label: string;
   onClick?: () => void;
 }) {
-  const content = (
-    <>
-      <p className={`text-[12px] font-bold ${isNumber(value) ? getMetricTone(progress ?? 0) : 'text-slate-400'}`}>
-        {formatKsbCompleted(value)}
-      </p>
-      {isNumber(progress) && <p className="mt-0.5 text-[9px] text-slate-400">{progress}%</p>}
-    </>
-  );
+  const content = <ProgressMetric value={formatKsbCompleted(value)} percent={progress} />;
 
   if (!onClick) {
-    return <div className="text-center">{content}</div>;
+    return <div className="mx-auto w-full max-w-[108px]">{content}</div>;
   }
 
   return (
@@ -304,7 +311,7 @@ function KsbValue({
       type="button"
       onClick={onClick}
       aria-label={`Open ${label} KSB details`}
-      className="mx-auto block min-w-14 rounded-xl px-3 py-2 text-center transition hover:bg-violet-50 hover:ring-1 hover:ring-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-300"
+      className="mx-auto block w-full max-w-[108px] rounded-lg p-1.5 text-left transition hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-300"
     >
       {content}
     </button>
@@ -323,7 +330,7 @@ function KsbRatioValue({
   onClick?: () => void;
 }) {
   const content = (
-    <p className={`text-[11px] font-semibold ${isNumber(target) && target > 0 ? 'text-slate-600' : 'text-slate-400'}`}>
+    <p className={cn('text-[12px] font-semibold tabular-nums', isNumber(target) && target > 0 ? 'text-foreground-700' : 'text-foreground-400')}>
       {formatKsbRatio(completed, target)}
     </p>
   );
@@ -337,76 +344,10 @@ function KsbRatioValue({
       type="button"
       onClick={onClick}
       aria-label={`Open ${label} KSB details`}
-      className="mx-auto block min-w-16 rounded-xl px-3 py-2 text-center transition hover:bg-violet-50 hover:ring-1 hover:ring-violet-100 focus:outline-none focus:ring-2 focus:ring-violet-300"
+      className="mx-auto block min-w-16 rounded-lg px-3 py-2 text-center transition hover:bg-primary-50 focus:outline-none focus:ring-2 focus:ring-primary-300"
     >
       {content}
     </button>
-  );
-}
-
-function KsbTableMessage({ icon, message }: { icon: string; message: string }) {
-  return (
-    <div className="px-5 py-14 text-center">
-      <AppIcon className={`${icon} text-2xl text-slate-400`} />
-      <p className="mt-2 text-xs font-semibold text-slate-500">{message}</p>
-    </div>
-  );
-}
-
-function KsbPagination({
-  currentPage,
-  pageCount,
-  total,
-  onChange,
-}: {
-  currentPage: number;
-  pageCount: number;
-  total: number;
-  onChange: (page: number) => void;
-}) {
-  const start = (currentPage - 1) * ROWS_PER_PAGE + 1;
-  const end = Math.min(currentPage * ROWS_PER_PAGE, total);
-
-  return (
-    <div className="flex flex-col gap-3 border-t border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <p className="text-[11px] font-medium text-slate-500">
-        Showing <span className="font-bold text-slate-800">{start}-{end}</span> of <span className="font-bold text-slate-800">{total}</span>
-      </p>
-      {pageCount > 1 && (
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="Previous page"
-            disabled={currentPage === 1}
-            onClick={() => onChange(currentPage - 1)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <AppIcon className="ri-arrow-left-s-line" />
-          </button>
-          {Array.from({ length: pageCount }, (_, index) => index + 1).map(page => (
-            <button
-              key={page}
-              type="button"
-              onClick={() => onChange(page)}
-              className={`h-8 min-w-8 rounded-lg px-2 text-[11px] font-bold transition ${
-                currentPage === page ? 'bg-[#21003f] text-white' : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {page}
-            </button>
-          ))}
-          <button
-            type="button"
-            aria-label="Next page"
-            disabled={currentPage === pageCount}
-            onClick={() => onChange(currentPage + 1)}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <AppIcon className="ri-arrow-right-s-line" />
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -526,186 +467,181 @@ export default function CoachKsbImpact() {
     setSelectedDetailFilter('all');
   };
 
-  const filterOptions: Array<{ key: FilterKey; label: string; count: number }> = [
-    { key: 'all', label: 'All', count: rows.length },
-    { key: 'high-risk', label: 'High Risk', count: stats.highRisk },
-    { key: 'on-track', label: 'On Track', count: stats.onTrack },
-    { key: 'gateway-ready', label: 'Gateway Ready', count: stats.gatewayReady },
+  const filterTabItems: PageTabItem[] = [
+    { value: 'all', label: 'All', count: rows.length },
+    { value: 'high-risk', label: 'High Risk', count: stats.highRisk, tone: 'critical' },
+    { value: 'on-track', label: 'On Track', count: stats.onTrack, tone: 'caution' },
+    { value: 'gateway-ready', label: 'Gateway Ready', count: stats.gatewayReady, tone: 'positive' },
+  ];
+
+  const ksbColumns: DataColumn<KsbImpactRow>[] = [
+    {
+      key: 'learner',
+      label: 'Learner',
+      widthClass: 'min-w-[220px]',
+      render: (row) => (
+        <LearnerIdentity name={row.learner} programme={row.programme} tone={riskToneOf(row.risk)} />
+      ),
+    },
+    {
+      key: 'knowledge',
+      label: 'Knowledge',
+      align: 'center',
+      widthClass: 'w-[112px] min-w-[112px]',
+      render: (row) => (
+        <KsbTriadValue
+          value={row.knowledgeCompleted}
+          progress={row.knowledgeProgress}
+          label="Knowledge"
+          onClick={() => openKsbDetails(row.id, 'knowledge')}
+        />
+      ),
+    },
+    {
+      key: 'skills',
+      label: 'Skills',
+      align: 'center',
+      widthClass: 'w-[112px] min-w-[112px]',
+      render: (row) => (
+        <KsbTriadValue
+          value={row.skillsCompleted}
+          progress={row.skillsProgress}
+          label="Skills"
+          onClick={() => openKsbDetails(row.id, 'skills')}
+        />
+      ),
+    },
+    {
+      key: 'behaviours',
+      label: 'Behaviours',
+      align: 'center',
+      widthClass: 'w-[112px] min-w-[112px]',
+      render: (row) => (
+        <KsbTriadValue
+          value={row.behavioursCompleted}
+          progress={row.behavioursProgress}
+          label="Behaviours"
+          onClick={() => openKsbDetails(row.id, 'behaviours')}
+        />
+      ),
+    },
+    {
+      key: 'validated',
+      label: 'Validated',
+      align: 'center',
+      widthClass: 'w-[110px] min-w-[110px]',
+      render: (row) => (
+        <KsbRatioValue
+          completed={row.completed}
+          target={row.target}
+          label="Validated"
+          onClick={() => openKsbDetails(row.id, 'all')}
+        />
+      ),
+    },
+    {
+      key: 'overall',
+      label: 'Overall progress',
+      widthClass: 'w-[200px] min-w-[180px]',
+      render: (row) => (
+        <ProgressMetric
+          value={`${row.overall}%`}
+          percent={row.overall}
+          note={<StatusBadge tone={riskToneOf(row.risk)} label={ksbStatusLabel(row.overall)} size="sm" />}
+        />
+      ),
+    },
+    {
+      key: 'evidence',
+      label: 'Evidenced',
+      align: 'center',
+      widthClass: 'w-[92px] min-w-[92px]',
+      render: (row) => (
+        <span className="text-[12px] font-semibold text-foreground-500">
+          {row.evidenceCountAvailable ? row.evidenceCount : MISSING_VALUE}
+        </span>
+      ),
+    },
+    {
+      key: 'action',
+      label: '',
+      align: 'center',
+      widthClass: 'w-[100px] min-w-[100px]',
+      render: (row) => (
+        <RowAction label="Details" icon="ri-arrow-right-s-line" onClick={() => openKsbDetails(row.id)} />
+      ),
+    },
   ];
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Monthly KSB Impact" pageSubtitle="Track Knowledge, Skills and Behaviours progress across your caseload" userName={ownerName} userRole="Progress Coach">
-      <div className="min-h-screen w-full space-y-4 bg-[#f7f6fb] p-3 md:p-5">
-        <section
-          className="rounded-2xl border border-white/10 px-5 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)] md:px-7"
-          style={{ background: 'linear-gradient(110deg, #100021 0%, #190034 52%, #2a0752 100%)' }}
-        >
-          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-center">
-            <div className="text-white">
-              <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-white/65">
-                <span>Coach Workspace</span>
-                <AppIcon className="ri-arrow-right-s-line text-sm" />
-                <span className="text-white">KSB Impact</span>
-              </div>
-              <h1 className="font-heading text-2xl font-bold tracking-tight text-white md:text-[28px]">Monthly KSB Impact</h1>
-              <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-white/80">
-                Track Knowledge, Skills and Behaviours progress across your caseload and spot learners who need support.
+      <PageContainer>
+        <PageHeader
+          title="Monthly KSB Impact"
+          description="Track Knowledge, Skills and Behaviours progress across your caseload and spot learners who need support."
+          icon="ri-stack-line"
+          meta={
+            <>
+              <CompactMetric
+                label={stats.highRisk ? 'Needs attention' : 'Caseload status'}
+                value={stats.highRisk ? `${stats.highRisk} high-risk learner${stats.highRisk === 1 ? '' : 's'}` : 'Everything on track'}
+                tone={stats.highRisk ? 'critical' : 'positive'}
+              />
+              <CompactMetric label="Average KSB progress" value={`${stats.averageOverall}%`} tone="brand" />
+              <CompactMetric label="Validated / target" value={`${stats.totalCompleted ?? 0}/${stats.totalTarget ?? 0}`} />
+            </>
+          }
+        />
+
+        <section className="space-y-3">
+          <div className="flex flex-col justify-between gap-3 xl:flex-row xl:items-end">
+            <div>
+              <h2 className="flex items-center gap-2 text-[15px] font-semibold text-foreground-900">
+                Learner KSB progress
+                <span className="text-[15px] font-semibold tabular-nums text-foreground-400">{filteredRows.length}</span>
+              </h2>
+              <p className="mt-0.5 text-[12px] leading-relaxed text-foreground-500">
+                Live validated KSB values and supporting evidence across your caseload.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => changeFilter(stats.highRisk ? 'high-risk' : 'gateway-ready')}
-              className="flex min-w-[190px] items-center gap-3 self-start rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-left text-white backdrop-blur-sm transition hover:bg-white/15 md:self-auto"
-            >
-              <span className={`flex h-10 w-10 items-center justify-center rounded-xl ${stats.highRisk ? 'bg-red-400/15 text-red-200' : 'bg-emerald-400/15 text-emerald-200'}`}>
-                <AppIcon className={stats.highRisk ? 'ri-alarm-warning-line text-xl' : 'ri-checkbox-circle-line text-xl'} />
-              </span>
-              <span>
-                <span className="block text-[9px] font-bold uppercase tracking-[0.14em] text-white/55">
-                  {stats.highRisk ? 'Needs attention' : 'Caseload status'}
-                </span>
-                <span className="mt-0.5 block text-sm font-bold">
-                  {stats.highRisk ? `${stats.highRisk} high-risk learner${stats.highRisk === 1 ? '' : 's'}` : 'Everything on track'}
-                </span>
-              </span>
-            </button>
+            <PageTabs items={filterTabItems} value={filter} onChange={(next) => changeFilter(next as FilterKey)} label="Filter learners by KSB status" />
           </div>
-        </section>
 
-        <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_8px_24px_rgba(15,23,42,0.05)]">
-          <div className="border-b border-slate-100 px-4 py-4 md:px-5">
-            <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-slate-950">Learner KSB progress</h2>
-                  <span className="rounded-full bg-violet-50 px-2.5 py-1 text-[10px] font-bold text-violet-700">
-                    {filteredRows.length} learner{filteredRows.length === 1 ? '' : 's'}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-slate-500">Live validated KSB values and supporting evidence across your caseload.</p>
-              </div>
-              <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
-                {filterOptions.map(option => (
-                  <button
-                    key={option.key}
-                    type="button"
-                    onClick={() => changeFilter(option.key)}
-                    className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-[11px] font-semibold transition ${
-                      filter === option.key ? 'bg-[#21003f] text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-900'
-                    }`}
-                  >
-                    {option.label}
-                    <span className={`ml-1.5 text-[10px] ${filter === option.key ? 'text-white/65' : 'text-slate-400'}`}>{option.count}</span>
-                  </button>
+          <DataTable
+            columns={ksbColumns}
+            rows={paginatedRows}
+            rowKey={(row) => row.id}
+            stickyFirstColumn
+            minWidthClass="min-w-[1180px]"
+            caption="Learner KSB progress"
+            loading={loading ? (
+              <div className="space-y-2 p-4">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <div key={index} className="h-12 animate-pulse rounded-lg bg-background-100" />
                 ))}
               </div>
-            </div>
-          </div>
+            ) : undefined}
+            empty={
+              error ? (
+                <EmptyState variant="error" title="Unable to load KSB data" description={error} />
+              ) : (
+                <EmptyState variant="no-matches" title="No learners match this KSB filter." description="Try a different KSB status filter." />
+              )
+            }
+          />
 
-          <div className="overflow-x-auto">
-            <div className="min-w-[1080px]">
-              <div className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(150px,0.9fr)_minmax(90px,0.65fr)_minmax(90px,0.5fr)] gap-3 border-b border-slate-100 bg-slate-50/80 px-5 py-3 text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400">
-                <span>Learner</span>
-                <span className="text-center">Knowledge</span>
-                <span className="text-center">Skills</span>
-                <span className="text-center">Behaviours</span>
-                <span className="text-center">Validated</span>
-                <span>Overall progress</span>
-                <span className="text-center">Evidenced</span>
-                <span className="text-center">Action</span>
-              </div>
-
-              {/* Rows on the table's own grid, so the columns stay put. */}
-              {loading && (
-                <TableRowsSkeleton
-                  rows={6}
-                  columns={8}
-                  gridClass="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(150px,0.9fr)_minmax(90px,0.65fr)_minmax(90px,0.5fr)]"
-                />
-              )}
-
-              {!loading && error && <KsbTableMessage icon="ri-error-warning-line text-red-500" message={error} />}
-
-              {!loading && !error && filteredRows.length === 0 && (
-                <KsbTableMessage icon="ri-user-search-line text-violet-500" message="No learners match this KSB filter." />
-              )}
-
-              {!loading && !error && paginatedRows.length > 0 && (
-                <div className="divide-y divide-slate-100">
-                  {paginatedRows.map(row => (
-                    <div key={row.id} className="grid grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(90px,0.7fr))_minmax(120px,0.8fr)_minmax(150px,0.9fr)_minmax(90px,0.65fr)_minmax(90px,0.5fr)] items-center gap-3 px-5 py-4 transition hover:bg-violet-50/30">
-                      <div className="flex min-w-0 items-center gap-3">
-                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-xs font-bold ${getAvatarStyle(row.risk)}`}>{row.initials}</div>
-                        <div className="min-w-0">
-                          <p className="truncate text-[13px] font-bold text-slate-900">{row.learner}</p>
-                          <p className="mt-0.5 truncate text-[10px] text-slate-500">{row.programme}</p>
-                        </div>
-                      </div>
-                      <KsbValue
-                        value={row.knowledgeCompleted}
-                        progress={row.knowledgeProgress}
-                        label="Knowledge"
-                        onClick={() => openKsbDetails(row.id, 'knowledge')}
-                      />
-                      <KsbValue
-                        value={row.skillsCompleted}
-                        progress={row.skillsProgress}
-                        label="Skills"
-                        onClick={() => openKsbDetails(row.id, 'skills')}
-                      />
-                      <KsbValue
-                        value={row.behavioursCompleted}
-                        progress={row.behavioursProgress}
-                        label="Behaviours"
-                        onClick={() => openKsbDetails(row.id, 'behaviours')}
-                      />
-                      <KsbRatioValue
-                        completed={row.completed}
-                        target={row.target}
-                        label="Validated"
-                        onClick={() => openKsbDetails(row.id, 'all')}
-                      />
-                      <div className="min-w-0">
-                        <div className="mb-1.5 flex items-center justify-between gap-2">
-                          <span className={`text-[12px] font-bold ${getMetricTone(row.overall)}`}>{row.overall}%</span>
-                          <span className={`rounded-full border px-2 py-0.5 text-[8px] font-bold uppercase ${getStatusStyle(row.risk)}`}>
-                            {row.overall < 40 ? 'High risk' : row.overall >= 80 ? 'Ready' : 'On track'}
-                          </span>
-                        </div>
-                        <div className="h-1.5 overflow-hidden rounded-full bg-slate-100">
-                          <div
-                            className={`h-full rounded-full ${row.risk === 'red' ? 'bg-red-500' : row.risk === 'green' ? 'bg-emerald-500' : 'bg-amber-500'}`}
-                            style={{ width: `${Math.min(row.overall, 100)}%` }}
-                          />
-                        </div>
-                      </div>
-                      <span className="text-center text-[11px] font-bold text-slate-500">{row.evidenceCountAvailable ? row.evidenceCount : MISSING_VALUE}</span>
-                      <div className="text-center">
-                        <button
-                          type="button"
-                          onClick={() => openKsbDetails(row.id)}
-                          className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[10px] font-bold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100"
-                        >
-                          Details
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {!loading && !error && filteredRows.length > 0 && (
-            <KsbPagination
-              currentPage={activePage}
-              pageCount={pageCount}
+          {!loading && !error && filteredRows.length > 0 ? (
+            <Pagination
+              page={activePage}
+              totalPages={pageCount}
               total={filteredRows.length}
-              onChange={setCurrentPage}
+              pageSize={ROWS_PER_PAGE}
+              onPageChange={setCurrentPage}
+              noun="learners"
             />
-          )}
+          ) : null}
         </section>
-      </div>
+      </PageContainer>
 
       <RightSlidePanel
         isOpen={selectedRow !== null}
@@ -717,53 +653,44 @@ export default function CoachKsbImpact() {
           <div className="space-y-5">
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <div className="flex items-start gap-3">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-bold shrink-0 ${getAvatarStyle(selectedRow.risk)}`}>
-                  {selectedRow.initials}
-                </div>
+                <LearnerAvatar name={selectedRow.learner} tone={riskToneOf(selectedRow.risk)} size="lg" />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="text-sm font-heading font-bold text-foreground-900">{selectedRow.learner}</h3>
-                    <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border ${getStatusStyle(selectedRow.risk)}`}>
-                      {selectedRow.overall < 40 ? 'High Risk' : selectedRow.overall >= 80 ? 'Gateway Ready' : 'On Track'}
-                    </span>
+                    <StatusBadge tone={riskToneOf(selectedRow.risk)} label={ksbStatusLabel(selectedRow.overall)} size="sm" />
                   </div>
-                  <p className="mt-1 text-[11px] text-foreground-500">{selectedRow.employer}</p>
-                  <p className="mt-0.5 text-[11px] text-foreground-400">{selectedRow.programme}</p>
+                  <p className="mt-1 text-[12px] text-foreground-500">{selectedRow.employer}</p>
+                  <p className="mt-0.5 text-[12px] text-foreground-400">{selectedRow.programme}</p>
                 </div>
               </div>
             </div>
 
             <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Overall</p>
-                <p className={`mt-1 text-xl font-bold ${getMetricTone(selectedRow.overall)}`}>{selectedRow.overall}%</p>
+              <div className="rounded-lg border border-foreground-200/60 bg-background-100/40 p-3 text-center">
+                <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Overall</p>
+                <p className={cn('mt-1 text-xl font-bold', toneStyle(riskToneOf(selectedRow.risk)).text)}>{selectedRow.overall}%</p>
               </div>
-              <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Completed</p>
+              <div className="rounded-lg border border-foreground-200/60 bg-background-100/40 p-3 text-center">
+                <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Completed</p>
                 <p className="mt-1 text-xl font-bold text-primary-600">{selectedRow.completed}</p>
               </div>
-              <div className="rounded-xl border border-foreground-200/60 bg-background-100/40 p-3 text-center">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">Target</p>
+              <div className="rounded-lg border border-foreground-200/60 bg-background-100/40 p-3 text-center">
+                <p className="text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Target</p>
                 <p className="mt-1 text-xl font-bold text-foreground-900">{selectedRow.target || MISSING_VALUE}</p>
               </div>
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
-              <div className="flex items-center justify-between text-[11px] text-foreground-500">
+              <div className="flex items-center justify-between text-[12px] text-foreground-500">
                 <span>KSB completion against target</span>
                 <span className="font-semibold text-foreground-900">{selectedRow.completed}/{selectedRow.target || MISSING_VALUE}</span>
               </div>
-              <div className="mt-3 h-2 rounded-full bg-background-200 overflow-hidden">
-                <div
-                  className={`${selectedRow.risk === 'red' ? 'bg-red-500' : selectedRow.risk === 'green' ? 'bg-emerald-500' : 'bg-amber-500'} h-full rounded-full`}
-                  style={{ width: `${Math.min(selectedRow.overall, 100)}%` }}
-                />
-              </div>
+              <ProgressBar percent={selectedRow.overall} height="h-2" className="mt-3" />
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Live KSB Source Values</h4>
-              <div className="space-y-2 text-[11px]">
+              <div className="space-y-2 text-[12px]">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-foreground-400">Knowledge</span>
                   <span className="font-semibold text-foreground-700">{formatKsbRatio(selectedRow.knowledgeCompleted, selectedRow.knowledgeTarget)}</span>
@@ -805,51 +732,43 @@ export default function CoachKsbImpact() {
                   <h4 className="text-xs font-heading font-semibold text-foreground-900">
                     {ksbDetailFilterLabel(selectedDetailFilter)} KSB Breakdown
                   </h4>
-                  <p className="mt-1 text-[11px] text-foreground-400">Each completed KSB and the activity that surfaced it.</p>
+                  <p className="mt-1 text-[12px] text-foreground-400">Each completed KSB and the activity that surfaced it.</p>
                 </div>
-                <span className="shrink-0 rounded-full bg-violet-50 px-3 py-1 text-[10px] font-bold text-violet-700">
+                <span className="shrink-0 rounded-full bg-primary-50 px-3 py-1 text-[12px] font-bold text-primary-700">
                   {selectedCompletedDetails.length} KSB{selectedCompletedDetails.length === 1 ? '' : 's'}
                 </span>
               </div>
 
-              <div className="mt-4 flex gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1">
-                {(['all', 'knowledge', 'skills', 'behaviours'] as KsbDetailFilter[]).map(detailFilter => (
-                  <button
-                    key={detailFilter}
-                    type="button"
-                    onClick={() => setSelectedDetailFilter(detailFilter)}
-                    className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-[10px] font-bold transition ${
-                      selectedDetailFilter === detailFilter
-                        ? 'bg-[#21003f] text-white shadow-sm'
-                        : 'text-slate-500 hover:bg-white hover:text-slate-900'
-                    }`}
-                  >
-                    {ksbDetailFilterLabel(detailFilter)}
-                  </button>
-                ))}
-              </div>
+              <PageTabs
+                className="mt-4"
+                items={(['all', 'knowledge', 'skills', 'behaviours'] as KsbDetailFilter[]).map((key) => ({
+                  value: key,
+                  label: ksbDetailFilterLabel(key),
+                }))}
+                value={selectedDetailFilter}
+                onChange={(next) => setSelectedDetailFilter(next as KsbDetailFilter)}
+                label="Filter KSB breakdown by type"
+              />
 
               {selectedCompletedDetails.length === 0 ? (
-                <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-white p-4 text-center">
-                  <p className="text-[11px] font-semibold text-foreground-500">No completed KSB details available yet.</p>
-                </div>
+                <EmptyState size="sm" variant="no-matches" title="No completed KSB details available yet." />
               ) : (
                 <div className="mt-4 max-h-[24rem] space-y-2 overflow-y-auto pr-1">
                   {selectedCompletedDetails.map(detail => (
-                    <div key={detail.code} className="rounded-2xl border border-slate-200 bg-white p-3 shadow-[0_5px_16px_rgba(15,23,42,0.03)]">
+                    <div key={detail.code} className="rounded-2xl border border-foreground-200/70 bg-background-50 p-3 shadow-sm">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="rounded-xl bg-violet-100 px-2.5 py-1 text-[11px] font-bold text-violet-800">{detail.code}</span>
-                            <span className={`rounded-full border px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide ${getKsbTypeStyle(detail.type)}`}>
+                            <span className="rounded-lg bg-primary-100 px-2.5 py-1 text-[12px] font-bold text-primary-800">{detail.code}</span>
+                            <span className={cn('rounded-full border px-2 py-0.5 text-[12px] font-bold uppercase tracking-wide', getKsbTypeStyle(detail.type))}>
                               {detail.type}
                             </span>
                           </div>
-                          <p className="mt-2 text-[11px] font-semibold leading-relaxed text-foreground-800">
+                          <p className="mt-2 text-[12px] font-semibold leading-relaxed text-foreground-800">
                             {detail.description || 'No programme description recorded for this KSB.'}
                           </p>
                         </div>
-                        <span className="shrink-0 rounded-full bg-slate-50 px-2.5 py-1 text-[9px] font-bold text-slate-500">
+                        <span className="shrink-0 rounded-full bg-background-100 px-2.5 py-1 text-[12px] font-bold text-foreground-500">
                           {detail.sources?.length || 0} source{detail.sources?.length === 1 ? '' : 's'}
                         </span>
                       </div>
@@ -857,28 +776,28 @@ export default function CoachKsbImpact() {
                       <div className="mt-3 space-y-2">
                         {detail.sources && detail.sources.length > 0 ? (
                           detail.sources.map(source => (
-                            <div key={source.id} className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2">
+                            <div key={source.id} className="rounded-lg border border-foreground-100 bg-background-100/60 px-3 py-2">
                               <div className="flex items-center justify-between gap-3">
-                                <span className="rounded-full bg-white px-2 py-0.5 text-[8px] font-bold uppercase tracking-wide text-slate-500">
+                                <span className="rounded-full bg-background-50 px-2 py-0.5 text-[12px] font-bold uppercase tracking-wide text-foreground-500">
                                   {source.typeLabel}
                                 </span>
-                                <span className="text-[9px] font-semibold text-slate-400">{source.completedDate}</span>
+                                <span className="text-[12px] font-semibold text-foreground-400">{source.completedDate}</span>
                               </div>
-                              <p className="mt-1.5 truncate text-[11px] font-bold text-slate-900">{source.title}</p>
-                              <p className="mt-1 truncate text-[10px] text-slate-500">{source.module} / {source.week}</p>
+                              <p className="mt-1.5 truncate text-[12px] font-bold text-foreground-900">{source.title}</p>
+                              <p className="mt-1 truncate text-[12px] text-foreground-500">{source.module} / {source.week}</p>
                               <div className="mt-2 flex flex-wrap gap-1.5">
                                 {source.reportedTime && source.reportedTime !== MISSING_VALUE && (
-                                  <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500">
+                                  <span className="rounded-full bg-background-50 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">
                                     Reported {source.reportedTime}
                                   </span>
                                 )}
                                 {isNumber(source.hours) && (
-                                  <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500">
+                                  <span className="rounded-full bg-background-50 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">
                                     {source.hours}h
                                   </span>
                                 )}
                                 {source.detail && source.detail !== MISSING_VALUE && source.detail !== source.reportedTime && (
-                                  <span className="rounded-full bg-white px-2 py-0.5 text-[9px] font-semibold text-slate-500">
+                                  <span className="rounded-full bg-background-50 px-2 py-0.5 text-[12px] font-semibold text-foreground-500">
                                     {source.detail}
                                   </span>
                                 )}
@@ -886,7 +805,7 @@ export default function CoachKsbImpact() {
                             </div>
                           ))
                         ) : (
-                          <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold text-slate-400">
+                          <p className="rounded-lg border border-dashed border-foreground-200 bg-background-100/60 px-3 py-2 text-[12px] font-semibold text-foreground-400">
                             This KSB is counted as complete, but no source metadata was recorded.
                           </p>
                         )}
@@ -899,25 +818,16 @@ export default function CoachKsbImpact() {
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Granular Breakdown</h4>
-              <div className="grid grid-cols-1 gap-3 text-[11px] sm:grid-cols-3">
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="font-semibold text-foreground-500">Knowledge %</p>
-                  <p className={`mt-1 ${isNumber(selectedRow.knowledgeProgress) ? getMetricTone(selectedRow.knowledgeProgress) : 'text-foreground-400'}`}>{formatKsbPercent(selectedRow.knowledgeProgress)}</p>
-                </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="font-semibold text-foreground-500">Skills %</p>
-                  <p className={`mt-1 ${isNumber(selectedRow.skillsProgress) ? getMetricTone(selectedRow.skillsProgress) : 'text-foreground-400'}`}>{formatKsbPercent(selectedRow.skillsProgress)}</p>
-                </div>
-                <div className="rounded-xl bg-background-100/60 p-3">
-                  <p className="font-semibold text-foreground-500">Behaviours %</p>
-                  <p className={`mt-1 ${isNumber(selectedRow.behavioursProgress) ? getMetricTone(selectedRow.behavioursProgress) : 'text-foreground-400'}`}>{formatKsbPercent(selectedRow.behavioursProgress)}</p>
-                </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <ProgressMetric label="Knowledge %" value={formatKsbPercent(selectedRow.knowledgeProgress)} percent={selectedRow.knowledgeProgress} />
+                <ProgressMetric label="Skills %" value={formatKsbPercent(selectedRow.skillsProgress)} percent={selectedRow.skillsProgress} />
+                <ProgressMetric label="Behaviours %" value={formatKsbPercent(selectedRow.behavioursProgress)} percent={selectedRow.behavioursProgress} />
               </div>
             </div>
 
             <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
               <h4 className="text-xs font-heading font-semibold text-foreground-900 mb-3">Learner Context</h4>
-              <div className="space-y-2 text-[11px]">
+              <div className="space-y-2 text-[12px]">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-foreground-400">Email</span>
                   <span className="max-w-[260px] truncate font-semibold text-foreground-700">{selectedRow.email}</span>

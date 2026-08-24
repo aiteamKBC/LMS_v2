@@ -2,11 +2,28 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import SparklineChart from '@/components/feature/SparklineChart';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
+import { cn } from '@/lib/cn';
+import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
+import { statusTone, toneStyle, type StatusTone } from '@/lib/statusTone';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { SectionHeader } from '@/components/ui/SectionHeader';
+import { MetricCard } from '@/components/ui/MetricCard';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { ProgressBar } from '@/components/ui/ProgressMetric';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { DataTable, type DataColumn } from '@/components/ui/DataTable';
+import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
+import { FilterToolbar, SearchInput, FilterSelect } from '@/components/ui/FilterToolbar';
+import { Pagination } from '@/components/ui/Pagination';
+import { Panel } from '@/components/ui/Panel';
+import { ActionRow } from '@/components/ui/ActionRow';
+import { LearnerAvatar, LearnerIdentity, ReasonLine } from '@/pages/coach/shared/LearnerIdentity';
 import TrendChart from './components/TrendChart';
-import { RowsSkeleton, TableBodySkeleton } from '@/components/feature/Skeletons';
 
 const coachNav = roleNavMap.coach;
 const API_ENDPOINT = '/coach_api/coach/attendance';
@@ -165,10 +182,10 @@ function attendanceStatusLabel(status?: string | null): string {
   return displayText(status);
 }
 
-function attendanceStatusClasses(status?: string | null): string {
-  if (status === 'present') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  if (status === 'absent') return 'bg-red-50 text-red-700 border-red-200';
-  return 'bg-foreground-100 text-foreground-600 border-foreground-200';
+function sessionStatusTone(status?: string | null): StatusTone {
+  if (status === 'present') return 'positive';
+  if (status === 'absent') return 'critical';
+  return 'neutral';
 }
 
 function percentOf(count: number, total: number): string {
@@ -188,37 +205,23 @@ function getDisplayRiskLabel(learner: AttendanceLearner): string {
   return getRiskLabel(learner.risk);
 }
 
-function getRiskClasses(risk: RiskTone): string {
-  if (risk === 'green') return 'bg-emerald-100 text-emerald-700 border-emerald-200/60';
-  if (risk === 'amber') return 'bg-amber-100 text-amber-700 border-amber-200/60';
-  if (risk === 'red') return 'bg-red-100 text-red-700 border-red-200/60';
-  return 'bg-foreground-100 text-foreground-500 border-foreground-200/60';
+/**
+ * A learner's risk tone. "On break" has no entry of its own in the risk model —
+ * it is mapped to `caution`, the same treatment the caseload page gives a
+ * break, so the colour a coach reads for "paused, not a problem" is consistent
+ * across both screens rather than inventing a fifth slate-grey state here.
+ */
+function learnerTone(learner: AttendanceLearner): StatusTone {
+  if (learner.isOnBreak) return 'caution';
+  return statusTone(learner.risk);
 }
 
-function getDisplayRiskClasses(learner: AttendanceLearner): string {
-  if (learner.isOnBreak) return 'bg-slate-100 text-slate-700 border-slate-200/70';
-  return getRiskClasses(learner.risk);
-}
-
-function getAvatarClasses(risk: RiskTone): string {
-  if (risk === 'green') return 'bg-emerald-100 text-emerald-700 ring-emerald-200';
-  if (risk === 'amber') return 'bg-amber-100 text-amber-700 ring-amber-200';
-  if (risk === 'red') return 'bg-red-100 text-red-700 ring-red-200';
-  return 'bg-foreground-100 text-foreground-500 ring-foreground-200';
-}
-
-function getAttendanceTone(value?: number | null): string {
-  if (value === null || value === undefined) return 'text-foreground-400';
-  if (value >= 90) return 'text-emerald-600';
-  if (value >= 80) return 'text-amber-600';
-  return 'text-red-600';
-}
-
-function getAttendanceBar(value?: number | null): string {
-  if (value === null || value === undefined) return 'bg-foreground-300';
-  if (value >= 90) return 'bg-emerald-500';
-  if (value >= 80) return 'bg-amber-500';
-  return 'bg-red-500';
+/** The backend's own attendance thresholds (90% / 80%), mirrored so the tone matches the reason text. */
+function rateTone(value?: number | null): StatusTone {
+  if (value === null || value === undefined) return 'neutral';
+  if (value >= ATTENDANCE_EXPECTED_RATE) return 'positive';
+  if (value >= ATTENDANCE_MINIMUM_RATE) return 'caution';
+  return 'critical';
 }
 
 function exportAttendanceCsv(rows: AttendanceLearner[]) {
@@ -246,73 +249,8 @@ function exportAttendanceCsv(rows: AttendanceLearner[]) {
   URL.revokeObjectURL(url);
 }
 
-function FilterDropdown({ value, onChange, options, allLabel }: { value: string; onChange: (v: string) => void; options: string[]; allLabel: string }) {
-  return (
-    <div className="relative">
-      <select value={value} onChange={e => onChange(e.target.value)} className="appearance-none pl-3 pr-8 py-2 bg-background-100 border border-foreground-200 rounded-lg text-xs font-medium text-foreground-700 cursor-pointer focus:outline-none focus:border-primary-300 focus:ring-1 focus:ring-primary-300/50 min-w-[160px]">
-        <option value="all">{allLabel}</option>
-        {options.map(option => <option key={option} value={option}>{option}</option>)}
-      </select>
-      <AppIcon className="ri-arrow-down-s-line absolute right-2.5 top-1/2 -translate-y-1/2 text-foreground-400 text-xs pointer-events-none"></AppIcon>
-    </div>
-  );
-}
-
-function StatCard({ icon, label, value, hint, tone = 'primary', onClick }: { icon: string; label: string; value: string; hint?: string; tone?: 'primary' | 'emerald' | 'red' | 'amber'; onClick?: () => void }) {
-  const toneMap: Record<'primary' | 'emerald' | 'red' | 'amber', {
-    card: string; accent: string; icon: string; value: string; badge: string;
-  }> = {
-    primary: {
-      card: 'border-primary-200/70 bg-gradient-to-br from-white via-white to-primary-50/70',
-      accent: 'bg-primary-500',
-      icon: 'bg-primary-100 text-primary-700 ring-primary-200/70',
-      value: 'text-primary-800',
-      badge: 'bg-primary-100 text-primary-700',
-    },
-    emerald: {
-      card: 'border-emerald-200/70 bg-gradient-to-br from-white via-white to-emerald-50/70',
-      accent: 'bg-emerald-500',
-      icon: 'bg-emerald-100 text-emerald-700 ring-emerald-200/70',
-      value: 'text-emerald-700',
-      badge: 'bg-emerald-100 text-emerald-700',
-    },
-    red: {
-      card: 'border-red-200/70 bg-gradient-to-br from-white via-white to-red-50/70',
-      accent: 'bg-red-500',
-      icon: 'bg-red-100 text-red-700 ring-red-200/70',
-      value: 'text-red-600',
-      badge: 'bg-red-100 text-red-700',
-    },
-    amber: {
-      card: 'border-amber-200/70 bg-gradient-to-br from-white via-white to-amber-50/70',
-      accent: 'bg-amber-500',
-      icon: 'bg-amber-100 text-amber-700 ring-amber-200/70',
-      value: 'text-amber-700',
-      badge: 'bg-amber-100 text-amber-700',
-    },
-  };
-  const colors = toneMap[tone];
-
-  return (
-    <button type="button" onClick={onClick} className={`group relative flex min-h-[126px] flex-col overflow-hidden rounded-2xl border p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-primary-300/40 cursor-pointer ${colors.card}`}>
-      <span className={`absolute inset-x-0 top-0 h-1 ${colors.accent}`} />
-      <div className="flex items-start justify-between gap-3">
-        <span className={`flex h-10 w-10 items-center justify-center rounded-xl ring-1 ${colors.icon}`}>
-          <AppIcon className={`${icon} text-lg`}></AppIcon>
-        </span>
-        {hint && <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${colors.badge}`}>{hint}</span>}
-      </div>
-      <div className="mt-auto flex items-end justify-between gap-3 pt-4">
-        <div className="min-w-0">
-          <p className={`text-3xl font-heading font-bold leading-none tracking-tight ${colors.value}`}>{value}</p>
-          <p className="mt-2 truncate text-[10px] font-semibold text-foreground-600">{label}</p>
-        </div>
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/80 text-foreground-300 shadow-sm ring-1 ring-foreground-100 transition group-hover:translate-x-0.5 group-hover:text-primary-600">
-          <AppIcon className="ri-arrow-right-line text-xs"></AppIcon>
-        </span>
-      </div>
-    </button>
-  );
+function optionsFrom(values: string[]): { value: string; label: string }[] {
+  return values.map((value) => ({ value, label: value }));
 }
 
 export default function CoachAttendance() {
@@ -333,7 +271,7 @@ export default function CoachAttendance() {
   const [dateTo, setDateTo] = useState('');
   const [trendView, setTrendView] = useState<TrendView>('month');
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(25);
+  const [itemsPerPage, setItemsPerPage] = useState(50);
   const [selectedKpi, setSelectedKpi] = useState<AttendanceKpi | null>(null);
   const [riskFilter, setRiskFilter] = useState<AttendanceRiskFilter>('all');
   const [selectedAttendanceLearner, setSelectedAttendanceLearner] = useState<AttendanceLearner | null>(null);
@@ -538,140 +476,315 @@ export default function CoachAttendance() {
     setCurrentPage(1);
   };
 
+  const riskTabs: PageTabItem[] = [
+    { value: 'all', label: 'All Learners', count: summary.totalLearners },
+    { value: 'green', label: 'On Track', count: summary.onTrack, tone: 'positive' },
+    { value: 'amber', label: 'Needs Attention', count: summary.needsAttention, tone: 'caution' },
+    { value: 'red', label: 'At Risk', count: summary.atRisk, tone: 'critical' },
+    { value: 'break', label: 'On Break', count: summary.onBreakLearners || 0, tone: 'caution', hideWhenEmpty: true },
+    { value: 'unknown', label: 'No Data', count: summary.unknown, tone: 'neutral', hideWhenEmpty: true },
+  ];
+
+  const columns: DataColumn<AttendanceLearner>[] = [
+    {
+      key: 'learner',
+      label: 'Learner',
+      widthClass: 'w-[280px] min-w-[240px]',
+      render: (row) => (
+        <LearnerIdentity
+          name={row.learner}
+          programme={`${displayText(row.cohort)} · ${displayText(row.programme)}`}
+          meta={displayText(row.email)}
+          tone={learnerTone(row)}
+          status={(
+            <StatusBadge
+              tone={row.isOnBreak ? 'caution' : 'positive'}
+              label={row.isOnBreak ? 'On Break' : displayText(row.programStatus)}
+              size="sm"
+              dot={false}
+            />
+          )}
+          onClick={() => navigate(`/coach/attendance/${row.id}`)}
+        />
+      ),
+    },
+    {
+      key: 'attendance',
+      label: 'Attendance',
+      widthClass: 'w-[190px] min-w-[170px]',
+      render: (row) => {
+        if (row.attendance === null) return <span className="text-foreground-400">{MISSING_VALUE}</span>;
+        const tone = learnerTone(row);
+        return (
+          <div className="max-w-[170px]">
+            <div className="flex items-center gap-2">
+              <span className={cn('text-[15px] font-bold', toneStyle(tone).text)}>{row.attendance}%</span>
+              <StatusBadge tone={tone} label={getDisplayRiskLabel(row)} size="sm" />
+            </div>
+            <ProgressBar percent={row.attendance} tone={toneStyle(tone).dot} className="mt-2" />
+          </div>
+        );
+      },
+    },
+    {
+      key: 'sessions',
+      label: 'Present / Absent',
+      widthClass: 'w-[200px] min-w-[180px]',
+      render: (row) => {
+        if (row.present === null || row.absent === null) return <span className="text-foreground-400">{MISSING_VALUE}</span>;
+        return (
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => openAttendanceDetails(row, 'present')}
+              className={cn('inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-semibold ring-1', toneStyle('positive').bg, toneStyle('positive').text, toneStyle('positive').border)}
+            >
+              <AppIcon className="ri-check-line"></AppIcon> Present <strong>{row.present}</strong>
+            </button>
+            <button
+              type="button"
+              onClick={() => openAttendanceDetails(row, 'absent')}
+              className={cn('inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12px] font-semibold ring-1', toneStyle('critical').bg, toneStyle('critical').text, toneStyle('critical').border)}
+            >
+              <AppIcon className="ri-close-line"></AppIcon> Absent <strong>{row.absent}</strong>
+            </button>
+            <button type="button" onClick={() => openAttendanceDetails(row, 'all')} className="w-full text-left text-[12px] font-medium text-foreground-400 hover:text-primary-600">
+              Total sessions: {row.sessions ?? (row.present + row.absent)}
+            </button>
+          </div>
+        );
+      },
+    },
+    {
+      key: 'catchup',
+      label: 'Catch-up',
+      widthClass: 'w-[170px] min-w-[150px]',
+      render: (row) => (
+        <div className="space-y-1.5">
+          <StatusBadge tone="caution" label={`${formatCount(row.catchup)} recorded`} size="sm" showIcon />
+          <p className="truncate text-[12px] text-foreground-400">Next: {displayText(row.nextSession)}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'consecutive',
+      label: 'Consecutive Absences',
+      widthClass: 'w-[180px] min-w-[160px]',
+      render: (row) => {
+        const missed = row.consecutiveMissed || 0;
+        const tone: StatusTone = missed >= 2 ? 'critical' : 'neutral';
+        return (
+          <div>
+            <StatusBadge tone={tone} label={`${formatCount(row.consecutiveMissed)} current`} size="sm" showIcon />
+            {missed >= 2 ? (
+              <p className="mt-1.5 text-[12px] font-medium text-red-600">{missed} consecutive missed sessions</p>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
+      key: 'lastSession',
+      label: 'Last Session',
+      widthClass: 'w-[200px] min-w-[180px]',
+      render: (row) => (
+        <div>
+          <p className="inline-flex items-center gap-1.5 rounded-md bg-background-100 px-2.5 py-1.5 text-[12px] font-semibold text-foreground-700">
+            <AppIcon className="ri-calendar-check-line text-primary-500"></AppIcon>{displayText(row.lastSession)}
+          </p>
+          <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-2 inline-flex items-center gap-1 text-[12px] font-bold text-primary-600 transition hover:gap-1.5 hover:text-primary-800">
+            View profile <AppIcon className="ri-arrow-right-line"></AppIcon>
+          </button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Attendance Dashboard" pageSubtitle="Attendance overview from KBC attendance records" userName={coach.name} userRole="Progress Coach">
-      <div className="min-h-screen space-y-4 bg-[#f7f6fb] p-3 md:p-5">
-        <section
-          className="rounded-2xl border border-white/10 px-6 py-6 text-white shadow-[0_14px_32px_rgba(20,4,46,0.16)]"
-          style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}
-        >
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="mb-2 flex items-center gap-2 text-[10px] text-white/55">
-                <span>Coach Workspace</span>
-                <AppIcon className="ri-arrow-right-s-line"></AppIcon>
-                <span className="font-semibold text-white">Attendance</span>
-              </div>
-              <h1 className="text-2xl font-heading font-bold tracking-[-0.02em] text-white">Learner Attendance</h1>
-              <p className="mt-1 max-w-xl text-[12px] leading-5 text-white/70">
-                Monitor attendance, identify absence patterns, and support learners who require intervention.
-              </p>
-            </div>
+      <PageContainer>
+        <PageHeader
+          title="Learner Attendance"
+          description="Monitor attendance, identify absence patterns, and support learners who require intervention."
+          icon="ri-calendar-check-line"
+          actions={(
             <button
               type="button"
               onClick={() => exportAttendanceCsv(filteredData)}
-              className="inline-flex h-10 items-center justify-center gap-2 self-start rounded-xl border border-white/15 bg-white px-4 text-[11px] font-semibold text-primary-800 shadow-sm transition hover:bg-primary-50 lg:self-center"
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200 bg-background-50 px-3.5 text-[12px] font-semibold text-foreground-700 shadow-sm transition hover:border-foreground-300"
             >
               <AppIcon className="ri-download-2-line"></AppIcon>
-              Export Attendance Report
+              Export attendance report
             </button>
-          </div>
-        </section>
+          )}
+        />
 
+        {/* ===== 1. Attendance health summary ===== */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <button type="button" onClick={() => setSelectedKpi('average')} className="group relative flex min-h-[126px] flex-col overflow-hidden rounded-2xl border border-primary-200/70 bg-gradient-to-br from-white via-white to-primary-50/70 p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-primary-300/40 cursor-pointer">
-            <span className="absolute inset-x-0 top-0 h-1 bg-primary-500" />
-            <div className="flex items-start justify-between gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-100 text-primary-700 ring-1 ring-primary-200/70">
-                <AppIcon className="ri-bar-chart-line text-lg"></AppIcon>
-              </span>
-              <div className="h-9 w-24 overflow-hidden rounded-lg bg-white/70 px-1 ring-1 ring-primary-100">
-                <SparklineChart data={attendanceTrendValues.slice(-6)} color={(summary.averageAttendance || 0) >= 90 ? 'emerald' : (summary.averageAttendance || 0) >= 80 ? 'amber' : 'red'} width={88} height={36} showDots={false} showFill={false} />
-              </div>
-            </div>
-            <div className="mt-auto flex items-end justify-between gap-3 pt-4">
-              <div className="min-w-0">
-                <p className="text-3xl font-heading font-bold leading-none tracking-tight text-primary-800">{formatPercent(summary.averageAttendance)}</p>
-                <p className="mt-2 text-[10px] font-semibold text-foreground-600">Overall Attendance · All Months</p>
-              </div>
-              <div className={`flex items-center gap-1 rounded-full px-2 py-1 text-[9px] font-bold ${trendUp ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
-                <AppIcon className={trendUp ? 'ri-arrow-up-line' : 'ri-arrow-down-line'}></AppIcon>
+          <MetricCard
+            label="Average attendance"
+            value={formatPercent(summary.averageAttendance)}
+            tone={rateTone(summary.averageAttendance)}
+            icon="ri-bar-chart-line"
+            active={selectedKpi === 'average'}
+            onClick={() => setSelectedKpi('average')}
+            note={(
+              <span className="flex items-center gap-2">
+                <span className="h-7 w-16 shrink-0 overflow-hidden rounded-md bg-background-100">
+                  <SparklineChart
+                    data={attendanceTrendValues.slice(-6)}
+                    color={(summary.averageAttendance || 0) >= 90 ? 'emerald' : (summary.averageAttendance || 0) >= 80 ? 'amber' : 'red'}
+                    width={64}
+                    height={28}
+                    showDots={false}
+                    showFill={false}
+                  />
+                </span>
                 <span>{trendData.length ? (trendUp ? 'Improving' : 'Declining') : MISSING_VALUE}</span>
-              </div>
-            </div>
-          </button>
-          <StatCard icon="ri-check-double-line" label="On Track (90%+)" value={formatCount(summary.onTrack)} hint={percentOf(summary.onTrack, knownLearnerCount)} tone="emerald" onClick={() => setSelectedKpi('on-track')} />
-          <StatCard icon="ri-error-warning-line" label="At Risk (<80%)" value={formatCount(summary.atRisk)} hint={percentOf(summary.atRisk, knownLearnerCount)} tone="red" onClick={() => setSelectedKpi('at-risk')} />
-          <StatCard icon="ri-alert-line" label="Needs Attention (80-89%)" value={formatCount(summary.needsAttention)} hint={percentOf(summary.needsAttention, knownLearnerCount)} tone="amber" onClick={() => setSelectedKpi('needs-attention')} />
-          <StatCard icon="ri-timer-line" label="Catch-ups Pending" value={formatCount(summary.catchupsPending)} hint={summary.overdueCatchups === null ? MISSING_VALUE : `${summary.overdueCatchups} overdue`} tone="amber" onClick={() => setSelectedKpi('catchups')} />
+              </span>
+            )}
+          />
+          <MetricCard
+            label="On track (90%+)"
+            value={formatCount(summary.onTrack)}
+            tone="positive"
+            icon="ri-check-double-line"
+            active={selectedKpi === 'on-track'}
+            onClick={() => setSelectedKpi('on-track')}
+            note={`${percentOf(summary.onTrack, knownLearnerCount)} of tracked learners`}
+          />
+          <MetricCard
+            label="At risk (<80%)"
+            value={formatCount(summary.atRisk)}
+            tone="critical"
+            icon="ri-error-warning-line"
+            active={selectedKpi === 'at-risk'}
+            onClick={() => setSelectedKpi('at-risk')}
+            note={`${percentOf(summary.atRisk, knownLearnerCount)} of tracked learners`}
+          />
+          <MetricCard
+            label="Needs attention (80–89%)"
+            value={formatCount(summary.needsAttention)}
+            tone="caution"
+            icon="ri-alert-line"
+            active={selectedKpi === 'needs-attention'}
+            onClick={() => setSelectedKpi('needs-attention')}
+            note={`${percentOf(summary.needsAttention, knownLearnerCount)} of tracked learners`}
+          />
+          <MetricCard
+            label="Catch-ups pending"
+            value={formatCount(summary.catchupsPending)}
+            tone="caution"
+            icon="ri-timer-line"
+            active={selectedKpi === 'catchups'}
+            onClick={() => setSelectedKpi('catchups')}
+            note={summary.overdueCatchups === null ? MISSING_VALUE : `${summary.overdueCatchups} overdue`}
+          />
         </div>
 
-        <section className="space-y-3 rounded-2xl border border-foreground-200/60 bg-white p-3 shadow-sm">
-          <div className="flex gap-2 overflow-x-auto scrollbar-hide">
-            {([
-              ['all', 'All Learners', summary.totalLearners, 'ri-group-line'],
-              ['green', 'On Track', summary.onTrack, 'ri-check-line'],
-              ['amber', 'Needs Attention', summary.needsAttention, 'ri-alert-line'],
-              ['red', 'At Risk', summary.atRisk, 'ri-error-warning-line'],
-              ['break', 'On Break', summary.onBreakLearners || 0, 'ri-moon-line'],
-              ['unknown', 'No Data', summary.unknown, 'ri-question-line'],
-            ] as [AttendanceRiskFilter, string, number, string][]).map(([value, label, count, icon]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => { setRiskFilter(value); setCurrentPage(1); }}
-                className={`flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-semibold transition ${
-                  riskFilter === value
-                    ? 'border-primary-600 bg-primary-600 text-white shadow-sm'
-                    : 'border-foreground-200 bg-white text-foreground-600 hover:border-primary-200 hover:text-primary-700'
-                }`}
-              >
-                <AppIcon className={icon}></AppIcon>
-                {label}
-                <span className={`rounded-full px-1.5 py-0.5 text-[8px] ${riskFilter === value ? 'bg-white/20' : 'bg-background-100 text-foreground-400'}`}>{count}</span>
-              </button>
-            ))}
-          </div>
+        {/* ===== 2. Filters ===== */}
+        <PageTabs
+          items={riskTabs}
+          value={riskFilter}
+          onChange={(next) => { setRiskFilter(next as AttendanceRiskFilter); setCurrentPage(1); }}
+          label="Filter learners by attendance risk"
+        />
 
-          <div className="flex flex-col gap-2 xl:flex-row xl:items-center">
-            <div className="relative min-w-0 flex-1">
-              <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-sm text-foreground-400"></AppIcon>
-              <input type="text" value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }} placeholder="Search by learner, email, programme or employer..." className="h-10 w-full rounded-xl border border-foreground-200 bg-background-50 pl-9 pr-3 text-[11px] text-foreground-700 placeholder:text-foreground-400 focus:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-100" />
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <FilterDropdown allLabel="All Cohorts" value={cohortFilter} onChange={(v) => { setCohortFilter(v); setCurrentPage(1); }} options={cohorts} />
-              <FilterDropdown allLabel="All Programmes" value={programmeFilter} onChange={(v) => { setProgrammeFilter(v); setCurrentPage(1); }} options={programmes} />
-              <FilterDropdown allLabel="All Employers" value={employerFilter} onChange={(v) => { setEmployerFilter(v); setCurrentPage(1); }} options={employers} />
-              <input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
-              <span className="text-[10px] text-foreground-400">to</span>
-              <input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setCurrentPage(1); }} className="h-10 rounded-xl border border-foreground-200 bg-background-50 px-3 text-[10px] text-foreground-700 focus:border-primary-300 focus:outline-none" />
-              {hasActiveFilters && (
-                <button onClick={resetFilters} className="h-10 rounded-xl px-3 text-[10px] font-semibold text-foreground-500 hover:bg-background-100 hover:text-foreground-800">Clear Filters</button>
+        <FilterToolbar
+          search={(
+            <SearchInput
+              value={searchQuery}
+              onChange={(value) => { setSearchQuery(value); setCurrentPage(1); }}
+              placeholder="Search by learner, email, programme or employer…"
+            />
+          )}
+          filters={(
+            <>
+              <FilterSelect
+                value={cohortFilter}
+                onChange={(value) => { setCohortFilter(value); setCurrentPage(1); }}
+                options={[{ value: 'all', label: 'All cohorts' }, ...optionsFrom(cohorts)]}
+                widthClass="w-[150px]"
+                tone={cohortFilter !== 'all' ? 'active' : 'default'}
+              />
+              <FilterSelect
+                value={programmeFilter}
+                onChange={(value) => { setProgrammeFilter(value); setCurrentPage(1); }}
+                options={[{ value: 'all', label: 'All programmes' }, ...optionsFrom(programmes)]}
+                widthClass="w-[160px]"
+                tone={programmeFilter !== 'all' ? 'active' : 'default'}
+              />
+              <FilterSelect
+                value={employerFilter}
+                onChange={(value) => { setEmployerFilter(value); setCurrentPage(1); }}
+                options={[{ value: 'all', label: 'All employers' }, ...optionsFrom(employers)]}
+                widthClass="w-[150px]"
+                tone={employerFilter !== 'all' ? 'active' : 'default'}
+              />
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(event) => { setDateFrom(event.target.value); setCurrentPage(1); }}
+                  className="h-9 rounded-lg border border-foreground-200 bg-background-50 px-2.5 text-[12px] text-foreground-700 transition focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200/50"
+                />
+                <span className="text-[12px] text-foreground-400">to</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(event) => { setDateTo(event.target.value); setCurrentPage(1); }}
+                  className="h-9 rounded-lg border border-foreground-200 bg-background-50 px-2.5 text-[12px] text-foreground-700 transition focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200/50"
+                />
+              </div>
+            </>
+          )}
+          trailing={hasActiveFilters ? (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-semibold text-foreground-500 transition hover:bg-background-100 hover:text-foreground-800"
+            >
+              <AppIcon className="ri-close-circle-line text-[13px]"></AppIcon>
+              Clear filters
+            </button>
+          ) : undefined}
+        />
+
+        {/* ===== 3. Trend / distribution charts ===== */}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Panel>
+            <SectionHeader
+              title="Average attendance trend"
+              icon="ri-line-chart-line"
+              actions={(
+                <select
+                  value={trendView}
+                  onChange={(event) => setTrendView(event.target.value as TrendView)}
+                  className="h-9 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-600 focus:border-primary-300 focus:outline-none"
+                >
+                  <option value="week">Weekly</option>
+                  <option value="month">Monthly</option>
+                  <option value="year">Yearly</option>
+                </select>
+              )}
+            />
+            <div className="mt-4">
+              {attendanceTrendData.length ? (
+                <TrendChart data={attendanceTrendData} height={245} color="primary" yAxisMax={100} yAxisMin={0} />
+              ) : (
+                <EmptyState variant="empty" size="sm" title="No attendance trend records yet." />
               )}
             </div>
-          </div>
-        </section>
+          </Panel>
 
-        <div className="flex items-center gap-2 text-[11px] font-semibold text-foreground-700">
-          <AppIcon className="ri-arrow-down-s-line"></AppIcon>
-          Attendance Analytics
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="text-sm font-heading font-semibold text-foreground-900">Average Attendance Trend</h3>
-              <select value={trendView} onChange={(event) => setTrendView(event.target.value as TrendView)} className="rounded-lg border border-foreground-200 bg-background-50 px-3 py-2 text-[10px] font-semibold text-foreground-600 focus:border-primary-300 focus:outline-none">
-                <option value="week">Weekly</option>
-                <option value="month">Monthly</option>
-                <option value="year">Yearly</option>
-              </select>
-            </div>
-            {attendanceTrendData.length ? (
-              <TrendChart data={attendanceTrendData} height={245} color="primary" yAxisMax={100} yAxisMin={0} />
-            ) : (
-              <div className="flex h-[245px] items-center justify-center text-[11px] text-foreground-400">No attendance trend records yet.</div>
-            )}
-          </section>
-
-          <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
-            <h3 className="text-sm font-heading font-semibold text-foreground-900">Attendance Distribution</h3>
-            <div className="flex h-[245px] items-center justify-center gap-8 px-2 lg:gap-10 xl:gap-12">
+          <Panel>
+            <SectionHeader title="Attendance distribution" icon="ri-pie-chart-line" />
+            <div className="mt-4 flex h-[245px] items-center justify-center gap-8 px-2 lg:gap-10 xl:gap-12">
               <div className="relative h-44 w-44 shrink-0 rounded-full" style={{ background: attendanceDistributionGradient }}>
-                <div className="absolute inset-[31px] flex items-center justify-center rounded-full bg-white">
+                <div className="absolute inset-[31px] flex items-center justify-center rounded-full bg-background-50">
                   <div className="text-center">
                     <p className="text-2xl font-bold text-foreground-900">{attendanceDistributionTotal}</p>
-                    <p className="mt-0.5 text-[8px] font-semibold uppercase tracking-wide text-foreground-400">Learners</p>
+                    <p className="mt-0.5 text-[12px] font-semibold uppercase tracking-wide text-foreground-400">Learners</p>
                   </div>
                 </div>
               </div>
@@ -681,236 +794,103 @@ export default function CoachAttendance() {
                     ? Math.round((bucket.value / attendanceDistributionTotal) * 100)
                     : 0;
                   return (
-                    <div key={bucket.label} className="flex items-center gap-3 rounded-xl bg-background-50 px-3.5 py-3">
+                    <div key={bucket.label} className="flex items-center gap-3 rounded-lg bg-background-100 px-3.5 py-3">
                       <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: bucket.color }}></span>
-                      <span className="min-w-0 flex-1 text-[10px] font-medium text-foreground-700">{bucket.label}</span>
-                      <span className="text-[11px] font-bold text-foreground-900">{bucket.value}</span>
-                      <span className="w-8 text-right text-[9px] text-foreground-400">({percentage}%)</span>
+                      <span className="min-w-0 flex-1 text-[12px] font-medium text-foreground-700">{bucket.label}</span>
+                      <span className="text-[13px] font-bold text-foreground-900">{bucket.value}</span>
+                      <span className="w-9 text-right text-[12px] text-foreground-400">({percentage}%)</span>
                     </div>
                   );
                 })}
               </div>
             </div>
-          </section>
+          </Panel>
         </div>
 
+        {/* ===== 4. Learners requiring intervention ===== */}
         {!hasActiveFilters && (
-          <div>
-            <section className="rounded-xl border border-foreground-200/60 bg-white p-5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-50 text-red-600">
-                  <AppIcon className="ri-alarm-warning-line"></AppIcon>
-                </span>
-                <div>
-                  <h3 className="text-sm font-heading font-semibold text-foreground-900">At-Risk Learners</h3>
-                  <p className="text-[10px] text-foreground-400">{atRiskLearners.length} matching the current filters</p>
-                </div>
-              </div>
-              <button type="button" onClick={() => { setRiskFilter('red'); setCurrentPage(1); }} className="text-[10px] font-semibold text-primary-700 hover:text-primary-800">View All</button>
-            </div>
-            <div className="mt-4 max-h-[230px] space-y-2 overflow-y-auto pr-1">
+          <section className="space-y-3">
+            <SectionHeader
+              title="At-risk learners"
+              count={atRiskLearners.length}
+              icon="ri-alarm-warning-line"
+              description="Learners below the attendance minimum, excluding those on a break."
+              actions={(
+                <button type="button" onClick={() => { setRiskFilter('red'); setCurrentPage(1); }} className="text-[12px] font-semibold text-primary-700 hover:text-primary-800">
+                  View all
+                </button>
+              )}
+            />
+            <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
               {atRiskLearners.length ? atRiskLearners.map((learner) => (
-                <div key={learner.id} className="flex items-center gap-3 rounded-xl border border-red-100 bg-red-50/60 p-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-red-600 ring-1 ring-red-100">{learner.initials}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[11px] font-bold text-foreground-900">{learner.learner}</p>
-                    <p className="mt-0.5 text-[9px] text-red-600">
-                      {formatPercent(learner.attendance)} attendance
-                      {learner.consecutiveMissed ? ` · ${learner.consecutiveMissed} consecutive absence${learner.consecutiveMissed === 1 ? '' : 's'}` : ''}
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-red-200 bg-white px-2 py-1 text-[8px] font-semibold text-red-600">At Risk</span>
-                </div>
+                <ActionRow
+                  key={learner.id}
+                  tone="critical"
+                  leading={<LearnerAvatar name={learner.learner} tone="critical" />}
+                  title={learner.learner}
+                  meta={(
+                    <ReasonLine
+                      icon="ri-percent-line"
+                      label={`${formatPercent(learner.attendance)} attendance`}
+                      detail={learner.consecutiveMissed ? `${learner.consecutiveMissed} consecutive absence${learner.consecutiveMissed === 1 ? '' : 's'}` : null}
+                      tone="critical"
+                    />
+                  )}
+                  status={<StatusBadge tone="critical" label="At Risk" size="sm" />}
+                />
               )) : (
-                <div className="flex min-h-[150px] items-center justify-center rounded-xl border border-dashed border-foreground-200 text-[11px] text-foreground-400">
-                  No at-risk learners match the current filters.
-                </div>
+                <EmptyState variant="no-matches" size="sm" title="No at-risk learners" description="No at-risk learners match the current filters." />
               )}
             </div>
-            </section>
-          </div>
+          </section>
         )}
 
-        <div className="overflow-hidden rounded-2xl border border-primary-100 bg-white shadow-[0_12px_32px_rgba(46,16,101,0.08)] ring-1 ring-primary-50">
-          <div className="flex items-center justify-between border-b border-primary-100 bg-gradient-to-r from-primary-50/90 via-white to-background-50 px-5 py-4">
-            <div className="flex items-center gap-3">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-600 text-white shadow-md shadow-primary-600/20">
-                <AppIcon className="ri-table-line text-base"></AppIcon>
-              </span>
-              <div>
-                <h3 className="text-[13px] font-heading font-bold text-foreground-900">Learner Attendance</h3>
-                <p className="mt-0.5 text-[10px] text-foreground-400">{filteredData.length} learners matching the current filters</p>
-              </div>
-            </div>
-            <label className="flex items-center gap-2 rounded-xl border border-foreground-100 bg-white px-3 py-2 text-[10px] font-semibold text-foreground-500 shadow-sm">
-              Rows per page
-              <select value={itemsPerPage} onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }} className="rounded-lg border-0 bg-background-100 px-2.5 py-1.5 text-[10px] font-bold text-foreground-700 focus:outline-none focus:ring-2 focus:ring-primary-200">
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={100}>100</option>
-              </select>
-            </label>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1295px] table-fixed text-left">
-              <colgroup>
-                <col className="w-12" />
-                <col className="w-[310px]" />
-                <col className="w-[220px]" />
-                <col className="w-[165px]" />
-                <col className="w-[145px]" />
-                <col className="w-[190px]" />
-                <col className="w-[175px]" />
-              </colgroup>
-              <thead className="sticky top-0 z-10 bg-primary-50/95 backdrop-blur">
-                <tr className="border-b border-primary-100">
-                  <th className="px-4 py-4"><input type="checkbox" aria-label="Select all learners" className="h-4 w-4 accent-primary-600" /></th>
-                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Learner</th>
-                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Attendance</th>
-                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Present / Absent</th>
-                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Catch-up</th>
-                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Consecutive Absences</th>
-                  <th className="px-4 py-4 text-[10px] font-extrabold uppercase tracking-[0.1em] text-primary-800 whitespace-nowrap">Last Session</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-foreground-100 bg-white">
-                {loading && <TableBodySkeleton rows={6} columns={7} />}
-                {!loading && error && (
-                  <tr>
-                    <td colSpan={7} className="py-16 text-center">
-                      <div className="inline-flex flex-col items-center gap-2 text-red-600">
-                        <AppIcon className="ri-error-warning-line text-2xl"></AppIcon>
-                        <span className="text-sm font-semibold">Unable to load live attendance data.</span>
-                        <span className="text-xs text-foreground-400">{error}</span>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-                {!loading && !error && paginatedData.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="py-16 text-center text-sm text-foreground-400">No learners match the current filters.</td>
-                  </tr>
-                )}
-                {!loading && !error && paginatedData.map(row => {
-                  const rowPadding = 'py-4';
-                  return (
-                    <tr key={row.id} className="group border-l-[3px] border-l-transparent transition-all even:bg-background-50/40 hover:border-l-primary-500 hover:bg-primary-50/50">
-                      <td className={`px-4 ${rowPadding}`}><input type="checkbox" aria-label={`Select ${row.learner}`} className="h-4 w-4 accent-primary-600" /></td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <div className="flex items-center gap-3.5">
-                          <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ring-1 ${getAvatarClasses(row.risk)}`}>
-                            <span className="text-[11px] font-bold">{row.initials}</span>
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="truncate text-left text-[12px] font-bold text-foreground-900 hover:text-primary-700">{row.learner}</button>
-                              <span className={`rounded-full border px-2 py-0.5 text-[8px] font-semibold ${row.isOnBreak ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{row.isOnBreak ? 'On Break' : displayText(row.programStatus)}</span>
-                            </div>
-                            <p className="mt-0.5 truncate text-[10px] text-foreground-500">{displayText(row.email)}</p>
-                            <p className="mt-1 truncate text-[9px] text-foreground-400">{displayText(row.cohort)} <span className="mx-1.5">·</span> {displayText(row.programme)}</p>
-                          </div>
-                        </div>
-                      </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        {row.attendance === null ? (
-                          <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
-                        ) : (
-                          <div className="max-w-[180px]">
-                            <div className="flex items-center gap-2">
-                              <span className={`text-[15px] font-bold ${getAttendanceTone(row.attendance)}`}>{row.attendance}%</span>
-                              <span className={`rounded-full border px-2 py-1 text-[8px] font-semibold ${getDisplayRiskClasses(row)}`}>{getDisplayRiskLabel(row)}</span>
-                            </div>
-                            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-background-200">
-                              <div className={`h-full rounded-full ${getAttendanceBar(row.attendance)}`} style={{ width: `${row.attendance}%` }}></div>
-                            </div>
-                          </div>
-                        )}
-                      </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        {row.present === null || row.absent === null ? (
-                          <span className="text-[11px] text-foreground-300">{MISSING_VALUE}</span>
-                        ) : (
-                          <div className="flex flex-wrap gap-1.5 text-[9px]">
-                            <button type="button" onClick={() => openAttendanceDetails(row, 'present')} className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 font-semibold text-emerald-700 ring-1 ring-emerald-100 hover:bg-emerald-100">
-                              <AppIcon className="ri-check-line"></AppIcon> Present <strong>{row.present}</strong>
-                            </button>
-                            <button type="button" onClick={() => openAttendanceDetails(row, 'absent')} className="inline-flex items-center gap-1 rounded-lg bg-red-50 px-2 py-1 font-semibold text-red-700 ring-1 ring-red-100 hover:bg-red-100">
-                              <AppIcon className="ri-close-line"></AppIcon> Absent <strong>{row.absent}</strong>
-                            </button>
-                            <button type="button" onClick={() => openAttendanceDetails(row, 'all')} className="w-full text-left text-[9px] font-medium text-foreground-400 hover:text-primary-600">Total sessions: {row.sessions ?? (row.present + row.absent)}</button>
-                          </div>
-                        )}
-                      </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <div className="space-y-1.5 text-[10px] text-foreground-600">
-                          <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1.5 font-semibold text-amber-700 ring-1 ring-amber-100">
-                            <AppIcon className="ri-history-line"></AppIcon> {formatCount(row.catchup)} recorded
-                          </span>
-                          <p className="truncate text-[9px] text-foreground-400">Next: {displayText(row.nextSession)}</p>
-                        </div>
-                      </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <span className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] font-bold ${(row.consecutiveMissed || 0) >= 2 ? 'bg-red-50 text-red-700 ring-1 ring-red-100' : 'bg-background-100 text-foreground-600'}`}>
-                          <AppIcon className={(row.consecutiveMissed || 0) >= 2 ? 'ri-alarm-warning-line' : 'ri-checkbox-circle-line'}></AppIcon>
-                          {formatCount(row.consecutiveMissed)} current
-                        </span>
-                        {(row.consecutiveMissed || 0) >= 2 && <p className="mt-1.5 text-[9px] font-medium text-red-500">{row.consecutiveMissed} consecutive missed sessions</p>}
-                      </td>
-                      <td className={`px-4 ${rowPadding}`}>
-                        <p className="inline-flex items-center gap-1.5 rounded-lg bg-background-100 px-2.5 py-1.5 text-[10px] font-semibold text-foreground-700">
-                          <AppIcon className="ri-calendar-check-line text-primary-500"></AppIcon>{displayText(row.lastSession)}
-                        </p>
-                        <button type="button" onClick={() => navigate(`/coach/attendance/${row.id}`)} className="mt-2 inline-flex items-center gap-1 text-[9px] font-bold text-primary-600 transition hover:gap-1.5 hover:text-primary-800">View profile <AppIcon className="ri-arrow-right-line"></AppIcon></button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        <section className="space-y-3">
+          <SectionHeader title="Learner attendance" count={filteredData.length} icon="ri-table-line" />
 
-          <div className="flex flex-col items-center justify-between gap-3 border-t border-primary-100 bg-gradient-to-r from-background-50 to-primary-50/40 px-5 py-4 sm:flex-row">
-            <div className="flex items-center gap-2 text-[10px] font-medium text-foreground-500">
-              <span>Showing {filteredData.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}-{Math.min(currentPage * itemsPerPage, filteredData.length)} of {filteredData.length} learners</span>
-              <span className="text-foreground-300">|</span>
-              <span>Page {currentPage} of {totalPages}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setCurrentPage(1)} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-skip-back-line"></AppIcon></button>
-              <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-arrow-left-s-line"></AppIcon></button>
-              <div className="flex items-center gap-1">
-                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                  let pageNum: number;
-                  if (totalPages <= 5) pageNum = i + 1;
-                  else if (currentPage <= 3) pageNum = i + 1;
-                  else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
-                  else pageNum = currentPage - 2 + i;
-                  return (
-                    <button key={pageNum} onClick={() => setCurrentPage(pageNum)} className={`h-8 w-8 rounded-lg text-[11px] font-bold shadow-sm transition cursor-pointer ${currentPage === pageNum ? 'bg-primary-600 text-white shadow-primary-600/20' : 'border border-foreground-100 bg-white text-foreground-500 hover:border-primary-200 hover:text-primary-700'}`}>{pageNum}</button>
-                  );
-                })}
-              </div>
-              <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-arrow-right-s-line"></AppIcon></button>
-              <button onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} className="flex h-8 w-8 items-center justify-center rounded-lg border border-foreground-100 bg-white text-[11px] text-foreground-500 shadow-sm transition hover:border-primary-200 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-skip-forward-line"></AppIcon></button>
-            </div>
-          </div>
-        </div>
-      </div>
+          <Panel padding="none">
+            <DataTable
+              columns={columns}
+              rows={paginatedData}
+              rowKey={(row) => row.id}
+              stickyFirstColumn
+              minWidthClass="min-w-[1180px]"
+              loading={loading ? <RowsSkeleton rows={6} className="p-4" /> : undefined}
+              empty={error ? (
+                <EmptyState variant="error" title="Unable to load live attendance data." description={error} />
+              ) : (
+                <EmptyState variant="no-matches" title="No learners match the current filters." />
+              )}
+              className="rounded-none border-0 shadow-none"
+            />
+
+            {!loading && !error && filteredData.length > 0 ? (
+              <Pagination
+                page={currentPage}
+                totalPages={totalPages}
+                total={filteredData.length}
+                pageSize={itemsPerPage}
+                onPageChange={setCurrentPage}
+                onPageSizeChange={(size) => { setItemsPerPage(size); setCurrentPage(1); }}
+                noun="learners"
+              />
+            ) : null}
+          </Panel>
+        </section>
+      </PageContainer>
 
       {selectedAttendanceLearner && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4" onClick={closeAttendanceDetails}>
           <div className="absolute inset-0 bg-foreground-950/45 backdrop-blur-sm"></div>
-          <div className="relative flex max-h-[84vh] w-full max-w-[760px] flex-col overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <div className="relative flex max-h-[84vh] w-full max-w-[760px] flex-col overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-4 border-b border-foreground-100 px-5 py-4">
               <div className="min-w-0">
-                <span className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700">
+                <span className="mb-2 inline-flex items-center gap-1.5 rounded-full border border-primary-200 bg-primary-50 px-2.5 py-1 text-[12px] font-semibold text-primary-700">
                   <AppIcon className="ri-calendar-check-line text-xs"></AppIcon>
                   Attendance details
                 </span>
                 <h3 className="truncate text-base font-heading font-bold text-foreground-900">{selectedAttendanceLearner.learner}</h3>
-                <p className="mt-0.5 truncate text-[11px] text-foreground-400">
+                <p className="mt-0.5 truncate text-[12px] text-foreground-400">
                   {displayText(selectedAttendanceLearner.cohort)} · {displayText(selectedAttendanceLearner.group)}
                 </p>
               </div>
@@ -930,15 +910,16 @@ export default function CoachAttendance() {
                       key={filter}
                       type="button"
                       onClick={() => setAttendanceDetailFilter(filter)}
-                      className={`rounded-full px-3 py-1.5 text-[11px] font-semibold transition-smooth cursor-pointer ${
+                      className={cn(
+                        'rounded-full px-3 py-1.5 text-[12px] font-semibold transition-smooth cursor-pointer',
                         active
                           ? filter === 'absent'
                             ? 'bg-red-500 text-white shadow-sm'
                             : filter === 'present'
                               ? 'bg-emerald-500 text-white shadow-sm'
                               : 'bg-primary-500 text-white shadow-sm'
-                          : 'bg-background-100 text-foreground-500 hover:bg-background-200'
-                      }`}
+                          : 'bg-background-100 text-foreground-500 hover:bg-background-200',
+                      )}
                     >
                       {label} ({count})
                     </button>
@@ -953,9 +934,7 @@ export default function CoachAttendance() {
                   <RowsSkeleton rows={5} avatar={false} />
                 </div>
               ) : attendanceDetailsError ? (
-                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-[12px] text-red-700">
-                  {attendanceDetailsError}
-                </div>
+                <EmptyState variant="error" title="Unable to load attendance details." description={attendanceDetailsError} />
               ) : filteredAttendanceDetails.length ? (
                 <div className="space-y-2">
                   {filteredAttendanceDetails.map((session, index) => (
@@ -963,35 +942,30 @@ export default function CoachAttendance() {
                       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${attendanceStatusClasses(session.status)}`}>
-                              {attendanceStatusLabel(session.status)}
-                            </span>
-                            <span className="text-[10px] text-foreground-400">{displayText(session.sessionType)}</span>
+                            <StatusBadge tone={sessionStatusTone(session.status)} label={attendanceStatusLabel(session.status)} size="sm" />
+                            <span className="text-[12px] text-foreground-400">{displayText(session.sessionType)}</span>
                           </div>
                           <p className="mt-2 truncate text-[13px] font-semibold text-foreground-900">{displayText(session.sessionTitle)}</p>
-                          <p className="mt-1 text-[11px] text-foreground-400">Session ID: {displayText(session.sessionId)}</p>
+                          <p className="mt-1 text-[12px] text-foreground-400">Session ID: {displayText(session.sessionId)}</p>
                           {session.reason && session.reason !== MISSING_VALUE && (
-                            <p className="mt-2 rounded-lg bg-background-50 px-3 py-2 text-[11px] text-foreground-600">Reason: {session.reason}</p>
+                            <p className="mt-2 rounded-lg bg-background-50 px-3 py-2 text-[12px] text-foreground-600">Reason: {session.reason}</p>
                           )}
                         </div>
                         <div className="shrink-0 rounded-xl bg-background-50 px-3 py-2 text-left sm:text-right">
                           <p className="text-[12px] font-bold text-foreground-900">{displayText(session.sessionDateLabel)}</p>
-                          <p className="mt-0.5 text-[11px] text-foreground-400">{formatSessionTime(session.startTime, session.endTime)}</p>
+                          <p className="mt-0.5 text-[12px] text-foreground-400">{formatSessionTime(session.startTime, session.endTime)}</p>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="flex min-h-[220px] flex-col items-center justify-center rounded-xl border border-dashed border-foreground-200 bg-background-100/40 p-6 text-center">
-                  <span className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-background-50 text-foreground-400">
-                    <AppIcon className="ri-calendar-close-line text-lg"></AppIcon>
-                  </span>
-                  <p className="text-[13px] font-semibold text-foreground-700">No sessions found</p>
-                  <p className="mt-1 max-w-sm text-[11px] text-foreground-400">
-                    No {attendanceDetailFilter === 'all' ? 'attendance' : attendanceDetailFilter} session details were returned for this learner.
-                  </p>
-                </div>
+                <EmptyState
+                  variant="no-matches"
+                  icon="ri-calendar-close-line"
+                  title="No sessions found"
+                  description={`No ${attendanceDetailFilter === 'all' ? 'attendance' : attendanceDetailFilter} session details were returned for this learner.`}
+                />
               )}
             </div>
           </div>
@@ -1001,11 +975,11 @@ export default function CoachAttendance() {
       {selectedKpi && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setSelectedKpi(null)}>
           <div className="absolute inset-0 bg-foreground-950/45 backdrop-blur-sm"></div>
-          <div className="relative flex max-h-[80vh] w-full max-w-[620px] flex-col overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+          <div className="relative flex max-h-[80vh] w-full max-w-[620px] flex-col overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50 shadow-sm" onClick={(event) => event.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-foreground-100 px-5 py-4">
               <div>
                 <h3 className="text-sm font-bold text-foreground-900">{kpiTitle[selectedKpi]}</h3>
-                <p className="mt-0.5 text-[11px] text-foreground-400">{kpiLearners.length} learner{kpiLearners.length === 1 ? '' : 's'}</p>
+                <p className="mt-0.5 text-[12px] text-foreground-400">{kpiLearners.length} learner{kpiLearners.length === 1 ? '' : 's'}</p>
               </div>
               <button type="button" onClick={() => setSelectedKpi(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700 cursor-pointer" aria-label="Close popup">
                 <AppIcon className="ri-close-line text-lg"></AppIcon>
@@ -1017,27 +991,26 @@ export default function CoachAttendance() {
                   {kpiLearners.map(learner => (
                     <div key={`${learner.id}-${learner.email || learner.learner}`} className="flex items-center justify-between gap-4 rounded-xl border border-foreground-100 bg-background-100/50 p-3">
                       <div className="flex min-w-0 items-center gap-3">
-                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ring-1 ${getAvatarClasses(learner.risk)}`}>{learner.initials}</span>
+                        <LearnerAvatar name={learner.learner} tone={learnerTone(learner)} size="sm" />
                         <div className="min-w-0">
                           <p className="truncate text-[12px] font-semibold text-foreground-900">{learner.learner}</p>
-                          <p className="truncate text-[10px] text-foreground-400">{learner.cohort} · {learner.group}</p>
+                          <p className="truncate text-[12px] text-foreground-400">{learner.cohort} · {learner.group}</p>
                         </div>
                       </div>
                       <div className="shrink-0 text-right">
-                        <p className={`text-[12px] font-bold ${getAttendanceTone(learner.attendance)}`}>{formatPercent(learner.attendance)}</p>
-                        <p className="text-[9px] text-foreground-400">{selectedKpi === 'catchups' ? `${formatCount(learner.catchup)} catch-up` : `${formatCount(learner.present)}/${formatCount(learner.absent)} present/absent`}</p>
+                        <p className={cn('text-[12px] font-bold', toneStyle(learnerTone(learner)).text)}>{formatPercent(learner.attendance)}</p>
+                        <p className="text-[12px] text-foreground-400">{selectedKpi === 'catchups' ? `${formatCount(learner.catchup)} catch-up` : `${formatCount(learner.present)}/${formatCount(learner.absent)} present/absent`}</p>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="py-12 text-center text-[12px] text-foreground-400">No learners in this category.</div>
+                <EmptyState variant="no-matches" size="sm" title="No learners in this category." />
               )}
             </div>
           </div>
         </div>
       )}
-
     </WorkspaceShell>
   );
 }

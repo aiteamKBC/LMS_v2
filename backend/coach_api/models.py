@@ -92,6 +92,24 @@ class CoachCalendarEvent(models.Model):
             models.Index(fields=["learner_id", "event_type", "target_date"], name="coach_learner_type_date_idx"),
         ]
         constraints = [
+            models.CheckConstraint(
+                # Literal values rather than the STATUS_* class attributes above:
+                # a nested `class Meta` does not see its enclosing class's
+                # namespace (Python class bodies aren't closures the way
+                # function bodies are), so referencing them by name here raises
+                # NameError at import time. Kept in sync with STATUS_CHOICES.
+                condition=models.Q(
+                    status__in=[
+                        "not-scheduled",
+                        "scheduled",
+                        "in-progress",
+                        "awaiting-signature",
+                        "completed",
+                        "cancelled",
+                    ]
+                ),
+                name="coach_calendar_event_status_valid",
+            ),
             models.UniqueConstraint(
                 fields=["learner_id", "event_type", "sequence"],
                 condition=models.Q(
@@ -178,6 +196,12 @@ class CoachAbsenceReport(models.Model):
             models.Index(fields=["learner_id", "-session_date"], name="coach_abs_learner_date_idx"),
         ]
         constraints = [
+            models.CheckConstraint(
+                # Literal values, not the STATUS_* class attributes: see the
+                # matching comment on CoachCalendarEvent's constraint above.
+                condition=models.Q(status__in=["pending", "approved", "declined"]),
+                name="coach_absence_report_status_valid",
+            ),
             models.CheckConstraint(
                 condition=models.Q(attendance_rate__isnull=True)
                 | (models.Q(attendance_rate__gte=0) & models.Q(attendance_rate__lte=100)),

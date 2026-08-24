@@ -589,6 +589,13 @@ const routes: RouteObject[] = [
     element: <CurriculumDashboard />,
   },
   {
+    // ROUTE_PERMISSIONS lists a bare /coach entry (mocks/rbac.ts), so it gets
+    // typed and linked the same way /curriculum does below — send it to the
+    // workspace dashboard instead of the catch-all 404.
+    path: "/coach",
+    element: <Navigate to="/workspace/coach" replace />,
+  },
+  {
     path: "/coach/caseload",
     element: <CoachCaseload />,
   },
