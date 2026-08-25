@@ -35,6 +35,7 @@ from learner_api.progress_rules import (
 
 from . import pptx_slides
 from . import schema_gate
+from . import upload_storage
 from . import tutor_notifications
 from .schema_gate import SchemaNotProvisioned
 from .ksb_coverage import (
@@ -525,7 +526,10 @@ def component_upload_metadata(module_catalogue_id, component_id, component_type,
     stem = safe_upload_segment(Path(original_name).stem, 'resource')
     stored_name = f'{stem}-{timestamp}{suffix}'
     relative_path = f'{COMPONENT_UPLOAD_ROOT}/{module_catalogue_id}/{component_id}/{stored_name}'
-    saved_path = default_storage.save(relative_path, uploaded_file)
+    # Azure when it is configured, local disk when it is not — see upload_storage.
+    saved_path = upload_storage.store(
+        uploaded_file, relative_path, uploaded_file.content_type or '',
+    )
     public_path = saved_path.removeprefix(f'{COMPONENT_UPLOAD_ROOT}/')
     return {
         'fileName': original_name,
@@ -16399,6 +16403,38 @@ def uploads_absolute_path(relative_path):
     return absolute_path
 
 
+def parse_byte_range(header, total_size):
+    """``(offset, length)`` for a single-range request, None, or 'unsatisfiable'.
+
+    Only the one form clients actually send for media is honoured — a single
+    ``bytes=`` range. Anything multipart or malformed is ignored, which is
+    allowed: the whole file is then served as a plain 200.
+    """
+    text = str(header or '').strip().lower()
+    if not text.startswith('bytes=') or ',' in text:
+        return None
+    spec = text[len('bytes='):].strip()
+    if '-' not in spec:
+        return None
+    start_text, end_text = spec.split('-', 1)
+    try:
+        if not start_text:  # "bytes=-500": the last 500 bytes
+            suffix = int(end_text)
+            if suffix <= 0:
+                return 'unsatisfiable'
+            start = max(total_size - suffix, 0)
+            end = total_size - 1
+        else:
+            start = int(start_text)
+            end = int(end_text) if end_text else total_size - 1
+    except ValueError:
+        return None
+    if start >= total_size or start < 0 or end < start:
+        return 'unsatisfiable'
+    end = min(end, total_size - 1)
+    return start, end - start + 1
+
+
 @require_GET
 def curriculum_presentation_slides(request):
     """The slide model for an uploaded PowerPoint deck, for inline display.
@@ -16411,8 +16447,18 @@ def curriculum_presentation_slides(request):
     relative_path = uploads_relative_path(request.GET.get('src'))
     if not relative_path:
         return json_error('A slide deck upload path is required.', status=400)
-    absolute_path = uploads_absolute_path(relative_path)
-    if absolute_path is None or not absolute_path.is_file():
+    # The deck may live in blob storage, and python-pptx needs a real file, so a
+    # copy is pulled down for the render and removed afterwards. The cache is
+    # keyed on the blob's own stamp, not the copy's mtime, or every request would
+    # re-parse the deck.
+    stamp = upload_storage.content_stamp(relative_path)
+    # Answer from the render cache before touching the file: for a deck in blob
+    # storage, fetching first would pay the download on every single request.
+    cached = pptx_slides.deck_model_for_stamp(relative_path, stamp)
+    if cached is not None:
+        return JsonResponse(cached)
+    absolute_path, release_copy = upload_storage.local_copy(relative_path)
+    if absolute_path is None or not Path(absolute_path).is_file():
         # The upload has gone, but a deck that was viewed once left its rendered
         # model behind. Showing that beats a dead end: uploads live under
         # MEDIA_ROOT, which is neither version-controlled nor backed up, so the
@@ -16431,27 +16477,57 @@ def curriculum_presentation_slides(request):
             status=404,
         )
     try:
-        deck = pptx_slides.render_uploaded_deck(relative_path, absolute_path)
+        deck = pptx_slides.render_uploaded_deck(relative_path, absolute_path, stamp=stamp)
     except pptx_slides.UnsupportedDeck as error:
         return json_error(str(error), status=415)
+    finally:
+        release_copy()
     return JsonResponse(deck)
 
 
 @require_GET
 def curriculum_uploaded_file(request, path):
+    """Serve a component upload from wherever its bytes are.
+
+    The URL shape is unchanged, so every settings_json reference already stored
+    keeps working: upload_storage checks local disk first (files uploaded before
+    the move to Azure, and the slide render cache) and falls back to the
+    container. Streaming it through here rather than redirecting to a signed URL
+    keeps the file same-origin, which is what the PDF and slide viewers embed.
+    """
+    if '..' in str(path).split('/'):
+        raise Http404('File not found.')
     relative_path = f'{COMPONENT_UPLOAD_ROOT}/{path}'
-    try:
-        absolute_path = Path(default_storage.path(relative_path)).resolve()
-        media_root = Path(settings.MEDIA_ROOT).resolve()
-        if not str(absolute_path).startswith(str(media_root)):
-            raise Http404('File not found.')
-        if not absolute_path.exists() or not absolute_path.is_file():
-            raise Http404('File not found.')
-        return FileResponse(absolute_path.open('rb'), as_attachment=False, filename=absolute_path.name)
-    except NotImplementedError:
-        if not default_storage.exists(relative_path):
-            raise Http404('File not found.')
-        return FileResponse(default_storage.open(relative_path, 'rb'), as_attachment=False, filename=Path(relative_path).name)
+    probe = upload_storage.open_stream(relative_path, offset=0, length=1)
+    if probe is None:
+        raise Http404('File not found.')
+    _discard, total_size, content_type = probe
+
+    # An <audio> element seeking a podcast, and a PDF viewer jumping to a page,
+    # both do it with a byte range; without this they can only play or render
+    # from the start.
+    requested = parse_byte_range(request.META.get('HTTP_RANGE'), total_size)
+    if requested == 'unsatisfiable':
+        response = HttpResponse(status=416)
+        response['Content-Range'] = f'bytes */{total_size}'
+        return response
+
+    offset, length = requested if requested else (0, total_size)
+    opened = upload_storage.open_stream(relative_path, offset=offset, length=length)
+    if opened is None:
+        raise Http404('File not found.')
+    stream, _total, _content_type = opened
+    response = FileResponse(
+        stream, as_attachment=False, filename=Path(relative_path).name,
+        status=206 if requested else 200,
+    )
+    response['Accept-Ranges'] = 'bytes'
+    response['Content-Length'] = str(length)
+    if content_type:
+        response['Content-Type'] = content_type
+    if requested:
+        response['Content-Range'] = f'bytes {offset}-{offset + length - 1}/{total_size}'
+    return response
 
 
 # The component column that makes this table expensive: inlined authoring
