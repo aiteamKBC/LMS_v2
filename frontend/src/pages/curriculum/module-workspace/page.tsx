@@ -31,6 +31,7 @@ import {
   visibleNotes,
 } from '../shared/entities/model';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
+import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
 import { buildHolidayShiftPlan, CompactSchedulePreview } from '../shared/entities/sessionShiftPreview';
 import {
   DetailRow,
@@ -58,7 +59,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // tutor-assignment notification firing.
 // ============================================================================
 
-type Tab = 'overview' | 'schedule' | 'components' | 'ksbs' | 'teams';
+type Tab = 'overview' | 'schedule' | 'components' | 'ksbs' | 'achievement' | 'teams';
 
 function moduleBuilderUrl(catalogueId: string, programmeId: string) {
   const params = new URLSearchParams();
@@ -379,6 +380,7 @@ export default function ModuleWorkspacePage() {
     { key: 'schedule', label: 'Schedule', icon: 'ri-calendar-line' },
     { key: 'components', label: 'Components', icon: 'ri-layout-4-line', count: componentCount },
     { key: 'ksbs', label: 'KSBs', icon: 'ri-node-tree', count: ksbMappingCount },
+    { key: 'achievement', label: 'Achievement', icon: 'ri-medal-line' },
     { key: 'teams', label: 'Teams meeting', icon: 'ri-vidicon-line', count: teamsSummary?.occurrenceCount },
   ];
 
@@ -703,6 +705,20 @@ export default function ModuleWorkspacePage() {
         )}
 
         {/* ---------------------------------------------------------- Teams */}
+        {/* The KSBs tab above is what this module *plans*. This is what the
+            learners actually earned against it. A module has no roster of its
+            own: these are the learners in the group that delivers it, which the
+            panel states rather than leaving to be inferred. */}
+        {tab === 'achievement' && (
+          <ScopeAchievementPanel
+            scope="module"
+            identifier={catalogueId}
+            title={`Achievement in ${cleanText(module?.name, 'this module')}`}
+            learnerStatus="all"
+            active={tab === 'achievement'}
+          />
+        )}
+
         {tab === 'teams' && (
           <div className="space-y-5">
             {teamsError && <InlineError message={teamsError} />}

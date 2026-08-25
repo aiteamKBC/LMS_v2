@@ -12,7 +12,16 @@ assignment the curriculum already stated, and the read model used to derive a
 stand-in profile from any name typed onto a delivery row. That meant one person
 could exist twice, a tutor could exist whom nobody had granted tutor access, and
 deleting them in Users left the curriculum copy behind, still attached to live
-curriculum. Nothing reads or writes them any more.
+curriculum. Curriculum itself reads and writes neither table any more.
+
+``chat`` did. ``chat.ChatCoach`` mapped ``curriculum.coaches`` as its coach
+identity and three foreign keys referenced it, so this drop failed outright until
+``chat.0006_chat_coach_from_staff_directory`` moved them to the directory.
+That migration declares the ordering, with ``run_before`` pointing here -- the
+dependency cannot be stated from this side, because ``DJANGO_USE_SQLITE`` swaps
+chat's migrations out for ``None`` and the node would not exist. PostgreSQL's
+``DROP ... CASCADE`` hint was a trap here: it would have let this migration
+through and taken chat's coach identity with it.
 
 Verified before writing this: one row in each table, both people present in
 ``Staff_users`` under the matching access, so the drop loses no person the

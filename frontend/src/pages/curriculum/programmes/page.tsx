@@ -1167,11 +1167,29 @@ function ProgrammeLearnerImpactModal({
       (achievementsByLearner.get(String(learner.learnerId)) || []).map(ksb => ksb.code).join(' '),
     ].join(' ')).includes(needle));
   }, [achievementsByLearner, learners, query]);
-  const totalExpected = learners.reduce((sum, learner) => sum + (learner.expectedWeightTotal || 0), 0);
-  const totalConsumed = learners.reduce((sum, learner) => sum + (learner.cappedConsumedWeightTotal || 0), 0);
-  const averageProgress = totalExpected ? Math.round((totalConsumed / totalExpected) * 100) : 0;
-  const completedHours = assignedLearners.reduce((sum, learner) => sum + Number(learner.completedHours || 0), 0);
-  const plannedHours = assignedLearners.reduce((sum, learner) => sum + Number(learner.plannedHours || 0), 0);
+  // Both roll-ups now come from the response rather than being re-summed here:
+  // the backend computes them from this programme's own components, so the modal
+  // and every scope panel elsewhere report the same figure the same way.
+  const otjh = data?.otjhAchievement;
+  const ksb = data?.ksbAchievement;
+  const totalExpected = ksb?.expectedWeightTotal
+    ?? learners.reduce((sum, learner) => sum + (learner.expectedWeightTotal || 0), 0);
+  const totalConsumed = ksb?.cappedAchievedWeightTotal
+    ?? learners.reduce((sum, learner) => sum + (learner.cappedConsumedWeightTotal || 0), 0);
+  const averageProgress = ksb?.progressPercentage != null
+    ? Math.round(ksb.progressPercentage)
+    : (totalExpected ? Math.round((totalConsumed / totalExpected) * 100) : 0);
+  // Achieved OTJH is the credited figure for this programme's components, not the
+  // whole-learner-record hours: those cover everything a learner has ever logged,
+  // which is a different question and used to be shown as if it answered this one.
+  const achievedHours = otjh?.achievedTotal ?? 0;
+  const plannedHours = otjh?.plannedTotal
+    ?? assignedLearners.reduce((sum, learner) => sum + Number(learner.plannedHours || 0), 0);
+  const otjhByLearner = useMemo(() => {
+    const map = new Map<string, NonNullable<typeof otjh>['learners'][number]>();
+    for (const row of otjh?.learners || []) map.set(String(row.learnerId), row);
+    return map;
+  }, [otjh]);
   const achievedRows = Array.from(achievementsByLearner.values()).flat();
   const achievedKsbCount = new Set(achievedRows.map(item => item.code)).size;
   const achievedRecordCount = achievedRows.reduce((sum, item) => sum + item.count, 0);
@@ -1194,8 +1212,8 @@ function ProgrammeLearnerImpactModal({
 
         <div className="grid grid-cols-2 gap-3 border-b border-background-200 bg-background-50 p-4 lg:grid-cols-4">
           <ImpactStat icon="ri-user-follow-line" label="Assigned learners" value={String(assignedLearners.length)} detail="Learner + enrolment records" />
-          <ImpactStat icon="ri-time-line" label="OTJH completed" value={`${formatMetricNumber(completedHours)}h`} detail={`${formatMetricNumber(plannedHours)}h planned`} />
-          <ImpactStat icon="ri-node-tree" label="KSB progress" value={`${averageProgress}%`} detail="Weighted consumption" />
+          <ImpactStat icon="ri-time-line" label="OTJH achieved" value={`${formatMetricNumber(achievedHours)}h`} detail={`of ${formatMetricNumber(plannedHours)}h planned across this programme's components`} />
+          <ImpactStat icon="ri-node-tree" label="KSB weight earned" value={`${averageProgress}%`} detail={`${formatMetricNumber(totalConsumed)} of ${formatMetricNumber(totalExpected)} expected weight`} />
           <ImpactStat icon="ri-checkbox-circle-line" label="Achieved KSBs" value={String(achievedKsbCount)} detail={`${achievedRecordCount} learner record${achievedRecordCount === 1 ? '' : 's'}`} />
         </div>
 
@@ -1223,6 +1241,7 @@ function ProgrammeLearnerImpactModal({
                   key={String(learner.learnerId)}
                   learner={learner}
                   learnerMeta={assignedLearners.find(item => String(item.id) === String(learner.learnerId))}
+                  otjhRow={otjhByLearner.get(String(learner.learnerId))}
                   achievements={achievementsByLearner.get(String(learner.learnerId)) || []}
                 />
               ))}
@@ -1240,17 +1259,22 @@ function ProgrammeLearnerImpactModal({
 function ProgrammeLearnerImpactRow({
   learner,
   learnerMeta,
+  otjhRow,
   achievements,
 }: {
   learner: CurriculumLearnerKsbConsumption;
   learnerMeta?: CurriculumProgrammeLearnerKsbImpactResponse['assignedLearners'][number];
+  /** This learner's OTJH against this programme's components. */
+  otjhRow?: CurriculumProgrammeLearnerKsbImpactResponse['otjhAchievement']['learners'][number];
   achievements: LearnerKsbAchievement[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const achievedWeight = achievements.reduce((sum, item) => sum + item.weight, 0);
   const achievedCount = achievements.reduce((sum, item) => sum + item.count, 0);
-  const otjhCompleted = Number(learnerMeta?.completedHours || 0);
-  const otjhPlanned = Number(learnerMeta?.plannedHours || 0);
+  // The programme's own figure first; the learner's whole-record hours are a
+  // different total and are shown as such rather than standing in for it.
+  const otjhCompleted = otjhRow ? Number(otjhRow.achievedOtjh || 0) : Number(learnerMeta?.completedHours || 0);
+  const otjhPlanned = otjhRow ? Number(otjhRow.plannedOtjh || 0) : Number(learnerMeta?.plannedHours || 0);
   const otjhProgress = otjhPlanned ? Math.min(Math.round((otjhCompleted / otjhPlanned) * 100), 100) : 0;
   return (
     <article className="rounded-2xl border border-foreground-200 bg-background-50 p-4 shadow-sm">
@@ -1263,7 +1287,13 @@ function ProgrammeLearnerImpactRow({
           <p className="mt-1 text-[12px] font-semibold text-foreground-500">{learner.email || 'No email'} - {learner.cohort || 'No cohort'} - {learner.group || 'No group'}</p>
         </div>
         <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 xl:w-[620px]">
-          <LearnerMiniMetric label="OTJH" value={`${formatMetricNumber(otjhCompleted)}h`} detail={`${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h`} />
+          <LearnerMiniMetric
+            label="OTJH here"
+            value={`${formatMetricNumber(otjhCompleted)}h`}
+            detail={otjhRow
+              ? `${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h · ${formatMetricNumber(learnerMeta?.completedHours || 0)}h on record`
+              : `${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h`}
+          />
           <LearnerMiniMetric label="KSB weight achieved" value={formatMetricNumber(achievedWeight)} detail="Total consumed weight" />
           <LearnerMiniMetric label="Achieved KSBs" value={String(achievements.length)} detail={`${achievedCount} record${achievedCount === 1 ? '' : 's'}`} />
           <button type="button" onClick={() => setExpanded(value => !value)} className="inline-flex h-full min-h-14 items-center justify-center gap-2 rounded-xl border border-background-200 bg-background-100 px-3 text-[11px] font-black text-foreground-700 transition-smooth hover:bg-background-200">
