@@ -16,6 +16,8 @@ import logging
 import re
 from datetime import timedelta
 from html import unescape
+from pathlib import Path
+from urllib.parse import urlparse
 
 from django.db import DatabaseError, connections
 from django.db.models import prefetch_related_objects
@@ -29,6 +31,30 @@ from .mappers import _s, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
 
 logger = logging.getLogger(__name__)
+
+#: An uploaded file only counts as a component's audio when it is one of these.
+AUDIO_FILE_SUFFIXES = {'.mp3', '.wav', '.ogg', '.oga', '.m4a', '.aac', '.flac', '.opus', '.wma'}
+
+
+def component_audio_url(settings, component_type):
+    """The audio a component should offer, or None.
+
+    ``uploadedFileUrl`` is the generic "file attached to this component" key: on
+    a reading it is the PDF, on a slide deck the .pptx. Treating it as audio put
+    an empty player under every reading with an attachment, pointed at a
+    document — so it only counts for a podcast, or when the file itself is audio.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    explicit = _s(settings.get("podcastUrl")) or _s(settings.get("audioUrl"))
+    if explicit:
+        return explicit
+    uploaded = _s(settings.get("uploadedFileUrl"))
+    if not uploaded:
+        return None
+    if component_type == "podcast":
+        return uploaded
+    suffix = Path(urlparse(uploaded).path).suffix.lower()
+    return uploaded if suffix in AUDIO_FILE_SUFFIXES else None
 
 # The enrolment record is the source: every learner exists in
 # enrolment."Created_users" from the moment they are created, whereas the
@@ -1092,12 +1118,8 @@ def _resolve_from_master(modules, weeks, components):
         # podcast / reading / slide deck / reflection the same way as a video.
         # Podcast audio may be an external listening-page link (podcastUrl) or an
         # uploaded file (uploadedFileUrl) — either can be a real audio source.
-        audio_url = (
-            _s(settings.get("podcastUrl"))
-            or _s(settings.get("audioUrl"))
-            or _s(settings.get("uploadedFileUrl"))
-            or None
-        )
+        #
+        audio_url = component_audio_url(settings, ctype)
         content_html = _s(settings.get("readingContent")) or None
         file_name = (
             _s(settings.get("fileName"))
