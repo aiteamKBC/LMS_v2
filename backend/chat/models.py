@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import TextField, Value
+from django.db.models.functions import Coalesce, Lower, Trim
 from django.utils import timezone
 
 
@@ -8,22 +10,67 @@ from django.utils import timezone
 # ordinary SQLite table names so the chat suite can run without external schemas.
 CHAT_TEST_MODE = getattr(settings, "CHAT_TEST_MODE", False)
 
+#: The ``Staff_users.Access`` grant that makes a staff account a coach. Chat is
+#: not the authority on this -- ``curriculum_api.views.STAFF_ACCESS_ROLES`` uses
+#: the same value against the same column.
+COACH_ACCESS = "coach"
+
 
 def _table_name(test_name, production_name):
     return test_name if CHAT_TEST_MODE else production_name
 
 
-class ChatCoach(models.Model):
-    """Read-only view of the existing ``curriculum.coaches`` identity table."""
+class ChatCoachManager(models.Manager):
+    def coaches(self):
+        """Only the staff rows an administrator granted coach access to.
 
-    id = models.CharField(max_length=255, primary_key=True)
-    name = models.CharField(max_length=255)
-    email = models.EmailField(max_length=320)
-    job_title = models.CharField(max_length=255)
+        ``Staff_users`` holds every non-learner account, so an unfiltered lookup
+        here would resolve any signed-in staff member -- an enrolment officer, a
+        tutor -- to a coach principal. The normalisation matches the directory's
+        own reader (``curriculum_api.views.fetch_staff_users_by_access``) so the
+        two never disagree about who counts as a coach.
+        """
+        return (
+            self.get_queryset()
+            .annotate(
+                normalised_access=Lower(
+                    Trim(
+                        # output_field: the column is TextField and Value("")
+                        # infers CharField, which Coalesce refuses to mix.
+                        Coalesce("access", Value(""), output_field=TextField())
+                    )
+                )
+            )
+            .filter(normalised_access=COACH_ACCESS)
+        )
+
+
+class ChatCoach(models.Model):
+    """Read-only view of the coaches in ``enrolment.Staff_users``.
+
+    A coach is a staff user an administrator invited and granted coach access
+    to, so this reads the staff directory rather than a table of its own. It
+    used to map ``curriculum.coaches``, a second copy of the same people that
+    ``curriculum_api`` migration 0052 drops; chat was that table's last reader.
+
+    ``id`` is the directory's integer pk. ``Staff_users`` carries no unique index
+    on the email, only ``enrolment_staff_users_email_idx`` on
+    ``lower(btrim("Email"))``, so two rows can still share an address -- which is
+    why the services layer resolves a principal to every matching row rather
+    than one (see ``principal_owns_identity``).
+    """
+
+    id = models.AutoField(primary_key=True)
+    name = models.TextField(db_column="Username")
+    email = models.TextField(db_column="Email")
+    job_title = models.TextField(db_column="Position")
+    access = models.TextField(db_column="Access", null=True, blank=True)
+
+    objects = ChatCoachManager()
 
     class Meta:
         managed = CHAT_TEST_MODE
-        db_table = _table_name("chat_test_coaches", 'curriculum"."coaches')
+        db_table = _table_name("chat_test_coaches", 'enrolment"."Staff_users')
 
     def __str__(self):
         return self.name

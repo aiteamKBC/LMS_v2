@@ -285,18 +285,28 @@ export default function ModuleBuilder() {
   const saveRequestRef = useRef(0);
   const { modules, loading, error, reload } = useCurriculumModules({ compact: true, skipCache: true });
   const { programmes: curriculumProgrammes } = useCurriculumProgrammes({ skipCache: true, visibility: 'all' });
-  const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets({ all: true });
+  // KSB sets, standards and their derived labels only matter once something on
+  // the page actually asks for KSB data: the build drawer, a card's KSB map, or
+  // the programme-wide KSB map. The plain catalogue list never reads them, so
+  // fetching them on every page load bought nothing but three wasted requests.
+  const needsKsbData = Boolean(workingModule) || Boolean(ksbMapModule) || Boolean(programmeKsbMap);
+  const { ksbSets, loading: ksbSetsLoading } = useCurriculumKsbSets({ all: true, enabled: needsKsbData });
   const liveCurriculumProgrammes = curriculumProgrammes;
 
   // Reuse of the week-builder component editor needs group options, rule-driven
   // points and a scope — sourced the same way the week builder does.
   const [componentGroupOptions, setComponentGroupOptions] = useState<GroupOption[]>([]);
   const [componentPointsByType, setComponentPointsByType] = useState<Partial<Record<ModuleComponentType, number>>>({});
+  const componentPointsLoadedRef = useRef(false);
   useEffect(() => {
+    // Only the build drawer's component editor reads this -- nothing on the
+    // plain catalogue list does.
+    if (!workingModule || componentPointsLoadedRef.current) return undefined;
+    componentPointsLoadedRef.current = true;
     let active = true;
     fetchComponentPointsDefaults().then(map => { if (active) setComponentPointsByType(map); }).catch(() => {});
     return () => { active = false; };
-  }, []);
+  }, [workingModule]);
   useEffect(() => {
     let active = true;
     const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
@@ -788,7 +798,12 @@ export default function ModuleBuilder() {
     }
   }, [catalogueModules, curriculumProgrammes, programmeFilter, programmeKsbLoading]);
 
+  const quizzesLoadedRef = useRef(false);
   useEffect(() => {
+    // Only a quiz-type component's editor (inside the build drawer) reads
+    // this -- the plain catalogue list never shows quiz data.
+    if (!workingModule || quizzesLoadedRef.current) return undefined;
+    quizzesLoadedRef.current = true;
     let active = true;
     setQuizzesLoading(true);
     fetch('/quiz_api/quizzes/?status=all&assessmentType=quiz')
@@ -809,9 +824,14 @@ export default function ModuleBuilder() {
         if (active) setQuizzesLoading(false);
       });
     return () => { active = false; };
-  }, []);
+  }, [workingModule]);
 
+  const standardsLoadedRef = useRef(false);
   useEffect(() => {
+    // Same trigger as needsKsbData: standards only feed KSB source
+    // resolution, never the plain catalogue list.
+    if (!needsKsbData || standardsLoadedRef.current) return undefined;
+    standardsLoadedRef.current = true;
     const controller = new AbortController();
     setStandardsLoading(true);
     fetchCurriculumStandards(controller.signal)
@@ -825,7 +845,7 @@ export default function ModuleBuilder() {
         if (!controller.signal.aborted) setStandardsLoading(false);
       });
     return () => controller.abort();
-  }, []);
+  }, [needsKsbData]);
 
   useEffect(() => {
     if (!saving || !saveStartedAt) {
