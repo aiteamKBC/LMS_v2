@@ -165,6 +165,17 @@ class SettingsTests(SimpleTestCase):
         self.assertIn('Additional materials', settings['readingContent'])
         self.assertIn('notes-fr.docx', settings['readingContent'])
 
+    def test_the_document_being_shown_is_not_also_listed_as_a_link(self):
+        """The bug: a learner saw the PDF in the viewer and, above it, a link to
+        the same PDF on the old site — because the primary was excluded by URL,
+        and by then our copy had a different URL to the export's."""
+        local = '/curriculum_api/curriculum/uploads/_legacy_files/4242/handout.pdf'
+        settings = self.build('reading', material(attachments=[attachment('pdf')]),
+                              resolver=lambda _attachment: local)
+        self.assertEqual(settings['resourceUrl'], local)
+        self.assertNotIn('Additional materials', settings['readingContent'])
+        self.assertNotIn('old.example.test', settings['readingContent'])
+
     def test_a_local_copy_fills_in_the_uploaded_file_block(self):
         local = '/curriculum_api/curriculum/uploads/_legacy_files/4242/handout.pdf'
         settings = self.build('reading', material(attachments=[attachment('pdf')]),
