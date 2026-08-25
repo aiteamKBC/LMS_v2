@@ -12,9 +12,75 @@ Two rules are pinned here:
 2. a group's cached module list contains only its surviving modules.
 """
 from django.db import connection
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
+from unittest.mock import patch
 
 from . import views
+
+
+class ModuleQuizArchiveTests(SimpleTestCase):
+    def test_archives_a_quiz_owned_by_the_deleted_module(self):
+        def authoring_rows(table, where_sql='', params=None):
+            if table == views.AUTHORING_COMPONENTS_TABLE:
+                if 'module_catalogue_id <>' in where_sql:
+                    return []
+                return [{'id': 'COMP-1', 'settings_json': {'linkedQuizId': '17'}}]
+            if table == views.AUTHORING_WEEKS_TABLE:
+                return []
+            if table == views.AUTHORING_MODULES_TABLE:
+                return [{'module_catalogue_id': 'MOD-1', 'title': ''}]
+            return []
+
+        with (
+            patch.object(views, 'table_exists', side_effect=lambda table: table == 'quizzes'),
+            patch.object(views, 'has_column', return_value=True),
+            patch.object(views, 'fetch_all', return_value=[{'id': 17, 'status': 'published'}]),
+            patch.object(views, 'authoring_fetch_all', side_effect=authoring_rows),
+            patch.object(views, 'update_rows', return_value=[{'id': 17, 'status': 'trash'}]) as update,
+        ):
+            archived = views.archive_module_child_quizzes('MOD-1')
+
+        self.assertEqual(archived, [17])
+        args = update.call_args.args
+        self.assertEqual(args[:3], (
+            'quizzes',
+            "id in (%s) and lower(coalesce(status, '')) <> 'trash'",
+            [17],
+        ))
+        self.assertEqual(args[3]['status'], 'trash')
+        self.assertIsNotNone(args[3]['updated_at'])
+
+    def test_keeps_a_quiz_live_when_another_active_module_uses_it(self):
+        def table_exists(table):
+            return table in {'quizzes', 'quiz_course_links'}
+
+        def fetch_rows(query, params=None):
+            if 'where module_catalogue_id = %s' in query:
+                return [{'quiz_id': 17}]
+            if 'select id, status' in query:
+                return [{'id': 17, 'status': 'published'}]
+            if 'module_catalogue_id <> %s' in query:
+                return [{'quiz_id': 17, 'module_catalogue_id': 'MOD-2'}]
+            return []
+
+        def authoring_rows(table, where_sql='', params=None):
+            if table == views.AUTHORING_MODULES_TABLE and ' in (' in where_sql:
+                return [{'module_catalogue_id': 'MOD-2', 'deleted_at': None, 'is_programme_deleted': False}]
+            if table == views.AUTHORING_MODULES_TABLE:
+                return [{'module_catalogue_id': 'MOD-1', 'title': ''}]
+            return []
+
+        with (
+            patch.object(views, 'table_exists', side_effect=table_exists),
+            patch.object(views, 'has_column', return_value=True),
+            patch.object(views, 'fetch_all', side_effect=fetch_rows),
+            patch.object(views, 'authoring_fetch_all', side_effect=authoring_rows),
+            patch.object(views, 'update_rows') as update,
+        ):
+            archived = views.archive_module_child_quizzes('MOD-1')
+
+        self.assertEqual(archived, [])
+        update.assert_not_called()
 
 
 class ModuleDeleteFlagTests(TestCase):
