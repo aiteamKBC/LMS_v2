@@ -27,6 +27,7 @@ from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModi
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 
 from learner_api.progress_rules import (
     progress_achievement_status,
@@ -16486,8 +16487,14 @@ def curriculum_presentation_slides(request):
 
 
 @require_GET
+@xframe_options_sameorigin
 def curriculum_uploaded_file(request, path):
     """Serve a component upload from wherever its bytes are.
+
+    Framed same-origin on purpose: the site-wide X-Frame-Options is DENY, which
+    stops a browser rendering a PDF or a slide deck in the learner page's own
+    iframe — the viewer comes out blank. SAMEORIGIN lets our own pages embed the
+    file while still refusing to be framed by anyone else.
 
     The URL shape is unchanged, so every settings_json reference already stored
     keeps working: upload_storage checks local disk first (files uploaded before
