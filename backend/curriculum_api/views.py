@@ -5868,7 +5868,37 @@ def build_modules(module_rows, training_rows, program_configs=None, include_unus
     return modules
 
 
-def build_programmes(training_rows, program_configs, ksb_profiles, include_config_only=False):
+def _programme_ksb_stats(source_id, required_ksb_codes, only_stats_for_ids):
+    """The two per-programme reads build_programmes() would otherwise run for
+    every programme in the system just to keep the one the caller wants.
+
+    ``programme_component_ksb_mapping_count`` and ``programme_learner_ksb_progress``
+    each re-read authoring data for one programme. On ~20 programmes that is ~40
+    round trips to a remote database when only one programme's numbers are ever
+    used -- see ``_build_curriculum_programme_tree_detail_payload``, which used to
+    pay this cost for every programme in the system just to find the one it was
+    asked for. ``only_stats_for_ids`` restricts the real computation to that set;
+    every other programme gets the same placeholder its card would show before
+    anything was ever mapped.
+    """
+    if only_stats_for_ids is not None and clean_str(source_id) not in only_stats_for_ids:
+        return {
+            'ksbMapped': 0,
+            'learnerKsbProgressPercentage': 0,
+            'learnerKsbConsumedWeight': 0.0,
+            'learnerKsbExpectedWeight': 0.0,
+            'learnerKsbLearnerCount': 0,
+            'learnerKsbCodesStarted': 0,
+            'learnerKsbCodesComplete': 0,
+            'learnerKsbCodesTotal': 0,
+        }
+    return {
+        'ksbMapped': programme_component_ksb_mapping_count(source_id, required_ksb_codes),
+        **programme_learner_ksb_progress(source_id, required_ksb_codes),
+    }
+
+
+def build_programmes(training_rows, program_configs, ksb_profiles, include_config_only=False, only_stats_for_ids=None):
     configs_by_id = program_config_by_id(program_configs)
     grouped = defaultdict(list)
     group_meta = {}
@@ -6027,12 +6057,8 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             'modules': programme_modules_count,
             'groups': len(group_keys),
             'weeks': sum(parse_int(row.get('sessions_number')) for row in delivery_rows),
-            'ksbMapped': programme_component_ksb_mapping_count(source_id, required_ksb_codes),
+            **_programme_ksb_stats(source_id, required_ksb_codes, only_stats_for_ids),
             'ksbTotal': ksb_total,
-            # Learner-consumed KSB progress across the programme. Separate from
-            # ksbMapped/ksbTotal on purpose: that pair is design mapping
-            # coverage, this is what the learners actually evidenced.
-            **programme_learner_ksb_progress(source_id, required_ksb_codes),
             'learners': (
                 programme_learner_counts_by_id.get(clean_str(source_id), 0)
                 + programme_learner_counts_by_name.get(normalise(name), 0)
@@ -14877,11 +14903,28 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
         profile for profile in curriculum_rows['ksb_profiles']
         if profile.get('is_active')
     ]
+    # build_programmes() computes ksbMapped/learner-progress for every programme
+    # it builds -- fine for the full list, wasteful here where only one programme
+    # is ever returned. The first pass skips every programme's stats (cheap: no
+    # extra reads) just to resolve which one this identifier means, using the
+    # same matching find_programme always applies; the second pass computes the
+    # real numbers only for that resolved programme. See _programme_ksb_stats.
+    cheap_programmes = build_programmes(
+        training_rows,
+        curriculum_rows['program_configs'],
+        ksb_profiles,
+        include_config_only=visibility == 'all',
+        only_stats_for_ids=frozenset(),
+    )
+    resolved_programme = find_programme({'programmes': cheap_programmes}, identifier)
+    if not resolved_programme:
+        return None
     programmes = build_programmes(
         training_rows,
         curriculum_rows['program_configs'],
         ksb_profiles,
         include_config_only=visibility == 'all',
+        only_stats_for_ids={clean_str(resolved_programme.get('sourceId'))},
     )
     programme = find_programme({'programmes': programmes}, identifier)
     if not programme:
