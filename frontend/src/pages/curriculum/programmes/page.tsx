@@ -1020,9 +1020,14 @@ export default function CurriculumProgrammes() {
                 </div>
                 {prog.description && <p className="mb-2.5 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
                 <div className="mt-auto flex flex-wrap items-center gap-1 border-t border-primary-100/70 pt-2.5">
-                  <button className="programme-action-button programme-action-open inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1 text-[10px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
-                    <AppIcon className="ri-eye-line"></AppIcon>
-                    Open
+                  <button
+                    type="button"
+                    disabled
+                    title="Coming soon"
+                    className="programme-action-button programme-action-open inline-flex flex-1 cursor-not-allowed items-center justify-center gap-1.5 rounded-lg bg-background-200 px-2 py-1 text-[10px] font-bold text-foreground-400"
+                  >
+                    <AppIcon className="ri-time-line"></AppIcon>
+                    Coming soon
                   </button>
                   <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
                     <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB Source
