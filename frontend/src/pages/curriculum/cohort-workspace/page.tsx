@@ -15,6 +15,7 @@ import {
   scheduleLabel,
 } from '../shared/entities/model';
 import { CohortFormDrawer, GroupFormDrawer } from '../shared/entities/forms';
+import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
 import {
   DetailRow,
   EntityEmptyState,
@@ -33,7 +34,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // entities and calls the same endpoints as the global pages — this is a lens on
 // the data, not a second copy of it.
 
-type Tab = 'overview' | 'groups' | 'modules' | 'holidays';
+type Tab = 'overview' | 'groups' | 'modules' | 'learners' | 'holidays';
 
 const GROUP_GRID = 'grid grid-cols-[minmax(170px,1.3fr)_minmax(130px,1fr)_minmax(150px,1fr)_80px]';
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.4fr)_minmax(140px,1fr)_minmax(130px,1fr)_70px_110px_110px]';
@@ -109,6 +110,7 @@ export default function CohortWorkspacePage() {
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'groups', label: 'Groups', icon: 'ri-team-line', count: cohortGroups.length },
     { key: 'modules', label: 'Modules', icon: 'ri-stack-line', count: cohortModules.length },
+    { key: 'learners', label: 'Learners', icon: 'ri-graduation-cap-line', count: cohort?.learners || undefined },
     { key: 'holidays', label: 'Holidays', icon: 'ri-calendar-close-line', count: selectedHolidays.length },
   ];
 
@@ -278,6 +280,20 @@ export default function CohortWorkspacePage() {
                 <PlainCell>{formatDateLabel(module.endDate)}</PlainCell>
               </>
             )}
+          />
+        )}
+
+        {/* Who enrolment placed in this cohort, and what they have actually
+            achieved against this cohort's own components. The cohort is the
+            level enrolment places learners into, so this is its own roster —
+            not a slice of the programme's. */}
+        {tab === 'learners' && (
+          <ScopeAchievementPanel
+            scope="cohort"
+            identifier={cohort?.id || id}
+            title={`Learners and achievement in ${cohort?.name || 'this cohort'}`}
+            learnerStatus="all"
+            active={tab === 'learners'}
           />
         )}
 

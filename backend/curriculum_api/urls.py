@@ -9,6 +9,12 @@ urlpatterns = [
     path('curriculum/preview/cohort-end-date/', views.curriculum_preview_cohort_end_date, name='curriculum-preview-cohort-end-date'),
     path('curriculum/preview/module-session-plan/', views.curriculum_preview_module_session_plan, name='curriculum-preview-module-session-plan'),
     path('curriculum/preview/tutor-availability/', views.curriculum_preview_tutor_availability, name='curriculum-preview-tutor-availability'),
+    # The learner roster and the achievement roll-up are the same read at every
+    # level of Programme -> Cohort -> Group -> Module -> Week. These two routes
+    # take the scope as a query param; the per-level routes below are the same
+    # thing addressed by path.
+    path('curriculum/learner-roster/', views.curriculum_scope_learner_roster, name='curriculum-scope-learner-roster'),
+    path('curriculum/learner-ksb-impact/', views.curriculum_scope_learner_ksb_impact, name='curriculum-scope-learner-ksb-impact'),
     path('curriculum/programmes/', views.curriculum_programme_collection, name='curriculum-programmes'),
     path('curriculum/programmes/tree/', views.curriculum_programme_tree_save, name='curriculum-programme-tree-save'),
     path('curriculum/free-programmes/<str:programme_id>/modules/', views.curriculum_free_programme_modules, name='curriculum-free-programme-modules'),
@@ -28,6 +34,10 @@ urlpatterns = [
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', views.curriculum_module_teams_meeting_restore, name='curriculum-module-teams-meeting-restore'),
     path('curriculum/modules/<str:module_catalogue_id>/ksb-coverage/', views.curriculum_module_ksb_coverage, name='curriculum-module-ksb-coverage'),
+    # A module has no roster of its own: these report the learners in the group
+    # that delivers it, and what they achieved against this module's components.
+    path('curriculum/modules/<str:module_catalogue_id>/learner-roster/', views.curriculum_module_learner_roster, name='curriculum-module-learner-roster'),
+    path('curriculum/modules/<str:module_catalogue_id>/learner-ksb-impact/', views.curriculum_module_learner_ksb_impact, name='curriculum-module-learner-ksb-impact'),
     path('curriculum/modules/<str:module_catalogue_id>/components/<str:component_id>/', views.curriculum_module_component_detail, name='curriculum-module-component-detail'),
     path('curriculum/modules/<str:module_catalogue_id>/weeks/<str:week_id>/', views.curriculum_module_week_detail, name='curriculum-module-week-detail'),
     path('curriculum/modules/<str:identifier>/', views.curriculum_module_detail, name='curriculum-module-detail'),
@@ -36,6 +46,9 @@ urlpatterns = [
     path('curriculum/week-templates/', views.curriculum_week_template_collection, name='curriculum-week-templates'),
     path('curriculum/week-templates/<str:identifier>/', views.curriculum_week_template_detail, name='curriculum-week-template-detail'),
     path('curriculum/week-components/<str:component_id>/upload/', views.curriculum_week_component_upload, name='curriculum-week-component-upload'),
+    # Must precede curriculum/components/<component_id>/, or "library" would be
+    # captured as a component id.
+    path('curriculum/components/library/', views.curriculum_component_library, name='curriculum-component-library'),
     path('curriculum/components/', views.curriculum_component_collection, name='curriculum-components'),
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
@@ -49,6 +62,8 @@ urlpatterns = [
     path('curriculum/presentations/slides/', views.curriculum_presentation_slides, name='curriculum-presentation-slides'),
     path('curriculum/uploads/<path:path>', views.curriculum_uploaded_file, name='curriculum-uploaded-file'),
     path('curriculum/weeks/<str:week_id>/ksb-coverage/', views.curriculum_week_ksb_coverage, name='curriculum-week-ksb-coverage'),
+    path('curriculum/weeks/<str:week_id>/learner-roster/', views.curriculum_week_learner_roster, name='curriculum-week-learner-roster'),
+    path('curriculum/weeks/<str:week_id>/learner-ksb-impact/', views.curriculum_week_learner_ksb_impact, name='curriculum-week-learner-ksb-impact'),
     path('curriculum/ksb-mappings/<str:mapping_id>/', views.curriculum_ksb_mapping_detail, name='curriculum-ksb-mapping-detail'),
     path('curriculum/ksb-coverage/', views.curriculum_ksb_coverage, name='curriculum-ksb-coverage'),
     path('curriculum/ksb-coverage/trace/<str:ksb_id>/', views.curriculum_ksb_trace, name='curriculum-ksb-trace'),
@@ -60,9 +75,16 @@ urlpatterns = [
     path('curriculum/ksb-sets/', views.curriculum_ksb_sets, name='curriculum-ksb-sets'),
     path('curriculum/cohorts/', views.curriculum_cohort_collection, name='curriculum-cohorts'),
     path('curriculum/cohorts/<str:cohort_id>/ksb-coverage/', views.curriculum_cohort_ksb_coverage, name='curriculum-cohort-ksb-coverage'),
+    path('curriculum/cohorts/<str:cohort_id>/learner-roster/', views.curriculum_cohort_learner_roster, name='curriculum-cohort-learner-roster'),
+    path('curriculum/cohorts/<str:cohort_id>/learner-ksb-impact/', views.curriculum_cohort_learner_ksb_impact, name='curriculum-cohort-learner-ksb-impact'),
     path('curriculum/cohorts/<str:cohort_id>/groups/', views.curriculum_cohort_group_collection, name='curriculum-cohort-groups'),
     path('curriculum/cohorts/<str:identifier>/', views.curriculum_cohort_detail, name='curriculum-cohort-detail'),
     path('curriculum/groups/', views.curriculum_group_collection, name='curriculum-groups'),
+    # Declared before the <identifier> route below, which would otherwise
+    # capture these as group ids.
+    path('curriculum/groups/<str:group_id>/ksb-coverage/', views.curriculum_group_ksb_coverage, name='curriculum-group-ksb-coverage'),
+    path('curriculum/groups/<str:group_id>/learner-roster/', views.curriculum_group_learner_roster, name='curriculum-group-learner-roster'),
+    path('curriculum/groups/<str:group_id>/learner-ksb-impact/', views.curriculum_group_learner_ksb_impact, name='curriculum-group-learner-ksb-impact'),
     path('curriculum/groups/<str:identifier>/', views.curriculum_group_detail, name='curriculum-group-detail'),
     path('curriculum/groups/<str:identifier>/modules/', views.curriculum_group_modules, name='curriculum-group-modules'),
     path('curriculum/group-modules/<str:identifier>/', views.curriculum_module_detail, name='curriculum-group-module-detail'),

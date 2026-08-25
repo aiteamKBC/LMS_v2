@@ -2608,6 +2608,108 @@ def authoring_soft_delete(table, where_sql, params=None, *, via_parent='', delet
     return soft_delete_rows(table, where_sql, params or [], via_parent=via_parent, deleted_by=deleted_by, extra=extra)
 
 
+# A detached row's parent id. These columns are NOT NULL, so an unattached row
+# carries the empty string rather than NULL - which is also precisely what
+# ``repair_curriculum_parent_links`` already skips, so the orphan sweeper cannot
+# destroy library content.
+LIBRARY_STATE_DETACHED = 'library'
+DETACHED_PARENT_SENTINEL = ''
+
+
+def detach_to_library_payload(
+    table,
+    *,
+    origin_module_id='',
+    origin_module_title='',
+    origin_week_id='',
+    origin_week_label='',
+):
+    """Columns that turn an owned row into an unattached, reusable one.
+
+    A library item is deliberately *not* a deleted item: the soft-delete stamps
+    are cleared, because the row is no longer archived-under-a-parent, it simply
+    has no parent. Origin is denormalised because the whole point is that the
+    parent row is going away and its title would otherwise be unrecoverable.
+
+    Every write is guarded by ``has_column`` in the same style as
+    ``soft_delete_payload``, so an environment that has not yet run migration
+    0053 degrades to a plain detach rather than raising.
+    """
+    payload = {'updated_at': datetime.utcnow()}
+    if has_column(table, 'library_state'):
+        payload['library_state'] = LIBRARY_STATE_DETACHED
+    if has_column(table, 'detached_at'):
+        payload['detached_at'] = datetime.utcnow()
+    if has_column(table, 'origin_module_catalogue_id'):
+        payload['origin_module_catalogue_id'] = clean_str(origin_module_id)
+    if has_column(table, 'origin_module_title'):
+        payload['origin_module_title'] = clean_str(origin_module_title)
+    if has_column(table, 'origin_week_id'):
+        payload['origin_week_id'] = clean_str(origin_week_id)
+    if has_column(table, 'origin_week_label'):
+        payload['origin_week_label'] = clean_str(origin_week_label)
+    # Clear the parent links. Empty string, not NULL: the columns are NOT NULL
+    # and the orphan sweeper's own guards test for ''.
+    if has_column(table, 'module_catalogue_id'):
+        payload['module_catalogue_id'] = DETACHED_PARENT_SENTINEL
+    if has_column(table, 'week_id'):
+        payload['week_id'] = DETACHED_PARENT_SENTINEL
+    # An unattached row is available, not archived.
+    if has_column(table, 'deleted_at'):
+        payload['deleted_at'] = None
+    if has_column(table, 'deleted_by'):
+        payload['deleted_by'] = None
+    if has_column(table, 'deleted_via_parent'):
+        payload['deleted_via_parent'] = None
+    if has_column(table, 'is_programme_deleted'):
+        payload['is_programme_deleted'] = False
+    return payload
+
+
+def detach_rows_to_library(table, where_sql, where_params=None, **origin):
+    """Detach matching rows into the reuse library instead of deleting them."""
+    if not table_exists(table):
+        return []
+    payload = detach_to_library_payload(table, **origin)
+    if not any(column in column_names(table) for column in payload):
+        return []
+    # Already-detached rows keep their original origin stamps: a second detach
+    # would overwrite them with the parent that is being removed now, which is
+    # not where the content actually came from.
+    guarded_where = where_sql
+    if has_column(table, 'library_state'):
+        guarded_where = (
+            f'({where_sql}) and coalesce({quote_ident("library_state")}, %s) <> %s'
+        )
+    params = list(where_params or [])
+    if has_column(table, 'library_state'):
+        params = [*params, '', LIBRARY_STATE_DETACHED]
+    # allow_null_columns is required, not cosmetic: filtered_payload drops None
+    # values, so without it the soft-delete stamps would survive the detach and
+    # a programme-archived component would stay archived forever. The real path
+    # always hits this - a permanent delete is only allowed on an already
+    # archived programme, whose children are all stamped.
+    return update_rows(
+        table, guarded_where, params, payload,
+        allow_null_columns=RESTORE_NULLABLE_COLUMNS,
+    )
+
+
+def is_library_row(row):
+    """True when this week/component is detached and held for reuse."""
+    return clean_str((row or {}).get('library_state')) == LIBRARY_STATE_DETACHED
+
+
+def library_sweep_guard(table, where_sql):
+    """Narrow a destructive sweep so it can never touch detached library rows."""
+    if not has_column(table, 'library_state'):
+        return where_sql
+    return (
+        f"({where_sql}) and coalesce({quote_ident('library_state')}, '') "
+        f"<> '{LIBRARY_STATE_DETACHED}'"
+    )
+
+
 def deleted_sql_condition(table, alias=''):
     prefix = f'{alias}.' if alias else ''
     checks = []
@@ -3872,24 +3974,188 @@ def programme_permanent_delete_plan(identifier, programme=None, config=None):
         curriculum_in_clause('group_id', child['groupIds']),
         curriculum_in_clause('module_catalogue_id', child['moduleIds']),
     ])
+    plan['origins'] = programme_permanent_delete_origins(child)
     plan['blockers'] = programme_permanent_delete_blockers(child)
     plan['learners'] = parse_int(programme_dependency_counts(identifier, config).get('learners'), 0)
     return plan
 
 
+def programme_permanent_delete_origins(child_ids):
+    """Human-readable labels for the parents that are about to be removed.
+
+    Content detached into the library keeps a denormalised note of where it came
+    from, and this is the only moment that note can be taken: once the module
+    and week rows are gone their titles are unrecoverable.
+    """
+    origins = {'modules': {}, 'weeks': {}}
+    module_ids = child_ids.get('moduleIds') or []
+    week_ids = child_ids.get('weekIds') or []
+    if module_ids and table_exists(AUTHORING_MODULES_TABLE):
+        where_sql, params = curriculum_where_any([
+            curriculum_in_clause('module_catalogue_id', module_ids),
+        ])
+        if where_sql:
+            for row in fetch_all(
+                f'select module_catalogue_id, title from {table_name(AUTHORING_MODULES_TABLE)} where {where_sql}',
+                params,
+            ):
+                origins['modules'][clean_str(row.get('module_catalogue_id'))] = clean_str(row.get('title'))
+    if week_ids and table_exists(AUTHORING_WEEKS_TABLE):
+        where_sql, params = curriculum_where_any([curriculum_in_clause('id', week_ids)])
+        if where_sql:
+            for row in fetch_all(
+                f'select id, week_number, title from {table_name(AUTHORING_WEEKS_TABLE)} where {where_sql}',
+                params,
+            ):
+                origins['weeks'][clean_str(row.get('id'))] = component_week_label(row)
+    return origins
+
+
+def detach_programme_content_to_library(plan, removed):
+    """Move authored content out of a dying programme instead of destroying it.
+
+    Weeks and components are the reusable output of Curriculum Studio and an
+    author may well want them again in a different module, so a permanent
+    programme delete detaches them into the library rather than deleting them.
+    They keep a denormalised note of where they came from, taken from
+    ``plan['origins']`` while the parent rows still exist.
+
+    Quizzes are detached too, by clearing their programme and week. They are
+    already standalone rows carrying learner attempts, and their questions and
+    answers hang off them by ``ON DELETE CASCADE`` - a cascade that from here on
+    simply never fires for a programme delete.
+    """
+    child = plan.get('childIds') or {}
+    origins = plan.get('origins') or {}
+    module_titles = origins.get('modules') or {}
+    week_labels = origins.get('weeks') or {}
+    week_ids = child.get('weekIds') or []
+    component_ids = set(child.get('componentIds') or [])
+
+    def count(table, rows):
+        if rows:
+            removed[table] = removed.get(table, 0) + len(rows)
+
+    # Components carry their own week, so detach one week at a time to stamp the
+    # right origin on each. A programme has tens of weeks, not thousands.
+    detached_component_ids = set()
+    if component_ids and table_exists(AUTHORING_COMPONENTS_TABLE):
+        for week_id in week_ids:
+            rows = authoring_fetch_all(
+                AUTHORING_COMPONENTS_TABLE, 'week_id = %s', [week_id],
+            )
+            matching = [row for row in rows if clean_str(row.get('id')) in component_ids]
+            if not matching:
+                continue
+            ids = [clean_str(row.get('id')) for row in matching]
+            # Every component in a week shares its module, so the first matching
+            # row settles it - but read it from a row we are actually detaching.
+            module_id = clean_str(matching[0].get('module_catalogue_id'))
+            placeholders = ', '.join(['%s'] * len(ids))
+            count(AUTHORING_COMPONENTS_TABLE, detach_rows_to_library(
+                AUTHORING_COMPONENTS_TABLE,
+                f'id in ({placeholders})',
+                ids,
+                origin_module_id=module_id,
+                origin_module_title=module_titles.get(module_id, ''),
+                origin_week_id=week_id,
+                origin_week_label=week_labels.get(week_id, ''),
+            ))
+            detached_component_ids.update(ids)
+        # A component attached to the module but to no surviving week still has
+        # to come along, or it would be left pointing at a module that is gone.
+        # Grouped by module so these keep a provenance label too.
+        stragglers = component_ids - detached_component_ids
+        if stragglers:
+            by_module = defaultdict(list)
+            where_sql, params = curriculum_where_any([
+                curriculum_in_clause('id', sorted(stragglers)),
+            ])
+            if where_sql:
+                for row in fetch_all(
+                    f'select id, module_catalogue_id from {table_name(AUTHORING_COMPONENTS_TABLE)} where {where_sql}',
+                    params,
+                ):
+                    by_module[clean_str(row.get('module_catalogue_id'))].append(clean_str(row.get('id')))
+            for module_id, ids in by_module.items():
+                placeholders = ', '.join(['%s'] * len(ids))
+                count(AUTHORING_COMPONENTS_TABLE, detach_rows_to_library(
+                    AUTHORING_COMPONENTS_TABLE,
+                    f'id in ({placeholders})',
+                    ids,
+                    origin_module_id=module_id,
+                    origin_module_title=module_titles.get(module_id, ''),
+                ))
+
+    # Weeks, grouped by the module that is going away.
+    if week_ids and table_exists(AUTHORING_WEEKS_TABLE):
+        weeks_by_module = defaultdict(list)
+        where_sql, params = curriculum_where_any([curriculum_in_clause('id', week_ids)])
+        if where_sql:
+            for row in fetch_all(
+                f'select id, module_catalogue_id from {table_name(AUTHORING_WEEKS_TABLE)} where {where_sql}',
+                params,
+            ):
+                weeks_by_module[clean_str(row.get('module_catalogue_id'))].append(clean_str(row.get('id')))
+        for module_id, ids in weeks_by_module.items():
+            placeholders = ', '.join(['%s'] * len(ids))
+            count(AUTHORING_WEEKS_TABLE, detach_rows_to_library(
+                AUTHORING_WEEKS_TABLE,
+                f'id in ({placeholders})',
+                ids,
+                origin_module_id=module_id,
+                origin_module_title=module_titles.get(module_id, ''),
+            ))
+
+    # Quizzes: unhook from the programme and week, keep the quiz.
+    if table_exists('quizzes'):
+        clauses = [curriculum_in_clause('programme_id', plan.get('candidates') or [])]
+        if week_ids:
+            clauses.append(curriculum_in_clause('week_id', week_ids))
+        where_sql, params = curriculum_where_any(clauses)
+        if where_sql:
+            updates = {}
+            if has_column('quizzes', 'week_id'):
+                updates['week_id'] = DETACHED_PARENT_SENTINEL
+            if has_column('quizzes', 'programme_id'):
+                updates['programme_id'] = DETACHED_PARENT_SENTINEL
+            if updates:
+                count('quizzes', update_rows('quizzes', where_sql, params, updates))
+
+    # Week templates are reusable by definition; unhook rather than delete.
+    template_ids = child.get('weekTemplateIds') or []
+    if template_ids and table_exists(WEEK_TEMPLATES_TABLE):
+        where_sql, params = curriculum_where_any([curriculum_in_clause('id', template_ids)])
+        if where_sql:
+            updates = {'updated_at': datetime.utcnow()}
+            for column in ('programme_id', 'programme_name', 'group_id', 'group_name', 'module_catalogue_id'):
+                if has_column(WEEK_TEMPLATES_TABLE, column):
+                    updates[column] = DETACHED_PARENT_SENTINEL
+            count(WEEK_TEMPLATES_TABLE, update_rows(WEEK_TEMPLATES_TABLE, where_sql, params, updates))
+
+
 def permanently_delete_programme_structure(plan):
-    """Delete an archived programme and every curriculum row beneath it, for real.
+    """Delete an archived programme, and detach the content authored under it.
 
     The order is dictated by the foreign keys migration 0038 added (children
     first, ON DELETE RESTRICT). That ordering is exactly what a hand-written
     ``delete from curriculum.programmes`` cannot supply, which is why Postgres
     answers it with ``cohorts_programme_id_fkey``.
 
-    Where a cascade already exists it is left to do its job: deleting a live
-    session takes its occurrences, attendance, artifacts and recording events,
-    and deleting a quiz takes its questions, answers and links. The link tables
-    are still cleared explicitly first, because a link may point at this
-    programme's module from a quiz that belongs to another programme.
+    Authored content is *not* deleted. Weeks, components, quizzes and week
+    templates are detached into the reuse library by
+    ``detach_programme_content_to_library``; the delivery scaffolding around them
+    - the programme, cohorts, groups, modules, live sessions and link rows - is
+    what actually goes. Deleting a live session still takes its occurrences,
+    attendance, artifacts and recording events with it by cascade.
+
+    The link tables are cleared explicitly first, because a link may point at
+    this programme's module from a quiz that belongs to another programme.
+
+    ``ksb_mappings`` is still wiped, and that loses nothing: since 0042 a
+    component owns its mappings in its own ``ksb_mappings`` JSONB column and
+    that table is a projection of it (``component_ksb_mappings_from_row``
+    prefers the JSONB). Detached components keep their KSBs.
 
     Learner accounts, progress and enrolment rows are never touched. The
     training-plan tables that reference this content are RESTRICT-guarded and
@@ -3913,22 +4179,17 @@ def permanently_delete_programme_structure(plan):
     module_clause = curriculum_in_clause('module_catalogue_id', child.get('moduleIds'))
     week_clause = curriculum_in_clause('week_id', child.get('weekIds'))
     component_clause = curriculum_in_clause('component_id', child.get('componentIds'))
-    template_clause = curriculum_in_clause('id', child.get('weekTemplateIds'))
+
+    # Detach first, while the module and week rows are still here to be read.
+    detach_programme_content_to_library(plan, removed)
 
     wipe(AUTHORING_KSB_MAPPINGS_TABLE, [module_clause, week_clause, component_clause])
     wipe('quiz_component_links', [component_clause])
     wipe('quiz_course_links', [module_clause, week_clause])
-    wipe('quizzes', [programme_clause, week_clause])
     wipe('tutor_module_notifications', [module_clause])
     wipe('module_completion_criteria', [module_clause])
     wipe('module_details', [module_clause])
     wipe(LIVE_SESSIONS_TABLE, [module_clause])
-    wipe(AUTHORING_COMPONENTS_TABLE, [curriculum_in_clause('id', child.get('componentIds'))])
-    wipe(AUTHORING_WEEKS_TABLE, [curriculum_in_clause('id', child.get('weekIds'))])
-    wipe('week_template_components', [
-        curriculum_in_clause('week_template_id', child.get('weekTemplateIds')),
-    ])
-    wipe(WEEK_TEMPLATES_TABLE, [template_clause])
     wipe('free_programme_components', [programme_clause])
     wipe('free_programme_modules', [programme_clause])
     wipe(AUTHORING_MODULES_TABLE, [
@@ -6236,6 +6497,8 @@ def authoring_session_links_by_catalogue(module_catalogue_ids):
             f'module_catalogue_id in ({placeholders})',
             module_catalogue_ids,
             'module_catalogue_id, week_id, display_order, id',
+            # Reads id/title/type/week_id only; settings_json is 24 MB.
+            exclude_columns=COMPONENT_HEAVY_COLUMNS,
         )
     except Exception:
         logger.debug('Unable to batch read authored session links.', exc_info=True)
@@ -8934,12 +9197,40 @@ def identity_ids_conflict(left_id, context_ids):
 
 
 def authoring_component_counts_by_catalogue():
+    """How many live components each module has, counted in the database.
+
+    This used to read every column of every component row - 39 MB and ~175 s
+    against the remote database - and then throw all of it away except the
+    module id. The predicate below is the SQL form of ``active_component_rows``:
+    not soft-deleted, not detached into the library, and not a retired type.
+    """
     counts = Counter()
     try:
-        for row in active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE)):
-            catalogue_id = clean_str(row.get('module_catalogue_id'))
+        ensure_module_authoring_tables()
+        clauses = [f"coalesce({quote_ident('module_catalogue_id')}, '') <> ''"]
+        params = []
+        deleted = deleted_sql_condition(AUTHORING_COMPONENTS_TABLE)
+        if deleted != 'false':
+            clauses.append(f'not ({deleted})')
+        if has_column(AUTHORING_COMPONENTS_TABLE, 'library_state'):
+            clauses.append(f"coalesce({quote_ident('library_state')}, '') <> %s")
+            params.append(LIBRARY_STATE_DETACHED)
+        retired = sorted(RETIRED_COMPONENT_TYPES)
+        if retired:
+            placeholders = ', '.join(['%s'] * len(retired))
+            clauses.append(f'type not in ({placeholders})')
+            params.extend(retired)
+        rows = fetch_all(
+            f'select {quote_ident("module_catalogue_id")} as catalogue_id, count(*) as total '
+            f'from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} '
+            f'where {" and ".join(clauses)} '
+            f'group by {quote_ident("module_catalogue_id")}',
+            params,
+        )
+        for row in rows:
+            catalogue_id = clean_str(row.get('catalogue_id'))
             if catalogue_id:
-                counts[catalogue_id] += 1
+                counts[catalogue_id] = parse_int(row.get('total'), 0)
     except Exception:
         logger.debug('Unable to count authoring components by module.', exc_info=True)
     return counts
@@ -9032,6 +9323,48 @@ def ensure_module_authoring_tables():
         _AUTHORING_TABLES_READY = True
         return
     provision_module_authoring_tables()
+
+
+# Columns that let a week or component be detached from its parent and kept for
+# reuse instead of destroyed. Mirrors migration 0053; kept in sync by hand
+# because these tables are ``managed = False`` and this bootstrap is what the
+# SQLite test runner provisions from.
+LIBRARY_COLUMN_DDL = (
+    ('library_state', "varchar(16) not null default ''"),
+    ('detached_at', 'timestamp with time zone'),
+    ('origin_module_catalogue_id', 'varchar(128)'),
+    ('origin_module_title', 'varchar(500)'),
+    ('origin_week_id', 'varchar(128)'),
+    ('origin_week_label', 'varchar(500)'),
+    ('copied_from_id', 'varchar(128)'),
+)
+
+
+def provision_library_columns(cursor, table):
+    """Add the library/detach columns to a weeks-or-components table.
+
+    The column cache is dropped afterwards: every detach helper decides what to
+    write through ``has_column``, so a cache entry captured before these columns
+    landed would make the detach silently skip them.
+    """
+    if connection.vendor == 'postgresql':
+        for column, column_type in LIBRARY_COLUMN_DDL:
+            cursor.execute(
+                f'alter table {authoring_table_name(table)} '
+                f'add column if not exists {quote_ident(column)} {column_type}'
+            )
+    else:
+        cursor.execute(f'pragma table_info({quote_ident(table)})')
+        existing = {row[1] for row in cursor.fetchall()}
+        for column, column_type in LIBRARY_COLUMN_DDL:
+            if column in existing:
+                continue
+            cursor.execute(
+                f'alter table {authoring_table_name(table)} '
+                f'add column {quote_ident(column)} {column_type}'
+            )
+    _TABLE_COLUMNS_CACHE.pop(table, None)
+    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{table}', None)
 
 
 def provision_module_authoring_tables():
@@ -9151,6 +9484,7 @@ def provision_module_authoring_tables():
             columns = {row[1] for row in cursor.fetchall()}
             if 'is_programme_deleted' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_WEEKS_TABLE)} add column is_programme_deleted boolean not null default false')
+        provision_library_columns(cursor, AUTHORING_WEEKS_TABLE)
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} (
                 id varchar(128) primary key,
@@ -9223,6 +9557,7 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column is_programme_deleted boolean not null default false')
             if 'ksb_mappings' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column ksb_mappings {json_type}')
+        provision_library_columns(cursor, AUTHORING_COMPONENTS_TABLE)
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_KSB_MAPPINGS_TABLE)} (
                 id varchar(128) primary key,
@@ -9772,10 +10107,33 @@ def provision_free_programme_tables():
 
 
 @scoped_curriculum_read
-def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensure_tables=True):
+def authoring_fetch_all(table, where_sql='', params=None, order_sql='', *, ensure_tables=True, columns=None, exclude_columns=None):
+    """Read authoring rows. Pass ``columns`` to avoid ``select *``.
+
+    Narrowing matters on ``curriculum.components``: it holds ~18k rows and
+    39 MB, 24 MB of which is ``settings_json``, and the database is remote.
+    A caller that only needs titles and counts pays ~90 s for ``select *``
+    against well under a second for the columns it actually reads. ``columns``
+    is part of the memo key, so a narrow read and a full read never collide.
+
+    ``exclude_columns`` is the inverse and is the safer choice for a caller that
+    reads most of the row: it drops only what is named, so a column added later
+    still arrives.
+    """
     if ensure_tables:
         ensure_module_authoring_tables()
-    query = f'select * from {authoring_table_name(table)}'
+    if columns:
+        wanted = [column for column in columns if has_column(table, column)]
+        select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
+    elif exclude_columns:
+        # Everything but the named columns. Safer than an allow-list for a
+        # caller that reads most of the row: a column added later is included
+        # automatically instead of silently arriving as None.
+        wanted = sorted(column_names(table) - {column for column in exclude_columns})
+        select_list = ', '.join(quote_ident(column) for column in wanted) if wanted else '*'
+    else:
+        select_list = '*'
+    query = f'select {select_list} from {authoring_table_name(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
@@ -10291,9 +10649,15 @@ def repair_curriculum_parent_links(programme_id='', *, allow_writes=True):
         # physically gone. A soft-deleted week/module/component still has its
         # row, so an archived branch of curriculum is never swept up here and
         # historical learner progress stays joinable to it.
-        authoring_delete(AUTHORING_WEEKS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
-        authoring_delete(AUTHORING_COMPONENTS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
-        authoring_delete(AUTHORING_COMPONENTS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")")
+        #
+        # Detached library content is excluded twice over. Its parent ids are
+        # the empty string, which the coalesce guards below already skip, and
+        # the explicit library_state check makes that protection independent of
+        # the sentinel - a detach that forgot to clear a parent id would
+        # otherwise have its content swept away here.
+        authoring_delete(AUTHORING_WEEKS_TABLE, library_sweep_guard(AUTHORING_WEEKS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")"))
+        authoring_delete(AUTHORING_COMPONENTS_TABLE, library_sweep_guard(AUTHORING_COMPONENTS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")"))
+        authoring_delete(AUTHORING_COMPONENTS_TABLE, library_sweep_guard(AUTHORING_COMPONENTS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")"))
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(module_catalogue_id, '') <> '' and module_catalogue_id not in (select module_catalogue_id from " + authoring_table_name(AUTHORING_MODULES_TABLE) + ")")
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(week_id, '') <> '' and week_id not in (select id from " + authoring_table_name(AUTHORING_WEEKS_TABLE) + ")")
         authoring_delete(AUTHORING_KSB_MAPPINGS_TABLE, "coalesce(component_id, '') <> '' and component_id not in (select id from " + authoring_table_name(AUTHORING_COMPONENTS_TABLE) + ")")
@@ -10339,14 +10703,20 @@ def is_retired_component_type(value):
 
 
 def active_component_rows(rows):
+    # Detached library rows are excluded too. A detach deliberately clears the
+    # soft-delete stamps, so without this they would read as live content and
+    # surface in the component list belonging to no module at all. They are
+    # reachable only through the reuse library.
     return [
         row for row in rows
-        if not is_retired_component_type(row.get('type')) and not programme_deleted_row(row)
+        if not is_retired_component_type(row.get('type'))
+        and not programme_deleted_row(row)
+        and not is_library_row(row)
     ]
 
 
 def active_week_rows(rows):
-    return [row for row in rows if not programme_deleted_row(row)]
+    return [row for row in rows if not programme_deleted_row(row) and not is_library_row(row)]
 
 
 def active_mapping_rows(rows):
@@ -11406,6 +11776,269 @@ def component_builder_rows(module_catalogue_ids=None):
     ]
 
 
+LIBRARY_ORIGIN_ACTIVE = 'active'
+LIBRARY_ORIGIN_ARCHIVED = 'archived'
+LIBRARY_ORIGIN_LIBRARY = 'library'
+LIBRARY_ORIGINS = (LIBRARY_ORIGIN_ACTIVE, LIBRARY_ORIGIN_ARCHIVED, LIBRARY_ORIGIN_LIBRARY)
+
+
+def library_component_origin(row):
+    """Which bucket of the reuse library this component sits in.
+
+    ``library`` wins over ``archived``: a detached row has its soft-delete
+    stamps cleared on purpose, so the two are mutually exclusive in practice,
+    but ordering the checks makes that explicit rather than incidental.
+    """
+    if is_library_row(row):
+        return LIBRARY_ORIGIN_LIBRARY
+    if programme_deleted_row(row):
+        return LIBRARY_ORIGIN_ARCHIVED
+    return LIBRARY_ORIGIN_ACTIVE
+
+
+# Columns the picker list needs. Deliberately excludes settings_json, which
+# holds inlined authoring content - up to 200 kB on a single reading component
+# and 24 MB across the table. The picker shows titles; only the components
+# actually being copied need their settings, and those are fetched by id.
+LIBRARY_LIST_COLUMNS = (
+    'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'display_order',
+    'expected_otjh', 'points', 'reflection_required', 'workplace_evidence_required',
+    'tutor_validation_required', 'updated_at', 'deleted_at', 'is_programme_deleted',
+    'library_state', 'detached_at', 'copied_from_id',
+    'origin_module_catalogue_id', 'origin_module_title',
+    'origin_week_id', 'origin_week_label',
+)
+LIBRARY_PAGE_SIZE_DEFAULT = 50
+LIBRARY_PAGE_SIZE_MAX = 200
+
+
+def library_component_where(*, search='', types=None, origins=None, ids=None):
+    """The SQL predicate for a library search. Everything filters in the database.
+
+    Origin is expressed in SQL rather than in Python so that the LIMIT applies
+    to the rows the caller actually asked for. ``library_state`` and the
+    soft-delete columns are what separate the three buckets.
+    """
+    clauses = []
+    params = []
+    wanted_ids = sorted({clean_str(value) for value in (ids or []) if clean_str(value)})
+    if wanted_ids:
+        placeholders = ', '.join(['%s'] * len(wanted_ids))
+        clauses.append(f'id in ({placeholders})')
+        params.extend(wanted_ids)
+    search = clean_str(search).lower()
+    if search:
+        # lower(...) like ... rather than ilike, so the same SQL runs on the
+        # SQLite test database as on Postgres.
+        clauses.append(
+            "(lower(coalesce(title, '')) like %s or lower(coalesce(description, '')) like %s)"
+        )
+        params.extend([f'%{search}%'] * 2)
+    wanted_types = sorted({normalise_component_type(value) for value in (types or []) if clean_str(value)})
+    if wanted_types:
+        placeholders = ', '.join(['%s'] * len(wanted_types))
+        clauses.append(f'type in ({placeholders})')
+        params.extend(wanted_types)
+    retired = sorted(RETIRED_COMPONENT_TYPES)
+    if retired:
+        # Retired types cannot be authored any more, so reusing one is a dead end.
+        placeholders = ', '.join(['%s'] * len(retired))
+        clauses.append(f'type not in ({placeholders})')
+        params.extend(retired)
+
+    wanted_origins = {clean_str(value).lower() for value in (origins or []) if clean_str(value)}
+    wanted_origins = wanted_origins & set(LIBRARY_ORIGINS) or set(LIBRARY_ORIGINS)
+    if wanted_origins != set(LIBRARY_ORIGINS):
+        # Only the 'library' bucket needs library_state. Active-vs-archived is
+        # decided by the soft-delete columns alone, so this must NOT be gated on
+        # that column: before migration 0053 it made the whole filter a no-op and
+        # unticking a bucket appeared to do nothing at all.
+        if has_column(AUTHORING_COMPONENTS_TABLE, 'library_state'):
+            detached = f"coalesce({quote_ident('library_state')}, '') = '{LIBRARY_STATE_DETACHED}'"
+        else:
+            # No column means nothing can be detached yet.
+            detached = 'false'
+        archived = deleted_sql_condition(AUTHORING_COMPONENTS_TABLE)
+        origin_sql = {
+            LIBRARY_ORIGIN_LIBRARY: f'({detached})',
+            LIBRARY_ORIGIN_ARCHIVED: f'(not ({detached}) and ({archived}))',
+            LIBRARY_ORIGIN_ACTIVE: f'(not ({detached}) and not ({archived}))',
+        }
+        # No placeholders here on purpose: every fragment is built from module
+        # constants, so there is nothing to bind and nothing to get out of order
+        # with the clauses appended above.
+        clauses.append('(' + ' or '.join(
+            origin_sql[origin] for origin in sorted(wanted_origins) if origin in origin_sql
+        ) + ')')
+    return ' and '.join(clauses), params
+
+
+def rows_for_ids(table, column, values):
+    """Fetch just the rows these ids name. No ids means no query at all."""
+    wanted = sorted({clean_str(value) for value in (values or []) if clean_str(value)})
+    if not wanted or not table_exists(table):
+        return []
+    placeholders = ', '.join(['%s'] * len(wanted))
+    return fetch_all(
+        f'select * from {authoring_table_name(table)} where {quote_ident(column)} in ({placeholders})',
+        wanted,
+    )
+
+
+def library_component_rows(*, search='', types=None, programme_ids=None, origins=None,
+                           ids=None, page=1, page_size=LIBRARY_PAGE_SIZE_DEFAULT, detail=False):
+    """Components available for reuse, across every programme ever authored.
+
+    Deliberately does NOT go through ``active_component_rows``: archived and
+    detached content is the point of this read, and that filter is exactly what
+    removes it.
+
+    Every filter and the page window are pushed into SQL, and the list omits
+    ``settings_json``. That is not a micro-optimisation. ``curriculum.components``
+    holds ~18k rows and 39 MB, 24 MB of it ``settings_json``, and the database is
+    remote: reading the table in full measured ~90 s against ~190 ms for a
+    narrow, limited read.
+
+    ``detail=True`` returns the heavy authoring fields (``settings``,
+    ``ksbMappings``) and is meant to be called with ``ids``, for the handful of
+    components actually being copied.
+    """
+    ensure_module_authoring_tables()
+    where_sql, params = library_component_where(search=search, types=types, origins=origins, ids=ids)
+    page = max(1, parse_int(page, 1))
+    page_size = min(LIBRARY_PAGE_SIZE_MAX, max(1, parse_int(page_size, LIBRARY_PAGE_SIZE_DEFAULT)))
+
+    if detail:
+        columns = '*'
+    else:
+        columns = ', '.join(
+            quote_ident(column) for column in LIBRARY_LIST_COLUMNS
+            if has_column(AUTHORING_COMPONENTS_TABLE, column)
+        )
+    query = f'select {columns} from {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}'
+    if where_sql:
+        query += f' where {where_sql}'
+    query += ' order by updated_at desc, display_order, id limit %s offset %s'
+    component_rows = fetch_all(query, [*params, page_size, (page - 1) * page_size])
+    if not component_rows:
+        return []
+
+    # Look up only the parents this page refers to. A detached component's module
+    # row may be long gone and an archived one's module is archived too, so these
+    # cannot go through the active-only helpers.
+    module_by_id = {
+        str(row.get('module_catalogue_id')): row
+        for row in rows_for_ids(
+            AUTHORING_MODULES_TABLE, 'module_catalogue_id',
+            {clean_str(row.get('module_catalogue_id')) for row in component_rows},
+        )
+    }
+    week_by_id = {
+        str(row.get('id')): row
+        for row in rows_for_ids(
+            AUTHORING_WEEKS_TABLE, 'id',
+            {clean_str(row.get('week_id')) for row in component_rows},
+        )
+    }
+    mappings_by_component = defaultdict(list)
+    if detail:
+        for row in rows_for_ids(
+            AUTHORING_KSB_MAPPINGS_TABLE, 'component_id',
+            {clean_str(row.get('id')) for row in component_rows},
+        ):
+            mappings_by_component[str(row.get('component_id'))].append(row)
+
+    wanted_programmes = {clean_str(value) for value in (programme_ids or []) if clean_str(value)}
+    results = []
+    for row in component_rows:
+        module = module_by_id.get(str(row.get('module_catalogue_id')), {})
+        week = week_by_id.get(str(row.get('week_id')), {})
+        # Once the parents are gone the denormalised origin stamps are the only
+        # source. Note this cannot be written as ``payload['week'] or fallback``:
+        # component_week_label({}) returns a plausible-looking "Week 1" for a
+        # missing week, which would quietly mislabel every detached component.
+        module_title = clean_str(module.get('title')) if module else clean_str(row.get('origin_module_title'))
+        week_label = component_week_label(week) if week else clean_str(row.get('origin_week_label'))
+        module_id = clean_str(row.get('module_catalogue_id')) or clean_str(row.get('origin_module_catalogue_id'))
+        if wanted_programmes and clean_str(module.get('programme_id')) not in wanted_programmes:
+            continue
+        payload = component_builder_response(row, module_by_id, week_by_id, mappings_by_component)
+        payload.update({
+            'origin': library_component_origin(row),
+            # component_builder_response puts a human label in `type`
+            # ("Self-study"), which cannot be copied into a new component.
+            # The authoring type is the hyphenated machine value.
+            'componentType': frontend_component_type(row.get('type')),
+            'originModuleCatalogueId': module_id,
+            'originModuleTitle': module_title,
+            'originWeekId': clean_str(row.get('week_id')) or clean_str(row.get('origin_week_id')),
+            'originWeekLabel': week_label,
+            'detachedAt': row.get('detached_at'),
+            'copiedFromId': clean_str(row.get('copied_from_id')),
+            'module': module_title,
+            'week': week_label,
+            'weekTitle': clean_str(week.get('title')) if week else week_label,
+        })
+        results.append(payload)
+    return results
+
+
+@csrf_exempt
+def curriculum_component_library(request):
+    """Read-only search over every component that could be reused.
+
+    Two modes. Without ``ids`` this is the picker list: narrow columns, one page
+    at a time. With ``ids`` it returns full authoring detail for those
+    components only - what a caller needs to copy them. The split exists because
+    ``settings_json`` is 24 MB across this table and the list never shows it.
+
+    Paging is applied in SQL here, so the response is built without going
+    through ``paginate_curriculum_results`` (which slices an already-built list).
+    """
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    ids = csv_param(request, 'ids', 'id')
+    page = parse_int(request.GET.get('page'), 1)
+    page_size = parse_int(
+        request.GET.get('page_size') or request.GET.get('pageSize'),
+        LIBRARY_PAGE_SIZE_DEFAULT,
+    )
+    try:
+        rows = library_component_rows(
+            search=request.GET.get('search') or request.GET.get('q') or '',
+            types=csv_param(request, 'types', 'type'),
+            programme_ids=csv_param(request, 'programme_ids', 'programmeIds'),
+            origins=csv_param(request, 'origins', 'origin'),
+            ids=ids,
+            page=page,
+            # An ids request wants exactly those rows, not a page of them.
+            page_size=len(ids) if ids else page_size,
+            detail=bool(ids) or truthy(request.GET.get('detail')),
+        )
+    except Exception:
+        logger.exception('Unable to load the component reuse library.')
+        return json_error('Unable to load the component library.', status=500)
+    return JsonResponse({
+        'schema': CURRICULUM_SCHEMA,
+        'count': len(rows),
+        'results': rows,
+        'page': max(1, page),
+        'pageSize': page_size,
+        # A full page back suggests there is more; the alternative is a count(*)
+        # over the same predicate on every keystroke.
+        'hasNext': not ids and len(rows) >= min(LIBRARY_PAGE_SIZE_MAX, max(1, page_size)),
+    })
+
+
+def csv_param(request, *names):
+    """Read a repeated-or-comma-separated query parameter."""
+    values = []
+    for name in names:
+        for raw in request.GET.getlist(name):
+            values.extend(clean_str(part) for part in str(raw).split(',') if clean_str(part))
+    return values
+
+
 def save_component_builder_payload(payload, component_id=None):
     if is_retired_component_type(payload.get('type')):
         raise ModuleAuthoringValidationError([{
@@ -12333,11 +12966,28 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
     return payloads
 
 
+# Every component column authoring_catalogue_summaries() reads, plus the three
+# the active-row filters need (deleted_at, is_programme_deleted, library_state).
+# settings_json and ksb_mappings are excluded on purpose - see the call site.
+CATALOGUE_SUMMARY_COMPONENT_COLUMNS = (
+    'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'description',
+    'expected_otjh', 'points', 'display_order',
+    'reflection_required', 'workplace_evidence_required', 'tutor_validation_required',
+    'deleted_at', 'is_programme_deleted', 'library_state',
+)
+
+
 def authoring_catalogue_summaries(include_programme_deleted=False):
     try:
         module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, order_sql='updated_at desc, title')
         week_rows = active_week_rows(authoring_fetch_all(AUTHORING_WEEKS_TABLE))
-        component_rows = active_component_rows(authoring_fetch_all(AUTHORING_COMPONENTS_TABLE))
+        # Narrow deliberately. This builds per-module summaries and week outlines
+        # and never reads settings_json (24 MB across this table) or ksb_mappings
+        # - the summary sets 'ksbMappings': [] outright. With select * this one
+        # call dominated every non-compact overview request.
+        component_rows = active_component_rows(authoring_fetch_all(
+            AUTHORING_COMPONENTS_TABLE, columns=CATALOGUE_SUMMARY_COMPONENT_COLUMNS,
+        ))
         mapping_rows = active_mapping_rows(authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE))
     except Exception:
         logger.exception('Unable to read module authoring catalogue rows.')
@@ -13348,6 +13998,8 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                 'summary': week.get('summary') or '',
                 'learning_outcomes': json_db_value(week.get('learningOutcomes') or []),
                 'display_order': week_index,
+                # Attached to this module, so never a detached library item.
+                'library_state': '',
                 'deleted_at': None,
                 'deleted_by': None,
                 'deleted_via_parent': None,
@@ -13389,6 +14041,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                     'display_order': component_index,
                     'settings_json': json_db_value(component_settings),
                     'live_sessions_link': clean_str(component_settings.get('liveSessionUrl') or component_settings.get('teamsMeetingUrl')),
+                    'copied_from_id': clean_str(component.get('copiedFromId') or component.get('copied_from_id')) or None,
+                    # A saved component is attached to this module by definition,
+                    # so it is never a library item - and if it was copied out of
+                    # the library, the copy must not inherit that state.
+                    'library_state': '',
                     'deleted_at': None,
                     'deleted_by': None,
                     'deleted_via_parent': None,
@@ -15873,14 +16530,27 @@ def curriculum_uploaded_file(request, path):
     return response
 
 
-def authoring_child_rows_for_modules(table, module_ids):
+# The component column that makes this table expensive: inlined authoring
+# content, 24 MB across ~18k rows and up to 200 kB in one row. Anything that
+# does not render a component's body should exclude it.
+COMPONENT_HEAVY_COLUMNS = ('settings_json',)
+
+
+def authoring_child_rows_for_modules(table, module_ids, *, columns=None, exclude_columns=None):
     """Rows of an authoring child table (weeks/components/mappings) for module ids.
 
-    Inside a curriculum_read_scope() the table is read once in full and filtered in
-    memory. build_programmes() asks this question once per programme and the union
-    of those asks is the whole table, so N targeted round trips cost more than one
-    full read. Outside a scope (single-module/week/component endpoints) the targeted
-    query is kept, so one module never pulls the whole table.
+    Inside a curriculum_read_scope() the table is read once in full and filtered
+    in memory. build_programmes() asks this question once per programme and the
+    union of those asks is the whole table, so N targeted round trips cost more
+    than one full read. Outside a scope (single-module/week/component endpoints)
+    the targeted query is kept, so one module never pulls the whole table.
+
+    That trade depends entirely on the full read being narrow. It briefly was
+    not: with ``select *`` on curriculum.components a single scan moved 39 MB
+    and measured 100-175 s, which is why callers must pass ``columns`` or
+    ``exclude_columns`` for that table. With settings_json excluded, one shared
+    ~16 s read beats a targeted ~17 s read per programme, so the memo earns its
+    keep again.
     """
     wanted = {clean_str(value) for value in module_ids if clean_str(value)}
     if not wanted:
@@ -15888,15 +16558,25 @@ def authoring_child_rows_for_modules(table, module_ids):
     if getattr(_CURRICULUM_READ_SCOPE, 'memo', None) is None:
         ids = sorted(wanted)
         placeholders = ', '.join(['%s'] * len(ids))
-        return authoring_fetch_all(table, f'module_catalogue_id in ({placeholders})', ids)
+        return authoring_fetch_all(
+            table, f'module_catalogue_id in ({placeholders})', ids,
+            columns=columns, exclude_columns=exclude_columns,
+        )
     return [
-        row for row in authoring_fetch_all(table)
+        row for row in authoring_fetch_all(table, columns=columns, exclude_columns=exclude_columns)
         if clean_str(row.get('module_catalogue_id')) in wanted
     ]
 
 
 @scoped_curriculum_read
 def authoring_scope_data(scope='', identifier=''):
+    """Module/week/component/mapping rows for a scope.
+
+    The component read excludes settings_json for every caller, deliberately:
+    each one either feeds ksb_coverage.py (which never reads it) or only counts
+    the rows. Keeping one column set means all callers share a single memoised
+    read inside curriculum_read_scope() instead of one scan per variant.
+    """
     ensure_module_authoring_tables()
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE)
     ident = clean_str(identifier)
@@ -15989,16 +16669,44 @@ def authoring_scope_data(scope='', identifier=''):
             if matches_curriculum_identifier(row.get('cohort_id'), ident)
             or matches_curriculum_identifier(row.get('cohort_name'), ident)
         ]
+    elif scope == 'group':
+        # Group names are unique only inside their cohort, so a bare-name match
+        # would pull in a same-named group from another cohort. Resolve the group
+        # row first and prefer its canonical id; the name path is kept for legacy
+        # callers but is fenced by the resolved cohort.
+        group_row = resolve_group_row(ident) or {}
+        group_ident = clean_str(group_row.get('group_id')) or ident
+        group_name = clean_str(group_row.get('group_name')) or ident
+        cohort_id_key = normalise(group_row.get('cohort_id'))
+        cohort_name_key = normalise(group_row.get('cohort_name'))
+        module_rows = [
+            row for row in module_rows
+            if matches_curriculum_identifier(row.get('group_id'), group_ident)
+            or (
+                matches_curriculum_identifier(row.get('group_name'), group_name)
+                and (
+                    not (cohort_id_key or cohort_name_key)
+                    or normalise(row.get('cohort_id')) == cohort_id_key
+                    or normalise(row.get('cohort_name')) == cohort_name_key
+                )
+            )
+        ]
 
     module_ids = [clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))]
     if not module_ids:
         return [], [], [], []
 
     week_rows = active_week_rows(authoring_child_rows_for_modules(AUTHORING_WEEKS_TABLE, module_ids))
-    component_rows = active_component_rows(authoring_child_rows_for_modules(AUTHORING_COMPONENTS_TABLE, module_ids))
+    component_rows = active_component_rows(authoring_child_rows_for_modules(
+        AUTHORING_COMPONENTS_TABLE, module_ids,
+        # ksb_coverage.py never reads settings_json, and it is 24 MB of inlined
+        # authoring content - ~90 s per programme to fetch and discard.
+        # Excluded rather than allow-listed so columns added later still arrive.
+        exclude_columns=COMPONENT_HEAVY_COLUMNS,
+    ))
     mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(AUTHORING_KSB_MAPPINGS_TABLE, module_ids))
 
-    if scope in {'programme', 'cohort'}:
+    if scope in {'programme', 'cohort', 'group'}:
         module_rows = dedupe_authoring_module_rows(module_rows, mapping_rows, component_rows, week_rows)
         module_ids = {clean_str(row.get('module_catalogue_id')) for row in module_rows if clean_str(row.get('module_catalogue_id'))}
         week_rows = [row for row in week_rows if clean_str(row.get('module_catalogue_id')) in module_ids]
@@ -16146,7 +16854,12 @@ def required_ksbs_for_request(request, module_rows, scope='', identifier=''):
 
 def coverage_response(request, scope='', identifier=''):
     module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(scope, identifier)
-    if identifier and scope in {'module', 'week', 'component', 'programme', 'cohort'} and not module_rows:
+    if identifier and scope == 'group' and not module_rows:
+        # A group that exists but carries no modules yet is empty, not missing.
+        # Existence is the groups table, not the module rows.
+        if not resolve_group_row(identifier):
+            return json_error('Group not found.', status=404)
+    elif identifier and scope in {'module', 'week', 'component', 'programme', 'cohort'} and not module_rows:
         return json_error(f'{scope.title()} not found.', status=404)
     actual_mappings_only = truthy(request.GET.get('actual_mappings') or request.GET.get('actualMappings'))
     if not actual_mappings_only:
@@ -16333,7 +17046,163 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
     return sorted(learners, key=lambda row: (normalise(row.get('name') or row.get('email')), str(row.get('id'))))
 
 
-def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes):
+# The curriculum hierarchy, top to bottom. Every scope below `programme` is
+# resolved to the placement keys enrolment actually stores on a learner
+# (programme, cohort, group name), because curriculum owns the delivery
+# structure and enrolment owns the placements.
+CURRICULUM_LEARNER_SCOPES = ('programme', 'cohort', 'group', 'module', 'week', 'component')
+
+
+def scope_placement_lineage(scope, identifier):
+    """Resolve any curriculum scope to its Programme -> Component lineage.
+
+    Returns the ids *and* the names, because the two are used for different
+    things: curriculum joins on ids, and ``"Learner"."learners"`` stores the
+    cohort/group a learner sits in as a label, not a foreign key. ``found`` says
+    whether the scope record itself exists — an empty scope (a cohort with no
+    modules yet) is not a missing one, and the callers need to tell them apart.
+
+    A module/week/component has no roster of its own: the learners who meet it
+    are the learners enrolment placed in the group that delivers it. That is what
+    ``placementBasis`` names, so no consumer has to infer it.
+    """
+    scope = clean_str(scope) or 'programme'
+    ident = clean_str(identifier)
+    lineage = {
+        'scope': scope,
+        'identifier': ident,
+        'found': False,
+        'programmeId': '',
+        'programmeName': '',
+        'cohortId': '',
+        'cohortName': '',
+        'groupId': '',
+        'groupName': '',
+        'moduleCatalogueId': '',
+        'moduleTitle': '',
+        'weekId': '',
+        'weekTitle': '',
+        'componentId': '',
+        'componentTitle': '',
+        'programmeConfigId': '',
+        'placementBasis': 'programme',
+    }
+    if not ident:
+        return lineage
+
+    def apply_module_row(row):
+        lineage['moduleCatalogueId'] = clean_str(row.get('module_catalogue_id'))
+        lineage['moduleTitle'] = clean_str(row.get('title'))
+        lineage['programmeId'] = lineage['programmeId'] or clean_str(row.get('programme_id'))
+        lineage['programmeName'] = lineage['programmeName'] or clean_str(row.get('programme_name'))
+        lineage['cohortId'] = lineage['cohortId'] or clean_str(row.get('cohort_id'))
+        lineage['cohortName'] = lineage['cohortName'] or clean_str(row.get('cohort_name'))
+        lineage['groupId'] = lineage['groupId'] or clean_str(row.get('group_id'))
+        lineage['groupName'] = lineage['groupName'] or clean_str(row.get('group_name'))
+
+    if scope == 'programme':
+        config = programme_config_by_identifier(ident)
+        lineage['found'] = bool(config)
+        # The identifier as given, deliberately: `assigned_learners_for_programme`
+        # compares it against `Learner.learners.programme_id`, and swapping in the
+        # canonical config id would change which learners a programme claims.
+        lineage['programmeId'] = ident
+        lineage['programmeConfigId'] = clean_str(programme_config_identity(config)) if config else ''
+        lineage['programmeName'] = clean_str(config.get('name')) if config else ''
+        lineage['placementBasis'] = 'programme'
+        return lineage
+
+    if scope == 'cohort':
+        row = resolve_cohort_row(ident)
+        if row:
+            lineage['found'] = True
+            lineage['cohortId'] = clean_str(row.get('cohort_id'))
+            lineage['cohortName'] = clean_str(row.get('cohort_name'))
+            lineage['programmeId'] = clean_str(row.get('programme_id'))
+            lineage['programmeName'] = clean_str(row.get('programme_name'))
+        lineage['placementBasis'] = 'cohort'
+        return lineage
+
+    if scope == 'group':
+        row = resolve_group_row(ident)
+        if row:
+            lineage['found'] = True
+            lineage['groupId'] = clean_str(row.get('group_id'))
+            lineage['groupName'] = clean_str(row.get('group_name'))
+            lineage['cohortId'] = clean_str(row.get('cohort_id'))
+            lineage['cohortName'] = clean_str(row.get('cohort_name'))
+            lineage['programmeId'] = clean_str(row.get('programme_id'))
+            lineage['programmeName'] = clean_str(row.get('programme_name'))
+        lineage['placementBasis'] = 'group'
+        return lineage
+
+    if scope in {'module', 'week', 'component'}:
+        module_id = ''
+        if scope == 'component':
+            rows = authoring_fetch_all(
+                AUTHORING_COMPONENTS_TABLE, 'id = %s', [ident],
+                exclude_columns=COMPONENT_HEAVY_COLUMNS,
+            )
+            if rows:
+                lineage['componentId'] = clean_str(rows[0].get('id'))
+                lineage['componentTitle'] = clean_str(rows[0].get('title'))
+                lineage['weekId'] = clean_str(rows[0].get('week_id'))
+                module_id = clean_str(rows[0].get('module_catalogue_id'))
+        if scope == 'week' or (scope == 'component' and lineage['weekId']):
+            week_ident = ident if scope == 'week' else lineage['weekId']
+            rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'id = %s', [week_ident])
+            if rows:
+                lineage['weekId'] = clean_str(rows[0].get('id'))
+                lineage['weekTitle'] = clean_str(rows[0].get('title'))
+                module_id = module_id or clean_str(rows[0].get('module_catalogue_id'))
+        if scope == 'module':
+            module_id = resolve_authoring_catalogue_id(ident) or ident
+        if module_id:
+            rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id])
+            if rows:
+                lineage['found'] = True
+                apply_module_row(rows[0])
+        # A group is the level enrolment places learners into, so that is the
+        # roster a module/week/component inherits. Without one, the cohort — and
+        # failing that the programme — is the widest honest answer.
+        lineage['placementBasis'] = (
+            'group' if lineage['groupName'] else ('cohort' if lineage['cohortName'] else 'programme')
+        )
+        return lineage
+
+    return lineage
+
+
+def scope_programme_identifier(lineage):
+    """The identifier ``assigned_learners_for_programme`` should be asked with."""
+    return clean_str(lineage.get('programmeId')) or clean_str(lineage.get('programmeName'))
+
+
+def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=None):
+    """The learners enrolment placed inside a curriculum scope.
+
+    One read of the programme roster, then narrowed by the cohort/group labels
+    the scope resolves to. Narrowing on the label rather than an id is not a
+    shortcut: ``"Learner"."learners"`` stores ``cohort`` and ``group_name`` as
+    text, and the case/whitespace-insensitive comparison here is the same one the
+    programme delivery counts already use.
+    """
+    lineage = lineage or scope_placement_lineage(scope, identifier)
+    programme_ident = scope_programme_identifier(lineage)
+    if not programme_ident:
+        return []
+    learners = assigned_learners_for_programme(programme_ident, lifecycle_status)
+    cohort_key = normalise(lineage.get('cohortName'))
+    group_key = normalise(lineage.get('groupName'))
+    if cohort_key:
+        learners = [row for row in learners if normalise(row.get('cohort')) == cohort_key]
+    if group_key:
+        learners = [row for row in learners if normalise(row.get('group')) == group_key]
+    return learners
+
+
+def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component_ids=(),
+                                     include_unattributed=True, restrict_to_components=False):
     """Per-learner achieved KSB weight, and the rows that produced it.
 
     Returns ``(totals, achieved_rows, excluded_rows)``. Failed and unresolved
@@ -16343,12 +17212,34 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes):
     is ``learner_api.progress_rules``, the single completion rule, so a failed
     row cannot reach the totals even when it carries a valid ``component_ref``,
     valid lineage and a valid KSB snapshot.
+
+    ``component_ids`` scopes the read to one part of the hierarchy. A KSB code
+    filter alone cannot do this: the same code is taught in several modules, so a
+    cohort asked for its own achievement would be handed the whole programme's.
+    Every row carries ``scopeStatus``:
+
+    ``in_scope``      the activity resolves to a component inside this scope.
+    ``out_of_scope``  it resolves to a component outside it — real achievement,
+                      belonging to a different scope's total, so it is reported
+                      in ``excluded_rows`` and summed nowhere here.
+    ``unattributed``  it carries no ``component_ref`` at all, so which scope it
+                      belongs to is unknowable. ``include_unattributed`` decides
+                      whether it still counts: true for a programme (the widest
+                      scope, where it is at least in the right place), false for
+                      anything narrower, which would be a guess.
+
+    ``restrict_to_components`` is what makes an *empty* ``component_ids`` mean
+    "nothing is in this scope" rather than "apply no filter". Without it, a cohort
+    that has authored no components yet would be credited with everything its
+    learners did anywhere on the programme — the exact over-attribution the scope
+    filter exists to prevent. Pass it for every scope narrower than a programme.
     """
     if not learner_ids or connection.vendor != 'postgresql':
         return {}, [], []
     if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('learner_progress_ksbs'):
         return {}, [], []
     code_filter = {coverage_normalise_code(code) for code in programme_ksb_codes if coverage_normalise_code(code)}
+    scope_filter = {clean_str(value) for value in (component_ids or []) if clean_str(value)}
     totals = defaultdict(lambda: defaultdict(float))
     rows_out = []
     excluded_out = []
@@ -16388,6 +17279,14 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes):
         if code_filter and code not in code_filter:
             continue
         component_ref = clean_str(row.get('component_ref'))
+        if not (scope_filter or restrict_to_components):
+            scope_status = 'in_scope'
+        elif component_ref and component_ref in scope_filter:
+            scope_status = 'in_scope'
+        elif component_ref:
+            scope_status = 'out_of_scope'
+        else:
+            scope_status = 'unattributed'
         weight = float_weight(row.get('weight') or 0)
         counts_as_achieved = progress_counts_as_achieved(
             kind=row.get('kind'), passed=row.get('passed'),
@@ -16430,9 +17329,16 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes):
             'passed': row.get('passed'),
             'achievementStatus': achievement_status,
             'countsTowardAchievement': counts_as_achieved,
+            'scopeStatus': scope_status,
         }
         if not counts_as_achieved:
             excluded_out.append(payload)
+            continue
+        if scope_status == 'out_of_scope' or (scope_status == 'unattributed' and not include_unattributed):
+            # Achieved, but not achieved *here*. Reported so the gap between a
+            # learner's programme total and this scope's total is inspectable
+            # rather than an unexplained shortfall.
+            excluded_out.append({**payload, 'countsTowardAchievement': False})
             continue
         dedupe_key = (row.get('learner_id'), component_ref or row.get('progress_id'), code)
         if dedupe_key in seen:
@@ -16480,7 +17386,9 @@ def otjh_number(value):
     return float_weight(match.group(0)) if match else None
 
 
-def reflection_submission_ksb_consumption(learners, programme_ksb_codes, component_ids=()):
+def reflection_submission_ksb_consumption(learners, programme_ksb_codes, component_ids=(),
+                                          restrict_to_components=False,
+                                          include_unattributed=True):
     """Reflections for this programme's learners, resolved through Progress.
 
     A reflection is a write-up *about* a Progress activity, and
@@ -16514,6 +17422,13 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
     component in this programme that carry no ``progress_entry_id``: they cannot
     be attributed to a learner without guessing, so they are reported as a
     visible gap rather than silently dropped or silently credited.
+
+    ``restrict_to_components`` narrows the read to one part of the hierarchy the
+    same way ``learner_progress_ksb_consumption`` does, and for the same reason:
+    a reflection's *actual* OTJH is the only recorded figure for hours actually
+    done, so a cohort's achieved-OTJH total is only its own if the reflections
+    behind it belong to its own components. Rows keep a ``scopeStatus``, and the
+    ones outside the scope move to ``excluded_rows`` instead of being summed.
     """
     if connection.vendor != 'postgresql' or not learner_schema_table_exists('learning_reflection_submissions'):
         return {}, [], [], []
@@ -16533,7 +17448,7 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
             learners_by_profile_id.setdefault(str(value), row.get('id'))
     profile_ids = unique(learners_by_profile_id.keys())
     scoped_component_ids = unique([clean_str(value) for value in (component_ids or [])])
-    if not profile_ids and not scoped_component_ids:
+    if not profile_ids and not (scoped_component_ids or restrict_to_components):
         return {}, [], [], []
     select_columns = ['progress_entry_id', 'ksb_weights']
     for optional in (
@@ -16656,6 +17571,14 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
             or row.get('component_ref')
             or row.get('activity_id')
         )
+        if not restrict_to_components:
+            scope_status = 'in_scope'
+        elif component_id and component_id in set(scoped_component_ids):
+            scope_status = 'in_scope'
+        elif component_id:
+            scope_status = 'out_of_scope'
+        else:
+            scope_status = 'unattributed'
         declared_ksbs = [
             {'code': code, 'weight': float_weight(weight or 0)}
             for code, weight in sorted(weights.items(), key=lambda item: ksb_sort_key(item[0]))
@@ -16711,6 +17634,7 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
             'countsTowardAchievement': False,
             'ksbRole': 'supplementary_evidence',
             'activityCountsTowardAchievement': counts_as_achieved if linked else None,
+            'scopeStatus': scope_status,
         }
         # One row per declared code so consumers can index by code, plus a
         # single code-less row when a reflection declares none — otherwise the
@@ -16722,6 +17646,9 @@ def reflection_submission_ksb_consumption(learners, programme_ksb_codes, compone
                 unlinked_out.append(payload)
                 continue
             if not counts_as_achieved:
+                excluded_out.append(payload)
+                continue
+            if scope_status == 'out_of_scope' or (scope_status == 'unattributed' and not include_unattributed):
                 excluded_out.append(payload)
                 continue
             if item['code']:
@@ -16835,6 +17762,10 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
                 'reflection': None,
                 'evidence': [],
                 'evidenceCount': 0,
+                # Whether this activity belongs to the scope being reported on.
+                # See learner_progress_ksb_consumption(); an out-of-scope
+                # activity is real achievement that another scope owns.
+                'scopeStatus': 'in_scope',
             }
             activities[key] = entry
         if entry.get('learnerId') in (None, '') and learner_id not in (None, ''):
@@ -16860,6 +17791,8 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
         entry['progressStatus'] = row.get('achievementStatus') or entry['progressStatus']
         entry['passed'] = row.get('passed')
         entry['countsTowardAchievement'] = row.get('countsTowardAchievement')
+        if row.get('scopeStatus'):
+            entry['scopeStatus'] = row.get('scopeStatus')
         if entry['expectedOtjh'] is None and row.get('plannedOtjh') is not None:
             entry['expectedOtjh'] = row.get('plannedOtjh')
             entry['expectedOtjhSource'] = row.get('plannedOtjhSource') or 'not_returned'
@@ -16946,7 +17879,8 @@ def merge_ksb_totals(*sources):
     return {learner_id: dict(weights) for learner_id, weights in merged.items()}
 
 
-def learner_consumption_payload(learners, coverage_items, progress_totals, reflection_declared_totals):
+def learner_consumption_payload(learners, coverage_items, progress_totals, reflection_declared_totals,
+                                expected_by_learner=None):
     """Per-learner KSB consumption, with achieved and declared weight kept apart.
 
     ``consumedWeight`` is the canonical achieved weight and comes from the
@@ -16954,12 +17888,20 @@ def learner_consumption_payload(learners, coverage_items, progress_totals, refle
     learner's reflection claimed for the same activity — reported alongside as
     supplementary evidence, never added in. Summing both would double-count one
     activity's KSBs, which is the whole reason they are two fields.
+
+    ``expected_by_learner`` maps a learner id to the weight that learner is
+    actually assigned, which is not the same as the scope total whenever the scope
+    spans more than one group: a module belongs to one group, so a cohort holds
+    one module instance per group and summing them all over-states every
+    learner's denominator. Omit it and the scope total stands in for everyone,
+    which is only correct for a single-group scope.
     """
     expected = {
         coverage_normalise_code(item.get('code')): float(item.get('raw_total_weight') or item.get('rawTotalWeight') or 0)
         for item in coverage_items
         if coverage_normalise_code(item.get('code'))
     }
+    expected_by_learner = expected_by_learner or {}
     achieved = merge_ksb_totals(progress_totals)
     declared = merge_ksb_totals(reflection_declared_totals)
     output = []
@@ -16968,10 +17910,16 @@ def learner_consumption_payload(learners, coverage_items, progress_totals, refle
         weights = achieved.get(learner_id, {})
         declared_weights = declared.get(learner_id, {})
         consumed_total = sum(float(value or 0) for value in weights.values())
-        expected_total = sum(expected.values())
+        learner_expected = expected_by_learner.get(learner_id)
+        learner_expected = expected if learner_expected is None else {
+            coverage_normalise_code(code): float(value or 0)
+            for code, value in learner_expected.items()
+            if coverage_normalise_code(code)
+        }
+        expected_total = sum(learner_expected.values())
         ksb_rows = []
-        for code in sorted(set(expected) | set(weights), key=ksb_sort_key):
-            expected_weight = expected.get(code, 0)
+        for code in sorted(set(learner_expected) | set(weights), key=ksb_sort_key):
+            expected_weight = learner_expected.get(code, 0)
             consumed_weight = float(weights.get(code, 0) or 0)
             pct = round((consumed_weight / expected_weight) * 100, 1) if expected_weight else (100 if consumed_weight else 0)
             ksb_rows.append({
@@ -17051,20 +17999,543 @@ def apply_reflection_otjh_to_learners(learners, reflection_rows):
     return learners
 
 
-@require_GET
-def curriculum_programme_learner_roster(request, programme_id):
-    """List the learners the enrolment team assigned to this programme.
+# ---------------------------------------------------------------------------
+# Scope achievement roll-ups.
+#
+# Curriculum plans; learners consume. These helpers turn one scope's authored
+# plan (components, their expected OTJH, their KSB weights) and the actual
+# consumption underneath it into the two numbers every level of the hierarchy is
+# asked for: how many OTJH have really been achieved, and how much of each KSB's
+# weight has really been earned.
+#
+# Every figure names its source. `planned` is what curriculum authored,
+# `declared` is what the learner wrote down, and `achieved` is the credited
+# figure — declared where a reflection exists, the component's expectation where
+# the activity completed without one. Keeping them apart is the point: merging
+# them into a single "hours" field is what made the old per-learner totals
+# unreadable.
+# ---------------------------------------------------------------------------
+
+def scope_authored_plan(module_rows, component_rows, coverage_items):
+    """What this scope authored, split by the group that delivers it.
+
+    A module belongs to exactly one group (``curriculum.modules.group_id``), so a
+    cohort running two groups holds two module instances and the sum of its
+    components is *not* what any single learner is assigned. Summing the whole
+    scope and calling it "planned per learner" over-states the denominator by the
+    number of groups, which turns every percentage into a fraction of the truth.
+
+    So the plan is keyed by group label, and a learner is measured against the
+    group enrolment placed them in. ``scopeOtjh``/``scopeKsbWeights`` remain the
+    whole scope's authored content, which is a different and still useful fact.
+    """
+    group_by_module = {}
+    for row in module_rows or []:
+        module_id = clean_str(row.get('module_catalogue_id'))
+        if module_id:
+            group_by_module[module_id] = normalise(row.get('group_name') or row.get('group_id'))
+
+    otjh_by_group = defaultdict(float)
+    scope_otjh = 0.0
+    for row in component_rows or []:
+        value = otjh_number(row.get('expected_otjh'))
+        if value is None:
+            continue
+        key = group_by_module.get(clean_str(row.get('module_catalogue_id')), '')
+        otjh_by_group[key] += float(value)
+        scope_otjh += float(value)
+
+    # KSB weight is taken from the coverage payload's own mappings rather than
+    # re-summed from the mapping rows, so the per-group split always adds back up
+    # to the `raw_total_weight` the heatmap shows.
+    ksb_by_group = defaultdict(lambda: defaultdict(float))
+    scope_ksb = defaultdict(float)
+    for item in coverage_items or []:
+        code = coverage_normalise_code(item.get('code'))
+        if not code:
+            continue
+        scope_ksb.setdefault(code, 0.0)
+        for mapping in item.get('mappings') or []:
+            value = float(mapping.get('weight') or 0)
+            key = normalise(
+                mapping.get('group_name')
+                or mapping.get('groupName')
+                or group_by_module.get(clean_str(mapping.get('module_id') or mapping.get('moduleId')), '')
+            )
+            ksb_by_group[key][code] += value
+            scope_ksb[code] += value
+
+    return {
+        'componentCount': len(component_rows or []),
+        'groupKeys': set(otjh_by_group) | set(ksb_by_group),
+        'otjhByGroup': dict(otjh_by_group),
+        'ksbByGroup': {key: dict(value) for key, value in ksb_by_group.items()},
+        'scopeOtjh': float_weight(scope_otjh),
+        'scopeKsbWeights': dict(scope_ksb),
+    }
+
+
+def learner_authored_plan(plan, learner, unmatched='scope'):
+    """The slice of the authored plan one learner is actually assigned.
+
+    ``basis`` says which it is. ``group`` when the learner's placement matches a
+    group that delivers modules in this scope. Otherwise ``unmatched`` decides:
+    ``scope`` hands them the whole scope, ``none`` hands them nothing. Which is
+    right is not a per-learner question — see ``learner_plans_for_scope``.
+    """
+    key = normalise(learner.get('group'))
+    if key and key in plan.get('groupKeys', set()):
+        return {
+            'otjh': float_weight(plan['otjhByGroup'].get(key, 0)),
+            'ksbWeights': dict(plan['ksbByGroup'].get(key, {})),
+            'basis': 'group',
+        }
+    if unmatched == 'none':
+        return {'otjh': 0, 'ksbWeights': {}, 'basis': 'none'}
+    return {
+        'otjh': plan.get('scopeOtjh', 0),
+        'ksbWeights': dict(plan.get('scopeKsbWeights', {})),
+        'basis': 'scope',
+    }
+
+
+def learner_plans_for_scope(plan, learners):
+    """Every learner's slice of the authored plan, deciding the fallback once.
+
+    Two different situations look the same one learner at a time, so the choice
+    is made across the whole roster:
+
+    * some placements match a group that delivers here — then a learner whose
+      group does not match genuinely has nothing planned in this scope, and gets
+      nothing (``basis: none``). Handing them the scope total would invent an
+      expectation and drag every percentage down.
+    * no placement matches any of them (or the scope records no group labels at
+      all) — that is a label mismatch between ``curriculum.modules.group_name``
+      and ``"Learner"."learners".group_name``, not an empty curriculum. Reporting
+      zero for everyone would state the wrong thing, so the whole scope stands in
+      and every row says ``basis: scope`` so the substitution is visible.
+    """
+    group_keys = {key for key in plan.get('groupKeys', set()) if key}
+    placements = {normalise(learner.get('group')) for learner in learners or []}
+    unmatched = 'none' if (group_keys and (group_keys & placements)) else 'scope'
+    return {
+        learner.get('id'): learner_authored_plan(plan, learner, unmatched)
+        for learner in learners or []
+    }
+
+
+def scope_otjh_summary(plan, learner_plans, learners, activities):
+    """Achieved vs planned OTJH for one scope, and the per-learner rows behind it.
+
+    ``achievedTotal`` is the credited figure and the one to show: a learner's own
+    declared hours where the reflection exists, and the component's expected
+    hours where the activity completed without one. Reporting only declared hours
+    would under-count every quiz and assignment that carries no reflection;
+    reporting only expected hours would ignore what the learner actually wrote.
+    Both underlying totals are returned so either can be read on its own.
+
+    ``authoredTotal`` is everything this scope contains; ``plannedTotal`` is the
+    sum of what its learners are each assigned. They differ whenever a scope
+    spans more than one group — see ``scope_authored_plan``.
+    """
+    buckets = {}
+    for entry in activities or []:
+        if not entry.get('countsTowardAchievement'):
+            continue
+        if entry.get('scopeStatus') not in (None, '', 'in_scope'):
+            continue
+        learner_id = entry.get('learnerId')
+        bucket = buckets.setdefault(learner_id, {
+            'declared': 0.0, 'credited': 0.0, 'activities': 0, 'reflections': 0,
+        })
+        bucket['activities'] += 1
+        expected = otjh_number(entry.get('expectedOtjh'))
+        actual = otjh_number(entry.get('actualOtjh'))
+        if actual is not None:
+            bucket['declared'] += float(actual)
+            bucket['reflections'] += 1
+            bucket['credited'] += float(actual)
+        elif expected is not None:
+            bucket['credited'] += float(expected)
+    learner_rows = []
+    for learner in learners or []:
+        learner_id = learner.get('id')
+        learner_plan = learner_plans.get(learner_id) or learner_authored_plan(plan, learner)
+        # 'none' means no module in this scope is delivered to this learner's
+        # group, which is a real answer and not a missing figure.
+        planned = float(learner_plan.get('otjh') or 0)
+        bucket = buckets.get(learner_id) or {
+            'declared': 0.0, 'credited': 0.0, 'activities': 0, 'reflections': 0,
+        }
+        learner_rows.append({
+            'learnerId': learner_id,
+            'learnerName': learner.get('name') or '',
+            'email': learner.get('email') or '',
+            'cohort': learner.get('cohort') or '',
+            'group': learner.get('group') or '',
+            'plannedOtjh': float_weight(planned),
+            'plannedBasis': learner_plan.get('basis') or 'scope',
+            'achievedOtjh': float_weight(bucket['credited']),
+            'declaredOtjh': float_weight(bucket['declared']),
+            'completedActivityCount': bucket['activities'],
+            'reflectionCount': bucket['reflections'],
+            'progressPercentage': (
+                round(min(bucket['credited'] / planned, 1) * 100, 1) if planned else 0
+            ),
+            # The learner's whole-programme figures from "Learner"."learners",
+            # kept alongside so a scope total is never mistaken for them.
+            'programmeCompletedHours': learner.get('completedHours'),
+            'programmeTargetHours': learner.get('targetHours'),
+        })
+    achieved_total = float_weight(sum(row['achievedOtjh'] for row in learner_rows))
+    declared_total = float_weight(sum(row['declaredOtjh'] for row in learner_rows))
+    planned_total = float_weight(sum(row['plannedOtjh'] for row in learner_rows))
+    return {
+        'componentCount': plan.get('componentCount', 0),
+        'learnerCount': len(learner_rows),
+        # Everything this scope authored, once. Not a per-learner figure when the
+        # scope spans several groups.
+        'authoredTotal': plan.get('scopeOtjh', 0),
+        'plannedPerLearner': (
+            float_weight(planned_total / len(learner_rows)) if learner_rows else plan.get('scopeOtjh', 0)
+        ),
+        'plannedTotal': planned_total,
+        'achievedTotal': achieved_total,
+        'declaredTotal': declared_total,
+        'creditedFromExpectedTotal': float_weight(achieved_total - declared_total),
+        'achievedPerLearnerAverage': (
+            float_weight(achieved_total / len(learner_rows)) if learner_rows else 0
+        ),
+        'progressPercentage': (
+            round(min(achieved_total / planned_total, 1) * 100, 1) if planned_total else 0
+        ),
+        'completedActivityCount': sum(row['completedActivityCount'] for row in learner_rows),
+        'reflectionCount': sum(row['reflectionCount'] for row in learner_rows),
+        'learners': learner_rows,
+        'sources': {
+            'plannedOtjh': 'curriculum.components.expected_otjh (of the learner\'s group)',
+            'authoredOtjh': 'curriculum.components.expected_otjh (whole scope)',
+            'declaredOtjh': 'Learner.learning_reflection_submissions.actual_time_hours',
+            'creditedFromExpected': 'learner_progress_entries.expected_otjh|curriculum.components.expected_otjh',
+            'completionGate': 'learner_api.progress_rules',
+        },
+    }
+
+
+def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, learner_plans):
+    """Per-KSB achieved weight for one scope — the heatmap's achieved layer.
+
+    ``plannedWeight`` is what this scope authored for the KSB, once.
+    ``expectedWeightTotal`` is what its learners are between them assigned: the
+    weight authored in each learner's own group, summed. Those differ whenever a
+    scope spans more than one group, and using the first as a denominator for the
+    second is how a cohort percentage ends up a fraction of the truth.
+
+    ``cappedAchievedWeightTotal`` caps each learner at their own expectation,
+    which is what a percentage may be taken of; ``achievedWeightTotal`` is the
+    uncapped sum, reported so over-delivery stays visible rather than clipped.
+
+    Codes are keyed by code alone. A code authored against two different KSB
+    sources appears once, because ``learner_progress_ksbs`` records a code and
+    not the source it was authored from — the same collapse
+    ``learner_consumption_payload`` already makes.
+    """
+    definitions = {}
+    required_codes = set()
+    for item in coverage_items or []:
+        code = coverage_normalise_code(item.get('code'))
+        if not code:
+            continue
+        required_codes.add(code)
+        definitions.setdefault(code, {
+            'title': clean_str(item.get('title')) or code,
+            'ksbType': clean_str(item.get('ksb_type') or item.get('ksbType')),
+            'sourceType': clean_str(item.get('source_type') or item.get('sourceType')),
+            'sourceId': clean_str(item.get('source_id') or item.get('sourceId')),
+            'sourceLabel': clean_str(item.get('source_label') or item.get('sourceLabel')),
+        })
+    planned = dict(plan.get('scopeKsbWeights', {}))
+
+    expected_totals = defaultdict(float)
+    learners_expected = defaultdict(set)
+    for learner in learners or []:
+        weights = (learner_plans.get(learner.get('id')) or {}).get('ksbWeights') or {}
+        for code, value in weights.items():
+            code = coverage_normalise_code(code)
+            if not code or not value:
+                continue
+            expected_totals[code] += float(value)
+            learners_expected[code].add(learner.get('id'))
+
+    achieved = defaultdict(float)
+    capped = defaultdict(float)
+    declared = defaultdict(float)
+    learners_with = defaultdict(set)
+    learners_complete = defaultdict(set)
+    for row in learner_consumption or []:
+        learner_id = row.get('learnerId')
+        for item in row.get('ksbs') or []:
+            code = coverage_normalise_code(item.get('code'))
+            if not code:
+                continue
+            consumed = float(item.get('consumedWeight') or 0)
+            achieved[code] += consumed
+            capped[code] += float(item.get('cappedConsumedWeight') or 0)
+            declared[code] += float(item.get('declaredReflectionWeight') or 0)
+            if consumed > 0:
+                learners_with[code].add(learner_id)
+            if item.get('status') == 'complete':
+                learners_complete[code].add(learner_id)
+
+    learner_count = len(learners or [])
+    rows = []
+    for code in sorted(required_codes | set(achieved), key=ksb_sort_key):
+        planned_weight = float_weight(planned.get(code, 0))
+        expected_total = float_weight(expected_totals.get(code, 0))
+        capped_total = float_weight(capped.get(code, 0))
+        # How many learners this KSB is actually authored for. A cohort where only
+        # one group teaches a KSB must not read as the whole cohort failing it.
+        expected_learners = len(learners_expected.get(code, ())) or (learner_count if planned_weight else 0)
+        definition = definitions.get(code, {})
+        if code not in required_codes:
+            status = 'unplanned'
+        elif not planned_weight:
+            status = 'unmapped'
+        elif expected_learners and len(learners_complete.get(code, ())) >= expected_learners:
+            status = 'complete'
+        elif learners_with.get(code):
+            status = 'in_progress'
+        else:
+            status = 'not_started'
+        rows.append({
+            'code': code,
+            'title': definition.get('title') or code,
+            'ksbType': definition.get('ksbType') or '',
+            'sourceType': definition.get('sourceType') or '',
+            'sourceId': definition.get('sourceId') or '',
+            'sourceLabel': definition.get('sourceLabel') or '',
+            'plannedWeight': planned_weight,
+            'expectedWeightTotal': expected_total,
+            'achievedWeightTotal': float_weight(achieved.get(code, 0)),
+            'cappedAchievedWeightTotal': capped_total,
+            'declaredReflectionWeightTotal': float_weight(declared.get(code, 0)),
+            'learnerCount': expected_learners,
+            'learnersAchievedCount': len(learners_with.get(code, ())),
+            'learnersCompleteCount': len(learners_complete.get(code, ())),
+            'achievementPercentage': (
+                round(min(capped_total / expected_total, 1) * 100, 1) if expected_total else 0
+            ),
+            'status': status,
+        })
+    expected_total = float_weight(sum(row['expectedWeightTotal'] for row in rows))
+    capped_total = float_weight(sum(row['cappedAchievedWeightTotal'] for row in rows))
+    return {
+        'learnerCount': learner_count,
+        'requiredCount': len(required_codes),
+        'ksbCount': len(rows),
+        'mappedCount': len([row for row in rows if row['status'] != 'unplanned' and row['plannedWeight']]),
+        'unmappedCount': len([row for row in rows if row['status'] == 'unmapped']),
+        # Consumed by a learner but authored nowhere in this scope. A visible
+        # figure rather than a row that silently reads as achievement.
+        'unplannedCount': len([row for row in rows if row['status'] == 'unplanned']),
+        'startedCount': len([row for row in rows if row['learnersAchievedCount']]),
+        'notStartedCount': len([row for row in rows if not row['learnersAchievedCount']]),
+        'plannedWeightTotal': float_weight(sum(row['plannedWeight'] for row in rows)),
+        'expectedWeightTotal': expected_total,
+        'achievedWeightTotal': float_weight(sum(row['achievedWeightTotal'] for row in rows)),
+        'cappedAchievedWeightTotal': capped_total,
+        'declaredReflectionWeightTotal': float_weight(sum(row['declaredReflectionWeightTotal'] for row in rows)),
+        'progressPercentage': (
+            round(min(capped_total / expected_total, 1) * 100, 1) if expected_total else 0
+        ),
+        'learnersWithAchievement': len({
+            row.get('learnerId') for row in learner_consumption or []
+            if float(row.get('consumedWeightTotal') or 0) > 0
+        }),
+        'rows': rows,
+        'sources': {
+            'plannedWeight': 'curriculum.ksb_mappings.weight (whole scope)',
+            'expectedWeight': 'curriculum.ksb_mappings.weight (of each learner\'s group)',
+            'achievedWeight': 'Learner.learner_progress_ksbs.weight',
+            'declaredWeight': 'Learner.learning_reflection_submissions.ksb_weights',
+        },
+    }
+
+
+def scope_learner_ksb_impact_payload(request, scope, identifier):
+    """The one read behind every scope's achievement view.
+
+    Programme, cohort, group, module, week and component all answer the same
+    question — who is in this scope, what did curriculum plan for them, and what
+    have they actually consumed — so they share one implementation rather than
+    six that drift. What changes per scope is only which components are in it and
+    which learners it resolves to.
+    """
+    scope = clean_str(scope) or 'programme'
+    identifier = clean_str(identifier)
+    lineage = scope_placement_lineage(scope, identifier)
+    module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(scope, identifier)
+    if not lineage.get('found') and not module_rows:
+        return None, json_error(f'{scope.title()} not found.', status=404)
+    mapping_rows = mappings_with_inferred_sources(mapping_rows, module_rows)
+    required_ksbs = required_ksbs_for_request(request, module_rows, scope, identifier)
+    coverage = annotate_coverage_sources(build_coverage(
+        required_ksbs,
+        mapping_rows,
+        module_rows,
+        week_rows,
+        component_rows,
+        include_mapping_only=not bool(required_ksbs),
+    ))
+    learner_status = clean_str(request.GET.get('learnerStatus') or request.GET.get('status'))
+    learners = assigned_learners_for_scope(
+        scope,
+        identifier,
+        '' if learner_status.lower() in {'', 'all'} else learner_status,
+        lineage=lineage,
+    )
+    learner_ids = [
+        int(row.get('sourceId') if row.get('sourceKind') == 'learner' else row.get('id'))
+        for row in learners
+        if str(row.get('sourceId') if row.get('sourceKind') == 'learner' else row.get('id')).isdigit()
+    ]
+    scope_codes = [item.get('code') for item in coverage.get('items', [])]
+    component_ids = [clean_str(row.get('id')) for row in component_rows if clean_str(row.get('id'))]
+    # What this scope authored, split by the group that delivers it, so every
+    # denominator below is the weight and hours a single learner is assigned
+    # rather than the scope's whole content.
+    plan = scope_authored_plan(module_rows, component_rows, coverage.get('items', []))
+    # Only the programme — the widest scope — may count an activity that carries
+    # no component reference. Anywhere narrower that would be a guess about which
+    # cohort or group the activity belonged to.
+    include_unattributed = scope == 'programme'
+    progress_totals, progress_rows, excluded_progress_rows = learner_progress_ksb_consumption(
+        learner_ids, scope_codes, component_ids, include_unattributed,
+        restrict_to_components=not include_unattributed,
+    )
+    (
+        reflection_declared_totals,
+        reflection_rows,
+        excluded_reflection_rows,
+        unlinked_reflection_rows,
+    ) = reflection_submission_ksb_consumption(
+        learners, scope_codes, component_ids,
+        restrict_to_components=not include_unattributed,
+        include_unattributed=include_unattributed,
+    )
+    evidence_by_progress = progress_evidence_index(
+        [row.get('progressId') for row in progress_rows]
+        + [row.get('progressId') for row in excluded_progress_rows]
+        + [row.get('progressEntryId') for row in reflection_rows]
+        + [row.get('progressEntryId') for row in excluded_reflection_rows]
+    )
+    activities = learner_activity_trace(
+        progress_rows,
+        excluded_progress_rows,
+        reflection_rows,
+        excluded_reflection_rows,
+        evidence_by_progress,
+    )
+    learners = apply_reflection_otjh_to_learners(learners, reflection_rows)
+    learner_plans = learner_plans_for_scope(plan, learners)
+    learner_consumption = learner_consumption_payload(
+        learners,
+        coverage.get('items', []),
+        progress_totals,
+        reflection_declared_totals,
+        expected_by_learner={
+            learner_id: entry.get('ksbWeights') or {}
+            for learner_id, entry in learner_plans.items()
+        },
+    )
+    out_of_scope_progress = [
+        row for row in excluded_progress_rows
+        if row.get('scopeStatus') in {'out_of_scope', 'unattributed'}
+    ]
+    excluded_progress_rows = [
+        row for row in excluded_progress_rows
+        if row.get('scopeStatus') not in {'out_of_scope', 'unattributed'}
+    ]
+    otjh = scope_otjh_summary(plan, learner_plans, learners, activities)
+    ksb = scope_ksb_achievement(
+        coverage.get('items', []), learner_consumption, learners, plan, learner_plans,
+    )
+    payload = {
+        'scope': scope,
+        'identifier': identifier,
+        'lineage': lineage,
+        'placementBasis': lineage.get('placementBasis'),
+        'structure': {
+            'moduleCount': len(module_rows),
+            'weekCount': len(week_rows),
+            'componentCount': len(component_rows),
+            'ksbMappingCount': len(mapping_rows),
+            # How many distinct groups deliver this scope. Above one, the scope's
+            # authored totals and its per-learner totals are different figures.
+            'groupCount': len({key for key in plan.get('groupKeys', set()) if key}),
+        },
+        'assignedLearnerCount': len(learners),
+        'assignedLearners': learners,
+        # Retained key name: the programme view has always read
+        # `programmeCoverage`, and it is the same coverage payload whatever the
+        # scope. `coverage` is the scope-neutral alias.
+        'programmeCoverage': coverage,
+        'coverage': coverage,
+        # The two roll-ups this whole read exists for: hours actually done, and
+        # KSB weight actually earned, for this scope and no other.
+        'otjhAchievement': otjh,
+        'ksbAchievement': ksb,
+        'learnerKsbConsumption': learner_consumption,
+        'learnerActivities': activities,
+        'learnerActivityCount': len(activities),
+        'ksbAchievementPolicy': {
+            'achievedWeightSource': 'learner_progress_ksbs',
+            'reflectionKsbRole': 'supplementary_evidence',
+            'reflectionKsbCountsTowardAchievedWeight': False,
+            'reflectionLearnerResolution': 'progress_entry_id',
+            'expectedOtjhSource': 'learner_progress_entries|curriculum_component',
+            'actualOtjhSource': 'learning_reflection_submissions',
+            'scopeAttribution': 'curriculum.components.id',
+            'unattributedActivityCounts': include_unattributed,
+            # A learner is measured against the modules of the group enrolment
+            # placed them in, not against every module in the scope.
+            'expectedWeightBasis': 'learner_group',
+            'plannedOtjhBasis': 'learner_group',
+        },
+        'consumptionSources': {
+            'progress': progress_rows,
+            'learningReflectionSubmissions': reflection_rows,
+            'excludedProgress': excluded_progress_rows,
+            'excludedLearningReflectionSubmissions': excluded_reflection_rows,
+            'unlinkedLearningReflectionSubmissions': unlinked_reflection_rows,
+            # Achieved activity that belongs to a different scope inside the same
+            # programme. Reported so the gap between this scope's total and the
+            # learner's programme total is inspectable.
+            'outOfScopeProgress': out_of_scope_progress,
+            'evidenceByProgressEntry': evidence_by_progress,
+        },
+    }
+    return payload, None
+
+
+def scope_learner_roster_payload(request, scope, identifier):
+    """Who enrolment placed inside a curriculum scope, and how they split up.
 
     Curriculum never writes learner placements: ``Learner.learners`` is owned by
-    enrolment and read here so the programme view can show who is arriving in
-    each cohort/group. Optional ``cohort``/``group`` query params narrow the
-    roster using the same case/whitespace-insensitive comparison the delivery
-    counts use, because curriculum stores labels rather than learner ids.
+    enrolment and read here so each level of the hierarchy can show who is
+    arriving. A module/week/component has no roster of its own — the learners who
+    meet it are the ones placed in the group that delivers it, which is what
+    ``placementBasis`` says out loud.
     """
+    scope = clean_str(scope) or 'programme'
+    identifier = clean_str(identifier)
+    lineage = scope_placement_lineage(scope, identifier)
     learner_status = clean_str(request.GET.get('learnerStatus') or request.GET.get('status'))
-    learners = assigned_learners_for_programme(
-        programme_id,
+    learners = assigned_learners_for_scope(
+        scope,
+        identifier,
         '' if learner_status.lower() in {'', 'all'} else learner_status,
+        lineage=lineage,
     )
     cohort_filter = normalise(clean_str(request.GET.get('cohort')))
     group_filter = normalise(clean_str(request.GET.get('group')))
@@ -17083,9 +18554,11 @@ def curriculum_programme_learner_roster(request, programme_id):
         if cohort_name and group_name:
             by_group[f'{cohort_name}||{group_name}'] += 1
 
-    return JsonResponse({
-        'scope': 'programme',
-        'identifier': programme_id,
+    return {
+        'scope': scope,
+        'identifier': identifier,
+        'lineage': lineage,
+        'placementBasis': lineage.get('placementBasis'),
         # Placements are made by enrolment; curriculum only reads them.
         'source': 'enrolment',
         'editable': False,
@@ -17093,110 +18566,106 @@ def curriculum_programme_learner_roster(request, programme_id):
         'assignedLearners': learners,
         'countsByCohort': dict(by_cohort),
         'countsByGroup': dict(by_group),
-    })
+    }
+
+
+# ---------------------------------------------------------------------------
+# Learner roster and achievement, one endpoint shape per scope.
+#
+# Programme -> Cohort -> Group -> Module -> Week -> Component. Each level answers
+# the same two questions about itself and nothing else: who is assigned here, and
+# what have they actually achieved here. They are thin wrappers over one
+# implementation on purpose — six copies of this read would drift, and the whole
+# value of the roll-up is that a cohort's number and its programme's number are
+# computed the same way.
+# ---------------------------------------------------------------------------
+
+@require_GET
+def curriculum_programme_learner_roster(request, programme_id):
+    return JsonResponse(scope_learner_roster_payload(request, 'programme', programme_id))
+
+
+@require_GET
+def curriculum_cohort_learner_roster(request, cohort_id):
+    return JsonResponse(scope_learner_roster_payload(request, 'cohort', cohort_id))
+
+
+@require_GET
+def curriculum_group_learner_roster(request, group_id):
+    return JsonResponse(scope_learner_roster_payload(request, 'group', group_id))
+
+
+@require_GET
+def curriculum_module_learner_roster(request, module_catalogue_id):
+    return JsonResponse(scope_learner_roster_payload(request, 'module', module_catalogue_id))
+
+
+@require_GET
+def curriculum_week_learner_roster(request, week_id):
+    return JsonResponse(scope_learner_roster_payload(request, 'week', week_id))
 
 
 @require_GET
 def curriculum_programme_learner_ksb_impact(request, programme_id):
-    # Existence is the programmes config, not the module rows. A programme that
-    # exists but has no modules yet is empty, not missing, and must report its
-    # roster and an empty coverage rather than 404 -- the sibling roster
-    # endpoint already reads that way.
-    if not programme_config_by_identifier(programme_id):
-        return json_error('Programme not found.', status=404)
-    module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data('programme', programme_id)
-    mapping_rows = mappings_with_inferred_sources(mapping_rows, module_rows)
-    required_ksbs = required_ksbs_for_request(request, module_rows, 'programme', programme_id)
-    coverage = annotate_coverage_sources(build_coverage(
-        required_ksbs,
-        mapping_rows,
-        module_rows,
-        week_rows,
-        component_rows,
-        include_mapping_only=not bool(required_ksbs),
-    ))
-    learner_status = clean_str(request.GET.get('learnerStatus') or request.GET.get('status'))
-    learners = assigned_learners_for_programme(
-        programme_id,
-        '' if learner_status.lower() in {'', 'all'} else learner_status,
-    )
-    learner_ids = [
-        int(row.get('sourceId') if row.get('sourceKind') == 'learner' else row.get('id'))
-        for row in learners
-        if str(row.get('sourceId') if row.get('sourceKind') == 'learner' else row.get('id')).isdigit()
-    ]
-    programme_codes = [item.get('code') for item in coverage.get('items', [])]
-    progress_totals, progress_rows, excluded_progress_rows = learner_progress_ksb_consumption(
-        learner_ids, programme_codes,
-    )
-    (
-        reflection_declared_totals,
-        reflection_rows,
-        excluded_reflection_rows,
-        unlinked_reflection_rows,
-    ) = reflection_submission_ksb_consumption(
-        learners, programme_codes, [row.get('id') for row in component_rows],
-    )
-    evidence_by_progress = progress_evidence_index(
-        [row.get('progressId') for row in progress_rows]
-        + [row.get('progressId') for row in excluded_progress_rows]
-        + [row.get('progressEntryId') for row in reflection_rows]
-        + [row.get('progressEntryId') for row in excluded_reflection_rows]
-    )
-    activities = learner_activity_trace(
-        progress_rows,
-        excluded_progress_rows,
-        reflection_rows,
-        excluded_reflection_rows,
-        evidence_by_progress,
-    )
-    learners = apply_reflection_otjh_to_learners(learners, reflection_rows)
-    learner_consumption = learner_consumption_payload(
-        learners,
-        coverage.get('items', []),
-        progress_totals,
-        reflection_declared_totals,
-    )
-    return JsonResponse({
-        'scope': 'programme',
-        'identifier': programme_id,
-        'assignedLearnerCount': len(learners),
-        'assignedLearners': learners,
-        'programmeCoverage': coverage,
-        'learnerKsbConsumption': learner_consumption,
-        # One entry per Progress activity, joined on
-        # `learner_progress_entries.id`: Component, Progress, expected OTJH,
-        # Reflection, actual OTJH, Evidence, KSB snapshot, progress status.
-        'learnerActivities': activities,
-        'learnerActivityCount': len(activities),
-        # States the aggregation rule in the payload so no consumer has to infer
-        # it: achieved weight has exactly one source, and a reflection's KSB
-        # declaration is evidence about the activity, not a second helping of it.
-        'ksbAchievementPolicy': {
-            'achievedWeightSource': 'learner_progress_ksbs',
-            'reflectionKsbRole': 'supplementary_evidence',
-            'reflectionKsbCountsTowardAchievedWeight': False,
-            'reflectionLearnerResolution': 'progress_entry_id',
-            'expectedOtjhSource': 'learner_progress_entries|curriculum_component',
-            'actualOtjhSource': 'learning_reflection_submissions',
-        },
-        'consumptionSources': {
-            'progress': progress_rows,
-            'learningReflectionSubmissions': reflection_rows,
-            # Recorded activity that exists but does not count as achieved KSB
-            # delivery (a failed attempt, or a graded attempt with no outcome).
-            # Returned so the exclusion is visible and auditable rather than
-            # silent; deliberately kept out of the two lists above, which every
-            # consumer sums as achievement.
-            'excludedProgress': excluded_progress_rows,
-            'excludedLearningReflectionSubmissions': excluded_reflection_rows,
-            # Reflections against a component in this programme that carry no
-            # `progress_entry_id`. They cannot be attributed to a learner
-            # without guessing, so they are reported here as a visible gap.
-            'unlinkedLearningReflectionSubmissions': unlinked_reflection_rows,
-            'evidenceByProgressEntry': evidence_by_progress,
-        },
-    })
+    payload, error = scope_learner_ksb_impact_payload(request, 'programme', programme_id)
+    return error or JsonResponse(payload)
+
+
+@require_GET
+def curriculum_cohort_learner_ksb_impact(request, cohort_id):
+    payload, error = scope_learner_ksb_impact_payload(request, 'cohort', cohort_id)
+    return error or JsonResponse(payload)
+
+
+@require_GET
+def curriculum_group_learner_ksb_impact(request, group_id):
+    payload, error = scope_learner_ksb_impact_payload(request, 'group', group_id)
+    return error or JsonResponse(payload)
+
+
+@require_GET
+def curriculum_module_learner_ksb_impact(request, module_catalogue_id):
+    payload, error = scope_learner_ksb_impact_payload(request, 'module', module_catalogue_id)
+    return error or JsonResponse(payload)
+
+
+@require_GET
+def curriculum_week_learner_ksb_impact(request, week_id):
+    payload, error = scope_learner_ksb_impact_payload(request, 'week', week_id)
+    return error or JsonResponse(payload)
+
+
+@require_GET
+def curriculum_scope_learner_ksb_impact(request):
+    """The same read addressed by ``?scope=&identifier=``.
+
+    One route for a caller that already holds a scope and an id and does not want
+    to pick a URL per level — the drill-down in the Programme workspace uses it.
+    """
+    scope = clean_str(request.GET.get('scope')) or 'programme'
+    identifier = clean_str(request.GET.get('identifier') or request.GET.get('id'))
+    if scope not in CURRICULUM_LEARNER_SCOPES:
+        return json_error(
+            f'Unsupported scope. Expected one of: {", ".join(CURRICULUM_LEARNER_SCOPES)}.',
+        )
+    if not identifier:
+        return json_error('An identifier is required.')
+    payload, error = scope_learner_ksb_impact_payload(request, scope, identifier)
+    return error or JsonResponse(payload)
+
+
+@require_GET
+def curriculum_scope_learner_roster(request):
+    """``?scope=&identifier=`` form of the roster read."""
+    scope = clean_str(request.GET.get('scope')) or 'programme'
+    identifier = clean_str(request.GET.get('identifier') or request.GET.get('id'))
+    if scope not in CURRICULUM_LEARNER_SCOPES:
+        return json_error(
+            f'Unsupported scope. Expected one of: {", ".join(CURRICULUM_LEARNER_SCOPES)}.',
+        )
+    if not identifier:
+        return json_error('An identifier is required.')
+    return JsonResponse(scope_learner_roster_payload(request, scope, identifier))
 
 
 @csrf_exempt
@@ -17436,6 +18905,11 @@ def curriculum_programme_ksb_coverage(request, programme_id):
 @require_GET
 def curriculum_cohort_ksb_coverage(request, cohort_id):
     return coverage_response(request, 'cohort', cohort_id)
+
+
+@require_GET
+def curriculum_group_ksb_coverage(request, group_id):
+    return coverage_response(request, 'group', group_id)
 
 
 @require_GET
@@ -19584,6 +21058,36 @@ def provision_week_template_tables():
                 updated_at timestamp not null default current_timestamp
             )
         ''')
+        # week_templates was left out of migration 0041's list, so it had no
+        # soft-delete columns at all. It needs them for its DELETE to archive
+        # rather than destroy a reusable template. Mirrors migration 0053.
+        if connection.vendor == 'postgresql':
+            for column, column_type in (
+                ('deleted_at', 'timestamp with time zone'),
+                ('deleted_by', 'varchar(255)'),
+                ('deleted_via_parent', 'varchar(255)'),
+            ):
+                cursor.execute(
+                    f'alter table {authoring_table_name(WEEK_TEMPLATES_TABLE)} '
+                    f'add column if not exists {quote_ident(column)} {column_type}'
+                )
+        else:
+            cursor.execute(f'pragma table_info({quote_ident(WEEK_TEMPLATES_TABLE)})')
+            existing = {row[1] for row in cursor.fetchall()}
+            for column, column_type in (
+                ('deleted_at', 'timestamp with time zone'),
+                ('deleted_by', 'varchar(255)'),
+                ('deleted_via_parent', 'varchar(255)'),
+            ):
+                if column not in existing:
+                    cursor.execute(
+                        f'alter table {authoring_table_name(WEEK_TEMPLATES_TABLE)} '
+                        f'add column {quote_ident(column)} {column_type}'
+                    )
+    # soft_delete_rows() decides what to write through has_column, so a cache
+    # entry taken before those columns landed would make the archive a no-op.
+    _TABLE_COLUMNS_CACHE.pop(WEEK_TEMPLATES_TABLE, None)
+    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{WEEK_TEMPLATES_TABLE}', None)
     _WEEK_TEMPLATE_TABLES_READY = True
 
 
@@ -19617,17 +21121,26 @@ def week_template_scope_fields(payload, course_type):
     }
 
 
-def get_week_template_rows(where_sql='', params=None):
+def get_week_template_rows(where_sql='', params=None, *, include_deleted=False):
+    """Week template rows, archived ones excluded unless asked for.
+
+    This is the single read funnel for the table, so filtering here is what
+    keeps an archived template out of every list and picker at once. DELETE is
+    a soft archive, so without this a deleted template would keep showing up.
+    """
     ensure_week_template_tables()
     query = f'select * from {table_name(WEEK_TEMPLATES_TABLE)}'
     if where_sql:
         query += f' where {where_sql}'
     query += ' order by updated_at desc'
-    return fetch_all(query, params or [])
+    rows = fetch_all(query, params or [])
+    if include_deleted:
+        return rows
+    return [row for row in rows if not curriculum_row_effectively_deleted(row)]
 
 
-def get_week_template_row(template_id):
-    rows = get_week_template_rows('id = %s', [template_id])
+def get_week_template_row(template_id, *, include_deleted=False):
+    rows = get_week_template_rows('id = %s', [template_id], include_deleted=include_deleted)
     return rows[0] if rows else None
 
 
@@ -19810,10 +21323,13 @@ def curriculum_week_template_detail(request, identifier):
         return week_template_detail_response(identifier)
 
     if request.method == 'DELETE':
-        delete_rows(WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [identifier])
-        delete_rows(WEEK_TEMPLATES_TABLE, 'id = %s', [identifier])
+        # Archive, never destroy: a week template is reusable content by
+        # definition, and this used to be the one hard delete in the authoring
+        # surface. Its components are left attached to it so a future restore
+        # gets a whole template back rather than an empty shell.
+        soft_delete_rows(WEEK_TEMPLATES_TABLE, 'id = %s', [identifier], deleted_by='week-template-delete')
         invalidate_curriculum_cache()
-        return JsonResponse({'deleted': True, 'id': identifier})
+        return JsonResponse({'deleted': True, 'permanent': False, 'id': identifier})
 
     payload = json_body(request)
     if payload is None:

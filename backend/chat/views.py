@@ -170,8 +170,12 @@ def _demo_chat_identity(email, learner_source_id=None):
         return None
 
     participant_type, participant_email = mapping
-    participant_model = ChatCoach if participant_type == "coach" else ChatLearner
-    return participant_type, participant_model.objects.filter(email__iexact=participant_email).first()
+    participants = (
+        ChatCoach.objects.coaches()
+        if participant_type == "coach"
+        else ChatLearner.objects.all()
+    )
+    return participant_type, participants.filter(email__iexact=participant_email).first()
 
 
 def _ensure_assigned_coach_conversation(learner):
@@ -180,7 +184,7 @@ def _ensure_assigned_coach_conversation(learner):
     if not coach_email:
         raise ChatIdentityError("This learner does not have an assigned coach email.")
 
-    # Reuse an existing conversation even if the legacy coach table contains
+    # Reuse an existing conversation even if the staff directory holds
     # duplicate rows for the same email. This keeps one continuous thread.
     existing = (
         Conversation.objects.filter(
@@ -194,10 +198,10 @@ def _ensure_assigned_coach_conversation(learner):
     if existing is not None:
         return existing
 
-    coach = ChatCoach.objects.filter(email__iexact=coach_email).order_by("id").first()
+    coach = ChatCoach.objects.coaches().filter(email__iexact=coach_email).order_by("id").first()
     if coach is None:
         raise ChatIdentityError(
-            f"No coach chat identity matches {coach_email}."
+            f"No staff user with coach access matches {coach_email}."
         )
     conversation, _ = Conversation.objects.get_or_create(coach=coach, learner=learner)
     return conversation

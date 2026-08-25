@@ -51,10 +51,11 @@ class ChatPrincipal:
 def principal_owns_identity(principal, identity_id):
     """Return whether an email-resolved principal owns an external identity id.
 
-    Learner emails are unique. The existing coach table can contain duplicate
-    rows for the same email, so a signed-in coach must be able to access the
-    conversations attached to any of those equivalent rows. The conversation
-    id still determines the exact sender row used when a message is persisted.
+    Learner emails are unique. ``enrolment.Staff_users`` indexes the email but
+    does not constrain it, so it can hold duplicate rows for the same address
+    and a signed-in coach must be able to access the conversations attached to
+    any of those equivalent rows. The conversation id still determines the exact
+    sender row used when a message is persisted.
     """
 
     if principal is None:
@@ -69,9 +70,14 @@ def _principal_cache_key(user):
 def chat_principal_for_user(user):
     """Resolve a Django user to a coach or learner by email.
 
-    The chat tables intentionally reference the existing ``curriculum.coaches``
-    and ``Learner.learners`` tables rather than ``auth_user``. Email is the
-    stable identity bridge; no client-provided participant ID is trusted.
+    The chat tables intentionally reference the existing
+    ``enrolment.Staff_users`` and ``Learner.learners`` tables rather than
+    ``auth_user``. Email is the stable identity bridge; no client-provided
+    participant ID is trusted.
+
+    Coach is tried before learner, so the lookup must be narrowed to the staff
+    rows actually granted coach access -- otherwise any staff account would
+    answer as a coach.
     """
 
     if user is None or not user.is_authenticated:
@@ -84,7 +90,7 @@ def chat_principal_for_user(user):
     email = (getattr(user, "email", "") or "").strip()
     principal = None
     if email:
-        coaches = list(ChatCoach.objects.filter(email__iexact=email).order_by("id"))
+        coaches = list(ChatCoach.objects.coaches().filter(email__iexact=email).order_by("id"))
         if coaches:
             coach = coaches[0]
             principal = ChatPrincipal(
@@ -323,7 +329,7 @@ def create_message(conversation, sender, body):
     }
     if principal.kind == "coach":
         # The exact conversation row is authoritative. This is important when
-        # old coach identity rows share the same normalized email.
+        # two staff directory rows share the same normalized email.
         message_kwargs["sender_coach_id"] = locked_conversation.coach_id
     else:
         message_kwargs["sender_learner_id"] = principal.id

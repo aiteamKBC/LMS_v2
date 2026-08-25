@@ -3031,9 +3031,10 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
         )
         self.assertEqual(candidates, ['PROG-1', 'PROG-1-legacy'])
 
-    def test_children_are_deleted_before_their_parents(self):
-        """Ordering is the whole point, so it is pinned table by table."""
+    def _record_permanent_delete(self):
+        """Run the delete with every query stubbed, returning the tables hit."""
         deletes = []
+        detaches = []
 
         def record(table, where_sql, params):
             deletes.append(table)
@@ -3052,17 +3053,29 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
                 'weekTemplateIds': ['TPL-1'],
             },
         }
-        with patch.object(views, 'table_exists', lambda table: True),              patch.object(views, 'delete_rows', record),              patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+        # The detach reads the module and week rows it is about to orphan, which
+        # this SimpleTestCase has no database for. It has its own DB-backed cover
+        # in tests_content_library; here only the ordering of the deletes matters.
+        with patch.object(views, 'table_exists', lambda table: True), \
+                patch.object(views, 'delete_rows', record), \
+                patch.object(
+                    views, 'detach_programme_content_to_library',
+                    lambda plan, removed: detaches.append(plan),
+                ), \
+                patch.object(views, 'invalidate_curriculum_cache', lambda: None):
             removed = views.permanently_delete_programme_structure(plan)
+        return deletes, detaches, removed
+
+    def test_children_are_deleted_before_their_parents(self):
+        """Ordering is the whole point, so it is pinned table by table."""
+        deletes, _, removed = self._record_permanent_delete()
 
         for child, parent in (
-            ('ksb_mappings', 'components'),
-            ('components', 'weeks'),
-            ('weeks', 'modules'),
+            ('ksb_mappings', 'modules'),
             ('quiz_course_links', 'modules'),
             ('module_details', 'modules'),
+            ('module_completion_criteria', 'modules'),
             ('live_sessions', 'modules'),
-            ('week_template_components', 'week_templates'),
             ('modules', 'groups'),
             ('groups', 'cohorts'),
             ('cohorts', 'programmes'),
@@ -3073,6 +3086,40 @@ class ProgrammePermanentDeleteTests(SimpleTestCase):
             )
         self.assertEqual(deletes[-1], 'programmes')
         self.assertEqual(removed['programmes'], 1)
+
+    def test_authored_content_is_detached_rather_than_deleted(self):
+        """Weeks, components, quizzes and templates outlive their programme.
+
+        They are the reusable output of Curriculum Studio, so a permanent
+        programme delete unhooks them into the library instead of destroying
+        them. Only the delivery scaffolding is actually deleted.
+        """
+        deletes, detaches, _ = self._record_permanent_delete()
+
+        for table in ('components', 'weeks', 'quizzes', 'week_templates', 'week_template_components'):
+            self.assertNotIn(table, deletes, f'{table} must not be deleted by a programme delete')
+        self.assertEqual(len(detaches), 1, 'content must be detached exactly once')
+
+    def test_the_detach_runs_before_the_parents_are_removed(self):
+        """It reads the module and week titles, so it cannot run afterwards."""
+        order = []
+        plan = {
+            'candidates': ['PROG-1'],
+            'childIds': {'moduleIds': ['MOD-1'], 'weekIds': ['WEEK-1'], 'componentIds': ['COMP-1']},
+        }
+        with patch.object(views, 'table_exists', lambda table: True), \
+                patch.object(
+                    views, 'delete_rows',
+                    lambda table, where_sql, params: order.append(('delete', table)) or [{'id': 'row'}],
+                ), \
+                patch.object(
+                    views, 'detach_programme_content_to_library',
+                    lambda plan, removed: order.append(('detach', None)),
+                ), \
+                patch.object(views, 'invalidate_curriculum_cache', lambda: None):
+            views.permanently_delete_programme_structure(plan)
+
+        self.assertEqual(order[0], ('detach', None))
 
     def test_nothing_is_deleted_without_a_programme_id(self):
         deletes = []

@@ -21,10 +21,11 @@ class ChatTestMixin:
 
     def create_users(self):
         self.coach_identity = ChatCoach.objects.create(
-            id="coach-test-1",
+            id=101,
             name="Casey Coach",
             email="coach@example.com",
             job_title="Progress Coach",
+            access="coach",
         )
         self.learner_identity = ChatLearner.objects.create(
             id=1,
@@ -62,10 +63,11 @@ class ChatModelTests(ChatTestMixin, TestCase):
     def test_conversation_rejects_self_pair(self):
         self_pair = Conversation(
             coach=ChatCoach(
-                id="1",
+                id=1,
                 name="Same Person",
                 email="same@example.com",
                 job_title="Coach",
+                access="coach",
             ),
             learner=self.learner_identity,
         )
@@ -147,11 +149,14 @@ class ChatAPITests(ChatTestMixin, TestCase):
         )
 
     def test_same_email_coach_rows_keep_learner_conversations_isolated(self):
+        # enrolment.Staff_users indexes the email but does not constrain it, so
+        # two directory rows can share one address.
         duplicate_coach = ChatCoach.objects.create(
-            id="coach-test-duplicate",
+            id=102,
             name="Casey Coach",
             email="COACH@example.com",
             job_title="Progress Coach",
+            access="coach",
         )
         second_learner = ChatLearner.objects.create(
             id=2,
@@ -169,7 +174,7 @@ class ChatAPITests(ChatTestMixin, TestCase):
         )
 
         # The coach is resolved by normalized email, while the exact
-        # conversation chooses the legacy coach row written to the message.
+        # conversation chooses the directory row written to the message.
         message = create_message(second_conversation, self.coach_user, "For Morgan only")
         self.assertEqual(message.sender_coach_id, duplicate_coach.pk)
         self.assertTrue(

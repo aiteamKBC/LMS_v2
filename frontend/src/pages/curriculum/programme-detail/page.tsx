@@ -9,6 +9,7 @@ import { programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entit
 // the whole studio, so nothing behaves differently depending on the door taken.
 import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
 import { ModuleFormDrawer } from '@/pages/curriculum/shared/entities/moduleForm';
+import { ScopeAchievementPanel } from '@/pages/curriculum/shared/entities/scopeAchievement';
 // The same rule applies to reading: the record tables, filter bars and workspace
 // chrome here are the shared ones the Cohort, Group and Module workspaces use, so
 // a programme is a lens on those records rather than a second rendering of them.
@@ -1535,6 +1536,12 @@ function EnrolledLearnersPanel({
  *               Calendar).
  *   KSB       — coverage of the programme's KSB source across its modules. The
  *               only place this roll-up exists.
+ *   Achieved  — the other half of KSB: not what the curriculum plans, but what
+ *               the learners assigned to it have actually earned. Scoped by a
+ *               picker down the hierarchy — programme, one cohort, one group, one
+ *               module — because "how are we doing" is asked at every level and
+ *               the answer has to be computed the same way each time. It reads;
+ *               each child's own workspace still owns its record.
  *
  * Tabs that used to re-render a lower level's own view (a flat Groups list, a
  * module's week timeline, and a "Review" tab that drew cohorts, groups, modules
@@ -1542,7 +1549,7 @@ function EnrolledLearnersPanel({
  * chrome, and every one of them now has exactly one home.
  */
 
-type Tab = 'overview' | 'delivery' | 'modules' | 'sessions' | 'ksb';
+type Tab = 'overview' | 'delivery' | 'modules' | 'sessions' | 'ksb' | 'achievement';
 
 const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(100px,.8fr)_120px]';
 const GROUP_GRID = 'grid grid-cols-[minmax(160px,1.3fr)_minmax(170px,1.1fr)_minmax(150px,1fr)_80px_80px_130px]';
@@ -1555,6 +1562,7 @@ const TAB_LABELS: Record<Tab, string> = {
   modules: 'Modules',
   sessions: 'Sessions',
   ksb: 'KSB coverage',
+  achievement: 'Achievement',
 };
 
 export default function ProgrammeDetailPage() {
@@ -1569,6 +1577,14 @@ export default function ProgrammeDetailPage() {
   const [backendCoverageError, setBackendCoverageError] = useState<string | null>(null);
   // Learner placements come from the enrolment team's records. Curriculum
   // displays them read-only and never writes an allocation of its own.
+  // Which level of the hierarchy the Achievement tab is reporting on. Defaults
+  // to the programme; the picker walks down to a single module.
+  const [achievementScope, setAchievementScope] = useState<AchievementScope>(() => ({
+    scope: 'programme',
+    identifier: '',
+    label: 'Programme',
+    description: '',
+  }));
   const [learnerRoster, setLearnerRoster] = useState<CurriculumProgrammeLearnerRosterResponse | null>(null);
   const [learnerRosterLoading, setLearnerRosterLoading] = useState(false);
   const [learnerRosterError, setLearnerRosterError] = useState<string | null>(null);
@@ -1939,6 +1955,16 @@ export default function ProgrammeDetailPage() {
 
   // --------------------------------------------------------------------- KSB
 
+  const programmeScopeId = coverageProgrammeIds[0] || PROGRAMME.sourceId || PROGRAMME.id;
+  useEffect(() => {
+    if (!programmeScopeId) return;
+    setAchievementScope(current => (
+      current.scope === 'programme' && current.identifier !== programmeScopeId
+        ? { ...current, identifier: programmeScopeId, label: PROGRAMME.name || 'Programme' }
+        : current
+    ));
+  }, [PROGRAMME.name, programmeScopeId]);
+
   const filteredKsbHeatmap = useMemo(() => {
     const query = normalise(ksbSearch);
     return PROGRAMME.ksbHeatmap.filter(row => !query || [row.ksb, formatKsbCode(row.ksb), row.title, ksbSourceLabel(row)]
@@ -2103,6 +2129,7 @@ export default function ProgrammeDetailPage() {
     { key: 'modules', label: TAB_LABELS.modules, icon: 'ri-stack-line', count: PROGRAMME.modules.length },
     { key: 'sessions', label: TAB_LABELS.sessions, icon: 'ri-time-line', count: totalSessions },
     { key: 'ksb', label: TAB_LABELS.ksb, icon: 'ri-bar-chart-line', count: PROGRAMME.ksbHeatmap.length || undefined },
+    { key: 'achievement', label: TAB_LABELS.achievement, icon: 'ri-medal-line', count: totalLearners || undefined },
   ];
 
   return (
@@ -2938,6 +2965,34 @@ export default function ProgrammeDetailPage() {
             )}
           </WorkspacePanel>
         )}
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            Achievement — what the learners actually earned, at any level
+        ═══════════════════════════════════════════════════════════════════ */}
+        {tab === 'achievement' && (
+          <div className="space-y-4">
+            <WorkspacePanel
+              title="Scope"
+              description="Achievement is asked at every level of Programme → Cohort → Group → Module, and every level answers it from its own components. Pick the level; the panel below reports only what belongs to it."
+            >
+              <ScopePicker
+                programme={PROGRAMME}
+                value={achievementScope}
+                onChange={setAchievementScope}
+              />
+            </WorkspacePanel>
+
+            <ScopeAchievementPanel
+              key={`${achievementScope.scope}:${achievementScope.identifier}`}
+              scope={achievementScope.scope}
+              identifier={achievementScope.identifier}
+              title={`${achievementScope.label} — learner achievement`}
+              description={achievementScope.description}
+              learnerStatus="all"
+              active
+            />
+          </div>
+        )}
       </div>
 
       <ProgrammeFormDrawer
@@ -2988,6 +3043,170 @@ export default function ProgrammeDetailPage() {
 // ============================================================
 // Helper Components
 // ============================================================
+
+// The Achievement tab's level selector.
+//
+// A flat list of every module in the programme would be unreadable by the second
+// cohort, so the picker is the hierarchy itself: choose a cohort, then optionally
+// a group inside it, then optionally a module inside that. Each step narrows the
+// next, and the chosen level is what the panel below reports on.
+type AchievementScope = {
+  scope: 'programme' | 'cohort' | 'group' | 'module';
+  identifier: string;
+  label: string;
+  description: string;
+};
+
+function ScopePicker({
+  programme,
+  value,
+  onChange,
+}: {
+  programme: Programme;
+  value: AchievementScope;
+  onChange: (scope: AchievementScope) => void;
+}) {
+  const programmeId = clean(programme.sourceId) || clean(programme.id);
+  const cohort = programme.cohorts.find(item => item.id === value.identifier)
+    || programme.cohorts.find(item => item.groups.some(group => group.id === value.identifier))
+    || programme.cohorts.find(item => item.groups.some(group => group.modules.some(module => moduleWorkspaceIdentity(module) === value.identifier)));
+  const group = cohort?.groups.find(item => item.id === value.identifier)
+    || cohort?.groups.find(item => item.modules.some(module => moduleWorkspaceIdentity(module) === value.identifier));
+  const moduleOptions = group?.modules || cohort?.groups.flatMap(item => item.modules) || [];
+
+  const selectClass = 'h-9 min-w-[160px] rounded-lg border border-background-200 bg-background-50 px-2 text-[12px] font-semibold text-foreground-800 outline-none transition-smooth focus:border-primary-300';
+
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <button
+        type="button"
+        onClick={() => onChange({
+          scope: 'programme',
+          identifier: programmeId,
+          label: programme.name || 'Programme',
+          description: '',
+        })}
+        className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-[12px] font-bold transition-smooth ${
+          value.scope === 'programme'
+            ? 'border-primary-300 bg-primary-50 text-primary-700'
+            : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
+        }`}
+      >
+        <AppIcon className="ri-book-2-line"></AppIcon>
+        Whole programme
+      </button>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Cohort</span>
+        <select
+          className={selectClass}
+          value={cohort?.id || ''}
+          onChange={event => {
+            const next = programme.cohorts.find(item => item.id === event.target.value);
+            if (!next) {
+              onChange({ scope: 'programme', identifier: programmeId, label: programme.name || 'Programme', description: '' });
+              return;
+            }
+            onChange({
+              scope: 'cohort',
+              identifier: next.id,
+              label: next.name,
+              description: `Every group and module running in ${next.name}, and the learners enrolment placed in it.`,
+            });
+          }}
+        >
+          <option value="">All cohorts</option>
+          {programme.cohorts.map(item => (
+            <option key={item.id} value={item.id}>{item.name}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Group</span>
+        <select
+          className={selectClass}
+          disabled={!cohort}
+          value={group?.id || ''}
+          onChange={event => {
+            const next = cohort?.groups.find(item => item.id === event.target.value);
+            if (!next) {
+              if (cohort) {
+                onChange({
+                  scope: 'cohort',
+                  identifier: cohort.id,
+                  label: cohort.name,
+                  description: `Every group and module running in ${cohort.name}, and the learners enrolment placed in it.`,
+                });
+              }
+              return;
+            }
+            onChange({
+              scope: 'group',
+              identifier: next.id,
+              label: next.name,
+              description: `The timetabled class ${next.name}: its modules, and the learners enrolment placed in it.`,
+            });
+          }}
+        >
+          <option value="">All groups in this cohort</option>
+          {(cohort?.groups || []).map(item => (
+            <option key={item.id} value={item.id}>{item.name}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">Module</span>
+        <select
+          className={selectClass}
+          disabled={!moduleOptions.length}
+          value={value.scope === 'module' ? value.identifier : ''}
+          onChange={event => {
+            const next = moduleOptions.find(item => moduleWorkspaceIdentity(item) === event.target.value);
+            if (!next) {
+              if (group) {
+                onChange({
+                  scope: 'group',
+                  identifier: group.id,
+                  label: group.name,
+                  description: `The timetabled class ${group.name}: its modules, and the learners enrolment placed in it.`,
+                });
+              } else if (cohort) {
+                onChange({ scope: 'cohort', identifier: cohort.id, label: cohort.name, description: '' });
+              }
+              return;
+            }
+            onChange({
+              scope: 'module',
+              identifier: moduleWorkspaceIdentity(next),
+              label: next.name,
+              // Said plainly, because a module has no roster of its own and a
+              // reader would otherwise assume it does.
+              description: `${next.name}: its own components, and the learners in the group that delivers it.`,
+            });
+          }}
+        >
+          <option value="">All modules in this scope</option>
+          {moduleOptions.map(item => (
+            <option key={item.id} value={moduleWorkspaceIdentity(item)}>{item.name}</option>
+          ))}
+        </select>
+      </label>
+
+      <p className="ml-auto max-w-sm text-[11px] leading-relaxed text-foreground-400">
+        Reporting on <span className="font-bold text-foreground-700">{value.label || 'this programme'}</span>.
+        Each level below the programme has its own workspace for editing; this only reads.
+      </p>
+    </div>
+  );
+}
+
+/** The identifier the scope endpoints resolve a module by. */
+function moduleWorkspaceIdentity(module: Pick<Module, 'id' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId'>) {
+  return clean(module.moduleCatalogueId) || clean(module.catalogueId) || clean(module.moduleId) || clean(module.id);
+}
+
 
 function formatHours(value: number | string) {
   const parsed = Number(value || 0);

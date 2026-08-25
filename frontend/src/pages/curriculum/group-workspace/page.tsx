@@ -16,6 +16,7 @@ import {
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
+import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
 import {
   DetailRow,
   EntityEmptyState,
@@ -33,7 +34,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // edited here — each one opens its own workspace, which is where the operational
 // controls (schedule, Teams, components) live.
 
-type Tab = 'overview' | 'modules' | 'sessions';
+type Tab = 'overview' | 'modules' | 'sessions' | 'learners';
 
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(130px,1fr)_70px_110px_110px]';
 const SESSION_GRID = 'grid grid-cols-[110px_minmax(170px,1.4fr)_minmax(140px,1fr)_120px_120px]';
@@ -134,6 +135,7 @@ export default function GroupWorkspacePage() {
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'modules', label: 'Modules', icon: 'ri-stack-line', count: groupModules.length },
     { key: 'sessions', label: 'Sessions', icon: 'ri-time-line', count: groupSessions.length || undefined },
+    { key: 'learners', label: 'Learners', icon: 'ri-graduation-cap-line', count: group?.learners || undefined },
   ];
 
   return (
@@ -293,6 +295,20 @@ export default function GroupWorkspacePage() {
                 <PlainCell>{cleanText(session.tutor, 'Unassigned')}</PlainCell>
               </>
             )}
+          />
+        )}
+
+        {/* The group is the timetabled class, so it is the level enrolment
+            places a learner into and the level a module borrows its roster
+            from. Both questions — who is here, and what have they earned
+            against this group's modules — are answered from this group alone. */}
+        {tab === 'learners' && (
+          <ScopeAchievementPanel
+            scope="group"
+            identifier={group?.id || id}
+            title={`Learners and achievement in ${group?.name || 'this group'}`}
+            learnerStatus="all"
+            active={tab === 'learners'}
           />
         )}
       </div>
