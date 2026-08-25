@@ -910,12 +910,37 @@ def cached_deck_model(relative_path):
     return deck if isinstance(deck, dict) else None
 
 
-def render_uploaded_deck(relative_path, source):
+def deck_model_for_stamp(relative_path, stamp):
+    """The cached render for exactly these bytes, or None.
+
+    Lets a caller answer from the cache before fetching the deck at all: a deck
+    in blob storage would otherwise be downloaded on every request just to
+    discover the render was already on disk.
+    """
+    if not stamp:
+        return None
+    manifest = render_root() / render_cache_key(relative_path) / 'deck.json'
+    if not manifest.is_file():
+        return None
+    try:
+        cached = json.loads(manifest.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    if cached.get('stamp') != stamp:
+        return None
+    deck = cached.get('deck')
+    return deck if isinstance(deck, dict) else None
+
+
+def render_uploaded_deck(relative_path, source, stamp=None):
     """The slide model for an uploaded deck, rendering it if not already cached.
 
     `relative_path` is the storage-relative path of the upload and keys the
-    cache. Raises UnsupportedDeck, whose message is learner-facing, when the
-    file is not an OOXML deck or cannot be parsed.
+    cache. `stamp` identifies the bytes being rendered; a caller reading from
+    blob storage passes the blob's own stamp, because `source` is then a
+    temporary copy whose mtime would miss the cache every time. Raises
+    UnsupportedDeck, whose message is learner-facing, when the file is not an
+    OOXML deck or cannot be parsed.
     """
     source = Path(source)
     suffix = source.suffix.lower()
@@ -931,7 +956,7 @@ def render_uploaded_deck(relative_path, source):
     cache_dir = render_root() / key
     manifest = cache_dir / 'deck.json'
     url_prefix = '/curriculum_api/curriculum/uploads/%s/%s' % (RENDER_DIR_NAME, key)
-    stamp = _stamp(source)
+    stamp = stamp or _stamp(source)
 
     if manifest.exists():
         try:

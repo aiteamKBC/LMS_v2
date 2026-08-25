@@ -519,6 +519,16 @@ AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
 # AZURE_ENROLMENT_DOCS_CONTAINER was previously ignored in silence and the
 # default used instead. EVIDENCE_CLOUD.md already flags case-mismatch as a bug
 # that has bitten this project.
+# Curriculum component uploads (slide decks, reading PDFs, podcast audio,
+# assignment briefs). These used to be written to MEDIA_ROOT, which made a file
+# uploaded on one host a 404 on every other host sharing this database; the bytes
+# now live in the storage account and the database keeps holding the path. Unset
+# (or no Azure credentials) falls back to local disk, so a developer machine
+# without credentials behaves as it did before.
+AZURE_CURRICULUM_CONTAINER = (
+    os.environ.get("AZURE_CURRICULUM_CONTAINER") or "curriculum-uploads"
+)
+
 AZURE_ENROLMENT_DOCS_CONTAINER = (
     os.environ.get("AZURE_ENROLMENT_DOCS_CONTAINER")
     or os.environ.get("AZURE_Enrolment_Docs_CONTAINER")
