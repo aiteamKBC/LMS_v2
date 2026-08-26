@@ -18550,8 +18550,8 @@ def curriculum_coach_detail(request, identifier):
 # Sessions come from live_sessions joined to its occurrences. The series row
 # carries the module link and the meeting details; the occurrence rows carry the
 # actual per-session times, because a weekly series is one live_sessions row and
-# N occurrence rows. The next session is therefore the earliest occurrence still
-# ahead of now across every assigned module.
+# N occurrence rows. The workspace includes the current meeting and meetings
+# within the 30-minute post-meeting join grace period as well as future ones.
 # ---------------------------------------------------------------------------
 
 def iso_or_blank(value):
@@ -18559,6 +18559,20 @@ def iso_or_blank(value):
     if value is None:
         return ''
     return value.isoformat() if hasattr(value, 'isoformat') else clean_str(value)
+
+
+def utc_iso_or_blank(value):
+    """Return a timestamp as an unambiguous UTC ISO value for the browser."""
+    if value is None:
+        return ''
+    if isinstance(value, datetime):
+        instant = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return instant.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+    parsed = parse_graph_datetime(value)
+    if parsed is not None:
+        instant = parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+        return instant.astimezone(timezone.utc).isoformat().replace('+00:00', 'Z')
+    return clean_str(value)
 
 
 def tutor_profile_for_identity(email, name):
@@ -18597,28 +18611,6 @@ def tutor_profile_for_identity(email, name):
     return None, ''
 
 
-def module_ids_for_tutor_name(name):
-    """Modules whose delivery row names this tutor.
-
-    ``curriculum.modules.tutor_name`` is the assignment as the module itself
-    records it, which is what the curriculum builder writes when a module is
-    given a tutor. It is read alongside the profile's ``assigned_module_ids``
-    rather than instead of it: either can carry an assignment the other does not
-    have, and a tutor should see a module that names them regardless of which
-    side it was set from.
-    """
-    wanted = clean_str(name).lower()
-    if not wanted:
-        return []
-    rows = authoring_fetch_all(
-        AUTHORING_MODULES_TABLE,
-        'lower(trim(coalesce(tutor_name, %s))) = %s and deleted_at is null',
-        ['', wanted],
-        'start_date, title',
-    )
-    return [clean_str(row.get('module_catalogue_id')) for row in rows if clean_str(row.get('module_catalogue_id'))]
-
-
 def tutor_workspace_module_payload(row):
     """One assigned module, as the workspace shows it."""
     return {
@@ -18642,7 +18634,7 @@ def tutor_workspace_module_payload(row):
 
 
 def tutor_workspace_next_session(module_ids):
-    """The soonest upcoming occurrence across ``module_ids``, or None."""
+    """The current or soonest upcoming occurrence across ``module_ids``."""
     by_module = tutor_workspace_next_session_by_module(module_ids)
     if not by_module:
         return None
@@ -18650,7 +18642,7 @@ def tutor_workspace_next_session(module_ids):
 
 
 def tutor_workspace_next_session_by_module(module_ids):
-    """``{module_catalogue_id: next session}``, earliest upcoming one per module.
+    """``{module_catalogue_id: next session}``, earliest current/upcoming one per module.
 
     Superseded series are excluded: rescheduling writes a new series row and
     marks the old one superseded, so including them would offer a meeting whose
@@ -18688,14 +18680,15 @@ def tutor_workspace_next_session_by_module(module_ids):
         where session.module_catalogue_id in ({placeholders})
           and coalesce(session.status, '') <> 'superseded'
           and coalesce(occurrence.status, '') <> 'cancelled'
-          and occurrence.scheduled_start >= %s
+          and occurrence.scheduled_end >= %s
         order by occurrence.scheduled_start
     """
     with connection.cursor() as cursor:
-        cursor.execute(query, [*module_ids, datetime.utcnow()])
+        cursor.execute(query, [*module_ids, datetime.utcnow() - timedelta(minutes=30)])
         rows = rows_as_dicts(cursor)
 
-    # Ordered by start, so the first row seen for a module is its next session.
+    # Ordered by start, so the first row seen for a module is its current or next
+    # session.
     earliest = {}
     for row in rows:
         module_id = clean_str(row.get('module_catalogue_id'))
@@ -18710,10 +18703,10 @@ def tutor_workspace_session_payload(row):
         'moduleCatalogueId': clean_str(row.get('module_catalogue_id')),
         'moduleTitle': clean_str(row.get('module_title')),
         'sessionNumber': row.get('session_number'),
-        'scheduledStart': iso_or_blank(row.get('scheduled_start')),
-        'scheduledEnd': iso_or_blank(row.get('scheduled_end')),
-        # The stored timestamps are naive; this is the zone they were entered in,
-        # so the page can name it rather than guess the reader's.
+        'scheduledStart': utc_iso_or_blank(row.get('scheduled_start')),
+        'scheduledEnd': utc_iso_or_blank(row.get('scheduled_end')),
+        # The occurrence timestamps are returned as UTC instants. The named
+        # meeting timezone remains available for display and audit context.
         'timezone': clean_str(row.get('timezone')),
         'durationMinutes': row.get('duration_minutes'),
         'repeatPattern': clean_str(row.get('repeat_pattern')),
@@ -18741,26 +18734,20 @@ def curriculum_tutor_workspace(request):
 
     profile, matched_by = tutor_profile_for_identity(email, name)
 
-    # The name to look for on the modules themselves: the profile's own, when
-    # one was found, so a profile whose name differs from the account's still
-    # picks up the modules it is actually named on.
-    module_name = clean_str(profile.get('name')) if profile else name
-
+    # A tutor's module scope is the explicit grant stored on their staff
+    # profile. Do not infer access from a matching tutor_name on a module: that
+    # field can be stale or belong to a different assignment workflow.
     module_ids = list(staff_profile_assignment_ids('tutor', profile)) if profile else []
-    for module_id in module_ids_for_tutor_name(module_name):
-        if module_id not in module_ids:
-            module_ids.append(module_id)
-            if not matched_by:
-                matched_by = 'module-name'
 
-    if not profile and not module_ids:
-        # Not an error: an account that matches no profile and no module is the
-        # ordinary state until somebody assigns them something, or fills in the
-        # email on Curriculum > Staff profiles.
+    if not profile:
+        # Not an error: an account that matches no tutor profile is the
+        # ordinary state until somebody assigns them something in Curriculum >
+        # Staff profiles.
         return JsonResponse({
             'linked': False,
             'matchedBy': '',
             'tutor': None,
+            'assignedModuleIds': [],
             'modules': [],
             'nextSession': None,
         })
@@ -18772,7 +18759,11 @@ def curriculum_tutor_workspace(request):
         placeholders = ', '.join(['%s'] * len(module_ids))
         for row in authoring_fetch_all(
             AUTHORING_MODULES_TABLE,
-            f'module_catalogue_id in ({placeholders}) and deleted_at is null',
+            # Do not replace or drop an explicitly assigned ID because its
+            # curriculum row is archived. The staff profile is the source of
+            # truth for this tutor's scope; the row still supplies the module
+            # metadata needed by the workspace.
+            f'module_catalogue_id in ({placeholders})',
             module_ids,
             'start_date, title',
         ):
@@ -18799,6 +18790,8 @@ def curriculum_tutor_workspace(request):
             'email': clean_str(profile.get('email')) if profile else email,
             'jobTitle': clean_str(profile.get('job_title')) if profile else '',
         },
+        # This is the source of truth for both this list and `modules`.
+        'assignedModuleIds': [clean_str(module_id) for module_id in staff_profile_assignment_ids('tutor', profile)],
         'modules': modules,
         'nextSession': headline,
     })

@@ -68,7 +68,7 @@ function eventLabel(event: string): string {
 }
 
 export default function AdminDashboard() {
-  const { auth } = useAuth();
+  const { auth, isInitialized: authInitialized = true } = useAuth();
   const [overview, setOverview] = useState<PlatformOverview | null>(null);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [system, setSystem] = useState<SystemStatus | null>(null);
@@ -84,7 +84,25 @@ export default function AdminDashboard() {
 
   useEffect(() => {
     let cancelled = false;
+
+    // `previewAs()` only changes local UI state; it deliberately does not
+    // issue the HttpOnly `kbc_session` cookie that the admin API requires.
+    // Do not fire three guaranteed-401 requests while a demo preview is open.
+    if (!authInitialized) {
+      setLoading(true);
+      return () => { cancelled = true; };
+    }
+    if (!auth.account) {
+      setOverview(null);
+      setAudit([]);
+      setSystem(null);
+      setError('Sign in with an administrator account to retrieve platform data. Demo preview mode has no server session.');
+      setLoading(false);
+      return () => { cancelled = true; };
+    }
+
     setLoading(true);
+    setError(null);
     // Settled rather than all-or-nothing: the audit feed failing should not
     // blank the counts, and vice versa.
     Promise.allSettled([
@@ -100,7 +118,7 @@ export default function AdminDashboard() {
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [auditTick]);
+  }, [auditTick, auth.account, authInitialized]);
 
   /** Re-read just the audit feed — a re-send writes a new row to it. */
   const reloadAudit = () => setAuditTick(t => t + 1);
@@ -206,6 +224,11 @@ export default function AdminDashboard() {
             <div>
               <p className="text-sm font-semibold text-red-900">Could not load platform data</p>
               <p className="text-[12px] text-red-700 mt-0.5">{error}</p>
+              {!auth.account && (
+                <Link to="/login" className="mt-2 inline-block text-[12px] font-semibold text-red-800 underline underline-offset-2 hover:text-red-950">
+                  Sign in as administrator
+                </Link>
+              )}
             </div>
           </div>
         )}
