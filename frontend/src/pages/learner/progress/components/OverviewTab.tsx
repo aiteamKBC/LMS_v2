@@ -1,0 +1,164 @@
+import { AppIcon } from '@/components/feature/AppIcon';
+import type { LearnerDetail } from '@/api/learnerDetail';
+import type { EvidenceRecord } from '@/api/evidence';
+import { parseHours, formatHoursMinutes } from '@/utils/learnerJourney';
+import { useKsbProgress } from '@/hooks/useKsbProgress';
+import { Panel } from '@/components/ui/Panel';
+import { SectionHeader } from '@/components/ui/SectionHeader';
+import { ProgressBar } from '@/components/ui/ProgressMetric';
+import { ActionRow, RowAction } from '@/components/ui/ActionRow';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { toneStyle, type StatusTone } from '@/lib/statusTone';
+
+export type ProgressTabKey = 'overview' | 'evidence' | 'otjh' | 'ksbs';
+
+interface AttentionItem {
+  tone: 'critical' | 'caution';
+  title: string;
+  subtitle: string;
+  tab: ProgressTabKey;
+  cta: string;
+}
+
+function ProgressStat({
+  icon, label, value, percent, caption, tone = 'neutral', onClick,
+}: {
+  icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone; onClick: () => void;
+}) {
+  const style = toneStyle(tone);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 text-left shadow-sm transition hover:border-primary-200"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-foreground-400">{label}</p>
+        <AppIcon className={`${icon} shrink-0 text-[15px] ${tone === 'neutral' ? 'text-foreground-300' : style.text}`} />
+      </div>
+      <p className={`mt-1.5 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
+      <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
+      {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
+    </button>
+  );
+}
+
+export function OverviewTab({
+  real,
+  realLoading,
+  evidenceRecords,
+  evidenceLoading,
+  onNavigateTab,
+}: {
+  real: LearnerDetail | null;
+  realLoading: boolean;
+  evidenceRecords: EvidenceRecord[];
+  evidenceLoading: boolean;
+  onNavigateTab: (tab: ProgressTabKey) => void;
+}) {
+  const loading = realLoading || evidenceLoading;
+
+  const totalEvidence = evidenceRecords.length;
+  const validatedEvidence = evidenceRecords.filter(r => r.status === 'approved').length;
+  const needsWorkEvidence = evidenceRecords.filter(r => r.status === 'rejected').length;
+  const evidencePct = totalEvidence > 0 ? Math.round((validatedEvidence / totalEvidence) * 100) : null;
+
+  const completedHours = parseHours(real?.completedHours);
+  const targetHours = parseHours(real?.targetHours);
+  const otjhPct = targetHours > 0 ? Math.min(100, Math.round((completedHours / targetHours) * 100)) : null;
+  const otjhStatus = real?.otjhStatus || null;
+  const otjhAtRisk = /at risk|attention/i.test(otjhStatus || '');
+  const otjhBehind = Math.max(0, targetHours - completedHours);
+
+  const ksbProgress = useKsbProgress(real);
+  const ksbTotal = ksbProgress.length;
+  const ksbComplete = ksbProgress.filter(k => k.status === 'complete').length;
+  const ksbNotStarted = ksbProgress.filter(k => k.status === 'not-started').length;
+  const ksbPct = ksbTotal > 0 ? Math.round((ksbComplete / ksbTotal) * 100) : null;
+
+  const candidateItems: (AttentionItem | false)[] = [
+    needsWorkEvidence > 0 && {
+      tone: 'critical',
+      title: `${needsWorkEvidence} evidence ${needsWorkEvidence === 1 ? 'item needs' : 'items need'} rework`,
+      subtitle: 'Marked as needing changes — resubmit once addressed.',
+      tab: 'evidence', cta: 'Review evidence',
+    },
+    otjhAtRisk && {
+      tone: 'caution',
+      title: `OTJH hours ${(otjhStatus || 'need attention').toLowerCase()}`,
+      subtitle: `${formatHoursMinutes(otjhBehind)} behind the current target.`,
+      tab: 'otjh', cta: 'View hours',
+    },
+    ksbNotStarted > 0 && {
+      tone: 'caution',
+      title: `${ksbNotStarted} KSB${ksbNotStarted === 1 ? '' : 's'} not started yet`,
+      subtitle: 'No evidence linked to these Knowledge, Skills & Behaviours yet.',
+      tab: 'ksbs', cta: 'View KSBs',
+    },
+  ];
+  const attentionItems = candidateItems.filter((item): item is AttentionItem => item !== false);
+
+  if (loading) {
+    return <Panel><RowsSkeleton rows={4} /></Panel>;
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Compact summary tiles */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <ProgressStat
+          icon="ri-folder-upload-line" label="Evidence" tone="brand"
+          value={`${validatedEvidence}/${totalEvidence}`}
+          percent={evidencePct}
+          caption={totalEvidence ? `${totalEvidence - validatedEvidence - needsWorkEvidence} awaiting review` : 'No evidence uploaded yet'}
+          onClick={() => onNavigateTab('evidence')}
+        />
+        <ProgressStat
+          icon="ri-time-line" label="OTJ Hours" tone={otjhStatus ? (otjhAtRisk ? 'caution' : 'positive') : 'brand'}
+          value={formatHoursMinutes(completedHours)}
+          percent={otjhPct}
+          caption={targetHours > 0 ? `Target ${formatHoursMinutes(targetHours)}${otjhStatus ? ` · ${otjhStatus}` : ''}` : 'No target set yet'}
+          onClick={() => onNavigateTab('otjh')}
+        />
+        <ProgressStat
+          icon="ri-bar-chart-2-line" label="KSB Progress" tone="brand"
+          value={ksbTotal ? `${ksbPct}%` : '—'}
+          percent={ksbPct}
+          caption={ksbTotal ? `${ksbComplete} of ${ksbTotal} fully evidenced` : 'No KSBs defined yet'}
+          onClick={() => onNavigateTab('ksbs')}
+        />
+      </div>
+
+      {/* Needs your attention */}
+      <Panel>
+        <SectionHeader
+          title="Needs your attention"
+          count={attentionItems.length || undefined}
+          icon="ri-flag-2-line"
+        />
+        <div className="mt-3 space-y-2">
+          {attentionItems.length === 0 ? (
+            <EmptyState
+              size="sm"
+              variant="empty"
+              icon="ri-checkbox-circle-line"
+              title="You're all caught up"
+              description="Evidence, hours and KSBs all look on track."
+            />
+          ) : (
+            attentionItems.map((item, i) => (
+              <ActionRow
+                key={i}
+                tone={item.tone}
+                title={item.title}
+                subtitle={item.subtitle}
+                actions={<RowAction label={item.cta} icon="ri-arrow-right-line" onClick={() => onNavigateTab(item.tab)} />}
+              />
+            ))
+          )}
+        </div>
+      </Panel>
+    </div>
+  );
+}

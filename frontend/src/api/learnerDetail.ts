@@ -44,6 +44,8 @@ export interface LearnerComponentEntry {
   fileName?: string | null;             // powerpoint / document file name
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
+  reflectionRequired?: boolean;         // false completes the activity without the reflection flow
+  reflectionQuestion?: string | null;   // custom Apply-tab question; null uses the default copy
   resourceUrl?: string | null;          // generic external/download URL
   liveSessionUrl?: string | null;       // Microsoft Teams join URL for live sessions
   teamsLiveSessionId?: string | null;   // curriculum.live_sessions.id for attendance/artifact sync

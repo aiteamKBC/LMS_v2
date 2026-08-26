@@ -1,100 +1,275 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
+import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
-import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
+import { fetchLearnerAttendance, type LearnerAttendance, type AttendanceSessionRow, type AttendanceSessionStatus } from '@/api/learnerAttendance';
+import { fetchAbsenceReports, type LearnerAbsenceReport } from '@/api/absenceReports';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { Panel } from '@/components/ui/Panel';
+import { SectionHeader } from '@/components/ui/SectionHeader';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
+import { ProgressBar } from '@/components/ui/ProgressMetric';
+import { RowAction } from '@/components/ui/ActionRow';
+import { toneStyle, statusTone, progressTone, type StatusTone } from '@/lib/statusTone';
+import { EMPTY_VALUE } from '@/lib/format';
+import AbsenceReportForm from './components/AbsenceReportForm';
 
 const learnerNav = roleNavMap.learner;
 
-const riskConfig: Record<string, { label: string; text: string; badge: string; colour: string; soft: string }> = {
-  green: { label: 'Good standing', text: 'Your attendance is currently in a healthy range.', badge: 'bg-emerald-400/15 text-emerald-200 ring-emerald-300/20', colour: '#34d399', soft: 'bg-emerald-50 text-emerald-700' },
-  amber: { label: 'Needs attention', text: 'Your attendance needs attention. Review missed sessions with your coach.', badge: 'bg-amber-400/15 text-amber-200 ring-amber-300/20', colour: '#fbbf24', soft: 'bg-amber-50 text-amber-700' },
-  red: { label: 'At risk', text: 'Your attendance is at risk. Speak to your coach and address missed sessions.', badge: 'bg-red-400/15 text-red-200 ring-red-300/20', colour: '#ff0000', soft: 'bg-red-50 text-red-700' },
+const RISK_COPY: Record<string, string> = {
+  green: 'Your attendance is currently in a healthy range.',
+  amber: 'Your attendance needs attention. Review missed sessions below.',
+  red: 'Your attendance is at risk. Speak to your coach and address missed sessions.',
 };
 
+function formatRowDate(iso: string) {
+  const date = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 function formatDate(value: string | null, includeTime = false) {
-  if (!value) return 'Not recorded';
+  if (!value) return EMPTY_VALUE;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('en-GB', includeTime ? { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function humanizeType(type: string) {
+  if (!type) return EMPTY_VALUE;
+  return type.replaceAll('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+const ROW_STATUS_TONE: Record<AttendanceSessionStatus, StatusTone> = {
+  attended: 'positive',
+  late: 'caution',
+  missed: 'critical',
+};
+
+const ROW_STATUS_LABEL: Record<AttendanceSessionStatus, string> = {
+  attended: 'Attended',
+  late: 'Late',
+  missed: 'Missed',
+};
+
+type HistoryFilter = 'all' | AttendanceSessionStatus;
+
+interface DrawerState {
+  open: boolean;
+  preselect: { dateIso: string; title: string } | null;
 }
 
 export default function AttendancePage() {
   const myLearner = useMyLearner();
   const [learner, setLearner] = useState<LearnerDetail | null>(null);
   const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
+  const [reports, setReports] = useState<LearnerAbsenceReport[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [filter, setFilter] = useState<HistoryFilter>('all');
+  const [drawer, setDrawer] = useState<DrawerState>({ open: false, preselect: null });
+
+  const loadReports = () => {
+    fetchAbsenceReports(myLearner.kind, myLearner.id)
+      .then((data) => setReports(data.results))
+      .catch(() => { /* the history table degrades gracefully without reported-status */ });
+  };
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true); setError('');
-    Promise.all([fetchLearnerDetail(myLearner.kind, myLearner.id), fetchLearnerAttendance(myLearner.kind, myLearner.id)])
-      .then(([detail, record]) => { if (!cancelled) { setLearner(detail); setAttendance(record); } })
+    Promise.all([
+      fetchLearnerDetail(myLearner.kind, myLearner.id),
+      fetchLearnerAttendance(myLearner.kind, myLearner.id),
+      fetchAbsenceReports(myLearner.kind, myLearner.id).catch(() => ({ count: 0, results: [], missedSessions: [] })),
+    ])
+      .then(([detail, record, absence]) => {
+        if (cancelled) return;
+        setLearner(detail);
+        setAttendance(record);
+        setReports(absence.results);
+      })
       .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'Could not load attendance.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [myLearner.id, myLearner.kind]);
 
-  const risk = riskConfig[attendance?.risk || ''] || riskConfig.amber;
-  const presentWidth = attendance?.sessions ? (attendance.present / attendance.sessions) * 100 : 0;
-  const absentWidth = attendance?.sessions ? (attendance.absent / attendance.sessions) * 100 : 0;
+  const reportedKeys = useMemo(() => new Set(
+    reports
+      .filter((report) => !['declined', 'rejected'].includes(report.status.trim().toLowerCase()))
+      .map((report) => `${report.sessionDate}|${report.sessionTitle.trim().toLowerCase()}`),
+  ), [reports]);
+
+  const history = useMemo(() => attendance?.sessionHistory || [], [attendance]);
+  const counts = useMemo(() => ({
+    all: history.length,
+    attended: history.filter((row) => row.status === 'attended').length,
+    missed: history.filter((row) => row.status === 'missed').length,
+    late: history.filter((row) => row.status === 'late').length,
+  }), [history]);
+
+  const filteredHistory = filter === 'all' ? history : history.filter((row) => row.status === filter);
+
+  const tabs: PageTabItem[] = [
+    { value: 'all', label: 'All', count: counts.all },
+    { value: 'attended', label: 'Attended', count: counts.attended, tone: 'positive' },
+    { value: 'missed', label: 'Missed', count: counts.missed, tone: 'critical' },
+    { value: 'late', label: 'Late', count: counts.late, tone: 'caution', hideWhenEmpty: true },
+  ];
+
+  const risk = attendance?.risk || '';
+  const rateStyle = toneStyle(statusTone(risk));
+
+  const openReportDrawer = (row?: AttendanceSessionRow) => {
+    setDrawer({ open: true, preselect: row ? { dateIso: row.date, title: row.title } : null });
+  };
+  const closeDrawer = () => setDrawer({ open: false, preselect: null });
+  const handleAbsenceSubmitted = () => loadReports();
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Attendance" pageSubtitle="Your live attendance record and current risk status" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Apprentice` : 'Apprentice'}>
-      <main className="w-full space-y-5 p-4 md:p-6">
-        {loading ? <Loading /> : error ? <ErrorState message={error} /> : !attendance ? <EmptyState /> : <>
-          <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#17032d] via-[#33105e] to-[#6a2ca0] p-6 text-white shadow-[0_18px_50px_rgba(39,12,73,0.18)] md:p-7">
-            <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-secondary-300/15 blur-3xl"></div>
-            <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1fr)_420px] lg:items-center">
-              <div><div className="flex flex-wrap items-center gap-2"><span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.15em] text-secondary-100"><AppIcon className="ri-calendar-check-line text-secondary-300"></AppIcon>Attendance overview</span><span className={`rounded-full px-3 py-1 text-[10px] font-bold capitalize ring-1 ring-inset ${risk.badge}`}>{risk.label}</span></div><h1 className="mt-3 text-2xl font-bold text-white md:text-3xl">{learner?.programme || 'Learning'} attendance</h1><p className="mt-2 max-w-xl text-sm leading-6 text-white/65">{risk.text}</p><div className="mt-5 flex flex-wrap gap-2"><Link to="/learner/report-absence" className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-xs font-bold text-primary-800 shadow-md transition hover:bg-primary-50"><AppIcon className="ri-calendar-close-line"></AppIcon>Report absence</Link><Link to="/learner/profile" className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-xs font-semibold text-white transition hover:bg-white/15"><AppIcon className="ri-user-line"></AppIcon>View profile</Link></div></div>
-              <div className="flex items-center gap-5 rounded-3xl border border-white/10 bg-white/[0.08] p-5 backdrop-blur-sm"><div className="relative flex h-28 w-28 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(${risk.colour} ${attendance.attendanceRate * 3.6}deg, rgba(255,255,255,.1) 0deg)` }}><div className="flex h-[86px] w-[86px] flex-col items-center justify-center rounded-full bg-[#35105e]"><span className="text-2xl font-bold text-white">{attendance.attendanceRate}%</span><span className="text-[9px] text-white/45">Attendance</span></div></div><div className="min-w-0 flex-1 space-y-3"><HeroStat colour="bg-emerald-400" value={attendance.present} label="Present" /><HeroStat colour="bg-[#ff0000]" value={attendance.absent} label="Absent" /></div></div>
+      <PageContainer>
+        <SectionHeader
+          title="Attendance"
+          description={RISK_COPY[risk] || 'Only live sessions with a synced Microsoft Teams attendance report are counted.'}
+          icon="ri-calendar-check-line"
+          actions={!loading && !error ? <RowAction label="Report absence" icon="ri-calendar-close-line" emphasis="primary" onClick={() => openReportDrawer()} /> : undefined}
+        />
+
+        {loading ? (
+          <Panel><RowsSkeleton rows={5} /></Panel>
+        ) : error ? (
+          <Panel><EmptyState variant="error" size="sm" title={error} /></Panel>
+        ) : !attendance ? (
+          <Panel>
+            <EmptyState
+              size="sm"
+              icon="ri-calendar-check-line"
+              title="No verified attendance yet"
+              description="Attendance appears here once a completed live session has been synced with its Microsoft Teams attendance report."
+            />
+          </Panel>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 px-0.5">
+              <StatusBadge tone={statusTone(risk)} label={risk ? `${risk === 'green' ? 'Good standing' : risk === 'amber' ? 'Needs attention' : 'At risk'}` : 'Not set'} />
+              <span className="flex items-center gap-1.5 text-[12px]">
+                <AppIcon className="ri-calendar-check-line text-[13px] text-foreground-400" />
+                <span className="text-foreground-400">Last session</span>
+                <span className="font-semibold text-foreground-700">{formatDate(attendance.lastSessionDate)}</span>
+              </span>
+              <span className="flex items-center gap-1.5 text-[12px]">
+                <AppIcon className="ri-refresh-line text-[13px] text-foreground-400" />
+                <span className="text-foreground-400">Record updated</span>
+                <span className="font-semibold text-foreground-700">{formatDate(attendance.updatedAt, true)}</span>
+              </span>
+              {attendance.consecutiveMissed > 0 && (
+                <span className="flex items-center gap-1.5 text-[12px] text-red-600">
+                  <AppIcon className="ri-alert-line text-[13px]" />
+                  {attendance.consecutiveMissed} consecutive missed
+                </span>
+              )}
             </div>
-          </section>
 
-          <div className="flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-800">
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100">
-              <AppIcon className="ri-microsoft-line text-base"></AppIcon>
-            </span>
-            <div>
-              <p className="text-xs font-semibold">Verified Microsoft Teams attendance</p>
-              <p className="mt-0.5 text-[11px] leading-relaxed text-sky-700">
-                Only live sessions with an official Teams attendance report are included. Future sessions and sessions awaiting a report are not counted as absences.
-              </p>
+            <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 ${attendance.late > 0 ? 'lg:grid-cols-4' : 'lg:grid-cols-3'}`}>
+              <StatTile icon="ri-percent-line" label="Attendance Rate" value={`${attendance.attendanceRate}%`} percent={attendance.attendanceRate} tone={rateStyle} progressToneClass={progressTone(attendance.attendanceRate)} />
+              <StatTile icon="ri-checkbox-circle-line" label="Sessions Attended" value={String(attendance.present)} tone={toneStyle('positive')} />
+              <StatTile icon="ri-close-circle-line" label="Missed Sessions" value={String(attendance.absent)} tone={toneStyle('critical')} />
+              {attendance.late > 0 && (
+                <StatTile icon="ri-time-line" label="Late Sessions" value={String(attendance.late)} tone={toneStyle('caution')} />
+              )}
             </div>
-          </div>
 
-          <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard icon="ri-calendar-2-line" label="Total sessions" value={attendance.sessions} colour="bg-primary-50 text-primary-600" />
-            <StatCard icon="ri-checkbox-circle-line" label="Present" value={attendance.present} colour="bg-emerald-50 text-emerald-600" />
-            <StatCard icon="ri-close-circle-line" label="Absent" value={attendance.absent} colour="bg-red-50 text-red-600" />
-            <StatCard icon="ri-error-warning-line" label="Consecutive missed" value={attendance.consecutiveMissed} colour="bg-rose-50 text-rose-600" />
-          </section>
+            <div className="space-y-3">
+              <SectionHeader title="Attendance history" description="Every synced session, with the action you can take on it" icon="ri-history-line" />
+              <PageTabs items={tabs} value={filter} onChange={(v) => setFilter(v as HistoryFilter)} label="Filter attendance history" />
 
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(300px,.6fr)]">
-            <section className="rounded-3xl border border-background-200 bg-white p-5 shadow-[0_5px_24px_rgba(28,10,55,0.05)] md:p-6"><div className="flex items-center justify-between"><div><h2 className="text-base font-bold text-foreground-900">Attendance breakdown</h2><p className="mt-1 text-xs text-foreground-400">Present and absent sessions from verified Teams reports</p></div><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${risk.soft}`}>{risk.label}</span></div><div className="mt-7"><div className="flex h-4 overflow-hidden rounded-full bg-background-100"><div className="bg-emerald-500 transition-all" style={{ width: `${presentWidth}%` }}></div><div className="bg-[#ff0000] transition-all" style={{ width: `${absentWidth}%` }}></div></div><div className="mt-3 flex flex-wrap gap-5 text-xs"><span className="flex items-center gap-2 text-foreground-600"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500"></span><strong>{attendance.present}</strong> present</span><span className="flex items-center gap-2 text-foreground-600"><span className="h-2.5 w-2.5 rounded-full bg-[#ff0000]"></span><strong>{attendance.absent}</strong> absent</span></div></div><div className="mt-7 grid gap-3 sm:grid-cols-2"><InfoBox icon="ri-calendar-check-line" label="Last session" value={formatDate(attendance.lastSessionDate)} /><InfoBox icon="ri-refresh-line" label="Record updated" value={formatDate(attendance.updatedAt, true)} /></div></section>
-            <section className="rounded-3xl border border-background-200 bg-white p-5 shadow-[0_5px_24px_rgba(28,10,55,0.05)] md:p-6"><span className={`flex h-11 w-11 items-center justify-center rounded-2xl ${risk.soft}`}><AppIcon className="ri-heart-pulse-line text-lg"></AppIcon></span><h2 className="mt-4 text-base font-bold text-foreground-900">Attendance status</h2><p className="mt-2 text-sm leading-6 text-foreground-500">{risk.text}</p><div className="mt-5 rounded-2xl bg-background-100/70 p-4"><p className="text-[9px] font-bold uppercase tracking-wider text-foreground-400">Current risk</p><p className="mt-1 text-lg font-bold capitalize text-foreground-900">{attendance.risk || 'Not set'}</p></div>{attendance.consecutiveMissed > 0 && <p className="mt-4 rounded-xl bg-red-50 p-3 text-xs leading-5 text-red-700"><AppIcon className="ri-alert-line mr-1.5"></AppIcon>{attendance.consecutiveMissed} consecutive session{attendance.consecutiveMissed === 1 ? '' : 's'} missed.</p>}</section>
-          </div>
-        </>}
-      </main>
+              {filteredHistory.length === 0 ? (
+                <Panel><EmptyState size="sm" variant="no-matches" title="No sessions match this filter" /></Panel>
+              ) : (
+                <Panel padding="none">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-foreground-200/60 bg-background-100/60">
+                          <th className="whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Date</th>
+                          <th className="whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Session</th>
+                          <th className="whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Type</th>
+                          <th className="whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Status</th>
+                          <th className="px-4 py-2.5"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-foreground-100">
+                        {filteredHistory.map((row) => (
+                          <HistoryRow
+                            key={row.id}
+                            row={row}
+                            reported={reportedKeys.has(`${row.date}|${row.title.trim().toLowerCase()}`)}
+                            onReportAbsence={() => openReportDrawer(row)}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Panel>
+              )}
+            </div>
+          </>
+        )}
+      </PageContainer>
+
+      <RightSlidePanel isOpen={drawer.open} onClose={closeDrawer} title="Report absence" width="w-[520px]">
+        <AbsenceReportForm preselectMatch={drawer.preselect} onSubmitted={handleAbsenceSubmitted} showGuidance={false} showHistory />
+      </RightSlidePanel>
     </WorkspaceShell>
   );
 }
 
-function HeroStat({ colour, value, label }: { colour: string; value: number; label: string }) { return <div className="flex items-center gap-2 text-xs text-white/55"><span className={`h-2 w-2 rounded-full ${colour}`}></span><strong className="text-white">{value}</strong>{label}</div>; }
-function StatCard({ icon, label, value, colour }: { icon: string; label: string; value: number; colour: string }) { return <article className="rounded-2xl border border-background-200 bg-white p-4 shadow-sm"><span className={`flex h-9 w-9 items-center justify-center rounded-xl ${colour}`}><AppIcon className={icon}></AppIcon></span><p className="mt-3 text-2xl font-bold text-foreground-900">{value}</p><p className="mt-1 text-[10px] text-foreground-400">{label}</p></article>; }
-function InfoBox({ icon, label, value }: { icon: string; label: string; value: string }) { return <div className="flex items-center gap-3 rounded-2xl border border-background-200 p-4"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className={icon}></AppIcon></span><div><p className="text-[9px] uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-semibold text-foreground-700">{value}</p></div></div>; }
-function Loading() {
-  // Skeleton rather than a spinner: this stands in for the page's own
-  // content, so it should hold that shape while it loads.
+function StatTile({ icon, label, value, percent, tone, progressToneClass }: {
+  icon: string; label: string; value: string; percent?: number; tone: ReturnType<typeof toneStyle>; progressToneClass?: string;
+}) {
   return (
-    <div className="rounded-3xl border border-background-200 bg-white p-5">
-      <RowsSkeleton rows={5} />
+    <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-foreground-400">{label}</p>
+        <AppIcon className={`${icon} shrink-0 text-[15px] ${tone.text}`} />
+      </div>
+      <p className={`mt-1.5 text-[22px] font-semibold leading-none tabular-nums ${tone.text}`}>{value}</p>
+      {typeof percent === 'number' && <ProgressBar percent={percent} tone={progressToneClass} className="mt-2.5" />}
     </div>
   );
 }
-function ErrorState({ message }: { message: string }) { return <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2"></AppIcon>{message}</div>; }
-function EmptyState() { return <div className="rounded-3xl border border-dashed border-foreground-300 bg-white px-6 py-16 text-center"><span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary-50 text-primary-500"><AppIcon className="ri-calendar-check-line text-xl"></AppIcon></span><h2 className="mt-3 text-sm font-bold text-foreground-800">No verified attendance yet</h2><p className="mt-1 text-xs text-foreground-400">Attendance will appear after a completed live session has been synced with its Microsoft Teams attendance report.</p></div>; }
+
+function HistoryRow({ row, reported, onReportAbsence }: {
+  row: AttendanceSessionRow;
+  reported: boolean;
+  onReportAbsence: () => void;
+}) {
+  return (
+    <tr className="transition-colors hover:bg-background-100/40">
+      <td className="whitespace-nowrap px-4 py-3 text-[12px] text-foreground-600">{formatRowDate(row.date)}</td>
+      <td className="px-4 py-3">
+        <p className="text-[13px] font-semibold text-foreground-900">{row.title}</p>
+        {row.module && <p className="text-[11px] text-foreground-400">{row.module}</p>}
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-[12px] text-foreground-600">{humanizeType(row.sessionType)}</td>
+      <td className="whitespace-nowrap px-4 py-3">
+        <StatusBadge tone={ROW_STATUS_TONE[row.status]} label={ROW_STATUS_LABEL[row.status]} />
+      </td>
+      <td className="whitespace-nowrap px-4 py-3 text-right">
+        {row.status === 'missed' ? (
+          reported
+            ? <span className="text-[11px] font-semibold text-foreground-400">Reported</span>
+            : <RowAction label="Report absence" icon="ri-calendar-close-line" onClick={onReportAbsence} />
+        ) : (
+          <span className="text-[11px] text-foreground-300">{EMPTY_VALUE}</span>
+        )}
+      </td>
+    </tr>
+  );
+}

@@ -7,6 +7,7 @@ import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { PageHeader } from '@/components/ui/PageHeader';
 import {
   fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach,
   fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
@@ -14,6 +15,71 @@ import {
   type LearnerCalendarEvent, type BookableSessionType, type PersonalCalendarConnection,
   type PersonalCalendarProvider, type CalendarBusySlot,
 } from '@/api/learnerCalendar';
+
+/** The header's secondary-actions menu — everything that isn't booking a
+ * coach session (the primary action) moves in here so the toolbar stays a
+ * single row instead of a stack of equally-loud buttons. */
+function CalendarMoreMenu({
+  connectedCount, notificationsEnabled, onCreateEvent, onConnectCalendar, onShare, onNotifications, onExportAll,
+}: {
+  connectedCount: number;
+  notificationsEnabled: boolean;
+  onCreateEvent: () => void;
+  onConnectCalendar: () => void;
+  onShare: () => void;
+  onNotifications: () => void;
+  onExportAll: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const items: { label: string; icon: string; onClick: () => void }[] = [
+    { label: 'Create Event', icon: 'ri-add-line', onClick: onCreateEvent },
+    { label: connectedCount > 0 ? `${connectedCount} calendar${connectedCount === 1 ? '' : 's'} connected` : 'Connect Personal Calendar', icon: connectedCount > 0 ? 'ri-calendar-check-line' : 'ri-calendar-2-line', onClick: onConnectCalendar },
+    { label: 'Share Calendar', icon: 'ri-share-line', onClick: onShare },
+    { label: notificationsEnabled ? 'Notifications enabled' : 'Set up Notifications', icon: 'ri-notification-3-line', onClick: onNotifications },
+    { label: 'Export All Events', icon: 'ri-download-line', onClick: onExportAll },
+  ];
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="inline-flex h-[42px] items-center gap-1.5 rounded-xl border border-foreground-200 bg-background-50 px-3.5 text-[13px] font-semibold text-foreground-600 transition-smooth hover:border-foreground-300 hover:text-foreground-900 cursor-pointer"
+      >
+        <AppIcon className="ri-more-2-fill text-[16px]"></AppIcon>
+        More
+      </button>
+      {open && (
+        <div role="menu" className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-foreground-100 bg-background-50 shadow-lg animate-in fade-in slide-in-from-top-1 duration-150">
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              onClick={() => { item.onClick(); setOpen(false); }}
+              className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left text-[13px] font-medium text-foreground-700 transition-smooth hover:bg-background-100 cursor-pointer"
+            >
+              <AppIcon className={`${item.icon} text-[15px] text-foreground-400`}></AppIcon>
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const learnerNav = roleNavMap.learner;
 const p = LEARNER_PROFILE;
@@ -350,8 +416,6 @@ export function LearnerCalendarContent() {
   const todayDay = today.getDate();
   const todayMonth = today.getMonth();
   const todayYear = today.getFullYear();
-  const todayMonthLabel = MONTH_NAMES[todayMonth].slice(0, 3).toUpperCase();
-  const todayWeekdayLabel = DAYS_OF_WEEK[today.getDay() === 0 ? 6 : today.getDay() - 1].toUpperCase();
   const isToday = useCallback((day: number, month: number, year: number) => {
     return day === todayDay && month === todayMonth && year === todayYear;
   }, [todayDay, todayMonth, todayYear]);
@@ -850,46 +914,32 @@ export function LearnerCalendarContent() {
           </div>
         )}
 
-        {/* ═══════════ HERO BANNER ═══════════ */}
-        <section className="relative overflow-hidden rounded-2xl animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-            <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
-          </div>
-          <div className="relative flex min-h-[190px] flex-row items-center md:min-h-[160px] lg:items-stretch">
-            <div className="flex min-w-0 flex-1 flex-col justify-center px-5 py-6 md:px-7 md:py-6">
-              <div className="flex items-center gap-3 mb-2 flex-wrap">
-                <span className="max-w-full truncate rounded-md border border-accent-400/15 bg-accent-400/10 px-2.5 py-1 font-label text-[10px] font-semibold uppercase tracking-wider text-accent-300/80 sm:text-xs">{p.programme} &middot; Level {p.programmeLevel}</span>
-              </div>
-              <h1 className="mb-1.5 font-heading text-xl font-bold tracking-tight text-white md:text-xl">My Calendar</h1>
-              <p className="max-w-lg text-xs leading-relaxed text-white/55 sm:text-sm">Your schedule, coaching sessions, club events &mdash; all in one professional view</p>
-            </div>
-            <div className="flex w-[130px] shrink-0 items-center justify-center px-3 py-4 sm:w-[155px] md:px-5 md:py-5 lg:w-[380px] lg:px-7 lg:py-6">
-              <div className="rounded-[22px] border border-white/10 bg-white/10 p-2 shadow-[0_24px_55px_-30px_rgba(9,4,28,0.75)] backdrop-blur-md sm:rounded-[28px] sm:p-3">
-                <div className="relative w-[96px] overflow-hidden rounded-[18px] bg-white shadow-[0_12px_28px_-20px_rgba(10,10,20,0.55)] sm:w-[120px] sm:rounded-[22px] md:w-[150px] md:rounded-[24px] lg:w-[168px]">
-                  <div className="bg-[#ef4444] px-3 pb-3 pt-2.5">
-                    <div className="flex items-center justify-between">
-                      {[0, 1, 2, 3, 4, 5].map((index) => (
-                        <span key={index} className="relative flex h-5 w-2.5 items-start justify-center">
-                          <span className="absolute top-0 h-3.5 w-1 rounded-full bg-slate-700" />
-                          <span className="absolute top-1 h-4.5 w-2 rounded-full border border-black/15 bg-white/85 shadow-sm" />
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="px-2 pb-3 pt-2 text-center sm:px-4 sm:pb-4 sm:pt-3">
-                    <p className="text-[9px] font-semibold uppercase tracking-[0.28em] text-foreground-500 sm:text-[11px] sm:tracking-[0.34em]">{todayMonthLabel}</p>
-                    <p className="mt-1 font-heading text-3xl font-bold leading-none text-foreground-950 sm:mt-2 sm:text-5xl md:text-6xl">
-                      {String(todayDay).padStart(2, '0')}
-                    </p>
-                    <p className="mt-2 text-[8px] font-semibold uppercase tracking-[0.28em] text-foreground-500 sm:mt-2.5 sm:text-[10px] sm:tracking-[0.34em]">{todayWeekdayLabel}</p>
-                  </div>
-                  <div className="pointer-events-none absolute bottom-0 right-0 h-14 w-14 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.94),_rgba(226,232,240,0.82)_42%,_rgba(148,163,184,0.3)_72%,_transparent_74%)] opacity-95" />
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
+        {/* ═══════════ COMPACT HEADER ═══════════ */}
+        <PageHeader
+          icon="ri-calendar-2-line"
+          title="My Calendar"
+          description="Sessions, coaching and club events — all in one place"
+          actions={
+            <>
+              <button
+                onClick={() => setShowBookModal(true)}
+                className="inline-flex h-[42px] cursor-pointer items-center gap-2 rounded-xl bg-primary-600 px-4 text-[13px] font-semibold text-white transition-smooth hover:bg-primary-700"
+              >
+                <AppIcon className="ri-user-star-line text-[15px]"></AppIcon>
+                Book Coach Session
+              </button>
+              <CalendarMoreMenu
+                connectedCount={calendarConnections.length}
+                notificationsEnabled={notificationPermission === 'granted'}
+                onCreateEvent={() => setShowCreateModal(true)}
+                onConnectCalendar={() => { setConnectionError(null); setShowCalendarConnect(true); }}
+                onShare={() => setShowShareCalendar(true)}
+                onNotifications={() => setShowNotificationSettings(true)}
+                onExportAll={handleExportAllICS}
+              />
+            </>
+          }
+        />
 
         {/* ═══════════ TOP BAR: VIEW TOGGLE + NAV ═══════════ */}
         <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -1124,43 +1174,6 @@ export function LearnerCalendarContent() {
 
           {/* ── SIDEBAR (1/3) ── */}
           <div className="space-y-4">
-
-            {/* Quick Actions */}
-            <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
-              <h3 className="text-sm font-heading font-bold text-foreground-900 mb-4 flex items-center gap-2"><AppIcon className="ri-flashlight-line text-accent-500"></AppIcon>Quick Actions</h3>
-              <div className="space-y-2">
-                <button onClick={() => setShowBookModal(true)}
-                  className="group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-accent-500 px-3.5 py-3 text-white transition-all duration-200 hover:scale-[1.01] hover:bg-accent-600 active:scale-[0.99] sm:px-4">
-                  <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><AppIcon className="ri-user-star-line text-white"></AppIcon></span>
-                  <div className="text-left"><p className="text-sm font-semibold">Book Coach Session</p><p className="text-xs text-white/80">{coach ? `Catch-up or support with ${coach.name}` : 'Catch-up or student support'}</p></div>
-                </button>
-                <button onClick={() => setShowCreateModal(true)}
-                  className="group flex w-full cursor-pointer items-center gap-3 rounded-xl bg-primary-500 px-3.5 py-3 text-white transition-all duration-200 hover:scale-[1.01] hover:bg-primary-600 active:scale-[0.99] sm:px-4">
-                  <span className="w-9 h-9 rounded-lg bg-white/20 flex items-center justify-center group-hover:scale-110 transition-transform duration-200"><AppIcon className="ri-add-line text-white"></AppIcon></span>
-                  <div className="text-left"><p className="text-sm font-semibold">Create Event</p><p className="text-xs text-white/80">Add a custom personal event</p></div>
-                </button>
-                <button onClick={() => { setConnectionError(null); setShowCalendarConnect(true); }}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${calendarConnections.length ? 'bg-emerald-100 text-emerald-600' : 'bg-primary-100 text-primary-600'}`}><AppIcon className={calendarConnections.length ? 'ri-calendar-check-line' : 'ri-calendar-2-line'}></AppIcon></span>
-                  <div className="min-w-0 text-left"><p className="text-sm font-semibold text-foreground-900">Connect Your Personal Calendar</p><p className="truncate text-xs text-foreground-400">{calendarConnections.length ? `${calendarConnections.length} calendar${calendarConnections.length === 1 ? '' : 's'} connected` : 'Connect Google, Microsoft, Apple or ICS'}</p></div>
-                </button>
-                <button onClick={() => setShowShareCalendar(true)}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <span className="w-9 h-9 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center"><AppIcon className="ri-share-line"></AppIcon></span>
-                  <div className="text-left"><p className="text-sm font-semibold text-foreground-900">Share Calendar</p><p className="text-xs text-foreground-400">Generate iCal feed link</p></div>
-                </button>
-                <button onClick={() => setShowNotificationSettings(true)}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <span className={`w-9 h-9 rounded-lg flex items-center justify-center ${notificationPermission === 'granted' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}><AppIcon className="ri-notification-3-line"></AppIcon></span>
-                  <div className="text-left"><p className="text-sm font-semibold text-foreground-900">Notifications</p><p className="text-xs text-foreground-400">{notificationPermission === 'granted' ? 'Reminders enabled' : 'Set up reminders'}</p></div>
-                </button>
-                <button onClick={handleExportAllICS}
-                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl border border-background-300 hover:bg-background-100 transition-smooth cursor-pointer">
-                  <span className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center"><AppIcon className="ri-google-line"></AppIcon></span>
-                  <div className="text-left"><p className="text-sm font-semibold text-foreground-900">Export All Events</p><p className="text-xs text-foreground-400">Download .ics file</p></div>
-                </button>
-              </div>
-            </div>
 
             {/* Upcoming Events */}
             <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
