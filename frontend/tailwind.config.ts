@@ -130,10 +130,24 @@ export default {
             '0%': { height: '0%' },
             '100%': { height: 'var(--bar-height, 12%)' },
           },
+          // A background refresh is running: the list on screen is still the
+          // real one, so it stays put and this bar carries the "there is more
+          // coming" signal instead of a spinner that blanks the page.
+          'entity-refresh': {
+            '0%': { transform: 'translateX(-100%)' },
+            '100%': { transform: 'translateX(400%)' },
+          },
+          // The row a save just wrote, so the eye finds it in a long list.
+          'row-flash': {
+            '0%, 55%': { backgroundColor: 'oklch(var(--primary-100) / 0.9)' },
+            '100%': { backgroundColor: 'oklch(var(--primary-100) / 0)' },
+          },
         },
         animation: {
           'celebrate-glow': 'celebrate-glow 2s ease-in-out infinite',
           'bar-grow': 'bar-grow 0.8s ease-out forwards',
+          'entity-refresh': 'entity-refresh 1.1s ease-in-out infinite',
+          'row-flash': 'row-flash 2.6s ease-out forwards',
         },
       },
     },

@@ -182,6 +182,14 @@ export function EntityFilterBar({
 /**
  * A CSS-grid table. Rows are buttons so the whole row opens the record — the
  * action cell stops propagation for the inline edit/delete controls.
+ *
+ * Two states sit on top of the rows, both there because a save and the refresh
+ * that follows it are seconds apart. `refreshing` runs a bar under the header
+ * while a background load is in flight: the list stays readable and the user is
+ * told it is moving, rather than being shown a stale page with no explanation.
+ * `highlightKey` marks the record a save just wrote — the row flashes and is
+ * scrolled into view, so a create in a long list is something the user sees
+ * happen instead of something they have to go and find.
  */
 export function EntityTable<T>({
   columns,
@@ -190,6 +198,8 @@ export function EntityTable<T>({
   rowKey,
   renderRow,
   loading,
+  refreshing,
+  highlightKey,
   empty,
 }: {
   columns: Array<{ label: string; align?: 'left' | 'center' | 'right' }>;
@@ -198,8 +208,26 @@ export function EntityTable<T>({
   rowKey: (row: T) => string;
   renderRow: (row: T) => ReactNode;
   loading?: boolean;
+  /** A background reload is running behind the rows already on screen. */
+  refreshing?: boolean;
+  /** Row key of the record a save just wrote, or null. */
+  highlightKey?: string | null;
   empty: ReactNode;
 }) {
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  const rowNodes = useRef(new Map<string, HTMLDivElement>());
+
+  // `rows` is in the dependencies on purpose: the optimistic row is replaced by
+  // the server's copy when the refresh lands, and the highlight has to survive
+  // that swap rather than ending on the row that was thrown away.
+  useEffect(() => {
+    if (!highlightKey) { setFlashKey(null); return undefined; }
+    setFlashKey(highlightKey);
+    rowNodes.current.get(highlightKey)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const timer = setTimeout(() => setFlashKey(null), 2600);
+    return () => clearTimeout(timer);
+  }, [highlightKey, rows]);
+
   return (
     <div className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
       <div className="overflow-x-auto">
@@ -214,17 +242,35 @@ export function EntityTable<T>({
               </span>
             ))}
           </div>
+          <div className="relative h-0.5 overflow-hidden" aria-hidden="true">
+            {refreshing && !loading && (
+              <span className="absolute inset-y-0 left-0 w-1/4 animate-entity-refresh rounded-full bg-primary-500/70" />
+            )}
+          </div>
+          <span className="sr-only" role="status" aria-live="polite">
+            {refreshing && !loading ? 'Refreshing the list' : ''}
+          </span>
           {loading ? (
             <div className="space-y-2 p-4">
               {Array.from({ length: 6 }).map((_, index) => <SkeletonBlock key={index} className="h-14 w-full" />)}
             </div>
           ) : rows.length ? (
             <div className="divide-y divide-background-200/70">
-              {rows.map(row => (
-                <div key={rowKey(row)} className={`${gridClass} gap-3 px-4 py-3 transition-smooth hover:bg-background-100/60`}>
-                  {renderRow(row)}
-                </div>
-              ))}
+              {rows.map(row => {
+                const key = rowKey(row);
+                return (
+                  <div
+                    key={key}
+                    ref={node => {
+                      if (node) rowNodes.current.set(key, node);
+                      else rowNodes.current.delete(key);
+                    }}
+                    className={`${gridClass} gap-3 px-4 py-3 transition-smooth hover:bg-background-100/60${flashKey === key ? ' animate-row-flash' : ''}`}
+                  >
+                    {renderRow(row)}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             empty
@@ -380,25 +426,49 @@ export function FormField({
   hint,
   error,
   required,
+  as = 'label',
 }: {
   label: string;
   children: ReactNode;
   hint?: string;
   error?: string;
   required?: boolean;
+  /**
+   * `'label'` for a field that is one control. `'group'` for a field made of
+   * several controls — a tick list, a row of toggles. A `<label>` names the
+   * labelable elements inside it, and `<button>` is labelable: wrapping a tick
+   * list in one gives every row the whole list's text as its accessible name,
+   * so screen readers (and tests) cannot tell the rows apart.
+   */
+  as?: 'label' | 'group';
 }) {
+  const heading = (
+    <span className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+      {label}
+      {required && <span className="text-red-500">*</span>}
+    </span>
+  );
+  const footer = error ? (
+    <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>
+  ) : hint ? (
+    <span className="mt-1 block text-[11px] text-foreground-400">{hint}</span>
+  ) : null;
+
+  if (as === 'group') {
+    return (
+      <div className="block" role="group" aria-label={label}>
+        {heading}
+        {children}
+        {footer}
+      </div>
+    );
+  }
+
   return (
     <label className="block">
-      <span className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
-        {label}
-        {required && <span className="text-red-500">*</span>}
-      </span>
+      {heading}
       {children}
-      {error ? (
-        <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>
-      ) : hint ? (
-        <span className="mt-1 block text-[11px] text-foreground-400">{hint}</span>
-      ) : null}
+      {footer}
     </label>
   );
 }
@@ -499,6 +569,121 @@ export function SelectControl({
       placeholder={placeholder || 'Select'}
       clearable={Boolean(placeholder)}
     />
+  );
+}
+
+export interface MultiSelectOption {
+  value: string;
+  label: string;
+  /** Second line, for whatever tells two similarly-named rows apart. */
+  description?: string;
+  /** Short chip on the right, e.g. "already runs this". */
+  badge?: string;
+  /** Ticked and not togglable — something already true of this row. */
+  locked?: boolean;
+}
+
+/**
+ * A picker for "which of these, one or many" — the same list a `SelectControl`
+ * would draw, with a checkbox on every row instead of one radio-shaped choice.
+ *
+ * Written as a visible list rather than a dropdown with multi-select semantics:
+ * the point of the control is that picking a second row is obviously allowed,
+ * and a closed dropdown showing one value does not say that.
+ */
+export function MultiSelectControl({
+  value,
+  onChange,
+  options,
+  emptyMessage = 'Nothing to choose from.',
+  selectAllLabel,
+}: {
+  value: string[];
+  onChange: (value: string[]) => void;
+  options: MultiSelectOption[];
+  /** Shown in place of the list when there is nothing to pick. */
+  emptyMessage?: string;
+  /** Adds a select-all / clear toggle above the list, named by this. */
+  selectAllLabel?: string;
+}) {
+  const selected = new Set(value.map(String));
+  const togglable = options.filter(option => !option.locked);
+  const allSelected = togglable.length > 0 && togglable.every(option => selected.has(option.value));
+
+  const toggle = (option: MultiSelectOption) => {
+    if (option.locked) return;
+    // Order is preserved: the first pick stays first, which is what the module
+    // form reads as the delivery it patches.
+    onChange(selected.has(option.value)
+      ? value.filter(item => String(item) !== option.value)
+      : [...value, option.value]);
+  };
+
+  if (!options.length) {
+    return (
+      <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2.5 text-[12px] text-foreground-500">
+        {emptyMessage}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {selectAllLabel && togglable.length > 1 && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] font-semibold text-foreground-500">
+            {selected.size} of {options.length} selected
+          </p>
+          <button
+            type="button"
+            onClick={() => onChange(allSelected
+              ? value.filter(item => !togglable.some(option => option.value === String(item)))
+              : Array.from(new Set([...value.map(String), ...togglable.map(option => option.value)])))}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100"
+          >
+            <AppIcon className={allSelected ? 'ri-checkbox-blank-line text-sm' : 'ri-checkbox-multiple-line text-sm'}></AppIcon>
+            {allSelected ? `Clear ${selectAllLabel}` : `Select all ${selectAllLabel}`}
+          </button>
+        </div>
+      )}
+      <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
+        {options.map(option => {
+          const active = selected.has(option.value);
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => toggle(option)}
+              aria-pressed={active}
+              disabled={option.locked}
+              className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-smooth ${
+                active ? 'border-primary-300 bg-primary-50' : 'border-transparent hover:bg-background-100'
+              } ${option.locked ? 'cursor-not-allowed opacity-70' : ''}`}
+            >
+              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                active ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300'
+              }`}
+              >
+                {active && <AppIcon className="ri-check-line text-[10px]"></AppIcon>}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-[12px] font-semibold text-foreground-900">{option.label}</span>
+                  {option.badge && (
+                    <span className="shrink-0 rounded-full bg-background-200 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground-600">
+                      {option.badge}
+                    </span>
+                  )}
+                </span>
+                {option.description && (
+                  <span className="block truncate text-[11px] text-foreground-400">{option.description}</span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

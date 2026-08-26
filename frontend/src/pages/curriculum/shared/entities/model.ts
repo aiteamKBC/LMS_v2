@@ -351,6 +351,79 @@ function dateKey(value: unknown): string {
   return cleanText(value).slice(0, 10);
 }
 
+const DAY_MS = 86_400_000;
+
+/** A date as a whole number of days since the epoch, or null when unparseable. */
+function dayNumber(value: unknown): number | null {
+  const text = dateKey(value);
+  if (!text) return null;
+  // Fixed to UTC midnight so the arithmetic below cannot be shifted by the
+  // reader's timezone or by a daylight-saving boundary inside the period.
+  const parsed = Date.parse(`${text}T00:00:00Z`);
+  return Number.isNaN(parsed) ? null : Math.round(parsed / DAY_MS);
+}
+
+export interface CohortWeekCapacity {
+  /** Weeks the cohort period holds if nothing is ticked -- the minimum a module needs. */
+  totalWeeks: number;
+  /** Days the ticked holidays cover inside the period, deduplicated across overlaps -- e.g. a 3-day and a 5-day holiday is 8, not two separate weeks. */
+  holidayDays: number;
+  /** holidayDays rounded up to whole weeks -- what actually gets added to the maximum. */
+  holidayWeeks: number;
+  /** totalWeeks + holidayWeeks -- the ceiling once every ticked holiday has pushed the plan out. */
+  maxWeeks: number;
+}
+
+/**
+ * How many weeks a cohort has to deliver in, before and after its holidays.
+ *
+ * The contracted period is fixed -- ticked holidays never move a cohort's start
+ * or practical end date -- so `totalWeeks` (the minimum) is what the period
+ * holds with nothing ticked. Each ticked holiday pushes a module's own plan
+ * past the period rather than shrinking it: a session that lands on a holiday
+ * is skipped and delivered afterwards, so the days a holiday covers are
+ * additional weeks on top, not weeks subtracted -- `maxWeeks` is the minimum
+ * plus that extension.
+ *
+ * Holiday days are deduplicated across overlapping holidays and rounded up to
+ * whole weeks as a single count (7 days of ticked holiday is one extra week,
+ * however those days happen to fall against the cohort's own week
+ * boundaries) rather than counting how many of the period's own weeks the
+ * holiday's date range touches, which over- or under-counts short holidays
+ * that straddle a week boundary.
+ */
+export function cohortWeekCapacity(
+  periodStart: unknown,
+  periodEnd: unknown,
+  holidays: Array<{ startDate?: unknown; endDate?: unknown }> = [],
+): CohortWeekCapacity {
+  const start = dayNumber(periodStart);
+  const end = dayNumber(periodEnd);
+  if (start == null || end == null || end < start) {
+    return { totalWeeks: 0, holidayDays: 0, holidayWeeks: 0, maxWeeks: 0 };
+  }
+  const totalWeeks = Math.ceil((end - start + 1) / 7);
+  const touchedDays = new Set<number>();
+  holidays.forEach(holiday => {
+    const from = dayNumber(holiday.startDate);
+    if (from == null) return;
+    const to = dayNumber(holiday.endDate) ?? from;
+    // Clamped to the period, so a holiday that only overlaps it costs the days
+    // it actually reaches into and nothing else.
+    for (let day = Math.max(from, start); day <= Math.min(to, end); day += 1) {
+      touchedDays.add(day);
+    }
+  });
+  const holidayDays = touchedDays.size;
+  const holidayWeeks = Math.ceil(holidayDays / 7);
+  return {
+    totalWeeks,
+    holidayDays,
+    holidayWeeks,
+    maxWeeks: totalWeeks + holidayWeeks,
+  };
+}
+
 /**
  * The delivery window a module placed in a cohort has to fit inside.
  *
