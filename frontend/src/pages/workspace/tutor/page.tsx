@@ -7,6 +7,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useTutorIdentity } from '@/hooks/useTutorIdentity';
 import { clearTutorViewAs, setTutorViewAs } from '@/lib/tutorViewAs';
 import { TutorDirectoryPicker } from './TutorDirectoryPicker';
+import { isJoinButtonEnabled, scheduledInstant, UK_TIME_ZONE } from './meetingTiming';
 import {
   fetchModuleStructure,
   fetchTutorWorkspace,
@@ -30,12 +31,11 @@ import {
    they look like work waiting to be done.
 
    The tutor is resolved from their signed-in account by email
-   first, then by name — the login account and the curriculum
-   tutor profile are separate records with no key in common, so
-   the match is on whatever they share. Modules come from the
-   profile's assignments and from the tutor named on the module
-   itself, merged. An account matching none of that is told
-   exactly that rather than shown an empty timetable — see the
+   first, then by name — the login account and the curriculum tutor
+   profile are separate records with no key in common, so the match
+   is on whatever they share. Modules come only from the profile's
+   explicit assigned-module IDs. An account matching no profile is
+   told exactly that rather than shown an empty timetable — see the
    unlinked state below.
    ═══════════════════════════════════════════════════════ */
 
@@ -55,34 +55,65 @@ function shortDate(value: string): string {
   return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).format(date);
 }
 
-/**
- * A naive ISO stamp as "Friday 28 August 2026" + "07:30".
- *
- * Parsed as local deliberately: the stored value has no offset and the series
- * carries its own `timezone`, which is shown beside the time rather than used to
- * convert. Converting would mean guessing which zone the stamp was naive in.
- */
+/** A scheduled instant formatted in the meeting's UK timezone. */
 function sessionMoment(iso: string): { day: string; time: string } {
   if (!iso) return { day: '', time: '' };
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return { day: iso, time: '' };
+  const date = scheduledInstant(iso);
+  if (!date) return { day: iso, time: '' };
   return {
-    day: new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(date),
-    time: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date),
+    day: new Intl.DateTimeFormat('en-GB', { timeZone: UK_TIME_ZONE, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(date),
+    time: new Intl.DateTimeFormat('en-GB', { timeZone: UK_TIME_ZONE, hour: '2-digit', minute: '2-digit', hour12: false }).format(date),
   };
 }
 
 /** "in 6 days" / "today" / "tomorrow", from now to the session. */
 function countdown(iso: string): string {
   if (!iso) return '';
-  const start = new Date(iso).getTime();
-  if (Number.isNaN(start)) return '';
+  const start = scheduledInstant(iso)?.getTime();
+  if (start == null) return '';
   const days = Math.round((start - Date.now()) / 86_400_000);
   if (days <= 0) return 'today';
   if (days === 1) return 'tomorrow';
   if (days < 7) return `in ${days} days`;
   const weeks = Math.round(days / 7);
   return weeks === 1 ? 'in a week' : `in ${weeks} weeks`;
+}
+
+/** Keep the button state current when a tutor leaves this page open. */
+function useJoinButtonEnabled(session: TutorNextSession): boolean {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [session.scheduledStart, session.scheduledEnd]);
+
+  return isJoinButtonEnabled(session.scheduledStart, session.scheduledEnd, now);
+}
+
+function MeetingJoinButton({ session, compact = false }: { session: TutorNextSession; compact?: boolean }) {
+  const isEnabled = useJoinButtonEnabled(session);
+  const className = compact
+    ? 'shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors'
+    : 'mt-4 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold transition-colors';
+  const stateClassName = isEnabled
+    ? 'cursor-pointer bg-primary-600 text-white hover:bg-primary-700'
+    : 'cursor-not-allowed bg-foreground-200 text-foreground-400';
+  const label = compact ? 'Join' : 'Join the meeting';
+
+  if (!isEnabled) {
+    return (
+      <button type="button" disabled aria-disabled="true" className={`${className} ${stateClassName}`}>
+        <AppIcon className="ri-vidicon-line text-[14px]" /> {label}
+      </button>
+    );
+  }
+
+  return (
+    <a href={session.joinUrl} target="_blank" rel="noreferrer" className={`${className} ${stateClassName}`}>
+      <AppIcon className="ri-vidicon-line text-[14px]" /> {label}
+    </a>
+  );
 }
 
 function NextSessionCard({ session }: { session: TutorNextSession }) {
@@ -112,20 +143,10 @@ function NextSessionCard({ session }: { session: TutorNextSession }) {
         <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Fact label="Session" value={session.sessionNumber != null ? `${session.sessionNumber}${session.repeatOccurrences ? ` of ${session.repeatOccurrences}` : ''}` : '—'} />
           <Fact label="Duration" value={session.durationMinutes ? `${session.durationMinutes} min` : '—'} />
-          {/* The zone is named, not applied: the stored times have no offset. */}
           <Fact label="Time zone" value={session.timezone || '—'} />
           <Fact label="Repeats" value={session.repeatPattern || 'Once'} />
         </dl>
-        {session.joinUrl && (
-          <a
-            href={session.joinUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-primary-600 px-4 py-2.5 text-[13px] font-semibold text-white transition-colors hover:bg-primary-700"
-          >
-            <AppIcon className="ri-vidicon-line text-[14px]" /> Join the meeting
-          </a>
-        )}
+        {session.joinUrl && <MeetingJoinButton session={session} />}
       </div>
     </section>
   );
@@ -160,39 +181,87 @@ function componentMeta(type: string) {
 
 function ComponentRow({ component }: { component: ModuleComponent }) {
   const meta = componentMeta(component.type);
+  const [open, setOpen] = useState(false);
   // Only the requirements that are actually set, so a plain component stays plain.
   const requirements = [
     component.reflectionRequired && 'Reflection',
     component.workplaceEvidenceRequired && 'Evidence',
     component.tutorValidationRequired && 'Your validation',
   ].filter(Boolean) as string[];
+  const detailsId = `component-details-${component.id}`;
 
   return (
-    <li className="flex items-start gap-3 rounded-xl border border-foreground-100 bg-background-100/40 px-3 py-2.5">
-      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-50 text-foreground-500">
-        <AppIcon className={`${meta.icon} text-[13px]`} />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-semibold text-foreground-800">{component.title || meta.label}</p>
-        <p className="text-[10.5px] uppercase tracking-wider text-foreground-400">{meta.label}</p>
-        {requirements.length > 0 && (
-          <p className="mt-1 flex flex-wrap gap-1.5">
-            {requirements.map((requirement) => (
-              <span key={requirement} className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-semibold text-primary-700">
-                {requirement}
-              </span>
-            ))}
+    <li className="overflow-hidden rounded-xl border border-foreground-100 bg-background-100/40">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={detailsId}
+        onClick={() => setOpen(wasOpen => !wasOpen)}
+        className="flex w-full cursor-pointer items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-primary-50/40"
+      >
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-50 text-foreground-500">
+          <AppIcon className={`${meta.icon} text-[13px]`} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-semibold text-foreground-800">{component.title || meta.label}</span>
+          <span className="block text-[10.5px] uppercase tracking-wider text-foreground-400">{meta.label}</span>
+          {requirements.length > 0 && (
+            <span className="mt-1 flex flex-wrap gap-1.5">
+              {requirements.map((requirement) => (
+                <span key={requirement} className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-semibold text-primary-700">
+                  {requirement}
+                </span>
+              ))}
+            </span>
+          )}
+        </span>
+        <span className="shrink-0 text-right">
+          {component.expectedOtjh != null && component.expectedOtjh > 0 && (
+            <span className="block text-[11px] font-semibold tabular-nums text-foreground-600">{component.expectedOtjh}h</span>
+          )}
+          {component.points != null && component.points > 0 && (
+            <span className="block text-[10px] text-foreground-400">{component.points} pts</span>
+          )}
+        </span>
+        <AppIcon className={`mt-1 shrink-0 text-sm text-foreground-400 transition-transform ${open ? 'rotate-180' : ''} ri-arrow-down-s-line`} />
+      </button>
+
+      {open && (
+        <div id={detailsId} className="border-t border-foreground-100 bg-background-50/70 px-3 py-3 pl-[3.75rem]">
+          <p className="text-[12px] leading-relaxed text-foreground-600">
+            {component.description || 'No description has been added for this component yet.'}
           </p>
-        )}
-      </div>
-      <span className="shrink-0 text-right">
-        {component.expectedOtjh != null && component.expectedOtjh > 0 && (
-          <span className="block text-[11px] font-semibold tabular-nums text-foreground-600">{component.expectedOtjh}h</span>
-        )}
-        {component.points != null && component.points > 0 && (
-          <span className="block text-[10px] text-foreground-400">{component.points} pts</span>
-        )}
-      </span>
+          <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Expected OTJH</dt>
+              <dd className="mt-0.5 text-[12px] font-semibold text-foreground-800">
+                {component.expectedOtjh != null ? `${component.expectedOtjh}h` : '—'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Points</dt>
+              <dd className="mt-0.5 text-[12px] font-semibold text-foreground-800">
+                {component.points != null ? component.points : '—'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">Requirements</dt>
+              <dd className="mt-0.5 text-[12px] font-semibold text-foreground-800">
+                {requirements.length > 0 ? requirements.length : 'None'}
+              </dd>
+            </div>
+          </dl>
+          {requirements.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {requirements.map((requirement) => (
+                <span key={requirement} className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-semibold text-primary-700">
+                  {requirement}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </li>
   );
 }
@@ -200,9 +269,18 @@ function ComponentRow({ component }: { component: ModuleComponent }) {
 function WeekBlock({ week }: { week: ModuleWeek }) {
   const components = week.components;
   const hours = components.reduce((total, component) => total + (component.expectedOtjh || 0), 0);
+  const [open, setOpen] = useState(false);
+  const detailsId = `week-details-${week.id || week.weekNumber}`;
   return (
     <div className="rounded-xl border border-foreground-100 bg-background-50 p-3">
-      <div className="flex items-baseline justify-between gap-3">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={detailsId}
+        onClick={() => setOpen(wasOpen => !wasOpen)}
+        className="flex w-full cursor-pointer items-center gap-3 text-left transition-colors hover:text-primary-700"
+      >
+      <div className="flex flex-1 items-baseline justify-between gap-3">
         <h5 className="truncate text-[13px] font-bold text-foreground-800">
           {week.title || `Week ${week.weekNumber}`}
         </h5>
@@ -212,13 +290,23 @@ function WeekBlock({ week }: { week: ModuleWeek }) {
             : `${components.length} item${components.length === 1 ? '' : 's'}${hours > 0 ? ` · ${hours}h` : ''}`}
         </span>
       </div>
-      {week.summary && <p className="mt-1 text-[12px] leading-snug text-foreground-500">{week.summary}</p>}
-      {components.length > 0 && (
-        <ul className="mt-2.5 space-y-1.5">
-          {components.map((component) => (
-            <ComponentRow key={component.id} component={component} />
-          ))}
-        </ul>
+      <AppIcon className={`shrink-0 text-sm text-foreground-400 transition-transform ${open ? 'rotate-180' : ''} ri-arrow-down-s-line`} />
+      </button>
+      {open && (
+        <div id={detailsId} className="mt-3 border-t border-foreground-100 pt-3">
+          {week.summary && <p className="text-[12px] leading-snug text-foreground-500">{week.summary}</p>}
+          {components.length > 0 ? (
+            <ul className={`${week.summary ? 'mt-2.5' : ''} space-y-1.5`}>
+              {components.map((component) => (
+                <ComponentRow key={component.id} component={component} />
+              ))}
+            </ul>
+          ) : (
+            <p className={`${week.summary ? 'mt-2.5' : ''} rounded-lg bg-background-100/60 px-3 py-2 text-[12px] text-foreground-500`}>
+              Nothing added to this week yet.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );
@@ -248,16 +336,7 @@ function ModuleSessionLine({ session }: { session: TutorNextSession }) {
           ].filter(Boolean).join(' · ')}
         </p>
       </div>
-      {session.joinUrl && (
-        <a
-          href={session.joinUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="shrink-0 inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-primary-700"
-        >
-          <AppIcon className="ri-vidicon-line text-[13px]" /> Join
-        </a>
-      )}
+      {session.joinUrl && <MeetingJoinButton session={session} compact />}
     </div>
   );
 }
@@ -391,7 +470,7 @@ function UnlinkedNotice({ email, name, viewingAsTutor = false }: { email: string
         Nothing matches{' '}
         <strong className="font-semibold text-foreground-800">{name || email || 'this account'}</strong>
         {name && email ? <> or <strong className="font-semibold text-foreground-800">{email}</strong></> : null}
-        {' '}— no tutor profile carries that name or address, and no module names them as its tutor.
+        {' '}— no tutor profile carries that name or address.
       </p>
       <p className="mx-auto mt-2 max-w-xl text-[12.5px] leading-relaxed text-foreground-500">
         An administrator can fix this in <strong className="font-semibold text-foreground-700">Curriculum → Staff profiles</strong>,

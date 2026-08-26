@@ -21,6 +21,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import type { TutorWorkspace } from '@/api/tutorWorkspace';
+import { isJoinButtonEnabled } from '../meetingTiming';
 
 const fetchTutorWorkspace = vi.fn();
 const fetchModuleStructure = vi.fn();
@@ -74,6 +75,12 @@ const SESSION = {
   status: 'scheduled',
 };
 
+const ACTIVE_SESSION = {
+  ...SESSION,
+  scheduledStart: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+  scheduledEnd: new Date(Date.now() + 135 * 60 * 1000).toISOString(),
+};
+
 function resolvesTo(payload: Partial<TutorWorkspace>) {
   fetchTutorWorkspace.mockResolvedValue({
     linked: true, matchedBy: 'email', tutor: null, modules: [], nextSession: null, ...payload,
@@ -95,6 +102,22 @@ beforeEach(() => {
 });
 
 describe('tutor workspace', () => {
+  describe('meeting join window', () => {
+    const start = Date.parse('2026-12-12T09:00:00Z');
+    const end = Date.parse('2026-12-12T11:00:00Z');
+
+    it('enables joining from 30 minutes before until 30 minutes after', () => {
+      expect(isJoinButtonEnabled('2026-12-12T09:00:00', '2026-12-12T11:00:00', start - 30 * 60 * 1000 - 1)).toBe(false);
+      expect(isJoinButtonEnabled('2026-12-12T09:00:00', '2026-12-12T11:00:00', start - 30 * 60 * 1000)).toBe(true);
+      expect(isJoinButtonEnabled('2026-12-12T09:00:00', '2026-12-12T11:00:00', end + 30 * 60 * 1000)).toBe(true);
+      expect(isJoinButtonEnabled('2026-12-12T09:00:00', '2026-12-12T11:00:00', end + 30 * 60 * 1000 + 1)).toBe(false);
+    });
+
+    it('does not depend on the tutor browser timezone for offset-less API timestamps', () => {
+      expect(isJoinButtonEnabled('2026-12-12T09:00:00', '2026-12-12T11:00:00', Date.parse('2026-12-12T08:30:00Z'))).toBe(true);
+    });
+  });
+
   it('sends both the account email and its name, since either can match', async () => {
     // The login account and the curriculum tutor profile share no key, so the
     // server needs both and decides which one resolves.
@@ -142,13 +165,21 @@ describe('tutor workspace', () => {
     expect(screen.getByText('4 of 5')).toBeTruthy();
   });
 
-  it('offers the meeting link when the session has one', async () => {
-    resolvesTo({ modules: [MODULE], nextSession: SESSION });
+  it('offers the meeting link during the join window', async () => {
+    resolvesTo({ modules: [MODULE], nextSession: ACTIVE_SESSION });
     renderPage();
     const join = await waitFor(() => screen.getByText(/Join the meeting/).closest('a'));
-    expect(join?.getAttribute('href')).toBe(SESSION.joinUrl);
+    expect(join?.getAttribute('href')).toBe(ACTIVE_SESSION.joinUrl);
     // Opens out of the SPA: it is a Teams URL, not an in-app route.
     expect(join?.getAttribute('target')).toBe('_blank');
+  });
+
+  it('renders the meeting control grayed out and disabled outside the join window', async () => {
+    resolvesTo({ modules: [MODULE], nextSession: SESSION });
+    renderPage();
+    const join = await waitFor(() => screen.getByRole('button', { name: /Join the meeting/ }));
+    expect(join).toBeDisabled();
+    expect(screen.queryByRole('link', { name: /Join the meeting/ })).toBeNull();
   });
 
   it('renders the module details from the curriculum record', async () => {
@@ -211,7 +242,7 @@ describe('tutor workspace', () => {
             id: 'COMP-1',
             type: 'powerpoint',
             title: 'Fouda-PPT',
-            description: '',
+            description: 'Review the presentation and prepare discussion notes.',
             expectedOtjh: 2,
             points: 15,
             reflectionRequired: false,
@@ -242,14 +273,41 @@ describe('tutor workspace', () => {
 
       await waitFor(() => expect(screen.getByText('Week 1')).toBeTruthy());
       expect(fetchModuleStructure.mock.calls[0][0]).toBe('MOD-1');
+      // Weeks are collapsed until their header is clicked.
+      expect(screen.queryByText('Fouda-PPT')).toBeNull();
+      expect(screen.queryByText('Getting started')).toBeNull();
+      await user.click(screen.getByRole('button', { name: /Week 1/i }));
       expect(screen.getByText('Fouda-PPT')).toBeTruthy();
       expect(screen.getByText('Slides')).toBeTruthy();
       expect(screen.getByText('2h')).toBeTruthy();
       // Requirement chips appear only for the flags actually set.
       expect(screen.getByText('Your validation')).toBeTruthy();
       expect(screen.queryByText('Evidence')).toBeNull();
-      // A week with nothing in it says so rather than looking broken.
-      expect(screen.getByText('Nothing added yet')).toBeTruthy();
+      await user.click(screen.getByRole('button', { name: /Week 1/i }));
+      expect(screen.queryByText('Fouda-PPT')).toBeNull();
+      // An empty week can be opened independently.
+      await user.click(screen.getByRole('button', { name: /Week 2/i }));
+      expect(screen.getByText('Nothing added to this week yet.')).toBeTruthy();
+    });
+
+    it('expands a component to show its full details inside the week card', async () => {
+      fetchModuleStructure.mockResolvedValue({ weeks: WEEKS });
+      resolvesTo({ modules: [MODULE] });
+      const user = userEvent.setup();
+      renderPage();
+      await waitFor(() => expect(screen.getByText('M1')).toBeTruthy());
+      await user.click(screen.getByText('M1'));
+      await waitFor(() => expect(screen.getByText('Week 1')).toBeTruthy());
+      await user.click(screen.getByRole('button', { name: /Week 1/i }));
+      await waitFor(() => expect(screen.getByText('Fouda-PPT')).toBeTruthy());
+      expect(screen.queryByText('Review the presentation and prepare discussion notes.')).toBeNull();
+      await user.click(screen.getByRole('button', { name: /Fouda-PPT/i }));
+      expect(screen.getByText('Review the presentation and prepare discussion notes.')).toBeTruthy();
+      expect(screen.getByText('Expected OTJH')).toBeTruthy();
+      expect(screen.getByText('Requirements')).toBeTruthy();
+
+      await user.click(screen.getByRole('button', { name: /Fouda-PPT/i }));
+      expect(screen.queryByText('Review the presentation and prepare discussion notes.')).toBeNull();
     });
 
     it('reuses the structure when the card is closed and reopened', async () => {
@@ -267,7 +325,7 @@ describe('tutor workspace', () => {
     });
 
     it("shows the module's own session and its join link inside the card", async () => {
-      resolvesTo({ modules: [{ ...MODULE, nextSession: SESSION }] });
+      resolvesTo({ modules: [{ ...MODULE, nextSession: ACTIVE_SESSION }] });
       const user = userEvent.setup();
       renderPage();
       await waitFor(() => expect(screen.getByText('M1')).toBeTruthy());
@@ -275,7 +333,7 @@ describe('tutor workspace', () => {
 
       await waitFor(() => expect(screen.getByText('Next live session')).toBeTruthy());
       const join = screen.getByText('Join').closest('a');
-      expect(join?.getAttribute('href')).toBe(SESSION.joinUrl);
+      expect(join?.getAttribute('href')).toBe(ACTIVE_SESSION.joinUrl);
     });
 
     it('says so when the module itself has nothing scheduled', async () => {
