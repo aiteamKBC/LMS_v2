@@ -178,6 +178,7 @@ export const coachNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const tutorNavItems: SidebarNavItem[] = [
   { id: 'tutor-dashboard', label: 'My Teaching', icon: 'ri-presentation-line', href: '/workspace/tutor' },
+  { id: 'tutor-students', label: 'My Learners', icon: 'ri-group-line', href: '/tutor/learners' },
   { id: 'tutor-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages' },
 ];
 

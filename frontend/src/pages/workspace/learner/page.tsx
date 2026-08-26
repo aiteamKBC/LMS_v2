@@ -2,23 +2,33 @@ import { useState, useMemo, useRef, useEffect, useCallback, Fragment } from 'rea
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { LEARNER_PROFILE, LEARNER_RECENT_FEEDBACK, LEARNER_MESSAGES, WEEKLY_LEARNING_COMPONENTS } from '@/mocks/learner-profile';
+import { LEARNER_PROFILE, WEEKLY_LEARNING_COMPONENTS } from '@/mocks/learner-profile';
 import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
-import type { LearnerDetail, LearnerKind, LearnerVideoProgress, LearnerActivityEntry } from '@/api/learnerDetail';
+import type { LearnerDetail, LearnerKind, LearnerVideoProgress } from '@/api/learnerDetail';
 import { learningReflectionStatusKey, loadLearningReflectionStatuses, type LearningReflectionStatusMap } from '@/api/reflectionSubmission';
-import { EmptyState } from '@/pages/users/components/ui';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
-import { fetchLearnerCalendarEvents, bookLearnerCalendarSession, fetchLearnerCoach, type LearnerCalendarEvent, type BookableSessionType } from '@/api/learnerCalendar';
+import { fetchLearnerCalendarEvents, fetchLearnerCoach, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { fetchEvidence, type EvidenceRecord } from '@/api/evidence';
 import type React from 'react';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { PageContainer } from '@/components/ui/PageContainer';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { Panel } from '@/components/ui/Panel';
+import { SectionHeader } from '@/components/ui/SectionHeader';
+import { ActionRow, RowAction } from '@/components/ui/ActionRow';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { ProgressBar } from '@/components/ui/ProgressMetric';
+import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
+import { toneStyle, statusTone, type StatusTone } from '@/lib/statusTone';
+import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 
 /* ─────────────────────────────────────────────
    Real-learner component progress + current-week UI
@@ -68,209 +78,6 @@ function formatProgrammeStartDate(value?: string | null): string {
     : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
 }
 
-/** One component row inside the current-week card. */
-function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
-  c: JourneyComponent;
-  videos: LearnerVideoProgress[];
-  reflectionStatus?: string;
-  onOpen?: () => void;
-}) {
-  const meta = componentTypeMeta(c.title);
-  const prog = componentProgress(c, videos);
-  const style = STATE_STYLE[prog.state];
-  const actionable = !!onOpen;
-  const reflection = REFLECTION_STATUS[reflectionStatus || ''];
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      disabled={!actionable}
-      className={`group w-full flex items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3.5 py-3 text-left transition-smooth ${
-        actionable ? 'hover:border-primary-300/70 hover:shadow-sm cursor-pointer' : 'cursor-default'
-      }`}
-    >
-      <span className={`relative w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
-        <AppIcon className={`${meta.icon} text-[15px] ${meta.color}`} />
-        <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-background-50 ${style.dot}`} />
-      </span>
-      <span className="flex-1 min-w-0">
-        <span className="block text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{meta.label}</span>
-        <span className="block text-[13px] font-semibold text-foreground-900 leading-snug truncate">{meta.detail || meta.label}</span>
-        {(prog.state === 'attempted') && (
-          <span className="mt-1 flex items-center gap-2">
-            <span className="h-1 w-24 rounded-full bg-background-200 overflow-hidden">
-              <span className={`block h-full rounded-full ${style.bar}`} style={{ width: `${prog.percent}%` }} />
-            </span>
-          </span>
-        )}
-      </span>
-      <span className="shrink-0 flex flex-col items-end gap-1">
-        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${style.pill}`}>
-          {prog.state === 'passed' && <AppIcon className="ri-check-line text-[10px]" />}
-          {prog.state === 'watched' && <AppIcon className="ri-check-line text-[10px]" />}
-          {prog.label}{prog.detail ? ` · ${prog.detail}` : ''}
-        </span>
-        {reflection && (
-          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${reflection.style}`}>
-            <AppIcon className={`${reflection.icon} text-[10px]`} />
-            {reflection.label}
-          </span>
-        )}
-        {c.expectedOtjh != null && c.expectedOtjh > 0 && (
-          <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
-        )}
-      </span>
-      {actionable && <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0" />}
-    </button>
-  );
-}
-
-/** The highlighted "current week" hero card with rich component list + progress. */
-function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, learnerId, reflectionStatuses, canProgress }: {
-  moduleTitle: string; weekLabel: string; components: JourneyComponent[];
-  videos: LearnerVideoProgress[]; kind?: string; learnerId?: string;
-  reflectionStatuses: LearningReflectionStatusMap;
-  /** False for a staff/coach viewer: the rows still show progress, but none of
-   *  them opens the runner that would record progress as the learner. */
-  canProgress: boolean;
-}) {
-  const navigate = useNavigate();
-  const total = components.length;
-  const done = components.filter((c) => {
-    const s = componentProgress(c, videos).state;
-    return s === 'passed' || s === 'watched';
-  }).length;
-  const percent = total ? Math.round((done / total) * 100) : 0;
-
-  const openFor = (c: JourneyComponent): (() => void) | undefined => {
-    // Returning undefined leaves the row rendered but inert — CurrentWeekRow
-    // already draws that state for components with nowhere to open.
-    if (!kind || !learnerId || !canProgress) return undefined;
-    const q = `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekLabel)}`;
-    if (c.isQuiz && c.quizMeta?.quizId != null) return () => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`);
-    if (c.type === 'video' && c.videoUrl && c.componentId) return () => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}${q}`);
-    if (isOpenableComponent(c)) return () => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}${q}`);
-    return undefined;
-  };
-
-  const reflectionStatusFor = (c: JourneyComponent): string => {
-    const activityId = c.isQuiz && c.quizMeta?.quizId != null
-      ? `quiz-${c.quizMeta.quizId}`
-      : c.componentId || '';
-    if (!activityId) return '';
-    return reflectionStatuses[
-      learningReflectionStatusKey(c.isQuiz ? 'quiz' : componentNoun(c.type), activityId)
-    ] || '';
-  };
-
-  return (
-    <div className="relative overflow-hidden rounded-2xl border border-primary-200/70 shadow-sm">
-      {/* Accent header band */}
-      <div className="relative bg-gradient-to-r from-primary-600 to-primary-500 px-5 py-4 text-white">
-        <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/80">
-              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" /> Current week
-            </span>
-            <h3 className="mt-1 text-lg font-heading font-bold leading-tight text-white truncate">Current Week</h3>
-            <p className="text-[12px] text-white/75 truncate">{weekLabel} · {moduleTitle}</p>
-          </div>
-          <div className="shrink-0 text-right">
-            <p className="text-2xl font-heading font-bold tabular-nums leading-none">{percent}%</p>
-            <p className="text-[11px] text-white/75 mt-0.5">{done}/{total} done</p>
-          </div>
-        </div>
-        <div className="mt-3 h-1.5 w-full rounded-full bg-white/25 overflow-hidden">
-          <div className="h-full rounded-full bg-white transition-all duration-700" style={{ width: `${percent}%` }} />
-        </div>
-      </div>
-
-      {/* Component list */}
-      <div className="bg-background-50 p-3 md:p-4">
-        {total === 0 ? (
-          <EmptyState text="No components in this week yet." />
-        ) : (
-          <div className="space-y-2">
-            {components.map((c, i) => (
-              <CurrentWeekRow
-                key={c.componentId || `${c.title}-${i}`}
-                c={c}
-                videos={videos}
-                reflectionStatus={reflectionStatusFor(c)}
-                onOpen={openFor(c)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Short relative time, e.g. "just now", "2h ago", "3d ago", else a date. */
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return '';
-  const diff = Date.now() - then;
-  const min = Math.floor(diff / 60000);
-  if (min < 1) return 'just now';
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const d = Math.floor(hr / 24);
-  if (d < 7) return `${d}d ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
-/** One real activity-feed entry (quiz completed / video watched). */
-function RealActivityItem({ entry }: { entry: LearnerActivityEntry }) {
-  const isQuiz = entry.kind === 'quiz';
-  const icon = isQuiz ? 'ri-questionnaire-line' : 'ri-play-circle-line';
-  const tint = isQuiz
-    ? (entry.passed === false ? 'bg-amber-100 text-amber-600' : 'bg-emerald-100 text-emerald-600')
-    : 'bg-red-100 text-red-600';
-  return (
-    <div className="flex items-start gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3.5 py-3">
-      <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${tint}`}>
-        <AppIcon className={`${icon} text-[15px]`} />
-      </span>
-      <div className="flex-1 min-w-0">
-        <p className="text-[13px] font-semibold text-foreground-900 leading-snug">
-          {entry.action}
-          {entry.title && <span className="text-foreground-500 font-normal"> · {entry.title}</span>}
-        </p>
-        <p className="text-[11px] text-foreground-400 mt-0.5 truncate">
-          {[entry.detail, entry.week].filter(Boolean).join(' · ')}
-        </p>
-      </div>
-      <span className="shrink-0 text-[11px] text-foreground-400 whitespace-nowrap">{relativeTime(entry.at)}</span>
-    </div>
-  );
-}
-
-const learnerNav = roleNavMap.learner;
-
-/* ── type → colour mapping (mirror this-week page) ── */
-const typeStyle: Record<string, { bg: string; iconBg: string; iconText: string; chip: string }> = {
-  'Live Session': { bg: 'bg-emerald-50/80', iconBg: 'bg-emerald-100', iconText: 'text-emerald-600', chip: 'bg-emerald-100 text-emerald-700' },
-  'Video': { bg: 'bg-accent-50/80', iconBg: 'bg-accent-100', iconText: 'text-accent-600', chip: 'bg-accent-100 text-accent-700' },
-  'Reading': { bg: 'bg-primary-50/80', iconBg: 'bg-primary-100', iconText: 'text-primary-600', chip: 'bg-primary-100 text-primary-700' },
-  'Podcast': { bg: 'bg-secondary-50/80', iconBg: 'bg-secondary-100', iconText: 'text-secondary-600', chip: 'bg-secondary-100 text-secondary-700' },
-  'Quiz': { bg: 'bg-amber-50/80', iconBg: 'bg-amber-100', iconText: 'text-amber-600', chip: 'bg-amber-100 text-amber-700' },
-  'Activity': { bg: 'bg-accent-50/80', iconBg: 'bg-accent-100', iconText: 'text-accent-700', chip: 'bg-accent-100 text-accent-700' },
-  'Reflection': { bg: 'bg-primary-50/80', iconBg: 'bg-primary-100', iconText: 'text-primary-600', chip: 'bg-primary-100 text-primary-700' },
-  'Evidence': { bg: 'bg-secondary-50/80', iconBg: 'bg-secondary-100', iconText: 'text-secondary-600', chip: 'bg-secondary-100 text-secondary-700' },
-};
-
-const statusStyle: Record<string, { bg: string; text: string; dot: string; border: string }> = {
-  'Not Started': { bg: 'bg-background-50', text: 'text-foreground-500', dot: 'bg-foreground-300', border: 'border-foreground-200/60' },
-  'In Progress': { bg: 'bg-accent-50/40', text: 'text-accent-800', dot: 'bg-accent-500', border: 'border-accent-300/50' },
-  'Evidence Required': { bg: 'bg-amber-50/40', text: 'text-amber-700', dot: 'bg-amber-500', border: 'border-amber-200/60' },
-  'Evidence Submitted': { bg: 'bg-primary-50/40', text: 'text-primary-700', dot: 'bg-primary-500', border: 'border-primary-200/60' },
-  'Referred': { bg: 'bg-red-50/40', text: 'text-red-700', dot: 'bg-red-500', border: 'border-red-200/60' },
-  'Completed': { bg: 'bg-emerald-50/40', text: 'text-emerald-700', dot: 'bg-emerald-500', border: 'border-emerald-200/60' },
-};
-
 /* ─────────────────────────────────────────────
    Scroll-triggered reveal component
    ───────────────────────────────────────────── */
@@ -306,16 +113,8 @@ function SectionReveal({ children, className = '', delay = 0 }: { children: Reac
   );
 }
 
-/* ─────────────────────────────────────────────
-   MiniCalendar — a compact, purpose-built month view
-   (current month, session dots) + a short "next
-   sessions" agenda. Pulls the learner's real coaching
-   sessions from the same API the full calendar uses,
-   but is designed natively to fit a dashboard cell.
-   ───────────────────────────────────────────── */
-const MINI_WD = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+/* Small date helpers for the Upcoming panel — only what a list needs, not a grid. */
 const MINI_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const MINI_TYPE_DOT: Record<string, string> = { coaching: 'bg-teal-500', review: 'bg-red-500', welfare: 'bg-amber-500' };
 
 function miniEventYMD(s?: string | null): { y: number; m: number; d: number } | null {
   if (!s) return null;
@@ -326,473 +125,57 @@ function miniEventYMD(s?: string | null): { y: number; m: number; d: number } | 
 function miniEventDate(ev: LearnerCalendarEvent) {
   return miniEventYMD(ev.scheduledDate) || miniEventYMD(ev.date) || miniEventYMD(ev.targetDate);
 }
-function isoOf(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
-function MiniCalendar({ kind, id }: { kind?: string; id?: string }) {
-  const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
-  const now = useMemo(() => new Date(), []);
-  const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [vy, setVy] = useState(now.getFullYear());
-  const [vm, setVm] = useState(now.getMonth());
+const learnerNav = roleNavMap.learner;
 
-  /* ── Booking flow (real API) ── */
-  const [coach, setCoach] = useState<{ name: string; email: string } | null>(null);
-  const [showBook, setShowBook] = useState(false);
-  const [bookType, setBookType] = useState<BookableSessionType>('catch-up');
-  const [bookDate, setBookDate] = useState(() => isoOf(now));
-  const [bookTime, setBookTime] = useState('10:00');
-  const [bookDuration, setBookDuration] = useState('60');
-  const [bookNotes, setBookNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [bookErr, setBookErr] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+/* ── type → colour mapping (mock-mode "Continue Learning" list) ── */
+const typeStyle: Record<string, { bg: string; iconBg: string; iconText: string; chip: string }> = {
+  'Live Session': { bg: 'bg-emerald-50/80', iconBg: 'bg-emerald-100', iconText: 'text-emerald-600', chip: 'bg-emerald-100 text-emerald-700' },
+  'Video': { bg: 'bg-accent-50/80', iconBg: 'bg-accent-100', iconText: 'text-accent-600', chip: 'bg-accent-100 text-accent-700' },
+  'Reading': { bg: 'bg-primary-50/80', iconBg: 'bg-primary-100', iconText: 'text-primary-600', chip: 'bg-primary-100 text-primary-700' },
+  'Podcast': { bg: 'bg-secondary-50/80', iconBg: 'bg-secondary-100', iconText: 'text-secondary-600', chip: 'bg-secondary-100 text-secondary-700' },
+  'Quiz': { bg: 'bg-amber-50/80', iconBg: 'bg-amber-100', iconText: 'text-amber-600', chip: 'bg-amber-100 text-amber-700' },
+  'Activity': { bg: 'bg-accent-50/80', iconBg: 'bg-accent-100', iconText: 'text-accent-700', chip: 'bg-accent-100 text-accent-700' },
+  'Reflection': { bg: 'bg-primary-50/80', iconBg: 'bg-primary-100', iconText: 'text-primary-600', chip: 'bg-primary-100 text-primary-700' },
+  'Evidence': { bg: 'bg-secondary-50/80', iconBg: 'bg-secondary-100', iconText: 'text-secondary-600', chip: 'bg-secondary-100 text-secondary-700' },
+};
 
-  const loadEvents = useCallback(() => {
-    if (!learnerKind || !id) { setLoading(false); return () => {}; }
-    let cancelled = false;
-    setLoading(true);
-    fetchLearnerCalendarEvents(learnerKind, id)
-      .then((res) => { if (!cancelled) { setEvents(res.events.filter((e) => e.status !== 'cancelled')); setErr(null); } })
-      .catch((e: Error) => { if (!cancelled) setErr(e.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [learnerKind, id]);
-
-  useEffect(() => loadEvents(), [loadEvents]);
-
-  // Assigned coach — powers the booking panel copy.
-  useEffect(() => {
-    if (!id) return;
-    let cancelled = false;
-    fetchLearnerCoach(id)
-      .then((res) => { if (!cancelled && res.coachEmail) setCoach({ name: res.coachName || 'your coach', email: res.coachEmail }); })
-      .catch(() => { /* no coach assigned — panel shows a hint */ });
-    return () => { cancelled = true; };
-  }, [id]);
-
-  const submitBooking = async () => {
-    if (!learnerKind || !id || submitting) return;
-    setSubmitting(true);
-    setBookErr(null);
-    try {
-      const res = await bookLearnerCalendarSession(learnerKind, id, {
-        sessionType: bookType,
-        scheduledDate: bookDate,
-        scheduledTime: bookTime,
-        durationMinutes: parseInt(bookDuration),
-        notes: bookNotes.trim() || undefined,
-      });
-      setShowBook(false);
-      setBookNotes('');
-      setToast(res.warning ? `Session booked (${res.warning})` : `Session booked with ${coach?.name || 'your coach'}!`);
-      setTimeout(() => setToast(null), 4000);
-      // Jump the view to the booked month and refresh from the server.
-      const dt = miniEventYMD(bookDate);
-      if (dt) { setVy(dt.y); setVm(dt.m); }
-      loadEvents();
-    } catch (e) {
-      setBookErr(e instanceof Error ? e.message : 'Booking failed.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const cells = useMemo(() => {
-    const offset = (new Date(vy, vm, 1).getDay() + 6) % 7; // Monday-first
-    const days = new Date(vy, vm + 1, 0).getDate();
-    const arr: (number | null)[] = [];
-    for (let i = 0; i < offset; i++) arr.push(null);
-    for (let d = 1; d <= days; d++) arr.push(d);
-    return arr;
-  }, [vy, vm]);
-
-  const daysWithEvents = useMemo(() => {
-    const set = new Set<number>();
-    for (const ev of events) { const dt = miniEventDate(ev); if (dt && dt.y === vy && dt.m === vm) set.add(dt.d); }
-    return set;
-  }, [events, vy, vm]);
-
-  const upcoming = useMemo(() => {
-    const floor = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-    return events
-      .map((ev) => ({ ev, dt: miniEventDate(ev) }))
-      .filter((x): x is { ev: LearnerCalendarEvent; dt: { y: number; m: number; d: number } } =>
-        x.dt !== null && new Date(x.dt.y, x.dt.m, x.dt.d).getTime() >= floor)
-      .sort((a, b) => new Date(a.dt.y, a.dt.m, a.dt.d).getTime() - new Date(b.dt.y, b.dt.m, b.dt.d).getTime())
-      .slice(0, 3);
-  }, [events, now]);
-
-  const isToday = (d: number) => d === now.getDate() && vm === now.getMonth() && vy === now.getFullYear();
-  const prev = () => { if (vm === 0) { setVm(11); setVy(vy - 1); } else { setVm(vm - 1); } };
-  const next = () => { if (vm === 11) { setVm(0); setVy(vy + 1); } else { setVm(vm + 1); } };
-  const goToday = () => { setVy(now.getFullYear()); setVm(now.getMonth()); };
-
-  if (loading) return <RowsSkeleton rows={4} avatar={false} className="py-2" />;
-  if (err) return <EmptyState text={err} />;
-
-  return (
-    <div>
-      {/* Month nav */}
-      <div className="mb-3 flex items-center justify-between rounded-xl border border-primary-100/70 bg-gradient-to-r from-primary-50/70 to-background-50 px-3 py-2.5">
-        <span className="text-[13px] font-heading font-semibold text-foreground-900">{MINI_MONTHS[vm]} {vy}</span>
-        <div className="flex items-center gap-1">
-          <button onClick={goToday} className="rounded-lg border border-foreground-100 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-foreground-600 shadow-sm transition-smooth hover:border-primary-200 hover:text-primary-600 cursor-pointer">Today</button>
-          <button onClick={prev} aria-label="Previous month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><AppIcon className="ri-arrow-left-s-line" /></button>
-          <button onClick={next} aria-label="Next month" className="flex h-7 w-7 items-center justify-center rounded-lg text-foreground-500 transition-smooth hover:bg-white hover:text-primary-600 cursor-pointer"><AppIcon className="ri-arrow-right-s-line" /></button>
-        </div>
-      </div>
-
-      {/* Weekday header */}
-      <div className="mb-1.5 grid grid-cols-7 gap-1 px-1">
-        {MINI_WD.map((w, i) => <div key={i} className="text-center text-[10px] font-semibold text-foreground-400">{w}</div>)}
-      </div>
-
-      {/* Month grid */}
-      <div className="grid grid-cols-7 gap-1">
-        {cells.map((d, i) => (
-          <div
-            key={i}
-            className={`h-10 rounded-lg flex flex-col items-center justify-center transition-smooth ${d == null ? '' : 'border border-foreground-100 bg-background-50 hover:border-primary-200 hover:bg-primary-50/40'} ${
-              d != null && isToday(d) ? '!bg-primary-500 !border-primary-500 text-white shadow-sm shadow-primary-500/20' : 'text-foreground-700'
-            }`}
-          >
-            {d != null && (
-              <>
-                <span className="text-[11px] leading-none">{d}</span>
-                {daysWithEvents.has(d) && <span className={`mt-0.5 w-1.5 h-1.5 rounded-full ${isToday(d) ? 'bg-white' : 'bg-teal-500'}`} />}
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Next sessions */}
-      <div className="mt-4 border-t border-foreground-100 pt-4">
-        <div className="mb-3 flex items-center justify-between">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Next sessions</p>
-          <button
-            onClick={() => { setShowBook((v) => !v); setBookErr(null); }}
-            className="text-[11px] font-semibold px-2.5 py-1 rounded-lg bg-primary-500 text-white hover:bg-primary-600 transition-smooth cursor-pointer inline-flex items-center gap-1"
-          >
-            <AppIcon className={showBook ? 'ri-close-line' : 'ri-add-line'} />{showBook ? 'Cancel' : 'Book session'}
-          </button>
-        </div>
-
-        {upcoming.length === 0 ? (
-          <p className="text-[12px] text-foreground-400">No upcoming sessions.</p>
-        ) : (
-          <div className="space-y-2">
-            {upcoming.map(({ ev, dt }) => (
-              <div key={ev.id} className="group flex items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3 py-2.5 transition-smooth hover:border-primary-200 hover:shadow-sm">
-                <div className="w-10 shrink-0 rounded-lg bg-primary-50 py-1.5 text-center ring-1 ring-inset ring-primary-100">
-                  <p className="text-[12px] font-bold leading-none text-foreground-800">{dt.d}</p>
-                  <p className="mt-1 text-[9px] font-semibold uppercase text-primary-500">{MINI_MONTHS[dt.m].slice(0, 3)}</p>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12px] font-semibold text-foreground-900">{ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title}</p>
-                  <p className="mt-0.5 truncate text-[11px] text-foreground-400"><AppIcon className="ri-time-line mr-1" />{ev.scheduledTime || 'Time TBC'}{ev.coachName ? ` · ${ev.coachName}` : ''}</p>
-                </div>
-                <span className={`h-2 w-2 shrink-0 rounded-full ring-4 ring-background-100 ${MINI_TYPE_DOT[ev.type] || 'bg-primary-500'}`} />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Inline booking form */}
-        {showBook && (
-          <div className="mt-3 rounded-xl border border-foreground-100 bg-background-50 p-3 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
-            <p className="text-[11px] text-foreground-500">
-              {coach
-                ? <>Books a Teams session with <span className="font-semibold text-foreground-700">{coach.name}</span> and adds it to both calendars.</>
-                : 'No coach assigned yet — please contact your programme team.'}
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {([
-                { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line' },
-                { value: 'student-support' as BookableSessionType, label: 'Support', icon: 'ri-heart-2-line' },
-              ]).map((t) => (
-                <button
-                  key={t.value}
-                  onClick={() => setBookType(t.value)}
-                  className={`px-2.5 py-2 rounded-lg border text-left transition-smooth cursor-pointer flex items-center gap-2 ${
-                    bookType === t.value ? 'border-primary-400 bg-primary-50/50 text-primary-700' : 'border-foreground-200 text-foreground-600 hover:border-foreground-300'
-                  }`}
-                >
-                  <AppIcon className={`${t.icon} text-sm`} /><span className="text-[12px] font-semibold">{t.label}</span>
-                </button>
-              ))}
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block">
-                <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Date</span>
-                <input type="date" value={bookDate} min={isoOf(now)} onChange={(e) => setBookDate(e.target.value)}
-                  className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
-              </label>
-              <label className="block">
-                <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Time</span>
-                <input type="time" value={bookTime} onChange={(e) => setBookTime(e.target.value)}
-                  className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
-              </label>
-            </div>
-            <label className="block">
-              <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Duration</span>
-              <select value={bookDuration} onChange={(e) => setBookDuration(e.target.value)}
-                className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 cursor-pointer">
-                <option value="30">30 minutes</option>
-                <option value="45">45 minutes</option>
-                <option value="60">1 hour</option>
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Notes (optional)</span>
-              <textarea value={bookNotes} onChange={(e) => setBookNotes(e.target.value)} rows={2} placeholder="What would you like to cover?"
-                className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 resize-none focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
-            </label>
-            {bookErr && <p className="text-[11px] text-red-600"><AppIcon className="ri-error-warning-line mr-1" />{bookErr}</p>}
-            <button
-              onClick={submitBooking}
-              disabled={submitting || !coach}
-              className="w-full py-2 rounded-lg bg-primary-500 text-white text-[12px] font-semibold hover:bg-primary-600 transition-smooth cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
-            >
-              {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" />Booking…</> : <><AppIcon className="ri-calendar-check-line" />Confirm booking</>}
-            </button>
-          </div>
-        )}
-
-        {toast && (
-          <div className="mt-3 rounded-lg bg-emerald-50 border border-emerald-200/60 px-3 py-2 text-[12px] font-semibold text-emerald-700 inline-flex items-center gap-2">
-            <AppIcon className="ri-checkbox-circle-line" />{toast}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   MiniJourney — the learner's journey as a milestone
-   track (Start → modules → Gateway) with a progress
-   ring on each node and a rich "current module" card.
-   Reuses buildStations for the real progress data;
-   the layout is purpose-built for the dashboard cell.
-   ───────────────────────────────────────────── */
-type StationTone = 'done' | 'current' | 'upcoming';
-
-/** A node with an SVG progress ring — the fill shows how far through the module the learner is. */
-function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; label: string; sub?: string; tone: StationTone; pct?: number; href?: string }) {
-  const t = tone === 'done'
-    ? { fill: '#10b981', bg: 'bg-emerald-500 text-white', label: 'text-foreground-700', shadow: 'shadow-emerald-500/25' }
-    : tone === 'current'
-      ? { fill: '#7c5cff', bg: 'bg-primary-500 text-white', label: 'text-primary-700 font-semibold', shadow: 'shadow-primary-500/30' }
-      : { fill: '#cbd5e1', bg: 'bg-background-100 text-foreground-400', label: 'text-foreground-400', shadow: '' };
-  const size = 48, stroke = 3, r = (size - stroke) / 2, circ = 2 * Math.PI * r;
-  const ringPct = pct != null ? pct : tone === 'done' ? 100 : 0;
-  const content = (
-    <>
-      <div className="relative" style={{ width: size, height: size }}>
-        <svg width={size} height={size} className="-rotate-90 absolute inset-0">
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="text-background-200" stroke="currentColor" />
-          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} stroke={t.fill} strokeLinecap="round"
-            strokeDasharray={circ} strokeDashoffset={circ - (Math.min(100, ringPct) / 100) * circ} className="transition-all duration-700 ease-out" />
-        </svg>
-        <span className={`absolute inset-[6px] rounded-full flex items-center justify-center shadow-sm ${t.bg} ${t.shadow} ${tone === 'current' ? 'animate-pulse-slow' : ''}`}>
-          <AppIcon className={`${icon} text-base`} />
-        </span>
-      </div>
-      <span className={`text-[11px] leading-tight ${t.label}`}>{label}</span>
-      {sub ? <span className="text-[10px] text-foreground-400 leading-none tabular-nums">{sub}</span> : null}
-    </>
-  );
-
-  return href ? (
-    <Link
-      to={href}
-      aria-label={`Open ${label}`}
-      className="group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
-    >
-      {content}
-    </Link>
-  ) : (
-    <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 py-1 text-center">
-      {content}
-    </div>
-  );
-}
-function JourneyConnector({ filled }: { filled: boolean }) {
-  return (
-    <div className="flex-1 min-w-[20px] h-1 mt-6 rounded-full bg-background-200 overflow-hidden">
-      <div className={`h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-700 ${filled ? 'w-full' : 'w-0'}`} />
-    </div>
-  );
-}
-function stationTone(s: ModuleStation): StationTone {
-  return s.status === 'completed' ? 'done' : s.status === 'current' ? 'current' : 'upcoming';
-}
-
-function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerDetail | null; loading: boolean; loadError: string | null; journeyHref: string }) {
-  const journey = useMemo(() => buildLearnerJourney(real), [real]);
-  const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
-
-  if (loading) return <RowsSkeleton rows={4} className="py-2" />;
-  if (loadError) return <EmptyState text={loadError} />;
-  if (journey.length === 0) return <EmptyState text="No training plan built for this learner yet." />;
-
-  const current = currentIndex >= 0 ? stations[currentIndex] : null;
-  const allDone = currentIndex === -1 && stations.length > 0;
-  const modulesDone = stations.filter((s) => s.status === 'completed').length;
-
-  return (
-    <div>
-      {/* Overall progress banner */}
-      <div className="rounded-xl bg-gradient-to-r from-primary-50/80 to-background-50 border border-primary-100/60 p-3 mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">Overall progress</span>
-          <span className="text-[15px] font-heading font-bold text-foreground-900 tabular-nums">{overallPct}%</span>
-        </div>
-        <div className="h-2 rounded-full bg-background-200 overflow-hidden">
-          <div className="h-full rounded-full bg-gradient-to-r from-primary-400 to-primary-600 transition-all duration-700" style={{ width: `${overallPct}%` }} />
-        </div>
-        <p className="text-[11px] text-foreground-500 mt-1.5">
-          {modulesDone}/{stations.length} {stations.length === 1 ? 'module' : 'modules'} complete
-          {current ? ` · currently on Module ${current.index + 1}` : allDone ? ' · Gateway ready 🎉' : ''}
-        </p>
-      </div>
-
-      {/* Milestone track */}
-      <div className="overflow-x-auto pb-1">
-        <div className="flex items-start min-w-max px-1">
-          <JourneyNode icon="ri-flag-fill" label="Start" tone="done" />
-          {stations.map((s) => (
-            <Fragment key={s.index}>
-              <JourneyConnector filled={s.status === 'completed'} />
-              <JourneyNode
-                icon={s.status === 'completed' ? 'ri-check-line' : s.status === 'current' ? 'ri-flag-2-fill' : 'ri-lock-2-line'}
-                label={`Module ${s.index + 1}`}
-                sub={s.pct == null ? '—' : `${s.pct}%`}
-                tone={stationTone(s)}
-                pct={s.pct ?? 0}
-                href={s.status === 'completed' || s.status === 'current' ? `${journeyHref}?module=${s.index + 1}` : undefined}
-              />
-            </Fragment>
-          ))}
-          <JourneyConnector filled={allDone} />
-          <JourneyNode icon="ri-trophy-fill" label="Gateway" tone={allDone ? 'done' : 'upcoming'} />
-        </div>
-      </div>
-
-      {/* Current-module card */}
-      {current ? (
-        <Link
-          to={`${journeyHref}?module=${current.index + 1}`}
-          aria-label={`Open Module ${current.index + 1}: ${current.module.module}`}
-          className="group mt-4 block cursor-pointer rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
-        >
-          <div className="flex items-center gap-2 mb-2.5">
-            <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-flag-2-fill text-sm" /></span>
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 leading-none">You are here</p>
-              <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{current.module.module}</p>
-            </div>
-            <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{current.pct ?? 0}%</span>
-            <AppIcon className="ri-arrow-right-line text-primary-500 transition-transform duration-200 group-hover:translate-x-1" />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <JourneyStat icon="ri-stack-line" label="Components" value={`${current.componentCount}`} />
-            <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={current.quizTotal > 0 ? `${current.quizTaken}/${current.quizTotal}` : '—'} />
-            <JourneyStat icon="ri-play-circle-line" label="Videos" value={current.videoTotal > 0 ? `${current.videoDone}/${current.videoTotal}` : '—'} />
-          </div>
-        </Link>
-      ) : allDone ? (
-        <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
-          <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-trophy-fill" /></span>
-          <p className="text-[13px] font-semibold text-emerald-700">All modules complete — you&apos;ve reached the Gateway!</p>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function JourneyStat({ icon, label, value }: { icon: string; label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-background-50 border border-foreground-100 px-2 py-2 text-center">
-      <AppIcon className={`${icon} text-primary-500 text-sm`} />
-      <p className="text-[13px] font-heading font-bold text-foreground-900 leading-none mt-1">{value}</p>
-      <p className="text-[9px] uppercase tracking-wider text-foreground-400 mt-0.5">{label}</p>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   Tiny SVG Donut Chart
-   ───────────────────────────────────────────── */
-function DonutRing({ progress, color, size = 40, stroke = 4.5 }: { progress: number; color: string; size?: number; stroke?: number }) {
-  const r = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * r;
-  const offset = circumference - (Math.min(progress, 100) / 100) * circumference;
-
-  const colorMap: Record<string, string> = {
-    emerald: '#10b981',
-    amber: '#f59e0b',
-    red: '#ef4444',
-    primary: '#7c5cff',
-    muted: '#9ca3af',
-  };
-
-  const strokeColor = colorMap[color] || '#10b981';
-
-  return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={stroke}
-        className="text-foreground-200"
-      />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="none"
-        stroke={strokeColor}
-        strokeWidth={stroke}
-        strokeLinecap="round"
-        strokeDasharray={circumference}
-        strokeDashoffset={offset}
-        className="transition-all duration-700 ease-out"
-      />
-    </svg>
-  );
-}
+const statusStyle: Record<string, { bg: string; text: string; dot: string; border: string }> = {
+  'Not Started': { bg: 'bg-background-50', text: 'text-foreground-500', dot: 'bg-foreground-300', border: 'border-foreground-200/60' },
+  'In Progress': { bg: 'bg-accent-50/40', text: 'text-accent-800', dot: 'bg-accent-500', border: 'border-accent-300/50' },
+  'Evidence Required': { bg: 'bg-amber-50/40', text: 'text-amber-700', dot: 'bg-amber-500', border: 'border-amber-200/60' },
+  'Evidence Submitted': { bg: 'bg-primary-50/40', text: 'text-primary-700', dot: 'bg-primary-500', border: 'border-primary-200/60' },
+  'Referred': { bg: 'bg-red-50/40', text: 'text-red-700', dot: 'bg-red-500', border: 'border-red-200/60' },
+  'Completed': { bg: 'bg-emerald-50/40', text: 'text-emerald-700', dot: 'bg-emerald-500', border: 'border-emerald-200/60' },
+};
 
 /* ─────────────────────────────────────────────
    PAGE
    ───────────────────────────────────────────── */
 export default function LearnerOverview() {
   const p = LEARNER_PROFILE;
+  const navigate = useNavigate();
 
   /* ── Real-learner mode: /workspace/learner/:kind/:id ── */
   const { kind: urlKind, id: urlId } = useParams<{ kind?: string; id?: string }>();
   const { kind, id } = useResolvedLearner(urlKind, urlId);
   // Anyone but this learner reads the workspace: the plan is visible, nothing in
-  // it can be progressed. Booking a session is unaffected — see the calendar card.
+  // it can be progressed. Booking a session is unaffected — see the coach card.
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
   const { isRealMode, real, loading, loadError } = useLearnerDetailParam(kind, id);
   const isCommercialPreStart = isRealMode
     && kind === 'commercial'
     && real?.programmeStatus?.trim().toLowerCase() === 'delivery';
   const skipPreStartData = isRealMode && (real == null || isCommercialPreStart);
+  const learnerKind: LearnerKind | null = kind === 'commercial' || kind === 'apprenticeship' ? kind : null;
+
   const [attendance, setAttendance] = useState<LearnerAttendance | null>(null);
   const [attendanceLoading, setAttendanceLoading] = useState(isRealMode);
   const [evidence, setEvidence] = useState<EvidenceRecord[]>([]);
-  const [evidenceLoading, setEvidenceLoading] = useState(isRealMode);
   const [reflectionStatuses, setReflectionStatuses] = useState<LearningReflectionStatusMap>({});
+  const [coach, setCoach] = useState<{ name: string; email: string } | null>(null);
+  const [calendarEvents, setCalendarEvents] = useState<LearnerCalendarEvent[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(isRealMode);
 
   useEffect(() => {
     if (!isRealMode || !kind || !id || skipPreStartData) {
@@ -842,28 +225,53 @@ export default function LearnerOverview() {
   useEffect(() => {
     if (!isRealMode || !kind || !id || skipPreStartData) {
       setEvidence([]);
-      setEvidenceLoading(false);
       return;
     }
 
     let cancelled = false;
     setEvidence([]);
-    setEvidenceLoading(true);
     fetchEvidence(kind, id)
       .then((records) => {
         if (!cancelled) setEvidence(records);
       })
       .catch(() => {
         if (!cancelled) setEvidence([]);
-      })
-      .finally(() => {
-        if (!cancelled) setEvidenceLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
   }, [isRealMode, kind, id, skipPreStartData]);
+
+  // Assigned coach — powers the "My Coach" card and the header's coach fact.
+  useEffect(() => {
+    if (!isRealMode || !id || skipPreStartData) {
+      setCoach(null);
+      return;
+    }
+    let cancelled = false;
+    fetchLearnerCoach(id)
+      .then((res) => { if (!cancelled && res.coachEmail) setCoach({ name: res.coachName || 'Your coach', email: res.coachEmail }); })
+      .catch(() => { if (!cancelled) setCoach(null); });
+    return () => { cancelled = true; };
+  }, [isRealMode, id, skipPreStartData]);
+
+  // Upcoming coaching/review sessions — read-only here; booking still lives on
+  // the full calendar page, not duplicated on the Overview.
+  useEffect(() => {
+    if (!isRealMode || !learnerKind || !id || skipPreStartData) {
+      setCalendarEvents([]);
+      setCalendarLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCalendarLoading(true);
+    fetchLearnerCalendarEvents(learnerKind, id)
+      .then((res) => { if (!cancelled) setCalendarEvents(res.events.filter((e) => e.status !== 'cancelled')); })
+      .catch(() => { if (!cancelled) setCalendarEvents([]); })
+      .finally(() => { if (!cancelled) setCalendarLoading(false); });
+    return () => { cancelled = true; };
+  }, [isRealMode, learnerKind, id, skipPreStartData]);
 
   const evidenceStats = useMemo(() => {
     const approved = evidence.filter((record) => record.status === 'approved').length;
@@ -905,8 +313,25 @@ export default function LearnerOverview() {
       ].filter(Boolean)
     : [`${p.programme} ${p.programmeLevel}`, p.employer, `Cohort ${p.cohort}`];
 
+  const trainingPlanHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
+  const journeyHref = kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules';
+  const displayLearnerName = isRealMode ? heroFullName : p.fullName;
+  const displayCohort = isRealMode ? (heroCohort || EMPTY_VALUE) : p.cohort;
+  const headerDescription = isRealMode
+    ? ([heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined)
+    : `${p.programme} ${p.programmeLevel} · ${p.employer}`;
+  const plannedEndDisplay = isRealMode ? EMPTY_VALUE : p.plannedEndDate;
+  const coachDisplayName = isRealMode ? (coach?.name || 'Not yet assigned') : p.coach.name;
+  const coachDisplayEmail = isRealMode ? (coach?.email || '') : p.coach.email;
+
   /* ── Real learner's training-plan journey, grouped module -> week -> components ── */
   const journey = useMemo(() => (isRealMode ? buildLearnerJourney(real) : []), [isRealMode, real]);
+  const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
+  const currentStation = currentIndex >= 0 ? stations[currentIndex] : null;
+  const journeyAllDone = currentIndex === -1 && stations.length > 0;
+  const currentModuleLabel = isRealMode
+    ? (currentStation ? currentStation.module.module : journeyAllDone ? 'Gateway ready' : EMPTY_VALUE)
+    : p.currentModule;
 
   // The "current week" — first week of the first module (test data for now;
   // swap for date-based scheduling once live sessions are wired).
@@ -937,33 +362,51 @@ export default function LearnerOverview() {
     return { completedHours, plannedHours, targetHours, activities, percent, variance, progressHours, status, targetPercent };
   }, [real]);
 
-  /* ── Mark-as-complete state for timeline ── */
+  /* ── Compact progress cards ── */
+  const modulesDone = stations.filter((s) => s.status === 'completed').length;
+
+  const programmeProgressPercent = isRealMode ? (stations.length ? overallPct : null) : p.overallProgress;
+  const programmeProgressValue = programmeProgressPercent == null ? EMPTY_VALUE : `${programmeProgressPercent}%`;
+  const programmeProgressCaption = isRealMode
+    ? (stations.length ? `${modulesDone}/${stations.length} modules complete` : 'No training plan yet')
+    : `${p.currentWeek ? `Week ${p.currentWeek} · ` : ''}${p.currentModule}`;
+
+  const attendancePercent = isRealMode ? (attendance ? attendance.attendanceRate : null) : p.attendanceRate;
+  const attendanceValue = attendancePercent == null ? EMPTY_VALUE : `${attendancePercent}%`;
+  const attendanceCaption = isRealMode
+    ? (attendance ? `${attendance.present}/${attendance.sessions} sessions` : attendanceLoading ? 'Loading…' : 'No attendance record yet')
+    : `${p.sessionsAttended}/${p.sessionsAttended + p.sessionsMissed} sessions`;
+  const attendanceTone: StatusTone = attendancePercent == null
+    ? 'neutral'
+    : attendancePercent >= ATTENDANCE_EXPECTED_RATE ? 'positive' : attendancePercent >= ATTENDANCE_MINIMUM_RATE ? 'caution' : 'critical';
+
+  const otjPercent = isRealMode ? (otj.targetHours > 0 ? otj.targetPercent : otj.percent) : Math.round((p.otjhCompleted / p.otjhTarget) * 100);
+  const otjValue = isRealMode
+    ? formatHoursMinutes(otj.activities > 0 ? otj.completedHours : otj.plannedHours)
+    : `${p.otjhCompleted}h`;
+  const otjCaption = isRealMode
+    ? (otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)}${otj.status ? ` · ${otj.status}` : ''}` : `${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} logged`)
+    : `${p.otjhCompleted}/${p.otjhTarget}h planned`;
+  const otjTone: StatusTone = isRealMode ? (otj.status ? statusTone(otj.status) : 'brand') : 'brand';
+
+  const ksbTotal = isRealMode ? (real?.ksbs.length || 0) : p.ksbTotal;
+  const ksbPercent = isRealMode
+    ? (ksbTotal ? Math.round((evidencedKsbCodes.size / ksbTotal) * 100) : null)
+    : p.ksbProgress;
+  const ksbValue = isRealMode ? `${evidencedKsbCodes.size}` : `${p.ksbProgress}%`;
+  const ksbCaption = isRealMode ? `${evidencedKsbCodes.size} of ${ksbTotal} evidenced` : `${p.ksbValidated} of ${p.ksbTotal} validated`;
+  const ksbTone: StatusTone = !isRealMode
+    ? (p.ksbProgress >= 50 ? 'positive' : p.ksbProgress >= 30 ? 'caution' : 'critical')
+    : ksbTotal === 0 ? 'neutral' : ksbPercent >= 50 ? 'positive' : ksbPercent >= 30 ? 'caution' : 'critical';
+
+  /* ── Mark-as-complete state for the mock-mode timeline ── */
   const [userCompletions, setUserCompletions] = useState<Record<number, boolean>>({});
 
   const handleMarkComplete = useCallback((idx: number) => {
     setUserCompletions(prev => ({ ...prev, [idx]: true }));
   }, []);
 
-  /* ── Overdue count ── */
-  const overdueCount = useMemo(() =>
-    TRAINING_ACTIVITIES.filter(a => a.status === 'overdue' || a.status === 'Referred').length,
-  []);
-
-  /* ── Health score ── */
-  const kpiBreakdown = useMemo(() => {
-    const attendanceScore = Math.round((p.attendanceRate / 100) * 25);
-    const otjhScore = Math.round((p.otjhCompleted / p.otjhTarget) * 25);
-    const ksbScore = Math.round((p.ksbProgress / 100) * 25);
-    const evidenceScore = Math.round(Math.min((p.evidenceValidated / 12) * 25, 25));
-    return [
-      { label: 'Attendance', score: attendanceScore, max: 25, icon: 'ri-calendar-check-line', progress: p.attendanceRate, detail: `${p.attendanceRate}%` },
-      { label: 'OTJ Hours', score: otjhScore, max: 25, icon: 'ri-time-line', progress: Math.round((p.otjhCompleted / p.otjhTarget) * 100), detail: `${p.otjhCompleted}/${p.otjhTarget}` },
-      { label: 'KSB Progress', score: ksbScore, max: 25, icon: 'ri-bar-chart-2-line', progress: p.ksbProgress, detail: `${p.ksbValidated}/${p.ksbTotal}` },
-      { label: 'Evidence', score: evidenceScore, max: 25, icon: 'ri-folder-check-line', progress: Math.round(Math.min((p.evidenceValidated / 12) * 100, 100)), detail: `${p.evidenceValidated} approved` },
-    ];
-  }, [p]);
-
-  /* ── Timeline data ── */
+  /* ── Continue Learning (mock mode) ── */
   const timelineComponents = useMemo(() => {
     const dayOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
     const dateLabels = ['9 Jun', '10 Jun', '11 Jun', '12 Jun', '13 Jun'];
@@ -980,29 +423,110 @@ export default function LearnerOverview() {
     }).filter(Boolean);
   }, []);
 
-  /* ── Upcoming events ── */
+  /* ── Upcoming (mock mode) ── */
   const upcomingEvents = [
-    { date: '14 Jun', title: 'Workplace Reflection Due', type: 'Evidence', urgent: true, countdown: '2 days', icon: 'ri-folder-check-line' },
-    { date: '18 Jun', title: 'Monthly Coaching', type: 'Coaching', urgent: false, countdown: '6 days', icon: 'ri-chat-smile-2-line' },
-    { date: '22 Jun', title: 'Portfolio Submission', type: 'Portfolio', urgent: false, countdown: '10 days', icon: 'ri-briefcase-line' },
-    { date: '25 Jun', title: 'Progress Review', type: 'Review', urgent: false, countdown: '13 days', icon: 'ri-file-chart-line' },
-    { date: '30 Jun', title: 'Checkpoint Assessment', type: 'Assessment', urgent: false, countdown: '18 days', icon: 'ri-clipboard-line' },
+    { date: '14 Jun', title: 'Workplace Reflection Due', type: 'Evidence', urgent: true, countdown: '2 days' },
+    { date: '18 Jun', title: 'Monthly Coaching', type: 'Coaching', urgent: false, countdown: '6 days' },
+    { date: '22 Jun', title: 'Portfolio Submission', type: 'Portfolio', urgent: false, countdown: '10 days' },
+    { date: '25 Jun', title: 'Progress Review', type: 'Review', urgent: false, countdown: '13 days' },
   ];
 
-  /* ── Activity feed ── */
-  const activityFeed = [
-    ...LEARNER_RECENT_FEEDBACK.map(f => ({ ...f, kind: 'feedback' as const })),
-    ...LEARNER_MESSAGES.filter(m => m.unread).map(m => ({ ...m, kind: 'message' as const })),
-  ].slice(0, 3);
+  const now = useMemo(() => new Date(), []);
 
-  /* ── Achievements ── */
-  const achievements = [
-    { icon: 'ri-vip-crown-line', label: 'Gold Club', color: 'accent' as const },
-    { icon: 'ri-fire-line', label: '8 Week Streak', color: 'secondary' as const },
-    { icon: 'ri-star-line', label: `${p.pointsBalance} Points`, color: 'primary' as const },
-    { icon: 'ri-check-double-line', label: `${p.evidenceValidated} Approved`, color: 'emerald' as const },
-    { icon: 'ri-medal-line', label: 'Top Performer', color: 'amber' as const },
-  ];
+  const upcomingReal = useMemo(() => {
+    const floor = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    return calendarEvents
+      .map((ev) => ({ ev, dt: miniEventDate(ev) }))
+      .filter((x): x is { ev: LearnerCalendarEvent; dt: { y: number; m: number; d: number } } =>
+        x.dt !== null && new Date(x.dt.y, x.dt.m, x.dt.d).getTime() >= floor)
+      .sort((a, b) => new Date(a.dt.y, a.dt.m, a.dt.d).getTime() - new Date(b.dt.y, b.dt.m, b.dt.d).getTime())
+      .slice(0, 4)
+      .map(({ ev, dt }) => ({
+        id: ev.id,
+        day: String(dt.d),
+        month: MINI_MONTHS[dt.m].slice(0, 3),
+        timeLabel: ev.scheduledTime || 'Time TBC',
+        title: ev.sequence ? `${ev.title} ${ev.sequence}` : ev.title,
+        subtitle: [ev.type === 'coaching' ? 'Coaching' : ev.type === 'review' ? 'Review' : ev.type, ev.coachName].filter(Boolean).join(' · '),
+        tone: (ev.type === 'review' ? 'brand' : 'info') as StatusTone,
+      }));
+  }, [calendarEvents, now]);
+
+  const upcomingMock = useMemo(() => upcomingEvents.slice(0, 4).map((e, i) => {
+    const [day, month] = e.date.split(' ');
+    return {
+      id: `mock-${i}`,
+      day: day || e.date,
+      month: month || '',
+      timeLabel: e.countdown,
+      title: e.title,
+      subtitle: e.type,
+      tone: (e.urgent ? 'critical' : 'neutral') as StatusTone,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
+
+  /* ── My Tasks ── */
+  const realTasks = useMemo(() => {
+    if (!isRealMode) return [];
+    const list: Array<{ id: string; title: string; subtitle?: string; tone: StatusTone; actionLabel: string; actionHref: string }> = [];
+    const referredCount = Object.values(reflectionStatuses).filter((s) => s === 'referred' || s === 'reject' || s === 'rejected').length;
+    if (referredCount > 0) {
+      list.push({
+        id: 'reflections',
+        title: `${referredCount} reflection${referredCount === 1 ? '' : 's'} need changes`,
+        subtitle: 'A coach or tutor asked for an update before this can be accepted.',
+        tone: 'caution',
+        actionLabel: 'Review',
+        actionHref: trainingPlanHref,
+      });
+    }
+    if (evidenceStats.rejected > 0) {
+      list.push({
+        id: 'evidence',
+        title: `${evidenceStats.rejected} evidence item${evidenceStats.rejected === 1 ? '' : 's'} rejected`,
+        subtitle: 'Resubmit with the changes your coach asked for.',
+        tone: 'critical',
+        actionLabel: 'View evidence',
+        actionHref: '/learner/evidence',
+      });
+    }
+    if (otj.status && /at risk|need/i.test(otj.status)) {
+      list.push({
+        id: 'otjh',
+        title: /at risk/i.test(otj.status) ? 'Off-the-job hours are at risk' : 'Off-the-job hours need attention',
+        subtitle: otj.progressHours < 0 ? `${formatHoursMinutes(Math.abs(otj.progressHours))} behind the current-week target.` : undefined,
+        tone: statusTone(otj.status),
+        actionLabel: 'Log hours',
+        actionHref: '/learner/otjh',
+      });
+    }
+    if (attendance && attendance.attendanceRate < ATTENDANCE_EXPECTED_RATE) {
+      list.push({
+        id: 'attendance',
+        title: `Attendance is ${attendance.attendanceRate}%`,
+        subtitle: `Target is ${ATTENDANCE_EXPECTED_RATE}% or above.`,
+        tone: attendance.attendanceRate < ATTENDANCE_MINIMUM_RATE ? 'critical' : 'caution',
+        actionLabel: 'View attendance',
+        actionHref: '/learner/attendance',
+      });
+    }
+    return list;
+  }, [isRealMode, reflectionStatuses, evidenceStats, otj, attendance, trainingPlanHref]);
+
+  const mockTasks = useMemo(() => TRAINING_ACTIVITIES
+    .filter((a) => a.status === 'overdue' || a.status === 'Referred' || a.status === 'Evidence Required')
+    .slice(0, 4)
+    .map((a) => ({
+      id: a.id,
+      title: a.title,
+      subtitle: a.status === 'overdue' ? `Was due ${a.dueDate}` : a.status === 'Referred' ? 'Needs changes before it can be accepted.' : 'Evidence required to complete this activity.',
+      tone: (a.status === 'overdue' ? 'critical' : 'caution') as StatusTone,
+      actionLabel: a.primaryAction || 'Open',
+      actionHref: '/learner/training-plan',
+    })), []);
+
+  const tasks = isRealMode ? realTasks : mockTasks;
 
   // Nothing of the overview is rendered until the learner's programme status is
   // known. The onboarding redirect can only decide once the detail has loaded,
@@ -1117,403 +641,217 @@ export default function LearnerOverview() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle={isRealMode ? (loading ? 'Loading learner…' : `Good morning, ${heroName}`) : `Good morning, ${p.firstName}`}
+      pageTitle="Overview"
       pageSubtitle={isRealMode ? subtitleParts.join(' · ') : `${p.programme} ${p.programmeLevel} · ${p.employer} · Cohort ${p.cohort}`}
       userName={isRealMode ? heroFullName : p.fullName}
       userRole={isRealMode ? (heroProgramme ? `${heroProgramme} Learner` : 'Learner') : `${p.programme} Apprentice`}
     >
-      <div className="p-3 md:p-6 space-y-5 md:space-y-6">
+      <PageContainer>
 
         {/* ================================================================
-            SECTION 1 — HERO BANNER
+            PROFILE HEADER
             ================================================================ */}
         <SectionReveal delay={0}>
-          <section className="relative rounded-2xl overflow-hidden h-36 md:h-40" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
-            <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
-            <div className="absolute bottom-0 left-0 right-0 h-px bg-black/10"></div>
-            {/* blobs */}
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-              <div className="absolute opacity-10" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
-            </div>
-            <div className="relative h-full flex flex-col justify-center p-6 md:p-8">
-              <div className="flex flex-col md:flex-row md:items-center gap-4 md:gap-6">
-                <div className="flex-1 min-w-0 max-w-xl">
-                  <h1 className="text-2xl md:text-3xl font-heading font-bold text-white tracking-tight mb-1.5">
-                    {isRealMode ? (loading ? 'Loading learner…' : `Good morning, ${heroName}`) : `Good morning, ${p.firstName}`}
-                  </h1>
-                  <p className="text-[13px] text-white/50 max-w-lg">
-                    {isRealMode
-                      ? (loadError ? loadError : subtitleParts.join(' · ') || 'No programme details yet')
-                      : <>{p.programme} Level {p.programmeLevel} &middot; {p.employer} &middot; Cohort {p.cohort} &middot; Coach: {p.coach.name}</>}
-                  </p>
-                </div>
-              </div>
-            </div>
-            {/* Roadmap Icon Button — links to the logged-in learner's own journey, not applicable when viewing another learner's read-only profile */}
-            {!isRealMode && (
-            <Link
-              to="/learner/modules"
-              className="absolute top-4 right-4 lg:top-5 lg:right-5 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 border border-white/15 flex items-center justify-center transition-all duration-200 hover:scale-110 cursor-pointer group z-10"
-              title="My Learning Journey"
-            >
-              <AppIcon className="ri-route-line text-white/80 text-lg group-hover:text-white transition-colors"></AppIcon>
-            </Link>
-            )}
-          </section>
+          <PageHeader
+            icon="ri-graduation-cap-line"
+            title={displayLearnerName}
+            description={headerDescription}
+            meta={
+              <>
+                <ProfileFact icon="ri-stack-line" label="Cohort" value={displayCohort} />
+                <ProfileFact icon="ri-flag-2-line" label="Module" value={currentModuleLabel} />
+                <ProfileFact icon="ri-user-star-line" label="Coach" value={coachDisplayName} />
+                <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
+                <StatusBadge status={isRealMode ? real?.programmeStatus : p.status} tone={!isRealMode ? 'positive' : undefined} />
+              </>
+            }
+            actions={
+              <>
+                <RowAction label="Message coach" icon="ri-chat-3-line" onClick={() => navigate('/learner/messages')} />
+                <RowAction label="Continue learning" icon="ri-play-circle-line" emphasis="primary" onClick={() => navigate(trainingPlanHref)} />
+              </>
+            }
+          />
         </SectionReveal>
 
         {/* ================================================================
-            SECTION 3 — LEARNING HEALTH DASHBOARD (donut charts)
+            COMPACT PROGRESS CARDS
             ================================================================ */}
-        <SectionReveal delay={120}>
-          <section className="space-y-4">
-            <div className="flex items-center justify-between relative">
-              <h2 className="text-base font-heading font-semibold text-foreground-900">Learning Health</h2>
-
-              {/* ── View Overdue ── */}
-              {!isRealMode && (
-              <div className="flex items-center gap-2">
-                <Link
-                  to="/learner/training-plan?highlight=overdue"
-                  className="flex items-center gap-1.5 text-sm font-bold text-white whitespace-nowrap transition-smooth px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-600 shadow-sm shadow-red-500/15"
-                >
-                  <AppIcon className="ri-error-warning-line text-sm"></AppIcon>
-                  View Overdue
-                  <AppIcon className="ri-arrow-right-line text-xs"></AppIcon>
-                </Link>
-              </div>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-              {isRealMode ? (
-                <>
-                  {attendance ? (
-                    <HealthCard
-                      icon="ri-calendar-check-line"
-                      label="Attendance"
-                      value={`${attendance.attendanceRate}%`}
-                      detail={`${attendance.present}/${attendance.sessions} sessions`}
-                      status={attendance.attendanceRate >= 90 ? 'green' : attendance.attendanceRate >= 80 ? 'amber' : 'red'}
-                      progress={attendance.attendanceRate}
-                      showBar
-                      href="/learner/attendance"
-                    />
-                  ) : (
-                    <HealthCard
-                      icon="ri-calendar-check-line"
-                      label="Attendance"
-                      value="—"
-                      detail={attendanceLoading ? 'Loading attendance…' : 'No attendance record yet'}
-                      status="muted"
-                      progress={0}
-                      href="/learner/attendance"
-                    />
-                  )}
-                  {otj.activities > 0 ? (
-                    <HealthCard
-                      icon="ri-time-line"
-                      label="OTJ Hours"
-                      value={formatHoursMinutes(otj.completedHours)}
-                      detail={
-                        otj.targetHours > 0
-                          ? `Target ${formatHoursMinutes(otj.targetHours)} · ${
-                              otj.progressHours < 0
-                                ? `${formatHoursMinutes(Math.abs(otj.progressHours))} behind`
-                                : otj.progressHours > 0 ? `${formatHoursMinutes(otj.progressHours)} ahead` : 'on target'
-                            }${otj.variance != null ? ` (${Math.round(otj.variance * 100)}%)` : ''} · ${formatHoursMinutes(otj.plannedHours)} planned`
-                          : `From ${otj.activities} ${otj.activities === 1 ? 'activity' : 'activities'} · ${formatHoursMinutes(otj.plannedHours)} planned`
-                      }
-                      status="primary"
-                      progress={otj.targetHours > 0 ? otj.targetPercent : otj.percent}
-                      showBar
-                      badgeLabel="Logged"
-                      ragStatus={otj.status ?? undefined}
-                    />
-                  ) : (
-                    <HealthCard
-                      icon="ri-time-line"
-                      label="OTJ Hours"
-                      value={formatHoursMinutes(otj.plannedHours)}
-                      detail={otj.targetHours > 0 ? `Target ${formatHoursMinutes(otj.targetHours)} · ${formatHoursMinutes(otj.plannedHours)} planned` : 'Planned from saved training plan'}
-                      status="primary"
-                      progress={0}
-                      showBar
-                      badgeLabel="Planned"
-                      ragStatus={otj.status ?? undefined}
-                    />
-                  )}
-                  {evidencedKsbCodes.size > 0 ? (
-                    <HealthCard
-                      icon="ri-bar-chart-2-line"
-                      label="KSB Progress"
-                      value={`${evidencedKsbCodes.size} evidenced`}
-                      detail={`Via completed activities · ${real?.ksbs.length || 0} defined`}
-                      status="emerald"
-                      progress={real?.ksbs.length ? Math.round((evidencedKsbCodes.size / real.ksbs.length) * 100) : 0}
-                      showBar
-                      badgeLabel="From activities"
-                    />
-                  ) : (
-                    <HealthCard icon="ri-bar-chart-2-line" label="KSB Progress" value={`${real?.ksbs.length || 0} defined`} detail="Validation not tracked yet" status="emerald" progress={0} badgeLabel="Defined" />
-                  )}
-                  {evidenceStats.total > 0 ? (
-                    <HealthCard
-                      icon="ri-folder-check-line"
-                      label="Evidence"
-                      value={`${evidenceStats.total} Submitted`}
-                      detail={`${evidenceStats.approved} approved · ${evidenceStats.pending} pending${evidenceStats.rejected ? ` · ${evidenceStats.rejected} rejected` : ''}`}
-                      status={evidenceStats.rejected > 0 ? 'red' : evidenceStats.pending > 0 ? 'amber' : 'green'}
-                      progress={evidenceStats.progress}
-                      href="/learner/evidence"
-                      badgeLabel={evidenceStats.rejected > 0 ? 'Action Required' : evidenceStats.pending > 0 ? 'Needs Review' : 'Approved'}
-                    />
-                  ) : (
-                    <HealthCard
-                      icon="ri-folder-check-line"
-                      label="Evidence"
-                      value="—"
-                      detail={evidenceLoading ? 'Loading evidence…' : 'No evidence submitted yet'}
-                      status="muted"
-                      progress={0}
-                      href="/learner/evidence"
-                    />
-                  )}
-                </>
-              ) : (
-                <>
-                  <HealthCard
-                    icon="ri-calendar-check-line"
-                    label="Attendance"
-                    value={`${p.attendanceRate}%`}
-                    detail={`${p.sessionsAttended}/${(p.sessionsAttended + p.sessionsMissed)} sessions`}
-                    status={p.attendanceRate >= 90 ? 'green' : p.attendanceRate >= 80 ? 'amber' : 'red'}
-                    progress={p.attendanceRate}
-                    href="/learner/attendance"
-                  />
-                  <HealthCard
-                    icon="ri-time-line"
-                    label="OTJ Hours"
-                    value={`${p.otjhCompleted} / ${p.otjhTarget}`}
-                    detail={`${p.otjhValidated} validated · ${p.otjhPending} pending`}
-                    status={p.otjhCompleted / p.otjhTarget >= 0.7 ? 'green' : p.otjhCompleted / p.otjhTarget >= 0.5 ? 'amber' : 'red'}
-                    progress={(p.otjhCompleted / p.otjhTarget) * 100}
-                    href="/learner/otjh"
-                  />
-                  <HealthCard
-                    icon="ri-bar-chart-2-line"
-                    label="KSB Progress"
-                    value={`${p.ksbProgress}%`}
-                    detail={`${p.ksbValidated} of ${p.ksbTotal} validated`}
-                    status={p.ksbProgress >= 50 ? 'green' : p.ksbProgress >= 30 ? 'amber' : 'red'}
-                    progress={p.ksbProgress}
-                    href="/learner/ksbs"
-                  />
-                  <HealthCard
-                    icon="ri-folder-check-line"
-                    label="Evidence"
-                    value={`${p.evidenceCount} Submitted`}
-                    detail={`${p.evidenceValidated} approved · ${p.evidenceSubmitted} pending`}
-                    status="green"
-                    progress={Math.min((p.evidenceValidated / 12) * 100, 100)}
-                    href="/learner/evidence"
-                  />
-                </>
-              )}
-            </div>
-          </section>
+        <SectionReveal delay={60}>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <ProgressStat icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
+            <ProgressStat icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
+            <ProgressStat icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
+            <ProgressStat icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
+          </div>
         </SectionReveal>
 
         {/* ================================================================
-            SECTION 4 — REAL MODE: 2×2 GRID (Training Plan · Calendar ·
-            Activity Feed · Trail).  MOCK MODE: original two-column layout.
+            CONTINUE LEARNING + UPCOMING / MY COACH
             ================================================================ */}
-        {isRealMode ? (
-          <SectionReveal delay={160}>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-5 items-stretch">
-
-              {/* ── Training Plan ── */}
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">Training Plan</h2>
-                  {real && journey.length > 0 && (
-                  <Link to={`/learner/training-plan/${kind}/${id}`} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View full plan <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </Link>
-                  )}
-                </div>
-                {/* Says why the rows below do not open, so a read-only plan does
-                    not read as a broken one. */}
-                {showReadOnlyNotice && (
-                  <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
+        <SectionReveal delay={100}>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div className="lg:col-span-2">
+              <Panel>
+                <SectionHeader
+                  title="Continue Learning"
+                  icon="ri-play-circle-line"
+                  description={isRealMode ? (currentWeek ? `${currentWeek.week.week} · ${currentWeek.module}` : undefined) : "This week's plan"}
+                  actions={
+                    ((isRealMode && real && journey.length > 0) || !isRealMode) ? (
+                      <Link to={trainingPlanHref} className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">
+                        View full plan
+                      </Link>
+                    ) : undefined
+                  }
+                />
+                {isRealMode && showReadOnlyNotice && (
+                  <div className="mt-3 flex items-start gap-2.5 rounded-xl border border-primary-200/70 bg-primary-50/60 px-3.5 py-2.5">
                     <AppIcon className="ri-eye-line mt-0.5 shrink-0 text-[15px] text-primary-600" />
                     <p className="text-[12px] leading-snug text-foreground-600">
-                      {/* Not "viewing as staff": the same state covers a learner
-                          who opened somebody else's URL. */}
                       <span className="font-semibold text-foreground-800">Viewing read-only.</span>{' '}
-                      Only the learner can complete activities, upload evidence or submit
-                      reflections. You can still book a session.
+                      Only the learner can complete activities, upload evidence or submit reflections. You can still book a session.
                     </p>
                   </div>
                 )}
-                <div className="flex-1 overflow-y-auto" style={{ maxHeight: 620 }}>
-                  {journey.length === 0 || !currentWeek ? (
-                    loading
-                      ? <div className="p-4"><RowsSkeleton rows={4} /></div>
-                      : <EmptyState text="No training plan built for this learner yet." />
+                <div className="mt-3">
+                  {isRealMode ? (
+                    (journey.length === 0 || !currentWeek) ? (
+                      loading ? <RowsSkeleton rows={4} /> : <EmptyState size="sm" title="No training plan yet" description="Your training plan will appear here once it's built." />
+                    ) : (
+                      <CurrentWeekCard
+                        moduleTitle={currentWeek.module}
+                        weekLabel={currentWeek.week.week}
+                        components={currentWeek.week.components}
+                        videos={real?.videoProgress ?? []}
+                        kind={kind}
+                        learnerId={id}
+                        reflectionStatuses={reflectionStatuses}
+                        canProgress={canProgress}
+                      />
+                    )
                   ) : (
-                    <CurrentWeekCard
-                      moduleTitle={currentWeek.module}
-                      weekLabel={currentWeek.week.week}
-                      components={currentWeek.week.components}
-                      videos={real?.videoProgress ?? []}
-                      kind={kind}
-                      learnerId={id}
-                      reflectionStatuses={reflectionStatuses}
-                      canProgress={canProgress}
-                    />
+                    <div className="relative">
+                      <div className="absolute left-[19px] top-3 bottom-3 w-px bg-background-200" />
+                      <div className="space-y-0">
+                        {timelineComponents.slice(0, 4).map((comp, i) => {
+                          const effectiveStatus = userCompletions[i] ? 'completed' : comp.status;
+                          return (
+                            <TimelineCard
+                              key={comp.id}
+                              component={comp}
+                              status={effectiveStatus}
+                              canMarkComplete={comp.status.toLowerCase() !== 'completed' && !userCompletions[i]}
+                              onMarkComplete={() => handleMarkComplete(i)}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
                   )}
                 </div>
-              </div>
+              </Panel>
+            </div>
 
-              {/* ── My Calendar ── */}
-              <div className="self-start bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col shadow-[0_5px_24px_rgba(28,10,55,0.04)]">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary-50 text-primary-600">
-                      <AppIcon className="ri-calendar-2-line text-base" />
-                    </span>
-                    <div>
-                      <h2 className="text-base font-heading font-semibold leading-tight text-foreground-900">My Calendar</h2>
-                      <p className="mt-0.5 text-[11px] text-foreground-400">Sessions and upcoming reviews</p>
-                    </div>
-                  </div>
-                  <Link to="/learner/calendar" className="rounded-lg px-2.5 py-1.5 text-sm font-medium whitespace-nowrap text-primary-600 transition-smooth hover:bg-primary-50 hover:text-primary-700">
-                    Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </Link>
-                </div>
-                <MiniCalendar kind={kind} id={id} />
-              </div>
-
-              {/* ── Activity Feed ── */}
-              <div className="self-start bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
-                </div>
-                <div className="flex-1 overflow-y-auto" style={{ maxHeight: 620 }}>
-                  {(real?.activityFeed && real.activityFeed.length > 0) ? (
-                    <div className="space-y-2">
-                      {real.activityFeed.slice(0, 12).map((entry, i) => (
-                        <RealActivityItem key={`${entry.at}-${i}`} entry={entry} />
-                      ))}
-                    </div>
-                  ) : (
-                    <EmptyState text="No activity yet — finish a component to see it here." />
-                  )}
-                </div>
-              </div>
-
-              {/* ── Learner Journey ── */}
-              <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5 flex flex-col">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">Learner Journey</h2>
-                  <Link to={kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules'} className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </Link>
-                </div>
-                <MiniJourney
-                  real={real}
-                  loading={loading}
-                  loadError={loadError}
-                  journeyHref={kind && id ? `/learner/modules/${kind}/${id}` : '/learner/modules'}
+            <div className="space-y-4 lg:col-span-1">
+              <Panel>
+                <SectionHeader
+                  title="Upcoming"
+                  description="Sessions and reviews"
+                  actions={<Link to="/learner/calendar" className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">View calendar</Link>}
                 />
-              </div>
-
-            </div>
-          </SectionReveal>
-        ) : (
-          <>
-          {/* ── MOCK MODE — original two-column sections ── */}
-          <SectionReveal delay={160}>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5">
-              <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-                <div className="flex items-center justify-between mb-4 md:mb-5">
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">This Week's Learning Journey</h2>
-                  <Link to="/learner/training-plan" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View full plan <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </Link>
+                <div className="mt-3 space-y-2">
+                  {isRealMode && calendarLoading ? (
+                    <RowsSkeleton rows={3} avatar={false} />
+                  ) : (isRealMode ? upcomingReal : upcomingMock).length === 0 ? (
+                    <EmptyState
+                      size="sm"
+                      title="No upcoming sessions"
+                      description={isRealMode ? 'Book a catch-up or support session with your coach.' : undefined}
+                      action={<RowAction label="Book a session" icon="ri-calendar-check-line" emphasis="primary" onClick={() => navigate('/learner/calendar')} />}
+                    />
+                  ) : (
+                    (isRealMode ? upcomingReal : upcomingMock).map((item) => (
+                      <UpcomingRow key={item.id} {...item} onClick={() => navigate('/learner/calendar')} />
+                    ))
+                  )}
                 </div>
-                <div className="relative">
-                  <div className="absolute left-[19px] top-3 bottom-3 w-px bg-background-200" />
-                  <div className="space-y-0">
-                    {timelineComponents.map((comp, i) => {
-                      const effectiveStatus = userCompletions[i] ? 'completed' : comp.status;
-                      return (
-                        <TimelineCard
-                          key={comp.id}
-                          component={comp}
-                          status={effectiveStatus}
-                          canMarkComplete={comp.status.toLowerCase() !== 'completed' && !userCompletions[i]}
-                          onMarkComplete={() => handleMarkComplete(i)}
-                        />
-                      );
-                    })}
+              </Panel>
+
+              <Panel>
+                <SectionHeader title="My Coach" />
+                <div className="mt-3 flex items-center gap-3">
+                  <LearnerAvatar name={coachDisplayName} tone="brand" size="lg" />
+                  <div className="min-w-0">
+                    <p className="truncate text-[14px] font-semibold text-foreground-900">{coachDisplayName}</p>
+                    <p className="truncate text-[12px] text-foreground-500">{coachDisplayEmail || 'Contact your programme team'}</p>
                   </div>
                 </div>
-              </div>
-
-              <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">Upcoming</h2>
-                  <Link to="/learner/calendar" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View Calendar <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </Link>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <RowAction label="Message" icon="ri-chat-3-line" onClick={() => navigate('/learner/messages')} />
+                  <RowAction label="Book a session" icon="ri-calendar-check-line" emphasis="primary" onClick={() => navigate('/learner/calendar')} />
                 </div>
-                <div className="space-y-3">
-                  {upcomingEvents.map((event, i) => (
-                    <UpcomingEventCard key={i} {...event} />
-                  ))}
-                </div>
-              </div>
+              </Panel>
             </div>
-          </SectionReveal>
+          </div>
+        </SectionReveal>
 
-          <SectionReveal delay={200}>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-5">
-              <div className="lg:col-span-2 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">Activity Feed</h2>
-                  <Link to="/learner/monthly-coaching" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View All Activity <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </Link>
-                </div>
-                <div className="space-y-3">
-                  {activityFeed.map((item, i) => (
-                    <ActivityFeedItem key={i} item={item} index={i} />
-                  ))}
-                </div>
-              </div>
-
-              <div className="lg:col-span-1 bg-background-50 rounded-xl border border-foreground-200/60 p-4 md:p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-base font-heading font-semibold text-foreground-900">Achievements</h2>
-                  <Link to="/learner/rewards" className="text-sm text-primary-600 hover:text-primary-700 font-medium whitespace-nowrap transition-smooth">
-                    View Rewards <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
-                  </Link>
-                </div>
-                <div className="space-y-2.5">
-                  {achievements.map((ach, i) => (
-                    <AchievementBadge key={i} {...ach} />
-                  ))}
-                </div>
-              </div>
+        {/* ================================================================
+            MY TASKS
+            ================================================================ */}
+        <SectionReveal delay={140}>
+          <Panel>
+            <SectionHeader title="My Tasks" count={tasks.length} description="What needs your attention next" icon="ri-list-check-3" />
+            <div className="mt-3 space-y-2">
+              {tasks.length === 0 ? (
+                <EmptyState size="sm" icon="ri-checkbox-circle-line" title="You're all caught up" description="Nothing needs your attention right now." />
+              ) : (
+                tasks.map((t) => (
+                  <ActionRow
+                    key={t.id}
+                    title={t.title}
+                    subtitle={t.subtitle}
+                    tone={t.tone}
+                    status={<StatusBadge tone={t.tone} label={t.tone === 'critical' ? 'Action needed' : 'Needs attention'} />}
+                    actions={<RowAction label={t.actionLabel} emphasis="primary" onClick={() => navigate(t.actionHref)} />}
+                  />
+                ))
+              )}
             </div>
-          </SectionReveal>
-          </>
-        )}
+          </Panel>
+        </SectionReveal>
 
-      </div>
+        {/* ================================================================
+            MY APPRENTICESHIP JOURNEY
+            ================================================================ */}
+        <SectionReveal delay={180}>
+          <Panel>
+            <SectionHeader
+              title="My Apprenticeship Journey"
+              icon="ri-road-map-line"
+              actions={
+                <Link to={journeyHref} className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">
+                  Open <AppIcon className="ri-arrow-right-line ml-0.5"></AppIcon>
+                </Link>
+              }
+            />
+            <div className="mt-4">
+              {isRealMode ? (
+                <MiniJourney real={real} loading={loading} loadError={loadError} journeyHref={journeyHref} />
+              ) : (
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-[13px] font-semibold text-foreground-900">{p.overallProgress}% complete</span>
+                    <span className="text-[12px] text-foreground-400">Currently on: <span className="font-semibold text-foreground-700">{p.currentModule}</span></span>
+                  </div>
+                  <ProgressBar percent={p.overallProgress} />
+                </div>
+              )}
+            </div>
+          </Panel>
+        </SectionReveal>
+
+      </PageContainer>
     </WorkspaceShell>
   );
 }
@@ -1522,86 +860,327 @@ export default function LearnerOverview() {
    SUB-COMPONENTS
    ───────────────────────────────────────────── */
 
-function HealthCard({ icon, label, value, detail, status, progress, href, badgeLabel, showBar, ragStatus }: {
-  icon: string;
-  label: string;
-  value: string;
-  detail: string;
-  status: 'green' | 'amber' | 'red' | 'muted' | 'primary' | 'emerald';
-  progress: number;
-  href?: string;
-  badgeLabel?: string;
-  showBar?: boolean;   // render a linear completed/planned bar under the value
-  ragStatus?: string;  // "On track"/"Need attention"/"At risk" -> semantic-coloured badge (overrides badgeLabel)
+/** One labelled fact in the profile header's meta row. */
+function ProfileFact({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 text-[12px]">
+      <AppIcon className={`${icon} shrink-0 text-[13px] text-foreground-400`}></AppIcon>
+      <span className="shrink-0 text-foreground-400">{label}</span>
+      <span className="min-w-0 truncate font-semibold text-foreground-700">{value}</span>
+    </span>
+  );
+}
+
+/** A compact stat card: label, value, progress bar, caption. The four "quick health check" cards. */
+function ProgressStat({ icon, label, value, percent, caption, tone = 'neutral' }: {
+  icon: string; label: string; value: string; percent: number | null; caption?: string; tone?: StatusTone;
 }) {
-  // Colour tokens per status. 'primary'/'emerald' are the "alive" accented looks
-  // used by the OTJ Hours / KSB Progress cards.
-  const S = {
-    green:   { bg: 'bg-emerald-50', text: 'text-emerald-700', icon: 'bg-emerald-100 text-emerald-600', ring: 'emerald', bar: 'bg-emerald-500', tint: '' },
-    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-700', icon: 'bg-emerald-500 text-white', ring: 'emerald', bar: 'bg-emerald-500', tint: 'bg-gradient-to-br from-emerald-50/60 to-transparent' },
-    primary: { bg: 'bg-primary-100', text: 'text-primary-700', icon: 'bg-primary-500 text-white', ring: 'primary', bar: 'bg-primary-500', tint: 'bg-gradient-to-br from-primary-50/70 to-transparent' },
-    amber:   { bg: 'bg-amber-50', text: 'text-amber-700', icon: 'bg-amber-100 text-amber-600', ring: 'amber', bar: 'bg-amber-500', tint: '' },
-    red:     { bg: 'bg-red-50', text: 'text-red-700', icon: 'bg-red-100 text-red-600', ring: 'red', bar: 'bg-red-500', tint: '' },
-    muted:   { bg: 'bg-background-100', text: 'text-foreground-400', icon: 'bg-background-100 text-foreground-400', ring: 'muted', bar: 'bg-foreground-300', tint: '' },
-  }[status];
-  const statusLabel = badgeLabel ?? (status === 'green' ? 'On Track' : status === 'amber' ? 'Needs Attention' : status === 'red' ? 'Action Required' : 'Not Tracked');
-  // A RAG status paints its own semantic-coloured badge (green/amber/red) so the
-  // "On track / Need attention / At risk" reads at a glance regardless of the
-  // card's accent colour.
-  const rag = ragStatus
-    ? (/at risk/i.test(ragStatus) ? { bg: 'bg-red-100', text: 'text-red-700', dot: 'bg-red-500' }
-      : /attention/i.test(ragStatus) ? { bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-500' }
-      : { bg: 'bg-emerald-100', text: 'text-emerald-700', dot: 'bg-emerald-500' })
-    : null;
-
-  const Card = (
-    <div className={`relative flex h-full flex-col overflow-hidden rounded-xl border border-foreground-200/60 p-4 hover:border-primary-300/60 hover:shadow-sm transition-smooth cursor-pointer ${S.tint || 'bg-background-50'}`}>
-      {S.tint && <div className="absolute inset-0 bg-background-50 -z-10" />}
-      {/* Top row: icon + status badge */}
-      <div className="flex items-center justify-between mb-3">
-        <span className={`w-8 h-8 rounded-lg flex items-center justify-center ${S.icon}`}>
-          <AppIcon className={`${icon} text-sm`}></AppIcon>
-        </span>
-        {rag ? (
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${rag.bg} ${rag.text}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${rag.dot}`} />{ragStatus}
-          </span>
-        ) : (
-          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${S.bg} ${S.text}`}>{statusLabel}</span>
-        )}
+  const style = toneStyle(tone);
+  return (
+    <div className="rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-foreground-400">{label}</p>
+        <AppIcon className={`${icon} shrink-0 text-[15px] ${tone === 'neutral' ? 'text-foreground-300' : style.text}`}></AppIcon>
       </div>
-
-      {/* Middle: donut + value side by side */}
-      <div className="flex items-center gap-3">
-        <DonutRing progress={progress} color={S.ring} size={42} stroke={4.5} />
-        <div className="min-w-0">
-          <p className="text-xs text-foreground-400 mb-0.5">{label}</p>
-          <p className="text-lg font-heading font-semibold text-foreground-900 leading-tight">{value}</p>
-        </div>
-      </div>
-
-      {showBar && (
-        <div className="mt-3">
-          <div className="h-1.5 w-full rounded-full bg-background-200 overflow-hidden">
-            <div className={`h-full rounded-full transition-all ${S.bar}`} style={{ width: `${Math.min(100, Math.max(0, progress))}%` }} />
-          </div>
-          <p className="text-[10px] text-foreground-400 mt-1 text-right">{Math.round(progress)}% complete</p>
-        </div>
-      )}
-
-      <p className="mt-auto pt-2 text-xs text-foreground-400">{detail}</p>
+      <p className={`mt-1.5 text-[22px] font-semibold leading-none tabular-nums ${tone === 'neutral' ? 'text-foreground-900' : style.text}`}>{value}</p>
+      <ProgressBar percent={percent} tone={percent == null || tone === 'neutral' ? undefined : style.dot} className="mt-2.5" />
+      {caption ? <p className="mt-1.5 truncate text-[12px] leading-snug text-foreground-500">{caption}</p> : null}
     </div>
   );
+}
 
-  if (href) {
-    return (
-      <Link to={href} className="block h-full">
-        {Card}
-      </Link>
-    );
-  }
+/** One row in the Upcoming panel — a date chip, title, and time. */
+function UpcomingRow({ day, month, timeLabel, title, subtitle, tone = 'neutral', onClick }: {
+  day: string; month: string; timeLabel?: string; title: string; subtitle?: string; tone?: StatusTone; onClick?: () => void;
+}) {
+  const style = toneStyle(tone);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-3 py-2.5 text-left transition hover:border-primary-300/60 hover:shadow-sm"
+    >
+      <span className={`flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-lg ${style.bg}`}>
+        <span className={`text-[13px] font-bold leading-none ${style.text}`}>{day}</span>
+        <span className={`mt-0.5 text-[9px] font-semibold uppercase leading-none ${style.text}`}>{month}</span>
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-semibold text-foreground-900">{title}</span>
+        {subtitle ? <span className="block truncate text-[12px] text-foreground-400">{subtitle}</span> : null}
+      </span>
+      {timeLabel ? <span className="shrink-0 text-[12px] text-foreground-400">{timeLabel}</span> : null}
+    </button>
+  );
+}
 
-  return Card;
+/** One component row inside the Continue Learning card. */
+function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
+  c: JourneyComponent;
+  videos: LearnerVideoProgress[];
+  reflectionStatus?: string;
+  onOpen?: () => void;
+}) {
+  const meta = componentTypeMeta(c.title);
+  const prog = componentProgress(c, videos);
+  const style = STATE_STYLE[prog.state];
+  const actionable = !!onOpen;
+  const reflection = REFLECTION_STATUS[reflectionStatus || ''];
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={!actionable}
+      className={`group w-full flex items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3.5 py-3 text-left transition-smooth ${
+        actionable ? 'hover:border-primary-300/70 hover:shadow-sm cursor-pointer' : 'cursor-default'
+      }`}
+    >
+      <span className={`relative w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
+        <AppIcon className={`${meta.icon} text-[15px] ${meta.color}`} />
+        <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-background-50 ${style.dot}`} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{meta.label}</span>
+        <span className="block text-[13px] font-semibold text-foreground-900 leading-snug truncate">{meta.detail || meta.label}</span>
+        {(prog.state === 'attempted') && (
+          <span className="mt-1 flex items-center gap-2">
+            <span className="h-1 w-24 rounded-full bg-background-200 overflow-hidden">
+              <span className={`block h-full rounded-full ${style.bar}`} style={{ width: `${prog.percent}%` }} />
+            </span>
+          </span>
+        )}
+      </span>
+      <span className="shrink-0 flex flex-col items-end gap-1">
+        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${style.pill}`}>
+          {prog.state === 'passed' && <AppIcon className="ri-check-line text-[10px]" />}
+          {prog.state === 'watched' && <AppIcon className="ri-check-line text-[10px]" />}
+          {prog.label}{prog.detail ? ` · ${prog.detail}` : ''}
+        </span>
+        {reflection && (
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${reflection.style}`}>
+            <AppIcon className={`${reflection.icon} text-[10px]`} />
+            {reflection.label}
+          </span>
+        )}
+        {c.expectedOtjh != null && c.expectedOtjh > 0 && (
+          <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
+        )}
+      </span>
+      {actionable && <AppIcon className="ri-arrow-right-s-line text-foreground-300 group-hover:text-primary-500 transition-smooth shrink-0" />}
+    </button>
+  );
+}
+
+/** The Continue Learning card body: progress + this week's components. */
+function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, learnerId, reflectionStatuses, canProgress }: {
+  moduleTitle: string; weekLabel: string; components: JourneyComponent[];
+  videos: LearnerVideoProgress[]; kind?: string; learnerId?: string;
+  reflectionStatuses: LearningReflectionStatusMap;
+  /** False for a staff/coach viewer: the rows still show progress, but none of
+   *  them opens the runner that would record progress as the learner. */
+  canProgress: boolean;
+}) {
+  const navigate = useNavigate();
+  const total = components.length;
+  const done = components.filter((c) => {
+    const s = componentProgress(c, videos).state;
+    return s === 'passed' || s === 'watched';
+  }).length;
+  const percent = total ? Math.round((done / total) * 100) : 0;
+
+  const openFor = (c: JourneyComponent): (() => void) | undefined => {
+    // Returning undefined leaves the row rendered but inert — CurrentWeekRow
+    // already draws that state for components with nowhere to open.
+    if (!kind || !learnerId || !canProgress) return undefined;
+    const q = `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekLabel)}`;
+    if (c.isQuiz && c.quizMeta?.quizId != null) return () => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`);
+    if (c.type === 'video' && c.videoUrl && c.componentId) return () => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}${q}`);
+    if (isOpenableComponent(c)) return () => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}${q}`);
+    return undefined;
+  };
+
+  const reflectionStatusFor = (c: JourneyComponent): string => {
+    const activityId = c.isQuiz && c.quizMeta?.quizId != null
+      ? `quiz-${c.quizMeta.quizId}`
+      : c.componentId || '';
+    if (!activityId) return '';
+    return reflectionStatuses[
+      learningReflectionStatusKey(c.isQuiz ? 'quiz' : componentNoun(c.type), activityId)
+    ] || '';
+  };
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <span className="text-[13px] font-semibold text-foreground-900">{done}/{total} complete</span>
+        <span className="text-[13px] font-semibold tabular-nums text-primary-700">{percent}%</span>
+      </div>
+      <ProgressBar percent={total ? percent : null} className="mb-4" />
+      {total === 0 ? (
+        <EmptyState size="sm" title="No components in this week yet." />
+      ) : (
+        <div className="space-y-2">
+          {components.map((c, i) => (
+            <CurrentWeekRow
+              key={c.componentId || `${c.title}-${i}`}
+              c={c}
+              videos={videos}
+              reflectionStatus={reflectionStatusFor(c)}
+              onOpen={openFor(c)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   MiniJourney — the learner's journey as a milestone
+   track (Start → modules → Gateway) with a progress
+   ring on each node and a rich "current module" card.
+   ───────────────────────────────────────────── */
+type StationTone = 'done' | 'current' | 'upcoming';
+
+/** A node with an SVG progress ring — the fill shows how far through the module the learner is. */
+function JourneyNode({ icon, label, sub, tone, pct, href }: { icon: string; label: string; sub?: string; tone: StationTone; pct?: number; href?: string }) {
+  const t = tone === 'done'
+    ? { fill: '#10b981', bg: 'bg-emerald-500 text-white', label: 'text-foreground-700', shadow: 'shadow-emerald-500/25' }
+    : tone === 'current'
+      ? { fill: '#7c5cff', bg: 'bg-primary-500 text-white', label: 'text-primary-700 font-semibold', shadow: 'shadow-primary-500/30' }
+      : { fill: '#cbd5e1', bg: 'bg-background-100 text-foreground-400', label: 'text-foreground-400', shadow: '' };
+  const size = 48, stroke = 3, r = (size - stroke) / 2, circ = 2 * Math.PI * r;
+  const ringPct = pct != null ? pct : tone === 'done' ? 100 : 0;
+  const content = (
+    <>
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="-rotate-90 absolute inset-0">
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="text-background-200" stroke="currentColor" />
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} stroke={t.fill} strokeLinecap="round"
+            strokeDasharray={circ} strokeDashoffset={circ - (Math.min(100, ringPct) / 100) * circ} className="transition-all duration-700 ease-out" />
+        </svg>
+        <span className={`absolute inset-[6px] rounded-full flex items-center justify-center shadow-sm ${t.bg} ${t.shadow} ${tone === 'current' ? 'animate-pulse-slow' : ''}`}>
+          <AppIcon className={`${icon} text-base`} />
+        </span>
+      </div>
+      <span className={`text-[11px] leading-tight ${t.label}`}>{label}</span>
+      {sub ? <span className="text-[10px] text-foreground-400 leading-none tabular-nums">{sub}</span> : null}
+    </>
+  );
+
+  return href ? (
+    <Link
+      to={href}
+      aria-label={`Open ${label}`}
+      className="group flex w-[76px] shrink-0 cursor-pointer flex-col items-center gap-1.5 rounded-xl py-1 text-center transition-all duration-200 hover:-translate-y-1 hover:bg-primary-50/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+    >
+      {content}
+    </Link>
+  ) : (
+    <div className="flex w-[76px] shrink-0 flex-col items-center gap-1.5 py-1 text-center">
+      {content}
+    </div>
+  );
+}
+function JourneyConnector({ filled }: { filled: boolean }) {
+  return (
+    <div className="flex-1 min-w-[20px] h-1 mt-6 rounded-full bg-background-200 overflow-hidden">
+      <div className={`h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-700 ${filled ? 'w-full' : 'w-0'}`} />
+    </div>
+  );
+}
+function stationTone(s: ModuleStation): StationTone {
+  return s.status === 'completed' ? 'done' : s.status === 'current' ? 'current' : 'upcoming';
+}
+
+function MiniJourney({ real, loading, loadError, journeyHref }: { real: LearnerDetail | null; loading: boolean; loadError: string | null; journeyHref: string }) {
+  const journey = useMemo(() => buildLearnerJourney(real), [real]);
+  const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
+
+  if (loading) return <RowsSkeleton rows={4} className="py-2" />;
+  if (loadError) return <EmptyState size="sm" title={loadError} />;
+  if (journey.length === 0) return <EmptyState size="sm" title="No training plan built for this learner yet." />;
+
+  const current = currentIndex >= 0 ? stations[currentIndex] : null;
+  const allDone = currentIndex === -1 && stations.length > 0;
+  const modulesDone = stations.filter((s) => s.status === 'completed').length;
+
+  return (
+    <div>
+      {/* Overall progress banner */}
+      <div className="rounded-xl bg-primary-50/60 border border-primary-100/60 p-3 mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">Overall progress</span>
+          <span className="text-[15px] font-heading font-bold text-foreground-900 tabular-nums">{overallPct}%</span>
+        </div>
+        <ProgressBar percent={overallPct} height="h-2" />
+        <p className="text-[11px] text-foreground-500 mt-1.5">
+          {modulesDone}/{stations.length} {stations.length === 1 ? 'module' : 'modules'} complete
+          {current ? ` · currently on Module ${current.index + 1}` : allDone ? ' · Gateway ready' : ''}
+        </p>
+      </div>
+
+      {/* Milestone track */}
+      <div className="overflow-x-auto pb-1">
+        <div className="flex items-start min-w-max px-1">
+          <JourneyNode icon="ri-flag-fill" label="Start" tone="done" />
+          {stations.map((s) => (
+            <Fragment key={s.index}>
+              <JourneyConnector filled={s.status === 'completed'} />
+              <JourneyNode
+                icon={s.status === 'completed' ? 'ri-check-line' : s.status === 'current' ? 'ri-flag-2-fill' : 'ri-lock-2-line'}
+                label={`Module ${s.index + 1}`}
+                sub={s.pct == null ? '—' : `${s.pct}%`}
+                tone={stationTone(s)}
+                pct={s.pct ?? 0}
+                href={s.status === 'completed' || s.status === 'current' ? `${journeyHref}?module=${s.index + 1}` : undefined}
+              />
+            </Fragment>
+          ))}
+          <JourneyConnector filled={allDone} />
+          <JourneyNode icon="ri-trophy-fill" label="Gateway" tone={allDone ? 'done' : 'upcoming'} />
+        </div>
+      </div>
+
+      {/* Current-module card */}
+      {current ? (
+        <Link
+          to={`${journeyHref}?module=${current.index + 1}`}
+          aria-label={`Open Module ${current.index + 1}: ${current.module.module}`}
+          className="group mt-4 block cursor-pointer rounded-xl border border-primary-200/60 bg-primary-50/30 p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary-300 hover:bg-primary-50/60 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2"
+        >
+          <div className="flex items-center gap-2 mb-2.5">
+            <span className="w-7 h-7 rounded-lg bg-primary-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-flag-2-fill text-sm" /></span>
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary-600 leading-none">You are here</p>
+              <p className="text-[13px] font-semibold text-foreground-900 truncate leading-tight mt-0.5">{current.module.module}</p>
+            </div>
+            <span className="ml-auto text-[13px] font-heading font-bold text-primary-700 tabular-nums shrink-0">{current.pct ?? 0}%</span>
+            <AppIcon className="ri-arrow-right-line text-primary-500 transition-transform duration-200 group-hover:translate-x-1" />
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <JourneyStat icon="ri-stack-line" label="Components" value={`${current.componentCount}`} />
+            <JourneyStat icon="ri-questionnaire-line" label="Quizzes" value={current.quizTotal > 0 ? `${current.quizTaken}/${current.quizTotal}` : '—'} />
+            <JourneyStat icon="ri-play-circle-line" label="Videos" value={current.videoTotal > 0 ? `${current.videoDone}/${current.videoTotal}` : '—'} />
+          </div>
+        </Link>
+      ) : allDone ? (
+        <div className="mt-4 rounded-xl border border-emerald-200/60 bg-emerald-50/40 p-3.5 flex items-center gap-2.5">
+          <span className="w-8 h-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shrink-0"><AppIcon className="ri-trophy-fill" /></span>
+          <p className="text-[13px] font-semibold text-emerald-700">All modules complete — you&apos;ve reached the Gateway!</p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function JourneyStat({ icon, label, value }: { icon: string; label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-background-50 border border-foreground-100 px-2 py-2 text-center">
+      <AppIcon className={`${icon} text-primary-500 text-sm`} />
+      <p className="text-[13px] font-heading font-bold text-foreground-900 leading-none mt-1">{value}</p>
+      <p className="text-[9px] uppercase tracking-wider text-foreground-400 mt-0.5">{label}</p>
+    </div>
+  );
 }
 
 function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
@@ -1654,7 +1233,7 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
           </span>
         ) : (
           <span className={`w-[10px] h-[10px] rounded-full block ${
-            isToday ? 'bg-accent-500 ring-4 ring-accent-200 animate-pulse-slow' :
+            isToday ? 'bg-accent-500 ring-4 ring-accent-200' :
             'bg-foreground-200 ring-2 ring-background-100'
           }`} />
         )}
@@ -1671,7 +1250,7 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
         to={`/learner/training-plan`}
         className="flex-1 min-w-0 block"
       >
-        <div className={`relative rounded-xl border p-4 transition-smooth card-premium cursor-pointer hover:border-primary-300/60 hover:shadow-sm ${isCompleted ? 'border-foreground-200/50 bg-background-50' : 'border-foreground-200/50 bg-background-50'}`}>
+        <div className={`relative rounded-xl border p-4 transition-smooth cursor-pointer hover:border-primary-300/60 hover:shadow-sm ${isCompleted ? 'border-foreground-200/50 bg-background-50' : 'border-foreground-200/50 bg-background-50'}`}>
           <div className="flex items-start gap-4">
             {/* Type icon */}
             <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${ts.iconBg} ${ts.iconText}`}>
@@ -1683,7 +1262,7 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
               <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                 <span className={`text-xs font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded ${ts.chip}`}>{component.type}</span>
                 {component.isLive && !isCompleted && (
-                  <span className="text-xs font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded-full animate-pulse">LIVE</span>
+                  <span className="text-xs font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">LIVE</span>
                 )}
                 {component.status === 'In Progress' && !component.isLive && !isCompleted && (
                   <span className="text-xs font-semibold text-accent-600 bg-accent-50 px-2 py-0.5 rounded-full">Active</span>
@@ -1723,209 +1302,6 @@ function TimelineCard({ component, status, canMarkComplete, onMarkComplete }: {
           </div>
         </div>
       </Link>
-    </div>
-  );
-}
-
-function UpcomingEventCard({ date, title, type, urgent, countdown, icon }: {
-  date: string;
-  title: string;
-  type: string;
-  urgent: boolean;
-  countdown: string;
-  icon: string;
-}) {
-  return (
-    <Link to="/learner/calendar" className="block">
-      <div className={`flex items-start gap-3 p-3 rounded-lg transition-smooth cursor-pointer relative overflow-hidden ${
-        urgent
-          ? 'bg-background-50 border border-foreground-200/50'
-          : 'hover:bg-background-100 border border-transparent'
-      }`}>
-        {/* Animated shimmer overlay for urgent items */}
-        {urgent && (
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-foreground-100/30 to-transparent animate-urgent-shimmer pointer-events-none" />
-        )}
-
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 relative z-[1] ${
-          urgent ? 'bg-red-100 text-red-600' :
-          type === 'Coaching' ? 'bg-accent-100 text-accent-700' :
-          type === 'Review' ? 'bg-primary-100 text-primary-700' :
-          type === 'Assessment' ? 'bg-secondary-100 text-secondary-700' :
-          'bg-background-100 text-foreground-500'
-        }`}>
-          <AppIcon className={`${icon} text-sm`}></AppIcon>
-        </div>
-
-        <div className="flex-1 min-w-0 relative z-[1]">
-          <div className="flex items-center justify-between mb-0.5">
-            <span className={`text-xs font-semibold uppercase tracking-wider ${
-              urgent ? 'text-red-600' : 'text-foreground-400'
-            }`}>{date}</span>
-            {urgent && (
-              <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse-slow shrink-0"></span>
-            )}
-          </div>
-          <p className="text-sm font-semibold text-foreground-900 leading-snug mb-1">{title}</p>
-          <div className="flex items-center gap-1.5">
-            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-              urgent ? 'bg-red-100 text-red-600' : 'bg-background-100 text-foreground-500'
-            }`}>{type}</span>
-            <span className={`text-xs flex items-center gap-1 ${
-              urgent ? 'text-red-500 font-semibold animate-countdown-pulse' : 'text-foreground-400'
-            }`}>
-              <AppIcon className={`${urgent ? 'ri-timer-flash-line' : 'ri-timer-line'} text-xs`}></AppIcon>
-              {countdown}
-            </span>
-          </div>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   ACTIVITY FEED — Professional Item
-   ───────────────────────────────────────────── */
-function ActivityFeedItem({ item, index }: { item: any; index: number }) {
-  const roleTheme: Record<string, { accent: string; iconBg: string; iconText: string; border: string; avatar: string }> = {
-    Coach: {
-      accent: 'bg-primary-500',
-      iconBg: 'bg-primary-100',
-      iconText: 'text-primary-700',
-      border: 'border-primary-200/40',
-      avatar: 'bg-primary-100 text-primary-700',
-    },
-    Tutor: {
-      accent: 'bg-accent-500',
-      iconBg: 'bg-accent-100',
-      iconText: 'text-accent-700',
-      border: 'border-accent-200/40',
-      avatar: 'bg-accent-100 text-accent-700',
-    },
-    'Line Manager': {
-      accent: 'bg-emerald-500',
-      iconBg: 'bg-emerald-100',
-      iconText: 'text-emerald-700',
-      border: 'border-emerald-200/40',
-      avatar: 'bg-emerald-100 text-emerald-700',
-    },
-    message: {
-      accent: 'bg-secondary-500',
-      iconBg: 'bg-secondary-100',
-      iconText: 'text-secondary-700',
-      border: 'border-secondary-200/40',
-      avatar: 'bg-secondary-100 text-secondary-700',
-    },
-  };
-
-  const theme = roleTheme[item.role] || roleTheme[item.kind === 'message' ? 'message' : 'Coach'];
-  const isUnread = item.kind === 'message';
-
-  return (
-    <div className={`relative flex gap-3.5 rounded-xl border border-foreground-200/60 bg-background-50 p-4 hover:border-background-300/70 hover:bg-background-100/50 transition-all duration-300 group`}>
-      {/* Left accent bar */}
-      <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${theme.accent} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
-
-      {/* Avatar */}
-      <div className="shrink-0 mt-0.5">
-        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${theme.avatar} ring-2 ring-white shadow-sm`}>
-          {isUnread ? (
-            <AppIcon className={`ri-mail-unread-line ${theme.iconText} text-sm`}></AppIcon>
-          ) : (
-            <span className={`text-sm font-bold ${theme.iconText}`}>{item.from.charAt(0)}</span>
-          )}
-        </div>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        {/* Header row */}
-        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-          <span className="text-sm font-semibold text-foreground-900">{item.from}</span>
-          <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${theme.iconBg} ${theme.iconText}`}>
-            {item.role}
-          </span>
-          {isUnread && (
-            <span className="text-[11px] font-bold text-secondary-600 bg-secondary-50 px-2 py-0.5 rounded-full border border-secondary-200/40">
-              Unread
-            </span>
-          )}
-          <span className="text-xs text-foreground-400 ml-auto whitespace-nowrap">{item.date}</span>
-        </div>
-
-        {/* Message text */}
-        <p className="text-sm text-foreground-600 leading-relaxed line-clamp-2 group-hover:line-clamp-none transition-all duration-300">
-          {item.text}
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   ACHIEVEMENTS — Professional Badge
-   ───────────────────────────────────────────── */
-function AchievementBadge({ icon, label, color }: { icon: string; label: string; color: 'accent' | 'primary' | 'secondary' | 'emerald' | 'amber' }) {
-  const colorMap: Record<string, { iconBg: string; iconText: string; text: string; ring: string; gradientFrom: string; gradientTo: string }> = {
-    accent: {
-      iconBg: 'bg-accent-100',
-      iconText: 'text-accent-700',
-      text: 'text-accent-900',
-      ring: 'ring-accent-200/40',
-      gradientFrom: 'from-accent-50/60',
-      gradientTo: 'to-accent-50/20',
-    },
-    primary: {
-      iconBg: 'bg-primary-100',
-      iconText: 'text-primary-700',
-      text: 'text-primary-900',
-      ring: 'ring-primary-200/40',
-      gradientFrom: 'from-primary-50/60',
-      gradientTo: 'to-primary-50/20',
-    },
-    secondary: {
-      iconBg: 'bg-secondary-100',
-      iconText: 'text-secondary-700',
-      text: 'text-secondary-900',
-      ring: 'ring-secondary-200/40',
-      gradientFrom: 'from-secondary-50/60',
-      gradientTo: 'to-secondary-50/20',
-    },
-    emerald: {
-      iconBg: 'bg-emerald-100',
-      iconText: 'text-emerald-700',
-      text: 'text-emerald-900',
-      ring: 'ring-emerald-200/40',
-      gradientFrom: 'from-emerald-50/60',
-      gradientTo: 'to-emerald-50/20',
-    },
-    amber: {
-      iconBg: 'bg-amber-100',
-      iconText: 'text-amber-700',
-      text: 'text-amber-900',
-      ring: 'ring-amber-200/40',
-      gradientFrom: 'from-amber-50/60',
-      gradientTo: 'to-amber-50/20',
-    },
-  };
-  const c = colorMap[color];
-
-  return (
-    <div className={`relative flex items-center gap-3.5 px-4 py-3.5 rounded-xl border border-foreground-200 bg-gradient-to-r ${c.gradientFrom} ${c.gradientTo} hover:border-background-300/80 hover:shadow-sm transition-all duration-300 cursor-pointer group overflow-hidden`}>
-      {/* Subtle decorative ring behind icon */}
-      <span className={`absolute left-3 w-12 h-12 rounded-full ring-1 ${c.ring} opacity-0 group-hover:opacity-100 transition-opacity duration-300 -z-10`} />
-
-      {/* Icon */}
-      <span className={`w-11 h-11 rounded-xl flex items-center justify-center ${c.iconBg} ${c.iconText} shrink-0 ring-1 ring-inset ring-white/40 shadow-sm`}>
-        <AppIcon className={`${icon} text-base`}></AppIcon>
-      </span>
-
-      {/* Text */}
-      <span className={`text-sm font-semibold ${c.text} whitespace-nowrap leading-snug`}>{label}</span>
-
-      {/* Subtle arrow on hover */}
-      <AppIcon className="ri-arrow-right-s-line text-foreground-300 opacity-0 group-hover:opacity-100 transition-opacity duration-300 ml-auto text-base"></AppIcon>
     </div>
   );
 }

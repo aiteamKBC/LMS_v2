@@ -36,6 +36,8 @@ export default function QuizTakePage() {
   const [learnerKsbs, setLearnerKsbs] = useState<LearnerKsbItem[]>([]);
   const [learnerName, setLearnerName] = useState('Learner');
   const [programmeName, setProgrammeName] = useState('Programme not set');
+  const [reflectionRequired, setReflectionRequired] = useState(true);
+  const [reflectionQuestion, setReflectionQuestion] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -72,11 +74,16 @@ export default function QuizTakePage() {
           setLearnerKsbs(d.ksbs || []);
           setLearnerName(d.name || 'Learner');
           setProgrammeName(d.programme || 'Programme not set');
+          const quizComponent = (d.components || []).find(component =>
+            String(component.quizMeta?.quizId ?? '') === String(quizId),
+          );
+          setReflectionRequired(quizComponent?.reflectionRequired !== false);
+          setReflectionQuestion(quizComponent?.reflectionQuestion || null);
         }
       })
       .catch(() => { /* KSBs are optional — window still works without them */ });
     return () => { cancelled = true; };
-  }, [kind, id]);
+  }, [kind, id, quizId]);
 
   useEffect(() => {
     if (phase !== 'quiz') return;
@@ -105,6 +112,10 @@ export default function QuizTakePage() {
   // the attempt is only persisted once the learner completes that window.
   const handleFinishQuiz = () => {
     if (timerRef.current) clearInterval(timerRef.current);
+    if (!reflectionRequired) {
+      void finalizeSubmit({ ksbs: [], feedback: '', reportedTime: '' });
+      return;
+    }
     setPhase('reflect');
   };
 
@@ -192,6 +203,7 @@ export default function QuizTakePage() {
               learnerKind={kind as LearnerKind}
               learnerId={id}
               evidenceSectionRef={`quiz-${quiz.id}`}
+              reflectionQuestion={reflectionQuestion}
               onClose={() => navigate(-1)}
             />
         ) : (

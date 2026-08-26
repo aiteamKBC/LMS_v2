@@ -95,7 +95,6 @@ const EngagementDashboard = lazy(() => import("../pages/workspace/engagement/pag
 const EngagementReportsPage = lazy(() => import("../pages/engagement/reports/page"));
 const EventDetailPage = lazy(() => import("../pages/learner/clubs/events/detail/page"));
 const EventsPage = lazy(() => import("../pages/engagement/events/page"));
-const EvidencePage = lazy(() => import("../pages/learner/evidence/page"));
 const FinanceReportsPage = lazy(() => import("../pages/finance/reports/page"));
 const FinanceWorkspace = lazy(() => import("../pages/workspace/finance/page"));
 const FlashCardsPage = lazy(() => import("../pages/engagement/flash-cards/page"));
@@ -114,7 +113,6 @@ const IfateStandardPage = lazy(() => import("../pages/curriculum/ifate-standard/
 const InternalPanelPage = lazy(() => import("../pages/internal-panel/page"));
 const InvoicingPage = lazy(() => import("../pages/finance/invoices/page"));
 const KSBMapping = lazy(() => import("../pages/curriculum/ksb-mapping/page"));
-const KSBsPage = lazy(() => import("../pages/learner/ksbs/page"));
 const LeadershipAchievementPipelinePage = lazy(() => import("@/pages/leadership/achievement-pipeline/page"));
 const LeadershipAttendanceTrendsPage = lazy(() => import("@/pages/leadership/attendance-trends/page"));
 const LeadershipCoachWorkloadPage = lazy(() => import("@/pages/leadership/coach-workload/page"));
@@ -168,13 +166,14 @@ const MisTeamsSessionsPage = lazy(() => import("../pages/mis/teams-sessions/page
 const MisTimetablesPage = lazy(() => import("../pages/mis/timetables/page"));
 const MisTutorAssignmentPage = lazy(() => import("../pages/mis/tutor-assignment/page"));
 const ModuleBuilder = lazy(() => import("../pages/curriculum/module-builder/page"));
-const ModulesPage = lazy(() => import("../pages/learner/modules/page"));
+const ModulesPage = lazy(() => import("../pages/learner/my-learning/page"));
 const MonthlyCyclePage = lazy(() => import("../pages/learner/monthly-cycle/page"));
+const MyLearningPage = lazy(() => import("../pages/learner/my-learning/page"));
 const MySchedulePage = lazy(() => import("../pages/learner/clubs/events/schedule/page"));
 const NotFound = lazy(() => import("../pages/NotFound"));
-const OTJHPage = lazy(() => import("../pages/learner/otjh/page"));
 const PaymentsPage = lazy(() => import("../pages/finance/payments/page"));
 const PointsRulesPage = lazy(() => import("../pages/engagement/points-rules/page"));
+const ProgressPage = lazy(() => import("../pages/learner/progress/page"));
 const ProgrammeDetailPage = lazy(() => import("../pages/curriculum/programme-detail/page"));
 const QADashboard = lazy(() => import("../pages/workspace/qa/page"));
 const QaDeliverySetup = lazy(() => import("../pages/qa/delivery-setup/page"));
@@ -199,7 +198,7 @@ const QuestionBankPage = lazy(() => import("../pages/curriculum/question-bank/pa
 const QuizEditPage = lazy(() => import("../pages/curriculum/quiz-xml/edit/page"));
 const QuizTakePage = lazy(() => import("../pages/learner/quiz-take/page"));
 const QuizXmlWorkspace = lazy(() => import("../pages/curriculum/quiz-xml/page"));
-const QuizzesPage = lazy(() => import("../pages/learner/quizzes/page"));
+const QuizzesPage = lazy(() => import("../pages/learner/my-learning/page"));
 const RecognitionPage = lazy(() => import("../pages/engagement/recognition/page"));
 const ReportAbsencePage = lazy(() => import("../pages/learner/report-absence/page"));
 const RewardsPage = lazy(() => import("../pages/learner/rewards/page"));
@@ -226,7 +225,7 @@ const SupportReports = lazy(() => import("@/pages/support/reports/page"));
 const SupportResolved = lazy(() => import("@/pages/support/resolved/page"));
 const SupportTicketQueue = lazy(() => import("@/pages/support/ticket-queue/page"));
 const TrainingPlanBuilderPage = lazy(() => import("../pages/delivery/TrainingPlanPage"));
-const TrainingPlanPage = lazy(() => import("../pages/learner/training-plan/page"));
+const TrainingPlanPage = lazy(() => import("../pages/learner/my-learning/page"));
 const TutorAiMarkingPage = lazy(() => import("../pages/tutor/ai-marking/page"));
 const TutorAssignmentMarking = lazy(() => import("../pages/tutor/assignment-marking/page"));
 const TutorDashboard = lazy(() => import("../pages/workspace/tutor/page"));
@@ -403,6 +402,18 @@ const routes: RouteObject[] = [
     element: <WeekDetailPage />,
   },
   {
+    // Canonical URL for the merged Overview/Modules/Quizzes page. The three
+    // routes below it are the pre-merge URLs (training-plan, modules,
+    // quizzes) — kept working for staff/coach deep-links and saved links,
+    // each landing on the tab that matches what used to live there.
+    path: "/learner/my-learning",
+    element: <MyLearningPage />,
+  },
+  {
+    path: "/learner/my-learning/:kind/:id",
+    element: <MyLearningPage />,
+  },
+  {
     path: "/learner/training-plan",
     element: <TrainingPlanPage />,
   },
@@ -448,24 +459,32 @@ const routes: RouteObject[] = [
     element: <ReportAbsencePage />,
   },
   {
+    path: "/learner/progress",
+    element: <ProgressPage />,
+  },
+  {
+    path: "/learner/progress/:kind/:id",
+    element: <ProgressPage />,
+  },
+  {
     path: "/learner/otjh",
-    element: <OTJHPage />,
+    element: <ProgressPage />,
   },
   {
     path: "/learner/otjh/:kind/:id",
-    element: <OTJHPage />,
+    element: <ProgressPage />,
   },
   {
     path: "/learner/ksbs",
-    element: <KSBsPage />,
+    element: <ProgressPage />,
   },
   {
     path: "/learner/ksbs/:kind/:id",
-    element: <KSBsPage />,
+    element: <ProgressPage />,
   },
   {
     path: "/learner/evidence",
-    element: <EvidencePage />,
+    element: <ProgressPage />,
   },
   {
     path: "/learner/quizzes",

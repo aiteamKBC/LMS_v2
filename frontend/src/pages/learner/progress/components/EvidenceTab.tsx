@@ -1,14 +1,8 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
-import { roleNavMap } from '@/mocks/navigation';
-import { fetchEvidence, getEvidenceDownloadUrl, uploadEvidence, type EvidenceRecord } from '@/api/evidence';
-import type { LearnerDetail } from '@/api/learnerDetail';
-import { useMyLearner } from '@/hooks/useMyLearner';
-import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
-
-const learnerNav = roleNavMap.learner;
+import { getEvidenceDownloadUrl, uploadEvidence, type EvidenceRecord } from '@/api/evidence';
+import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 
 /* ═══════════════════════════════════════════════════════════════
    TYPES
@@ -173,7 +167,7 @@ const KSB_TYPE_COLORS: Record<string, { bg: string; text: string }> = {
    SUB-COMPONENTS
    ═══════════════════════════════════════════════════════════════ */
 
-/* ── Stat Strip Card (matching KSBs page style) ── */
+/* ── Stat Strip Card ── */
 function StatStripCard({ label, value, icon, color }: { label: string; value: number; icon: string; color: string }) {
   const colorMap: Record<string, { iconBg: string; iconText: string; accent: string }> = {
     emerald: { iconBg: 'bg-emerald-100', iconText: 'text-emerald-600', accent: 'text-emerald-700' },
@@ -376,7 +370,7 @@ function FilePreviewModal({ item, onClose, onDownload, opening }: {
           )}
         </div>
         <div className="flex items-center justify-end p-5 border-t border-foreground-200/60">
-          <button onClick={onClose} className="px-4 py-2 rounded-xl bg-background-100 text-sm font-medium text-foreground-500 hover:bg-background-200 transition-smooth cursor-pointer whitespace-nowrap">
+          <button onClick={onClose} className="px-4 py-2 rounded-xl bg-background-100 text-sm font-medium text-foreground-500 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">
             Close
           </button>
         </div>
@@ -386,15 +380,30 @@ function FilePreviewModal({ item, onClose, onDownload, opening }: {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   MAIN COMPONENT
+   MAIN COMPONENT — tab content, no page chrome (the parent
+   "My Progress" page owns the WorkspaceShell + page header).
    ═══════════════════════════════════════════════════════════════ */
-export default function EvidencePage() {
-  const learner = useMyLearner();
-  // This page has no :id in its URL — it follows the remembered learner, which
-  // is whichever one the viewer last opened. A staff viewer therefore lands on
-  // that learner's own library; the portfolio stays theirs to add to.
-  const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(learner.id);
-  const { real } = useLearnerDetailParam(learner.kind, learner.id);
+export function EvidenceTab({
+  learnerKind,
+  learnerId,
+  real,
+  canProgress,
+  showReadOnlyNotice,
+  evidenceRecords,
+  evidenceLoading,
+  evidenceError,
+  reloadEvidence,
+}: {
+  learnerKind: LearnerKind | undefined;
+  learnerId: string | undefined;
+  real: LearnerDetail | null;
+  canProgress: boolean;
+  showReadOnlyNotice: boolean;
+  evidenceRecords: EvidenceRecord[];
+  evidenceLoading: boolean;
+  evidenceError: string | null;
+  reloadEvidence: () => void | Promise<void>;
+}) {
   const weekLookup = useMemo(() => buildWeekLookup(real), [real]);
   const allKsbs = useMemo(() => buildAllKSBs(real), [real]);
   const [activeFilter, setActiveFilter] = useState<'All' | 'Validated' | 'Pending' | 'Draft' | 'Needs work'>('All');
@@ -409,32 +418,14 @@ export default function EvidencePage() {
   const [uploadKSBs, setUploadKSBs] = useState<string[]>([]);
   const [uploadDesc, setUploadDesc] = useState('');
   const [uploadOtjh, setUploadOtjh] = useState(1.5);
-  const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([]);
-  const [evidenceLoading, setEvidenceLoading] = useState(true);
-  const [evidenceError, setEvidenceError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [openingEvidenceId, setOpeningEvidenceId] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState(false);
   const [showFilePreview, setShowFilePreview] = useState<string | null>(null);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
-
-  const loadEvidence = useCallback(async () => {
-    setEvidenceLoading(true);
-    setEvidenceError(null);
-    try {
-      setEvidenceRecords(await fetchEvidence(learner.kind, learner.id));
-    } catch (error) {
-      setEvidenceError(error instanceof Error ? error.message : 'Could not load evidence.');
-    } finally {
-      setEvidenceLoading(false);
-    }
-  }, [learner.kind, learner.id]);
-
-  useEffect(() => {
-    void loadEvidence();
-  }, [loadEvidence]);
 
   const allEvidence = useMemo(() => evidenceRecords.map(evidenceRecordToItem), [evidenceRecords]);
 
@@ -467,7 +458,7 @@ export default function EvidencePage() {
   const hasActiveFilters = activeFilter !== 'All' || filterType !== 'All' || searchQuery.trim().length > 0;
 
   const handleUpload = async (files: File[]) => {
-    if (!uploadTitle.trim() || files.length === 0 || uploading || !canProgress) return;
+    if (!uploadTitle.trim() || files.length === 0 || uploading || !canProgress || !learnerKind || !learnerId) return;
     const weekInfo = weekLookup.find(w => w.weekNumber === uploadWeek);
     const moduleName = weekInfo?.moduleName || 'Programme';
     const sectionRef = `evidence-library-week-${uploadWeek}`;
@@ -475,7 +466,7 @@ export default function EvidencePage() {
     setUploadError(null);
     try {
       for (const file of files) {
-        await uploadEvidence(learner.kind, learner.id, file, sectionRef, {
+        await uploadEvidence(learnerKind, learnerId, file, sectionRef, {
           moduleTitle: moduleName,
           weekTitle: weekInfo?.dateRange || `Week ${uploadWeek}`,
           componentTitle: uploadTitle.trim(),
@@ -485,7 +476,7 @@ export default function EvidencePage() {
           otjhHours: uploadOtjh,
         });
       }
-      await loadEvidence();
+      await reloadEvidence();
       setUploadTitle('');
       setUploadDesc('');
       setUploadKSBs([]);
@@ -495,7 +486,7 @@ export default function EvidencePage() {
         setShowUploadModal(false);
       }, 800);
     } catch (error) {
-      await loadEvidence();
+      await reloadEvidence();
       setUploadError(error instanceof Error ? error.message : 'Evidence upload failed.');
     } finally {
       setUploading(false);
@@ -503,18 +494,18 @@ export default function EvidencePage() {
   };
 
   const handleDownload = useCallback(async (item: EvidenceItem) => {
-    if (!item.fileId || item.rawStatus !== 'approved' || openingEvidenceId) return;
+    if (!item.fileId || item.rawStatus !== 'approved' || openingEvidenceId || !learnerKind || !learnerId) return;
     setOpeningEvidenceId(item.id);
-    setEvidenceError(null);
+    setDownloadError(null);
     try {
-      const url = await getEvidenceDownloadUrl(learner.kind, learner.id, item.fileId);
+      const url = await getEvidenceDownloadUrl(learnerKind, learnerId, item.fileId);
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (error) {
-      setEvidenceError(error instanceof Error ? error.message : 'Could not open this evidence file.');
+      setDownloadError(error instanceof Error ? error.message : 'Could not open this evidence file.');
     } finally {
       setOpeningEvidenceId(null);
     }
-  }, [learner.kind, learner.id, openingEvidenceId]);
+  }, [learnerKind, learnerId, openingEvidenceId]);
 
   const handleCloseUpload = () => {
     setUploadTitle('');
@@ -551,9 +542,6 @@ export default function EvidencePage() {
 
   return (
     <>
-      {/* ═══════════════════════════════════
-          UPLOAD MODAL — Professional Redesign
-          ═══════════════════════════════════ */}
       {showUploadModal && (
         <UploadModal
           onClose={handleCloseUpload}
@@ -580,7 +568,6 @@ export default function EvidencePage() {
         />
       )}
 
-      {/* File Preview Modal */}
       {showFilePreview && (
         <FilePreviewModal
           item={previewItem || null}
@@ -590,237 +577,204 @@ export default function EvidencePage() {
         />
       )}
 
-      <WorkspaceShell
-        role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
-        pageTitle="Evidence Library" pageSubtitle="Upload, track & map your apprenticeship evidence to KSBs"
-        userName={real?.name || 'Learner'} userRole={`${real?.programme || 'Apprenticeship'} Apprentice`}
-      >
-        <div className="p-4 md:p-6 space-y-5 md:space-y-6">
+      <div className="space-y-5 md:space-y-6">
+        {/* ── Section header + primary CTA ── */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-base font-heading font-semibold text-foreground-900">Evidence Library</h2>
+            <p className="text-sm text-foreground-400 mt-0.5">Upload, track & map your apprenticeship evidence to KSBs</p>
+          </div>
+          {showReadOnlyNotice ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-foreground-200 bg-background-100 px-4 py-2 text-xs font-semibold text-foreground-500 whitespace-nowrap">
+              <AppIcon className="ri-eye-line"></AppIcon> Read only — the learner uploads their own evidence
+            </span>
+          ) : (
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
+            >
+              <AppIcon className="ri-add-line"></AppIcon> Upload Evidence
+            </button>
+          )}
+        </div>
 
-          {/* ══════════════════════════════════════════════════════
-              HERO HEADER
-              ══════════════════════════════════════════════════════ */}
-          <div className="relative rounded-2xl overflow-hidden animate-in fade-in duration-300" style={{ background: 'linear-gradient(135deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 40%, oklch(var(--primary-800)) 100%)' }}>
-            <div className="absolute inset-0 pointer-events-none overflow-hidden">
-              <div className="absolute animate-liquid-blob-1 opacity-25" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-              <div className="absolute animate-liquid-blob-2 opacity-15" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
+        {(evidenceError || downloadError) && (
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800">
+            <div className="flex items-center gap-2">
+              <AppIcon className="ri-error-warning-line" />
+              <p className="text-xs">{evidenceError || downloadError}</p>
             </div>
+            {evidenceError && <button onClick={() => void reloadEvidence()} className="text-xs font-semibold underline cursor-pointer">Retry</button>}
+          </div>
+        )}
 
-            <div className="relative p-6 md:p-8 flex flex-col lg:flex-row items-start lg:items-center gap-5 lg:gap-8">
-              <div className="flex items-center gap-4 shrink-0">
-                <span className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center">
-                  <AppIcon className="ri-folder-upload-line text-white text-2xl"></AppIcon>
-                </span>
-                <div>
-                  <h2 className="text-xl font-heading font-bold text-white">Evidence Library</h2>
-                  <p className="text-sm text-white/60">Upload, track & map your apprenticeship evidence to KSBs</p>
-                </div>
-              </div>
+        <section>
+          {evidenceLoading && (
+            <div className="mb-3 flex items-center gap-2 text-xs text-foreground-400">
+              <AppIcon className="ri-loader-4-line animate-spin" /> Loading evidence…
+            </div>
+          )}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <StatStripCard label="Total Evidence" value={counts.total} icon="ri-folder-line" color="primary" />
+            <StatStripCard label="Validated" value={counts.validated} icon="ri-check-double-line" color="emerald" />
+            <StatStripCard label="Pending" value={counts.pending} icon="ri-time-line" color="amber" />
+            <StatStripCard label="Needs Work" value={counts.needsWork} icon="ri-error-warning-line" color="red" />
+            <StatStripCard label="Drafts" value={counts.draft} icon="ri-draft-line" color="secondary" />
+          </div>
+        </section>
 
-              <div className="flex items-center lg:ml-auto">
-                {showReadOnlyNotice ? (
-                  <span className="flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-5 py-2.5 text-sm font-semibold whitespace-nowrap text-white/70">
-                    <AppIcon className="ri-eye-line"></AppIcon> Read only — the learner uploads their own evidence
-                  </span>
-                ) : (
-                  <button
-                    onClick={() => setShowUploadModal(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/15 backdrop-blur-sm text-white text-sm font-semibold hover:bg-white/25 transition-smooth cursor-pointer whitespace-nowrap border border-white/20"
-                  >
-                    <AppIcon className="ri-add-line"></AppIcon> Upload Evidence
+        {/* ═══════════════════════════════════
+            FILTERS + SEARCH
+            ═══════════════════════════════════ */}
+        <section>
+          <div className="bg-background-50 rounded-2xl border border-foreground-200/70 p-4 md:p-5 space-y-4">
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
+                <input
+                  type="text"
+                  placeholder="Search title, module, KSB code, or week..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-background-100 border border-background-200 text-sm text-foreground-900 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100 transition-smooth"
+                />
+                {searchQuery && (
+                  <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-foreground-200 text-background-50 hover:bg-foreground-300 transition-smooth cursor-pointer">
+                    <AppIcon className="ri-close-line text-[10px]"></AppIcon>
                   </button>
                 )}
               </div>
-            </div>
-          </div>
-
-          {/* ══════════════════════════════════════════════════════
-              STATS CARDS
-              ══════════════════════════════════════════════════════ */}
-          {evidenceError && (
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800">
               <div className="flex items-center gap-2">
-                <AppIcon className="ri-error-warning-line" />
-                <p className="text-xs">{evidenceError}</p>
-              </div>
-              <button onClick={() => void loadEvidence()} className="text-xs font-semibold underline cursor-pointer">Retry</button>
-            </div>
-          )}
-
-          <section>
-            {evidenceLoading && (
-              <div className="mb-3 flex items-center gap-2 text-xs text-foreground-400">
-                <AppIcon className="ri-loader-4-line animate-spin" /> Loading evidence…
-              </div>
-            )}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-              <StatStripCard label="Total Evidence" value={counts.total} icon="ri-folder-line" color="primary" />
-              <StatStripCard label="Validated" value={counts.validated} icon="ri-check-double-line" color="emerald" />
-              <StatStripCard label="Pending" value={counts.pending} icon="ri-time-line" color="amber" />
-              <StatStripCard label="Needs Work" value={counts.needsWork} icon="ri-error-warning-line" color="red" />
-              <StatStripCard label="Drafts" value={counts.draft} icon="ri-draft-line" color="secondary" />
-            </div>
-          </section>
-
-          {/* ═══════════════════════════════════
-              FILTERS + SEARCH
-              ═══════════════════════════════════ */}
-          <section>
-            <div className="bg-background-50 rounded-2xl border border-foreground-200/70 p-4 md:p-5 space-y-4">
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="relative flex-1">
-                  <AppIcon className="ri-search-line absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
-                  <input
-                    type="text"
-                    placeholder="Search title, module, KSB code, or week..."
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-background-100 border border-background-200 text-sm text-foreground-900 placeholder:text-foreground-300 focus:outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100 transition-smooth"
-                  />
-                  {searchQuery && (
-                    <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full bg-foreground-200 text-background-50 hover:bg-foreground-300 transition-smooth cursor-pointer">
-                      <AppIcon className="ri-close-line text-[10px]"></AppIcon>
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {/* Filter Dropdown */}
-                  <div className="relative" ref={filterRef}>
-                    <button
-                      onClick={() => setShowFilterDropdown(!showFilterDropdown)}
-                      className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap border ${
-                        hasActiveFilters
-                          ? 'bg-primary-50 text-primary-700 border-primary-200/50'
-                          : 'bg-background-100 text-foreground-500 border-transparent hover:text-foreground-700 hover:border-foreground-200/40'
-                      }`}
-                    >
-                      <AppIcon className="ri-filter-3-line text-sm"></AppIcon>
-                      Filters
-                      {hasActiveFilters && (
-                        <span className="w-2 h-2 rounded-full bg-primary-500"></span>
-                      )}
-                    </button>
-                    {showFilterDropdown && (
-                      <div className="absolute right-0 mt-2 w-[280px] bg-background-50 rounded-2xl border border-foreground-200/70 shadow-xl z-50 p-4 space-y-4">
-                        {/* Status */}
-                        <div>
-                          <p className="text-xs font-semibold text-foreground-400 uppercase tracking-wider mb-2">Status</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {(['All', 'Validated', 'Pending', 'Draft', 'Needs work'] as const).map(tab => {
-                              const count = tab === 'All' ? counts.total : tab === 'Validated' ? counts.validated : tab === 'Pending' ? counts.pending : tab === 'Draft' ? counts.draft : counts.needsWork;
-                              return (
-                                <button
-                                  key={tab}
-                                  onClick={() => setActiveFilter(tab)}
-                                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${
-                                    activeFilter === tab
-                                      ? 'bg-foreground-900 text-background-50 dark:text-foreground-950'
-                                      : 'bg-background-100 text-foreground-500 hover:text-foreground-700'
-                                  }`}
-                                >
-                                  {tab}
-                                  <span className={`text-[10px] px-1 py-0.5 rounded-full ${activeFilter === tab ? 'bg-white/15' : 'bg-background-200/60 text-foreground-400'}`}>{count}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                        {/* Type */}
-                        <div>
-                          <p className="text-xs font-semibold text-foreground-400 uppercase tracking-wider mb-2">Type</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {(['All', 'Document', 'Presentation', 'Spreadsheet', 'Reflection', 'Quiz', 'Meeting notes', 'Workplace evidence', 'Image', 'Audio'] as const).map(t => (
+                <div className="relative" ref={filterRef}>
+                  <button
+                    onClick={() => setShowFilterDropdown(!showFilterDropdown)}
+                    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap border ${
+                      hasActiveFilters
+                        ? 'bg-primary-50 text-primary-700 border-primary-200/50'
+                        : 'bg-background-100 text-foreground-500 border-transparent hover:text-foreground-700 hover:border-foreground-200/40'
+                    }`}
+                  >
+                    <AppIcon className="ri-filter-3-line text-sm"></AppIcon>
+                    Filters
+                    {hasActiveFilters && (
+                      <span className="w-2 h-2 rounded-full bg-primary-500"></span>
+                    )}
+                  </button>
+                  {showFilterDropdown && (
+                    <div className="absolute right-0 mt-2 w-[280px] bg-background-50 rounded-2xl border border-foreground-200/70 shadow-xl z-50 p-4 space-y-4">
+                      <div>
+                        <p className="text-xs font-semibold text-foreground-400 uppercase tracking-wider mb-2">Status</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(['All', 'Validated', 'Pending', 'Draft', 'Needs work'] as const).map(tab => {
+                            const count = tab === 'All' ? counts.total : tab === 'Validated' ? counts.validated : tab === 'Pending' ? counts.pending : tab === 'Draft' ? counts.draft : counts.needsWork;
+                            return (
                               <button
-                                key={t}
-                                onClick={() => setFilterType(t)}
-                                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${
-                                  filterType === t
+                                key={tab}
+                                onClick={() => setActiveFilter(tab)}
+                                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${
+                                  activeFilter === tab
                                     ? 'bg-foreground-900 text-background-50 dark:text-foreground-950'
                                     : 'bg-background-100 text-foreground-500 hover:text-foreground-700'
                                 }`}
                               >
-                                {t === 'All' ? 'All' : t}
+                                {tab}
+                                <span className={`text-[10px] px-1 py-0.5 rounded-full ${activeFilter === tab ? 'bg-white/15' : 'bg-background-200/60 text-foreground-400'}`}>{count}</span>
                               </button>
-                            ))}
-                          </div>
+                            );
+                          })}
                         </div>
-                        {/* Clear */}
-                        {hasActiveFilters && (
-                          <div className="pt-2 border-t border-foreground-200/60">
-                            <button
-                              onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
-                              className="flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-700 font-semibold cursor-pointer"
-                            >
-                              <AppIcon className="ri-close-circle-line"></AppIcon> Clear all filters
-                            </button>
-                          </div>
-                        )}
                       </div>
-                    )}
-                  </div>
-                  <div className="flex items-center p-1 bg-background-100 rounded-xl border border-foreground-200/60">
-                    <button onClick={() => setViewMode('grid')} className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-smooth cursor-pointer ${viewMode === 'grid' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
-                      <AppIcon className="ri-grid-fill"></AppIcon>
-                    </button>
-                    <button onClick={() => setViewMode('list')} className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-smooth cursor-pointer ${viewMode === 'list' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
-                      <AppIcon className="ri-list-check"></AppIcon>
-                    </button>
-                  </div>
+                      <div>
+                        <p className="text-xs font-semibold text-foreground-400 uppercase tracking-wider mb-2">Type</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(['All', 'Document', 'Presentation', 'Spreadsheet', 'Reflection', 'Quiz', 'Meeting notes', 'Workplace evidence', 'Image', 'Audio'] as const).map(t => (
+                            <button
+                              key={t}
+                              onClick={() => setFilterType(t)}
+                              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${
+                                filterType === t
+                                  ? 'bg-foreground-900 text-background-50 dark:text-foreground-950'
+                                  : 'bg-background-100 text-foreground-500 hover:text-foreground-700'
+                              }`}
+                            >
+                              {t === 'All' ? 'All' : t}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {hasActiveFilters && (
+                        <div className="pt-2 border-t border-foreground-200/60">
+                          <button
+                            onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
+                            className="flex items-center gap-1.5 text-xs text-primary-600 hover:text-primary-700 font-semibold cursor-pointer"
+                          >
+                            <AppIcon className="ri-close-circle-line"></AppIcon> Clear all filters
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center p-1 bg-background-100 rounded-xl border border-foreground-200/60">
+                  <button onClick={() => setViewMode('grid')} className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-smooth cursor-pointer ${viewMode === 'grid' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
+                    <AppIcon className="ri-grid-fill"></AppIcon>
+                  </button>
+                  <button onClick={() => setViewMode('list')} className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-smooth cursor-pointer ${viewMode === 'list' ? 'bg-background-50 text-foreground-900 shadow-sm' : 'text-foreground-400 hover:text-foreground-600'}`}>
+                    <AppIcon className="ri-list-check"></AppIcon>
+                  </button>
                 </div>
               </div>
-
-              {/* Results count */}
-              <div className="flex items-center justify-between text-xs text-foreground-400 pt-2 border-t border-foreground-200/60">
-                <span>Showing {filtered.length} of {allEvidence.length} items</span>
-                {(activeFilter !== 'All' || filterType !== 'All' || searchQuery) && (
-                  <button
-                    onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
-                    className="text-primary-600 hover:text-primary-700 font-medium cursor-pointer"
-                  >
-                    Clear all filters
-                  </button>
-                )}
-              </div>
             </div>
-          </section>
 
-          {/* ═══════════════════════════════════
-              EVIDENCE GRID / LIST
-              ═══════════════════════════════════ */}
-          <section>
-            {viewMode === 'grid' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filtered.map(ev => (
-                  <EvidenceCard key={ev.id} ev={ev} onClick={() => setSelectedEvidence(ev.id)} />
-                ))}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {filtered.map(ev => (
-                  <EvidenceRow key={ev.id} ev={ev} onClick={() => setSelectedEvidence(ev.id)} />
-                ))}
-              </div>
-            )}
-
-            {!evidenceLoading && filtered.length === 0 && (
-              <div className="py-16 text-center bg-background-50 rounded-2xl border border-foreground-200/70">
-                <span className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-4">
-                  <AppIcon className="ri-folder-open-line text-foreground-300 text-2xl"></AppIcon>
-                </span>
-                <p className="text-sm text-foreground-500 mb-1">{allEvidence.length ? 'No evidence matches your filters' : 'No evidence uploaded yet'}</p>
-                <p className="text-xs text-foreground-400 mb-3">{allEvidence.length ? 'Try adjusting your search or clearing filters' : 'Use Upload Evidence to add the first file.'}</p>
-                {allEvidence.length > 0 && <button
+            <div className="flex items-center justify-between text-xs text-foreground-400 pt-2 border-t border-foreground-200/60">
+              <span>Showing {filtered.length} of {allEvidence.length} items</span>
+              {(activeFilter !== 'All' || filterType !== 'All' || searchQuery) && (
+                <button
                   onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
-                  className="px-4 py-2 rounded-xl bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"
+                  className="text-primary-600 hover:text-primary-700 font-medium cursor-pointer"
                 >
                   Clear all filters
-                </button>}
-              </div>
-            )}
-          </section>
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
 
-        </div>
-      </WorkspaceShell>
+        {/* ═══════════════════════════════════
+            EVIDENCE GRID / LIST
+            ═══════════════════════════════════ */}
+        <section>
+          {viewMode === 'grid' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filtered.map(ev => (
+                <EvidenceCard key={ev.id} ev={ev} onClick={() => setSelectedEvidence(ev.id)} />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map(ev => (
+                <EvidenceRow key={ev.id} ev={ev} onClick={() => setSelectedEvidence(ev.id)} />
+              ))}
+            </div>
+          )}
+
+          {!evidenceLoading && filtered.length === 0 && (
+            <div className="py-16 text-center bg-background-50 rounded-2xl border border-foreground-200/70">
+              <span className="w-14 h-14 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-4">
+                <AppIcon className="ri-folder-open-line text-foreground-300 text-2xl"></AppIcon>
+              </span>
+              <p className="text-sm text-foreground-500 mb-1">{allEvidence.length ? 'No evidence matches your filters' : 'No evidence uploaded yet'}</p>
+              <p className="text-xs text-foreground-400 mb-3">{allEvidence.length ? 'Try adjusting your search or clearing filters' : 'Use Upload Evidence to add the first file.'}</p>
+              {allEvidence.length > 0 && <button
+                onClick={() => { setActiveFilter('All'); setFilterType('All'); setSearchQuery(''); }}
+                className="px-4 py-2 rounded-xl bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer"
+              >
+                Clear all filters
+              </button>}
+            </div>
+          )}
+        </section>
+      </div>
 
       {/* ═══════════════════════════════════
           RIGHT PANEL — DETAIL
@@ -898,7 +852,7 @@ export default function EvidencePage() {
               )}
             </div>
             <div className="flex flex-col gap-2 pt-2 border-t border-background-200/40">
-              <button 
+              <button
                 onClick={() => { setSelectedEvidence(null); setShowFilePreview(selectedItem.id); }}
                 className="w-full px-4 py-2.5 rounded-xl bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold cursor-pointer whitespace-nowrap hover:bg-primary-600 transition-smooth"
               >
@@ -921,7 +875,7 @@ export default function EvidencePage() {
 }
 
 /* ═══════════════════════════════════════════════════════════════
-   UPLOAD MODAL — Professional Clean Design
+   UPLOAD MODAL
    ═══════════════════════════════════════════════════════════════ */
 interface UploadModalProps {
   onClose: () => void;
@@ -1029,7 +983,6 @@ function UploadModal({
         className="bg-background-50 rounded-2xl border border-foreground-200/60 shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col animate-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between gap-4 p-6 pb-4 border-b border-foreground-200/60">
           <div className="flex items-center gap-3">
             <span className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center shrink-0">
@@ -1048,9 +1001,7 @@ function UploadModal({
           </button>
         </div>
 
-        {/* Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-5">
-          {/* Success banner */}
           {uploadSuccess && (
             <div className="px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200/50 flex items-center gap-2 text-sm text-emerald-700">
               <AppIcon className="ri-checkbox-circle-fill text-emerald-500"></AppIcon>
@@ -1140,7 +1091,7 @@ function UploadModal({
             </div>
           </div>
 
-          {/* Linked KSBs — Clean selector */}
+          {/* Linked KSBs */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-[11px] font-semibold text-foreground-500 uppercase tracking-wider">
@@ -1151,7 +1102,6 @@ function UploadModal({
               )}
             </div>
 
-            {/* Selected KSB chips */}
             {uploadKSBs.length > 0 ? (
               <div className="flex flex-wrap gap-1.5 mb-3">
                 {uploadKSBs.map(code => {
@@ -1182,7 +1132,6 @@ function UploadModal({
               </div>
             )}
 
-            {/* Toggle KSB selector */}
             <button
               onClick={() => setShowKSBSelector(!showKSBSelector)}
               className="flex items-center gap-2 w-full px-4 py-3 rounded-xl bg-background-100 border border-foreground-200/60 text-sm text-foreground-500 hover:text-foreground-700 hover:border-foreground-300/40 transition-smooth cursor-pointer"
@@ -1200,10 +1149,8 @@ function UploadModal({
               )}
             </button>
 
-            {/* Expandable KSB selector */}
             {showKSBSelector && (
               <div className="mt-3 p-4 rounded-xl bg-background-100 border border-foreground-200/60 space-y-4 animate-in slide-in-from-top-2 duration-200">
-                {/* Search */}
                 <div className="relative">
                   <AppIcon className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-foreground-300 text-sm"></AppIcon>
                   <input
@@ -1215,7 +1162,6 @@ function UploadModal({
                   />
                 </div>
 
-                {/* Grouped KSBs */}
                 <div className="space-y-3 max-h-[240px] overflow-y-auto">
                   {(['Knowledge', 'Skill', 'Behaviour'] as const).map(group => {
                     const items = ksbByType[group];
@@ -1256,7 +1202,6 @@ function UploadModal({
                   <p className="text-xs text-foreground-400 text-center py-2">No KSBs found</p>
                 )}
 
-                {/* Quick actions */}
                 <div className="flex items-center gap-2 pt-2 border-t border-foreground-200/40">
                   {suggestedKSBs.length > 0 && (
                     <button
@@ -1361,7 +1306,6 @@ function UploadModal({
           </div>
         </div>
 
-        {/* Footer */}
         <div className="flex items-center justify-end gap-3 p-6 pt-4 border-t border-foreground-200/60">
           <button
             onClick={onClose}
@@ -1387,9 +1331,6 @@ function UploadModal({
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   EXTRA SUB-COMPONENTS
-   ═══════════════════════════════════════════════════════════════ */
 function MetaBox({ label, value }: { label: string; value: string }) {
   return (
     <div className="bg-background-100/60 rounded-xl p-3">
