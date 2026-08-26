@@ -214,6 +214,14 @@ export default function ComponentViewPage() {
 
   const finishConsuming = () => {
     if (timerRef.current) clearInterval(timerRef.current);
+    if (component?.reflectionRequired === false) {
+      void finalizeSubmit({
+        ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
+        feedback: '',
+        reportedTime: plannedTimeLabel,
+      });
+      return;
+    }
     setPhase('reflect');
   };
 
@@ -296,6 +304,7 @@ export default function ComponentViewPage() {
               learnerKind={kind as LearnerKind}
               learnerId={id}
               evidenceSectionRef={componentId}
+              reflectionQuestion={component.reflectionQuestion}
               onClose={() => navigate(-1)}
             />
           </div>

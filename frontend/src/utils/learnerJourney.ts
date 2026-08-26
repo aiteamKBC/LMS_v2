@@ -17,6 +17,8 @@ export interface JourneyComponent {
   fileName?: string | null;
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
+  reflectionRequired?: boolean;
+  reflectionQuestion?: string | null;
   resourceUrl?: string | null;
   liveSessionUrl?: string | null;
   teamsLiveSessionId?: string | null;
@@ -471,7 +473,9 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             componentId: c.componentId, type: c.type, description: c.description,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
-            downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt, resourceUrl: c.resourceUrl,
+            downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
+            reflectionRequired: c.reflectionRequired, reflectionQuestion: c.reflectionQuestion,
+            resourceUrl: c.resourceUrl,
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,
             sessionDateTimeUtc: c.sessionDateTimeUtc,
