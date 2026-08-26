@@ -55,10 +55,13 @@ import {
   ColorControl,
   EntityDrawer,
   FormField,
+  MultiSelectControl,
   SelectControl,
   TextAreaControl,
   TextControl,
+  type MultiSelectOption,
 } from './ui';
+import { useFormSeedGuard } from './useDrawerState';
 
 export interface ModuleFormDefaults {
   programmeId?: string;
@@ -176,7 +179,11 @@ export function ModuleFormDrawer({
   const [name, setName] = useState('');
   const [programmeId, setProgrammeId] = useState('');
   const [cohortId, setCohortId] = useState('');
-  const [groupId, setGroupId] = useState('');
+  // Which groups this save places the module in. The same module is regularly
+  // taught to more than one group of a cohort, and each group needs a delivery of
+  // its own -- its own session dates off its own delivery days, its own tutor
+  // booking -- so this is a list rather than the single choice it used to be.
+  const [groupIds, setGroupIds] = useState<string[]>([]);
   const [sessionsNumber, setSessionsNumber] = useState('1');
   const [startDate, setStartDate] = useState('');
   const [targetEndDate, setTargetEndDate] = useState('');
@@ -187,10 +194,12 @@ export function ModuleFormDrawer({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<CurriculumSessionPlanPreview | null>(null);
-  // True from the moment weeks/start date/delivery days change until the
-  // session-plan preview catches up with them. Saving while this is true
-  // would PATCH the end date from the *previous* weeks value, since the
-  // preview (and the end date it feeds) is fetched on a 300ms debounce.
+  // The inputs `plan` was fetched for. A plan whose key no longer matches the
+  // form is stale, and the locally projected end date is used instead of it.
+  const [planFor, setPlanFor] = useState('');
+  // True while the debounced session-plan preview is in flight. It no longer
+  // holds the save back: the end date is projected locally the moment the weeks
+  // or the start date move, so a save can never carry the previous value's date.
   const [planLoading, setPlanLoading] = useState(false);
   const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
   // What the drawer opened with, for the unsaved-changes check below.
@@ -200,11 +209,38 @@ export function ModuleFormDrawer({
     [programmes],
   );
 
+  const dirty = !sameFormValues(
+    { name, programmeId, cohortId, groupIds, sessionsNumber, startDate, targetEndDate, tutor, status, description, color },
+    baseline.current,
+  );
+  // The seeding effect below has to depend on `groups`, `cohorts` and
+  // `programmes` to resolve the module's parent chain, and those arrays get a new
+  // identity whenever the page refreshes them -- the Module Builder in particular
+  // fetches its picker scope *after* this drawer is already open. Re-seeding then
+  // wiped whatever had been chosen. See useFormSeedGuard.
+  const allowSeed = useFormSeedGuard(dirty);
+
+  // The delivery this drawer owns when editing: the module row's own group. It
+  // stays the one a PATCH moves; every other ticked group gets its own delivery.
+  const ownGroupId = cleanText(module?.groupId) || cleanText(module?.deliveryUsages?.[0]?.groupId);
+  // Groups this module already runs for through another delivery. They are shown
+  // ticked and locked -- re-sending them would overwrite that delivery's own
+  // tutor and dates with this form's.
+  const attachedGroupIds = useMemo(() => {
+    const seen = new Set<string>();
+    (module?.deliveryUsages || []).forEach(usage => {
+      const id = cleanText(usage.groupId);
+      if (id && !sameIdentifier(id, ownGroupId)) seen.add(id);
+    });
+    return Array.from(seen);
+  }, [module?.deliveryUsages, ownGroupId]);
+
   useEffect(() => {
-    if (!open) return;
+    if (!allowSeed(open, cleanText(module?.id) || 'new-module')) return;
     setError(null);
     setSaving(false);
     setPlan(null);
+    setPlanFor('');
     setSessionPreviewOpen(false);
 
     const storedDelivery = module?.deliveryUsages?.[0];
@@ -233,7 +269,12 @@ export function ModuleFormDrawer({
       name: cleanText(module?.name),
       programmeId: resolvedProgrammeId,
       cohortId: cleanText(parentCohort?.id) || cleanText(module?.cohortId) || cleanText(storedDelivery?.cohortId) || defaults?.cohortId || '',
-      groupId: cleanText(parentGroup?.id) || cleanText(module?.groupId) || cleanText(storedDelivery?.groupId) || defaults?.groupId || '',
+      // The module's own group first: `primaryGroupId` below reads position 0 as
+      // the delivery a PATCH belongs to when nothing more specific matches.
+      groupIds: Array.from(new Set([
+        cleanText(parentGroup?.id) || cleanText(module?.groupId) || cleanText(storedDelivery?.groupId) || defaults?.groupId || '',
+        ...attachedGroupIds,
+      ].filter(Boolean))),
       // Seeded from the authored week count only. Seeding from `sessionsNumber`
       // (or the delivery's `sessions`) put a delivery-day-multiplied number in the
       // Weeks box, which then saved back multiplied again on every round-trip.
@@ -252,7 +293,7 @@ export function ModuleFormDrawer({
     setName(initial.name);
     setProgrammeId(initial.programmeId);
     setCohortId(initial.cohortId);
-    setGroupId(initial.groupId);
+    setGroupIds(initial.groupIds);
     setSessionsNumber(initial.sessionsNumber);
     setStartDate(initial.startDate);
     setTargetEndDate(initial.targetEndDate);
@@ -260,18 +301,7 @@ export function ModuleFormDrawer({
     setStatus(initial.status);
     setDescription(initial.description);
     setColor(initial.color);
-  }, [cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, module, open, selectableProgrammes]);
-
-  const dirty = !sameFormValues(
-    { name, programmeId, cohortId, groupId, sessionsNumber, startDate, targetEndDate, tutor, status, description, color },
-    baseline.current,
-  );
-  // Only the fields the session plan is built from. A plan refresh is worth
-  // waiting for once one of them has moved -- on an untouched drawer the stored
-  // end date is already the right answer, so blocking Save there would just stop
-  // an unrelated edit (a rename, a colour) from saving at all.
-  const sessionInputsTouched = String(sessionsNumber) !== String(baseline.current.sessionsNumber ?? '')
-    || startDate !== String(baseline.current.startDate ?? '');
+  }, [allowSeed, attachedGroupIds, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, module, open, selectableProgrammes]);
 
   const programmeOptions = useMemo(
     () => selectableProgrammes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
@@ -285,14 +315,39 @@ export function ModuleFormDrawer({
     () => groupsForScope(groups, cohorts, programmes, { programmeId, cohortId }),
     [cohortId, cohorts, groups, programmeId, programmes],
   );
+  // The delivery the previews, the tutor check and (when editing) the PATCH are
+  // about. Every other ticked group gets its own delivery on save, generated from
+  // its own delivery days by the backend.
+  const primaryGroupId = useMemo(
+    () => groupIds.find(id => sameIdentifier(id, ownGroupId)) || groupIds[0] || '',
+    [groupIds, ownGroupId],
+  );
+  const selectedGroups = useMemo(
+    () => groupIds
+      .map(id => groups.find(group => sameIdentifier(group.id, id)))
+      .filter((group): group is CurriculumGroup => Boolean(group)),
+    [groupIds, groups],
+  );
   const selectedGroup = useMemo(
-    () => groups.find(group => sameIdentifier(group.id, groupId)),
-    [groupId, groups],
+    () => groups.find(group => sameIdentifier(group.id, primaryGroupId)),
+    [groups, primaryGroupId],
   );
   const selectedCohort = useMemo(
     () => cohorts.find(cohort => sameIdentifier(cohort.id, cohortId || selectedGroup?.cohortId)),
     [cohortId, cohorts, selectedGroup],
   );
+  // Every cohort the ticked groups belong to. Usually one; the date window is
+  // checked against all of them, because a module placed in two cohorts has to
+  // fit inside both.
+  const selectedCohorts = useMemo(() => {
+    const seen = new Map<string, CurriculumCohort>();
+    selectedGroups.forEach(group => {
+      const cohort = cohorts.find(item => sameIdentifier(item.id, group.cohortId));
+      if (cohort) seen.set(normaliseKey(cohort.id), cohort);
+    });
+    if (!seen.size && selectedCohort) seen.set(normaliseKey(selectedCohort.id), selectedCohort);
+    return Array.from(seen.values());
+  }, [cohorts, selectedCohort, selectedGroups]);
 
   // The holidays that apply are the ones the parent cohort selected â€” the same
   // set the backend skips when it generates this module's session dates.
@@ -310,8 +365,15 @@ export function ModuleFormDrawer({
   const deliveryDaysPerWeek = weekDays ? weekDays.split(',').map(day => day.trim()).filter(Boolean).length : 0;
   const weeksEntered = Math.max(1, Number(sessionsNumber) || 1);
   const totalSessions = Math.round(weeksEntered * Math.max(1, deliveryDaysPerWeek));
+  // Everything the plan is built from, in one string: what the preview in state
+  // was fetched for is compared against it below, so a plan left over from the
+  // previous weeks value is never read as this one's answer.
+  const planInputs = useMemo(
+    () => JSON.stringify([startDate, totalSessions, weekDays, cohortHolidays.map(holiday => holiday.id)]),
+    [cohortHolidays, startDate, totalSessions, weekDays],
+  );
   useEffect(() => {
-    if (!open || !startDate) { setPlan(null); setPlanLoading(false); return undefined; }
+    if (!open || !startDate) { setPlan(null); setPlanFor(''); setPlanLoading(false); return undefined; }
     let active = true;
     setPlanLoading(true);
     const timer = setTimeout(() => {
@@ -321,17 +383,24 @@ export function ModuleFormDrawer({
         weekDays,
         holidays: cohortHolidays,
       })
-        .then(result => { if (active) setPlan(result); })
-        .catch(() => { if (active) setPlan(null); })
+        .then(result => { if (active) { setPlan(result); setPlanFor(planInputs); } })
+        .catch(() => { if (active) { setPlan(null); setPlanFor(''); } })
         .finally(() => { if (active) setPlanLoading(false); });
     }, 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [cohortHolidays, open, totalSessions, startDate, weekDays]);
+  }, [cohortHolidays, open, planInputs, totalSessions, startDate, weekDays]);
 
-  // Save waits on this: the end date it would send is still the previous weeks
-  // value until the debounced preview lands.
-  const awaitingPlan = planLoading && sessionInputsTouched;
-  const calculatedEndDate = plan?.finalEndDate || '';
+  // The same walk the backend does, run here so the End date moves on the very
+  // keystroke that changed the weeks or the start date instead of 300ms later
+  // when the debounced preview lands. The server's own plan still wins the
+  // moment it arrives -- this only fills the gap the debounce used to leave
+  // blank (or, worse, filled with the previous weeks value's answer).
+  const projectedEndDate = useMemo(
+    () => projectModuleEndDate(startDate, totalSessions, weekDays, cohortHolidays),
+    [cohortHolidays, startDate, totalSessions, weekDays],
+  );
+  const planIsCurrent = Boolean(plan) && planFor === planInputs;
+  const calculatedEndDate = (planIsCurrent ? plan?.finalEndDate : '') || projectedEndDate || '';
   const manualEndDate = cleanText(targetEndDate);
   // Manual wins: the generated plan can suggest an end date, but the drawer is
   // allowed to store the date the user picked.
@@ -342,7 +411,7 @@ export function ModuleFormDrawer({
     ? manualEndDate
       ? calculatedEndDate && calculatedEndDate !== manualEndDate
         ? `Set by hand. Generated sessions currently finish ${formatDateLabel(calculatedEndDate)}.`
-        : 'Set by hand. Clear it to use the calculated date.'
+        : 'Set by hand. Clear it, or change the start date or the weeks, to recalculate it.'
       : `The last of ${totalSessions} session${totalSessions === 1 ? '' : 's'} across ${sessionsNumber} week${Number(sessionsNumber) === 1 ? '' : 's'}${weekDays ? ` on ${weekDays}` : ''}${cohortHolidays.length ? `, skipping ${cohortHolidays.length} holiday${cohortHolidays.length === 1 ? '' : 's'}` : ''}.`
     : plan?.warnings?.[0] || 'Set the start date, the weeks and the group delivery day to calculate it.';
   // The cohort's delivery window is the module's boundary, and the end date is
@@ -351,9 +420,16 @@ export function ModuleFormDrawer({
   // enforced again on submit; the backend refuses the same three cases.
   // Split per field so each message lands on the date it is about; the two are
   // independent checks, so an out-of-window start does not hide a run-past end.
-  const startDateError = moduleCohortDateError(selectedCohort, startDate, undefined);
-  const endDateError = moduleCohortDateError(selectedCohort, undefined, endDate);
+  const startDateError = selectedCohorts.length
+    ? selectedCohorts.map(cohort => moduleCohortDateError(cohort, startDate, undefined)).find(Boolean) || null
+    : moduleCohortDateError(selectedCohort, startDate, undefined);
+  const endDateError = selectedCohorts.length
+    ? selectedCohorts.map(cohort => moduleCohortDateError(cohort, undefined, endDate)).find(Boolean) || null
+    : moduleCohortDateError(selectedCohort, undefined, endDate);
   const dateWindowError = startDateError || endDateError;
+  // Not a refusal -- a weekend or bank-holiday start is still saved -- just a
+  // heads-up, since the module will not actually deliver on that day.
+  const startDateNotice = useMemo(() => describeNonDeliveryDate(startDate, cohortHolidays), [startDate, cohortHolidays]);
   const shiftedSessionCount = useMemo(
     () => (plan?.sessions || []).filter(session => session.skippedHolidays?.length).length,
     [plan],
@@ -447,25 +523,64 @@ export function ModuleFormDrawer({
   const changeProgramme = (value: string) => {
     setProgrammeId(value);
     setCohortId('');
-    setGroupId('');
+    setGroupIds([]);
+  };
+  // The two inputs the end date is made of. Moving either drops whatever end date
+  // was being held by hand -- including the stored one an edit opens with -- so
+  // the field recalculates from what is now typed instead of showing the answer
+  // to the previous weeks value.
+  const changeStartDate = (value: string) => {
+    setStartDate(value);
+    setTargetEndDate('');
+  };
+  const changeWeeks = (value: string) => {
+    setSessionsNumber(value);
+    setTargetEndDate('');
   };
   const changeCohort = (value: string) => {
     setCohortId(value);
-    setGroupId('');
+    setGroupIds([]);
     const cohort = cohorts.find(item => sameIdentifier(item.id, value));
     // Only seeds an empty field: a date the user already picked stays put.
-    if (!startDate && cohort?.startDate) setStartDate(cohort.startDate);
+    if (!startDate && cohort?.startDate) changeStartDate(cohort.startDate);
   };
-  const changeGroup = (value: string) => {
-    setGroupId(value);
-    const group = groups.find(item => sameIdentifier(item.id, value));
+  const changeGroups = (next: string[]) => {
+    setGroupIds(next);
+    const group = groups.find(item => sameIdentifier(item.id, next[0]));
     if (group?.cohortId && !cohortId) setCohortId(group.cohortId);
   };
+
+  // Attached-but-out-of-scope groups are appended rather than dropped: a module
+  // already running for a group in another cohort must still be visible here, or
+  // the list would silently claim it does not.
+  const groupOptions = useMemo<MultiSelectOption[]>(() => {
+    const rows = [...availableGroups];
+    [ownGroupId, ...attachedGroupIds].forEach(id => {
+      if (!id || rows.some(group => sameIdentifier(group.id, id))) return;
+      const group = groups.find(item => sameIdentifier(item.id, id));
+      if (group) rows.push(group);
+    });
+    return rows.map(group => {
+      const cohort = cohorts.find(item => sameIdentifier(item.id, group.cohortId));
+      const schedule = cleanText(group.weekDays);
+      const alreadyRuns = attachedGroupIds.some(id => sameIdentifier(id, group.id));
+      return {
+        value: group.id,
+        label: group.name,
+        description: [cleanText(cohort?.name), schedule, cleanText(group.coach)].filter(Boolean).join(' · ') || undefined,
+        badge: alreadyRuns ? 'Already runs this' : undefined,
+        locked: alreadyRuns,
+      };
+    });
+  }, [attachedGroupIds, availableGroups, cohorts, groups, ownGroupId]);
+
+  // Named so the reader knows the previews below are one group's, not all of them.
+  const otherGroupCount = selectedGroups.filter(group => !sameIdentifier(group.id, primaryGroupId)).length;
 
   const submit = async () => {
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
-    if (!module && !programmeId && !groupId) { setError('Choose the programme this module belongs to.'); return; }
+    if (!module && !programmeId && !groupIds.length) { setError('Choose the programme this module belongs to.'); return; }
     if (dateWindowError) {
       console.log('[TEMP-DEBUG moduleForm] blocked by dateWindowError', dateWindowError, { startDate, endDate, selectedCohort });
       setError(dateWindowError); return;
@@ -480,12 +595,47 @@ export function ModuleFormDrawer({
       );
       return;
     }
-    if (awaitingPlan) return;
     const weeks = Math.max(1, Math.round(Number(sessionsNumber) || 1));
     const sessions = totalSessions;
 
     const programme = programmes.find(item => sameIdentifier(programmeIdentity(item), programmeId))
       || programmes.find(item => sameIdentifier(item.name, programmeId));
+
+    /**
+     * One group's delivery of this module.
+     *
+     * Everything schedule-shaped is read off the group being attached to, not off
+     * the primary one: a second group may run on different days, at a different
+     * time, under a cohort with a different holiday selection. Only the primary
+     * group's end date is sent, because that is the one this drawer previewed;
+     * for the others the backend generates the plan from their own days.
+     */
+    const attachToGroup = (group: CurriculumGroup) => {
+      const groupWeekDays = cleanText(group.weekDays);
+      const groupDeliveryDays = groupWeekDays
+        ? groupWeekDays.split(',').map(day => day.trim()).filter(Boolean).length
+        : 0;
+      const groupCohort = cohorts.find(item => sameIdentifier(item.id, group.cohortId));
+      const groupHolidayIds = new Set((groupCohort?.holidayIds || []).map(holidayId => normaliseKey(holidayId)));
+      const isPrimary = sameIdentifier(group.id, primaryGroupId);
+      return createGroupModule(group.id, {
+        moduleName: trimmed,
+        programmeId: programme ? programmeIdentity(programme) : programmeId,
+        cohortId: cleanText(group.cohortId) || cohortId,
+        groupId: group.id,
+        startDate: startDate || undefined,
+        endDate: isPrimary ? (endDate || undefined) : undefined,
+        sessionsNumber: Math.round(weeks * Math.max(1, groupDeliveryDays)),
+        weeks,
+        tutor: tutor || undefined,
+        weekDays: groupWeekDays || undefined,
+        startTime: cleanText(group.startTime) || undefined,
+        endTime: cleanText(group.endTime) || undefined,
+        color,
+        notes: description,
+        holidays: holidays.filter(holiday => groupHolidayIds.has(normaliseKey(holiday.id))),
+      }) as Promise<{ created?: Array<Record<string, unknown>>; updatedModules?: Array<Record<string, unknown>> }>;
+    };
 
     setSaving(true);
     setError(null);
@@ -510,20 +660,32 @@ export function ModuleFormDrawer({
           programmeName: programme?.name || undefined,
           cohortId: cohortId || undefined,
           cohortName: selectedCohort?.name || undefined,
-          groupId: groupId || undefined,
+          groupId: primaryGroupId || undefined,
           groupName: selectedGroup?.name || undefined,
           weekDays: weekDays || undefined,
           startTime: cleanText(selectedGroup?.startTime) || undefined,
           endTime: cleanText(selectedGroup?.endTime) || undefined,
         };
         console.log('[TEMP-DEBUG moduleForm] baseline at open', baseline.current);
-        console.log('[TEMP-DEBUG moduleForm] current form state', { name, programmeId, cohortId, groupId, sessionsNumber, startDate, targetEndDate, endDate, tutor, status, description, color });
+        console.log('[TEMP-DEBUG moduleForm] current form state', { name, programmeId, cohortId, groupIds, sessionsNumber, startDate, targetEndDate, endDate, tutor, status, description, color });
         console.log('[TEMP-DEBUG moduleForm] PATCH module.id =', module.id, 'payload =', patchPayload);
         // The PATCH merges onto the stored structure, so only what this form
         // owns is sent: the weeks, components and KSB mappings authored in the
         // Module Builder are left exactly as they are.
         const patchResult = await updateCurriculumModule(module.id, patchPayload);
         console.log('[TEMP-DEBUG moduleForm] PATCH response =', patchResult);
+        // Groups ticked on top of the module's own: each gets a delivery of its
+        // own rather than sharing this one, so its dates come from its own
+        // delivery days and its tutor booking is checked against its own slot.
+        // Sequential on purpose -- the backend compares each attachment against
+        // the ones already accepted, which a parallel burst would defeat.
+        const newGroups = selectedGroups.filter(group => (
+          !sameIdentifier(group.id, primaryGroupId)
+          && !attachedGroupIds.some(id => sameIdentifier(id, group.id))
+        ));
+        for (const group of newGroups) {
+          await attachToGroup(group);
+        }
         // The caller's refresh runs BEFORE the drawer closes, so `saving` keeps the
         // spinner up and the buttons dimmed until the list actually holds the new
         // numbers. Closing first left a window -- as long as the round-trip, which
@@ -532,36 +694,43 @@ export function ModuleFormDrawer({
         await onSaved({ catalogueId: module.id, name: trimmed, created: false });
         console.log('[TEMP-DEBUG moduleForm] onSaved() resolved for', module.id);
         onClose();
-        await showCurriculumAlert({ title: 'Module updated', text: `${trimmed} is saved.`, timer: 1800 });
+        await showCurriculumAlert({
+          title: 'Module updated',
+          text: newGroups.length
+            ? `${trimmed} is saved, and now also runs for ${newGroups.map(group => group.name).join(', ')}.`
+            : `${trimmed} is saved.`,
+          timer: newGroups.length ? 2600 : 1800,
+        });
         return;
       }
 
-      if (groupId) {
+      if (selectedGroups.length) {
         // Attaching to a group is the endpoint that owns the delivery rules:
-        // cohort date bounds, the session plan and the tutor conflict check.
-        const result = await createGroupModule(groupId, {
-          moduleName: trimmed,
-          programmeId: programme ? programmeIdentity(programme) : programmeId,
-          cohortId: cohortId || selectedGroup?.cohortId,
-          groupId,
-          startDate: startDate || undefined,
-          endDate: endDate || undefined,
-          sessionsNumber: sessions,
-          weeks,
-          tutor: tutor || undefined,
-          weekDays: weekDays || undefined,
-          startTime: cleanText(selectedGroup?.startTime) || undefined,
-          endTime: cleanText(selectedGroup?.endTime) || undefined,
-          color,
-          notes: description,
-          holidays: cohortHolidays,
-        }) as { created?: Array<Record<string, unknown>>; updatedModules?: Array<Record<string, unknown>> };
-        const saved = (result.created || [])[0] || (result.updatedModules || [])[0] || {};
-        const catalogueId = String(
-          saved.moduleCatalogueId || saved.catalogueId || saved.structureId || saved.id || '',
-        );
+        // cohort date bounds, the session plan and the tutor conflict check. It
+        // is called once per group, in order, so a clash between two of the new
+        // deliveries is caught by the same rule as a clash with a stored one.
+        const ordered = [
+          ...selectedGroups.filter(group => sameIdentifier(group.id, primaryGroupId)),
+          ...selectedGroups.filter(group => !sameIdentifier(group.id, primaryGroupId)),
+        ];
+        let catalogueId = '';
+        for (const group of ordered) {
+          const result = await attachToGroup(group);
+          const saved = (result.created || [])[0] || (result.updatedModules || [])[0] || {};
+          const id = String(saved.moduleCatalogueId || saved.catalogueId || saved.structureId || saved.id || '');
+          if (!catalogueId) catalogueId = id;
+        }
         onClose();
         await onSaved({ catalogueId, name: trimmed, created: true });
+        if (ordered.length > 1) {
+          // Worth saying out loud: one press produced one delivery per group, and
+          // each of them is authored and scheduled separately from here on.
+          await showCurriculumAlert({
+            title: 'Module created for each group',
+            text: `${trimmed} now runs for ${ordered.map(group => group.name).join(', ')}. Each group has its own dates and tutor.`,
+            timer: 3000,
+          });
+        }
         return;
       }
 
@@ -593,11 +762,13 @@ export function ModuleFormDrawer({
     }
   };
 
-  const placementHint = groupId
-    ? 'Saved against this group, with its delivery days and holidays.'
-    : cohortId
-      ? 'Saved against this cohort. Pick a group to give it delivery dates and a tutor.'
-      : 'No group yet - the module is created as a catalogue draft.';
+  const placementHint = selectedGroups.length > 1
+    ? `Tick as many groups as run this module. Each gets its own delivery from its own days and holidays; the dates and tutor below are ${selectedGroup?.name || 'the first group'}'s.`
+    : selectedGroups.length === 1
+      ? 'Saved against this group, with its delivery days and holidays. Tick another group to run the same module for it too.'
+      : cohortId
+        ? 'Saved against this cohort. Tick one or more groups to give it delivery dates and a tutor.'
+        : 'No group yet - the module is created as a catalogue draft.';
 
   return (
     <EntityDrawer
@@ -610,7 +781,7 @@ export function ModuleFormDrawer({
       onSubmit={submit}
       submitLabel={module ? 'Save module' : 'Create module'}
       width="w-[760px]"
-      saving={saving || awaitingPlan}
+      saving={saving}
       error={error}
       dirty={dirty}
     >
@@ -632,14 +803,28 @@ export function ModuleFormDrawer({
               placeholder={availableCohorts.length ? 'No cohort yet' : 'No cohorts for this programme'}
             />
           </FormField>
-          <FormField label="Group" hint={placementHint}>
-            <SelectControl
-              value={groupId}
-              onChange={changeGroup}
-              options={availableGroups.map(group => ({ value: group.id, label: group.name }))}
-              placeholder={availableGroups.length ? 'No group yet' : 'No groups for this cohort'}
+          <FormField
+            as="group"
+            label={selectedGroups.length > 1 ? `Groups (${selectedGroups.length})` : 'Groups'}
+            hint={placementHint}
+          >
+            <MultiSelectControl
+              value={groupIds}
+              onChange={changeGroups}
+              options={groupOptions}
+              selectAllLabel="groups"
+              emptyMessage={cohortId ? 'No groups for this cohort.' : 'No groups for this programme.'}
             />
           </FormField>
+          {otherGroupCount > 0 && (
+            <p className="-mt-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[11px] leading-5 text-primary-800">
+              <AppIcon className="ri-information-line mr-1 text-sm"></AppIcon>
+              {module
+                ? `Saving updates ${selectedGroup?.name || 'this group'}'s delivery and creates ${otherGroupCount} more, one per other ticked group.`
+                : `Saving creates ${selectedGroups.length} deliveries of this module, one per ticked group.`}
+              {' '}The session dates and tutor check below are {selectedGroup?.name || 'the first group'}'s; every other group is dated from its own delivery days.
+            </p>
+          )}
         </>
       )}
       <FormField label="Module name" required>
@@ -653,17 +838,22 @@ export function ModuleFormDrawer({
             : 'How long the module runs. Each week is authored in the Module Builder.'
         }
       >
-        <TextControl type="number" min={1} max={104} value={sessionsNumber} onChange={setSessionsNumber} />
+        <TextControl type="number" min={1} max={104} value={sessionsNumber} onChange={changeWeeks} />
       </FormField>
       <div className="grid gap-4 sm:grid-cols-2">
         <DatePickerField
           label="Start date"
           value={startDate}
-          onChange={setStartDate}
+          onChange={changeStartDate}
           min={selectedCohort?.startDate || undefined}
           max={selectedCohort?.practicalEndDate || selectedCohort?.endDate || undefined}
           error={startDateError || undefined}
-          helper={selectedCohort ? `Within ${formatDateLabel(selectedCohort.startDate)} - ${formatDateLabel(selectedCohort.practicalEndDate || selectedCohort.endDate)}` : undefined}
+          warning={startDateNotice || undefined}
+          helper={
+            selectedCohort
+              ? `Within ${formatDateLabel(selectedCohort.startDate)} - ${formatDateLabel(selectedCohort.practicalEndDate || selectedCohort.endDate)}.`
+              : undefined
+          }
         />
         <DatePickerField
           label="End date"
@@ -729,6 +919,112 @@ export function ModuleFormDrawer({
       )}
     </EntityDrawer>
   );
+}
+
+/**
+ * A weekend or a ticked holiday isn't refused as a start date -- it's still saved
+ * as typed -- but the module won't actually deliver that day, so the picker warns
+ * about it instead of staying silent.
+ */
+function describeNonDeliveryDate(dateValue: string, holidays: CurriculumHoliday[]): string {
+  const date = dateFromYmd(dateValue);
+  if (!date) return '';
+  const weekday = date.getDay();
+  if (weekday === 0 || weekday === 6) {
+    return `${date.toLocaleDateString('en-GB', { weekday: 'long' })} is a weekend — no delivery normally runs that day.`;
+  }
+  const holiday = holidays.find(item => {
+    const start = dateFromYmd(item.startDate);
+    const end = dateFromYmd(item.endDate || item.startDate);
+    return start && end && start <= date && date <= end;
+  });
+  if (holiday) {
+    return `That date falls inside ${holiday.label || 'a ticked holiday'} — England's bank holiday period, so no delivery runs then.`;
+  }
+  return '';
+}
+
+/** Monday-first weekday indexes, the way `parse_delivery_days` reads a group's schedule. */
+const WEEKDAY_INDEX: Record<string, number> = {
+  monday: 0, mon: 0,
+  tuesday: 1, tue: 1,
+  wednesday: 2, wed: 2,
+  thursday: 3, thu: 3,
+  friday: 4, fri: 4,
+  saturday: 5, sat: 5,
+  sunday: 6, sun: 6,
+};
+
+function deliveryDayIndexes(weekDays: string): number[] {
+  const days: number[] = [];
+  String(weekDays || '').toLowerCase().split(/[,/|+&\s]+/).forEach(token => {
+    const index = WEEKDAY_INDEX[token.trim()];
+    if (index !== undefined && !days.includes(index)) days.push(index);
+  });
+  return days;
+}
+
+function holidayDateKeys(holidays: CurriculumHoliday[]): Set<string> {
+  const keys = new Set<string>();
+  (holidays || []).forEach(holiday => {
+    const start = dateFromYmd(holiday.startDate);
+    const end = dateFromYmd(holiday.endDate || holiday.startDate) || start;
+    if (!start || !end) return;
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      keys.add(ymdOf(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+  });
+  return keys;
+}
+
+function ymdOf(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * The date the last session lands on -- the same walk `build_module_session_plan`
+ * does on the server, run locally so the End date field answers the keystroke
+ * that changed the weeks or the start date rather than the debounced preview
+ * that follows it. Deliberately identical in shape to the backend loop: step a
+ * day at a time from the start, count the delivery days, skip the ones a ticked
+ * holiday covers. Returns '' whenever the backend would also refuse to
+ * calculate -- no start date, no sessions, or a group with no delivery day.
+ */
+function projectModuleEndDate(
+  startDate: string,
+  numberOfSessions: number,
+  weekDays: string,
+  holidays: CurriculumHoliday[],
+): string {
+  const start = dateFromYmd(startDate);
+  const days = deliveryDayIndexes(weekDays);
+  const sessionCount = Math.max(0, Math.round(Number(numberOfSessions) || 0));
+  if (!start || !days.length || sessionCount <= 0) return '';
+
+  const blocked = holidayDateKeys(holidays);
+  const cursor = new Date(start);
+  let found = 0;
+  let guardDays = Math.max(3650, sessionCount * 21);
+  while (found < sessionCount && guardDays > 0) {
+    // JS counts weeks from Sunday; the delivery days are Monday-first.
+    const weekday = (cursor.getDay() + 6) % 7;
+    if (days.includes(weekday) && !blocked.has(ymdOf(cursor))) {
+      found += 1;
+      if (found === sessionCount) return ymdOf(cursor);
+    }
+    cursor.setDate(cursor.getDate() + 1);
+    guardDays -= 1;
+  }
+  return '';
+}
+
+function dateFromYmd(value: string): Date | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value || '').trim());
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 /** One row of the session preview timeline: a normal session, a session a holiday blocked, or that session's replacement date. */

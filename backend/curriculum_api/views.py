@@ -185,18 +185,30 @@ def shared_curriculum_cache_key(key, epoch):
     return f'curriculum:v{epoch}:{digest}'
 
 
-def cached_curriculum_value(key, factory):
+def cached_curriculum_value(key, factory, force=False):
+    """The cached payload for ``key``, rebuilding it when it is not there.
+
+    ``force`` skips both cache layers and rebuilds from the database, then stores
+    the result the same way a normal miss does. It is for a caller that has just
+    written and is asking for the state it wrote: the invalidation on the write
+    path only reaches the process that handled it, and the shared epoch it bumps
+    lives in Django's cache -- which is per-process LocMemCache unless a Redis
+    ``CACHE_URL`` is configured. Under more than one worker that left every other
+    worker serving its own pre-write payload for the rest of the TTL, which is a
+    new group or programme that does not appear until the page is reloaded enough
+    times to land on the worker that took the write.
+    """
     now = datetime.now().timestamp()
     shared_epoch = shared_curriculum_epoch()
     with _CURRICULUM_CACHE_LOCK:
         entry = _CURRICULUM_CACHE.get(key)
-        if entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:
+        if not force and entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:
             return entry['value']
         epoch = _CURRICULUM_CACHE_EPOCH
 
     shared_key = shared_curriculum_cache_key(key, shared_epoch)
     try:
-        shared_value = cache.get(shared_key)
+        shared_value = None if force else cache.get(shared_key)
     except Exception:
         logger.warning('Unable to read shared curriculum payload cache.', exc_info=True)
         shared_value = None
@@ -8886,13 +8898,25 @@ def curriculum_overview(request):
     def build_overview():
         return build_curriculum_payload(visibility, compact=compact)
 
-    return JsonResponse(cached_curriculum_value(cache_key, build_overview))
+    # A client that asks for fresh data gets it. Every Curriculum Studio screen
+    # reloads with `skipCache` straight after a save, which sends Cache-Control:
+    # no-cache -- and that reload is exactly the one that must not be answered
+    # out of a payload cache built before the write.
+    return JsonResponse(cached_curriculum_value(
+        cache_key,
+        build_overview,
+        force=request_bypasses_curriculum_cache(request),
+    ))
 
 
 def get_cached_payload(request, compact=False):
     visibility = curriculum_visibility(request)
     cache_key = f'overview:{visibility}:{"compact" if compact else "full"}'
-    return cached_curriculum_value(cache_key, lambda: build_curriculum_payload(visibility, compact=compact))
+    return cached_curriculum_value(
+        cache_key,
+        lambda: build_curriculum_payload(visibility, compact=compact),
+        force=request_bypasses_curriculum_cache(request),
+    )
 
 
 def find_programme(payload, identifier):

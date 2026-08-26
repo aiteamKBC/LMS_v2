@@ -1572,11 +1572,18 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
       multiTierCache.invalidateByEntity('cohort');
       multiTierCache.invalidateByEntity('group');
       multiTierCache.invalidateByEntity('module');
-    } else if (path.includes('/cohorts/')) {
+    } else if (path.includes('/cohorts/') || path.includes('/groups/') || path.includes('/modules/')) {
+      // The overview payload carries programmes, cohorts, groups AND modules in
+      // one document, and a programme's detail tree carries the same structure.
+      // Neither is tagged with an entity type, so an entity-scoped invalidation
+      // left both in place: creating a group refreshed the page you were on (that
+      // reload asks for fresh data explicitly) but the next page you opened read
+      // the pre-write overview out of cache and showed no new group until a full
+      // browser refresh threw the cache away.
+      multiTierCache.invalidateByPattern(/\/overview\//);
+      multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
       multiTierCache.invalidateByEntity('cohort');
-    } else if (path.includes('/groups/')) {
       multiTierCache.invalidateByEntity('group');
-    } else if (path.includes('/modules/')) {
       multiTierCache.invalidateByEntity('module');
     } else if (path.includes('/ksb-')) {
       multiTierCache.invalidateByEntity('ksb');

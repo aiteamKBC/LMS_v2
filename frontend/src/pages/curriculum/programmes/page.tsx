@@ -61,6 +61,12 @@ type ProgrammeAppliedKsbSource = {
    * module to map against, which is the same dead end as no source at all.
    */
   ksbCount: number;
+  /**
+   * The underlying standard row, only set when kind is 'standard'. Carries the
+   * funding-body facts (compliance hours, max funding, LARS code) that a KSB
+   * profile has no equivalent for.
+   */
+  standard?: CurriculumStandard;
 };
 type ProgrammeKsbSourceReview = {
   programme: CurriculumProgramme;
@@ -988,6 +994,65 @@ export default function CurriculumProgrammes() {
                     </span>
                   </div>
                 </button>
+                {appliedSource.standard && (
+                  <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+                    {appliedSource.standard.minimumHours && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-cyan-200 bg-cyan-50 px-2 py-0.5 text-[10px] font-bold text-cyan-800" title="Minimum hours for funding compliance">
+                        <AppIcon className="ri-time-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.minimumHours} hrs min
+                      </span>
+                    )}
+                    {appliedSource.standard.maxFunding && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800" title="Maximum government funding">
+                        <AppIcon className="ri-price-tag-3-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.maxFunding} max funding
+                      </span>
+                    )}
+                    {appliedSource.standard.duration && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="Typical duration">
+                        <AppIcon className="ri-hourglass-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.duration}
+                      </span>
+                    )}
+                    {appliedSource.standard.route && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="Route">
+                        <AppIcon className="ri-route-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.route}
+                      </span>
+                    )}
+                    {appliedSource.standard.degree && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="Qualification type">
+                        <AppIcon className="ri-graduation-cap-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.degree}
+                      </span>
+                    )}
+                    {appliedSource.standard.larsCode && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="LARS code">
+                        <AppIcon className="ri-barcode-line text-[11px]"></AppIcon>
+                        LARS {appliedSource.standard.larsCode}
+                      </span>
+                    )}
+                    {appliedSource.standard.eqaProvider && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-600" title="External quality assurance provider">
+                        <AppIcon className="ri-shield-check-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.eqaProvider}
+                      </span>
+                    )}
+                    {appliedSource.standard.approvedForDelivery && (
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                          /approved/i.test(appliedSource.standard.approvedForDelivery)
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                            : 'border-amber-200 bg-amber-50 text-amber-800'
+                        }`}
+                        title="Approved for delivery"
+                      >
+                        <AppIcon className="ri-checkbox-circle-line text-[11px]"></AppIcon>
+                        {appliedSource.standard.approvedForDelivery}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="programmes-metrics mb-3 grid grid-cols-2 gap-2.5 rounded-xl border border-primary-100/70 bg-primary-50/65 p-2.5 sm:grid-cols-5">
                   <Metric label="Cohorts" value={String(prog.cohorts)} />
                   <Metric label="Groups" value={String(prog.groups || 0)} />
@@ -2505,6 +2570,7 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
           subtitle: `${standard.code || standard.standardRef || 'Standard'} - ${standard.level || standard.levelValue || programme.level || 'Level not set'}`,
           detail: standardCountsLabel(standard),
           ksbCount: (standard.knowledge || 0) + (standard.skills || 0) + (standard.behaviours || 0),
+          standard,
         };
       }
     }

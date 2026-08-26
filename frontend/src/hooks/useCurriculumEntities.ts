@@ -23,6 +23,11 @@ import {
  *
  * This deliberately does NOT hold write logic: every page saves through the
  * canonical endpoints in `lib/curriculumApi` and then calls `reload({ silent })`.
+ * That refresh is not instant, so two things go with it: `refreshing` says a
+ * background load is in flight (the list on screen is real but a beat behind),
+ * and `applyLocal` lets a page drop the record the write just returned straight
+ * into the collections. Without them a create looked like it had done nothing
+ * until the refresh landed seconds later.
  */
 export interface CurriculumEntitiesOptions {
   includeStaff?: boolean;
@@ -58,6 +63,7 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
   const { includeStaff = false, includeHolidays = false, includeTeams = false } = options;
   const [entities, setEntities] = useState<CurriculumEntities>(EMPTY);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
@@ -65,7 +71,8 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
   const load = useCallback(async (signal?: AbortSignal, loadOptions: LoadOptions = {}) => {
     const requestId = requestIdRef.current + 1;
     requestIdRef.current = requestId;
-    if (!loadOptions.silent) setLoading(true);
+    if (loadOptions.silent) setRefreshing(true);
+    else setLoading(true);
     try {
       const overview = await fetchCurriculumOverview(signal, {
         compact: true,
@@ -93,6 +100,9 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
       setError(null);
       setLoading(false);
       setLoaded(true);
+      // The structure has landed, so the table is already correct; the optional
+      // collections below are additive and must not keep the bar running.
+      setRefreshing(false);
 
       const [tutors, coaches, holidays, teamsMeetings] = await Promise.all([
         includeStaff ? fetchCurriculumTutors(signal, { skipCache: loadOptions.skipCache }).catch(() => []) : Promise.resolve([]),
@@ -110,9 +120,23 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
       setError(err instanceof Error ? err.message : 'Unable to load curriculum data.');
       return null;
     } finally {
-      if (!signal?.aborted && requestId === requestIdRef.current) setLoading(false);
+      if (!signal?.aborted && requestId === requestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [includeHolidays, includeStaff, includeTeams]);
+
+  /**
+   * Write a record a save has already committed into the collections on screen,
+   * ahead of the refresh that will replace them with the server's copy. Only
+   * ever called with what an endpoint returned, so the row is real — it is early,
+   * not invented, and the reload immediately behind it is the source of truth.
+   */
+  const applyLocal = useCallback(
+    (updater: (previous: CurriculumEntities) => CurriculumEntities) => setEntities(updater),
+    [],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -124,6 +148,9 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
     ...entities,
     entities,
     loading,
+    /** A background refresh is in flight behind a list that is already painted. */
+    refreshing,
+    applyLocal,
     /** True once a structure payload has landed — used to tell "empty" from "not here yet". */
     loaded,
     error,
