@@ -505,6 +505,28 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
   }
 }
 
+// Keys that describe a component's relationship to *its own* week/module — a
+// copy lands in a different one, so carrying these forward is always wrong:
+// stale group ids from the source's context, and (worse) placedCopy* pointers
+// that would make the clone's "Assigned groups" cascade-delete reach into
+// whatever module/week the *source* had placed a copy in, not its own. The
+// clone starts with a clean slate; the target's own AssignedGroupsSection
+// re-derives its locked group on first render.
+const GROUP_ASSIGNMENT_SETTING_KEYS = [
+  'selectedGroupKeys',
+  'selectedGroupNames',
+  'placedCopyGroupKeys',
+  'placedCopyModuleCatalogueIds',
+  'placedCopyWeekIds',
+  'placedCopyComponentIds',
+] as const;
+
+function withoutGroupAssignmentSettings(settings: ComponentSettings): ComponentSettings {
+  const next = { ...settings };
+  GROUP_ASSIGNMENT_SETTING_KEYS.forEach(key => { delete next[key]; });
+  return next;
+}
+
 /**
  * Copy a component out of the reuse library into a week, as a snapshot.
  *
@@ -553,10 +575,34 @@ export function copyComponentIntoWeek(
         weight_class: weightClass,
       };
     }),
-    settings: normaliseComponentSettings(type, {
+    settings: normaliseComponentSettings(type, withoutGroupAssignmentSettings({
       ...getDefaultComponentSettings(type),
       ...((source.settings || {}) as ComponentSettings),
-    }),
+    })),
+  };
+}
+
+/**
+ * Copy a component that's being edited into a *different* week — possibly in
+ * another group's module entirely — as an independent snapshot.
+ *
+ * Same id-regeneration + `copiedFromId` provenance convention as
+ * `copyComponentIntoWeek`: the placed copy never reaches back into the
+ * component it came from, and vice versa.
+ */
+export function copyComponentToWeek(
+  source: ModuleComponent,
+  targetWeekId: string,
+  targetModuleId: string,
+): ModuleComponent {
+  return {
+    ...source,
+    id: makeAuthoringId('component'),
+    copiedFromId: source.id,
+    moduleId: targetModuleId,
+    weekId: targetWeekId,
+    settings: withoutGroupAssignmentSettings(source.settings),
+    ksbMappings: source.ksbMappings.map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
   };
 }
 
