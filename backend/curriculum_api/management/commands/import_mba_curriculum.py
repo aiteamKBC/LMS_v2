@@ -34,6 +34,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import unquote, urlparse
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
@@ -134,6 +135,22 @@ def primary_link(material):
     return None, ''
 
 
+def same_target(left, right):
+    """Whether two authored URLs point at the same thing.
+
+    The export can carry one web page twice over — once as ``open_url`` and once
+    as ``original_url`` — differing only in how the fragment is percent-encoded,
+    which made a reading list the very article it was already pointing at.
+    """
+    def normalise(value):
+        text = views.clean_str(value)
+        if not text:
+            return ''
+        parsed = urlparse(unquote(text))
+        return parsed._replace(fragment='').geturl().rstrip('/').lower()
+    return bool(left) and normalise(left) == normalise(right)
+
+
 def extra_materials_html(files, links, primary=None, skip_url=''):
     """The leftovers as a small HTML list, so nothing in the export is dropped.
 
@@ -157,7 +174,7 @@ def extra_materials_html(files, links, primary=None, skip_url=''):
             items.append((title or url, url))
     for link in links:
         url = views.clean_str(link.get('open_url') or link.get('original_url'))
-        if url and url != skip_url:
+        if url and not same_target(url, skip_url):
             items.append((url, url))
     if not items:
         return ''
