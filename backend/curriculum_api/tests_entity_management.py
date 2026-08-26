@@ -181,10 +181,78 @@ class EntityModuleTests(CurriculumPersistenceHarness):
         self.assertEqual(response.status_code, 400, response.content)
         self.assertIn('cannot start before', response.json()['error'])
 
-    def test_editing_a_module_tutor_mirrors_onto_the_tutor_profile(self):
-        """The headline UX win — Modules -> edit Tutor — must still notify."""
+    def test_module_cannot_start_after_the_cohort_has_finished(self):
+        group_id = self.seed_group()
+        response = self.post_json(
+            f'/curriculum_api/curriculum/groups/{group_id}/modules/',
+            {'moduleName': 'Too Late', 'startDate': '2027-10-06', 'sessionsNumber': 1, 'weekDays': 'Wednesday'},
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('cannot start after', response.json()['error'])
+
+    def test_module_sessions_cannot_run_past_the_cohort_end_date(self):
+        """A start date inside the cohort is not enough on its own.
+
+        The cohort finishes 2027-08-31, so four weekly sessions from 2027-08-25
+        land two of them after it. Nothing sends an end date here -- the plan
+        generates it -- which is exactly the case the start-date bound misses.
+        """
+        group_id = self.seed_group()
+        response = self.post_json(
+            f'/curriculum_api/curriculum/groups/{group_id}/modules/',
+            {'moduleName': 'Overruns', 'startDate': '2027-08-25', 'sessionsNumber': 4, 'weekDays': 'Wednesday'},
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn('cannot finish after', response.json()['error'])
+        self.assertNotIn(
+            'Overruns',
+            [views.clean_str(row.get('title')) for row in views.safe_authoring_module_rows()],
+        )
+
+    def test_module_that_fits_inside_the_cohort_is_accepted(self):
+        group_id = self.seed_group()
+        response = self.post_json(
+            f'/curriculum_api/curriculum/groups/{group_id}/modules/',
+            {'moduleName': 'Fits', 'startDate': '2027-08-11', 'sessionsNumber': 2, 'weekDays': 'Wednesday'},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        catalogue_id = response.json()['created'][0]['catalogueId']
+        row = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', catalogue_id)
+        self.assertEqual(views.format_date(row.get('start_date')), '2027-08-11')
+
+    def test_patching_a_module_cannot_push_it_outside_the_cohort(self):
+        """The edit path carries the same bound as the create path.
+
+        Both ends are checked: a start date before the cohort opens and an end
+        date after it closes are each refused, and the stored dates stay put.
+        """
         self.seed_group()
-        views.add_staff_profile_assignments  # sanity: helper exists
+
+        early = self.patch_json(
+            '/curriculum_api/curriculum/modules/MOD-DATA-1/',
+            {'startDate': '2026-08-05'},
+        )
+        self.assertEqual(early.status_code, 400, early.content)
+        self.assertIn('cannot start before', early.json()['error'])
+
+        late = self.patch_json(
+            '/curriculum_api/curriculum/modules/MOD-DATA-1/',
+            {'endDate': '2027-09-30'},
+        )
+        self.assertEqual(late.status_code, 400, late.content)
+        self.assertIn('cannot finish after', late.json()['error'])
+
+        module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
+        self.assertEqual(views.format_date(module.get('start_date')), '2026-09-02')
+
+    def test_editing_a_module_tutor_moves_the_assignment_and_notifies(self):
+        """The headline UX win — Modules -> edit Tutor — must still notify.
+
+        The module row is the assignment: there is no staff-side copy of it to
+        keep in step, so what this pins is that the row moves and the tutor is
+        told.
+        """
+        self.seed_group()
 
         with patch.object(views.tutor_notifications, 'schedule_assignment_notifications') as scheduled:
             response = self.patch_json(
@@ -197,21 +265,7 @@ class EntityModuleTests(CurriculumPersistenceHarness):
         module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
         self.assertEqual(views.clean_str(module.get('tutor_name')), 'Tutor Two')
 
-        new_profile = views.find_staff_profile_row('tutor', 'Tutor Two')
-        self.assertIsNotNone(new_profile, 'the new tutor has no profile row')
-        self.assertIn(
-            'MOD-DATA-1',
-            views.as_json_value(new_profile.get('assigned_module_ids'), []),
-        )
-
-        previous_profile = views.find_staff_profile_row('tutor', 'Tutor One')
-        if previous_profile:
-            self.assertNotIn(
-                'MOD-DATA-1',
-                views.as_json_value(previous_profile.get('assigned_module_ids'), []),
-            )
-
-    def test_clearing_a_module_tutor_releases_the_previous_assignment(self):
+    def test_clearing_a_module_tutor_releases_the_assignment(self):
         self.seed_group()
         response = self.patch_json(
             '/curriculum_api/curriculum/modules/MOD-DATA-1/',
@@ -219,22 +273,16 @@ class EntityModuleTests(CurriculumPersistenceHarness):
         )
         self.assertEqual(response.status_code, 200, response.content)
 
-        previous_profile = views.find_staff_profile_row('tutor', 'Tutor One')
-        if previous_profile:
-            self.assertNotIn(
-                'MOD-DATA-1',
-                views.as_json_value(previous_profile.get('assigned_module_ids'), []),
-            )
+        module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
+        self.assertTrue(views.is_blank_staff_assignment(module.get('tutor_name')), module.get('tutor_name'))
 
-    def test_patching_an_unrelated_field_leaves_staff_links_alone(self):
-        """A rename must not churn the tutor's assignments.
+    def test_patching_an_unrelated_field_leaves_the_assignment_alone(self):
+        """A rename must not churn the tutor's assignment.
 
         (It may still *schedule* a notification pass — the dispatcher diffs
         against what has already been sent, so an extra pass mails nobody.)
         """
         self.seed_group()
-        before = views.find_staff_profile_row('tutor', 'Tutor One') or {}
-        before_ids = views.as_json_value(before.get('assigned_module_ids'), [])
 
         response = self.patch_json(
             '/curriculum_api/curriculum/modules/MOD-DATA-1/',
@@ -242,8 +290,6 @@ class EntityModuleTests(CurriculumPersistenceHarness):
         )
         self.assertEqual(response.status_code, 200, response.content)
 
-        after = views.find_staff_profile_row('tutor', 'Tutor One') or {}
-        self.assertEqual(views.as_json_value(after.get('assigned_module_ids'), []), before_ids)
         module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
         self.assertEqual(views.clean_str(module.get('title')), 'Data Foundations (revised)')
         self.assertEqual(views.clean_str(module.get('tutor_name')), 'Tutor One')

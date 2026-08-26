@@ -7,7 +7,6 @@ import type { CurriculumGroup } from '@/lib/curriculumApi';
 import {
   cleanText,
   cohortProgramme,
-  cohortHolidayExtensionDays,
   findCohort,
   formatDateLabel,
   moduleIdentity,
@@ -16,6 +15,7 @@ import {
   scheduleLabel,
 } from '../shared/entities/model';
 import { CohortFormDrawer, GroupFormDrawer } from '../shared/entities/forms';
+import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
 import {
   DetailRow,
   EntityEmptyState,
@@ -34,7 +34,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // entities and calls the same endpoints as the global pages — this is a lens on
 // the data, not a second copy of it.
 
-type Tab = 'overview' | 'groups' | 'modules' | 'holidays';
+type Tab = 'overview' | 'groups' | 'modules' | 'learners' | 'holidays';
 
 const GROUP_GRID = 'grid grid-cols-[minmax(170px,1.3fr)_minmax(130px,1fr)_minmax(150px,1fr)_80px]';
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.4fr)_minmax(140px,1fr)_minmax(130px,1fr)_70px_110px_110px]';
@@ -70,10 +70,6 @@ export default function CohortWorkspacePage() {
     const ids = new Set((cohort?.holidayIds || []).map(holidayId => normaliseKey(holidayId)));
     return holidays.filter(holiday => ids.has(normaliseKey(holiday.id)));
   }, [cohort, holidays]);
-
-  // Days the applied holidays added to this cohort's practical end date. Zero
-  // when nothing moved, so the annotations below simply do not render.
-  const holidayExtensionDays = cohort ? cohortHolidayExtensionDays(cohort) : 0;
 
   const coachNames = useMemo(() => {
     const names = new Set<string>();
@@ -114,6 +110,7 @@ export default function CohortWorkspacePage() {
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'groups', label: 'Groups', icon: 'ri-team-line', count: cohortGroups.length },
     { key: 'modules', label: 'Modules', icon: 'ri-stack-line', count: cohortModules.length },
+    { key: 'learners', label: 'Learners', icon: 'ri-graduation-cap-line', count: cohort?.learners || undefined },
     { key: 'holidays', label: 'Holidays', icon: 'ri-calendar-close-line', count: selectedHolidays.length },
   ];
 
@@ -177,37 +174,10 @@ export default function CohortWorkspacePage() {
 
         {tab === 'overview' && (
           <div className="grid gap-5 xl:grid-cols-2">
-            <WorkspacePanel title="Dates" description="Calculated by the same rules the rest of the LMS uses.">
+            <WorkspacePanel title="Dates" description="Contract dates stay fixed; selected holidays only affect clashing module sessions.">
               <DetailRow label="Start" value={formatDateLabel(cohort?.startDate)} />
-              <DetailRow
-                label="Duration"
-                value={(
-                  <span>
-                    {cohort?.durationMonths ? `${cohort.durationMonths} months` : '—'}
-                    {/* The contracted duration is unchanged by holidays, so the
-                        practical end date below lands later than it implies.
-                        Saying so here stops the two reading as a contradiction. */}
-                    {holidayExtensionDays > 0 && (
-                      <span className="ml-1.5 text-[10px] font-bold uppercase text-amber-600">
-                        + {holidayExtensionDays} holiday {holidayExtensionDays === 1 ? 'day' : 'days'}
-                      </span>
-                    )}
-                  </span>
-                )}
-              />
-              <DetailRow
-                label="Practical end"
-                value={(
-                  <span>
-                    {formatDateLabel(cohort?.practicalEndDate || cohort?.endDate)}
-                    {holidayExtensionDays > 0 && (
-                      <span className="ml-1.5 text-[10px] font-bold uppercase text-amber-600">
-                        Extended from {formatDateLabel(cohort?.baseEndDate)}
-                      </span>
-                    )}
-                  </span>
-                )}
-              />
+              <DetailRow label="Duration" value={cohort?.durationMonths ? `${cohort.durationMonths} months` : '-'} />
+              <DetailRow label="Practical end" value={formatDateLabel(cohort?.practicalEndDate || cohort?.endDate)} />
               <DetailRow label="EPA period" value={cohort?.epaMonths == null ? 'Not recorded' : `${cohort.epaMonths} months`} />
               <DetailRow
                 label="Apprenticeship end"
@@ -310,6 +280,20 @@ export default function CohortWorkspacePage() {
                 <PlainCell>{formatDateLabel(module.endDate)}</PlainCell>
               </>
             )}
+          />
+        )}
+
+        {/* Who enrolment placed in this cohort, and what they have actually
+            achieved against this cohort's own components. The cohort is the
+            level enrolment places learners into, so this is its own roster —
+            not a slice of the programme's. */}
+        {tab === 'learners' && (
+          <ScopeAchievementPanel
+            scope="cohort"
+            identifier={cohort?.id || id}
+            title={`Learners and achievement in ${cohort?.name || 'this cohort'}`}
+            learnerStatus="all"
+            active={tab === 'learners'}
           />
         )}
 

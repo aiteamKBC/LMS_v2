@@ -41,8 +41,7 @@ import {
 } from './weekTemplateData';
 import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
-import { resolveDocEmbed } from '@/lib/docEmbed';
-import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
+import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
 // load of this page and of module-builder, which imports from this module.
@@ -828,6 +827,7 @@ interface RailNodeProps {
   index: number;
   selected: boolean;
   issues: number;
+  weekSessionDate?: string;
   onSelect?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
@@ -845,9 +845,14 @@ function SortableRailNode(props: RailNodeProps) {
   );
 }
 
-function RailNodeCard({ component, index, selected, issues, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
+function RailNodeCard({ component, index, selected, issues, weekSessionDate, dragging, onSelect, onDuplicate, onDelete, handleProps }: RailNodeProps & { dragging?: boolean; handleProps?: Record<string, unknown> }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
+  // A blank component-level date reads as "not yet scheduled", but the week
+  // already knows when it runs -- show that instead of leaving the row silent.
+  const scheduledDate = component.type === 'live-session'
+    ? String(component.settings.sessionDate || weekSessionDate || '')
+    : '';
   return (
     <div id={`node-${component.id}`} className="group/node flex gap-3">
       <SpineGutter>
@@ -869,6 +874,7 @@ function RailNodeCard({ component, index, selected, issues, dragging, onSelect, 
             <span className="tabular-nums">{component.expectedOtjh}h</span>
             <span className="tabular-nums">{component.points}pts</span>
             {component.ksbMappings.length > 0 && <span className="tabular-nums">{component.ksbMappings.length} KSB</span>}
+            {scheduledDate && <span className="tabular-nums">{formatDateLabel(scheduledDate)}</span>}
           </span>
         </span>
         {(onDuplicate || onDelete) && (
@@ -934,9 +940,16 @@ export interface WeekComponentRailProps {
   // rail is embedded inline under a week row (module builder's accordion),
   // where that framing/label would just repeat what the week row already says.
   variant?: 'standalone' | 'nested';
+  // The week's own calendar date, for a live-session row that has not been
+  // given its own date yet. Unset for a template, which has no calendar date.
+  weekSessionDate?: string;
+  // Opens the caller's reuse picker. Optional because the rail is shared: the
+  // module builder owns the picker and the copy, and a surface without one (a
+  // week template, say) simply does not pass it and shows no Reuse action.
+  onReuseComponents?: () => void;
 }
 
-export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone' }: WeekComponentRailProps) {
+export function WeekComponentRail({ weekId, components, selectedId, onSelectId, onChange, pointsByType, variant = 'standalone', weekSessionDate, onReuseComponents }: WeekComponentRailProps) {
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const sensors = useSensors(
@@ -989,13 +1002,25 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
           <span className="text-[11px] text-foreground-400 tabular-nums">{components.length} {components.length === 1 ? 'part' : 'parts'}</span>
         </div>
       )}
+      {nested && onReuseComponents && (
+        <div className="flex justify-end">
+          <ReuseComponentsButton onClick={onReuseComponents} />
+        </div>
+      )}
 
       {components.length === 0 && pickerIndex === null ? (
-        <button onClick={() => setPickerIndex(0)} className="mt-3 w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
-          <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
-          <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first part</p>
-          <p className="text-[11px] text-foreground-400">Live sessions, videos, readings, quizzes…</p>
-        </button>
+        <div className="mt-3">
+          <button onClick={() => setPickerIndex(0)} className="w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
+            <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
+            <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first part</p>
+            <p className="text-[11px] text-foreground-400">Live sessions, videos, readings, quizzes…</p>
+          </button>
+          {onReuseComponents && (
+            <div className="mt-2 flex justify-center">
+              <ReuseComponentsButton onClick={onReuseComponents} label="Or reuse an existing component" />
+            </div>
+          )}
+        </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDragId(null)} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
           <SortableContext items={components.map(c => c.id)} strategy={verticalListSortingStrategy}>
@@ -1011,6 +1036,7 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
                     onDuplicate={() => duplicateComponent(component)}
                     onDelete={() => removeComponent(component.id)}
                     issues={validateWeekComponent(component).length}
+                    weekSessionDate={weekSessionDate}
                   />
                   <InsertionZone index={index + 1} open={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} onClose={() => setPickerIndex(null)} onPick={type => addComponentAt(type, index + 1)} last={index === components.length - 1} />
                 </Fragment>
@@ -1018,11 +1044,24 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
             </div>
           </SortableContext>
           <DragOverlay>
-            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} /> : null}
+            {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} /> : null}
           </DragOverlay>
         </DndContext>
       )}
     </div>
+  );
+}
+
+function ReuseComponentsButton({ onClick, label = 'Reuse' }: { onClick: () => void; label?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100"
+    >
+      <AppIcon className="ri-file-copy-line text-[12px]"></AppIcon>
+      {label}
+    </button>
   );
 }
 
@@ -1226,6 +1265,10 @@ export interface ComponentBodyProps {
   groupOptions: GroupOption[];
   rulePoints?: number;
   weekScope: WeekScope;
+  // The parent week's own calendar date (only set for a real module week, never
+  // a reusable template) -- lets a live session default to when its week
+  // actually runs instead of asking the date to be typed in again.
+  weekSessionDate?: string;
   // Injected file uploader so the same bodies work in both the week builder
   // (posts to week-components/) and the module builder (module-scoped upload).
   uploadResource?: WeekComponentUploader;
@@ -1233,12 +1276,12 @@ export interface ComponentBodyProps {
   restoringTeamsMeeting?: boolean;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
   const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting };
 
   return (
     <div className="rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -1315,8 +1358,13 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, restoreTeamsMeeting, restoringTeamsMeeting }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, restoreTeamsMeeting, restoringTeamsMeeting }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
+  // An explicit edit always wins; otherwise default to the date the week is
+  // actually scheduled on, so the field reads correctly before anyone types
+  // into it rather than sitting blank until someone repeats what the session
+  // plan already worked out.
+  const sessionDate = s('sessionDate') || weekSessionDate || '';
 
   return (
     <>
@@ -1326,7 +1374,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, restoreT
 
         <div className="mt-4 grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <Field label="Microsoft Teams link"><input value={s('liveSessionUrl')} onChange={e => setSetting('liveSessionUrl', e.target.value)} placeholder="https://teams.microsoft.com/…" className={inputClass} /></Field>
-          <Field label="Session date"><input type="date" value={s('sessionDate')} onChange={e => setSetting('sessionDate', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
+          <Field label="Session date"><input type="date" value={sessionDate} onChange={e => setSetting('sessionDate', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Start time"><input type="time" value={s('sessionTime')} onChange={e => setSetting('sessionTime', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
         {restoreTeamsMeeting && (
@@ -1455,7 +1503,7 @@ const POWERPOINT_UPLOAD_ACCEPT = '.ppt,.pptx,.pps,.ppsx,.pdf,application/vnd.ms-
 // its own field beneath the toggle.
 function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
-  const sourceMode = s('readingSource') === 'File' ? 'File' : 'Text';
+  const sourceMode = ['File', 'LMS resource'].includes(s('readingSource')) ? 'File' : 'Text';
 
   return (
     <>
@@ -1476,7 +1524,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
 
         {sourceMode === 'Text' ? (
           <div className="mt-4">
-            <RichTextDraft label="Component content" value={s('readingContent')} onChange={value => setSetting('readingContent', value)} rows={14} />
+            <RichTextDraft label="Component content" value={s('readingContent')} onChange={value => setSetting('readingContent', value)} rows={14} htmlOnly />
           </div>
         ) : (
           <div className="mt-4">
@@ -1487,10 +1535,19 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
               onUpload={uploadResource}
               accept={READING_UPLOAD_ACCEPT}
               uploadedName={s('uploadedFileName')}
-              uploadedUrl={s('uploadedFileUrl')}
+              uploadedUrl={s('uploadedFileUrl') || s('resourceUrl')}
               uploadedSize={Number(component.settings.uploadedFileSize) || 0}
               onUploaded={file => onChange({
-                settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
+                settings: {
+                  ...component.settings,
+                  readingSource: 'File',
+                  resourceUrl: file.url,
+                  uploadedFileName: file.fileName,
+                  uploadedFileUrl: file.url,
+                  uploadedFileSize: file.size,
+                  uploadedFileContentType: file.contentType,
+                  uploadSource: 'Device upload',
+                },
               })}
             />
             <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: Word (.doc, .docx), PDF, plain text (.txt), RTF, OpenDocument (.odt).</p>
@@ -1533,7 +1590,14 @@ const PODCAST_SOURCE_TYPES_WEEK = ['Audio File', 'External Link', 'Embed', 'Shor
 // Spotify), or a shortcode — each with its own field beneath the selector.
 function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
-  const sourceType = (PODCAST_SOURCE_TYPES_WEEK as readonly string[]).includes(s('podcastSource')) ? s('podcastSource') : 'Audio File';
+  const rawSourceType = s('podcastSource');
+  const sourceType = rawSourceType === 'Device upload'
+    ? 'Audio File'
+    : rawSourceType === 'External URL'
+      ? 'External Link'
+      : (PODCAST_SOURCE_TYPES_WEEK as readonly string[]).includes(rawSourceType)
+        ? rawSourceType
+        : 'Audio File';
 
   return (
     <>
@@ -1555,17 +1619,26 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
               onUpload={uploadResource}
               accept={PODCAST_UPLOAD_ACCEPT}
               uploadedName={s('uploadedFileName')}
-              uploadedUrl={s('uploadedFileUrl')}
+              uploadedUrl={s('uploadedFileUrl') || s('podcastUrl')}
               uploadedSize={Number(component.settings.uploadedFileSize) || 0}
               onUploaded={file => onChange({
-                settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
+                settings: {
+                  ...component.settings,
+                  podcastSource: 'Audio File',
+                  podcastUrl: file.url,
+                  uploadedFileName: file.fileName,
+                  uploadedFileUrl: file.url,
+                  uploadedFileSize: file.size,
+                  uploadedFileContentType: file.contentType,
+                  uploadSource: 'Device upload',
+                },
               })}
             />
             <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: MP3, OGG, WAV (plus M4A, AAC, WEBM).</p>
-            {s('uploadedFileUrl') && (
+            {(s('uploadedFileUrl') || s('podcastUrl')) && (
               <div className="mt-3">
                 <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <audio controls src={s('uploadedFileUrl')} className="w-full" />
+                <audio controls src={s('uploadedFileUrl') || s('podcastUrl')} className="w-full" />
               </div>
             )}
           </div>

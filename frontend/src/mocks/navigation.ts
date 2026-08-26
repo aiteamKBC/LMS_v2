@@ -273,28 +273,18 @@ export const curriculumNavItems: SidebarNavItem[] = [
       { id: 'curriculum-cohorts', label: 'Cohorts', icon: 'ri-calendar-event-line', href: '/curriculum/cohorts' },
       { id: 'curriculum-groups', label: 'Groups', icon: 'ri-team-line', href: '/curriculum/groups' },
       { id: 'curriculum-module-builder', label: 'Module Builder', icon: 'ri-layout-4-line', href: '/curriculum/module-builder' },
-      { id: 'curriculum-ksb-mapping', label: 'KSB Mapping', icon: 'ri-link', href: '/curriculum/ksb-mapping' },
+      { id: 'curriculum-teams-meetings', label: 'Teams Meetings', icon: 'ri-vidicon-line', href: '/curriculum/teams-meetings' },
+      // The calendar reads the same modules the entries above author, so it sits
+      // with them rather than alone in a group of its own.
+      { id: 'curriculum-session-calendar', label: 'Session Calendar', icon: 'ri-calendar-schedule-line', href: '/curriculum/session-calendar' },
       { id: 'curriculum-holidays', label: 'Holidays', icon: 'ri-calendar-close-line', href: '/curriculum/holidays' },
-    ],
-  },
-  {
-    id: 'curriculum-group-programme-design',
-    label: 'Programme Design',
-    icon: 'ri-file-list-3-line',
-    href: '',
-    children: [
       { id: 'curriculum-free-courses', label: 'Free Courses', icon: 'ri-graduation-cap-line', href: '/curriculum/free-courses' },
-      { id: 'curriculum-standards', label: 'Standards', icon: 'ri-file-list-3-line', href: '/curriculum/standards' },
-      { id: 'curriculum-ksb-frameworks', label: 'KSB Frameworks', icon: 'ri-bar-chart-line', href: '/curriculum/ksb-frameworks' },
-    ],
-  },
-  {
-    id: 'curriculum-group-builder',
-    label: 'Content Library',
-    icon: 'ri-tools-line',
-    href: '',
-    children: [
       { id: 'curriculum-week-builder', label: 'Week Builder', icon: 'ri-calendar-line', href: '/curriculum/week-builder' },
+      // KSB work reads top-down: the standard, the framework built from it, then
+      // the mapping of modules onto it.
+      { id: 'curriculum-standards', label: 'KSB Standards', icon: 'ri-file-list-3-line', href: '/curriculum/standards' },
+      { id: 'curriculum-ksb-frameworks', label: 'KSB Frameworks', icon: 'ri-bar-chart-line', href: '/curriculum/ksb-frameworks' },
+      { id: 'curriculum-ksb-mapping', label: 'KSB Mapping', icon: 'ri-link', href: '/curriculum/ksb-mapping' },
     ],
   },
   {
@@ -307,16 +297,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
       { id: 'curriculum-question-bank', label: 'Question Bank', icon: 'ri-questionnaire-line', href: '/curriculum/question-bank' },
       { id: 'curriculum-quiz-archive', label: 'Quiz Archive', icon: 'ri-archive-line', href: '/curriculum/quiz-xml?status=archive' },
       { id: 'curriculum-checkpoints', label: 'Checkpoint Assessments', icon: 'ri-check-double-line', href: '/curriculum/checkpoints' },
-    ],
-  },
-  {
-    id: 'curriculum-group-delivery',
-    label: 'Delivery Planning',
-    icon: 'ri-calendar-schedule-line',
-    href: '',
-    children: [
-      { id: 'curriculum-staff-profiles', label: 'Profiles', icon: 'ri-team-line', href: '/curriculum/staff-profiles' },
-      { id: 'curriculum-session-calendar', label: 'Session Calendar', icon: 'ri-calendar-schedule-line', href: '/curriculum/session-calendar' },
     ],
   },
   {

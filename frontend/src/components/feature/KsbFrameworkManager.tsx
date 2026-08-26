@@ -24,6 +24,9 @@ type KsbDraft = {
   description: string;
   displayOrder: number;
   expanded?: boolean;
+  // Spreadsheet row this draft was read from, so an import error can point at
+  // the line the user is looking at in Excel rather than at a running count.
+  sourceRow?: number;
 };
 
 type FrameworkForm = {
@@ -44,6 +47,9 @@ type ImportResult = {
   importedRows: number;
   skippedRows: number;
   errorRows: ImportError[];
+  // A file with errors still yields its good rows: until the user takes them,
+  // `importedRows` is an offer, not something that happened.
+  applied: boolean;
 };
 
 const EMPTY_FORM: FrameworkForm = { name: '', programmeName: '', notes: '', status: 'active' };
@@ -75,9 +81,11 @@ function codeSortValue(code: string) {
   return cleanCode(code).split('.').reduce((total, part, index) => total + (Number(part) || 0) / Math.pow(100, index), 0);
 }
 
-function sortKsbItems(items: KsbDraft[]) {
+// K then S then B, and inside a type the dotted codes fall under their parent
+// (K1, K1.1, K1.2, K2) because codeSortValue weighs each segment in turn.
+function sortKsbItems<T extends { type: KsbType; code: string; displayOrder?: number }>(items: T[]) {
   const typeOrder: Record<KsbType, number> = { K: 1, S: 2, B: 3 };
-  return [...items].sort((a, b) => typeOrder[a.type] - typeOrder[b.type] || codeSortValue(a.code) - codeSortValue(b.code) || a.displayOrder - b.displayOrder);
+  return [...items].sort((a, b) => typeOrder[a.type] - typeOrder[b.type] || codeSortValue(a.code) - codeSortValue(b.code) || (a.displayOrder || 0) - (b.displayOrder || 0));
 }
 
 function frameworkId(framework: CurriculumKsbFramework | null) {
@@ -137,35 +145,49 @@ function itemsToPayload(items: KsbDraft[]): CurriculumKsbItemInput[] {
   }));
 }
 
-function rowsForTemplate(items: KsbDraft[]) {
-  return sortKsbItems(items).map((item, index) => ({
-    type: item.type,
-    code: cleanCode(item.code, item.type),
-    parent_code: cleanCode(item.parentCode, item.type),
-    title: item.title,
-    description: item.description,
-    display_order: item.displayOrder || index + 1,
+// The template carries exactly the three fields a KSB row edits: the type, the
+// full code and the definition text. A child point (K1.1) needs no parent
+// column — the dotted code says where it belongs, and the rows are laid out in
+// that order so K1.1 sits directly under K1.
+function rowsForTemplate(items: Array<{ type: KsbType; code: string; description: string; displayOrder?: number }>) {
+  return sortKsbItems(items).map(item => ({
+    Type: item.type,
+    Code: `${item.type}${cleanCode(item.code, item.type)}`,
+    Description: item.description,
   }));
 }
 
-function downloadTemplate() {
-  const sampleRows = [
-    { type: 'K', code: '1', parent_code: '', title: 'Marketing Concepts and Theory', description: 'Core marketing concepts, models and planning principles.', display_order: 1 },
-    { type: 'K', code: '1.1', parent_code: '1', title: 'The fundamentals of marketing', description: 'Explains the role of marketing in creating customer value.', display_order: 2 },
-    { type: 'K', code: '1.2', parent_code: '1', title: 'The concepts of brand positioning', description: 'Describes how brands are positioned for target audiences.', display_order: 3 },
-    { type: 'S', code: '1', parent_code: '', title: 'Research and Analysis', description: 'Ability to gather, interpret and apply market insight.', display_order: 4 },
-    { type: 'S', code: '1.1', parent_code: '1', title: 'Analyse customer and competitor data', description: 'Uses evidence to support marketing decisions.', display_order: 5 },
-    { type: 'B', code: '1', parent_code: '', title: 'Agile and flexible', description: 'Adapts approach in response to changing priorities.', display_order: 6 },
-    { type: 'B', code: '1.1', parent_code: '1', title: 'Respond positively to feedback', description: 'Uses feedback to improve work and professional practice.', display_order: 7 },
-  ];
-  const worksheet = XLSX.utils.json_to_sheet(sampleRows);
-  worksheet['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 44 }, { wch: 60 }, { wch: 14 }];
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, TEMPLATE_SHEET);
-  XLSX.writeFile(workbook, 'ksb-framework-template.xlsx', { compression: true });
+const EXAMPLE_TEMPLATE_ROWS = [
+  { type: 'K' as KsbType, code: '1', description: 'Marketing Concepts and Theory' },
+  { type: 'K' as KsbType, code: '1.1', description: 'The fundamentals of marketing and the role it plays in creating customer value.' },
+  { type: 'K' as KsbType, code: '1.2', description: 'The concepts of brand positioning for a target audience.' },
+  { type: 'S' as KsbType, code: '1', description: 'Research and Analysis' },
+  { type: 'S' as KsbType, code: '1.1', description: 'Analyse customer and competitor data to support marketing decisions.' },
+  { type: 'B' as KsbType, code: '1', description: 'Agile and flexible' },
+  { type: 'B' as KsbType, code: '1.1', description: 'Respond positively to feedback and use it to improve professional practice.' },
+];
+
+function templateFileName(frameworkName: string) {
+  const slug = frameworkName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return slug ? `${slug}-ksb-template.xlsx` : 'ksb-framework-template.xlsx';
 }
 
-async function parseTemplate(file: File): Promise<{ items: KsbDraft[]; result: ImportResult }> {
+// Downloading a framework that already has definitions hands back those
+// definitions, not examples: the file is the edit surface for a bulk change and
+// the copy to fall back on if an upload replaces the wrong thing. Examples are
+// only for a framework with nothing in it yet.
+function downloadTemplate(items: KsbDraft[], frameworkName: string) {
+  const source = items.length
+    ? items.map(item => ({ type: item.type, code: item.code, description: item.title || item.description, displayOrder: item.displayOrder }))
+    : EXAMPLE_TEMPLATE_ROWS;
+  const worksheet = XLSX.utils.json_to_sheet(rowsForTemplate(source));
+  worksheet['!cols'] = [{ wch: 10 }, { wch: 14 }, { wch: 70 }];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, TEMPLATE_SHEET);
+  XLSX.writeFile(workbook, templateFileName(items.length ? frameworkName : ''), { compression: true });
+}
+
+export async function parseTemplate(file: File): Promise<{ items: KsbDraft[]; result: ImportResult }> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
   const sheetName = workbook.SheetNames.includes(TEMPLATE_SHEET) ? TEMPLATE_SHEET : workbook.SheetNames[0];
@@ -177,39 +199,64 @@ async function parseTemplate(file: File): Promise<{ items: KsbDraft[]; result: I
     const rowNumber = index + 2;
     const type = String(row.type || row.Type || '').trim().toUpperCase() as KsbType;
     const code = cleanCode(String(row.code || row.Code || ''), type);
-    const parentCode = cleanCode(String(row.parent_code || row.parentCode || row.Parent || ''), type);
-    const title = String(row.title || row.Title || '').trim();
-    const description = String(row.description || row.Description || '').trim();
+    const explicitParent = cleanCode(String(row.parent_code || row.parentCode || row.Parent || ''), type);
+    const titleCell = String(row.title || row.Title || '').trim();
+    const descriptionCell = String(row.description || row.Description || '').trim();
+    // The template ships one text column; older files carried Title as well, so
+    // take whichever is filled as the definition text.
+    const text = titleCell || descriptionCell;
+    // K1.1 belongs to K1: derive the parent from the code when it is not given.
+    const parentCode = explicitParent || (code.includes('.') ? code.slice(0, code.lastIndexOf('.')) : '');
     const displayOrder = Number(row.display_order || row.displayOrder || index + 1) || index + 1;
 
-    if (!type && !code && !title && !description) return;
+    if (!type && !code && !text) return;
     if (!['K', 'S', 'B'].includes(type)) errors.push({ row: rowNumber, field: 'type', message: 'Type must be K, S or B.' });
     if (!code) errors.push({ row: rowNumber, field: 'code', message: 'Code is required.' });
-    if (!title) errors.push({ row: rowNumber, field: 'title', message: 'Title is required.' });
-    if (type && code && title) {
-      items.push({ localId: makeLocalId(), saved: false, type, code, parentCode, title, description, displayOrder });
+    if (!text) errors.push({ row: rowNumber, field: 'description', message: 'Description is required.' });
+    if (type && code && text) {
+      items.push({
+        localId: makeLocalId(),
+        saved: false,
+        type,
+        code,
+        parentCode,
+        title: text,
+        description: titleCell ? descriptionCell : '',
+        displayOrder,
+        sourceRow: rowNumber,
+      });
     }
   });
 
+  // A bad row takes only itself out. Both checks below drop the offending row
+  // instead of the file, so the rows that survive are always self-consistent
+  // and the user can take them without fixing the spreadsheet first.
   const codes = new Set<string>();
-  items.forEach(item => {
+  const unique = items.filter(item => {
     const key = fullCode(item);
-    if (codes.has(key)) errors.push({ row: item.displayOrder + 1, field: 'code', message: `Duplicate KSB code ${key}.` });
-    codes.add(key);
-  });
-  items.forEach(item => {
-    if (item.parentCode && !codes.has(`${item.type}${item.parentCode}`)) {
-      errors.push({ row: item.displayOrder + 1, field: 'parent_code', message: `Parent ${item.type}${item.parentCode} was not found.` });
+    if (codes.has(key)) {
+      errors.push({ row: item.sourceRow || 0, field: 'code', message: `Duplicate KSB code ${key} — the first row wins.` });
+      return false;
     }
+    codes.add(key);
+    return true;
+  });
+  const accepted = unique.filter(item => {
+    if (item.parentCode && !codes.has(`${item.type}${item.parentCode}`)) {
+      errors.push({ row: item.sourceRow || 0, field: 'parent_code', message: `Parent ${item.type}${item.parentCode} was not found.` });
+      return false;
+    }
+    return true;
   });
 
   return {
-    items: errors.length ? [] : sortKsbItems(items),
+    items: sortKsbItems(accepted),
     result: {
       totalRows: rows.length,
-      importedRows: errors.length ? 0 : items.length,
-      skippedRows: rows.length - items.length,
-      errorRows: errors,
+      importedRows: accepted.length,
+      skippedRows: rows.length - accepted.length,
+      errorRows: errors.sort((a, b) => a.row - b.row),
+      applied: false,
     },
   };
 }
@@ -225,7 +272,7 @@ function validateFramework(form: FrameworkForm, items: KsbDraft[]) {
     const rowKey = item.localId;
     if (!item.type) errors[`${rowKey}.type`] = 'Type is required.';
     if (!cleanCode(item.code, item.type)) errors[`${rowKey}.code`] = 'Code is required.';
-    if (!item.title.trim()) errors[`${rowKey}.title`] = 'Title is required.';
+    if (!item.title.trim()) errors[`${rowKey}.title`] = 'Description is required.';
     const key = fullCode(item);
     if (seen.has(key)) errors[`${rowKey}.code`] = `Duplicate code ${key}.`;
     seen.add(key);
@@ -272,6 +319,8 @@ export function KsbFrameworkManager({
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  // Rows a file with errors still yielded, held until the user asks for them.
+  const [pendingImport, setPendingImport] = useState<KsbDraft[] | null>(null);
   const [openSections, setOpenSections] = useState<Record<KsbType, boolean>>({ K: true, S: true, B: true });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -292,12 +341,14 @@ export function KsbFrameworkManager({
       setItems([]);
       setErrors({});
       setImportResult(null);
+      setPendingImport(null);
       return;
     }
     setForm(formFromFramework(selectedFramework));
     setItems(draftsFromSet(selectedFramework, selectedSet));
     setErrors({});
     setImportResult(null);
+    setPendingImport(null);
   }, [creating, selectedFramework, selectedSet]);
 
   const searchNeedle = search.trim().toLowerCase();
@@ -326,6 +377,19 @@ export function KsbFrameworkManager({
   const selectedSubtitle = creating ? 'KSB Framework' : form.name || 'Select a framework';
   const validationErrors = useMemo(() => validateFramework(form, items), [form, items]);
   const canSave = Object.keys(validationErrors).length === 0 && (creating || !!selectedFramework);
+
+  // Saving and importing write the same framework record; only the KSB rows differ.
+  const frameworkPayload = (draft: KsbDraft[]) => ({
+    name: form.name.trim(),
+    programmeName: form.programmeName.trim(),
+    description: form.notes.trim(),
+    notes: form.notes.trim(),
+    isActive: form.status !== 'archived',
+    ksbItems: itemsToPayload(draft),
+    knowledgeCodes: draft.filter(item => item.type === 'K').map(fullCode),
+    skillCodes: draft.filter(item => item.type === 'S').map(fullCode),
+    behaviourCodes: draft.filter(item => item.type === 'B').map(fullCode),
+  });
 
   const updateItem = (id: string, patch: Partial<KsbDraft>) => {
     setItems(prev => sortKsbItems(prev.map(item => item.localId === id ? { ...item, ...patch } : item)));
@@ -389,17 +453,7 @@ export function KsbFrameworkManager({
 
     setSaving(true);
     try {
-      const payload = {
-        name: form.name.trim(),
-        programmeName: form.programmeName.trim(),
-        description: form.notes.trim(),
-        notes: form.notes.trim(),
-        isActive: form.status !== 'archived',
-        ksbItems: itemsToPayload(items),
-        knowledgeCodes: items.filter(item => item.type === 'K').map(fullCode),
-        skillCodes: items.filter(item => item.type === 'S').map(fullCode),
-        behaviourCodes: items.filter(item => item.type === 'B').map(fullCode),
-      };
+      const payload = frameworkPayload(items);
       if (creating) {
         const result = await createCurriculumKsbFramework(payload);
         setCreating(false);
@@ -442,35 +496,62 @@ export function KsbFrameworkManager({
     });
   };
 
+  const applyImport = async (imported: KsbDraft[], parsed: ImportResult) => {
+    setItems(imported);
+    setPendingImport(null);
+    setImportResult({ ...parsed, importedRows: imported.length, applied: true });
+    if (!creating && selectedFramework) {
+      await updateCurriculumKsbFramework(selectedFramework.id, frameworkPayload(imported));
+      onRefresh();
+      success('Template imported', `${imported.length} KSB definitions imported and saved.`);
+    } else {
+      success('Template imported', `${imported.length} KSB definitions loaded. Save the framework to commit them.`);
+    }
+  };
+
+  // An import replaces every definition in the framework — a wider change than
+  // deleting a single KSB, which already asks. It gets the same confirmation,
+  // and the file on disk is the copy to go back to.
+  const confirmImport = async (imported: KsbDraft[], parsed: ImportResult) => {
+    if (!items.length) {
+      await applyImport(imported, parsed);
+      return;
+    }
+    const saves = !creating && selectedFramework;
+    await showCurriculumConfirm({
+      title: 'Replace the current KSB definitions?',
+      text: `This framework has ${items.length} definitions. Importing removes all of them and puts the ${imported.length} from the file in their place${saves ? ', saving the framework straight away' : ''}. Download the template first if you need a copy of what is there now.`,
+      icon: 'warning',
+      confirmButtonText: `Replace with ${imported.length}`,
+      cancelButtonText: 'Keep current',
+      onConfirm: () => applyImport(imported, parsed),
+    });
+  };
+
   const handleUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
     setUploading(true);
     try {
-      const result = await parseTemplate(file);
-      setImportResult(result.result);
-      if (result.result.errorRows.length) {
-        toastError('Template has row errors', `${result.result.errorRows.length} rows need attention before import.`);
-      } else {
-        setItems(result.items);
-        if (!creating && selectedFramework) {
-          await updateCurriculumKsbFramework(selectedFramework.id, {
-            name: form.name.trim(),
-            programmeName: form.programmeName.trim(),
-            description: form.notes.trim(),
-            notes: form.notes.trim(),
-            isActive: form.status !== 'archived',
-            ksbItems: itemsToPayload(result.items),
-            knowledgeCodes: result.items.filter(item => item.type === 'K').map(fullCode),
-            skillCodes: result.items.filter(item => item.type === 'S').map(fullCode),
-            behaviourCodes: result.items.filter(item => item.type === 'B').map(fullCode),
-          });
-          onRefresh();
-          success('Template imported', `${result.items.length} KSB definitions imported and saved.`);
-        } else {
-          success('Template imported', `${result.items.length} KSB definitions loaded. Save the framework to commit them.`);
-        }
+      const parsed = await parseTemplate(file);
+      setImportResult(parsed.result);
+      setPendingImport(null);
+      if (parsed.result.errorRows.length) {
+        // The good rows stay on offer instead of the whole file being thrown out.
+        setPendingImport(parsed.items);
+        toastError(
+          'Template has row errors',
+          parsed.items.length
+            ? `${parsed.result.errorRows.length} rows need attention. ${parsed.items.length} rows are ready if you want them.`
+            : `${parsed.result.errorRows.length} rows need attention and no row could be read.`,
+        );
+        return;
       }
+      if (!parsed.items.length) {
+        info('Nothing to import', 'That file has no KSB rows in it.');
+        return;
+      }
+      await confirmImport(parsed.items, parsed.result);
     } catch (err) {
       toastError('Could not read template', err instanceof Error ? err.message : 'Upload a valid XLSX or CSV file.');
     } finally {
@@ -608,18 +689,27 @@ export function KsbFrameworkManager({
                 <div className="px-4 py-3 border-b border-background-200 flex flex-wrap items-center gap-2">
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-700 text-xs font-bold text-white">2</span>
                   <h4 className="text-sm font-bold text-foreground-900 mr-auto">KSB Definitions</h4>
-                  <button onClick={downloadTemplate} className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-background-200 px-3 py-2 text-[11px] font-semibold transition-smooth hover:bg-background-100"><AppIcon className="shrink-0" name="ri-download-line" size={15}></AppIcon>Download Template</button>
+                  <button onClick={() => downloadTemplate(items, form.name || form.programmeName)} title={items.length ? `Downloads the ${items.length} definitions in this framework` : 'Downloads an example template'} className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-background-200 px-3 py-2 text-[11px] font-semibold transition-smooth hover:bg-background-100"><AppIcon className="shrink-0" name="ri-download-line" size={15}></AppIcon>{items.length ? 'Download Definitions' : 'Download Template'}</button>
                   <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-background-200 px-3 py-2 text-[11px] font-semibold transition-smooth hover:bg-background-100 disabled:opacity-50"><AppIcon className="shrink-0" name="ri-upload-line" size={15}></AppIcon>{uploading ? 'Uploading...' : 'Upload Template'}</button>
                   <button onClick={addDefaultKsb} className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-primary-700 px-3 py-2 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600"><AppIcon className="shrink-0" name="ri-add-line" size={15}></AppIcon>Add KSB</button>
                   <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleUpload} className="hidden" />
                 </div>
                 {importResult && (
                   <div className={`mx-4 mt-4 rounded-lg border p-3 ${importResult.errorRows.length ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}`}>
-                    <p className="text-xs font-bold text-foreground-900">Import result: {importResult.totalRows} rows, {importResult.importedRows} imported, {importResult.skippedRows} skipped, {importResult.errorRows.length} errors.</p>
+                    <p className="text-xs font-bold text-foreground-900">
+                      {importResult.applied
+                        ? `Import result: ${importResult.totalRows} rows, ${importResult.importedRows} imported, ${importResult.skippedRows} skipped, ${importResult.errorRows.length} errors.`
+                        : `Template check: ${importResult.totalRows} rows, ${importResult.importedRows} ready to import, ${importResult.skippedRows} skipped, ${importResult.errorRows.length} errors.`}
+                    </p>
                     {importResult.errorRows.length > 0 && (
                       <div className="mt-2 max-h-28 overflow-y-auto space-y-1">
                         {importResult.errorRows.map((row, index) => <p key={index} className="text-[11px] text-red-700">Row {row.row} · {row.field}: {row.message}</p>)}
                       </div>
+                    )}
+                    {pendingImport && pendingImport.length > 0 && (
+                      <button onClick={() => void confirmImport(pendingImport, importResult)} className="mt-2 inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary-700 px-3 py-2 text-[11px] font-semibold text-white transition-smooth hover:bg-primary-600">
+                        <AppIcon className="shrink-0" name="ri-check-line" size={15}></AppIcon>Import the {pendingImport.length} rows that are ready
+                      </button>
                     )}
                   </div>
                 )}
@@ -793,7 +883,7 @@ function KsbRow({ item, errors, parent, onAddChild, onUpdate, onDelete }: {
           {rowError('parentCode') && <p className="mt-1 text-[10px] text-red-600">{rowError('parentCode')}</p>}
         </div>
         <div>
-          <input value={item.title} onChange={event => onUpdate(item.localId, { title: event.target.value })} placeholder={parent ? 'Parent KSB title' : 'KSB point title'} className={`h-10 w-full rounded-lg border px-3 text-sm font-semibold outline-none focus:border-primary-300 ${rowError('title') ? 'border-red-300 bg-red-50' : 'border-background-200'}`} />
+          <input value={item.title} onChange={event => onUpdate(item.localId, { title: event.target.value })} placeholder={parent ? 'Parent KSB description' : 'KSB point description'} className={`h-10 w-full rounded-lg border px-3 text-sm font-semibold outline-none focus:border-primary-300 ${rowError('title') ? 'border-red-300 bg-red-50' : 'border-background-200'}`} />
           {rowError('title') && <p className="mt-1 text-[10px] text-red-600">{rowError('title')}</p>}
         </div>
         <div className="flex gap-1">

@@ -10,11 +10,13 @@ import {
   cohortYear,
   groupsForScope,
   matchesSearch,
+  moduleCohortDateError,
   modulesForScope,
   resolveGroupContext,
   resolveModuleContext,
   sameFormValues,
   scheduleLabel,
+  visibleNotes,
 } from '../model';
 
 // The entity pages must never invent a Module -> Cohort relationship: a module's
@@ -134,6 +136,47 @@ describe('cascades', () => {
   });
 });
 
+describe('a module has to fit inside its cohort', () => {
+  // The practical end date is the boundary; the apprenticeship end that follows
+  // it is the EPA window and carries no delivery.
+  const cohort = {
+    id: 'COHORT-1',
+    startDate: '2026-09-01',
+    endDate: '2027-08-31',
+    practicalEndDate: '2027-08-31',
+    apprenticeshipEndDate: '2027-11-30',
+  } as CurriculumCohort;
+
+  it('accepts a module inside the window', () => {
+    expect(moduleCohortDateError(cohort, '2026-09-02', '2027-08-25')).toBeNull();
+    // The boundaries themselves are inside it.
+    expect(moduleCohortDateError(cohort, '2026-09-01', '2027-08-31')).toBeNull();
+  });
+
+  it('refuses a start date before the cohort opens', () => {
+    expect(moduleCohortDateError(cohort, '2026-08-31', '2026-10-01')).toMatch(/cannot start before/);
+  });
+
+  it('refuses a start date after the cohort has finished', () => {
+    expect(moduleCohortDateError(cohort, '2027-09-01', '')).toMatch(/cannot start after/);
+  });
+
+  it('refuses an end date past the cohort end, even when the start date fits', () => {
+    // The case the start-date bound alone misses: the generated session plan
+    // runs on past the cohort.
+    expect(moduleCohortDateError(cohort, '2027-08-25', '2027-09-15')).toMatch(/cannot finish after/);
+  });
+
+  it('stays quiet until there is a cohort and a date to judge', () => {
+    expect(moduleCohortDateError(undefined, '2026-09-02', '2027-08-25')).toBeNull();
+    expect(moduleCohortDateError(cohort, '', '')).toBeNull();
+  });
+
+  it('reads the EPA period as outside the delivery window', () => {
+    expect(moduleCohortDateError(cohort, '2026-09-02', '2027-10-01')).toMatch(/cannot finish after/);
+  });
+});
+
 describe('presentation helpers', () => {
   it('matches every search term across the given fields', () => {
     expect(matchesSearch('data found', ['Data Foundations', 'Group A'])).toBe(true);
@@ -166,5 +209,31 @@ describe('unsaved-form comparison', () => {
     expect(sameFormValues({ epaMonths: undefined }, {})).toBe(true);
     // Key order is an implementation detail of whichever snapshot was built first.
     expect(sameFormValues({ name: 'A', level: '4' }, { level: '4', name: 'A' })).toBe(true);
+  });
+});
+
+// Every module the API returns has its parent chain appended to `notes` as
+// hidden `__key:value` lines. They are derived from real columns on each read,
+// so a reader must never see them and a form must never save them back.
+describe('notes the reader is meant to see', () => {
+  const stored = [
+    'Bring the reporting template.',
+    '__program_id:PROG-DATA',
+    '__cohort_id:COHORT-1',
+    '__module_catalogue_id:MOD-3',
+  ].join('\n');
+
+  it('keeps the written note and drops the bookkeeping lines', () => {
+    expect(visibleNotes(stored)).toBe('Bring the reporting template.');
+  });
+
+  it('reads notes that are nothing but bookkeeping as empty', () => {
+    expect(visibleNotes('__program_id:PROG-DATA\n__group_name:Group A')).toBe('');
+    expect(visibleNotes(undefined)).toBe('');
+    expect(visibleNotes('   __group_id:GROUP-1  ', 'No notes')).toBe('No notes');
+  });
+
+  it('only drops a line that starts with the marker', () => {
+    expect(visibleNotes('Use the __init__ helper.')).toBe('Use the __init__ helper.');
   });
 });

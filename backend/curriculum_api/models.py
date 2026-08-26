@@ -36,6 +36,17 @@ class ModuleAuthoringWeek(models.Model):
     deleted_at = models.DateTimeField(blank=True, null=True)
     deleted_by = models.CharField(max_length=255, blank=True, null=True)
     deleted_via_parent = models.CharField(max_length=255, blank=True, null=True)
+    # Declared because the column exists: an ORM read that omits it silently
+    # treats programme-deleted rows as live.
+    is_programme_deleted = models.BooleanField(default=False)
+    # Detached-into-the-library state. See migration 0053.
+    library_state = models.CharField(max_length=16, blank=True, default='')
+    detached_at = models.DateTimeField(blank=True, null=True)
+    origin_module_catalogue_id = models.CharField(max_length=128, blank=True, null=True)
+    origin_module_title = models.CharField(max_length=500, blank=True, null=True)
+    origin_week_id = models.CharField(max_length=128, blank=True, null=True)
+    origin_week_label = models.CharField(max_length=500, blank=True, null=True)
+    copied_from_id = models.CharField(max_length=128, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -74,6 +85,17 @@ class ModuleAuthoringComponent(models.Model):
     deleted_at = models.DateTimeField(blank=True, null=True)
     deleted_by = models.CharField(max_length=255, blank=True, null=True)
     deleted_via_parent = models.CharField(max_length=255, blank=True, null=True)
+    # Declared because the column exists: an ORM read that omits it silently
+    # treats programme-deleted rows as live.
+    is_programme_deleted = models.BooleanField(default=False)
+    # Detached-into-the-library state. See migration 0053.
+    library_state = models.CharField(max_length=16, blank=True, default='')
+    detached_at = models.DateTimeField(blank=True, null=True)
+    origin_module_catalogue_id = models.CharField(max_length=128, blank=True, null=True)
+    origin_module_title = models.CharField(max_length=500, blank=True, null=True)
+    origin_week_id = models.CharField(max_length=128, blank=True, null=True)
+    origin_week_label = models.CharField(max_length=500, blank=True, null=True)
+    copied_from_id = models.CharField(max_length=128, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -193,6 +215,7 @@ class LiveSessionOccurrence(models.Model):
     actual_start = models.DateTimeField(blank=True, null=True)
     actual_end = models.DateTimeField(blank=True, null=True)
     join_url = models.TextField(blank=True, default='')
+    online_meeting_id = models.TextField(blank=True, default='')
     attendance_report_id = models.CharField(max_length=512, blank=True, default='')
     participant_count = models.IntegerField(default=0)
     status = models.CharField(max_length=32, default='scheduled')

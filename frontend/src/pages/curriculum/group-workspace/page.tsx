@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
@@ -16,6 +16,7 @@ import {
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
+import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
 import {
   DetailRow,
   EntityEmptyState,
@@ -33,14 +34,13 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // edited here — each one opens its own workspace, which is where the operational
 // controls (schedule, Teams, components) live.
 
-type Tab = 'overview' | 'modules' | 'sessions';
+type Tab = 'overview' | 'modules' | 'sessions' | 'learners';
 
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(130px,1fr)_70px_110px_110px]';
 const SESSION_GRID = 'grid grid-cols-[110px_minmax(170px,1.4fr)_minmax(140px,1fr)_120px_120px]';
 
 export default function GroupWorkspacePage() {
   const { id = '' } = useParams();
-  const navigate = useNavigate();
   const {
     programmes, cohorts, groups, modules, coaches, tutors, holidays, loading, loaded, error, reload,
   } = useCurriculumEntities({ includeStaff: true, includeHolidays: true });
@@ -135,6 +135,7 @@ export default function GroupWorkspacePage() {
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'modules', label: 'Modules', icon: 'ri-stack-line', count: groupModules.length },
     { key: 'sessions', label: 'Sessions', icon: 'ri-time-line', count: groupSessions.length || undefined },
+    { key: 'learners', label: 'Learners', icon: 'ri-graduation-cap-line', count: group?.learners || undefined },
   ];
 
   return (
@@ -296,6 +297,20 @@ export default function GroupWorkspacePage() {
             )}
           />
         )}
+
+        {/* The group is the timetabled class, so it is the level enrolment
+            places a learner into and the level a module borrows its roster
+            from. Both questions — who is here, and what have they earned
+            against this group's modules — are answered from this group alone. */}
+        {tab === 'learners' && (
+          <ScopeAchievementPanel
+            scope="group"
+            identifier={group?.id || id}
+            title={`Learners and achievement in ${group?.name || 'this group'}`}
+            learnerStatus="all"
+            active={tab === 'learners'}
+          />
+        )}
       </div>
 
       <GroupFormDrawer
@@ -309,8 +324,7 @@ export default function GroupWorkspacePage() {
       />
 
       {/* Same form the Module Builder opens, with this group's parents fixed.
-          Authoring the weeks and components carries on in the Module Builder,
-          which is where a freshly created module lands. */}
+          Authoring weeks and components stays behind the explicit Edit components action. */}
       <ModuleFormDrawer
         open={moduleDrawerOpen}
         defaults={{
@@ -325,9 +339,8 @@ export default function GroupWorkspacePage() {
         tutorNames={tutorNames}
         lockGroup
         onClose={() => setModuleDrawerOpen(false)}
-        onSaved={async saved => {
+        onSaved={async () => {
           await reload({ silent: true });
-          if (saved.catalogueId) navigate(`/curriculum/module-builder?module=${encodeURIComponent(saved.catalogueId)}`);
         }}
       />
     </WorkspaceShell>

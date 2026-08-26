@@ -63,6 +63,7 @@ const CurriculumGroups = lazy(() => import("../pages/curriculum/groups/page"));
 const CurriculumGroupWorkspace = lazy(() => import("../pages/curriculum/group-workspace/page"));
 const CurriculumHolidays = lazy(() => import("../pages/curriculum/holidays/page"));
 const CurriculumModuleWorkspace = lazy(() => import("../pages/curriculum/module-workspace/page"));
+const CurriculumTeamsMeetings = lazy(() => import("../pages/curriculum/teams-meetings/page"));
 const CurriculumProgrammes = lazy(() => import("../pages/curriculum/programmes/page"));
 const CurriculumPublishedPage = lazy(() => import("../pages/curriculum/published/page"));
 const CurriculumQAPage = lazy(() => import("../pages/curriculum/curriculum-qa/page"));
@@ -215,7 +216,6 @@ const SafeguardingQAAudit = lazy(() => import("@/pages/safeguarding/qa-audit/pag
 const SafeguardingReferrals = lazy(() => import("@/pages/safeguarding/referrals/page"));
 const SafeguardingReports = lazy(() => import("@/pages/safeguarding/reports/page"));
 const SessionCalendarPage = lazy(() => import("../pages/curriculum/session-calendar/page"));
-const StaffProfilesPage = lazy(() => import("../pages/curriculum/staff-profiles/page"));
 const StarredMessagesPage = lazy(() => import("../pages/starred-messages/page"));
 const SupportDashboard = lazy(() => import("@/pages/workspace/support/page"));
 const SupportEscalations = lazy(() => import("@/pages/support/escalations/page"));
@@ -785,16 +785,18 @@ const routes: RouteObject[] = [
     element: <CurriculumModuleWorkspace />,
   },
   {
+    // The schedule side of the Teams work, across every module at once: the
+    // per-module view of the same meeting is the module workspace's Teams tab.
+    path: "/curriculum/teams-meetings",
+    element: <CurriculumTeamsMeetings />,
+  },
+  {
     path: "/curriculum/holidays",
     element: <CurriculumHolidays />,
   },
   {
     path: "/curriculum/session-calendar",
     element: <SessionCalendarPage />,
-  },
-  {
-    path: "/curriculum/staff-profiles",
-    element: <StaffProfilesPage />,
   },
   {
     path: "/tutor/sessions",

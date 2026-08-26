@@ -6,9 +6,23 @@ import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type Rea
 
 type RichTextMode = 'design' | 'html';
 
-export function RichTextDraft({ label, value, onChange, rows = 9, compact = false }: { label: string; value: string; onChange: (value: string) => void; rows?: number; compact?: boolean }) {
+export function RichTextDraft({
+  label,
+  value,
+  onChange,
+  rows = 9,
+  compact = false,
+  htmlOnly = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  rows?: number;
+  compact?: boolean;
+  htmlOnly?: boolean;
+}) {
   const editorRef = useRef<HTMLDivElement | null>(null);
-  const [mode, setMode] = useState<RichTextMode>('design');
+  const [mode, setMode] = useState<RichTextMode>(htmlOnly ? 'html' : 'design');
   const [fullscreen, setFullscreen] = useState(false);
   const lastHtmlRef = useRef(value || '');
   const placeholder = compact
@@ -17,6 +31,10 @@ export function RichTextDraft({ label, value, onChange, rows = 9, compact = fals
   const plainText = htmlToPlainText(value);
   const wordCount = plainText ? plainText.split(/\s+/).filter(Boolean).length : 0;
   const minHeight = compact ? 'min-h-[220px]' : 'min-h-[360px]';
+
+  useEffect(() => {
+    if (htmlOnly && mode !== 'html') setMode('html');
+  }, [htmlOnly, mode]);
 
   useEffect(() => {
     if (mode !== 'design') return;
@@ -96,13 +114,17 @@ export function RichTextDraft({ label, value, onChange, rows = 9, compact = fals
     <div className="block">
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className="text-[10px] font-semibold uppercase text-foreground-400">{label}</span>
-        <div className="flex items-center gap-1 rounded-lg bg-background-100 p-0.5">
-          <button type="button" onClick={() => setMode('design')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'design' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>Design</button>
-          <button type="button" onClick={() => setMode('html')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'html' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>HTML</button>
-        </div>
+        {htmlOnly ? (
+          <span className="rounded-md bg-background-100 px-2 py-1 text-[10px] font-bold text-foreground-500">HTML</span>
+        ) : (
+          <div className="flex items-center gap-1 rounded-lg bg-background-100 p-0.5">
+            <button type="button" onClick={() => setMode('design')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'design' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>Design</button>
+            <button type="button" onClick={() => setMode('html')} className={`rounded-md px-2 py-1 text-[10px] font-bold ${mode === 'html' ? 'bg-background-50 text-primary-700 shadow-sm' : 'text-foreground-500 hover:text-foreground-900'}`}>HTML</button>
+          </div>
+        )}
       </div>
       <div className={shellClass}>
-        <div className="flex flex-wrap items-center gap-1 border-b border-background-200 bg-background-100/70 px-2 py-2 text-[11px] text-foreground-600">
+        {!htmlOnly && <div className="flex flex-wrap items-center gap-1 border-b border-background-200 bg-background-100/70 px-2 py-2 text-[11px] text-foreground-600">
           <RichSelect title="Block style" disabled={mode !== 'design'} defaultValue="P" onChange={tag => runCommand('formatBlock', tag)}>
             <option value="P">Paragraph</option>
             <option value="H1">Heading 1</option>
@@ -156,7 +178,7 @@ export function RichTextDraft({ label, value, onChange, rows = 9, compact = fals
           <RichTool icon="ri-format-clear" label="Clear formatting" disabled={mode !== 'design'} onClick={() => runCommand('removeFormat')} />
           <RichTool icon={fullscreen ? 'ri-fullscreen-exit-line' : 'ri-fullscreen-line'} label={fullscreen ? 'Exit fullscreen' : 'Fullscreen'} onClick={() => setFullscreen(open => !open)} />
           <span className="ml-auto rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-bold text-foreground-500">{wordCount} words</span>
-        </div>
+        </div>}
         {mode === 'design' ? (
           <div className="relative">
             {!plainText && (

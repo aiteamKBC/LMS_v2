@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normaliseComponentSettings } from './componentAuthoringModel';
+import { normaliseComponentSettings, validateComponentAuthoring } from './componentAuthoringModel';
 
 describe('normaliseComponentSettings week-template compatibility', () => {
   it('restores a podcast embed imported from Week Builder and keeps both keys', () => {
@@ -35,6 +35,27 @@ describe('normaliseComponentSettings week-template compatibility', () => {
     expect(settings.podcastUrl).toContain('show.mp3');
   });
 
+  it('accepts uploaded podcast resource URLs as valid audio sources', () => {
+    const settings = normaliseComponentSettings('podcast', {
+      podcastSource: 'Audio File',
+      podcastUrl: '/curriculum_api/curriculum/uploads/week-template/show.mp3',
+      uploadedFileUrl: '/curriculum_api/curriculum/uploads/week-template/show.mp3',
+      uploadedFileName: 'show.mp3',
+    });
+
+    const issues = validateComponentAuthoring({
+      type: 'podcast',
+      title: 'Podcast',
+      expectedOtjh: 2,
+      points: 10,
+      reflectionRequired: false,
+      workplaceEvidenceRequired: false,
+      settings,
+    });
+
+    expect(issues.some(issue => issue.path === 'component.settings.podcastUrl')).toBe(false);
+  });
+
   it('keeps reading in the Week Builder vocabulary while mirroring the resource URL', () => {
     const reading = normaliseComponentSettings('reading', {
       readingSource: 'File',
@@ -48,6 +69,26 @@ describe('normaliseComponentSettings week-template compatibility', () => {
     expect(reading.uploadedFileName).toBe('reading.pdf');
     // … the older Module vocabulary (resourceUrl) stays populated too.
     expect(reading.resourceUrl).toContain('reading.pdf');
+  });
+
+  it('accepts uploaded reading resource URLs as valid reading sources', () => {
+    const settings = normaliseComponentSettings('reading', {
+      readingSource: 'File',
+      uploadedFileUrl: '/curriculum_api/curriculum/uploads/week-template/reading.pdf',
+      uploadedFileName: 'reading.pdf',
+    });
+
+    const issues = validateComponentAuthoring({
+      type: 'reading',
+      title: 'Reading',
+      expectedOtjh: 2,
+      points: 10,
+      reflectionRequired: false,
+      workplaceEvidenceRequired: false,
+      settings,
+    });
+
+    expect(issues.some(issue => issue.path === 'component.settings.resourceUrl')).toBe(false);
   });
 
   it('maps assignment fields both ways so either editor sees them', () => {

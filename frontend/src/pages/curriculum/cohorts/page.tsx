@@ -6,7 +6,6 @@ import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
 import { archiveCurriculumCohort, type CurriculumCohort } from '@/lib/curriculumApi';
 import {
-  cohortHolidayExtensionDays,
   cohortsForProgramme,
   cohortYear,
   formatDateLabel,
@@ -207,20 +206,7 @@ export default function CurriculumCohortsPage() {
                 secondary={cohort.durationMonths ? `${cohort.durationMonths} months` : undefined}
               />
               <PlainCell>{formatDateLabel(cohort.startDate)}</PlainCell>
-              <PlainCell>
-                {formatDateLabel(cohort.practicalEndDate || cohort.endDate)}
-                {/* The duration column reads the contracted months, which the
-                    holidays do not change -- this marks the rows where the two
-                    therefore disagree, rather than leaving it unexplained. */}
-                {cohortHolidayExtensionDays(cohort) > 0 ? (
-                  <span
-                    className="ml-1 text-[10px] font-bold uppercase text-amber-600"
-                    title={`Extended by ${cohortHolidayExtensionDays(cohort)} holiday days from ${formatDateLabel(cohort.baseEndDate)}`}
-                  >
-                    +{cohortHolidayExtensionDays(cohort)}d
-                  </span>
-                ) : null}
-              </PlainCell>
+              <PlainCell>{formatDateLabel(cohort.practicalEndDate || cohort.endDate)}</PlainCell>
               <PlainCell align="center">{cohort.epaMonths == null ? '—' : `${cohort.epaMonths}m`}</PlainCell>
               <PlainCell>
                 {formatDateLabel(cohort.apprenticeshipEndDate)}

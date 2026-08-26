@@ -152,6 +152,21 @@ export default function ComponentViewPage() {
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
   const backHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
+
+  // A quiz component has nowhere to show its questions — the quiz page owns
+  // that. Reaching this page for one (a direct link, a bookmark, the sidebar
+  // before its quiz was linked) would otherwise show the generic "complete this
+  // activity" card instead of the quiz.
+  const linkedQuizId = component?.isQuiz ? component.quizMeta?.quizId ?? null : null;
+  useEffect(() => {
+    if (linkedQuizId == null || !kind || !id) return;
+    navigate(
+      `/learner/quiz/${kind}/${id}/${linkedQuizId}`
+      + `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekTitle)}`,
+      { replace: true },
+    );
+  }, [linkedQuizId, kind, id, moduleTitle, weekTitle, navigate]);
+
   const parsed = useMemo(() => (isVideo && component?.videoUrl ? parseVideoUrl(component.videoUrl) : null), [isVideo, component?.videoUrl]);
   const pageTitle = meta?.detail || meta?.label || 'Activity';
 
@@ -791,20 +806,24 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
           <span className="w-11 h-11 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center"><AppIcon className="ri-book-open-line text-xl" /></span>
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p></div>
         </div>
-        {component.contentHtml ? (
+        {/* A reading can have written content, an attached document, or both —
+            imported material routinely has a sentence of framing plus the PDF —
+            so neither one hides the other. */}
+        {component.contentHtml && (
           // Reading content is coach-authored curriculum (trusted staff authors).
           <div
             className="max-w-none text-sm text-foreground-700 leading-relaxed [&_h2]:font-heading [&_h2]:font-bold [&_h2]:text-lg [&_h2]:text-foreground-900 [&_h2]:mt-4 [&_h2]:mb-2 [&_h3]:font-heading [&_h3]:font-semibold [&_h3]:text-base [&_h3]:text-foreground-900 [&_h3]:mt-3 [&_h3]:mb-1.5 [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_li]:mb-1 [&_strong]:font-semibold [&_strong]:text-foreground-900 [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
             dangerouslySetInnerHTML={{ __html: normalizeReadingHtml(component.contentHtml) }}
           />
-        ) : component.resourceUrl ? (
-          <>
+        )}
+        {component.resourceUrl ? (
+          <div className={component.contentHtml ? 'mt-4 pt-4 border-t border-background-200' : ''}>
             {/* Reading material stored as an external link/file — shown inline
                 through the same document embed PowerPoint uses. */}
             <DocumentEmbed url={component.resourceUrl} title={title} noun="document" />
             <a href={component.resourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
-          </>
-        ) : (
+          </div>
+        ) : !component.contentHtml && (
           <p className="text-sm text-foreground-500">No reading content was set. You can still record your reflection below.</p>
         )}
         {component.audioUrl && (

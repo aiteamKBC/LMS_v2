@@ -14,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
-import { SelectMenu } from '@/components/feature/SelectField';
+import { SelectMenu, type SelectOption } from '@/components/feature/SelectField';
 import { statusTone } from './model';
 import { AppIcon } from '@/components/feature/AppIcon';
 
@@ -302,6 +302,52 @@ export function RowActions({ actions }: {
   );
 }
 
+/**
+ * Row actions that say what they do. The icon-only `RowActions` above is fine for
+ * the obvious edit/archive pair; anything else — "show the groups below", "open
+ * this in the Module Builder" — is not guessable from a glyph, and a reader
+ * should not have to hover every button to tell two of them apart. Icon + short
+ * label here, the full sentence in `title`.
+ *
+ * Widen the actions column rather than dropping the words.
+ *
+ * NOTE: the Teams Meetings page still carries its own local copy of this, from
+ * before it was shared. That one should be replaced by this import.
+ */
+export function NamedActions({ actions }: {
+  actions: Array<{
+    icon: string;
+    label: string;
+    title: string;
+    onClick: () => void;
+    disabled?: boolean;
+    primary?: boolean;
+    busy?: boolean;
+  }>;
+}) {
+  return (
+    <span className="flex flex-wrap items-center justify-end gap-1.5 self-center">
+      {actions.map(action => (
+        <button
+          key={action.label}
+          type="button"
+          title={action.title}
+          disabled={action.disabled}
+          onClick={event => { event.stopPropagation(); action.onClick(); }}
+          className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-50 ${
+            action.primary
+              ? 'border-primary-600 bg-primary-600 text-white hover:bg-primary-700'
+              : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
+          }`}
+        >
+          <AppIcon className={`${action.busy ? 'ri-loader-4-line animate-spin' : action.icon} text-sm`}></AppIcon>
+          {action.label}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 /** Two-line cell: a strong primary value with a muted secondary line under it. */
 export function StackedCell({ primary, secondary, href }: { primary: ReactNode; secondary?: ReactNode; href?: string }) {
   const body = (
@@ -368,6 +414,7 @@ export function TextControl({
   min,
   max,
   step,
+  inputMode,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -377,6 +424,7 @@ export function TextControl({
   min?: string | number;
   max?: string | number;
   step?: string | number;
+  inputMode?: 'text' | 'numeric' | 'decimal';
 }) {
   return (
     <input
@@ -385,9 +433,18 @@ export function TextControl({
       min={min}
       max={max}
       step={step}
+      inputMode={inputMode}
       disabled={disabled}
       placeholder={placeholder}
       onChange={event => onChange(event.target.value)}
+      // A number input still owns the scroll wheel and arrow keys while
+      // focused: a page scroll or an accidental arrow press silently nudges
+      // the value. Blurring on wheel, and letting arrow keys move focus
+      // instead of the value, keeps typed input as the only way to change it.
+      onWheel={type === 'number' ? event => event.currentTarget.blur() : undefined}
+      onKeyDown={type === 'number' ? event => {
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') event.preventDefault();
+      } : undefined}
       className={CONTROL_CLASS}
     />
   );
@@ -424,7 +481,12 @@ export function SelectControl({
 }: {
   value: string;
   onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
+  /**
+   * `SelectOption`, not `{value,label}`: a picker whose rows carry a reason —
+   * the tutor list marking who is already teaching in the slot — needs the
+   * group heading, the meta chip and the second line the menu already draws.
+   */
+  options: SelectOption[];
   disabled?: boolean;
   placeholder?: string;
 }) {
@@ -624,6 +686,7 @@ export function WorkspaceHeader({
   accentColor,
   stats,
   actions,
+  dense = false,
 }: {
   breadcrumbs: Array<{ label: string; href?: string }>;
   eyebrow: string;
@@ -632,7 +695,54 @@ export function WorkspaceHeader({
   accentColor?: string;
   stats: EntityStat[];
   actions?: ReactNode;
+  /**
+   * The short header: one line of identity and the same figures as a single
+   * inline strip instead of a grid of cards. For pages whose real content is
+   * the tab below, where a full-height banner is only pushing it off screen.
+   */
+  dense?: boolean;
 }) {
+  if (dense) {
+    return (
+      <section className="relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
+        <div className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: accentColor || 'oklch(var(--primary-500))' }} aria-hidden="true" />
+        <div className="flex flex-col gap-2.5 px-4 py-3 pl-5 sm:px-5 sm:pl-6">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <nav className="flex flex-wrap items-center gap-1.5 text-[11px] text-foreground-400">
+              {breadcrumbs.map((crumb, index) => (
+                <span key={`${crumb.label}-${index}`} className="flex items-center gap-1.5">
+                  {index > 0 && <AppIcon className="ri-arrow-right-s-line text-[10px]"></AppIcon>}
+                  {crumb.href ? (
+                    <Link to={crumb.href} className="font-semibold transition-smooth hover:text-primary-700">{crumb.label}</Link>
+                  ) : (
+                    <span className="font-semibold text-foreground-600">{crumb.label}</span>
+                  )}
+                </span>
+              ))}
+            </nav>
+            {actions && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
+          </div>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h1 className="text-lg font-heading font-black leading-tight tracking-tight text-foreground-950">{title}</h1>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-primary-600">{eyebrow}</p>
+            {subtitle && <p className="text-[12px] text-foreground-500">{subtitle}</p>}
+          </div>
+          {/* The same figures, read as a sentence rather than six cards. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-foreground-200/60 pt-2.5">
+            {stats.map(stat => (
+              <span key={stat.label} className="flex items-center gap-1.5 text-[12px]">
+                <AppIcon className={`${stat.icon} text-sm text-foreground-400`}></AppIcon>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-foreground-400">{stat.label}</span>
+                <span className="font-bold text-foreground-900">{stat.value}</span>
+                {stat.detail && <span className="text-[11px] text-foreground-400">{stat.detail}</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm">
       <div className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: accentColor || 'oklch(var(--primary-500))' }} aria-hidden="true" />

@@ -5,6 +5,8 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardGridSkeleton } from '@/components/feature/Skeletons';
 import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
+import { ensureSharedEmptyKsbProfile, SHARED_EMPTY_KSB_PROFILE_NAME } from '@/pages/curriculum/shared/entities/programmeKsbProfile';
+import { visibleNotes } from '@/pages/curriculum/shared/entities/model';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
@@ -53,6 +55,12 @@ type ProgrammeAppliedKsbSource = {
   title: string;
   subtitle: string;
   detail: string;
+  /**
+   * KSB codes the source holds. A new programme is given an empty profile of its
+   * own, so "applied" no longer means "ready": an empty source has nothing for a
+   * module to map against, which is the same dead end as no source at all.
+   */
+  ksbCount: number;
 };
 type ProgrammeKsbSourceReview = {
   programme: CurriculumProgramme;
@@ -87,6 +95,9 @@ type LearnerKsbAchievement = {
 
 const COLOR_PRESETS = ['#6d28d9', '#2563eb', '#0f766e', '#16a34a', '#ea580c', '#dc2626', '#be123c', '#334155'];
 const WEEKDAY_OPTIONS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+/** How many "set it now" shortcuts the notice offers before it stops listing. */
+const MISSING_KSB_SOURCE_SHORTCUTS = 3;
+
 const PROGRAMMES_PER_PAGE = 6;
 
 type SelectOption = { value: string; label: string; meta?: string; color?: string; aliases?: string[] };
@@ -250,7 +261,7 @@ export default function CurriculumProgrammes() {
   const totalLearners = visibleProgrammes.reduce((a, b) => a + (b.learners || 0), 0);
   const totalCohorts = visibleProgrammes.reduce((a, b) => a + (b.cohorts || 0), 0);
   const totalModules = visibleProgrammes.reduce((a, b) => a + (b.modules || 0), 0);
-  const totalSessions = visibleProgrammes.reduce((a, b) => a + (b.weeks || 0), 0);
+  const totalWeeks = visibleProgrammes.reduce((a, b) => a + (b.weeks || 0), 0);
   const programmeKsbSources = useMemo(() => {
     const lookup = new Map<string, ProgrammeAppliedKsbSource>();
     visibleProgrammes.forEach(programme => {
@@ -282,6 +293,23 @@ export default function CurriculumProgrammes() {
     : 0;
   const pageSubtitle = `${totalProgrammes} programmes - ${totalCohorts} cohorts - ${totalModules} modules - ${totalLearners} learners`;
   const heroSummary = <><strong>{totalProgrammes} programmes</strong> - {totalCohorts} cohorts - {totalModules} modules</>;
+
+  // Programmes nothing can be mapped against yet. A KSB source is not decoration
+  // on a programme: its modules map to that source's codes, its coverage is
+  // measured against them, and learner progress rolls up through them. The gap
+  // otherwise shows itself much later as an empty KSB mapping page, so it is
+  // reported here where programmes are made.
+  //
+  // Two states, one problem. A programme created without a source is one; a
+  // programme holding the empty profile it was created with is the other, and
+  // an empty source maps exactly as much as no source does.
+  const programmesMissingKsbSource = useMemo(
+    () => (showArchived ? [] : filtered
+      .map(programme => ({ programme, source: programmeKsbSources.get(programme.sourceId || programme.id) }))
+      .filter(entry => !entry.source?.value || entry.source.ksbCount < 1)),
+    [filtered, programmeKsbSources, showArchived],
+  );
+  const programmesWithEmptyKsbSource = programmesMissingKsbSource.filter(entry => Boolean(entry.source?.value));
 
   const refreshProgrammeCards = async () => {
     const [nextKsbSets, nextStandards] = await Promise.all([
@@ -484,21 +512,29 @@ export default function CurriculumProgrammes() {
     }
   };
 
-  const applyProgrammeKsbSource = async (programme: CurriculumProgramme, sourceValue: string) => {
+  // `options.sets` is for a source that has only just been created: the state
+  // holding the KSB sets cannot have caught up inside the same call, and this
+  // would otherwise fail to find a profile that certainly exists.
+  const applyProgrammeKsbSource = async (
+    programme: CurriculumProgramme,
+    sourceValue: string,
+    options: { sets?: CurriculumKsbSet[] } = {},
+  ) => {
     const [kind, id] = sourceValue.split(':');
     const programmeId = programme.sourceId || programme.id;
     if (!programmeId || !id) return;
+    const availableSets = options.sets || ksbSets;
     setApplyingKsbSource(true);
     try {
       // Compact is safe: this page's only use of curriculumData.modules is the KSB
       // source cascade below, which reads name/colour/notes plus identity fields.
       const modulesForCascade = curriculumData?.modules?.length ? curriculumData.modules : await fetchCurriculumModules(undefined, { compact: true });
       if (kind === 'profile') {
-        const profile = ksbSets.find(set => ksbSourceIdForProgrammeCard(set) === id || set.frameworkId === id || set.ksbProfileId === id);
+        const profile = availableSets.find(set => ksbSourceIdForProgrammeCard(set) === id || set.frameworkId === id || set.ksbProfileId === id);
         if (!profile) throw new Error('Selected KSB profile could not be found.');
         const selectedProfileId = ksbSourceIdForProgrammeCard(profile);
         const programmeCandidates = uniqueTextValues([programmeId, programme.id, programme.sourceId, programme.name]);
-        const previouslyLinkedProfiles = ksbSets.filter(set => {
+        const previouslyLinkedProfiles = availableSets.filter(set => {
           if (ksbSourceIdForProgrammeCard(set) === selectedProfileId) return false;
           const linkedProgrammeIds = uniqueTextValues([set.programmeId, ...(set.programmeIds || [])]);
           return programmeCandidates.some(candidate => linkedProgrammeIds.some(linked => normalise(linked) === normalise(candidate)));
@@ -615,6 +651,38 @@ export default function CurriculumProgrammes() {
     })().catch(err => console.warn('Unable to refresh KSB Source state after unapply.', err));
   };
 
+  // Park a programme on the one shared empty profile, so it has a source at all
+  // while its real standard is still to be authored. One profile, not one per
+  // programme: the same placeholder is reused, and the assignment goes through
+  // the ordinary apply path so linking and the module cascade behave identically.
+  const [parkingKsbProfileFor, setParkingKsbProfileFor] = useState('');
+  const assignSharedEmptyKsbProfile = async (programme: CurriculumProgramme) => {
+    const key = programme.sourceId || programme.id;
+    setParkingKsbProfileFor(key);
+    try {
+      const { frameworkId, sets } = await ensureSharedEmptyKsbProfile(ksbSets);
+      setKsbSets(sets);
+      await applyProgrammeKsbSource(programme, `profile:${frameworkId}`, { sets });
+    } catch (err) {
+      await showProgrammeSwalToast(
+        'Unable to assign the empty KSB profile',
+        err instanceof Error ? err.message : 'The empty KSB profile could not be assigned.',
+        'error',
+      );
+    } finally {
+      setParkingKsbProfileFor('');
+    }
+  };
+
+  // A new programme has no KSB source, and cannot be mapped or measured without
+  // one. So the create hands it straight to the picker — where the shared empty
+  // profile is one of the options — rather than leaving the reader to notice the
+  // gap on the card later. An edit passes nothing and changes nothing.
+  const handleProgrammeSaved = async (result?: { programme: CurriculumProgramme }) => {
+    await refreshProgrammeCards();
+    if (result?.programme) setApplyProgramme(result.programme);
+  };
+
   const openAppliedKsbSourceReview = (programme: CurriculumProgramme, source: ProgrammeAppliedKsbSource) => {
     if (!source.value) {
       setApplyProgramme(programme);
@@ -679,7 +747,7 @@ export default function CurriculumProgrammes() {
             <div className="relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
               <DashboardStat icon="ri-layout-masonry-line" label="Actual programmes" value={String(totalProgrammes)} detail={`${totalModules} modules connected`} />
               <DashboardStat icon="ri-calendar-event-line" label="Cohorts" value={String(totalCohorts)} detail={`${totalLearners} learners allocated`} />
-              <DashboardStat icon="ri-stack-line" label="Modules" value={String(totalModules)} detail={`${totalSessions} planned sessions`} />
+              <DashboardStat icon="ri-stack-line" label="Modules" value={String(totalModules)} detail={`${totalWeeks} planned weeks`} />
               <DashboardStat
                 icon="ri-node-tree"
                 label="KSB progress"
@@ -746,6 +814,76 @@ export default function CurriculumProgrammes() {
           </div>
         )}
 
+        {/* Said once for the page, because it is a state to clear rather than a
+            fact about one card: a programme with no KSB source is unfinished,
+            and the button that finishes it is right here. */}
+        {!loading && programmesMissingKsbSource.length > 0 && (
+          <div className="flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-2.5">
+              <AppIcon className="ri-error-warning-fill mt-0.5 shrink-0 text-base text-amber-600"></AppIcon>
+              <div className="min-w-0">
+                <p className="text-[13px] font-bold text-amber-900">
+                  {programmesMissingKsbSource.length === 1
+                    ? `${programmesMissingKsbSource[0].programme.name} has no KSB codes yet`
+                    : `${programmesMissingKsbSource.length} programmes have no KSB codes yet`}
+                </p>
+                <p className="mt-0.5 text-[12px] leading-5 text-amber-800">
+                  {programmesWithEmptyKsbSource.length === programmesMissingKsbSource.length
+                    ? `Their applied source holds no KSB codes. Author each programme’s real knowledge, skills and behaviours on the KSB Frameworks page and apply that profile — while they sit on “${SHARED_EMPTY_KSB_PROFILE_NAME}” there is nothing for their modules to map to and coverage stays at 0%.`
+                    : 'Until a KSB source is applied and filled in there are no codes for their modules to map to, coverage stays at 0% and learner KSB progress cannot be measured.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              {/* A programme with no source can be parked on the shared empty
+                  profile here; one already parked there needs a real profile
+                  authored, which is a different page. */}
+              {programmesWithEmptyKsbSource.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/curriculum/ksb-frameworks')}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[11px] font-bold text-amber-900 transition-smooth hover:bg-amber-100"
+                >
+                  <AppIcon className="ri-list-check-2 text-sm"></AppIcon>
+                  Author a KSB profile
+                </button>
+              )}
+              {programmesMissingKsbSource
+                .filter(entry => !entry.source?.value)
+                .slice(0, MISSING_KSB_SOURCE_SHORTCUTS)
+                .map(({ programme }) => (
+                  <span key={programme.id} className="inline-flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      disabled={Boolean(parkingKsbProfileFor)}
+                      title={`Park ${programme.name} on the shared "${SHARED_EMPTY_KSB_PROFILE_NAME}" until its real standard is authored.`}
+                      onClick={() => void assignSharedEmptyKsbProfile(programme)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-amber-500 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <AppIcon className={parkingKsbProfileFor === (programme.sourceId || programme.id)
+                        ? 'ri-loader-4-line animate-spin text-sm'
+                        : 'ri-add-line text-sm'}></AppIcon>
+                      Assign empty profile to {programme.name}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setApplyProgramme(programme)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-400 bg-white px-2.5 text-[11px] font-bold text-amber-900 transition-smooth hover:bg-amber-100"
+                    >
+                      <AppIcon className="ri-node-tree text-sm"></AppIcon>
+                      Choose a source
+                    </button>
+                  </span>
+                ))}
+              {programmesMissingKsbSource.length > MISSING_KSB_SOURCE_SHORTCUTS && (
+                <span className="text-[11px] font-bold text-amber-800">
+                  +{programmesMissingKsbSource.length - MISSING_KSB_SOURCE_SHORTCUTS} more below
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <CardGridSkeleton count={6} />
         ) : filtered.length ? (
@@ -754,6 +892,9 @@ export default function CurriculumProgrammes() {
             {paginatedProgrammes.map(prog => {
               const appliedSource = programmeKsbSources.get(prog.sourceId || prog.id) || resolveProgrammeAppliedKsbSource(prog, ksbSets, standards);
               const hasAppliedKsbSource = Boolean(appliedSource.value);
+              // Applied but empty is its own state: the source is chosen, so the
+              // work left is authoring its codes, not picking a different one.
+              const ksbSourceIsEmpty = hasAppliedKsbSource && appliedSource.ksbCount < 1;
               const mappingCoverage = hasAppliedKsbSource && prog.ksbTotal > 0 ? Math.round((prog.ksbMapped / prog.ksbTotal) * 100) : 0;
               // Learner-consumed KSB progress. Read straight off the programme
               // payload, so unlike the design-mapping figure above it does not
@@ -774,7 +915,7 @@ export default function CurriculumProgrammes() {
                     </span>
                     <div className="min-w-0">
                       <p className="truncate text-[15px] font-heading font-bold text-foreground-950">{prog.name}</p>
-                      <p className="text-[11px] text-foreground-400">Level: {prog.level || 'Not set'}</p>
+                      <p className="text-[11px] text-foreground-400">{prog.level || 'Not set'}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         <span className="programme-type-badge inline-flex items-center gap-1 rounded-full bg-primary-50 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-primary-700 ring-1 ring-primary-100">
                           <AppIcon className="ri-calendar-event-line text-[10px]"></AppIcon>
@@ -785,29 +926,65 @@ export default function CurriculumProgrammes() {
                             Draft
                           </span>
                         )}
+                        {/* Up beside the name, because a grid of cards is read
+                            by its headings: the panel below says the same thing
+                            in full, but only once the eye has stopped here. */}
+                        {(!hasAppliedKsbSource || ksbSourceIsEmpty) && (
+                          <span className="programme-warning-badge inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-black uppercase tracking-wide text-amber-800 ring-1 ring-amber-300">
+                            <AppIcon className="ri-error-warning-line text-[10px]"></AppIcon>
+                            {ksbSourceIsEmpty ? 'Needs KSB codes' : 'Needs KSB source'}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
                 </div>
                 <button
                   type="button"
-                  onClick={e => { e.stopPropagation(); openAppliedKsbSourceReview(prog, appliedSource); }}
-                  className={`programme-source-button mb-2.5 w-full rounded-xl border px-2 py-1.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${appliedSource.value ? 'programme-source-applied' : 'programme-source-missing'}`}
-                  aria-label={appliedSource.value ? `View KSBs for ${appliedSource.title}` : 'Choose KSB Source'}
+                  onClick={e => {
+                    e.stopPropagation();
+                    // An empty source has no KSBs to review. It is a placeholder
+                    // to move off rather than a profile to fill in, so the panel
+                    // offers the choice of a real source instead.
+                    if (ksbSourceIsEmpty) setApplyProgramme(prog);
+                    else openAppliedKsbSourceReview(prog, appliedSource);
+                  }}
+                  className={`programme-source-button mb-2.5 w-full rounded-xl border px-2 py-1.5 text-left transition-smooth focus:outline-none focus:ring-2 focus:ring-primary-200 ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'programme-source-applied' : 'programme-source-missing'}`}
+                  aria-label={!hasAppliedKsbSource
+                    ? `Set the KSB source for ${prog.name}`
+                    : ksbSourceIsEmpty
+                      ? `Choose a real KSB source for ${prog.name}`
+                      : `View KSBs for ${appliedSource.title}`}
                 >
                   <div className="flex items-start gap-2">
-                    <span className={`programme-source-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${appliedSource.value ? 'programme-source-applied' : 'programme-source-missing'}`}>
-                      <AppIcon className={appliedSource.value ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'}></AppIcon>
+                    <span className={`programme-source-icon mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'programme-source-applied' : 'programme-source-missing'}`}>
+                      <AppIcon className={hasAppliedKsbSource && !ksbSourceIsEmpty ? 'ri-checkbox-circle-line' : 'ri-error-warning-fill'}></AppIcon>
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className={`text-[9px] font-black uppercase tracking-wide ${appliedSource.value ? 'text-primary-700' : 'text-amber-700'}`}>
-                        {appliedSource.value ? 'Applied KSB Source' : 'No KSB Source selected'}
+                      <p className={`programme-source-label text-[9px] font-black uppercase tracking-wide ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'text-primary-700' : 'text-amber-800'}`}>
+                        {!hasAppliedKsbSource ? 'KSB Source required' : ksbSourceIsEmpty ? 'Applied KSB Source · empty' : 'Applied KSB Source'}
                       </p>
                       <p className="mt-0.5 truncate text-[12px] font-heading font-bold text-foreground-950">{appliedSource.title}</p>
-                      <p className="mt-0.5 truncate text-[10px] font-semibold text-foreground-500">{appliedSource.detail || appliedSource.subtitle}</p>
+                      {/* Reported by what it costs, not by the word "none":
+                          "not applied" and "0 K / 0 S / 0 B" both read as a
+                          value left at its default rather than as work to do. */}
+                      <p className={`mt-0.5 text-[10px] font-semibold ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'truncate text-foreground-500' : 'text-amber-800'}`}>
+                        {!hasAppliedKsbSource
+                          ? 'Modules cannot map KSBs and coverage cannot be measured until one is applied.'
+                          : ksbSourceIsEmpty
+                            ? 'A placeholder with no KSB codes in it. Apply the programme’s real profile or standard to make it mappable.'
+                            : appliedSource.detail || appliedSource.subtitle}
+                      </p>
                     </div>
-                    <span className="mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-primary-600">
-                      <AppIcon className={appliedSource.value ? 'ri-arrow-right-s-line' : 'ri-add-line'}></AppIcon>
+                    <span className={`programme-source-cta mt-1 flex h-6 shrink-0 items-center justify-center rounded-lg ${hasAppliedKsbSource && !ksbSourceIsEmpty ? 'w-6 text-primary-600' : 'gap-1 bg-amber-500 px-2 text-[10px] font-bold text-white'}`}>
+                      {hasAppliedKsbSource && !ksbSourceIsEmpty ? (
+                        <AppIcon className="ri-arrow-right-s-line"></AppIcon>
+                      ) : (
+                        <>
+                          <AppIcon className="ri-add-line text-[12px]"></AppIcon>
+                          {ksbSourceIsEmpty ? 'Replace' : 'Set'}
+                        </>
+                      )}
                     </span>
                   </div>
                 </button>
@@ -815,7 +992,7 @@ export default function CurriculumProgrammes() {
                   <Metric label="Cohorts" value={String(prog.cohorts)} />
                   <Metric label="Groups" value={String(prog.groups || 0)} />
                   <Metric label="Modules" value={String(prog.modules)} />
-                  <Metric label="Sessions" value={`${prog.weeks}`} />
+                  <Metric label="Weeks" value={`${prog.weeks}`} />
                   <Metric label="Learners" value={String(prog.learners)} />
                   <div className="col-span-2 sm:col-span-5">
                     <div className="flex items-baseline justify-between gap-2">
@@ -843,9 +1020,14 @@ export default function CurriculumProgrammes() {
                 </div>
                 {prog.description && <p className="mb-2.5 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
                 <div className="mt-auto flex flex-wrap items-center gap-1 border-t border-primary-100/70 pt-2.5">
-                  <button className="programme-action-button programme-action-open inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1 text-[10px] font-bold text-white transition-smooth hover:bg-primary-700" onClick={e => { e.stopPropagation(); window.REACT_APP_NAVIGATE(`/curriculum/programmes/${prog.id}`); }}>
-                    <AppIcon className="ri-eye-line"></AppIcon>
-                    Open
+                  <button
+                    type="button"
+                    disabled
+                    title="Coming soon"
+                    className="programme-action-button programme-action-open inline-flex flex-1 cursor-not-allowed items-center justify-center gap-1.5 rounded-lg bg-background-200 px-2 py-1 text-[10px] font-bold text-foreground-400"
+                  >
+                    <AppIcon className="ri-time-line"></AppIcon>
+                    Coming soon
                   </button>
                   <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
                     <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB Source
@@ -910,7 +1092,7 @@ export default function CurriculumProgrammes() {
           open={programmeDrawerOpen}
           programme={programmeDrawerTarget}
           onClose={() => setProgrammeDrawerOpen(false)}
-          onSaved={refreshProgrammeCards}
+          onSaved={handleProgrammeSaved}
         />
         {reviewProgramme && (
           <ProgrammeKsbReviewModal
@@ -990,11 +1172,29 @@ function ProgrammeLearnerImpactModal({
       (achievementsByLearner.get(String(learner.learnerId)) || []).map(ksb => ksb.code).join(' '),
     ].join(' ')).includes(needle));
   }, [achievementsByLearner, learners, query]);
-  const totalExpected = learners.reduce((sum, learner) => sum + (learner.expectedWeightTotal || 0), 0);
-  const totalConsumed = learners.reduce((sum, learner) => sum + (learner.cappedConsumedWeightTotal || 0), 0);
-  const averageProgress = totalExpected ? Math.round((totalConsumed / totalExpected) * 100) : 0;
-  const completedHours = assignedLearners.reduce((sum, learner) => sum + Number(learner.completedHours || 0), 0);
-  const plannedHours = assignedLearners.reduce((sum, learner) => sum + Number(learner.plannedHours || 0), 0);
+  // Both roll-ups now come from the response rather than being re-summed here:
+  // the backend computes them from this programme's own components, so the modal
+  // and every scope panel elsewhere report the same figure the same way.
+  const otjh = data?.otjhAchievement;
+  const ksb = data?.ksbAchievement;
+  const totalExpected = ksb?.expectedWeightTotal
+    ?? learners.reduce((sum, learner) => sum + (learner.expectedWeightTotal || 0), 0);
+  const totalConsumed = ksb?.cappedAchievedWeightTotal
+    ?? learners.reduce((sum, learner) => sum + (learner.cappedConsumedWeightTotal || 0), 0);
+  const averageProgress = ksb?.progressPercentage != null
+    ? Math.round(ksb.progressPercentage)
+    : (totalExpected ? Math.round((totalConsumed / totalExpected) * 100) : 0);
+  // Achieved OTJH is the credited figure for this programme's components, not the
+  // whole-learner-record hours: those cover everything a learner has ever logged,
+  // which is a different question and used to be shown as if it answered this one.
+  const achievedHours = otjh?.achievedTotal ?? 0;
+  const plannedHours = otjh?.plannedTotal
+    ?? assignedLearners.reduce((sum, learner) => sum + Number(learner.plannedHours || 0), 0);
+  const otjhByLearner = useMemo(() => {
+    const map = new Map<string, NonNullable<typeof otjh>['learners'][number]>();
+    for (const row of otjh?.learners || []) map.set(String(row.learnerId), row);
+    return map;
+  }, [otjh]);
   const achievedRows = Array.from(achievementsByLearner.values()).flat();
   const achievedKsbCount = new Set(achievedRows.map(item => item.code)).size;
   const achievedRecordCount = achievedRows.reduce((sum, item) => sum + item.count, 0);
@@ -1017,8 +1217,8 @@ function ProgrammeLearnerImpactModal({
 
         <div className="grid grid-cols-2 gap-3 border-b border-background-200 bg-background-50 p-4 lg:grid-cols-4">
           <ImpactStat icon="ri-user-follow-line" label="Assigned learners" value={String(assignedLearners.length)} detail="Learner + enrolment records" />
-          <ImpactStat icon="ri-time-line" label="OTJH completed" value={`${formatMetricNumber(completedHours)}h`} detail={`${formatMetricNumber(plannedHours)}h planned`} />
-          <ImpactStat icon="ri-node-tree" label="KSB progress" value={`${averageProgress}%`} detail="Weighted consumption" />
+          <ImpactStat icon="ri-time-line" label="OTJH achieved" value={`${formatMetricNumber(achievedHours)}h`} detail={`of ${formatMetricNumber(plannedHours)}h planned across this programme's components`} />
+          <ImpactStat icon="ri-node-tree" label="KSB weight earned" value={`${averageProgress}%`} detail={`${formatMetricNumber(totalConsumed)} of ${formatMetricNumber(totalExpected)} expected weight`} />
           <ImpactStat icon="ri-checkbox-circle-line" label="Achieved KSBs" value={String(achievedKsbCount)} detail={`${achievedRecordCount} learner record${achievedRecordCount === 1 ? '' : 's'}`} />
         </div>
 
@@ -1046,6 +1246,7 @@ function ProgrammeLearnerImpactModal({
                   key={String(learner.learnerId)}
                   learner={learner}
                   learnerMeta={assignedLearners.find(item => String(item.id) === String(learner.learnerId))}
+                  otjhRow={otjhByLearner.get(String(learner.learnerId))}
                   achievements={achievementsByLearner.get(String(learner.learnerId)) || []}
                 />
               ))}
@@ -1063,17 +1264,22 @@ function ProgrammeLearnerImpactModal({
 function ProgrammeLearnerImpactRow({
   learner,
   learnerMeta,
+  otjhRow,
   achievements,
 }: {
   learner: CurriculumLearnerKsbConsumption;
   learnerMeta?: CurriculumProgrammeLearnerKsbImpactResponse['assignedLearners'][number];
+  /** This learner's OTJH against this programme's components. */
+  otjhRow?: CurriculumProgrammeLearnerKsbImpactResponse['otjhAchievement']['learners'][number];
   achievements: LearnerKsbAchievement[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const achievedWeight = achievements.reduce((sum, item) => sum + item.weight, 0);
   const achievedCount = achievements.reduce((sum, item) => sum + item.count, 0);
-  const otjhCompleted = Number(learnerMeta?.completedHours || 0);
-  const otjhPlanned = Number(learnerMeta?.plannedHours || 0);
+  // The programme's own figure first; the learner's whole-record hours are a
+  // different total and are shown as such rather than standing in for it.
+  const otjhCompleted = otjhRow ? Number(otjhRow.achievedOtjh || 0) : Number(learnerMeta?.completedHours || 0);
+  const otjhPlanned = otjhRow ? Number(otjhRow.plannedOtjh || 0) : Number(learnerMeta?.plannedHours || 0);
   const otjhProgress = otjhPlanned ? Math.min(Math.round((otjhCompleted / otjhPlanned) * 100), 100) : 0;
   return (
     <article className="rounded-2xl border border-foreground-200 bg-background-50 p-4 shadow-sm">
@@ -1086,7 +1292,13 @@ function ProgrammeLearnerImpactRow({
           <p className="mt-1 text-[12px] font-semibold text-foreground-500">{learner.email || 'No email'} - {learner.cohort || 'No cohort'} - {learner.group || 'No group'}</p>
         </div>
         <div className="grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4 xl:w-[620px]">
-          <LearnerMiniMetric label="OTJH" value={`${formatMetricNumber(otjhCompleted)}h`} detail={`${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h`} />
+          <LearnerMiniMetric
+            label="OTJH here"
+            value={`${formatMetricNumber(otjhCompleted)}h`}
+            detail={otjhRow
+              ? `${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h · ${formatMetricNumber(learnerMeta?.completedHours || 0)}h on record`
+              : `${otjhProgress}% of ${formatMetricNumber(otjhPlanned)}h`}
+          />
           <LearnerMiniMetric label="KSB weight achieved" value={formatMetricNumber(achievedWeight)} detail="Total consumed weight" />
           <LearnerMiniMetric label="Achieved KSBs" value={String(achievements.length)} detail={`${achievedCount} record${achievedCount === 1 ? '' : 's'}`} />
           <button type="button" onClick={() => setExpanded(value => !value)} className="inline-flex h-full min-h-14 items-center justify-center gap-2 rounded-xl border border-background-200 bg-background-100 px-3 text-[11px] font-black text-foreground-700 transition-smooth hover:bg-background-200">
@@ -1821,11 +2033,12 @@ function ProgrammesEmptyState({
   );
 }
 
-function Field({ label, value, onChange, required, type = 'text', placeholder, disabled }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; type?: string; placeholder?: string; disabled?: boolean }) {
+function Field({ label, value, onChange, required, type = 'text', placeholder, disabled, inputMode, hint }: { label: string; value: string; onChange: (value: string) => void; required?: boolean; type?: string; placeholder?: string; disabled?: boolean; inputMode?: 'text' | 'numeric' | 'decimal'; hint?: string }) {
   return (
     <label className="block">
       <span className="text-[10px] font-bold text-foreground-500 uppercase tracking-wide">{label}{required ? ' *' : ''}</span>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} required={required} placeholder={placeholder} disabled={disabled} className="mt-1.5 w-full h-10 px-3 bg-background-50 border border-foreground-200/70 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-300 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:bg-background-100 disabled:text-foreground-400 transition-smooth" />
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} required={required} placeholder={placeholder} disabled={disabled} inputMode={inputMode} className="mt-1.5 w-full h-10 px-3 bg-background-50 border border-foreground-200/70 rounded-lg text-[13px] text-foreground-900 placeholder:text-foreground-300 focus:outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:bg-background-100 disabled:text-foreground-400 transition-smooth" />
+      {hint ? <span className="mt-1 block text-[11px] text-foreground-400">{hint}</span> : null}
     </label>
   );
 }
@@ -2254,7 +2467,7 @@ async function cascadeKsbSourceToProgrammeModules(programme: CurriculumProgramme
     programmeName: programme.name,
     programme: programme.name,
     color: module.color,
-    notes: module.notes,
+    notes: visibleNotes(module.notes),
     ksbProfileSourceId,
   })));
   return programmeModules.length;
@@ -2278,6 +2491,7 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
           title: profile.standard || profile.programmeName || 'KSB profile',
           subtitle: `${profile.programmeName || programme.name} - ${profile.ksbs.length} KSBs`,
           detail: ksbSetCountsLabel(profile),
+          ksbCount: profile.ksbs.length,
         };
       }
     }
@@ -2290,6 +2504,7 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
           title: standard.name || standard.standardRef || 'KSB standard',
           subtitle: `${standard.code || standard.standardRef || 'Standard'} - ${standard.level || standard.levelValue || programme.level || 'Level not set'}`,
           detail: standardCountsLabel(standard),
+          ksbCount: (standard.knowledge || 0) + (standard.skills || 0) + (standard.behaviours || 0),
         };
       }
     }
@@ -2301,6 +2516,7 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
     title: 'Choose a KSB profile or KSB standard',
     subtitle: 'Coverage will not be measured against a selected source yet',
     detail: 'Not applied',
+    ksbCount: 0,
   };
 }
 
@@ -2468,7 +2684,7 @@ function moduleOptions(items: CurriculumModule[] = []): SelectOption[] {
     const name = String(item.name || '').trim();
     const key = normalise(name);
     if (!key || options.has(key)) return;
-    const meta = [item.programme, item.cohort, item.weeks ? `${item.weeks} sessions` : ''].filter(Boolean).join(' - ');
+    const meta = [item.programme, item.cohort, item.weeks ? `${item.weeks} weeks` : ''].filter(Boolean).join(' - ');
     options.set(key, { value: name, label: name, meta, color: item.color });
   });
   return Array.from(options.values()).sort((left, right) => left.label.localeCompare(right.label));
@@ -2482,14 +2698,6 @@ function selectedWeekDays(value: string) {
 function matchesProgramme(programme: CurriculumProgramme, value: unknown) {
   const key = normalise(value);
   return [programme.id, programme.sourceId, programme.name, programme.standard].some(candidate => normalise(candidate) === key);
-}
-
-function cleanEditorNotes(value: unknown) {
-  return String(value || '')
-    .split(/\r?\n/)
-    .filter(line => !line.trim().startsWith('__'))
-    .join('\n')
-    .trim();
 }
 
 function ProgrammeStructureEditor({
@@ -2683,7 +2891,7 @@ function ProgrammeEditorForm({ programme, onSaved }: { programme: CurriculumProg
   const [form, setForm] = useState<ProgrammeFormState>({
     name: programme.name,
     standard: programme.standard,
-    level: programme.level || '',
+    level: (programme.level || '').replace(/\D/g, ''),
     color: programme.color || '#6941c6',
     description: programme.description || '',
   });
@@ -2693,7 +2901,10 @@ function ProgrammeEditorForm({ programme, onSaved }: { programme: CurriculumProg
     event.preventDefault();
     setSaving(true);
     try {
-      await updateCurriculumProgramme(programme.sourceId || programme.id, form);
+      await updateCurriculumProgramme(programme.sourceId || programme.id, {
+        ...form,
+        level: form.level.trim() ? `LVL-${form.level.trim()}` : '',
+      });
       await onSaved();
     } finally {
       setSaving(false);
@@ -2705,7 +2916,14 @@ function ProgrammeEditorForm({ programme, onSaved }: { programme: CurriculumProg
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Field label="Programme name" value={form.name} onChange={value => setForm(prev => ({ ...prev, name: value }))} required />
         <Field label="Standard" value={form.standard} onChange={value => setForm(prev => ({ ...prev, standard: value }))} />
-        <Field label="Level" value={form.level} onChange={value => setForm(prev => ({ ...prev, level: value }))} placeholder="Example: L4" />
+        <Field
+          label="Level"
+          value={form.level}
+          onChange={value => setForm(prev => ({ ...prev, level: value.replace(/\D/g, '') }))}
+          placeholder="e.g. 4"
+          inputMode="numeric"
+          hint={form.level ? `Will be saved as LVL-${form.level}` : 'Numbers only, e.g. 4'}
+        />
         <div>
           <ColorField label="Colour" value={form.color} onChange={value => setForm(prev => ({ ...prev, color: value }))} />
         </div>
@@ -2873,7 +3091,7 @@ function ModuleEditorRow({
     name: module.name,
     weeks: String(module.weeks || 1),
     color: module.color || '#6941c6',
-    notes: cleanEditorNotes(module.notes),
+    notes: visibleNotes(module.notes),
     startDate: firstSession?.date || '',
     endDate: lastSession?.date || '',
     tutor: firstSession?.tutor || module.tutor || '',
@@ -2891,7 +3109,7 @@ function ModuleEditorRow({
       ...prev,
       name: value,
       color: selected?.color || prev.color,
-      weeks: selected?.meta?.match(/(\d+)\s+sessions/)?.[1] || prev.weeks,
+      weeks: selected?.meta?.match(/(\d+)\s+weeks/)?.[1] || prev.weeks,
     }));
   };
 
@@ -2902,7 +3120,7 @@ function ModuleEditorRow({
       await updateCurriculumModule(module.id, {
         ...form,
         weeks: Number(form.weeks) || 1,
-        notes: cleanEditorNotes(form.notes),
+        notes: visibleNotes(form.notes),
       });
       await onSaved();
     } catch (error) {
@@ -2929,7 +3147,7 @@ function ModuleEditorRow({
           icon="ri-book-open-line"
           title={form.name || module.name}
           meta={[
-            `${form.weeks || 0} sessions`,
+            `${form.weeks || 0} weeks`,
             form.startDate || 'No start',
             form.endDate || 'No end',
             form.tutor ? `Tutor: ${findSelectOption(tutors, form.tutor)?.label || form.tutor}` : 'No tutor',
@@ -2939,7 +3157,7 @@ function ModuleEditorRow({
         />
         <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-4 md:items-start">
           <div className="md:col-span-2"><ChoiceSelect label="Module" value={form.name} onChange={selectModule} options={availableModules} placeholder="Select module..." required /></div>
-          <Field label="Sessions / weeks" type="number" value={form.weeks} onChange={value => setForm(prev => ({ ...prev, weeks: value }))} />
+          <Field label="Weeks" type="number" value={form.weeks} onChange={value => setForm(prev => ({ ...prev, weeks: value }))} />
           <ColorField label="Colour" value={form.color} onChange={value => setForm(prev => ({ ...prev, color: value }))} compact />
           <ChoiceSelect label="Tutor" value={form.tutor} onChange={value => setForm(prev => ({ ...prev, tutor: value }))} options={tutors} placeholder="Select tutor..." onOpen={onRefreshStaffProfiles} />
           <ChoiceSelect label="Coach" value={form.coach} onChange={value => setForm(prev => ({ ...prev, coach: value }))} options={coaches} placeholder="Select coach..." onOpen={onRefreshStaffProfiles} />

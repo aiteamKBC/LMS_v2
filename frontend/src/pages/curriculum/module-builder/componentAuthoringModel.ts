@@ -197,6 +197,11 @@ const definitions: ComponentAuthoringDefinition[] = [
       requirement: 'Required',
       readingSource: 'Written in LMS',
       resourceUrl: '',
+      uploadedFileName: '',
+      uploadedFileUrl: '',
+      uploadedFileSize: 0,
+      uploadedFileContentType: '',
+      uploadSource: '',
       shortDescription: '',
       readingContent: '',
       mainLearningOutcomes: '',
@@ -568,7 +573,7 @@ export function validateComponentAuthoring(component: ComponentValidationTarget,
 
   if (component.type === 'reading') {
     const url = String(settings.resourceUrl || '').trim();
-    if (url && !isHttpUrl(url)) issues.push({ path: `${pathPrefix}.settings.resourceUrl`, message: 'Enter a valid reading URL.' });
+    if (url && !isResourceUrl(url)) issues.push({ path: `${pathPrefix}.settings.resourceUrl`, message: 'Enter a valid reading URL.' });
     const audioUrl = String(settings.audioUrl || '').trim();
     if (audioUrl && !isHttpUrl(audioUrl)) issues.push({ path: `${pathPrefix}.settings.audioUrl`, message: 'Enter a valid audio URL.' });
   }

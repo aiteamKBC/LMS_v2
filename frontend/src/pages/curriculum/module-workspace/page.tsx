@@ -1,28 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { TutorClashNotice } from '@/components/feature/TutorClashNotice';
-import { useTutorAvailability } from '@/hooks/useTutorAvailability';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
 import {
-  archiveCurriculumModule,
   fetchCurriculumModuleKsbCoverage,
-  fetchCurriculumSessions,
   previewModuleSessionPlan,
-  updateCurriculumModule,
   type CurriculumKsbCoverageResponse,
-  type CurriculumSession,
   type CurriculumSessionPlanPreview,
-  tutorConflictMessage,
 } from '@/lib/curriculumApi';
 import {
+  formatCalendarDateTime,
   loadModuleStructure,
   loadTeamsMeetingArtifacts,
-  restoreModuleTeamsMeeting,
-  syncTeamsMeetingArtifacts,
   teamsMeetingArtifactPreviewUrl,
+  zonedNaiveToUtcIso,
+  type KsbMapping,
   type ModuleCatalogueItem,
   type TeamsMeetingArtifactsResult,
 } from '../module-builder/moduleAuthoringData';
@@ -35,25 +28,20 @@ import {
   normaliseKey,
   programmeIdentity,
   resolveModuleContext,
+  visibleNotes,
 } from '../shared/entities/model';
+import { ModuleFormDrawer } from '../shared/entities/moduleForm';
+import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
+import { buildHolidayShiftPlan, CompactSchedulePreview } from '../shared/entities/sessionShiftPreview';
 import {
   DetailRow,
-  EntityDrawer,
   EntityEmptyState,
-  EntityTable,
-  FormField,
   InlineError,
-  PlainCell,
-  SelectControl,
-  StackedCell,
   StatusBadge,
-  TextControl,
-  WeekdayControl,
   WorkspaceHeader,
   WorkspacePanel,
   WorkspaceTabs,
 } from '../shared/entities/ui';
-import { useDrawerState } from '../shared/entities/useDrawerState';
 import { AppIcon } from '@/components/feature/AppIcon';
 
 // ============================================================================
@@ -64,28 +52,14 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // attendance sync. Here each of those is a tab of a full page instead.
 //
 // None of that logic is reimplemented. The schedule preview is the backend's own
-// session-plan calculation, the Teams panel drives the existing live-session
-// endpoints through `moduleAuthoringData`, component authoring stays in the
-// Module Builder, and every save goes through the canonical module endpoint —
-// which is what keeps the tutor-assignment notification firing.
+// session-plan calculation, the Teams panel reads the live-session endpoints
+// through `moduleAuthoringData` and nothing more — the Teams Meetings page owns
+// every calendar action — component authoring stays in the Module Builder, and
+// every save goes through the canonical module endpoint, which is what keeps the
+// tutor-assignment notification firing.
 // ============================================================================
 
-type Tab = 'overview' | 'schedule' | 'components' | 'ksbs' | 'teams' | 'sessions';
-
-const SESSION_GRID = 'grid grid-cols-[70px_120px_120px_minmax(160px,1fr)]';
-
-interface DetailsForm {
-  name: string;
-  status: string;
-  tutor: string;
-  notes: string;
-}
-
-interface ScheduleForm {
-  startDate: string;
-  sessionsNumber: string;
-  weekDays: string;
-}
+type Tab = 'overview' | 'schedule' | 'components' | 'ksbs' | 'achievement' | 'teams';
 
 function moduleBuilderUrl(catalogueId: string, programmeId: string) {
   const params = new URLSearchParams();
@@ -93,6 +67,28 @@ function moduleBuilderUrl(catalogueId: string, programmeId: string) {
   if (programmeId) params.set('programme', programmeId);
   const query = params.toString();
   return `/curriculum/module-builder${query ? `?${query}` : ''}`;
+}
+
+const DEFAULT_START_TIME = '09:00';
+const DEFAULT_DURATION_MINUTES = 60;
+
+/** `HH:mm`, with anything the group stored past the minute dropped. */
+function clockTime(value: unknown, fallback = ''): string {
+  const text = cleanText(value).slice(0, 5);
+  return /^\d{2}:\d{2}$/.test(text) ? text : fallback;
+}
+
+/** The minute a UTC instant falls on, for comparing two dates for equality. */
+function minuteKey(value: unknown): string {
+  const instant = new Date(String(value ?? ''));
+  return Number.isNaN(instant.getTime()) ? '' : instant.toISOString().slice(0, 16);
+}
+
+function minutesBetween(startTime: string, endTime: string): number {
+  const [startHour, startMinute] = clockTime(startTime).split(':').map(Number);
+  const [endHour, endMinute] = clockTime(endTime).split(':').map(Number);
+  if ([startHour, startMinute, endHour, endMinute].some(value => !Number.isFinite(value))) return 0;
+  return (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
 }
 
 // Graph calls these `transcript` and `recording`; the panel spells out what the
@@ -105,7 +101,6 @@ function teamsArtifactLabel(artifactType: string) {
 
 export default function ModuleWorkspacePage() {
   const { id = '' } = useParams();
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const {
     programmes, cohorts, groups, modules, tutors, holidays, teamsMeetings,
@@ -118,40 +113,9 @@ export default function ModuleWorkspacePage() {
   const [structureError, setStructureError] = useState<string | null>(null);
   const [structureLoading, setStructureLoading] = useState(true);
 
-  const detailsDrawer = useDrawerState<DetailsForm>({ name: '', status: 'draft', tutor: '', notes: '' });
-  // Answered while the drawer is open, so a tutor who cannot take this module's
-  // slot is marked in the picker rather than discovered from a refused save.
-  const tutorAvailability = useTutorAvailability(
-    detailsDrawer.open && catalogueId ? { moduleCatalogueId: catalogueId } : null,
-  );
-  const tutorVerdict = tutorAvailability.verdictFor(detailsDrawer.form.tutor);
-
-  const [schedule, setSchedule] = useState<ScheduleForm>({ startDate: '', sessionsNumber: '1', weekDays: '' });
-  const [plan, setPlan] = useState<CurriculumSessionPlanPreview | null>(null);
-  const [planLoading, setPlanLoading] = useState(false);
-  const [scheduleSaving, setScheduleSaving] = useState(false);
-  const [scheduleError, setScheduleError] = useState<string | null>(null);
-  const [scheduleDirty, setScheduleDirty] = useState(false);
-
-  const [coverage, setCoverage] = useState<CurriculumKsbCoverageResponse | null>(null);
-  const [coverageLoading, setCoverageLoading] = useState(false);
-
-  const [teams, setTeams] = useState<TeamsMeetingArtifactsResult | null>(null);
-  const [teamsLoading, setTeamsLoading] = useState(false);
-  const [teamsBusy, setTeamsBusy] = useState('');
-  const [teamsError, setTeamsError] = useState<string | null>(null);
-
-  const [sessions, setSessions] = useState<CurriculumSession[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
-
-  // Which module each tab has already fetched for. These are refs and not state
-  // on purpose: an effect that both sets and watches its own `loading` flag
-  // re-runs the moment it sets it, tears down the request it just started and
-  // starts another -- a render loop that made the page visibly shake.
-  const coverageRequestedRef = useRef('');
-  const teamsRequestedRef = useRef('');
-  const sessionsRequestedRef = useRef('');
-
+  // Editing a module is the shared module form's job, here as everywhere else:
+  // this page opens it, it does not hold a second copy of those fields.
+  const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
   const module = useMemo(() => findModule(modules, id), [id, modules]);
   const catalogueId = useMemo(
     () => (module ? moduleIdentity(module) : cleanText(id)),
@@ -162,6 +126,30 @@ export default function ModuleWorkspacePage() {
     [cohorts, groups, module, programmes],
   );
   const cohort = context?.cohort;
+
+  // The three values the session dates are generated from. They are read from
+  // the saved module (and its group's timetable) rather than typed here: the
+  // module form is the one place they are edited.
+  const scheduleStartDate = cleanText(module?.startDate) || cleanText(structure?.startDate);
+  const scheduleSessions = Number(module?.sessionsNumber || structure?.sessionsNumber || 1) || 1;
+  const scheduleWeekDays = cleanText(context?.group?.weekDays);
+
+  const [plan, setPlan] = useState<CurriculumSessionPlanPreview | null>(null);
+  const [planLoading, setPlanLoading] = useState(false);
+
+  const [coverage, setCoverage] = useState<CurriculumKsbCoverageResponse | null>(null);
+  const [coverageLoading, setCoverageLoading] = useState(false);
+
+  const [teams, setTeams] = useState<TeamsMeetingArtifactsResult | null>(null);
+  const [teamsLoading, setTeamsLoading] = useState(false);
+  const [teamsError, setTeamsError] = useState<string | null>(null);
+
+  // Which module each tab has already fetched for. These are refs and not state
+  // on purpose: an effect that both sets and watches its own `loading` flag
+  // re-runs the moment it sets it, tears down the request it just started and
+  // starts another -- a render loop that made the page visibly shake.
+  const coverageRequestedRef = useRef('');
+  const teamsRequestedRef = useRef('');
 
   const teamsSummary = useMemo(
     () => teamsMeetings.find(summary => normaliseKey(summary.moduleCatalogueId) === normaliseKey(catalogueId)),
@@ -206,16 +194,6 @@ export default function ModuleWorkspacePage() {
 
   useEffect(() => { void loadStructure(); }, [loadStructure]);
 
-  // Seed the schedule editor once, from whichever source has the values.
-  useEffect(() => {
-    if (scheduleDirty || !module) return;
-    setSchedule({
-      startDate: cleanText(module.startDate) || cleanText(structure?.startDate),
-      sessionsNumber: String(module.sessionsNumber || structure?.sessionsNumber || 1),
-      weekDays: cleanText(context?.group?.weekDays),
-    });
-  }, [context?.group?.weekDays, module, scheduleDirty, structure]);
-
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
     if (tab === 'overview') next.delete('tab'); else next.set('tab', tab);
@@ -224,16 +202,18 @@ export default function ModuleWorkspacePage() {
 
   // ------------------------------------------------------- session preview
 
+  // The Teams tab needs the plan as much as the Schedule tab does: the generated
+  // dates are exactly what its Create Teams calendar button sends.
   useEffect(() => {
-    if (tab !== 'schedule' && tab !== 'sessions') return undefined;
-    if (!schedule.startDate) { setPlan(null); return undefined; }
+    if (tab !== 'schedule' && tab !== 'teams') return undefined;
+    if (!scheduleStartDate) { setPlan(null); return undefined; }
     let active = true;
     setPlanLoading(true);
     const timer = setTimeout(() => {
       previewModuleSessionPlan({
-        startDate: schedule.startDate,
-        numberOfSessions: Number(schedule.sessionsNumber) || 1,
-        weekDays: schedule.weekDays,
+        startDate: scheduleStartDate,
+        numberOfSessions: scheduleSessions,
+        weekDays: scheduleWeekDays,
         holidays: cohortHolidays,
       })
         .then(result => { if (active) setPlan(result); })
@@ -241,7 +221,7 @@ export default function ModuleWorkspacePage() {
         .finally(() => { if (active) setPlanLoading(false); });
     }, 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [cohortHolidays, schedule.sessionsNumber, schedule.startDate, schedule.weekDays, tab]);
+  }, [cohortHolidays, scheduleSessions, scheduleStartDate, scheduleWeekDays, tab]);
 
   // ------------------------------------------------------------- KSBs tab
 
@@ -273,141 +253,99 @@ export default function ModuleWorkspacePage() {
     }
   }, []);
 
+  // The Schedule tab needs the occurrences too: they are the dates Teams is
+  // holding today, shown next to the dates this module generates.
   useEffect(() => {
     const liveSessionId = teamsSummary?.liveSessionId || '';
-    if (tab !== 'teams' || !liveSessionId || teamsRequestedRef.current === liveSessionId) return;
+    if ((tab !== 'teams' && tab !== 'schedule') || !liveSessionId || teamsRequestedRef.current === liveSessionId) return;
     teamsRequestedRef.current = liveSessionId;
     void loadTeams(liveSessionId);
   }, [loadTeams, tab, teamsSummary]);
 
-  // --------------------------------------------------------- Sessions tab
+  // -------------------------------------------- the schedule Teams reads
 
-  useEffect(() => {
-    if (tab !== 'sessions' || !catalogueId || sessionsRequestedRef.current === catalogueId) return;
-    sessionsRequestedRef.current = catalogueId;
-    setSessionsLoading(true);
-    fetchCurriculumSessions()
-      .then(result => setSessions(result))
-      .catch(() => { sessionsRequestedRef.current = ''; setSessions([]); })
-      .finally(() => setSessionsLoading(false));
-  }, [catalogueId, tab]);
+  // The group owns the clock: its delivery window is the time every generated
+  // session runs at, and the length of the Teams meeting put on that date.
+  const sessionStartTime = clockTime(context?.group?.startTime, DEFAULT_START_TIME);
+  const sessionDurationMinutes = Math.max(
+    15,
+    minutesBetween(context?.group?.startTime as string, context?.group?.endTime as string)
+      || teamsSummary?.durationMinutes
+      || DEFAULT_DURATION_MINUTES,
+  );
 
-  const moduleSessions = useMemo(() => {
-    if (!catalogueId) return [];
-    return sessions
-      .filter(session => normaliseKey(session.moduleCatalogueId) === normaliseKey(catalogueId)
-        || normaliseKey(session.moduleId) === normaliseKey(catalogueId))
-      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  }, [catalogueId, sessions]);
+  /** The generated dates as the UTC instants a Teams calendar would hold them at. */
+  const plannedOccurrences = useMemo(
+    () => (plan?.sessions || []).map((session, index) => ({
+      sessionNumber: session.sessionNumber || index + 1,
+      startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${sessionStartTime}`),
+      durationMinutes: sessionDurationMinutes,
+    })),
+    [plan, sessionDurationMinutes, sessionStartTime],
+  );
 
-  // ------------------------------------------------------------------ save
+  /** What Teams holds today, session number first and position as the fallback. */
+  const teamsOccurrenceFor = useCallback((sessionNumber: number, index: number) => {
+    const occurrences = teams?.occurrences || [];
+    return occurrences.find(occurrence => Number(occurrence.session_number) === sessionNumber) || occurrences[index];
+  }, [teams]);
 
-  const saveDetails = async () => {
-    const form = detailsDrawer.form;
-    if (!form.name.trim()) { detailsDrawer.setError('Give the module a name.'); return; }
-    detailsDrawer.setSaving(true);
-    detailsDrawer.setError(null);
-    try {
-      await updateCurriculumModule(catalogueId, {
-        name: form.name.trim(),
-        status: form.status,
-        tutor: form.tutor,
-        notes: form.notes,
-      });
-      detailsDrawer.close();
-      await Promise.all([reload({ silent: true }), loadStructure()]);
-      await showCurriculumAlert({ title: 'Module updated', text: `${form.name.trim()} is saved.`, timer: 1800 });
-    } catch (err) {
-      // The tutor field on this drawer can collide with the tutor's existing
-      // diary, which the backend reports as a sentence worth showing verbatim.
-      detailsDrawer.setError(
-        tutorConflictMessage(err) || (err instanceof Error ? err.message : 'The module could not be saved.'),
-      );
-    } finally {
-      detailsDrawer.setSaving(false);
-    }
-  };
+  // A preview session carries the ISO dates it stepped over, not their names.
+  const holidayLabelFor = useCallback((date: string) => {
+    const match = cohortHolidays.find(holiday => (
+      String(holiday.startDate) <= date && date <= String(holiday.endDate || holiday.startDate)
+    ));
+    return cleanText(match?.label);
+  }, [cohortHolidays]);
 
-  const saveSchedule = async () => {
-    setScheduleSaving(true);
-    setScheduleError(null);
-    try {
-      await updateCurriculumModule(catalogueId, {
-        startDate: schedule.startDate,
-        // The end date is the backend's own holiday-adjusted final session date,
-        // not a date this page worked out for itself.
-        endDate: plan?.finalEndDate || undefined,
-        sessionsNumber: Number(schedule.sessionsNumber) || 1,
-        weekDays: schedule.weekDays,
-      });
-      setScheduleDirty(false);
-      // Saving a schedule regenerates the stored sessions, so drop what is on
-      // screen and let the Sessions tab ask for the new dates.
-      sessionsRequestedRef.current = '';
-      setSessions([]);
-      await Promise.all([reload({ silent: true }), loadStructure()]);
-      await showCurriculumAlert({
-        title: 'Schedule saved',
-        text: plan?.finalEndDate
-          ? `Sessions run to ${formatDateLabel(plan.finalEndDate)}.`
-          : 'The module schedule is saved.',
-        timer: 1800,
-      });
-    } catch (err) {
-      setScheduleError(err instanceof Error ? err.message : 'The schedule could not be saved.');
-    } finally {
-      setScheduleSaving(false);
-    }
-  };
+  const teamsDatesMatch = useMemo(() => {
+    if (!teamsSummary || !plannedOccurrences.length) return false;
+    const held = teams?.occurrences || [];
+    if (held.length !== plannedOccurrences.length) return false;
+    return plannedOccurrences.every((occurrence, index) => (
+      minuteKey(occurrence.startDateTimeUtc) === minuteKey(held[index]?.scheduled_start)
+    ));
+  }, [plannedOccurrences, teams, teamsSummary]);
 
-  const syncTeams = async () => {
-    if (!teamsSummary?.liveSessionId) return;
-    setTeamsBusy('sync');
-    setTeamsError(null);
-    try {
-      const result = await syncTeamsMeetingArtifacts(teamsSummary.liveSessionId);
-      await loadTeams(teamsSummary.liveSessionId);
-      await showCurriculumAlert({
-        title: result.partial ? 'Some Teams data could not be fetched' : 'Attendance and recordings updated',
-        text: `Saved ${result.synced.attendanceRecords} attendance records, ${result.synced.transcripts} transcripts and ${result.synced.recordings} recordings.`,
-        icon: result.partial ? 'warning' : 'success',
-      });
-    } catch (err) {
-      setTeamsError(err instanceof Error ? err.message : 'The Teams sync failed.');
-    } finally {
-      setTeamsBusy('');
-    }
-  };
-
-  const restoreTeams = async () => {
-    setTeamsBusy('restore');
-    setTeamsError(null);
-    try {
-      const result = await restoreModuleTeamsMeeting(catalogueId);
-      await Promise.all([reload({ silent: true }), loadStructure()]);
-      await showCurriculumAlert({
-        title: 'Meeting re-attached',
-        text: `${result.updatedComponents} live-session component${result.updatedComponents === 1 ? '' : 's'} now use this meeting's join link.`,
-      });
-    } catch (err) {
-      setTeamsError(err instanceof Error ? err.message : 'The Teams meeting could not be restored.');
-    } finally {
-      setTeamsBusy('');
-    }
-  };
-
-  const archive = async () => {
-    await showCurriculumConfirm({
-      title: 'Archive module?',
-      text: `${cleanText(module?.name, 'This module')} will be removed from the active curriculum. Its authored content is kept.`,
-      icon: 'warning',
-      confirmButtonText: 'Archive module',
-      onConfirm: async () => {
-        await archiveCurriculumModule(catalogueId);
-        navigate('/curriculum/module-builder');
-      },
-    });
-  };
+  // The same month-grouped "shifted to replacement" / "replacement delivered"
+  // timeline the Teams Meetings page uses, so a holiday-moved date reads the
+  // same way in both places.
+  const scheduleShiftPlan = useMemo(
+    () => buildHolidayShiftPlan(plan?.sessions || [], holidayLabelFor),
+    [plan, holidayLabelFor],
+  );
+  const scheduleOccurrences = useMemo(() => (plan?.sessions || []).map((session, index) => {
+    const sessionNumber = session.sessionNumber || index + 1;
+    const occurrence = teamsOccurrenceFor(sessionNumber, index);
+    return {
+      session,
+      plannedUtc: plannedOccurrences[index]?.startDateTimeUtc || '',
+      durationMinutes: sessionDurationMinutes,
+      shift: scheduleShiftPlan.shifts[index],
+      extra: teamsSummary ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {occurrence ? (
+            <span>
+              {formatCalendarDateTime(occurrence.scheduled_start)} · {cleanText(occurrence.status, 'scheduled')} · {occurrence.participant_count || occurrence.attendance?.length || 0} attended
+            </span>
+          ) : (
+            <span className="text-amber-700">{teamsLoading ? 'Loading…' : 'Not on the Teams calendar'}</span>
+          )}
+          {teamsSummary.joinUrl && (
+            <a
+              href={teamsSummary.joinUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex h-6 items-center gap-1 rounded-lg bg-primary-600 px-2 text-[10px] font-bold text-white transition-smooth hover:bg-primary-700"
+            >
+              <AppIcon className="ri-microsoft-teams-line text-xs"></AppIcon>
+              Open
+            </a>
+          )}
+        </div>
+      ) : undefined,
+    };
+  }), [plan, plannedOccurrences, scheduleShiftPlan, sessionDurationMinutes, teamsLoading, teamsOccurrenceFor, teamsSummary]);
 
   if (!loading && loaded && !module) {
     return (
@@ -434,15 +372,16 @@ export default function ModuleWorkspacePage() {
   const weekStructure = structure?.weekStructure || [];
   const componentCount = weekStructure.reduce((sum, week) => sum + (week.components?.length || 0), 0);
   const totalOtjh = structure?.totalOtjh ?? 0;
-  const moduleKsbs = structure?.moduleKsbMappings || [];
+  const allKsbMappings = structure ? allStructureKsbMappings(structure) : [];
+  const ksbMappingCount = allKsbMappings.length || structure?.ksbCount || module?.ksbCount || 0;
 
   const tabs = [
     { key: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
     { key: 'schedule', label: 'Schedule', icon: 'ri-calendar-line' },
     { key: 'components', label: 'Components', icon: 'ri-layout-4-line', count: componentCount },
-    { key: 'ksbs', label: 'KSBs', icon: 'ri-node-tree', count: moduleKsbs.length || module?.ksbCount },
+    { key: 'ksbs', label: 'KSBs', icon: 'ri-node-tree', count: ksbMappingCount },
+    { key: 'achievement', label: 'Achievement', icon: 'ri-medal-line' },
     { key: 'teams', label: 'Teams meeting', icon: 'ri-vidicon-line', count: teamsSummary?.occurrenceCount },
-    { key: 'sessions', label: 'Sessions', icon: 'ri-time-line', count: moduleSessions.length || module?.sessionsNumber },
   ];
 
   return (
@@ -470,6 +409,7 @@ export default function ModuleWorkspacePage() {
           title={module?.name || 'Loading…'}
           subtitle={context ? `${context.programmeName} / ${context.cohortName} / ${context.groupName}` : ''}
           accentColor={module?.color}
+          dense
           stats={[
             { icon: 'ri-presentation-line', label: 'Tutor', value: cleanText(module?.tutor, 'Unassigned') },
             { icon: 'ri-broadcast-line', label: 'Sessions', value: module?.sessionsNumber || 0 },
@@ -479,38 +419,14 @@ export default function ModuleWorkspacePage() {
             { icon: 'ri-layout-4-line', label: 'Components', value: componentCount },
           ]}
           actions={(
-            <>
-              <button
-                type="button"
-                onClick={() => detailsDrawer.openWith({
-                  name: cleanText(module?.name),
-                  status: cleanText(module?.status) || 'draft',
-                  tutor: normaliseKey(module?.tutor) === 'unassigned' ? '' : cleanText(module?.tutor),
-                  notes: cleanText(module?.notes),
-                })}
-                disabled={!module}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:opacity-50"
-              >
-                <AppIcon className="ri-edit-line text-sm"></AppIcon>
-                Edit module
-              </button>
-              <Link
-                to={moduleBuilderUrl(catalogueId, context?.programmeId || '')}
-                className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
-              >
-                <AppIcon className="ri-layout-4-line text-sm"></AppIcon>
-                Open in Module Builder
-              </Link>
-              <button
-                type="button"
-                onClick={() => void archive()}
-                disabled={!module}
-                className="inline-flex h-10 items-center gap-2 rounded-xl border border-red-100 bg-red-50 px-4 text-[12px] font-bold text-red-600 transition-smooth hover:bg-red-100 disabled:opacity-50"
-              >
-                <AppIcon className="ri-archive-line text-sm"></AppIcon>
-                Archive
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => setModuleDrawerOpen(true)}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+            >
+              <AppIcon className="ri-edit-line text-sm"></AppIcon>
+              Edit module
+            </button>
           )}
         />
 
@@ -525,12 +441,12 @@ export default function ModuleWorkspacePage() {
           <div className="grid gap-5 xl:grid-cols-2">
             <WorkspacePanel title="Delivery context" description="Derived through this module's group — the only parent it has.">
               <DetailRow
-                label="Group"
-                value={context?.groupId ? (
-                  <Link to={`/curriculum/groups/${encodeURIComponent(context.groupId)}`} className="text-primary-700 hover:underline">
-                    {context.groupName}
+                label="Programme"
+                value={context?.programme ? (
+                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}`} className="text-primary-700 hover:underline">
+                    {context.programmeName}
                   </Link>
-                ) : cleanText(context?.groupName, '—')}
+                ) : cleanText(context?.programmeName, '—')}
               />
               <DetailRow
                 label="Cohort"
@@ -541,16 +457,15 @@ export default function ModuleWorkspacePage() {
                 ) : cleanText(context?.cohortName, '—')}
               />
               <DetailRow
-                label="Programme"
-                value={context?.programme ? (
-                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}`} className="text-primary-700 hover:underline">
-                    {context.programmeName}
+                label="Group"
+                value={context?.groupId ? (
+                  <Link to={`/curriculum/groups/${encodeURIComponent(context.groupId)}`} className="text-primary-700 hover:underline">
+                    {context.groupName}
                   </Link>
-                ) : cleanText(context?.programmeName, '—')}
+                ) : cleanText(context?.groupName, '—')}
               />
-              <DetailRow label="Tutor" value={cleanText(module?.tutor, 'Unassigned')} />
               <DetailRow label="Coach" value={cleanText(module?.coach) || cleanText(context?.group?.coach, 'Unassigned')} />
-              <DetailRow label="Status" value={<StatusBadge status={module?.status} />} />
+              <DetailRow label="Tutor" value={cleanText(module?.tutor, 'Unassigned')} />
             </WorkspacePanel>
 
             <WorkspacePanel title="Content" description="Authored in the Module Builder; summarised here.">
@@ -558,95 +473,113 @@ export default function ModuleWorkspacePage() {
               <DetailRow label="Weeks" value={weekStructure.length || module?.weeks || 0} />
               <DetailRow label="Components" value={componentCount} />
               <DetailRow label="Expected OTJH" value={`${totalOtjh}h`} />
-              <DetailRow label="KSB mappings" value={moduleKsbs.length || module?.ksbCount || 0} />
+              <DetailRow label="KSB mappings" value={ksbMappingCount} />
               <DetailRow label="Quality score" value={structure ? `${structure.qualityScore}%` : '—'} />
-              {module?.notes && <DetailRow label="Notes" value={module.notes} />}
+              {visibleNotes(module?.notes) && <DetailRow label="Notes" value={visibleNotes(module?.notes)} />}
             </WorkspacePanel>
           </div>
         )}
 
         {/* ------------------------------------------------------- Schedule */}
         {tab === 'schedule' && (
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
-            <WorkspacePanel title="Delivery plan" description="Sessions are generated from these three values.">
-              {scheduleError && <div className="mb-3"><InlineError message={scheduleError} /></div>}
-              <div className="space-y-4">
-                <FormField
-                  label="Start date"
-                  required
-                  hint={cohort?.startDate ? `Cohort starts ${formatDateLabel(cohort.startDate)}` : undefined}
-                >
-                  <TextControl
-                    type="date"
-                    value={schedule.startDate}
-                    onChange={value => { setScheduleDirty(true); setSchedule(prev => ({ ...prev, startDate: value })); }}
-                  />
-                </FormField>
-                <FormField label="Number of sessions" required>
-                  <TextControl
-                    type="number"
-                    min={1}
-                    max={52}
-                    value={schedule.sessionsNumber}
-                    onChange={value => { setScheduleDirty(true); setSchedule(prev => ({ ...prev, sessionsNumber: value })); }}
-                  />
-                </FormField>
-                <FormField label="Delivery days" hint="Defaults to the group's timetable.">
-                  <WeekdayControl
-                    value={schedule.weekDays}
-                    onChange={value => { setScheduleDirty(true); setSchedule(prev => ({ ...prev, weekDays: value })); }}
-                  />
-                </FormField>
-                <button
-                  type="button"
-                  onClick={() => void saveSchedule()}
-                  disabled={scheduleSaving || !schedule.startDate}
-                  className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {scheduleSaving && <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>}
-                  Save schedule
-                </button>
-              </div>
-            </WorkspacePanel>
-
+          <div className="space-y-5">
             <WorkspacePanel
               title="Generated session dates"
-              description="Calculated by the backend, with this cohort's holidays skipped."
+              description={`Generated from the module's saved plan — ${scheduleSessions} session${scheduleSessions === 1 ? '' : 's'} from ${scheduleStartDate ? formatDateLabel(scheduleStartDate) : 'a start date that is not set yet'}${scheduleWeekDays ? ` on ${scheduleWeekDays}` : ''} — with this cohort's holidays skipped. Change any of it with Edit module.`}
             >
               {planLoading && <p className="text-[12px] text-foreground-400">Recalculating…</p>}
               {!planLoading && !plan && (
-                <p className="text-[12px] text-foreground-500">Set a start date and delivery days to preview the session dates.</p>
+                <p className="text-[12px] text-foreground-500">
+                  This module has no start date or delivery day yet, so there are no session dates to generate. Set them with Edit module.
+                </p>
               )}
               {plan && (
                 <>
-                  <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                  <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                     <MiniStat label="Sessions" value={plan.sessions.length} />
                     <MiniStat label="Final session" value={formatDateLabel(plan.finalEndDate)} />
                     <MiniStat label="Holidays skipped" value={plan.skippedHolidays.length} />
+                    <MiniStat
+                      label="Teams calendar"
+                      value={teamsSummary ? `${teams?.occurrences?.length ?? teamsSummary.occurrenceCount} meetings` : 'Not created'}
+                    />
                   </div>
                   {plan.warnings?.map(warning => (
                     <p key={warning} className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] font-semibold text-amber-800">
                       {warning}
                     </p>
                   ))}
-                  <ol className="space-y-1.5">
-                    {plan.sessions.map(session => (
-                      <li key={session.sessionNumber} className="flex items-center gap-3 rounded-lg border border-background-200 px-3 py-2">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-background-100 text-[11px] font-bold text-foreground-600">
-                          {session.sessionNumber}
+
+                  {/* What the Teams calendar holds against these dates. Every
+                      Teams action lives on the Teams Meetings page, so this
+                      strip only says whether the calendar is in step, and
+                      points there. */}
+                  <div className="mb-4 rounded-xl border border-primary-100 bg-primary-50/60 p-3">
+                    <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="flex min-w-0 items-start gap-2.5">
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary-600 text-white">
+                          <AppIcon className="ri-microsoft-teams-line text-base"></AppIcon>
                         </span>
-                        <span className="min-w-0 flex-1 text-[13px] font-semibold text-foreground-900">
-                          {formatDateLabel(session.date)}
-                          <span className="ml-2 text-[11px] font-medium text-foreground-400">{session.day}</span>
-                        </span>
-                        {session.skippedHolidays?.length ? (
-                          <span className="shrink-0 text-[11px] font-semibold text-amber-700" title={session.skippedHolidays.join(', ')}>
-                            moved past {session.skippedHolidays.length} holiday{session.skippedHolidays.length === 1 ? '' : 's'}
-                          </span>
-                        ) : null}
-                      </li>
-                    ))}
-                  </ol>
+                        <div className="min-w-0">
+                          <p className="text-[12px] font-bold text-foreground-900">Microsoft Teams live sessions</p>
+                          {teamsSummary ? (
+                            <>
+                              <p className="mt-0.5 truncate text-[11px] font-semibold text-foreground-500">
+                                {cleanText(teamsSummary.organizerEmail, 'No organizer')} · {teamsSummary.occurrenceCount} meeting{teamsSummary.occurrenceCount === 1 ? '' : 's'} tracked
+                              </p>
+                              <p className={`mt-0.5 text-[11px] font-semibold ${teamsDatesMatch ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                {teamsLoading
+                                  ? 'Reading the dates Teams holds…'
+                                  : teamsDatesMatch
+                                    ? 'The Teams calendar is on these dates.'
+                                    : 'The Teams calendar is not on these dates yet — send them from the Teams Meetings page.'}
+                              </p>
+                            </>
+                          ) : (
+                            <p className="mt-0.5 text-[11px] font-semibold text-foreground-500">
+                              No Teams calendar yet. Create one on the Teams Meetings page: it puts a meeting on each date below and writes the join link into this module&apos;s live-session components.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setTab('teams')}
+                          title="Open the Teams meeting tab, which lists what this calendar holds."
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-background-50 px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-50"
+                        >
+                          <AppIcon className="ri-vidicon-line text-sm"></AppIcon>
+                          Teams meeting tab
+                        </button>
+                        <Link
+                          to={`/curriculum/teams-meetings?module=${encodeURIComponent(catalogueId)}`}
+                          title="Open this module on the Teams Meetings page, where the calendar is created, sent these dates and synced."
+                          className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+                        >
+                          <AppIcon className="ri-external-link-line text-sm"></AppIcon>
+                          Manage on Teams Meetings
+                        </Link>
+                      </div>
+                    </div>
+                    <p className="mt-2 text-[11px] font-semibold text-foreground-400">
+                      Sending these dates, who is invited, who can present and fetching attendance all live on the{' '}
+                      <Link to={`/curriculum/teams-meetings?module=${encodeURIComponent(catalogueId)}`} className="text-primary-700 hover:underline">
+                        Teams Meetings page
+                      </Link>. The Teams meeting tab here is read-only.
+                    </p>
+                  </div>
+
+                  {/* The same month-grouped session timeline as the Teams
+                      Meetings page: a red "shifted to replacement" card next
+                      to the green delivered date, and — while a Teams
+                      calendar exists — its status and join link underneath. */}
+                  <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50">
+                    <CompactSchedulePreview
+                      occurrences={scheduleOccurrences}
+                      formatLabel={(plannedUtc, date) => (plannedUtc ? formatCalendarDateTime(plannedUtc) : formatDateLabel(date))}
+                    />
+                  </div>
                 </>
               )}
               {!cohortHolidays.length && cohort && (
@@ -729,20 +662,28 @@ export default function ModuleWorkspacePage() {
                 </Link>
               )}
             >
-              {moduleKsbs.length ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {moduleKsbs.map(mapping => (
-                    <span
-                      key={mapping.id || `${mapping.code}-${mapping.weight}`}
-                      title={mapping.description}
-                      className="rounded-lg border border-primary-100 bg-primary-50 px-2 py-1 text-[11px] font-bold text-primary-700"
-                    >
-                      {mapping.code}
-                    </span>
+              {allKsbMappings.length ? (
+                <div className="space-y-3">
+                  {allKsbMappings.map(({ mapping, placement }, index) => (
+                    <div key={mapping.id || `${mapping.code}-${placement}-${index}`} className="rounded-xl border border-background-200 bg-background-50 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          title={mapping.description}
+                          className="rounded-lg border border-primary-100 bg-primary-50 px-2 py-1 text-[11px] font-bold text-primary-700"
+                        >
+                          {mapping.code}
+                        </span>
+                        <span className="text-[11px] font-semibold text-foreground-500">{placement}</span>
+                        <span className="ml-auto rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
+                          {mapping.weight || 0}% {mapping.weightClass || mapping.weight_class || ''}
+                        </span>
+                      </div>
+                      {mapping.description && <p className="mt-1 text-[11px] text-foreground-500">{mapping.description}</p>}
+                    </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-[12px] text-foreground-500">No KSBs mapped at module level yet.</p>
+                <p className="text-[12px] text-foreground-500">No KSBs mapped to this module, its weeks or its components yet.</p>
               )}
             </WorkspacePanel>
 
@@ -764,39 +705,35 @@ export default function ModuleWorkspacePage() {
         )}
 
         {/* ---------------------------------------------------------- Teams */}
+        {/* The KSBs tab above is what this module *plans*. This is what the
+            learners actually earned against it. A module has no roster of its
+            own: these are the learners in the group that delivers it, which the
+            panel states rather than leaving to be inferred. */}
+        {tab === 'achievement' && (
+          <ScopeAchievementPanel
+            scope="module"
+            identifier={catalogueId}
+            title={`Achievement in ${cleanText(module?.name, 'this module')}`}
+            learnerStatus="all"
+            active={tab === 'achievement'}
+          />
+        )}
+
         {tab === 'teams' && (
           <div className="space-y-5">
             {teamsError && <InlineError message={teamsError} />}
             <WorkspacePanel
               title="Teams meeting"
-              description="The recurring Teams meeting for this module. Attendance, transcripts and recordings are pulled back from Teams once a meeting has run."
+              description="What the Microsoft Teams calendar holds for this module, read-only: the series, its meeting dates, and the attendance, transcripts and recordings Teams has returned. Creating the calendar, sending session dates, invitations and fetching results are all done on the Teams Meetings page."
               actions={(
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void syncTeams()}
-                    disabled={!teamsSummary?.liveSessionId || Boolean(teamsBusy)}
-                    title="Ask Microsoft Teams for the attendance, transcripts and recordings of every meeting that has already run, and save them below."
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {teamsBusy === 'sync'
-                      ? <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>
-                      : <AppIcon className="ri-refresh-line text-sm"></AppIcon>}
-                    Fetch attendance &amp; recordings
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void restoreTeams()}
-                    disabled={Boolean(teamsBusy)}
-                    title="Write this meeting's join link back into the module's live-session components, for when they have lost it."
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-50"
-                  >
-                    {teamsBusy === 'restore'
-                      ? <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>
-                      : <AppIcon className="ri-history-line text-sm"></AppIcon>}
-                    Re-attach meeting to components
-                  </button>
-                </>
+                <Link
+                  to={`/curriculum/teams-meetings?module=${encodeURIComponent(catalogueId)}`}
+                  title="Open this module on the Teams Meetings page, where the calendar is created, sent the session dates and synced."
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+                >
+                  <AppIcon className="ri-external-link-line text-sm"></AppIcon>
+                  Manage on Teams Meetings
+                </Link>
               )}
             >
               {teamsSummary ? (
@@ -816,8 +753,9 @@ export default function ModuleWorkspacePage() {
                 </>
               ) : (
                 <p className="text-[12px] text-foreground-500">
-                  No Teams meeting is tracked for this module yet, so there is nothing to fetch. Create one from the
-                  module&apos;s live-session component in the Module Builder and it will appear here.
+                  {planLoading && !plannedOccurrences.length && 'Reading this module’s generated session dates…'}
+                  {!planLoading && !plannedOccurrences.length && 'No Teams calendar for this module yet, and no session dates to put on one. Set the start date, the weeks and the delivery day with Edit module first — the Schedule tab lists the dates a calendar would be built from.'}
+                  {Boolean(plannedOccurrences.length) && `No Teams calendar for this module yet. Create one on the Teams Meetings page: it puts a meeting on each of the ${plannedOccurrences.length} generated session date${plannedOccurrences.length === 1 ? '' : 's'}, holiday shifts included, and writes the join link into this module’s live-session components.`}
                 </p>
               )}
             </WorkspacePanel>
@@ -825,12 +763,12 @@ export default function ModuleWorkspacePage() {
             {teamsSummary?.liveSessionId && (
               <WorkspacePanel
                 title="Attendance and recordings per meeting"
-                description="One block per meeting date. Teams only fills these in after a meeting has run — use Fetch attendance and recordings to pull the latest."
+                description="One block per meeting date. Teams only fills these in after a meeting has run — fetch the latest from the Teams Meetings page."
               >
                 {teamsLoading && <p className="text-[12px] text-foreground-400">Loading meeting history…</p>}
                 {!teamsLoading && !teams?.occurrences?.length && (
                   <p className="text-[12px] text-foreground-500">
-                    Nothing has been fetched yet. Attendance and recordings only exist once a meeting has actually run.
+                    Nothing has been fetched yet. Attendance and recordings only exist once a meeting has actually run, and are pulled in from the Teams Meetings page.
                   </p>
                 )}
                 <div className="space-y-3">
@@ -891,94 +829,36 @@ export default function ModuleWorkspacePage() {
             )}
           </div>
         )}
-
-        {/* ------------------------------------------------------- Sessions */}
-        {tab === 'sessions' && (
-          <div className="space-y-5">
-            <EntityTable
-              columns={[
-                { label: '#', align: 'center' },
-                { label: 'Date' },
-                { label: 'Time' },
-                { label: 'Tutor' },
-              ]}
-              gridClass={SESSION_GRID}
-              rows={moduleSessions}
-              rowKey={session => session.id}
-              loading={sessionsLoading}
-              empty={(
-                <EntityEmptyState
-                  icon="ri-time-line"
-                  title="No scheduled sessions stored"
-                  message="The Schedule tab shows the dates this module's sessions will fall on."
-                />
-              )}
-              renderRow={session => (
-                <>
-                  <PlainCell align="center">{session.week || '—'}</PlainCell>
-                  <PlainCell>{formatDateLabel(session.date)}</PlainCell>
-                  <PlainCell>{session.startTime ? `${session.startTime} – ${cleanText(session.endTime, '')}` : '—'}</PlainCell>
-                  <StackedCell
-                    primary={cleanText(session.tutor, 'Unassigned')}
-                    secondary={session.skippedHolidays?.length ? `Skipped: ${session.skippedHolidays.join(', ')}` : undefined}
-                  />
-                </>
-              )}
-            />
-          </div>
-        )}
       </div>
 
-      <EntityDrawer
-        open={detailsDrawer.open}
-        title="Edit module"
-        subtitle="Changing the tutor here updates their profile and raises the assignment notification, exactly as the wizard did."
-        onClose={detailsDrawer.close}
-        onSubmit={saveDetails}
-        submitLabel="Save module"
-        saving={detailsDrawer.saving}
-        error={detailsDrawer.error}
-        dirty={detailsDrawer.dirty}
-      >
-        <FormField label="Module name" required>
-          <TextControl value={detailsDrawer.form.name} onChange={value => detailsDrawer.patch({ name: value })} />
-        </FormField>
-        <FormField
-          label="Tutor"
-          hint={tutorAvailability.loading
-            ? 'Checking who is free in this slot...'
-            : tutorAvailability.bookable
-              ? `${tutorAvailability.sessionDates.length} session${tutorAvailability.sessionDates.length === 1 ? '' : 's'} in this slot. Busy tutors are marked.`
-              : undefined}
-        >
-          {/* Busy names stay selectable: the save is still the authority, and a
-              clash can be deliberate. Marking beats hiding. */}
-          <SelectControl
-            value={detailsDrawer.form.tutor}
-            onChange={value => detailsDrawer.patch({ tutor: value })}
-            options={tutorNames.map(name => ({
-              value: name,
-              label: tutorAvailability.verdictFor(name)?.available === false ? `${name} — busy in this slot` : name,
-            }))}
-            placeholder="Unassigned"
-          />
-        </FormField>
-        {tutorVerdict && !tutorVerdict.available && <TutorClashNotice verdict={tutorVerdict} />}
-        <FormField label="Status">
-          <SelectControl
-            value={detailsDrawer.form.status}
-            onChange={value => detailsDrawer.patch({ status: value })}
-            options={[
-              { value: 'draft', label: 'Draft' },
-              { value: 'review', label: 'Review' },
-              { value: 'published', label: 'Published' },
-            ]}
-          />
-        </FormField>
-        <FormField label="Notes">
-          <TextControl value={detailsDrawer.form.notes} onChange={value => detailsDrawer.patch({ notes: value })} placeholder="Optional delivery notes" />
-        </FormField>
-      </EntityDrawer>
+      {/* The one module form: same fields, same conflict check and same tutor
+          notification as the Module Builder and the Group workspace. */}
+      <ModuleFormDrawer
+        open={moduleDrawerOpen}
+        module={{
+          id: catalogueId,
+          name: cleanText(module?.name),
+          programmeId: context?.programmeId || cleanText(module?.programmeId),
+          programme: cleanText(context?.programmeName),
+          cohortId: context?.cohortId || cleanText(module?.cohortId),
+          groupId: context?.groupId || cleanText(module?.groupId),
+          sessionsNumber: module?.sessionsNumber,
+          weeks: module?.weeks,
+          startDate: cleanText(module?.startDate),
+          endDate: cleanText(module?.endDate),
+          tutor: cleanText(module?.tutor),
+          status: cleanText(module?.status),
+          notes: visibleNotes(module?.notes),
+          color: cleanText(module?.color),
+        }}
+        programmes={programmes}
+        cohorts={cohorts}
+        groups={groups}
+        holidays={holidays}
+        tutorNames={tutorNames}
+        onClose={() => setModuleDrawerOpen(false)}
+        onSaved={async () => { await Promise.all([reload({ silent: true }), loadStructure()]); }}
+      />
     </WorkspaceShell>
   );
 }
@@ -990,4 +870,18 @@ function MiniStat({ label, value }: { label: string; value: string | number }) {
       <p className="mt-1 text-lg font-heading font-bold text-foreground-950">{value}</p>
     </div>
   );
+}
+
+function allStructureKsbMappings(module: ModuleCatalogueItem): Array<{ mapping: KsbMapping; placement: string }> {
+  const rows: Array<{ mapping: KsbMapping; placement: string }> = [];
+  (module.moduleKsbMappings || []).forEach(mapping => rows.push({ mapping, placement: 'Module level' }));
+  (module.weekStructure || []).forEach(week => {
+    const weekLabel = `Week ${week.weekNumber}${week.title ? ` - ${week.title}` : ''}`;
+    (week.ksbMappings || []).forEach(mapping => rows.push({ mapping, placement: weekLabel }));
+    (week.components || []).forEach(component => {
+      const componentLabel = component.title || 'Untitled component';
+      (component.ksbMappings || []).forEach(mapping => rows.push({ mapping, placement: `${weekLabel} / ${componentLabel}` }));
+    });
+  });
+  return rows;
 }

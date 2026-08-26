@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   previewTutorAvailabilityRoster,
   type CurriculumTutorAvailabilityInput,
@@ -35,6 +35,9 @@ export interface TutorAvailability {
   verdictFor: (tutor: string) => CurriculumTutorAvailabilityVerdict | null;
 }
 
+/** Matches the module form's session-plan preview, so the two land together. */
+const DEBOUNCE_MS = 300;
+
 const EMPTY: TutorAvailability = {
   byTutor: new Map(),
   sessionDates: [],
@@ -54,7 +57,19 @@ export function useTutorAvailability(
   // its contents rather than its identity — otherwise every keystroke in an
   // unrelated field would refire the request.
   const key = enabled && slot
-    ? JSON.stringify([slot.startDate, slot.sessionsNumber, slot.weekDays, slot.startTime, slot.endTime, slot.moduleCatalogueId])
+    ? JSON.stringify([
+      slot.startDate,
+      slot.sessionsNumber,
+      slot.weekDays,
+      slot.startTime,
+      slot.endTime,
+      slot.moduleCatalogueId,
+      // Part of the slot, not decoration: the cohort's ticked holidays move the
+      // session dates, so a changed cohort (or a changed tick) is a changed
+      // question. Left out, the picker kept answering about the old dates.
+      slot.cohortId,
+      (slot.holidays || []).map(holiday => `${holiday.id}:${holiday.startDate}:${holiday.endDate}`),
+    ])
     : '';
   const slotRef = useRef(slot);
   slotRef.current = slot;
@@ -66,31 +81,38 @@ export function useTutorAvailability(
     }
     let live = true;
     setState(previous => ({ ...previous, loading: true }));
-    previewTutorAvailabilityRoster(slotRef.current || {})
-      .then(response => {
-        if (!live) return;
-        setState({
-          byTutor: new Map(response.results.map(item => [item.tutor.toLowerCase(), item])),
-          sessionDates: response.sessionDates,
-          bookable: response.bookable,
-          loading: false,
+    // Debounced, because the slot moves with a number field: typing "18" into a
+    // weeks box passes through 1 and then 18, and only the answer for 18 is worth
+    // asking for.
+    const timer = setTimeout(() => {
+      previewTutorAvailabilityRoster(slotRef.current || {})
+        .then(response => {
+          if (!live) return;
+          setState({
+            byTutor: new Map(response.results.map(item => [item.tutor.toLowerCase(), item])),
+            sessionDates: response.sessionDates,
+            bookable: response.bookable,
+            loading: false,
+          });
+        })
+        .catch(() => {
+          // Advisory only: a failed preview must never block the form. The save
+          // still enforces the rule, so silence here degrades to the old
+          // find-out-on-save behaviour rather than to a broken screen.
+          if (live) setState({ ...EMPTY, loading: false });
         });
-      })
-      .catch(() => {
-        // Advisory only: a failed preview must never block the form. The save
-        // still enforces the rule, so silence here degrades to the old
-        // find-out-on-save behaviour rather than to a broken screen.
-        if (live) setState({ ...EMPTY, loading: false });
-      });
-    return () => { live = false; };
+    }, DEBOUNCE_MS);
+    return () => { live = false; clearTimeout(timer); };
   }, [key]);
 
-  return {
-    ...state,
-    verdictFor: (tutor: string) => {
-      const name = (tutor || '').trim().toLowerCase();
-      if (!name || !state.bookable) return null;
-      return state.byTutor.get(name) || null;
-    },
-  };
+  // Stable while the answers are: callers memoise a whole annotated picker off
+  // this, and a fresh function every render would rebuild it on every keystroke
+  // in an unrelated field.
+  const verdictFor = useCallback((tutor: string) => {
+    const name = (tutor || '').trim().toLowerCase();
+    if (!name || !state.bookable) return null;
+    return state.byTutor.get(name) || null;
+  }, [state.bookable, state.byTutor]);
+
+  return { ...state, verdictFor };
 }

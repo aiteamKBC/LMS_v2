@@ -132,6 +132,7 @@ export interface CurriculumProgramme {
   level: string;
   status?: 'active' | 'draft' | 'archived' | string;
   isArchived?: boolean;
+  isActive?: boolean;
   modules: number;
   freeComponents?: number;
   weeks: number;
@@ -184,6 +185,11 @@ export interface CurriculumModule {
   groupId?: string;
   group?: string;
   isProgrammeDeleted?: boolean;
+  /**
+   * The authored week count — what the week builder holds and what the UI shows
+   * as "N weeks". NOT the number of calendar sessions: a group delivering
+   * Mon+Thu runs two sessions per week, so `sessionsNumber` is twice this.
+   */
   weeks: number;
   weekStructure?: Array<{
     id: string;
@@ -193,6 +199,12 @@ export interface CurriculumModule {
     ksbMappings?: CurriculumComponent['ksbMappings'];
     components?: CurriculumComponent[];
   }>;
+  /**
+   * The calendar session count — `weeks` x the group's delivery days per week.
+   * This is what the session dates, the tutor clash check and the Teams series
+   * are built from. Kept apart from `weeks` because one field meaning both made
+   * every edit round-trip multiply the weeks by the delivery days.
+   */
   sessionsNumber?: number;
   startDate?: string;
   endDate?: string;
@@ -258,6 +270,31 @@ export interface CurriculumComponent {
   deletedAt?: string | null;
   deletedViaParent?: string;
   settings?: Record<string, unknown>;
+}
+
+/** Where a reusable component currently lives. */
+export type LibraryComponentOrigin = 'active' | 'archived' | 'library';
+
+/**
+ * A component offered for reuse. Same shape as a normal component plus its
+ * provenance, because the parent module may no longer exist: `originModuleTitle`
+ * and `originWeekLabel` are stamped on the row at detach time and are the only
+ * labels available for detached content.
+ */
+export interface LibraryComponent extends CurriculumComponent {
+  origin: LibraryComponentOrigin;
+  /**
+   * The authoring type (`live-session`, `reading`, …). Distinct from `type`,
+   * which the component endpoints fill with a human label ("Self-study") that
+   * several activity types share and which cannot be copied.
+   */
+  componentType: string;
+  originModuleCatalogueId?: string;
+  originModuleTitle?: string;
+  originWeekId?: string;
+  originWeekLabel?: string;
+  detachedAt?: string | null;
+  copiedFromId?: string;
 }
 
 export interface CurriculumKsbActivity {
@@ -463,9 +500,28 @@ export interface CurriculumKsbCoverageSummaryBucket {
   total_weight: number;
 }
 
+/** Where a coverage response read its required-KSB set from. */
+export interface CurriculumKsbCoverageSource {
+  type: string;
+  id: string;
+  /**
+   * 'programme' (the source stored on the programme row), 'module', 'request',
+   * 'programme-name' (matched by name), 'mappings-only', or 'all-profiles' when
+   * nothing identified a source and every profile's KSBs stood in.
+   */
+  origin: 'programme' | 'module' | 'request' | 'programme-name' | 'mappings-only' | 'all-profiles' | string;
+  required_count: number;
+  requiredCount: number;
+  source_name?: string;
+  sourceName?: string;
+  source_label?: string;
+  sourceLabel?: string;
+}
+
 export interface CurriculumKsbCoverageResponse {
   scope: string;
   identifier: string;
+  source?: CurriculumKsbCoverageSource;
   summary: {
     overall: CurriculumKsbCoverageSummaryBucket;
     knowledge: CurriculumKsbCoverageSummaryBucket;
@@ -496,6 +552,157 @@ export interface CurriculumKsbCoverageResponse {
       modules: Array<{ module_id: string; moduleId: string; module_name: string; moduleName: string; weight: number; mappings: CurriculumKsbTraceMapping[] }>;
     }>;
   };
+}
+
+// ---------------------------------------------------------------------------
+// Scope achievement — Programme -> Cohort -> Group -> Module -> Week.
+//
+// Curriculum plans; learners consume. Every level of the hierarchy answers the
+// same two questions about itself and nothing else: who is assigned here, and
+// what have they actually achieved here. One response shape, one set of rules,
+// so a cohort's number and its programme's number mean the same thing.
+// ---------------------------------------------------------------------------
+
+export type CurriculumLearnerScope = 'programme' | 'cohort' | 'group' | 'module' | 'week' | 'component';
+
+/** Where a scope sits in the hierarchy, resolved server-side. */
+export interface CurriculumScopeLineage {
+  scope: CurriculumLearnerScope | string;
+  identifier: string;
+  /** Whether the scope record itself exists. An empty scope is not a missing one. */
+  found: boolean;
+  programmeId: string;
+  programmeName: string;
+  cohortId: string;
+  cohortName: string;
+  groupId: string;
+  groupName: string;
+  moduleCatalogueId: string;
+  moduleTitle: string;
+  weekId: string;
+  weekTitle: string;
+  componentId: string;
+  componentTitle: string;
+  /**
+   * Which level's roster this scope reports. A module/week/component has none of
+   * its own: the learners who meet it are the ones enrolment placed in the group
+   * that delivers it.
+   */
+  placementBasis: 'programme' | 'cohort' | 'group' | string;
+}
+
+/** One learner's OTJH inside one scope. */
+export interface CurriculumScopeOtjhLearner {
+  learnerId: number | string;
+  learnerName: string;
+  email: string;
+  cohort: string;
+  group: string;
+  /** What the modules of *this learner's group* add up to in this scope. */
+  plannedOtjh: number;
+  /**
+   * Where `plannedOtjh` came from. 'group' is the normal case. 'none' means no
+   * module in this scope is delivered to this learner's group. 'scope' means no
+   * placement matched any delivering group, so the whole scope stood in.
+   */
+  plannedBasis?: 'group' | 'none' | 'scope' | string;
+  /** Credited: declared hours where a reflection exists, expected hours otherwise. */
+  achievedOtjh: number;
+  /** The learner's own declared hours only. */
+  declaredOtjh: number;
+  completedActivityCount: number;
+  reflectionCount: number;
+  progressPercentage: number;
+  /** Whole-programme figures from `Learner.learners`, never a scope subtotal. */
+  programmeCompletedHours?: number | null;
+  programmeTargetHours?: number | null;
+}
+
+export interface CurriculumScopeOtjhAchievement {
+  componentCount: number;
+  learnerCount: number;
+  /**
+   * Everything this scope authored, counted once. Not a per-learner figure: a
+   * module belongs to one group, so a cohort running two groups holds two module
+   * instances and no learner is assigned both.
+   */
+  authoredTotal: number;
+  /** The average of what its learners are each assigned. */
+  plannedPerLearner: number;
+  /** The sum of what its learners are each assigned — the real denominator. */
+  plannedTotal: number;
+  /** The headline: hours actually achieved in this scope, across its learners. */
+  achievedTotal: number;
+  declaredTotal: number;
+  creditedFromExpectedTotal: number;
+  achievedPerLearnerAverage: number;
+  progressPercentage: number;
+  completedActivityCount: number;
+  reflectionCount: number;
+  learners: CurriculumScopeOtjhLearner[];
+  sources: Record<string, string>;
+}
+
+/** One KSB's achieved weight inside one scope — a row of the achieved heatmap. */
+export interface CurriculumScopeKsbAchievementRow {
+  code: string;
+  title: string;
+  ksbType: string;
+  sourceType: string;
+  sourceId: string;
+  sourceLabel: string;
+  /** Authored weight for this KSB across this scope, counted once. */
+  plannedWeight: number;
+  /**
+   * What this scope's learners are between them assigned: the weight authored in
+   * each learner's own group, summed. The honest denominator, and not the same
+   * as `plannedWeight × learnerCount` once a scope spans several groups.
+   */
+  expectedWeightTotal: number;
+  achievedWeightTotal: number;
+  /** Each learner capped at the planned weight. What a percentage is taken of. */
+  cappedAchievedWeightTotal: number;
+  declaredReflectionWeightTotal: number;
+  /** How many learners this KSB is actually authored for in this scope. */
+  learnerCount: number;
+  learnersAchievedCount: number;
+  learnersCompleteCount: number;
+  achievementPercentage: number;
+  /**
+   * 'unmapped' — required by the KSB source but taught nowhere in this scope (a
+   * coverage gap). 'unplanned' — a learner consumed it but the scope never
+   * authored it at all. Two different facts.
+   */
+  status: 'complete' | 'in_progress' | 'not_started' | 'unmapped' | 'unplanned' | string;
+}
+
+export interface CurriculumScopeKsbAchievement {
+  learnerCount: number;
+  requiredCount: number;
+  ksbCount: number;
+  mappedCount: number;
+  unmappedCount: number;
+  unplannedCount: number;
+  startedCount: number;
+  notStartedCount: number;
+  plannedWeightTotal: number;
+  expectedWeightTotal: number;
+  achievedWeightTotal: number;
+  cappedAchievedWeightTotal: number;
+  declaredReflectionWeightTotal: number;
+  progressPercentage: number;
+  learnersWithAchievement: number;
+  rows: CurriculumScopeKsbAchievementRow[];
+  sources: Record<string, string>;
+}
+
+export interface CurriculumScopeStructureCounts {
+  moduleCount: number;
+  weekCount: number;
+  componentCount: number;
+  ksbMappingCount: number;
+  /** Above one, the scope's authored totals and its per-learner totals differ. */
+  groupCount: number;
 }
 
 export interface CurriculumProgrammeAssignedLearner {
@@ -622,9 +829,11 @@ export interface CurriculumLearnerActivity {
 
 // Learner placements are owned by the enrolment team. Curriculum reads this
 // roster to show who is arriving in a cohort/group and never writes to it.
-export interface CurriculumProgrammeLearnerRosterResponse {
-  scope: 'programme';
+export interface CurriculumScopeLearnerRosterResponse {
+  scope: CurriculumLearnerScope | string;
   identifier: string;
+  lineage: CurriculumScopeLineage;
+  placementBasis: CurriculumScopeLineage['placementBasis'];
   source: string;
   editable: boolean;
   assignedLearnerCount: number;
@@ -633,12 +842,24 @@ export interface CurriculumProgrammeLearnerRosterResponse {
   countsByGroup: Record<string, number>;
 }
 
-export interface CurriculumProgrammeLearnerKsbImpactResponse {
-  scope: 'programme';
+/** Retained name: the programme roster is the same read at the top scope. */
+export type CurriculumProgrammeLearnerRosterResponse = CurriculumScopeLearnerRosterResponse;
+
+export interface CurriculumScopeLearnerKsbImpactResponse {
+  scope: CurriculumLearnerScope | string;
   identifier: string;
+  lineage: CurriculumScopeLineage;
+  placementBasis: CurriculumScopeLineage['placementBasis'];
+  structure: CurriculumScopeStructureCounts;
   assignedLearnerCount: number;
   assignedLearners: CurriculumProgrammeAssignedLearner[];
+  /** Retained name; `coverage` is the scope-neutral alias for the same payload. */
   programmeCoverage: CurriculumKsbCoverageResponse;
+  coverage: CurriculumKsbCoverageResponse;
+  /** Hours actually achieved in this scope — the OTJH roll-up. */
+  otjhAchievement: CurriculumScopeOtjhAchievement;
+  /** KSB weight actually earned in this scope — the achieved heatmap. */
+  ksbAchievement: CurriculumScopeKsbAchievement;
   learnerKsbConsumption: CurriculumLearnerKsbConsumption[];
   learnerActivities?: CurriculumLearnerActivity[];
   learnerActivityCount?: number;
@@ -649,6 +870,11 @@ export interface CurriculumProgrammeLearnerKsbImpactResponse {
     reflectionLearnerResolution: string;
     expectedOtjhSource: string;
     actualOtjhSource: string;
+    scopeAttribution?: string;
+    /** Whether activity with no component reference counted. Programme only. */
+    unattributedActivityCounts?: boolean;
+    expectedWeightBasis?: string;
+    plannedOtjhBasis?: string;
   };
   consumptionSources: {
     // Achieved delivery only. Failed activity and unresolved graded attempts are
@@ -664,9 +890,16 @@ export interface CurriculumProgrammeLearnerKsbImpactResponse {
     // Reflections on a component in this programme with no progress link, so no
     // learner can be resolved without guessing. Reported as a visible gap.
     unlinkedLearningReflectionSubmissions?: Array<Record<string, unknown>>;
+    // Achieved activity belonging to a different scope in the same programme.
+    // Reported so the gap between this scope's total and the learner's programme
+    // total is inspectable rather than an unexplained shortfall.
+    outOfScopeProgress?: Array<Record<string, unknown>>;
     evidenceByProgressEntry?: Record<string, CurriculumLearnerActivityEvidence[]>;
   };
 }
+
+/** Retained name: the programme impact is the same read at the top scope. */
+export type CurriculumProgrammeLearnerKsbImpactResponse = CurriculumScopeLearnerKsbImpactResponse;
 
 export interface CurriculumReadinessIssue {
   severity: 'warning' | 'error' | string;
@@ -835,8 +1068,15 @@ export interface CurriculumTeamsMeetingSummary {
   moduleCatalogueId: string;
   liveSessionId: string;
   status: string;
+  moduleTitle?: string;
   joinUrl: string;
+  webLink?: string;
+  meetingOptionsUrl?: string;
+  eventId?: string;
+  onlineMeetingId?: string;
   organizerEmail: string;
+  presenters?: string[];
+  attendees?: string[];
   repeatPattern: string;
   startDateTime: string;
   durationMinutes: number;
@@ -845,6 +1085,8 @@ export interface CurriculumTeamsMeetingSummary {
   syncedCount: number;
   nextOccurrence: string;
   updatedAt: string;
+  /** Only present when asked for: the dates Teams currently holds, in order. */
+  occurrenceDates?: string[];
 }
 
 export interface CurriculumHoliday {
@@ -1521,6 +1763,51 @@ export function fetchCurriculumComponents(signal?: AbortSignal, options: { modul
   return fetchCollection<CurriculumComponent>(`/curriculum/components/${suffix}`, { signal, skipCache: options.skipCache });
 }
 
+/**
+ * Search components available for reuse, across all programmes.
+ *
+ * Returns list rows only: no `settings`, no `ksbMappings`. Those are 24 MB
+ * across the components table, the picker does not show them, and fetching
+ * them for a whole page would dominate the request. Call
+ * `fetchComponentLibraryDetail` for the handful actually being copied.
+ *
+ * Deliberately not cached: a filtered search changes with every keystroke,
+ * unlike the stable snapshot `fetchCurriculumComponents` serves.
+ */
+export function fetchComponentLibrary(options: {
+  search?: string;
+  types?: string[];
+  programmeIds?: string[];
+  origins?: LibraryComponentOrigin[];
+  page?: number;
+  pageSize?: number;
+} = {}, signal?: AbortSignal): Promise<LibraryComponent[]> {
+  const query = new URLSearchParams();
+  const search = (options.search || '').trim();
+  if (search) query.set('search', search);
+  const types = (options.types || []).filter(Boolean);
+  if (types.length) query.set('types', types.join(','));
+  const programmeIds = (options.programmeIds || []).filter(Boolean);
+  if (programmeIds.length) query.set('programme_ids', programmeIds.join(','));
+  const origins = (options.origins || []).filter(Boolean);
+  if (origins.length) query.set('origins', origins.join(','));
+  if (options.page) query.set('page', String(options.page));
+  if (options.pageSize) query.set('page_size', String(options.pageSize));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  return fetchCollection<LibraryComponent>(`/curriculum/components/library/${suffix}`, { signal, skipCache: true });
+}
+
+/**
+ * Full authoring detail for specific components — `settings` and `ksbMappings`
+ * included. Call this with the ids being copied, never with a whole page.
+ */
+export function fetchComponentLibraryDetail(ids: string[], signal?: AbortSignal): Promise<LibraryComponent[]> {
+  const wanted = ids.filter(Boolean);
+  if (!wanted.length) return Promise.resolve([]);
+  const query = new URLSearchParams({ ids: wanted.join(',') });
+  return fetchCollection<LibraryComponent>(`/curriculum/components/library/?${query.toString()}`, { signal, skipCache: true });
+}
+
 export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOverview['stats']> {
   return fetchJson<CurriculumOverview['stats']>('/curriculum/stats/', { signal });
 }
@@ -1572,22 +1859,103 @@ export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params:
   return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal });
 }
 
+// Kept as named entry points because the Programme workspace reads them by
+// name; both are the scope reads at the top of the hierarchy.
 export function fetchCurriculumProgrammeLearnerKsbImpact(programmeId: string, params: { sourceType?: string; sourceId?: string; learnerStatus?: string } = {}, signal?: AbortSignal): Promise<CurriculumProgrammeLearnerKsbImpactResponse> {
-  const query = new URLSearchParams();
-  if (params.sourceType) query.set('source_type', params.sourceType);
-  if (params.sourceId) query.set('source_id', params.sourceId);
-  if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
-  const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumProgrammeLearnerKsbImpactResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/learner-ksb-impact/${suffix}`, { signal });
+  return fetchCurriculumScopeLearnerKsbImpact('programme', programmeId, params, signal);
 }
 
 export function fetchCurriculumProgrammeLearnerRoster(programmeId: string, params: { cohort?: string; group?: string; learnerStatus?: string } = {}, signal?: AbortSignal): Promise<CurriculumProgrammeLearnerRosterResponse> {
+  return fetchCurriculumScopeLearnerRoster('programme', programmeId, params, signal);
+}
+
+// One route per level of Programme -> Cohort -> Group -> Module -> Week, so a
+// page asks for its own scope and nothing wider. `component` has no path route
+// of its own and goes through the query form.
+const SCOPE_ROSTER_PATHS: Record<string, (id: string) => string> = {
+  programme: id => `/curriculum/programmes/${encodeURIComponent(id)}/learner-roster/`,
+  cohort: id => `/curriculum/cohorts/${encodeURIComponent(id)}/learner-roster/`,
+  group: id => `/curriculum/groups/${encodeURIComponent(id)}/learner-roster/`,
+  module: id => `/curriculum/modules/${encodeURIComponent(id)}/learner-roster/`,
+  week: id => `/curriculum/weeks/${encodeURIComponent(id)}/learner-roster/`,
+};
+
+const SCOPE_IMPACT_PATHS: Record<string, (id: string) => string> = {
+  programme: id => `/curriculum/programmes/${encodeURIComponent(id)}/learner-ksb-impact/`,
+  cohort: id => `/curriculum/cohorts/${encodeURIComponent(id)}/learner-ksb-impact/`,
+  group: id => `/curriculum/groups/${encodeURIComponent(id)}/learner-ksb-impact/`,
+  module: id => `/curriculum/modules/${encodeURIComponent(id)}/learner-ksb-impact/`,
+  week: id => `/curriculum/weeks/${encodeURIComponent(id)}/learner-ksb-impact/`,
+};
+
+function scopePath(
+  paths: Record<string, (id: string) => string>,
+  fallback: string,
+  scope: CurriculumLearnerScope,
+  identifier: string,
+  query: URLSearchParams,
+) {
+  const builder = paths[scope];
+  if (builder) {
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return `${builder(identifier)}${suffix}`;
+  }
+  query.set('scope', scope);
+  query.set('identifier', identifier);
+  return `${fallback}?${query.toString()}`;
+}
+
+/**
+ * The learners enrolment placed inside one curriculum scope.
+ *
+ * A module/week/component reports the roster of the group that delivers it —
+ * `placementBasis` on the response says which level the roster came from.
+ */
+export function fetchCurriculumScopeLearnerRoster(
+  scope: CurriculumLearnerScope,
+  identifier: string,
+  params: { cohort?: string; group?: string; learnerStatus?: string } = {},
+  signal?: AbortSignal,
+): Promise<CurriculumScopeLearnerRosterResponse> {
   const query = new URLSearchParams();
   if (params.cohort) query.set('cohort', params.cohort);
   if (params.group) query.set('group', params.group);
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
+  return fetchJson<CurriculumScopeLearnerRosterResponse>(
+    scopePath(SCOPE_ROSTER_PATHS, '/curriculum/learner-roster/', scope, identifier, query),
+    { signal },
+  );
+}
+
+/**
+ * What the learners in one curriculum scope have actually achieved there.
+ *
+ * `otjhAchievement` is hours, `ksbAchievement` is the achieved KSB heatmap, and
+ * both are computed from the components inside this scope alone — a cohort is
+ * never handed the whole programme's consumption.
+ */
+export function fetchCurriculumScopeLearnerKsbImpact(
+  scope: CurriculumLearnerScope,
+  identifier: string,
+  params: { sourceType?: string; sourceId?: string; learnerStatus?: string } = {},
+  signal?: AbortSignal,
+): Promise<CurriculumScopeLearnerKsbImpactResponse> {
+  const query = new URLSearchParams();
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
+  if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
+  return fetchJson<CurriculumScopeLearnerKsbImpactResponse>(
+    scopePath(SCOPE_IMPACT_PATHS, '/curriculum/learner-ksb-impact/', scope, identifier, query),
+    { signal },
+  );
+}
+
+export function fetchCurriculumGroupKsbCoverage(groupId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
+  const query = new URLSearchParams();
+  if (params.sourceType) query.set('source_type', params.sourceType);
+  if (params.sourceId) query.set('source_id', params.sourceId);
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumProgrammeLearnerRosterResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/learner-roster/${suffix}`, { signal });
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/groups/${encodeURIComponent(groupId)}/ksb-coverage/${suffix}`, { signal });
 }
 
 export function fetchCurriculumModuleKsbCoverage(moduleId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
@@ -1662,10 +2030,15 @@ export function deleteCurriculumKsbFramework(id: string) {
 
 export function fetchCurriculumTeamsMeetingSummaries(
   signal?: AbortSignal,
-  options: { moduleCatalogueIds?: string[]; skipCache?: boolean } = {},
+  options: { moduleCatalogueIds?: string[]; occurrenceDates?: boolean; skipCache?: boolean } = {},
 ): Promise<CurriculumTeamsMeetingSummary[]> {
   const ids = (options.moduleCatalogueIds || []).filter(Boolean);
-  const suffix = ids.length ? `?module_catalogue_ids=${encodeURIComponent(ids.join(','))}` : '';
+  const query = new URLSearchParams();
+  if (ids.length) query.set('module_catalogue_ids', ids.join(','));
+  // Opt-in: the occurrence dates are only needed by the page that compares them
+  // against the module's stored session plan, and they are the bulk of the payload.
+  if (options.occurrenceDates) query.set('occurrence_dates', '1');
+  const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchCollection<CurriculumTeamsMeetingSummary>(
     `/curriculum/teams-meetings/summary/${suffix}`,
     { signal, skipCache: options.skipCache },
@@ -1683,25 +2056,6 @@ export function fetchCurriculumTutors(signal?: AbortSignal, options: { skipCache
 export function fetchCurriculumCoaches(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumStaffProfile[]> {
   return fetchCollection<CurriculumStaffProfile>('/curriculum/coaches/', { signal, skipCache: options.skipCache, timeoutMs: 15000 });
 }
-
-export type CurriculumStaffProfileInput = {
-  name?: string;
-  email?: string;
-  phone?: string;
-  jobTitle?: string;
-  status?: string;
-  specialisms?: string[];
-  assignedModuleIds?: string[];
-  assignedGroupIds?: string[];
-  notes?: string;
-};
-
-export type CurriculumStaffProfileCreateResponse = {
-  created: boolean;
-  duplicate?: boolean;
-  restored?: boolean;
-  profile: CurriculumStaffProfile;
-};
 
 export function fetchCurriculumHolidays(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumHoliday[]> {
   return fetchCollection<CurriculumHoliday>('/curriculum/holidays/', { signal, skipCache: options.skipCache });
@@ -1762,7 +2116,10 @@ export type CurriculumModuleInput = Partial<Pick<CurriculumModule, 'name' | 'wee
   // Both are already honoured by PATCH /curriculum/modules/<id>/ — declared here
   // so the module workspace can send them without casting.
   status?: string;
+  /** Calendar sessions (weeks x delivery days per week). See `CurriculumModule`. */
   sessionsNumber?: number;
+  /** Authored weeks. Sent alongside `sessionsNumber`, never instead of it. */
+  weeks?: number;
   /**
    * Book a slot the tutor already holds. Without it the save is refused with a
    * 409 carrying `tutorConflicts` — see `isTutorConflictError`.
@@ -1941,6 +2298,17 @@ export interface CurriculumTutorAvailabilityInput {
   tutor?: string;
   /** The module being edited, so it is not reported as blocking its own slot. */
   moduleCatalogueId?: string;
+  /**
+   * The parent cohort, so the slot is dated the way the calendar dates it — its
+   * ticked holidays move a session onto the next delivery day, and a clash is
+   * about the day the session actually runs on.
+   */
+  cohortId?: string;
+  /**
+   * The ticked holidays themselves, for a form previewing a cohort choice that
+   * is not saved yet. Sent, they win over what `cohortId` would have read back.
+   */
+  holidays?: CurriculumHoliday[];
 }
 
 export interface CurriculumTutorAvailabilityVerdict {
@@ -2031,29 +2399,6 @@ export function deleteStaffingAssignment(id: string) {
   return deleteJson(`/curriculum/staffing/${encodeURIComponent(id)}/`);
 }
 
-export function createCurriculumCoach(input: CurriculumStaffProfileInput) {
-  return postJson<CurriculumStaffProfileCreateResponse>('/curriculum/coaches/', input);
-}
-
-export function updateCurriculumCoach(id: string | number, input: CurriculumStaffProfileInput) {
-  return patchJson<{ updated: boolean; profile: CurriculumStaffProfile }>(`/curriculum/coaches/${encodeURIComponent(String(id))}/`, input);
-}
-
-export function deleteCurriculumCoach(id: string | number) {
-  return deleteJson<{ deleted: boolean; id: string | number; count: number; ids: string[] }>(`/curriculum/coaches/${encodeURIComponent(String(id))}/`);
-}
-
-export function createCurriculumTutor(input: CurriculumStaffProfileInput) {
-  return postJson<CurriculumStaffProfileCreateResponse>('/curriculum/tutors/', input);
-}
-
-export function updateCurriculumTutor(id: string | number, input: CurriculumStaffProfileInput) {
-  return patchJson<{ updated: boolean; profile: CurriculumStaffProfile }>(`/curriculum/tutors/${encodeURIComponent(String(id))}/`, input);
-}
-
-export function deleteCurriculumTutor(id: string | number) {
-  return deleteJson<{ deleted: boolean; id: string | number; count: number; ids: string[] }>(`/curriculum/tutors/${encodeURIComponent(String(id))}/`);
-}
 
 export function createCurriculumHoliday(input: CurriculumHolidayInput) {
   return postJson('/curriculum/holidays/', input);
