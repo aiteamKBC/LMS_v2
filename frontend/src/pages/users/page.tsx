@@ -16,6 +16,7 @@ import { CreateEmployerModal } from './components/CreateEmployerModal';
 import { CreateOrganisationModal } from './components/CreateOrganisationModal';
 import { EditStaffModal } from './components/EditStaffModal';
 import { LearningPlanModal } from './components/LearningPlanModal';
+import { ShiftModuleModal } from './components/ShiftModuleModal';
 import { TableBodySkeleton } from '@/components/feature/Skeletons';
 
 const enrolmentNav = roleNavMap.apprentice;
@@ -24,6 +25,11 @@ const PAGE_SIZE = 8;
 // signed and the learner has moved into delivery — see the backend's
 // promote_to_delivery_if_ready.
 const DELIVERY_STATUS = 'Delivery';
+// Shifting a learner between modules is for learners already being taught: they
+// have a plan and have started on it. Not Delivery — nothing has begun there, so
+// the plan itself is still the thing to edit — and not Withdrawn or Completed,
+// where there is no remaining delivery to move.
+const SHIFT_STATUSES: string[] = ['Active', 'On break'];
 
 /**
  * A directory row. Learner rows are plain UserListRows; staff rows carry the
@@ -190,6 +196,9 @@ export default function UsersListPage() {
   // The learner whose learning plan is open, if any. Only offered once a learner
   // reaches Delivery — before that their modules aren't settled.
   const [planFor, setPlanFor] = useState<UserListRow | null>(null);
+  // The learner being shifted between modules, if any. Gated like editing the
+  // plan: it rewrites the plan, so it is a Delivery-stage action.
+  const [shiftFor, setShiftFor] = useState<UserListRow | null>(null);
 
   // One directory for the whole enrolment section: every learner — both
   // apprenticeship and commercial — comes from the single Enrolment_Users table
@@ -546,27 +555,44 @@ export default function UsersListPage() {
                       {row.subscriptionStatus ? (row.subscriptionVerified ? <i className="ri-checkbox-circle-fill text-emerald-500 ml-1.5 align-middle" title="Verified" /> : <i className="ri-close-circle-fill text-red-500 ml-1.5 align-middle" title="Unverified" />) : null}
                     </td>
                     <td className="py-2.5 px-3">
-                      {isLearner && row.programmeStatus === DELIVERY_STATUS ? (
-                        <button
-                          onClick={() => setPlanFor(row)}
-                          title={`${row.hasLearningPlan ? 'Edit' : 'Add'} ${row.name}'s learning plan`}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
-                        >
-                          <i className={`ri-${row.hasLearningPlan ? 'edit' : 'add'}-line`} />
-                          {row.hasLearningPlan ? 'Edit learning plan' : 'Add learning plan'}
-                        </button>
-                      ) : isLearner && row.learningPlan ? (
-                        // Past planning — the plan is fixed, so this opens the
-                        // same modal read-only rather than routing to the
-                        // learner's record, which is not their plan.
-                        <button
-                          onClick={() => setPlanFor(row)}
-                          title={`View ${row.name}'s learning plan`}
-                          className="text-primary-600 hover:underline cursor-pointer"
-                        >
-                          Learning plan
-                        </button>
-                      ) : null}
+                      <span className="flex flex-wrap items-center gap-2">
+                        {isLearner && row.programmeStatus === DELIVERY_STATUS ? (
+                          <button
+                            onClick={() => setPlanFor(row)}
+                            title={`${row.hasLearningPlan ? 'Edit' : 'Add'} ${row.name}'s learning plan`}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                          >
+                            <i className={`ri-${row.hasLearningPlan ? 'edit' : 'add'}-line`} />
+                            {row.hasLearningPlan ? 'Edit learning plan' : 'Add learning plan'}
+                          </button>
+                        ) : isLearner && row.learningPlan ? (
+                          // Past planning — the plan is fixed, so this opens the
+                          // same modal read-only rather than routing to the
+                          // learner's record, which is not their plan.
+                          <button
+                            onClick={() => setPlanFor(row)}
+                            title={`View ${row.name}'s learning plan`}
+                            className="text-primary-600 hover:underline cursor-pointer"
+                          >
+                            Learning plan
+                          </button>
+                        ) : null}
+                        {/* Which modules a learner takes is settled in the plan;
+                            moving them off one part-way through delivery is a
+                            separate job, so it is a separate action — and only
+                            once they are being taught. */}
+                        {isLearner && row.hasLearningPlan
+                          && SHIFT_STATUSES.includes(row.programmeStatus || '') && (
+                          <button
+                            onClick={() => setShiftFor(row)}
+                            title={`Shift ${row.name} from one module to another`}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-foreground-200 px-2.5 py-1 text-[12px] font-medium text-foreground-600 transition-smooth hover:border-primary-300 hover:bg-primary-50/60 hover:text-primary-700 cursor-pointer whitespace-nowrap"
+                          >
+                            <i className="ri-arrow-left-right-line" />
+                            Shift module
+                          </button>
+                        )}
+                      </span>
                     </td>
                     <td className="py-2.5 px-3">{isLearner && row.programmeStatus ? <StatusBadge status={row.programmeStatus} /> : null}</td>
                     <td className="py-2.5 px-3">
@@ -625,6 +651,14 @@ export default function UsersListPage() {
       {createAdminOpen && <CreateStaffModal variant="admin" onClose={() => setCreateAdminOpen(false)} onCreated={load} />}
       {createTutorOpen && <CreateStaffModal variant="tutor" onClose={() => setCreateTutorOpen(false)} onCreated={load} />}
       {editStaff && <EditStaffModal row={editStaff} onClose={() => setEditStaff(null)} onSaved={applyStaffUpdate} />}
+      {shiftFor && (
+        <ShiftModuleModal
+          learnerId={shiftFor.id}
+          learnerName={shiftFor.name}
+          onClose={() => setShiftFor(null)}
+          onSaved={load}
+        />
+      )}
       {planFor && (
         <LearningPlanModal
           learnerId={planFor.id}
