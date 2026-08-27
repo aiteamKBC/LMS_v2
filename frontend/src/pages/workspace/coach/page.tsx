@@ -1309,7 +1309,11 @@ export default function CoachDashboard() {
   if (coach.canChooseCoach && !coach.isViewingAsCoach) {
     return (
       <WorkspaceShell
-        role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel}
+        // No sidebar until a coach is chosen: every coach page reads the
+        // selected coach, so those links would open a caseload, a timetable and
+        // a marking queue belonging to nobody. Picking one is the only thing to
+        // do here, and the nav returns with the choice.
+        role="coach" roleLabel={coachNav.label} navItems={[]} workspaceLabel={coachNav.workspaceLabel}
         pageTitle="Coach Workspace" pageSubtitle="Choose a coach to open their workspace"
         userName={auth.account?.displayName || auth.user?.fullName || 'Administrator'} userRole="Administrator"
       >
