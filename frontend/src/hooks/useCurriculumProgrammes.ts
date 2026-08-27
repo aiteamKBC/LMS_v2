@@ -61,6 +61,27 @@ export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCu
     )));
   };
 
+  /**
+   * Put a just-written programme on the list without waiting for the reload.
+   *
+   * The collection is rebuilt from several tables and can take seconds, so a
+   * create that only triggered a refetch left the page looking unchanged for
+   * long enough to read as "it didn't save". A new programme goes to the front
+   * rather than the end: the list is paginated, and appending can drop it onto a
+   * page the reader is not looking at. The reload behind it restores the
+   * server's own ordering.
+   */
+  const upsertProgramme = (programme: CurriculumProgramme) => {
+    const key = programme.sourceId || programme.id;
+    if (!key) return;
+    setProgrammes(prev => {
+      const known = prev.some(p => (p.sourceId || p.id) === key);
+      return known
+        ? prev.map(p => ((p.sourceId || p.id) === key ? { ...p, ...programme } : p))
+        : [programme, ...prev];
+    });
+  };
+
   return {
     programmes,
     loading,
@@ -69,5 +90,6 @@ export function useCurriculumProgrammes({ skipCache = false, visibility }: UseCu
     removeProgramme,
     markProgrammeArchived,
     markProgrammeRestored,
+    upsertProgramme,
   };
 }
