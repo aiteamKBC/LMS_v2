@@ -9,7 +9,7 @@ import { submitComponentProgress } from '@/api/components';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
-  componentCriteria, componentRequiresEvidence,
+  componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { fetchEvidence } from '@/api/evidence';
@@ -122,6 +122,15 @@ export default function ComponentViewPage() {
   }, [kind, id]);
 
   const ctx = useMemo(() => (componentId ? locate(detail, componentId) : null), [detail, componentId]);
+  // Every component id this learner has finished, so each sidebar row can show
+  // whether it is already done. Nothing needs folding in for a component
+  // completed on this visit: submitting swaps the whole layout for the results
+  // screen, and the sidebar is only ever rendered while still consuming.
+  const completedIds = useMemo(() => completedComponentIds(detail), [detail]);
+  const weekDoneCount = useMemo(
+    () => (ctx?.weekComponents ?? []).filter((c) => isComponentComplete(c, completedIds)).length,
+    [ctx, completedIds],
+  );
   const component = ctx?.component ?? null;
   const meta = component ? componentTypeMeta(component.title) : null;
   const learnerKsbs: LearnerKsbItem[] = detail?.ksbs ?? [];
@@ -429,7 +438,10 @@ export default function ComponentViewPage() {
               <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
                 <div className="px-4 py-3 border-b border-background-300">
                   <h2 className="text-sm font-heading font-bold text-foreground-800">{weekTitle || 'This week'}</h2>
-                  <p className="text-[11px] text-foreground-400 mt-0.5">{ctx?.weekComponents.length ?? 0} components</p>
+                  <p className="text-[11px] text-foreground-400 mt-0.5">
+                    {ctx?.weekComponents.length ?? 0} components
+                    {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
+                  </p>
                 </div>
                 <ul className="divide-y divide-background-300">
                   {(ctx?.weekComponents ?? []).map((c) => {
@@ -437,6 +449,7 @@ export default function ComponentViewPage() {
                     const isCurrent = !c.isQuiz && c.componentId === componentId;
                     const contentAvailable = hasComponentContent(c);
                     const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
+                    const completed = isComponentComplete(c, completedIds);
                     const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
                     const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
                     return (
@@ -445,15 +458,23 @@ export default function ComponentViewPage() {
                           disabled={!clickable}
                           onClick={() => clickable && navigate(componentRoute(kind, id, c, moduleTitle, weekTitle))}
                           className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                            !contentAvailable ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale' : isCurrent ? 'bg-primary-50' : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
+                            !contentAvailable
+                              ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale'
+                              : isCurrent
+                                ? 'bg-primary-50'
+                                : completed
+                                  ? `bg-emerald-50/70 ${clickable ? 'hover:bg-emerald-50 cursor-pointer' : 'cursor-default'}`
+                                  : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
                           }`}
                         >
-                          <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${cm.bg}`}>
-                            <AppIcon className={`${cm.icon} text-[12px] ${cm.color}`} />
+                          <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : cm.bg}`}>
+                            <AppIcon className={completed ? 'ri-check-line text-[12px] text-emerald-700' : `${cm.icon} text-[12px] ${cm.color}`} />
                           </span>
                           <span className="flex-1 min-w-0">
                             <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
-                            <span className={`block text-[13px] font-semibold leading-snug truncate ${isCurrent ? 'text-primary-700' : 'text-foreground-800'}`}>
+                            <span className={`block text-[13px] font-semibold leading-snug truncate ${
+                              isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-foreground-800'
+                            }`}>
                               {cm.detail || cm.label}
                             </span>
                           </span>
@@ -466,6 +487,8 @@ export default function ComponentViewPage() {
                           )}
                           {!contentAvailable ? (
                             <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
+                          ) : completed ? (
+                            <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-sm shrink-0" />
                           ) : isCurrent ? (
                             <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
                           ) : clickable ? (
@@ -546,7 +569,13 @@ function DocumentEmbed({ url, title, noun }: { url: string; title: string; noun:
   if (embed.mode === 'unavailable') return unavailable(embed.reason);
   if (embed.mode === 'deck') return <SlideDeckViewer src={embed.src} title={title} fallback={unavailable} />;
   return (
-    <div className="rounded-xl overflow-hidden border border-background-300" style={{ aspectRatio: '4 / 3' }}>
+    // A 4:3 box on a wide card is taller than the screen, which puts the top of
+    // the document above the fold and the controls far below it. The ratio still
+    // drives the shape; the window caps how big it gets.
+    <div
+      className="rounded-xl overflow-hidden border border-background-300"
+      style={{ aspectRatio: '4 / 3', maxHeight: 'calc(100vh - 14rem)' }}
+    >
       <iframe title={title} src={embed.src} className="w-full h-full" />
     </div>
   );
@@ -773,7 +802,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
   if (contentKind === 'video' && parsed) {
     return (
       <div className="rounded-2xl overflow-hidden bg-black shadow-sm ring-1 ring-background-300">
-        <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
+        <div className="relative w-full mx-auto" style={{ aspectRatio: '16 / 9', maxHeight: 'calc(100vh - 14rem)' }}>
           <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onEnded={onEnded} onUnsupported={onUnsupported} />
         </div>
       </div>
@@ -796,7 +825,10 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
                 and display the page itself in the LMS rather than only linking
                 out. Some sites block embedding (X-Frame-Options), so the "open
                 in a new tab" link below is always shown, not just a fallback. */}
-            <div className="rounded-xl overflow-hidden border border-background-300 bg-white" style={{ aspectRatio: '16 / 9' }}>
+            <div
+              className="rounded-xl overflow-hidden border border-background-300 bg-white"
+              style={{ aspectRatio: '16 / 9', maxHeight: 'calc(100vh - 16rem)' }}
+            >
               <iframe title={title} src={component.audioUrl} className="w-full h-full" sandbox="allow-scripts allow-same-origin allow-popups allow-forms" />
             </div>
             <p className="text-[11px] text-foreground-400 mt-2">If the player above stays blank, this site doesn&apos;t allow embedding — use the link below instead.</p>

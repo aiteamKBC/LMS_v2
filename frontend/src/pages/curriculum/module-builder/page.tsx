@@ -1076,7 +1076,6 @@ export default function ModuleBuilder() {
   const exportKsbSheet = useCallback(async () => {
     if (!workingModule) return;
     setActionMessage(null);
-    setSaveSuccess(null);
     // Guard before exporting so an empty module never downloads a blank sheet.
     if (!workingModule.weekStructure.some(week => week.components.length)) {
       setActionMessage('This module has no components to export yet.');
@@ -1095,7 +1094,6 @@ export default function ModuleBuilder() {
   const importKsbSheet = useCallback(async (file: File) => {
     if (!workingModule) return;
     setActionMessage(null);
-    setSaveSuccess(null);
     try {
       const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule);
       if (!summary.rowsWithKsbs) {
