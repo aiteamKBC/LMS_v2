@@ -762,6 +762,8 @@ export function LearnerCalendarContent() {
                   {([
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
+                    { value: 'progress-review' as BookableSessionType, label: 'Progress Review', icon: 'ri-line-chart-line', desc: 'Review your progress and targets' },
+                    { value: 'mcr' as BookableSessionType, label: 'Monthly Coaching', icon: 'ri-calendar-check-line', desc: 'Your monthly coaching meeting' },
                   ]).map((t) => (
                     <button key={t.value} onClick={() => setBookType(t.value)}
                       className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
