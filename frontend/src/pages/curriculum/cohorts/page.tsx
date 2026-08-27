@@ -12,9 +12,12 @@ import {
   matchesSearch,
   normaliseKey,
   programmeIdentity,
+  removeById,
   sameIdentifier,
+  upsertById,
 } from '../shared/entities/model';
 import { CohortFormDrawer } from '../shared/entities/forms';
+import { CurriculumStructureWizard, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
   EntityFilterBar,
@@ -55,6 +58,9 @@ export default function CurriculumCohortsPage() {
   const [yearFilter, setYearFilter] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumCohort | null>(null);
+  // The guided run: this same cohort form, then the group and module ones, for a
+  // cohort that is being stood up rather than added to a running programme.
+  const [wizardOpen, setWizardOpen] = useState(false);
   // The cohort a save just wrote, marked in the table until the eye has had a
   // chance to land on it.
   const [highlightId, setHighlightId] = useState<string | null>(null);
@@ -118,6 +124,10 @@ export default function CurriculumCohortsPage() {
       confirmButtonText: 'Archive cohort',
       onConfirm: async () => {
         await archiveCurriculumCohort(cohort.id);
+        // Drop the row now, for the same reason a create paints one now: the
+        // refresh behind this takes seconds, and a cohort still sitting in the
+        // list after "Archive" reads as an archive that did not happen.
+        applyLocal(previous => ({ ...previous, cohorts: removeById(previous.cohorts, cohort.id) }));
         await reload({ silent: true });
       },
       successTitle: 'Cohort archived',
@@ -150,12 +160,7 @@ export default function CurriculumCohortsPage() {
   const handleSaved = async (result?: { cohort: CurriculumCohort }) => {
     const saved = result?.cohort;
     if (saved) {
-      applyLocal(previous => ({
-        ...previous,
-        cohorts: previous.cohorts.some(item => sameIdentifier(item.id, saved.id))
-          ? previous.cohorts.map(item => (sameIdentifier(item.id, saved.id) ? { ...item, ...saved } : item))
-          : [...previous.cohorts, saved],
-      }));
+      applyLocal(previous => ({ ...previous, cohorts: upsertById(previous.cohorts, saved) }));
       revealCohort(saved);
       window.clearTimeout(highlightTimer.current);
       setHighlightId(saved.id);
@@ -190,6 +195,16 @@ export default function CurriculumCohortsPage() {
             { icon: 'ri-graduation-cap-line', label: 'Learners', value: totals.learners },
           ]}
           primaryAction={{ label: 'Add Cohort', onClick: openCreate }}
+          secondaryActions={(
+            <button
+              type="button"
+              onClick={() => setWizardOpen(true)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
+            >
+              <AppIcon className="ri-route-line text-base"></AppIcon>
+              Cohort + group + module
+            </button>
+          )}
         />
 
         {error && <InlineError message={error} onRetry={() => void reload()} />}
@@ -281,6 +296,20 @@ export default function CurriculumCohortsPage() {
         holidays={holidays}
         onClose={() => setDrawerOpen(false)}
         onSaved={handleSaved}
+      />
+
+      {/* The same cohort form as above, with the group and module ones chained
+          behind it. Only the cohort step reaches this page's list; what the later
+          steps create is picked up by the refresh that follows each one. */}
+      <CurriculumStructureWizard
+        open={wizardOpen}
+        from="cohort"
+        defaults={{ programmeId: programmeFilter }}
+        onClose={() => setWizardOpen(false)}
+        onStepSaved={async (created: StructureWizardCreated) => {
+          if (created.cohort) await handleSaved({ cohort: created.cohort });
+          else await reload({ silent: true });
+        }}
       />
     </WorkspaceShell>
   );

@@ -55,6 +55,26 @@ export function sameIdentifier(left: unknown, right: unknown): boolean {
   return Boolean(a) && a === b;
 }
 
+/**
+ * Put the record a save just wrote into a collection the page is already
+ * showing, matched on id: merged over the existing row when it is an edit,
+ * appended when it is new.
+ *
+ * The pages use this to paint a save before the background refresh returns,
+ * which on a remote database is several seconds later. Only ever call it with
+ * what an endpoint gave back — the point is to be early, not to invent a row.
+ */
+export function upsertById<T extends { id: string }>(rows: T[], saved: T): T[] {
+  return rows.some(row => sameIdentifier(row.id, saved.id))
+    ? rows.map(row => (sameIdentifier(row.id, saved.id) ? { ...row, ...saved } : row))
+    : [...rows, saved];
+}
+
+/** The other half of `upsertById`: drop a record an archive has just hidden. */
+export function removeById<T extends { id: string }>(rows: T[], id: string): T[] {
+  return rows.filter(row => !sameIdentifier(row.id, id));
+}
+
 /** Any of `values` matches any of `candidates`. */
 export function matchesAny(values: unknown[], candidates: unknown[]): boolean {
   const wanted = new Set(candidates.map(normaliseKey).filter(Boolean));

@@ -15,6 +15,7 @@ import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { SelectMenu, type SelectOption } from '@/components/feature/SelectField';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { statusTone } from './model';
 import { AppIcon } from '@/components/feature/AppIcon';
 
@@ -216,6 +217,10 @@ export function EntityTable<T>({
 }) {
   const [flashKey, setFlashKey] = useState<string | null>(null);
   const rowNodes = useRef(new Map<string, HTMLDivElement>());
+  // Both cues below carry information, so a reduced-motion viewer keeps them and
+  // loses only the movement: the bar sits still and the row holds a flat tint
+  // for the same length of time.
+  const reduceMotion = useReducedMotion();
 
   // `rows` is in the dependencies on purpose: the optimistic row is replaced by
   // the server's copy when the refresh lands, and the highlight has to survive
@@ -223,10 +228,13 @@ export function EntityTable<T>({
   useEffect(() => {
     if (!highlightKey) { setFlashKey(null); return undefined; }
     setFlashKey(highlightKey);
-    rowNodes.current.get(highlightKey)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    rowNodes.current.get(highlightKey)?.scrollIntoView({
+      block: 'center',
+      behavior: reduceMotion ? 'auto' : 'smooth',
+    });
     const timer = setTimeout(() => setFlashKey(null), 2600);
     return () => clearTimeout(timer);
-  }, [highlightKey, rows]);
+  }, [highlightKey, reduceMotion, rows]);
 
   return (
     <div className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
@@ -244,7 +252,11 @@ export function EntityTable<T>({
           </div>
           <div className="relative h-0.5 overflow-hidden" aria-hidden="true">
             {refreshing && !loading && (
-              <span className="absolute inset-y-0 left-0 w-1/4 animate-entity-refresh rounded-full bg-primary-500/70" />
+              <span
+                className={reduceMotion
+                  ? 'absolute inset-0 bg-primary-500/40'
+                  : 'absolute inset-y-0 left-0 w-1/4 animate-entity-refresh rounded-full bg-primary-500/70'}
+              />
             )}
           </div>
           <span className="sr-only" role="status" aria-live="polite">
@@ -265,7 +277,9 @@ export function EntityTable<T>({
                       if (node) rowNodes.current.set(key, node);
                       else rowNodes.current.delete(key);
                     }}
-                    className={`${gridClass} gap-3 px-4 py-3 transition-smooth hover:bg-background-100/60${flashKey === key ? ' animate-row-flash' : ''}`}
+                    className={`${gridClass} gap-3 px-4 py-3 transition-smooth hover:bg-background-100/60${
+                      flashKey === key ? (reduceMotion ? ' bg-primary-100/70' : ' animate-row-flash') : ''
+                    }`}
                   >
                     {renderRow(row)}
                   </div>
@@ -746,6 +760,50 @@ export function WeekdayControl({ value, onChange }: { value: string; onChange: (
 }
 
 /**
+ * A third footer action, beside Cancel. Used by the structure wizard for "skip
+ * this step"; `confirmWhenDirty` is the sentence the confirm shows when the form
+ * holds answers the action would throw away, and without it the action fires
+ * straight away.
+ */
+export interface DrawerExtraAction {
+  label: string;
+  icon?: string;
+  onClick: () => void;
+  confirmWhenDirty?: string;
+}
+
+/**
+ * What a form is handed when something is driving it as one step of a chain —
+ * the structure wizard is the only such caller. It is deliberately additive:
+ * unset, every form behaves exactly as it does on its own page.
+ */
+export interface FormChainStep {
+  /** Rendered under the header, above the fields: which step this is. */
+  banner?: ReactNode;
+  /** Beside Cancel, e.g. "Use an existing cohort". */
+  extraAction?: DrawerExtraAction;
+  /**
+   * Returns to the previous step's form, reopened against the record it already
+   * saved. Absent on the first step of a chain, since there is nowhere to go back to.
+   */
+  backAction?: DrawerExtraAction;
+  /**
+   * The chain closes the drawer and confirms at the end of the run, so the form
+   * does neither: it saves, hands the record to `onSaved` and stops there.
+   */
+  chained?: boolean;
+  /** Overrides the submit button, e.g. "Create cohort & continue". */
+  submitLabel?: string;
+  /**
+   * Overrides the Cancel button. A chain that has already written records is not
+   * cancelling anything by closing, so it says "Stop here" instead.
+   */
+  cancelLabel?: string;
+  /** Overrides the drawer width, so a chain does not resize between steps. */
+  width?: string;
+}
+
+/**
  * The focused create/edit surface. Simple records are edited here rather than on
  * a page of their own; anything operational (a module's schedule, its Teams
  * series, its components) gets a full workspace instead.
@@ -754,9 +812,13 @@ export function EntityDrawer({
   open,
   title,
   subtitle,
+  banner,
   onClose,
   onSubmit,
   submitLabel,
+  cancelLabel = 'Cancel',
+  extraAction,
+  backAction,
   saving,
   error,
   dirty = false,
@@ -766,9 +828,15 @@ export function EntityDrawer({
   open: boolean;
   title: string;
   subtitle?: string;
+  /** Held above the scroll area, so a step rail stays put while the form scrolls. */
+  banner?: ReactNode;
   onClose: () => void;
   onSubmit: () => void | Promise<void>;
   submitLabel: string;
+  cancelLabel?: string;
+  extraAction?: DrawerExtraAction;
+  /** A step back in a chain, e.g. "Back to Cohort" — placed before `extraAction`. */
+  backAction?: DrawerExtraAction;
   saving?: boolean;
   error?: string | null;
   /**
@@ -808,6 +876,39 @@ export function EntityDrawer({
     }).finally(() => { confirmingDiscard.current = false; });
   };
 
+  // Skipping a step is a way out of the form too, so it asks about unsaved
+  // answers on the same terms the cross and Cancel do.
+  const runExtraAction = () => {
+    if (saving || !extraAction) return;
+    if (!dirty || !extraAction.confirmWhenDirty) { extraAction.onClick(); return; }
+    if (confirmingDiscard.current) return;
+    confirmingDiscard.current = true;
+    void showCurriculumConfirm({
+      title: extraAction.label,
+      text: extraAction.confirmWhenDirty,
+      icon: 'warning',
+      confirmButtonText: extraAction.label,
+      cancelButtonText: 'Keep editing',
+      onConfirm: () => { extraAction.onClick(); },
+    }).finally(() => { confirmingDiscard.current = false; });
+  };
+
+  // Same pattern as `runExtraAction`, for stepping back instead of forward.
+  const runBackAction = () => {
+    if (saving || !backAction) return;
+    if (!dirty || !backAction.confirmWhenDirty) { backAction.onClick(); return; }
+    if (confirmingDiscard.current) return;
+    confirmingDiscard.current = true;
+    void showCurriculumConfirm({
+      title: backAction.label,
+      text: backAction.confirmWhenDirty,
+      icon: 'warning',
+      confirmButtonText: backAction.label,
+      cancelButtonText: 'Keep editing',
+      onConfirm: () => { backAction.onClick(); },
+    }).finally(() => { confirmingDiscard.current = false; });
+  };
+
   // The slide panel stays mounted so it can animate, but its form does not: a
   // closed drawer that keeps its inputs in the DOM leaves tab-reachable fields
   // behind the page, and a page with two drawers ends up with two sets of
@@ -820,6 +921,7 @@ export function EntityDrawer({
         className="flex h-full min-h-0 flex-col"
         onSubmit={event => { event.preventDefault(); void onSubmit(); }}
       >
+        {banner && <div className="shrink-0 border-b border-background-200 bg-background-100 px-5 py-3.5">{banner}</div>}
         <div ref={firstFieldRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
           {subtitle && <p className="text-[12px] leading-5 text-foreground-500">{subtitle}</p>}
           {error && (
@@ -830,23 +932,49 @@ export function EntityDrawer({
           )}
           {children}
         </div>
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-background-200 px-5 py-4">
-          <button
-            type="button"
-            onClick={requestClose}
-            disabled={saving}
-            className="inline-flex h-10 items-center rounded-xl border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {saving && <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>}
-            {submitLabel}
-          </button>
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-background-200 px-5 py-4">
+          <div className="flex items-center">
+            {backAction && (
+              <button
+                type="button"
+                onClick={runBackAction}
+                disabled={saving}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl px-3 text-[12px] font-bold text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-700 disabled:opacity-50"
+              >
+                <AppIcon className="ri-arrow-left-line text-sm"></AppIcon>
+                {backAction.label}
+              </button>
+            )}
+            {extraAction && (
+              <button
+                type="button"
+                onClick={runExtraAction}
+                disabled={saving}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl px-3 text-[12px] font-bold text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-700 disabled:opacity-50"
+              >
+                {extraAction.icon && <AppIcon className={`${extraAction.icon} text-sm`}></AppIcon>}
+                {extraAction.label}
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={requestClose}
+              disabled={saving}
+              className="inline-flex h-10 items-center rounded-xl border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-50"
+            >
+              {cancelLabel}
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving && <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>}
+              {submitLabel}
+            </button>
+          </div>
         </div>
       </form>
     </RightSlidePanel>

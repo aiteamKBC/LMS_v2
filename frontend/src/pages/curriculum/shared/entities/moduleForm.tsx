@@ -28,6 +28,7 @@ import { TutorClashNotice } from '@/components/feature/TutorClashNotice';
 import { useTutorAvailability } from '@/hooks/useTutorAvailability';
 import {
   createGroupModule,
+  isTutorConflictError,
   previewModuleSessionPlan,
   tutorConflictMessage,
   updateCurriculumModule,
@@ -59,6 +60,7 @@ import {
   SelectControl,
   TextAreaControl,
   TextControl,
+  type FormChainStep,
   type MultiSelectOption,
 } from './ui';
 import { useFormSeedGuard } from './useDrawerState';
@@ -113,6 +115,18 @@ export interface SavedModuleRef {
   catalogueId: string;
   name: string;
   created: boolean;
+  /**
+   * Where this save actually placed the module. A caller driving a chain (the
+   * structure wizard) needs it: the parent may have been picked in this form
+   * rather than created by an earlier step, and only the form knows which.
+   */
+  programmeId?: string;
+  programmeName?: string;
+  cohortId?: string;
+  cohortName?: string;
+  /** Every group the module was placed in — one module regularly runs for several. */
+  groupIds?: string[];
+  groupNames?: string[];
 }
 
 const UNASSIGNED = 'unassigned';
@@ -158,6 +172,7 @@ export function ModuleFormDrawer({
   holidays = [],
   tutorNames = [],
   lockGroup = false,
+  chain,
   onClose,
   onSaved,
 }: {
@@ -173,6 +188,8 @@ export function ModuleFormDrawer({
   tutorNames?: string[];
   /** True inside a Group workspace, where the parent is not up for debate. */
   lockGroup?: boolean;
+  /** Set when the structure wizard is driving this form as one step of a chain. */
+  chain?: FormChainStep;
   onClose: () => void;
   onSaved: (saved: SavedModuleRef) => unknown | Promise<unknown>;
 }) {
@@ -193,6 +210,21 @@ export function ModuleFormDrawer({
   const [color, setColor] = useState('#2563eb');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A group whose attach was refused for a tutor double-booking, offered a
+  // one-click override rather than a dead end: two deliveries of the same
+  // module really can share a tutor (a co-taught slot), and the backend
+  // already accepts `allowTutorConflict` for exactly that -- this is just the
+  // first screen that surfaces it instead of stopping at the 409.
+  const [tutorConflictGroup, setTutorConflictGroup] = useState<{ groupId: string; groupName: string } | null>(null);
+  // Groups already attached (or explicitly overridden) in this submit session,
+  // so retrying after "Book anyway" does not re-create the ones that already
+  // succeeded before the refusal.
+  const attachedThisSession = useRef<Set<string>>(new Set());
+  const overrideGroupIds = useRef<Set<string>>(new Set());
+  // The first group's catalogue id from a create-path run, kept across a
+  // "Book anyway" retry so the later groups attach to the same module rather
+  // than each minting their own.
+  const createdCatalogueId = useRef('');
   const [plan, setPlan] = useState<CurriculumSessionPlanPreview | null>(null);
   // The inputs `plan` was fetched for. A plan whose key no longer matches the
   // form is stale, and the locally projected end date is used instead of it.
@@ -208,6 +240,9 @@ export function ModuleFormDrawer({
     () => programmes.filter(isSelectableProgramme),
     [programmes],
   );
+
+  // The structure wizard drives this same form as the last step of its chain.
+  const chained = Boolean(chain?.chained);
 
   const dirty = !sameFormValues(
     { name, programmeId, cohortId, groupIds, sessionsNumber, startDate, targetEndDate, tutor, status, description, color },
@@ -242,6 +277,10 @@ export function ModuleFormDrawer({
     setPlan(null);
     setPlanFor('');
     setSessionPreviewOpen(false);
+    setTutorConflictGroup(null);
+    attachedThisSession.current = new Set();
+    overrideGroupIds.current = new Set();
+    createdCatalogueId.current = '';
 
     const storedDelivery = module?.deliveryUsages?.[0];
     const parentGroup = groups.find(group => (
@@ -601,6 +640,17 @@ export function ModuleFormDrawer({
     const programme = programmes.find(item => sameIdentifier(programmeIdentity(item), programmeId))
       || programmes.find(item => sameIdentifier(item.name, programmeId));
 
+    // Handed back with every save so a chain can report the parents this form
+    // resolved, whichever of them the person picked here rather than created.
+    const savedParents = () => ({
+      programmeId: programme ? programmeIdentity(programme) : cleanText(programmeId),
+      programmeName: cleanText(programme?.name),
+      cohortId: cleanText(cohortId) || cleanText(selectedCohort?.id),
+      cohortName: cleanText(selectedCohort?.name),
+      groupIds: selectedGroups.map(group => cleanText(group.id)).filter(Boolean),
+      groupNames: selectedGroups.map(group => cleanText(group.name)).filter(Boolean),
+    });
+
     /**
      * One group's delivery of this module.
      *
@@ -627,6 +677,7 @@ export function ModuleFormDrawer({
         endDate: isPrimary ? (endDate || undefined) : undefined,
         sessionsNumber: Math.round(weeks * Math.max(1, groupDeliveryDays)),
         weeks,
+        allowTutorConflict: overrideGroupIds.current.has(group.id) || undefined,
         tutor: tutor || undefined,
         weekDays: groupWeekDays || undefined,
         startTime: cleanText(group.startTime) || undefined,
@@ -639,6 +690,8 @@ export function ModuleFormDrawer({
 
     setSaving(true);
     setError(null);
+    setTutorConflictGroup(null);
+    let failingGroup: CurriculumGroup | null = null;
     try {
       if (module) {
         const patchPayload = {
@@ -684,15 +737,21 @@ export function ModuleFormDrawer({
           && !attachedGroupIds.some(id => sameIdentifier(id, group.id))
         ));
         for (const group of newGroups) {
+          if (attachedThisSession.current.has(group.id)) continue;
+          failingGroup = group;
           await attachToGroup(group);
+          attachedThisSession.current.add(group.id);
         }
         // The caller's refresh runs BEFORE the drawer closes, so `saving` keeps the
         // spinner up and the buttons dimmed until the list actually holds the new
         // numbers. Closing first left a window -- as long as the round-trip, which
         // is seconds on a slow connection -- where reopening the drawer offered the
         // pre-save weeks and saving again wrote them straight back.
-        await onSaved({ catalogueId: module.id, name: trimmed, created: false });
+        await onSaved({ catalogueId: module.id, name: trimmed, created: false, ...savedParents() });
         console.log('[TEMP-DEBUG moduleForm] onSaved() resolved for', module.id);
+        // In a chain the wizard owns closing and confirming, so that a run of
+        // four steps says what it created once rather than four times.
+        if (chained) return;
         onClose();
         await showCurriculumAlert({
           title: 'Module updated',
@@ -713,16 +772,18 @@ export function ModuleFormDrawer({
           ...selectedGroups.filter(group => sameIdentifier(group.id, primaryGroupId)),
           ...selectedGroups.filter(group => !sameIdentifier(group.id, primaryGroupId)),
         ];
-        let catalogueId = '';
         for (const group of ordered) {
+          if (attachedThisSession.current.has(group.id)) continue;
+          failingGroup = group;
           const result = await attachToGroup(group);
           const saved = (result.created || [])[0] || (result.updatedModules || [])[0] || {};
           const id = String(saved.moduleCatalogueId || saved.catalogueId || saved.structureId || saved.id || '');
-          if (!catalogueId) catalogueId = id;
+          if (!createdCatalogueId.current) createdCatalogueId.current = id;
+          attachedThisSession.current.add(group.id);
         }
-        onClose();
-        await onSaved({ catalogueId, name: trimmed, created: true });
-        if (ordered.length > 1) {
+        if (!chained) onClose();
+        await onSaved({ catalogueId: createdCatalogueId.current, name: trimmed, created: true, ...savedParents() });
+        if (!chained && ordered.length > 1) {
           // Worth saying out loud: one press produced one delivery per group, and
           // each of them is authored and scheduled separately from here on.
           await showCurriculumAlert({
@@ -750,16 +811,26 @@ export function ModuleFormDrawer({
         endDate: endDate || '',
         status: 'draft',
       });
-      onClose();
-      await onSaved({ catalogueId: created.catalogueId || created.id, name: trimmed, created: true });
+      if (!chained) onClose();
+      await onSaved({ catalogueId: created.catalogueId || created.id, name: trimmed, created: true, ...savedParents() });
     } catch (err) {
       console.log('[TEMP-DEBUG moduleForm] submit() threw', err);
       // A tutor already booked in that slot is reported by the backend as a
       // sentence worth showing verbatim.
       setError(tutorConflictMessage(err) || (err instanceof Error ? err.message : 'The module could not be saved.'));
+      if (isTutorConflictError(err) && failingGroup) {
+        setTutorConflictGroup({ groupId: failingGroup.id, groupName: failingGroup.name });
+      }
     } finally {
       setSaving(false);
     }
+  };
+
+  const bookConflictAnyway = () => {
+    if (!tutorConflictGroup) return;
+    overrideGroupIds.current.add(tutorConflictGroup.groupId);
+    setTutorConflictGroup(null);
+    void submit();
   };
 
   const placementHint = selectedGroups.length > 1
@@ -777,10 +848,14 @@ export function ModuleFormDrawer({
       subtitle={module
         ? 'Placement, dates and tutor. Weeks and components stay in the Module Builder.'
         : 'Where the module lives and when it runs. Weeks and components are authored next, in the Module Builder.'}
+      banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
-      submitLabel={module ? 'Save module' : 'Create module'}
-      width="w-[760px]"
+      submitLabel={chain?.submitLabel || (module ? 'Save module' : 'Create module')}
+      cancelLabel={chain?.cancelLabel}
+      extraAction={chain?.extraAction}
+      backAction={chain?.backAction}
+      width={chain?.width || 'w-[760px]'}
       saving={saving}
       error={error}
       dirty={dirty}
@@ -902,6 +977,23 @@ export function ModuleFormDrawer({
           freeTutors={freeTutorNames}
           onPickTutor={setTutor}
         />
+      )}
+      {tutorConflictGroup && (
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3">
+          <p className="text-[12px] leading-5 text-red-700">
+            The save was refused because of that clash. If this is a deliberate
+            co-taught slot for {tutorConflictGroup.groupName}, you can book the tutor
+            anyway and save regardless.
+          </p>
+          <button
+            type="button"
+            onClick={bookConflictAnyway}
+            disabled={saving}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:opacity-50"
+          >
+            Book anyway
+          </button>
+        </div>
       )}
       <FormField label="Notes">
         <TextAreaControl value={description} onChange={setDescription} placeholder="Optional delivery notes" />
