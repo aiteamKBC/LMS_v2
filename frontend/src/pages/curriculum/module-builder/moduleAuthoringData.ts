@@ -1305,6 +1305,22 @@ export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { 
   }));
 }
 
+export interface ModuleMeetingInvitees {
+  moduleCatalogueId: string;
+  presenters: string[];
+  attendees: string[];
+}
+
+/**
+ * Suggested Presenters/Attendees for a module's Teams meeting: the module's own
+ * tutor email as presenter, and every learner whose training plan carries this
+ * module as attendee. A starting point for the form, not a binding assignment —
+ * the caller can still edit the lists freely before saving.
+ */
+export function fetchModuleMeetingInvitees(moduleCatalogueId: string) {
+  return apiJson<ModuleMeetingInvitees>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/meeting-invitees/`);
+}
+
 export function createTeamsMeeting(input: TeamsMeetingInput) {
   return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
     method: 'POST',

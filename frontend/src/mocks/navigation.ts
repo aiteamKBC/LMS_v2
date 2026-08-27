@@ -6,9 +6,6 @@ import type { SidebarNavItem } from '@/components/feature/Sidebar';
 export const learnerNavItems: SidebarNavItem[] = [
   // Overview — standalone (not grouped)
   { id: 'learner-overview', label: 'Overview', icon: 'ri-dashboard-line', href: '/workspace/learner' },
-  // Keep the learner's database-backed coach conversation directly available.
-  { id: 'learner-messages', label: 'Messages', icon: 'ri-message-3-line', href: '/learner/messages' },
-
   // The learner's own enrolment wizard — relevant while onboarding, and stays
   // available afterwards as a record of what they submitted.
   { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
@@ -41,7 +38,7 @@ export const learnerNavItems: SidebarNavItem[] = [
     children: [
       { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
 
@@ -80,6 +77,10 @@ export const learnerNavItems: SidebarNavItem[] = [
       { id: 'learner-support', label: 'Support', icon: 'ri-chat-1-line', href: '/learner/support' },
     ],
   },
+
+  // Keep the learner's database-backed coach conversation directly available
+  // as the final destination in the sidebar.
+  { id: 'learner-messages', label: 'Messages', icon: 'ri-message-3-line', href: '/learner/messages' },
 ];
 
 // ============================================================================

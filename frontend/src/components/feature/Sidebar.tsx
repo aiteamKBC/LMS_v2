@@ -456,21 +456,6 @@ export function Sidebar({
         </div>
       </nav>
 
-      {/* Help & support */}
-      <div className={`shrink-0 border-t border-foreground-100/70 py-2.5 ${variant === 'rail' ? 'px-1.5' : 'px-2'}`}>
-        {variant === 'expanded' && (
-          <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-foreground-300">
-            Help &amp; Support
-          </p>
-        )}
-        <div className={variant === 'rail' ? 'space-y-1' : 'space-y-0.5'}>
-          {HELP_LINKS.map(link => (
-            variant === 'rail'
-              ? <RailLink key={link.href} item={link} isActive={isActive} compact />
-              : <ExpandedLink key={link.href} item={link} isActive={isActive} onNavigate={onCloseMobile} compact />
-          ))}
-        </div>
-      </div>
     </div>
   );
 
@@ -512,14 +497,6 @@ export function Sidebar({
     </>
   );
 }
-
-/** Fixed destinations shown under every role's own navigation. */
-const HELP_LINKS: SidebarNavItem[] = [
-  { id: 'knowledge-base', label: 'Knowledge Base', icon: 'ri-book-read-line', href: '/support/knowledge-base' },
-  { id: 'user-guide', label: 'User Guides', icon: 'ri-guide-line', href: '/user-guide' },
-  { id: 'contact-support', label: 'Contact Support', icon: 'ri-customer-service-2-line', href: '/support/ticket-queue' },
-  { id: 'notifications', label: "What's New", icon: 'ri-bell-line', href: '/notifications' },
-];
 
 /* ═══════════════════════════════════════════════════════
    RAIL — icon above a label, so nothing is icon-only

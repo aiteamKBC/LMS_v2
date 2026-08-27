@@ -150,6 +150,7 @@ export function ProgrammeFormDrawer({
       banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
+      closeConfirm={chain?.closeConfirm}
       submitLabel={chain?.submitLabel || (programme ? 'Save programme' : 'Create programme')}
       cancelLabel={chain?.cancelLabel}
       extraAction={chain?.extraAction}
@@ -460,6 +461,7 @@ export function CohortFormDrawer({
       banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
+      closeConfirm={chain?.closeConfirm}
       submitLabel={chain?.submitLabel || (cohort ? 'Save cohort' : 'Create cohort')}
       cancelLabel={chain?.cancelLabel}
       extraAction={chain?.extraAction}
@@ -937,6 +939,7 @@ export function GroupFormDrawer({
       banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
+      closeConfirm={chain?.closeConfirm}
       submitLabel={chain?.submitLabel || (group ? 'Save group' : 'Create group')}
       cancelLabel={chain?.cancelLabel}
       extraAction={chain?.extraAction}

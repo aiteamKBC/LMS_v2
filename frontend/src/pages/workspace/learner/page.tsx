@@ -7,8 +7,13 @@ import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
-import type { LearnerDetail, LearnerKind, LearnerVideoProgress } from '@/api/learnerDetail';
+import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
+import type {
+  LearnerComponentProgress,
+  LearnerDetail,
+  LearnerKind,
+  LearnerVideoProgress,
+} from '@/api/learnerDetail';
 import { learningReflectionStatusKey, loadLearningReflectionStatuses, type LearningReflectionStatusMap } from '@/api/reflectionSubmission';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
 import { fetchLearnerCalendarEvents, fetchLearnerCoach, type LearnerCalendarEvent } from '@/api/learnerCalendar';
@@ -34,12 +39,22 @@ import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM
    Real-learner component progress + current-week UI
    ───────────────────────────────────────────── */
 
-type CompState = 'passed' | 'attempted' | 'watched' | 'todo';
+type CompState = 'passed' | 'attempted' | 'watched' | 'completed' | 'todo';
 
-/** Derive a component's real progress from the learner's attempts/watches. */
-function componentProgress(c: JourneyComponent, videos: LearnerVideoProgress[]): {
-  state: CompState; label: string; percent: number; detail?: string;
-} {
+/**
+ * Derive a component's real progress from what the learner has recorded.
+ *
+ * Three kinds of completion, one per way a component can be finished: a quiz is
+ * graded, a video is watched, and everything else (reading, slides, podcast,
+ * assignment, reflection…) is completed through the component runner, which
+ * writes its own `component` record. Reading only the first two left every
+ * completed reading and slide deck showing "To do" — see LearnerComponentProgress.
+ */
+function componentProgress(
+  c: JourneyComponent,
+  videos: LearnerVideoProgress[],
+  completions: LearnerComponentProgress[] = [],
+): { state: CompState; label: string; percent: number; detail?: string } {
   if (c.isQuiz && c.quizAttempts && c.quizAttempts.length > 0) {
     const best = c.quizAttempts.reduce((b, a) => (gradePercent(a.grade) > gradePercent(b.grade) ? a : b));
     const pct = gradePercent(best.grade);
@@ -49,7 +64,17 @@ function componentProgress(c: JourneyComponent, videos: LearnerVideoProgress[]):
   }
   if (c.type === 'video' && c.componentId) {
     const watched = videos.some((v) => v.componentId === c.componentId);
-    if (watched) return { state: 'watched', label: 'Watched', percent: 100 };
+    if (watched) return { state: 'watched', label: 'Completed', percent: 100 };
+  }
+  if (c.componentId) {
+    const done = completions.filter((entry) => entry.componentId === c.componentId);
+    if (done.length > 0) {
+      // An explicit false is a recorded failure and never counts as done; an
+      // absent `passed` is the normal ungraded completion.
+      return done.some((entry) => entry.passed !== false)
+        ? { state: 'completed', label: 'Completed', percent: 100 }
+        : { state: 'attempted', label: 'Attempted', percent: 0 };
+    }
   }
   return { state: 'todo', label: 'To do', percent: 0 };
 }
@@ -58,6 +83,7 @@ const STATE_STYLE: Record<CompState, { pill: string; dot: string; bar: string }>
   passed:    { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
   attempted: { pill: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', bar: 'bg-amber-500' },
   watched:   { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
+  completed: { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
   todo:      { pill: 'bg-background-200 text-foreground-500', dot: 'bg-foreground-300', bar: 'bg-foreground-300' },
 };
 
@@ -76,6 +102,29 @@ function formatProgrammeStartDate(value?: string | null): string {
   return Number.isNaN(date.getTime())
     ? value
     : new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+}
+
+/** Week names are authored as free text, but often include a UK date such as
+ * 3/3/2026. Turn it into a clear seven-day learning period when available. */
+function weekPeriodLabel(value: string): string | null {
+  const match = value.match(/(?:^|\D)(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})(?:\D|$)/);
+  if (!match) return null;
+  const [, dayText, monthText, yearText] = match;
+  const day = Number(dayText);
+  const month = Number(monthText);
+  const year = Number(yearText);
+  const start = new Date(Date.UTC(year, month - 1, day));
+  if (
+    start.getUTCFullYear() !== year
+    || start.getUTCMonth() !== month - 1
+    || start.getUTCDate() !== day
+  ) return null;
+  const end = new Date(start);
+  end.setUTCDate(end.getUTCDate() + 6);
+  const format = (date: Date) => new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
+  }).format(date);
+  return `${format(start)} – ${format(end)}`;
 }
 
 /* ─────────────────────────────────────────────
@@ -320,27 +369,40 @@ export default function LearnerOverview() {
   const headerDescription = isRealMode
     ? ([heroProgramme, heroEmployer].filter(Boolean).join(' · ') || undefined)
     : `${p.programme} ${p.programmeLevel} · ${p.employer}`;
+  const startDateDisplay = isRealMode
+    ? (formatProgrammeStartDate(real?.programmeStartDate) || EMPTY_VALUE)
+    : p.startDate;
   const plannedEndDisplay = isRealMode ? EMPTY_VALUE : p.plannedEndDate;
   const coachDisplayName = isRealMode ? (coach?.name || 'Not yet assigned') : p.coach.name;
   const coachDisplayEmail = isRealMode ? (coach?.email || '') : p.coach.email;
 
   /* ── Real learner's training-plan journey, grouped module -> week -> components ── */
   const journey = useMemo(() => (isRealMode ? buildLearnerJourney(real) : []), [isRealMode, real]);
-  const { stations, overallPct, currentIndex } = useMemo(() => buildStations(journey, real), [journey, real]);
+  const { stations, overallPct, currentIndex, currentWeek: currentWeekLabel } = useMemo(() => buildStations(journey, real), [journey, real]);
   const currentStation = currentIndex >= 0 ? stations[currentIndex] : null;
   const journeyAllDone = currentIndex === -1 && stations.length > 0;
   const currentModuleLabel = isRealMode
     ? (currentStation ? currentStation.module.module : journeyAllDone ? 'Gateway ready' : EMPTY_VALUE)
     : p.currentModule;
 
-  // The "current week" — first week of the first module (test data for now;
-  // swap for date-based scheduling once live sessions are wired).
+  // Use the first incomplete week in the current module so Continue Learning
+  // follows the learner's actual progress instead of remaining on week one.
   const currentWeek = useMemo(() => {
+    if (currentStation) {
+      const weekIndex = Math.max(0, currentStation.module.weeks.findIndex((week) => week.week === currentWeekLabel));
+      const week = currentStation.module.weeks[weekIndex];
+      if (week) return {
+        module: currentStation.module.module,
+        week,
+        weekIndex,
+        totalWeeks: currentStation.module.weeks.length,
+      };
+    }
     for (const mod of journey) {
-      if (mod.weeks.length > 0) return { module: mod.module, week: mod.weeks[0] };
+      if (mod.weeks.length > 0) return { module: mod.module, week: mod.weeks[0], weekIndex: 0, totalWeeks: mod.weeks.length };
     }
     return null;
-  }, [journey]);
+  }, [currentStation, currentWeekLabel, journey]);
   const evidencedKsbCodes = useMemo(() => recordedKsbEvidenceCodes(real), [real]);
 
   // OTJ hours: completed + planned come from the backend (stored in
@@ -352,7 +414,12 @@ export default function LearnerOverview() {
     const targetHours = parseHours(real?.targetHours);
     const distinctQuizzes = new Set((real?.quizAttempts ?? []).map((a) => a.quizId)).size;
     const videos = (real?.videoProgress ?? []).length;
-    const activities = distinctQuizzes + videos;
+    // Readings, slide decks, podcasts and the rest complete through the
+    // component runner and count the same as a quiz or a video.
+    const completions = new Set(
+      (real?.componentProgress ?? []).map((entry) => entry.componentId),
+    ).size;
+    const activities = distinctQuizzes + videos + completions;
     const percent = plannedHours > 0 ? Math.round((completedHours / plannedHours) * 100) : 0;
     // Progress vs the current-week target (the "should have reached by now" bar).
     const variance = real?.progressVariance ? parseFloat(real.progressVariance) : null;   // decimal, e.g. -0.86
@@ -661,6 +728,7 @@ export default function LearnerOverview() {
                 <ProfileFact icon="ri-stack-line" label="Cohort" value={displayCohort} />
                 <ProfileFact icon="ri-flag-2-line" label="Module" value={currentModuleLabel} />
                 <ProfileFact icon="ri-user-star-line" label="Coach" value={coachDisplayName} />
+                <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
                 <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
                 <StatusBadge status={isRealMode ? real?.programmeStatus : p.status} tone={!isRealMode ? 'positive' : undefined} />
               </>
@@ -722,8 +790,11 @@ export default function LearnerOverview() {
                       <CurrentWeekCard
                         moduleTitle={currentWeek.module}
                         weekLabel={currentWeek.week.week}
+                        weekIndex={currentWeek.weekIndex}
+                        totalWeeks={currentWeek.totalWeeks}
                         components={currentWeek.week.components}
                         videos={real?.videoProgress ?? []}
+                        completions={real?.componentProgress ?? []}
                         kind={kind}
                         learnerId={id}
                         reflectionStatuses={reflectionStatuses}
@@ -914,33 +985,48 @@ function UpcomingRow({ day, month, timeLabel, title, subtitle, tone = 'neutral',
 }
 
 /** One component row inside the Continue Learning card. */
-function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
+function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
   c: JourneyComponent;
   videos: LearnerVideoProgress[];
+  completions: LearnerComponentProgress[];
   reflectionStatus?: string;
   onOpen?: () => void;
 }) {
   const meta = componentTypeMeta(c.title);
-  const prog = componentProgress(c, videos);
+  const prog = componentProgress(c, videos, completions);
   const style = STATE_STYLE[prog.state];
   const actionable = !!onOpen;
   const reflection = REFLECTION_STATUS[reflectionStatus || ''];
+  const completed = prog.state === 'watched' || prog.state === 'passed' || prog.state === 'completed';
+  const unavailable = !hasComponentContent(c);
   return (
     <button
       type="button"
       onClick={onOpen}
       disabled={!actionable}
-      className={`group w-full flex items-center gap-3 rounded-xl border border-foreground-100 bg-background-50 px-3.5 py-3 text-left transition-smooth ${
-        actionable ? 'hover:border-primary-300/70 hover:shadow-sm cursor-pointer' : 'cursor-default'
+      title={unavailable ? 'Content unavailable' : undefined}
+      className={`group relative w-full flex items-center gap-3 overflow-hidden rounded-xl border px-3.5 py-3 text-left transition-smooth ${
+        unavailable
+          ? 'border-foreground-100 bg-background-100/70 opacity-55 grayscale'
+          : completed
+          ? 'border-emerald-200 bg-emerald-50/60 shadow-sm shadow-emerald-100/60'
+          : 'border-foreground-100 bg-background-50'
+      } ${
+        actionable
+          ? completed
+            ? 'cursor-pointer hover:border-emerald-300 hover:bg-emerald-50 hover:shadow-md hover:shadow-emerald-100/70'
+            : 'cursor-pointer hover:border-primary-300/70 hover:shadow-sm'
+          : 'cursor-default'
       }`}
     >
-      <span className={`relative w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
-        <AppIcon className={`${meta.icon} text-[15px] ${meta.color}`} />
-        <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-background-50 ${style.dot}`} />
+      {completed && <span className="absolute inset-y-0 left-0 w-1 bg-emerald-500" aria-hidden="true" />}
+      <span className={`relative w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : meta.bg}`}>
+        <AppIcon className={`${completed ? 'ri-check-line text-emerald-700' : `${meta.icon} ${meta.color}`} text-[15px]`} />
+        <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ${completed ? 'ring-emerald-50' : 'ring-background-50'} ${style.dot}`} />
       </span>
       <span className="flex-1 min-w-0">
         <span className="block text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{meta.label}</span>
-        <span className="block text-[13px] font-semibold text-foreground-900 leading-snug truncate">{meta.detail || meta.label}</span>
+        <span className={`block text-[13px] font-semibold leading-snug truncate ${completed ? 'text-emerald-950' : 'text-foreground-900'}`}>{meta.detail || meta.label}</span>
         {(prog.state === 'attempted') && (
           <span className="mt-1 flex items-center gap-2">
             <span className="h-1 w-24 rounded-full bg-background-200 overflow-hidden">
@@ -950,11 +1036,18 @@ function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
         )}
       </span>
       <span className="shrink-0 flex flex-col items-end gap-1">
+        {unavailable ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[10px] font-semibold text-foreground-500">
+            <AppIcon className="ri-lock-line text-[10px]" />Content unavailable
+          </span>
+        ) : (
         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${style.pill}`}>
           {prog.state === 'passed' && <AppIcon className="ri-check-line text-[10px]" />}
           {prog.state === 'watched' && <AppIcon className="ri-check-line text-[10px]" />}
+          {prog.state === 'completed' && <AppIcon className="ri-check-line text-[10px]" />}
           {prog.label}{prog.detail ? ` · ${prog.detail}` : ''}
         </span>
+        )}
         {reflection && (
           <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${reflection.style}`}>
             <AppIcon className={`${reflection.icon} text-[10px]`} />
@@ -971,28 +1064,31 @@ function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
 }
 
 /** The Continue Learning card body: progress + this week's components. */
-function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, learnerId, reflectionStatuses, canProgress }: {
-  moduleTitle: string; weekLabel: string; components: JourneyComponent[];
-  videos: LearnerVideoProgress[]; kind?: string; learnerId?: string;
+function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress }: {
+  moduleTitle: string; weekLabel: string; weekIndex: number; totalWeeks: number; components: JourneyComponent[];
+  videos: LearnerVideoProgress[]; completions: LearnerComponentProgress[];
+  kind?: string; learnerId?: string;
   reflectionStatuses: LearningReflectionStatusMap;
   /** False for a staff/coach viewer: the rows still show progress, but none of
    *  them opens the runner that would record progress as the learner. */
   canProgress: boolean;
 }) {
   const navigate = useNavigate();
-  const total = components.length;
-  const done = components.filter((c) => {
-    const s = componentProgress(c, videos).state;
-    return s === 'passed' || s === 'watched';
+  const availableComponents = components.filter(hasComponentContent);
+  const total = availableComponents.length;
+  const done = availableComponents.filter((c) => {
+    const s = componentProgress(c, videos, completions).state;
+    return s === 'passed' || s === 'watched' || s === 'completed';
   }).length;
   const percent = total ? Math.round((done / total) * 100) : 0;
+  const period = weekPeriodLabel(weekLabel);
 
   const openFor = (c: JourneyComponent): (() => void) | undefined => {
     // Returning undefined leaves the row rendered but inert — CurrentWeekRow
     // already draws that state for components with nowhere to open.
     if (!kind || !learnerId || !canProgress) return undefined;
     const q = `?module=${encodeURIComponent(moduleTitle)}&week=${encodeURIComponent(weekLabel)}`;
-    if (c.isQuiz && c.quizMeta?.quizId != null) return () => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`);
+    if (c.isQuiz && hasComponentContent(c)) return () => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}${q}`);
     if (c.type === 'video' && c.videoUrl && c.componentId) return () => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}${q}`);
     if (isOpenableComponent(c)) return () => navigate(`/learner/component/${kind}/${learnerId}/${c.componentId}${q}`);
     return undefined;
@@ -1010,6 +1106,20 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
 
   return (
     <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-100 bg-primary-50/50 px-3.5 py-2.5">
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700">
+            <AppIcon className="ri-calendar-event-line text-[15px]" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">Current period</span>
+            <span className="block truncate text-[12px] font-semibold text-foreground-800">{period || 'Date not scheduled yet'}</span>
+          </span>
+        </span>
+        <span className="shrink-0 rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700 ring-1 ring-primary-200">
+          Week {weekIndex + 1} of {totalWeeks}
+        </span>
+      </div>
       <div className="mb-3 flex items-center justify-between gap-3">
         <span className="text-[13px] font-semibold text-foreground-900">{done}/{total} complete</span>
         <span className="text-[13px] font-semibold tabular-nums text-primary-700">{percent}%</span>
@@ -1024,6 +1134,7 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, kind, lea
               key={c.componentId || `${c.title}-${i}`}
               c={c}
               videos={videos}
+              completions={completions}
               reflectionStatus={reflectionStatusFor(c)}
               onOpen={openFor(c)}
             />

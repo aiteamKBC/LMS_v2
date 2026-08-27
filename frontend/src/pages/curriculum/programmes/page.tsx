@@ -5,6 +5,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardGridSkeleton } from '@/components/feature/Skeletons';
 import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
+import { WEEKEND_DAYS, WEEKEND_HINT } from '@/pages/curriculum/shared/entities/ui';
 import { CurriculumStructureWizard, type StructureWizardCreated, type StructureWizardRecordStep } from '@/pages/curriculum/shared/entities/structureWizard';
 import { ensureSharedEmptyKsbProfile, SHARED_EMPTY_KSB_PROFILE_NAME } from '@/pages/curriculum/shared/entities/programmeKsbProfile';
 import { visibleNotes } from '@/pages/curriculum/shared/entities/model';
@@ -2515,6 +2516,7 @@ function WeekdayMultiSelect({ value, onChange }: { value: string; onChange: (val
     const next = exists ? selected.filter(item => normalise(item) !== normalise(day)) : [...selected, day];
     onChange(next.join(', '));
   };
+  const weekendPicked = selected.some(item => WEEKEND_DAYS.some(day => normalise(day) === normalise(item)));
 
   return (
     <fieldset className="block">
@@ -2522,13 +2524,15 @@ function WeekdayMultiSelect({ value, onChange }: { value: string; onChange: (val
       <div className="mt-1.5 flex flex-wrap gap-1.5 rounded-xl border border-foreground-200/70 bg-background-50 p-1.5 shadow-sm">
         {WEEKDAY_OPTIONS.map(day => {
           const checked = selected.some(item => normalise(item) === normalise(day));
+          const weekend = WEEKEND_DAYS.includes(day);
           return (
             <button
               key={day}
               type="button"
               aria-pressed={checked}
               onClick={() => toggle(day)}
-              className={`h-8 min-w-12 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth ${checked ? 'border-primary-300 bg-primary-500 text-white shadow-sm' : 'border-transparent bg-background-100 text-foreground-600 hover:bg-background-200'}`}
+              title={weekend ? WEEKEND_HINT : undefined}
+              className={`h-8 min-w-12 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth ${checked ? 'border-primary-300 bg-primary-500 text-white shadow-sm' : weekend ? 'border-dashed border-foreground-200 bg-background-100 text-foreground-400 hover:bg-background-200' : 'border-transparent bg-background-100 text-foreground-600 hover:bg-background-200'}`}
             >
               {day.slice(0, 3)}
             </button>
@@ -2536,6 +2540,12 @@ function WeekdayMultiSelect({ value, onChange }: { value: string; onChange: (val
         })}
       </div>
       <p className="mt-1 text-[11px] text-foreground-400">{selected.length ? `${selected.join(', ')} selected` : 'No delivery days selected'}</p>
+      {weekendPicked && (
+        <p className="mt-1 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600">
+          <i className="ri-information-line mt-px" aria-hidden />
+          <span>{WEEKEND_HINT}</span>
+        </p>
+      )}
     </fieldset>
   );
 }
