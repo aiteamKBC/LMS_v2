@@ -34,11 +34,12 @@ from datetime import datetime
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import unquote, urlparse
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection, transaction
 
-from curriculum_api import views
+from curriculum_api import upload_storage, views
 
 LEGACY_SCHEMA = 'MBA'
 LEGACY_TABLE = 'course_curriculum'
@@ -134,22 +135,46 @@ def primary_link(material):
     return None, ''
 
 
-def extra_materials_html(files, links, skip_url=''):
+def same_target(left, right):
+    """Whether two authored URLs point at the same thing.
+
+    The export can carry one web page twice over — once as ``open_url`` and once
+    as ``original_url`` — differing only in how the fragment is percent-encoded,
+    which made a reading list the very article it was already pointing at.
+    """
+    def normalise(value):
+        text = views.clean_str(value)
+        if not text:
+            return ''
+        parsed = urlparse(unquote(text))
+        return parsed._replace(fragment='').geturl().rstrip('/').lower()
+    return bool(left) and normalise(left) == normalise(right)
+
+
+def extra_materials_html(files, links, primary=None, skip_url=''):
     """The leftovers as a small HTML list, so nothing in the export is dropped.
 
     A component in this LMS holds one primary resource; the old one could carry
     several files and links at once (translations of a handout, reference PNGs).
     Those extras go into the component's own prose field rather than vanishing.
+
+    The primary is excluded by identity rather than by URL, because by the time
+    a file has been copied into our own storage its URL no longer matches the
+    old-site one in the export — which listed the document a learner was already
+    being shown, as a link back to the old site.
     """
+    primary_id = (primary or {}).get('attachment_id')
     items = []
     for attachment in files:
         url = views.clean_str(attachment.get('original_file_url'))
         title = views.clean_str(attachment.get('title') or attachment.get('filename'))
+        if primary_id is not None and attachment.get('attachment_id') == primary_id:
+            continue
         if url and url != skip_url:
             items.append((title or url, url))
     for link in links:
         url = views.clean_str(link.get('open_url') or link.get('original_url'))
-        if url and url != skip_url:
+        if url and not same_target(url, skip_url):
             items.append((url, url))
     if not items:
         return ''
@@ -203,7 +228,7 @@ def build_settings(component_type, material, file_url_for):
             'sourceType': 'Uploaded file' if video_url else 'External link',
             'durationMinutes': duration_minutes,
             'lessonContent': content_html,
-            'lessonMaterialLinks': extra_materials_html(files, links, video_url or link_url),
+            'lessonMaterialLinks': extra_materials_html(files, links, attachment, link_url),
         })
     elif component_type == 'podcast':
         attachment = attachment_of_kinds(material, {'audio'})
@@ -212,7 +237,7 @@ def build_settings(component_type, material, file_url_for):
             'podcastUrl': audio_url or link_url,
             'podcastSource': 'Device upload' if audio_url else 'External URL',
             'durationMinutes': duration_minutes,
-            'transcript': content_html + extra_materials_html(files, links, audio_url or link_url),
+            'transcript': content_html + extra_materials_html(files, links, attachment, link_url),
         })
         if attachment:
             settings.update(upload_settings(attachment, audio_url))
@@ -223,7 +248,7 @@ def build_settings(component_type, material, file_url_for):
             'presentationUrl': deck_url or link_url,
             'fileName': views.clean_str((attachment or {}).get('title') or (attachment or {}).get('filename')),
             'downloadAllowed': True,
-            'speakerNotes': content_html + extra_materials_html(files, links, deck_url or link_url),
+            'speakerNotes': content_html + extra_materials_html(files, links, attachment, link_url),
         })
         if attachment:
             settings.update(upload_settings(attachment, deck_url))
@@ -234,7 +259,7 @@ def build_settings(component_type, material, file_url_for):
             'assignmentBrief': content_html,
             'assignmentFileUrl': brief_url or link_url,
             'assignmentFileName': views.clean_str((attachment or {}).get('title') or (attachment or {}).get('filename')),
-            'submissionInstructions': extra_materials_html(files, links, brief_url or link_url),
+            'submissionInstructions': extra_materials_html(files, links, attachment, link_url),
         })
         if attachment:
             settings.update(upload_settings(attachment, brief_url))
@@ -253,13 +278,13 @@ def build_settings(component_type, material, file_url_for):
             'liveSessionUrl': link_url,
             'durationMinutes': duration_minutes,
             'attendanceRequired': True,
-            'preparationInstructions': content_html + extra_materials_html(files, links, link_url),
+            'preparationInstructions': content_html + extra_materials_html(files, links, None, link_url),
         })
     else:  # reading — the catch-all for pdf/word/excel/file/text
         attachment = attachment_of_kinds(material, {'pdf', 'word', 'excel', 'file', 'slides'})
         resource_url = file_url_for(attachment) if attachment else ''
         settings.update({
-            'readingContent': content_html + extra_materials_html(files, links, resource_url or link_url),
+            'readingContent': content_html + extra_materials_html(files, links, attachment, link_url),
             'resourceUrl': resource_url or link_url,
             'readingSource': 'LMS resource' if (resource_url or link_url) else 'Written in LMS',
             'estimatedReadingTime': str(duration_minutes or ''),
@@ -555,7 +580,11 @@ class Command(BaseCommand):
                         name = views.clean_str(attachment.get('filename') or attachment.get('title'))
                         relative, url = local_upload_path(attachment.get('attachment_id'), name)
                         target = media_root / relative
-                        if target.is_file() and target.stat().st_size > 0:
+                        # Already ours? Checked through upload_storage, not just
+                        # the disk: once a file has been migrated to blob storage
+                        # its local copy is gone, and a disk-only check would
+                        # re-download every migrated file from the old site.
+                        if upload_storage.exists(relative):
                             stats['existing'] += 1
                             local_urls[attachment.get('attachment_id')] = url
                             continue

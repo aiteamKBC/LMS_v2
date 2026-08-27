@@ -40,6 +40,13 @@ import {
   type WorkspaceQuizSummary,
 } from './weekTemplateData';
 import { MEDIA_SOURCE_TYPES, normaliseVideoSourceType, providerForVideoSourceType, type ComponentSettingValue } from '@/pages/curriculum/module-builder/componentAuthoringModel';
+// Round-trip this week's components to Excel for ChatGPT KSB mapping. xlsx is
+// dynamically imported inside the helpers, so it stays off this page's bundle.
+import { buildKsbMappingPrompt, describeKsbImport, exportWeekKsbWorkbook, importWeekKsbWorkbook } from '@/pages/curriculum/module-builder/ksbExcel';
+import { KsbExcelPanel } from '@/pages/curriculum/module-builder/KsbExcelPanel';
+import { GroupPlacementPanel, type PlacementResult } from './PlaceComponentDrawer';
+import { loadModuleStructure, saveModuleStructure } from '@/pages/curriculum/module-builder/moduleAuthoringData';
+import { TeamsMeetingModal, type TeamsMeetingModuleContext } from '@/pages/curriculum/module-builder/TeamsMeetingModal';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
@@ -545,7 +552,8 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
     programmeId: template.programmeId,
     programmeName: template.programmeName,
     moduleName,
-  }), [template.courseType, template.programmeId, template.programmeName, moduleName]);
+    groupName: template.groupName,
+  }), [template.courseType, template.programmeId, template.programmeName, moduleName, template.groupName]);
 
   useEffect(() => {
     let active = true;
@@ -554,6 +562,7 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
   }, []);
 
   const savedSnapshot = useRef(JSON.stringify(initial));
+  const ksbImportInputRef = useRef<HTMLInputElement>(null);
 
   // Points are never hand-edited — they always mirror the Engagement points
   // rule for the component's type (e.g. a live session's points come from the
@@ -587,6 +596,9 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
   const selected = template.components.find(c => c.id === selectedId) || null;
   const course = COURSE[template.courseType];
   const issues = useMemo(() => template.components.reduce((count, component) => count + validateWeekComponent(component).length, 0), [template.components]);
+  // A week template carries no attached KSB source, so the prompt lists no fixed
+  // profile — it falls back to the codes already in the sheet's Current KSBs.
+  const ksbMappingPrompt = useMemo(() => buildKsbMappingPrompt({ title: template.title, profile: [] }), [template.title]);
 
   const patchComponent = (id: string, patch: Partial<ModuleComponent>) => {
     update(prev => ({ ...prev, components: prev.components.map(c => (c.id === id ? { ...c, ...patch } : c)) }));
@@ -618,6 +630,35 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
     const restored = JSON.parse(savedSnapshot.current) as WeekTemplate;
     setTemplate(restored);
     setSelectedId(prev => (prev && restored.components.some(c => c.id === prev) ? prev : restored.components[0]?.id ?? null));
+  };
+
+  // Export this week's components to Excel for a curriculum worker to have
+  // ChatGPT map KSBs against each title/description, then re-import the file.
+  const exportKsbSheet = async () => {
+    if (!template.components.length) {
+      showCurriculumAlert({ title: 'No components to export', text: 'Add a component before exporting the KSB sheet.', icon: 'info' });
+      return;
+    }
+    try {
+      const { rows, fileName } = await exportWeekKsbWorkbook(template.title || 'week', template.components);
+      showCurriculumAlert({ title: 'KSB sheet exported', text: `Downloaded ${fileName} with ${rows} component${rows === 1 ? '' : 's'}. Fill the KSBs column in ChatGPT, then re-upload it here.`, icon: 'success' });
+    } catch (err) {
+      showCurriculumAlert({ title: 'Export failed', text: err instanceof Error ? err.message : undefined, icon: 'error' });
+    }
+  };
+
+  const importKsbSheet = async (file: File) => {
+    try {
+      const { components, summary } = await importWeekKsbWorkbook(file, template.components);
+      if (!summary.rowsWithKsbs) {
+        showCurriculumAlert({ title: 'No KSBs found', text: 'Fill the KSBs column in the sheet before re-uploading.', icon: 'warning' });
+        return;
+      }
+      update(prev => ({ ...prev, components }));
+      showCurriculumAlert({ title: 'KSB sheet imported', text: describeKsbImport(summary), icon: 'success' });
+    } catch (err) {
+      showCurriculumAlert({ title: 'Import failed', text: err instanceof Error ? err.message : undefined, icon: 'error' });
+    }
   };
 
   const back = async () => {
@@ -669,6 +710,18 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
               <FlowStrip components={template.components} selectedId={selectedId} onJump={jumpTo} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
+              <input
+                ref={ksbImportInputRef}
+                type="file"
+                accept=".xlsx,.xls,.csv"
+                className="hidden"
+                onChange={event => {
+                  const file = event.target.files?.[0];
+                  // Reset so re-uploading the same file name fires change again.
+                  event.target.value = '';
+                  if (file) void importKsbSheet(file);
+                }}
+              />
               <button onClick={save} disabled={saving || !dirty} className="inline-flex items-center gap-1.5 rounded-full bg-primary-600 px-5 py-2 text-[12px] font-bold text-background-50 hover:bg-primary-700 transition-smooth disabled:opacity-30">
                 {saving ? <><AppIcon className="ri-loader-4-line animate-spin"></AppIcon>Saving</> : <><AppIcon className="ri-save-3-line"></AppIcon>{persistedId ? 'Save' : 'Create'}</>}
               </button>
@@ -691,15 +744,23 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
 
       {/* Workspace: rail (left, fixed) + inspector (right, fills the width) */}
       <div className="grid gap-6 lg:grid-cols-[380px_minmax(0,1fr)] xl:grid-cols-[420px_minmax(0,1fr)] items-start">
-        {/* Week rail */}
-        <WeekComponentRail
-          weekId={template.id}
-          components={template.components}
-          selectedId={selectedId}
-          onSelectId={setSelectedId}
-          onChange={next => update(prev => ({ ...prev, components: next }))}
-          pointsByType={pointsByType}
-        />
+        {/* Week rail + KSB side panel */}
+        <div className="space-y-4">
+          <WeekComponentRail
+            weekId={template.id}
+            components={template.components}
+            selectedId={selectedId}
+            onSelectId={setSelectedId}
+            onChange={next => update(prev => ({ ...prev, components: next }))}
+            pointsByType={pointsByType}
+          />
+          <KsbExcelPanel
+            prompt={ksbMappingPrompt}
+            profileCount={0}
+            onExport={() => void exportKsbSheet()}
+            onImport={() => ksbImportInputRef.current?.click()}
+          />
+        </div>
 
         {/* Inspector — the wide working canvas */}
         <div>
@@ -1274,14 +1335,20 @@ export interface ComponentBodyProps {
   uploadResource?: WeekComponentUploader;
   restoreTeamsMeeting?: () => Promise<void>;
   restoringTeamsMeeting?: boolean;
+  // The module a live-session component belongs to. Only the Module Builder
+  // supplies it; when present, the live-session editor offers a "Create Teams
+  // meeting" button that generates the meeting and fills the join link + dates.
+  // The Week Builder edits reusable templates that have no module, so it omits
+  // this and the button stays hidden.
+  liveSessionModule?: TeamsMeetingModuleContext;
 }
 
-export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean }) {
+export function ComponentEditor({ component, onChange, onBack, groupOptions, rulePoints, weekScope, weekSessionDate, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting = false, liveSessionModule }: { component: ModuleComponent; onChange: (patch: Partial<ModuleComponent>) => void; onBack: () => void; groupOptions: GroupOption[]; rulePoints?: number; weekScope: WeekScope; weekSessionDate?: string; uploadResource?: WeekComponentUploader; restoreTeamsMeeting?: () => Promise<void>; restoringTeamsMeeting?: boolean; liveSessionModule?: TeamsMeetingModuleContext }) {
   const definition = getComponentDefinition(component.type);
   const tone = toneFor(component.type);
   const issues = validateWeekComponent(component);
   const setSetting = (key: string, value: ComponentSettingValue) => onChange({ settings: { ...component.settings, [key]: value } });
-  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting };
+  const bodyProps: ComponentBodyProps = { component, onChange, setSetting, groupOptions, rulePoints, weekScope, weekSessionDate, uploadResource, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule };
 
   return (
     <div className="rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
@@ -1309,7 +1376,7 @@ export function ComponentEditor({ component, onChange, onBack, groupOptions, rul
 
         {/* Group assignment applies to every component type — scoped to the
             week's programme + module (resolved in the editor). */}
-        <AssignedGroupsSection component={component} onChange={onChange} groupOptions={groupOptions} />
+        <AssignedGroupsSection component={component} onChange={onChange} groupOptions={groupOptions} programmeId={weekScope.programmeId} groupName={weekScope.groupName} />
 
         {issues.length > 0 && (
           <Section title="To fix before publish">
@@ -1361,8 +1428,9 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
 
 // Bespoke Live Teams Session editor. (Group assignment is rendered once for
 // every component type by ComponentEditor, so it isn't repeated here.)
-function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, restoreTeamsMeeting, restoringTeamsMeeting }: ComponentBodyProps) {
+function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSessionDate, restoreTeamsMeeting, restoringTeamsMeeting, liveSessionModule }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
+  const [teamsMeetingOpen, setTeamsMeetingOpen] = useState(false);
   // An explicit edit always wins; otherwise default to the date the week is
   // actually scheduled on, so the field reads correctly before anyone types
   // into it rather than sitting blank until someone repeats what the session
@@ -1380,17 +1448,29 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
           <Field label="Session date"><input type="date" value={sessionDate} onChange={e => setSetting('sessionDate', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Start time"><input type="time" value={s('sessionTime')} onChange={e => setSetting('sessionTime', e.target.value)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
-        {restoreTeamsMeeting && (
-          <div className="mt-3 flex justify-end">
-            <button
-              type="button"
-              onClick={() => { void restoreTeamsMeeting(); }}
-              disabled={restoringTeamsMeeting}
-              className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-70"
-            >
-              <i className={restoringTeamsMeeting ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></i>
-              {restoringTeamsMeeting ? 'Restoring Teams data...' : 'Restore saved Teams data'}
-            </button>
+        {(liveSessionModule || restoreTeamsMeeting) && (
+          <div className="mt-3 flex flex-wrap justify-end gap-2">
+            {liveSessionModule && (
+              <button
+                type="button"
+                onClick={() => setTeamsMeetingOpen(true)}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
+              >
+                <AppIcon className="ri-calendar-event-line"></AppIcon>
+                {s('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
+              </button>
+            )}
+            {restoreTeamsMeeting && (
+              <button
+                type="button"
+                onClick={() => { void restoreTeamsMeeting(); }}
+                disabled={restoringTeamsMeeting}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100 disabled:cursor-wait disabled:opacity-70"
+              >
+                <i className={restoringTeamsMeeting ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></i>
+                {restoringTeamsMeeting ? 'Restoring Teams data...' : 'Restore saved Teams data'}
+              </button>
+            )}
           </div>
         )}
 
@@ -1420,6 +1500,47 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
           <Field label="Version"><input value={s('version') || '0.1'} onChange={e => setSetting('version', e.target.value)} placeholder="0.1" className={inputClass} /></Field>
         </div>
       </Section>
+
+      {teamsMeetingOpen && liveSessionModule && (
+        <TeamsMeetingModal
+          component={component}
+          module={liveSessionModule}
+          onClose={() => setTeamsMeetingOpen(false)}
+          onCreated={(result, input) => {
+            const meeting = result.meeting;
+            // One merged write so the whole meeting lands atomically (and the
+            // Module Builder's onChange can mirror the join link across the
+            // week's other live sessions). The visible date/time fields are
+            // filled from the calendar wall clock the meeting was booked on.
+            onChange({
+              settings: {
+                ...component.settings,
+                liveSessionUrl: meeting.joinUrl || meeting.webLink,
+                teamsEventId: meeting.eventId,
+                teamsLiveSessionId: meeting.liveSessionId,
+                teamsMeetingOptionsUrl: meeting.meetingOptionsUrl,
+                teamsOrganizerEmail: meeting.organizerEmail,
+                teamsAttendees: meeting.attendees,
+                teamsPresenters: meeting.presenters,
+                sessionDateTimeUtc: meeting.startDateTimeUtc,
+                sessionDate: input.localStartDateTime.slice(0, 10),
+                sessionTime: input.localStartDateTime.slice(11, 16),
+                durationMinutes: meeting.durationMinutes,
+                teamsProvider: meeting.provider,
+                teamsRepeat: meeting.repeat,
+                teamsRepeatOccurrences: meeting.repeatOccurrences,
+                teamsLobbyBypass: input.lobbyBypass,
+                teamsRecording: input.recording,
+                teamsSpokenLanguage: input.spokenLanguage,
+                teamsMeetingType: input.meetingType,
+                teamsRequestResponses: input.requestResponses,
+                teamsAllowTimeProposals: input.allowNewTimeProposals,
+                teamsHideAttendees: input.hideAttendees,
+              },
+            });
+          }}
+        />
+      )}
 
     </>
   );
@@ -2086,7 +2207,9 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
               uploadedUrl={s('uploadedFileUrl')}
               uploadedSize={Number(component.settings.uploadedFileSize) || 0}
               onUploaded={file => onChange({
-                settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
+                // Pin the tab to File on upload (like Reading) so it stays put
+                // after save/reload rather than snapping back to the brief.
+                settings: { ...component.settings, assignmentSource: 'File', uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
               })}
             />
             <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: Word (.doc, .docx), PDF, plain text (.txt), RTF, OpenDocument (.odt).</p>
@@ -2200,25 +2323,135 @@ function formatFileSize(size: number) {
 // (the option list is prepared by the editor). Stored as parallel key/name
 // arrays so a saved template keeps readable names even if a group is later
 // renamed or removed from the picker.
-function AssignedGroupsSection({ component, onChange, groupOptions }: Pick<ComponentBodyProps, 'component' | 'onChange' | 'groupOptions'>) {
-  const selectedKeys = (component.settings.selectedGroupKeys as string[] | undefined) ?? [];
+function AssignedGroupsSection({ component, onChange, groupOptions, programmeId, groupName }: Pick<ComponentBodyProps, 'component' | 'onChange' | 'groupOptions'> & { programmeId: string; groupName?: string }) {
+  const rawSelectedKeys = component.settings.selectedGroupKeys as string[] | undefined;
+  const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
+  // The module was built for this group, so it's never really optional — shown
+  // locked/dimmed and always included, not something the user can uncheck.
+  const lockedOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
+  const storedKeys = rawSelectedKeys ?? [];
+  const selectedKeys = lockedOption && !storedKeys.includes(lockedOption.key)
+    ? [...storedKeys, lockedOption.key]
+    : storedKeys;
+  const [browsingKey, setBrowsingKey] = useState<string | null>(null);
   const setGroups = (keys: string[]) => onChange({
     settings: { ...component.settings, selectedGroupKeys: keys, selectedGroupNames: groupOptions.filter(option => keys.includes(option.key)).map(option => option.name) },
   });
+
+  // Self-heals a never-touched (or pre-existing) component so the locked group
+  // is actually persisted as assigned, not just shown that way — otherwise a
+  // week saved without ever touching this list would still store it as
+  // unassigned underneath.
+  useEffect(() => {
+    if (lockedOption && !storedKeys.includes(lockedOption.key)) setGroups(selectedKeys);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockedOption?.key]);
+
+  // Placed copies this component has produced elsewhere, one entry per group
+  // (parallel arrays — ComponentSettingValue has no object type). At most one
+  // placement per group key: an already-assigned group's row only ever
+  // toggles off, it never re-opens the placement panel.
+  const placedGroupKeys = (component.settings.placedCopyGroupKeys as string[] | undefined) ?? [];
+  const placedModuleCatalogueIds = (component.settings.placedCopyModuleCatalogueIds as string[] | undefined) ?? [];
+  const placedWeekIds = (component.settings.placedCopyWeekIds as string[] | undefined) ?? [];
+  const placedComponentIds = (component.settings.placedCopyComponentIds as string[] | undefined) ?? [];
+
+  const recordPlacement = (key: string, result: PlacementResult) => {
+    setBrowsingKey(null);
+    onChange({
+      settings: {
+        ...component.settings,
+        selectedGroupKeys: [...selectedKeys, key],
+        selectedGroupNames: groupOptions.filter(option => [...selectedKeys, key].includes(option.key)).map(option => option.name),
+        placedCopyGroupKeys: [...placedGroupKeys, key],
+        placedCopyModuleCatalogueIds: [...placedModuleCatalogueIds, result.moduleCatalogueId],
+        placedCopyWeekIds: [...placedWeekIds, result.weekId],
+        placedCopyComponentIds: [...placedComponentIds, result.componentId],
+      },
+    });
+  };
+
+  const handleToggle = async (key: string) => {
+    if (key === lockedOption?.key) return;
+    if (!selectedKeys.includes(key)) {
+      setGroups([...selectedKeys, key]);
+      return;
+    }
+    const placementIndex = placedGroupKeys.indexOf(key);
+    if (placementIndex === -1) {
+      setGroups(selectedKeys.filter(existing => existing !== key));
+      return;
+    }
+    const groupLabel = groupOptions.find(option => option.key === key)?.name || 'this group';
+    await showCurriculumConfirm({
+      title: 'Remove this group?',
+      text: `This part was copied into ${groupLabel}'s week. Removing the group also deletes that copy from their module.`,
+      icon: 'warning',
+      confirmButtonText: 'Remove and delete the copy',
+      cancelButtonText: 'Keep it',
+      onConfirm: async () => {
+        const moduleCatalogueId = placedModuleCatalogueIds[placementIndex];
+        const weekId = placedWeekIds[placementIndex];
+        const componentId = placedComponentIds[placementIndex];
+        const structure = await loadModuleStructure(moduleCatalogueId);
+        if (structure) {
+          const nextWeekStructure = structure.weekStructure.map(week => (
+            week.id === weekId ? { ...week, components: week.components.filter(item => item.id !== componentId) } : week
+          ));
+          await saveModuleStructure(moduleCatalogueId, { ...structure, weekStructure: nextWeekStructure });
+        }
+        const nextSelectedKeys = selectedKeys.filter(existing => existing !== key);
+        onChange({
+          settings: {
+            ...component.settings,
+            selectedGroupKeys: nextSelectedKeys,
+            selectedGroupNames: groupOptions.filter(option => nextSelectedKeys.includes(option.key)).map(option => option.name),
+            placedCopyGroupKeys: placedGroupKeys.filter((_, index) => index !== placementIndex),
+            placedCopyModuleCatalogueIds: placedModuleCatalogueIds.filter((_, index) => index !== placementIndex),
+            placedCopyWeekIds: placedWeekIds.filter((_, index) => index !== placementIndex),
+            placedCopyComponentIds: placedComponentIds.filter((_, index) => index !== placementIndex),
+          },
+        });
+      },
+    });
+  };
+
+  const browsingOption = groupOptions.find(option => option.key === browsingKey) ?? null;
   return (
     <Section title="Assigned groups" hint="Which delivery groups this part is for">
-      <GroupMultiSelect options={groupOptions} selectedKeys={selectedKeys} onChange={setGroups} />
+      <GroupMultiSelect
+        options={groupOptions}
+        selectedKeys={selectedKeys}
+        lockedKey={lockedOption?.key ?? null}
+        onChange={setGroups}
+        onToggle={key => void handleToggle(key)}
+        browsingKey={browsingKey}
+        onBrowse={key => setBrowsingKey(current => (current === key ? null : key))}
+      />
+      {browsingOption && (
+        <GroupPlacementPanel
+          key={browsingOption.key}
+          component={component}
+          groupName={browsingOption.name}
+          programmeId={programmeId}
+          onClose={() => setBrowsingKey(null)}
+          onPlaced={result => recordPlacement(browsingOption.key, result)}
+        />
+      )}
     </Section>
   );
 }
 
-function GroupMultiSelect({ options, selectedKeys, onChange }: { options: GroupOption[]; selectedKeys: string[]; onChange: (keys: string[]) => void }) {
+function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey, browsingKey, onBrowse }: {
+  options: GroupOption[];
+  selectedKeys: string[];
+  onChange: (keys: string[]) => void;
+  onToggle: (key: string) => void;
+  lockedKey: string | null;
+  browsingKey: string | null;
+  onBrowse: (key: string) => void;
+}) {
   const selectedSet = new Set(selectedKeys);
-  const toggle = (key: string) => {
-    const next = new Set(selectedSet);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    onChange(options.map(option => option.key).filter(optionKey => next.has(optionKey)));
-  };
   return (
     <div className="rounded-xl border border-background-200 bg-background-100/30 p-3">
       <div className="flex items-center justify-between mb-2">
@@ -2226,7 +2459,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange }: { options: GroupO
         {options.length > 0 && (
           <div className="flex items-center gap-1">
             <button onClick={() => onChange(options.map(option => option.key))} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-primary-600 hover:bg-primary-50 transition-smooth">Select all</button>
-            <button onClick={() => onChange([])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
+            <button onClick={() => onChange(lockedKey ? [lockedKey] : [])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
           </div>
         )}
       </div>
@@ -2236,14 +2469,47 @@ function GroupMultiSelect({ options, selectedKeys, onChange }: { options: GroupO
         <div className="grid gap-2 sm:grid-cols-2">
           {options.map(option => {
             const on = selectedSet.has(option.key);
+            const browsing = browsingKey === option.key;
+            const locked = option.key === lockedKey;
+            if (locked) {
+              return (
+                <div
+                  key={option.key}
+                  title="This module was built for this group — it can't be removed."
+                  className="flex items-start gap-2 rounded-lg border border-background-200 bg-background-100/70 px-3 py-2 opacity-60 cursor-not-allowed"
+                >
+                  <input type="checkbox" checked disabled className="mt-0.5 accent-primary-600" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[12px] font-bold text-foreground-800">{option.name}</span>
+                    {option.cohort && <span className="block truncate text-[10px] text-foreground-400">{option.cohort}</span>}
+                    <span className="mt-0.5 block truncate text-[10px] font-semibold text-foreground-400">This module's own group</span>
+                  </span>
+                </div>
+              );
+            }
             return (
-              <label key={option.key} className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${on ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-background-50 hover:border-background-300'}`}>
-                <input type="checkbox" checked={on} onChange={() => toggle(option.key)} className="mt-0.5 accent-primary-600" />
-                <span className="min-w-0">
+              <div
+                key={option.key}
+                role="button"
+                tabIndex={0}
+                onClick={() => (on ? onToggle(option.key) : onBrowse(option.key))}
+                onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); on ? onToggle(option.key) : onBrowse(option.key); } }}
+                title={on ? 'Click to unassign' : "Not yet assigned — click to place this part in this group's week"}
+                className={`flex items-start gap-2 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${browsing ? 'border-primary-400 bg-primary-50 ring-2 ring-primary-200' : on ? 'border-primary-300 bg-primary-50' : 'border-background-200 bg-background-50 hover:border-primary-200'}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onClick={event => event.stopPropagation()}
+                  onChange={() => onToggle(option.key)}
+                  className="mt-0.5 accent-primary-600"
+                />
+                <span className="min-w-0 flex-1">
                   <span className="block truncate text-[12px] font-bold text-foreground-800">{option.name}</span>
                   {option.cohort && <span className="block truncate text-[10px] text-foreground-400">{option.cohort}</span>}
+                  {!on && <span className="mt-0.5 block truncate text-[10px] font-semibold text-primary-500">{browsing ? 'Browsing…' : "Not assigned — click to place a copy here"}</span>}
                 </span>
-              </label>
+              </div>
             );
           })}
         </div>

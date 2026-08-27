@@ -302,6 +302,9 @@ export interface WeekScope {
   programmeId: string;
   programmeName: string;
   moduleName: string;
+  /** The module/template's own delivery group, if it has exactly one — used to
+   * default a never-touched component to serving that group instead of none. */
+  groupName?: string;
 }
 
 const normScope = (value?: string | number | null) => String(value ?? '').trim().toLowerCase();

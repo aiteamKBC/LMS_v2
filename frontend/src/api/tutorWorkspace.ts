@@ -77,12 +77,11 @@ export interface ModuleStructure {
 }
 
 /**
- * The next scheduled occurrence across every assigned module.
+ * The current or next scheduled occurrence across every assigned module.
  *
- * `scheduledStart`/`scheduledEnd` are naive ISO timestamps — no offset — and
- * `timezone` is the Windows zone name the series was created in (e.g. "GMT
- * Standard Time"). They are shown as recorded rather than converted, because
- * converting a naive stamp means guessing which zone it was naive in.
+ * `scheduledStart`/`scheduledEnd` are UTC ISO timestamps. `timezone` is the
+ * Windows zone name the series was created in (e.g. "GMT Standard Time").
+ * The tutor workspace displays and gates the meeting in UK time.
  */
 export interface TutorNextSession {
   liveSessionId: string;
@@ -101,8 +100,7 @@ export interface TutorNextSession {
 
 export interface TutorWorkspace {
   /**
-   * False when nothing identifies this account as a tutor — no profile matched
-   * by email or name, and no module names them.
+   * False when no tutor profile matches this account by email or name.
    *
    * Distinct from "linked with nothing assigned": the account exists but cannot
    * be matched to any record holding assignments, which is a different thing to
@@ -110,12 +108,14 @@ export interface TutorWorkspace {
    */
   linked: boolean;
   /**
-   * Which key resolved the tutor: 'email', 'name', 'module-name', or '' when
-   * unlinked. Reported so "why does this account see these modules?" is
-   * answerable without re-deriving the match.
+   * Which key resolved the tutor: 'email', 'name', or '' when unlinked.
+   * Reported so "why does this account see these modules?" is answerable
+   * without re-deriving the match.
    */
   matchedBy: string;
   tutor: { id: string; name: string; email: string; jobTitle: string } | null;
+  /** Only the explicit assigned_module_ids grant on the tutor profile. */
+  assignedModuleIds: string[];
   modules: TutorModule[];
   nextSession: TutorNextSession | null;
 }
@@ -200,6 +200,9 @@ export async function fetchTutorWorkspace(
     linked: Boolean(data?.linked),
     matchedBy: data?.matchedBy ?? '',
     tutor: data?.tutor ?? null,
+    assignedModuleIds: Array.isArray(data?.assignedModuleIds)
+      ? data.assignedModuleIds.map(String)
+      : [],
     modules: data?.modules ?? [],
     nextSession: data?.nextSession ?? null,
   };

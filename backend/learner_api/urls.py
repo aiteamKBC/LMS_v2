@@ -1,8 +1,9 @@
 from django.urls import path
 
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
 
 urlpatterns = [
+    path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/options/", views.enrolment_user_options, name="enrolment-user-options"),
     path("enrolment-users/<int:pk>/", views.enrolment_user_detail, name="enrolment-user-detail"),
@@ -10,6 +11,19 @@ urlpatterns = [
     # The learner's learning plan: their group's modules, editable within the
     # same programme. Offered once the learner reaches Delivery.
     path("learning-plan/<int:pk>/", learning_plan.learning_plan, name="learning-plan"),
+    # The modules taught alongside one module — the alternatives a learner can be
+    # shifted onto. The shift itself is a plan save, so it has no endpoint here.
+    # "options/" before the <int:pk> route, which would otherwise never be
+    # reached for it.
+    path("module-shift/options/", module_shift.module_shift_options, name="module-shift-options"),
+    path("module-shift/<int:pk>/", module_shift.module_shift, name="module-shift"),
+    # The week-by-week pairing behind a shift's progress step: which of the
+    # learner's completed components line up with the module they are joining.
+    path(
+        "module-shift/<int:pk>/progress/",
+        module_shift.module_shift_progress,
+        name="module-shift-progress",
+    ),
     # The statutory Apprenticeship Agreement, filled from the learner's record,
     # their group's delivery window and their learning plan's total hours.
     path(

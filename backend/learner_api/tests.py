@@ -45,6 +45,7 @@ from .learner_detail import (
     _append_week_quizzes,
     _display_quiz_title,
     _matching_module_ids_for_quiz_record,
+    _resolve_from_master,
     _schedule_based_week_target,
     _sequential_week_target,
 )
@@ -491,6 +492,40 @@ class ScriptedConnection:
 
     def __exit__(self, exc_type, exc, tb):
         return False
+
+
+class LearnerReflectionQuestionTests(SimpleTestCase):
+    def _resolved_component(self, reflection_question, reflection_required=True):
+        cursor = ScriptedCursor([
+            [("MOD-1", "Module 1")],
+            [("WEEK-1", "MOD-1", "Week 1", 1, 0)],
+            [(
+                "COMP-1", "WEEK-1", "MOD-1", "quiz", "Quiz component", "",
+                {"linkedQuizId": 7}, "", 0,
+                [{"code": "K1", "weight": 10}], reflection_required, reflection_question,
+            )],
+            [],
+            [(7, "Quiz title", 3, 30, "Minutes")],
+        ])
+        weeks = [{
+            "module": "Module 1", "week": "Week 1",
+            "moduleId": "MOD-1", "weekId": "WEEK-1",
+        }]
+        with patch("learner_api.learner_detail.connections", {"enrolment": ScriptedConnection(cursor)}):
+            _modules, _weeks, components = _resolve_from_master(["Module 1"], weeks, [])
+        return components[0]
+
+    def test_exposes_custom_component_reflection_question(self):
+        self.assertEqual(
+            self._resolved_component("What changed in your workplace?")["reflectionQuestion"],
+            "What changed in your workplace?",
+        )
+
+    def test_keeps_null_reflection_question_for_frontend_fallback(self):
+        self.assertIsNone(self._resolved_component(None)["reflectionQuestion"])
+
+    def test_exposes_whether_reflection_is_required(self):
+        self.assertFalse(self._resolved_component(None, False)["reflectionRequired"])
 
 
 class LearnerWeekQuizVisibilityTests(SimpleTestCase):

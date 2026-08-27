@@ -24,8 +24,10 @@ from django.db import DatabaseError, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_GET
 
 from login.permissions import staff_only
+from login.permissions import require_access
 from login.models import Invitation, LoginAccount, LoginSession, PasswordReset
 
 from .active_users import cohort_delivery_window, replace_training_plan, sync_active_user
@@ -51,7 +53,10 @@ from .mappers import (
     write_fields,
     write_staff_fields,
 )
-from .models import CommercialUser, Employer, EnrolmentUser, LearnerProfile, StaffUser
+from .models import CommercialUser, Employer, EnrolmentUser, LearnerProfile, LearnerTrainingPlanModule, StaffUser
+from .constants import ACCESS_TUTOR
+from .progress_rules import progress_record_counts_as_achieved
+from .teams_attendance import fetch_verified_teams_attendance_rows
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,226 @@ def _learner_profiles_with_plan():
     return LearnerProfile.objects.prefetch_related(
         'plan_modules__weeks__components',
     )
+
+
+def _tutor_number(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _tutor_percent(numerator, denominator):
+    denominator_value = _tutor_number(denominator)
+    if denominator_value <= 0:
+        return 0
+    return max(0, min(100, round((_tutor_number(numerator) / denominator_value) * 100)))
+
+
+def _tutor_display_date(value):
+    if not value:
+        return ''
+    if hasattr(value, 'day') and hasattr(value, 'strftime'):
+        return f"{value.day} {value.strftime('%b')}"
+    return str(value)[:10]
+
+
+def _tutor_live_learner_row(profile, attendance_rate=0, allowed_module_ids=None):
+    """Project Learner.learners into the compact My Learners card shape."""
+    allowed_module_ids = None if allowed_module_ids is None else {
+        str(module_id).strip()
+        for module_id in allowed_module_ids
+        if str(module_id).strip()
+    }
+    progress_entries = [
+        entry for entry in (profile.training_plan_progress or [])
+        if isinstance(entry, dict)
+        and (
+            allowed_module_ids is None
+            or str(entry.get('moduleId') or '').strip() in allowed_module_ids
+        )
+    ]
+    plan_modules = []
+    planned_components = 0
+    for module in profile.plan_modules.all():
+        module_ref = str(module.module_ref or '').strip()
+        if allowed_module_ids is not None and module_ref not in allowed_module_ids:
+            continue
+        module_name = (module.module_title or '').strip()
+        if module_name:
+            plan_modules.append({
+                'id': module_ref or str(module.pk),
+                'name': module_name,
+            })
+        for week in module.weeks.all():
+            planned_components += len(list(week.components.all()))
+
+    completed_keys = set()
+    for index, entry in enumerate(progress_entries):
+        if not progress_record_counts_as_achieved(entry):
+            continue
+        key = entry.get('quizId') or entry.get('componentId') or (
+            entry.get('moduleTitle'), entry.get('weekTitle'), entry.get('componentTitle'), index
+        )
+        completed_keys.add(str(key))
+
+    completed_components = len(completed_keys)
+    component_progress = _tutor_percent(completed_components, planned_components)
+
+    otjh_hours = _tutor_number(profile.completed_hours)
+    otjh_target = (
+        _tutor_number(profile.target_hours)
+        or _tutor_number(profile.planned_hours)
+        or _tutor_number(profile.minimum_hours)
+    )
+    otjh_progress = _tutor_percent(otjh_hours, otjh_target)
+
+    ksb_items = list(profile.ksbs or [])
+    ksb_targets = {
+        str(item.get('code') or '').strip().upper()
+        for item in ksb_items
+        if isinstance(item, dict) and str(item.get('code') or '').strip()
+    }
+    completed_ksbs = {
+        str(code).strip().upper()
+        for entry in progress_entries
+        if progress_record_counts_as_achieved(entry)
+        for code in (entry.get('ksbs') or [])
+        if str(code).strip()
+    }
+    validated_ksbs = len(ksb_targets & completed_ksbs)
+    ksb_progress = _tutor_percent(validated_ksbs, len(ksb_targets))
+
+    evidence_entries = [
+        entry for entry in progress_entries
+        if 'evidence' in ' '.join(
+            str(entry.get(field) or '')
+            for field in ('kind', 'title', 'action', 'detail')
+        ).lower()
+    ]
+    latest_activity = max(
+        (
+            str(entry.get('submittedAt') or entry.get('startedAt') or '')
+            for entry in progress_entries
+            if entry.get('submittedAt') or entry.get('startedAt')
+        ),
+        default='',
+    )
+    last_active = _tutor_display_date(latest_activity) or _tutor_display_date(profile.updated_at)
+
+    if (
+        'atrisk' in (profile.otjh_status or '').replace(' ', '').lower()
+        or (ksb_targets and ksb_progress < 25)
+        or (otjh_target and otjh_progress < 25)
+    ):
+        risk_level = 'high'
+    elif (
+        (ksb_targets and ksb_progress < 60)
+        or (otjh_target and otjh_progress < 60)
+        or (planned_components and component_progress < 40)
+    ):
+        risk_level = 'medium'
+    else:
+        risk_level = 'low'
+
+    return {
+        'id': str(profile.id),
+        'name': (profile.full_name or '').strip() or 'Unnamed learner',
+        'email': (profile.email or '').strip(),
+        'programme': (profile.programme or '').strip(),
+        'cohort': (profile.cohort or '').strip(),
+        'group': (profile.group_name or '').strip(),
+        'modules': plan_modules,
+        'progress': component_progress if planned_components else otjh_progress,
+        'attendance': attendance_rate,
+        'evidenceSubmitted': len(evidence_entries),
+        'evidenceRequired': planned_components,
+        'lastActive': last_active,
+        'riskLevel': risk_level,
+        'ksbStatus': f'{validated_ksbs} of {len(ksb_targets)} validated' if ksb_targets else 'Not available',
+        'ksbCompleted': validated_ksbs,
+        'ksbTarget': len(ksb_targets),
+        'otjhHours': otjh_hours,
+        'otjhTarget': otjh_target,
+    }
+
+
+@require_access(ACCESS_TUTOR)
+@require_GET
+def tutor_learners(request):
+    """Return active learner profiles for the Tutor > My Learners screen."""
+    try:
+        requested_module_ids = {
+            str(module_id).strip()
+            for module_id in (
+                request.GET.getlist('moduleIds')
+                or request.GET.getlist('module_ids')
+            )
+            if str(module_id).strip()
+        }
+        if not requested_module_ids:
+            return JsonResponse({'count': 0, 'learners': []})
+
+        # The learner training-plan table is the source of module membership.
+        # Resolve learner IDs from it first, then load the learner profiles for
+        # the performance fields shown in each module card.
+        plan_learner_ids = (
+            LearnerTrainingPlanModule.objects.using('enrolment')
+            .filter(
+                module_ref__in=requested_module_ids,
+                learner__lifecycle_status__iexact='active',
+            )
+            .values_list('learner_id', flat=True)
+            .distinct()
+        )
+        profiles = (
+            LearnerProfile.objects.using('enrolment')
+            .filter(id__in=plan_learner_ids, lifecycle_status__iexact='active')
+            .prefetch_related(
+                'ksb_assignment__profile_version__definitions',
+                'plan_modules__weeks__components',
+                'progress_entries__ksb_links',
+            )
+            .distinct()
+            .order_by('full_name', 'id')
+        )
+        profiles = list(profiles)
+        attendance_by_learner = {}
+        try:
+            attendance_rows = fetch_verified_teams_attendance_rows(
+                [profile.id for profile in profiles],
+                module_refs=list(requested_module_ids),
+            )
+            grouped_attendance = {}
+            for row in attendance_rows:
+                learner_id = str(row.get('learner_id') or '')
+                if not learner_id:
+                    continue
+                summary = grouped_attendance.setdefault(learner_id, {'sessions': 0, 'present': 0})
+                summary['sessions'] += 1
+                if str(row.get('attendance_status') or '').strip().lower() in {'present', 'late'}:
+                    summary['present'] += 1
+            attendance_by_learner = {
+                learner_id: round((summary['present'] / summary['sessions']) * 100)
+                for learner_id, summary in grouped_attendance.items()
+                if summary['sessions']
+            }
+        except DatabaseError:
+            logger.warning('tutor_learners_attendance_unavailable', exc_info=True)
+
+        learners = [
+            _tutor_live_learner_row(
+                profile,
+                attendance_by_learner.get(str(profile.id), 0),
+                requested_module_ids,
+            )
+            for profile in profiles
+        ]
+    except DatabaseError as exc:
+        logger.exception('tutor_learners_load_failed')
+        return _error(f'Database error: {exc}', 503)
+
+    return JsonResponse({'count': len(learners), 'learners': learners})
 
 
 def _parse_body(request):

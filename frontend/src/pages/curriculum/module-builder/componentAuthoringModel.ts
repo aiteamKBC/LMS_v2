@@ -103,14 +103,13 @@ const definitions: ComponentAuthoringDefinition[] = [
       sessionTime: '',
       sessionDateTimeUtc: '',
       durationMinutes: 60,
-      selectedGroupKeys: [],
-      selectedGroupNames: [],
       liveSessionUrl: '',
       teamsEventId: '',
       teamsLiveSessionId: '',
       teamsMeetingOptionsUrl: '',
       teamsOrganizerEmail: '',
       teamsAttendees: [],
+      teamsPresenters: [],
       teamsProvider: '',
       teamsRepeat: 'none',
       teamsRepeatOccurrences: 1,
@@ -282,6 +281,11 @@ const definitions: ComponentAuthoringDefinition[] = [
       uploadSource: '',
       assignmentFileName: '',
       assignmentFileUrl: '',
+      // Which brief tab the assignment is authored on — 'Text' (written brief)
+      // or 'File' (uploaded document). Must be an allowed key or normalisation
+      // strips it on save/reload, resetting the editor to the written-brief tab
+      // and hiding an uploaded file that is actually still stored.
+      assignmentSource: 'Text',
     },
   },
   {
@@ -385,6 +389,13 @@ export function getDefaultComponentSettings(type: ModuleComponentType): Componen
 const WEEK_BUILDER_SHARED_KEYS = [
   'selectedGroupKeys',        // assigned-groups multi-select (all component types)
   'selectedGroupNames',
+  // Where this component was copied *to* via "Assigned groups" — one entry per
+  // group key, parallel arrays (ComponentSettingValue has no object type).
+  // Lets deselecting a group warn about, and cascade-delete, the placed copy.
+  'placedCopyGroupKeys',
+  'placedCopyModuleCatalogueIds',
+  'placedCopyWeekIds',
+  'placedCopyComponentIds',
   'podcastEmbedCode',         // podcast "Embed" source snippet
   'powerpointSource',         // PowerPoint source toggle (External Link vs Uploaded file)
   'quizAssessmentType',       // quiz/checkpoint flag stored on the component
@@ -447,6 +458,12 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
     if (!source.uploadedFileUrl && source.resourceUrl) source.uploadedFileUrl = source.resourceUrl;
   }
   if (type === 'assignment') {
+    // Recover assignments saved before `assignmentSource` was persisted: an
+    // uploaded document with no written brief was authored on the File tab, so
+    // reopen it there instead of the (default) written-brief tab.
+    if (!source.assignmentSource && (source.uploadedFileUrl || source.assignmentFileUrl) && !source.assignmentContent && !source.assignmentBrief) {
+      source.assignmentSource = 'File';
+    }
     if (!source.assignmentBrief && source.assignmentContent) source.assignmentBrief = source.assignmentContent;
     if (!source.assignmentContent && source.assignmentBrief) source.assignmentContent = source.assignmentBrief;
     if (!source.assignmentFileName && source.uploadedFileName) source.assignmentFileName = source.uploadedFileName;
