@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import json
 import logging
+import mimetypes
 import calendar
 import os
 import re
@@ -16986,8 +16987,15 @@ def curriculum_uploaded_file(request, path):
     )
     response['Accept-Ranges'] = 'bytes'
     response['Content-Length'] = str(length)
-    if content_type:
-        response['Content-Type'] = content_type
+    # Always state the type. FileResponse cannot infer one from a generator (it
+    # has no file name to look at) and falls back to text/html, which — with the
+    # nosniff header this site sends — is enough for a browser to refuse to
+    # render a rendered page image or play an audio file.
+    response['Content-Type'] = (
+        content_type
+        or mimetypes.guess_type(relative_path)[0]
+        or 'application/octet-stream'
+    )
     if requested:
         response['Content-Range'] = f'bytes {offset}-{offset + length - 1}/{total_size}'
     return response

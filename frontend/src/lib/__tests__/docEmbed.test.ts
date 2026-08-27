@@ -71,9 +71,17 @@ describe('resolveDocEmbed', () => {
     expect(resolveDocEmbed('/uploads/old.ppt', LOCAL).mode).toBe('unavailable');
   });
 
-  it('renders a PDF itself, so an uploaded PDF works on a dev server too', () => {
-    const embed = resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/deck.pdf', LOCAL);
-    expect(embed).toEqual({ mode: 'native', src: `${LOCAL}/curriculum_api/curriculum/uploads/m/c/deck.pdf` });
+  it('renders one of our own PDFs in-house, page by page', () => {
+    // Not the browser's viewer: whether a browser previews a PDF in a frame or
+    // offers it as a download is a setting on the reader's machine, and the
+    // download prompt is what learners were getting.
+    const embed = resolveDocEmbed('/curriculum_api/curriculum/uploads/m/c/handout.pdf', LOCAL);
+    expect(embed).toEqual({ mode: 'deck', src: `${LOCAL}/curriculum_api/curriculum/uploads/m/c/handout.pdf` });
+  });
+
+  it('leaves a PDF hosted elsewhere to the browser, since we cannot render it', () => {
+    const embed = resolveDocEmbed('https://partner.example.com/handout.pdf', PUBLIC);
+    expect(embed).toEqual({ mode: 'native', src: 'https://partner.example.com/handout.pdf' });
   });
 
   it('uses the native Google embeds for Slides and Docs links', () => {

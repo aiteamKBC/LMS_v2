@@ -47,6 +47,9 @@ function component(id: string, extra: Partial<ModuleComponent> = {}): ModuleComp
     expectedOtjh: 1,
     points: 10,
     reflectionRequired: false,
+    // Required on ModuleComponent since the reflection question was added; empty
+    // is the "no question authored" case these rows stand for.
+    reflectionQuestion: '',
     workplaceEvidenceRequired: false,
     tutorValidationRequired: false,
     ksbMappings: [],

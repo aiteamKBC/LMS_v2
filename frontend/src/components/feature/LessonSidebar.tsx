@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import {
-  buildLearnerJourney, componentTypeMeta, hasComponentContent, isOpenableComponent, gradePercent,
+  buildLearnerJourney, componentTypeMeta, hasComponentContent, isOpenableComponent, isComponentComplete, gradePercent,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import type { LearnerDetail } from '@/api/learnerDetail';
@@ -81,12 +81,18 @@ interface LessonSidebarProps {
   activeQuizId?: number | null;
   /** Where a week row / other-weeks navigation should go. */
   backHref: string;
+  /** Component ids the learner has already finished, so each row can show it.
+   *  Build with `completedComponentIds(detail)`, plus anything completed in
+   *  this visit that the fetched detail predates. */
+  completedIds?: Set<string>;
 }
 
-export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, backHref }: LessonSidebarProps) {
+export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, backHref, completedIds }: LessonSidebarProps) {
   const navigate = useNavigate();
   const moduleTitle = ctx?.moduleTitle ?? '';
   const weekTitle = ctx?.weekTitle ?? '';
+  const done = completedIds ?? new Set<string>();
+  const weekDoneCount = (ctx?.weekComponents ?? []).filter((c) => isComponentComplete(c, done)).length;
 
   const isActiveRow = (c: JourneyComponent): boolean => {
     if (c.isQuiz) return activeQuizId != null && c.quizMeta?.quizId === activeQuizId;
@@ -98,7 +104,10 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
       <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
         <div className="px-4 py-3 border-b border-background-300">
           <h2 className="text-sm font-heading font-bold text-foreground-800">{weekTitle || 'This week'}</h2>
-          <p className="text-[11px] text-foreground-400 mt-0.5">{ctx?.weekComponents.length ?? 0} components</p>
+          <p className="text-[11px] text-foreground-400 mt-0.5">
+            {ctx?.weekComponents.length ?? 0} components
+            {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
+          </p>
         </div>
         <ul className="divide-y divide-background-300">
           {(ctx?.weekComponents ?? []).map((c) => {
@@ -106,6 +115,7 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
             const isCurrent = isActiveRow(c);
             const contentAvailable = hasComponentContent(c);
             const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
+            const completed = isComponentComplete(c, done);
             const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
             const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
             return (
@@ -114,15 +124,23 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
                   disabled={!clickable}
                   onClick={() => clickable && navigate(componentRoute(kind, id, c, moduleTitle, weekTitle))}
                   className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                    !contentAvailable ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale' : isCurrent ? 'bg-primary-50' : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
+                    !contentAvailable
+                      ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale'
+                      : isCurrent
+                        ? 'bg-primary-50'
+                        : completed
+                          ? `bg-emerald-50/70 ${clickable ? 'hover:bg-emerald-50 cursor-pointer' : 'cursor-default'}`
+                          : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
                   }`}
                 >
-                  <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${cm.bg}`}>
-                    <AppIcon className={`${cm.icon} text-[12px] ${cm.color}`} />
+                  <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : cm.bg}`}>
+                    <AppIcon className={completed ? 'ri-check-line text-[12px] text-emerald-700' : `${cm.icon} text-[12px] ${cm.color}`} />
                   </span>
                   <span className="flex-1 min-w-0">
                     <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
-                    <span className={`block text-[13px] font-semibold leading-snug truncate ${isCurrent ? 'text-primary-700' : 'text-foreground-800'}`}>
+                    <span className={`block text-[13px] font-semibold leading-snug truncate ${
+                      isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-foreground-800'
+                    }`}>
                       {cm.detail || cm.label}
                     </span>
                   </span>
@@ -135,6 +153,8 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
                   )}
                   {!contentAvailable ? (
                     <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
+                  ) : completed ? (
+                    <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-sm shrink-0" />
                   ) : isCurrent ? (
                     <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
                   ) : clickable ? (

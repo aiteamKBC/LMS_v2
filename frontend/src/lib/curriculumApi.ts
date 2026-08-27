@@ -2201,6 +2201,54 @@ export function updateCurriculumProgramme(id: string, input: CurriculumProgramme
   return patchJson<{ updated: boolean; programme: CurriculumProgramme }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
 }
 
+/**
+ * What a programme DELETE answers with — an archive, or a permanent removal.
+ *
+ * `removed` counts the curriculum rows a permanent delete took with it, keyed by
+ * kind; `learners` is how many learner plans referenced it and were left alone.
+ * See curriculum_api.views.curriculum_programme_detail.
+ */
+export type CurriculumProgrammeDeleteResult = {
+  deleted: boolean;
+  permanent: boolean;
+  archived?: boolean;
+  reason?: string;
+  message?: string;
+  id: string;
+  removed?: Record<string, number>;
+  learners?: number;
+};
+
+/** What still hangs off a programme, when a permanent delete is refused. */
+export type CurriculumProgrammeDependencyReport = {
+  blocked: boolean;
+  counts: Record<string, number>;
+  total: number;
+  programme?: {
+    id?: string;
+    sourceId?: string;
+    name?: string;
+  };
+  cleanupStartStep?: string;
+  message?: string;
+};
+
+/**
+ * A refused delete. `blockers` names what still depends on the programme —
+ * learner delivery, which is never deleted with a programme — so the caller can
+ * say what has to be cleared first rather than only that it failed.
+ */
+export type CurriculumProgrammeDependencyError = {
+  error?: string;
+  reason?: 'programme-has-dependencies' | 'programme-has-learner-delivery' | 'programme-not-archived' | string;
+  deleted?: false;
+  permanent?: false;
+  id?: string;
+  blockers?: Record<string, number>;
+  dependencyReport?: CurriculumProgrammeDependencyReport;
+  message?: string;
+};
+
 export function deleteCurriculumProgramme(id: string, options: { permanent?: boolean } = {}) {
   const suffix = options.permanent ? '?permanent=true' : '';
   return fetchJson<CurriculumProgrammeDeleteResult>(
