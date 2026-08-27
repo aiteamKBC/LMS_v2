@@ -167,6 +167,13 @@ function emailList(value: string): string[] {
  * which works where the verb is obvious (edit, archive); here it is not — "send
  * the module's dates to Teams" and "fetch what Teams recorded" are two different
  * kinds of sync, and a glyph makes the reader guess which is which.
+ *
+ * Two emphases, and they do not mean the same thing. `primary` is the filled
+ * button: this row has work waiting that pressing it does. `attention` is the
+ * amber outline: nothing is created or sent from here, but the row disagrees
+ * with itself and is worth opening. Filling a read-only button the same way as
+ * a create button is what made the column unreadable - the reader could not
+ * tell whether the strong colour meant "act" or "look".
  */
 function NamedActions({ actions }: {
   actions: Array<{
@@ -176,6 +183,7 @@ function NamedActions({ actions }: {
     onClick: () => void;
     disabled?: boolean;
     primary?: boolean;
+    attention?: boolean;
     busy?: boolean;
   }>;
 }) {
@@ -191,7 +199,9 @@ function NamedActions({ actions }: {
           className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-50 ${
             action.primary
               ? 'border-primary-600 bg-primary-600 text-white hover:bg-primary-700'
-              : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
+              : action.attention
+                ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
           }`}
         >
           <AppIcon className={`${action.busy ? 'ri-loader-4-line animate-spin' : action.icon} text-sm`}></AppIcon>
@@ -1426,8 +1436,13 @@ export default function CurriculumTeamsMeetingsPage() {
                     ? {
                       icon: 'ri-eye-line',
                       label: 'Detail',
-                      title: 'Show this module\u2019s session dates next to the dates Teams holds.',
-                      primary: row.state === 'out-of-sync',
+                      // The same button either way: it opens the comparison and
+                      // changes nothing. Only its tone changes, and it changes
+                      // for the one reason the status column already names.
+                      title: row.state === 'out-of-sync'
+                        ? `The Teams calendar disagrees with this module on ${row.differingSessions === 1 ? '1 session date' : `${row.differingSessions} session dates`}. Open it to compare them, date by date.`
+                        : 'Show this module\u2019s session dates next to the dates Teams holds.',
+                      attention: row.state === 'out-of-sync',
                       onClick: () => setSelectedId(row.catalogueId),
                     }
                     : {

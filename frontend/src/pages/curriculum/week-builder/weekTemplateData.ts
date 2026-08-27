@@ -22,7 +22,7 @@ import {
   type ValidationIssue,
 } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 import { fetchPointsRules } from '@/api/engagement';
-import { fetchCurriculumOverview, type CurriculumGroup, type CurriculumModule, type CurriculumProgramme } from '@/lib/curriculumApi';
+import { fetchCurriculumOverview, type CurriculumCohort, type CurriculumGroup, type CurriculumModule, type CurriculumProgramme } from '@/lib/curriculumApi';
 
 export { componentTypeGroups, componentTypes, createEmptyComponent, getComponentDefinition, makeAuthoringId };
 export type { KsbMapping, ModuleComponent, ModuleComponentType, ModuleStatus };
@@ -66,10 +66,10 @@ export const weekPaletteTypes: WeekPaletteType[] = WEEK_BUILDER_TYPES.map(type =
 
 export const weekPaletteGroups: string[] = Array.from(new Set(weekPaletteTypes.map(item => item.group)));
 
-// --- Curriculum scope (programmes / groups / modules) -----------------------
-// The programme / group / module pickers and the editor's group + module-name
-// resolution only need three lists. We request the overview's `compact=true`
-// variant — it still returns programmes/groups/modules but drops the heavy
+// --- Curriculum scope (programmes / cohorts / groups / modules) -------------
+// The programme / cohort / group / module pickers and the editor's group +
+// module-name resolution only need these lists. We request the overview's
+// `compact=true` variant — it still returns the structure but drops the heavy
 // extras (sessions, holidays, tutors, coaches, KSB frameworks, authoring
 // details), which the week builder never uses. The result is cached in one
 // in-flight promise and shared across the create modal and every editor open,
@@ -77,6 +77,7 @@ export const weekPaletteGroups: string[] = Array.from(new Set(weekPaletteTypes.m
 // the request repeatedly and made the pickers pop in late).
 export interface CurriculumScope {
   programmes: CurriculumProgramme[];
+  cohorts: CurriculumCohort[];
   groups: CurriculumGroup[];
   modules: CurriculumModule[];
 }
@@ -89,6 +90,7 @@ export function loadCurriculumScope(options: { force?: boolean } = {}): Promise<
     scopeCache = fetchCurriculumOverview(undefined, { compact: true })
       .then(overview => ({
         programmes: overview.programmes || [],
+        cohorts: overview.cohorts || [],
         groups: overview.groups || [],
         modules: overview.modules || [],
       }))

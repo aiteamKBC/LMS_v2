@@ -18,6 +18,7 @@ import {
   type CurriculumGroup,
   type CurriculumHoliday,
   type CurriculumKsbSet,
+  type CurriculumModule,
   type CurriculumProgramme,
   type LibraryComponent,
   type CurriculumStaffProfile,
@@ -126,6 +127,12 @@ type ModuleDeliveryUsage = {
    * is used for matching, so the two are deliberately separate.
    */
   deliveryModuleId: string;
+  /**
+   * The delivery row itself. Every delivery of the same authored module shares
+   * `deliveryModuleId` — the catalogue id — so this is the only field that says
+   * *which* cohort/group run is meant.
+   */
+  deliveryRowId: string;
   sourceId: string;
   catalogueId: string;
   structureId: string;
@@ -319,6 +326,27 @@ export default function ModuleBuilder() {
     }).catch(() => {});
     return () => { active = false; };
   }, [workingModule?.programmeId, workingModule?.programmeName]);
+
+  // The cohort and group filters below list the records themselves, not only the
+  // ones a module already reaches: a programme with two cohorts and no modules
+  // must still show its two cohorts, or the filter contradicts every other page.
+  // Same cached compact overview the component picker above already loads.
+  const [scopeCohorts, setScopeCohorts] = useState<CurriculumCohort[]>([]);
+  const [scopeGroups, setScopeGroups] = useState<CurriculumGroup[]>([]);
+  // Settled either way — a failed load must not hold the cascade below forever.
+  const [scopeLoaded, setScopeLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    loadCurriculumScope()
+      .then(({ cohorts, groups }) => {
+        if (!active) return;
+        setScopeCohorts(cohorts);
+        setScopeGroups(groups);
+      })
+      .catch(() => {})
+      .finally(() => { if (active) setScopeLoaded(true); });
+    return () => { active = false; };
+  }, []);
 
   const catalogueModules = useMemo(() => {
     void storageVersion;
@@ -589,19 +617,42 @@ export default function ModuleBuilder() {
     [catalogueModules],
   );
 
+  /**
+   * The cohorts of the programme in the filter, whether or not a module reaches
+   * them. The deliveries are folded in afterwards so a module scoped to a cohort
+   * the overview does not carry still gets an option to be found by — but they
+   * are no longer the only source, which is what made a programme with two
+   * cohorts and no modules report "no cohorts".
+   */
   const cohortFilterOptions = useMemo(() => {
     const options = new Map<string, string>();
+    scopeCohorts
+      .filter(cohort => recordMatchesProgrammeFilter(cohort.programme, cohort.programmeId, programmeFilter, curriculumProgrammes))
+      .forEach(cohort => {
+        const value = deliveryFilterValue(cohort.id, cohort.name);
+        if (value) options.set(value, cleanModuleMeta(cohort.name) || value);
+      });
     deliveryUsages
       .filter(usage => usageMatchesProgrammeFilter(usage, programmeFilter, curriculumProgrammes))
       .forEach(usage => {
         const value = deliveryFilterValue(usage.cohortId, usage.cohort);
-        if (value) options.set(value, cleanModuleMeta(usage.cohort) || value);
+        if (value && !options.has(value)) options.set(value, cleanModuleMeta(usage.cohort) || value);
       });
     return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [curriculumProgrammes, deliveryUsages, programmeFilter]);
+  }, [curriculumProgrammes, deliveryUsages, programmeFilter, scopeCohorts]);
 
+  /** The groups of the programme and cohort in the filter, on the same terms. */
   const groupFilterOptions = useMemo(() => {
     const options = new Map<string, string>();
+    scopeGroups
+      .filter(group => (
+        recordMatchesProgrammeFilter(group.programme, group.programmeId, programmeFilter, curriculumProgrammes)
+        && deliveryFilterMatches(cohortFilter, group.cohortId, group.cohort)
+      ))
+      .forEach(group => {
+        const value = deliveryFilterValue(group.id, group.name);
+        if (value) options.set(value, cleanModuleMeta(group.name) || value);
+      });
     deliveryUsages
       .filter(usage => (
         usageMatchesProgrammeFilter(usage, programmeFilter, curriculumProgrammes)
@@ -609,10 +660,10 @@ export default function ModuleBuilder() {
       ))
       .forEach(usage => {
         const value = deliveryFilterValue(usage.groupId, usage.group);
-        if (value) options.set(value, cleanModuleMeta(usage.group) || value);
+        if (value && !options.has(value)) options.set(value, cleanModuleMeta(usage.group) || value);
       });
     return Array.from(options, ([value, label]) => ({ value, label })).sort((a, b) => a.label.localeCompare(b.label));
-  }, [cohortFilter, curriculumProgrammes, deliveryUsages, programmeFilter]);
+  }, [cohortFilter, curriculumProgrammes, deliveryUsages, programmeFilter, scopeGroups]);
 
   /** Every tutor who could be assigned: the staff roster plus anyone already on a delivery. */
   const tutorNames = useMemo(() => {
@@ -626,13 +677,18 @@ export default function ModuleBuilder() {
   }, [deliveryUsages, tutorProfiles]);
 
   // Drop a child filter its parent no longer contains, so the cascade can never
-  // show a contradictory Programme / Cohort / Group combination.
+  // show a contradictory Programme / Cohort / Group combination. Held until the
+  // cohort and group records have landed: until then the options are the
+  // deliveries alone, and a deep link to a cohort with no modules would be
+  // thrown away a beat before the option that justifies it arrives.
   useEffect(() => {
+    if (!scopeLoaded) return;
     if (cohortFilter && !cohortFilterOptions.some(option => option.value === cohortFilter)) setCohortFilter('');
-  }, [cohortFilter, cohortFilterOptions]);
+  }, [cohortFilter, cohortFilterOptions, scopeLoaded]);
   useEffect(() => {
+    if (!scopeLoaded) return;
     if (groupFilter && !groupFilterOptions.some(option => option.value === groupFilter)) setGroupFilter('');
-  }, [groupFilter, groupFilterOptions]);
+  }, [groupFilter, groupFilterOptions, scopeLoaded]);
 
   useEffect(() => {
     if (!filtersTouchedRef.current) return;
@@ -1076,7 +1132,7 @@ export default function ModuleBuilder() {
   const exportKsbSheet = useCallback(async () => {
     if (!workingModule) return;
     setActionMessage(null);
-    setSaveSuccess(null);
+    setNoticeAlert(null);
     // Guard before exporting so an empty module never downloads a blank sheet.
     if (!workingModule.weekStructure.some(week => week.components.length)) {
       setActionMessage('This module has no components to export yet.');
@@ -1095,7 +1151,7 @@ export default function ModuleBuilder() {
   const importKsbSheet = useCallback(async (file: File) => {
     if (!workingModule) return;
     setActionMessage(null);
-    setSaveSuccess(null);
+    setNoticeAlert(null);
     try {
       const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule);
       if (!summary.rowsWithKsbs) {
@@ -1726,13 +1782,17 @@ export default function ModuleBuilder() {
               >
                 {programmeOptions.map(option => <option key={option} value={option}>{option === 'All' ? 'All programmes' : option}</option>)}
               </select>
+              {/* Empty here now means the records genuinely do not exist, not
+                  that no module reaches them, so the labels can say so plainly. */}
               <select
                 aria-label="Cohort"
                 value={cohortFilter}
                 onChange={event => changeFilter(() => { setCohortFilter(event.target.value); setGroupFilter(''); })}
                 className={FILTER_SELECT_CLASS}
               >
-                <option value="">{cohortFilterOptions.length ? 'All cohorts' : 'No cohorts in scope'}</option>
+                <option value="">{cohortFilterOptions.length
+                  ? 'All cohorts'
+                  : programmeFilter === 'All' ? 'No cohorts' : 'No cohorts in this programme'}</option>
                 {cohortFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
@@ -1741,7 +1801,9 @@ export default function ModuleBuilder() {
                 onChange={event => changeFilter(() => setGroupFilter(event.target.value))}
                 className={FILTER_SELECT_CLASS}
               >
-                <option value="">{groupFilterOptions.length ? 'All groups' : 'No groups in scope'}</option>
+                <option value="">{groupFilterOptions.length
+                  ? 'All groups'
+                  : cohortFilter ? 'No groups in this cohort' : 'No groups'}</option>
                 {groupFilterOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
               <select
@@ -3369,6 +3431,7 @@ function moduleDeliveryUsageFallback(module: ModuleCatalogueItem): ModuleDeliver
     ].filter(Boolean).join('::'),
     moduleId: String(module.sourceModule?.id || module.id || ''),
     deliveryModuleId: (module.sourceModule ? moduleIdentity(module.sourceModule) : '') || String(module.catalogueId || module.id || ''),
+    deliveryRowId: deliveryRowIdentity(module.sourceModule),
     sourceId: String(module.sourceModule?.sourceId || module.sourceId || ''),
     catalogueId: String(module.catalogueId || ''),
     structureId: moduleStructureIdentifier(module),
@@ -5188,7 +5251,7 @@ function ModuleCatalogueCard({
   const hasContent = componentCount > 0;
   const subLabel = moduleListSubLabel(module);
   const primaryDelivery = (module.deliveryUsages || []).find(usage => usage.deliveryModuleId);
-  const primaryDeliveryHref = primaryDelivery ? `/curriculum/modules/${encodeURIComponent(primaryDelivery.deliveryModuleId)}` : '';
+  const primaryDeliveryHref = primaryDelivery ? deliveryUsageHref(primaryDelivery) : '';
   // Legacy fallbacks retained by the merge were:
   // weekCount = module.weekStructure.length || module.weeks || 0
 
@@ -5207,9 +5270,12 @@ function ModuleCatalogueCard({
               </div>
               {subLabel && <p className="mt-1 text-[11px] text-foreground-500">{subLabel}</p>}
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
-                <span className="rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-[10px] font-semibold text-foreground-600">
-                  {cleanModuleMeta(module.programmeName) || 'No programme'}
-                </span>
+                <ModuleFactPill
+                  icon="ri-graduation-cap-line"
+                  label="Programme"
+                  value={cleanModuleMeta(module.programmeName) || 'Not set'}
+                  tone={cleanModuleMeta(module.programmeName) ? 'default' : 'muted'}
+                />
                 <ModuleMetricPill icon="ri-stack-line" label={`${weekCount} weeks`} />
                 <ModuleMetricPill icon="ri-puzzle-line" label={`${componentCount} components`} tone={hasContent ? 'default' : 'muted'} />
               </div>
@@ -5291,6 +5357,15 @@ type ModuleKsbPlacement = {
   scope: 'Module' | 'Week' | 'Component';
   otjh: number;
   points: number;
+  /**
+   * Which column of the heatmap this placement belongs in: 'module' for a
+   * module-level mapping, `week:<index>` for anything inside a week. Set by
+   * `moduleKsbMapRows` from the week structure itself rather than parsed back
+   * out of the label, so a week titled "Week 3 / Intro" cannot be misread.
+   */
+  columnKey?: string;
+  /** The component's own title, when the placement is a component. */
+  detail?: string;
 };
 
 function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programmes, onClose, onBuild }: {
@@ -5351,6 +5426,22 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
   const visiblePlacementCount = filteredRows.reduce((total, row) => total + row.placements.length, 0);
   const visibleWeight = filteredRows.reduce((total, row) => total + row.weight, 0);
   const visibleOtjh = uniquePlacementOtjh(filteredRows);
+  // The heatmap is the way in — it answers "where in this module is this
+  // taught?" at a glance, the same question the programme heatmap answers one
+  // level up. The card view is kept for the per-placement OTJH and points
+  // breakdown the matrix has no room for.
+  const [view, setView] = useState<'heatmap' | 'cards'>('heatmap');
+  const columns = useMemo(() => moduleKsbHeatmapColumns(module), [module]);
+  const weekCount = module.weekStructure.length;
+  const coveredWeeks = useMemo(() => {
+    const touched = new Set<string>();
+    filteredRows.forEach(row => {
+      row.placements.forEach(placement => {
+        if (placement.columnKey && placement.columnKey !== MODULE_KSB_COLUMN) touched.add(placement.columnKey);
+      });
+    });
+    return touched.size;
+  }, [filteredRows]);
   return (
     <div className="fixed inset-0 z-[88] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm" onClick={onClose}>
       <div className="flex max-h-[88vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
@@ -5398,13 +5489,18 @@ function ModuleKsbMapModal({ module, sourceLabels, ksbSets, standards, programme
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {rows.length ? (
-            <div className="space-y-4">
+            view === 'heatmap' ? (
+              <>
+                <ModuleKsbHeatmapLegend weekCount={weekCount} coveredWeeks={coveredWeeks} />
+                <ModuleKsbHeatmapMatrix columns={columns} groups={groups} onBuild={onBuild} />
+              </>
+            ) : (
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
                 {groups.map(group => (
                   <ModuleKsbGroupPanel key={group.key} group={group} />
                 ))}
               </div>
-            </div>
+            )
           ) : (
             <div className="rounded-2xl border border-dashed border-background-300 bg-background-100 p-8 text-center">
               <AppIcon className="ri-node-tree text-3xl text-foreground-300"></AppIcon>
@@ -5582,12 +5678,224 @@ function ModuleKsbMapCard({ row }: { row: ModuleKsbMapRow }) {
   );
 }
 
+/**
+ * The module-scope answer to the programme's KSB heatmap. Same question asked
+ * one level down: the programme matrix puts a module in every column, so this
+ * one puts a week there, with the module's own mappings pinned in the first
+ * column. Rows stay grouped by Knowledge / Skills / Behaviours, because a
+ * flat alphabetical list of forty codes is what made the old panel view hard to
+ * read in the first place.
+ */
+function ModuleKsbHeatmapMatrix({ columns, groups, onBuild }: {
+  columns: ReturnType<typeof moduleKsbHeatmapColumns>;
+  groups: { key: 'K' | 'S' | 'B'; title: string; icon: string; rows: ModuleKsbMapRow[] }[];
+  onBuild: () => void;
+}) {
+  // Weeks are narrow because a week column only ever holds a count; the KSB and
+  // the trail are what need room. Everything scrolls inside the box rather than
+  // pushing the modal, so the header stays put while a 40-week module is read.
+  const gridTemplateColumns = `minmax(230px, 1.1fr) repeat(${columns.length}, minmax(60px, 72px)) minmax(96px, 0.4fr) minmax(220px, 1fr)`;
+  const visibleGroups = groups.filter(group => group.rows.length);
+
+  return (
+    <div className="max-h-[58vh] overflow-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm">
+      <div className="min-w-[900px]">
+        <div className="sticky top-0 z-30 grid items-end gap-2 border-b border-background-200 bg-background-100 px-4 py-3" style={{ gridTemplateColumns }}>
+          {/* Frozen both ways, the same way the programme matrix does it: the
+              column heads must survive scrolling down and the KSB column must
+              survive scrolling right, or a cell loses the row it belongs to. */}
+          <span className="sticky left-0 z-10 -ml-4 bg-background-100 pl-4 text-[10px] font-bold uppercase text-foreground-400 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">KSB outcome</span>
+          {columns.map(column => (
+            <span
+              key={column.key}
+              title={column.label}
+              className={`truncate text-center text-[10px] font-bold uppercase ${column.isModule ? 'text-sky-700' : 'text-foreground-400'}`}
+            >
+              {column.short}
+            </span>
+          ))}
+          <span className="text-center text-[10px] font-bold uppercase text-foreground-400">Weight</span>
+          <span className="text-[10px] font-bold uppercase text-foreground-400">Taught in</span>
+        </div>
+        <div className="divide-y divide-background-200">
+          {visibleGroups.map(group => (
+            <div key={group.key}>
+              <div className="sticky top-[45px] z-20 flex items-center gap-2 border-b border-background-200 bg-background-100/95 px-4 py-1.5 backdrop-blur-sm">
+                <AppIcon className={`${group.icon} text-[12px] text-foreground-500`}></AppIcon>
+                <span className="text-[10px] font-black uppercase tracking-wide text-foreground-600">{group.title}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[9px] font-black ${ksbVisualTone(group.key).badgeClass}`}>{group.rows.length}</span>
+              </div>
+              <div className="divide-y divide-background-200">
+                {group.rows.map(row => (
+                  <ModuleKsbHeatmapRow key={`${row.code}-${row.source}`} row={row} columns={columns} />
+                ))}
+              </div>
+            </div>
+          ))}
+          {!visibleGroups.length && (
+            <div className="px-4 py-10 text-center">
+              <p className="text-[12px] font-bold text-foreground-600">Nothing matches that search.</p>
+              <button type="button" onClick={onBuild} className="mt-2 text-[11px] font-bold text-primary-600 underline-offset-2 hover:underline">
+                Open Edit mappings
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModuleKsbHeatmapRow({ row, columns }: {
+  row: ModuleKsbMapRow;
+  columns: ReturnType<typeof moduleKsbHeatmapColumns>;
+}) {
+  const cells = moduleKsbRowCells(row);
+  const kind = row.code.toUpperCase().slice(0, 1);
+  const tone = ksbVisualTone(kind);
+  const gridTemplateColumns = `minmax(230px, 1.1fr) repeat(${columns.length}, minmax(60px, 72px)) minmax(96px, 0.4fr) minmax(220px, 1fr)`;
+  const touchedColumns = columns.filter(column => (cells.get(column.key) || []).length);
+  const totalOtjh = row.placements.reduce((total, placement) => total + Number(placement.otjh || 0), 0);
+
+  return (
+    // Opaque, because the frozen first cell inherits this background to hide the
+    // week cells sliding underneath it.
+    <div className="grid items-stretch gap-2 bg-background-50 px-4 py-2.5 transition-smooth hover:bg-background-100" style={{ gridTemplateColumns }}>
+      <div className="sticky left-0 z-10 -ml-4 min-w-0 bg-inherit pl-4 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`rounded-lg border px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{row.code}</span>
+          <span className={`rounded-full px-2 py-0.5 text-[9px] font-bold ${tone.badgeClass}`}>{tone.label}</span>
+          {row.source && <span className="truncate rounded-full bg-background-100 px-2 py-0.5 text-[9px] font-bold text-foreground-500">{row.source}</span>}
+        </div>
+        <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-relaxed text-foreground-700">{row.description || 'No description available.'}</p>
+      </div>
+      {columns.map(column => (
+        <ModuleKsbHeatCell key={column.key} column={column} placements={cells.get(column.key) || []} />
+      ))}
+      <div className="flex flex-col items-center justify-center gap-0.5">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] font-black ${ksbCodeChipClass(row.code)}`}>{formatKsbWeight(row.weight)}</span>
+        <span className="text-[9px] font-semibold text-foreground-400">{formatKsbOtjh(totalOtjh)} · {row.placements.length} place{row.placements.length === 1 ? '' : 's'}</span>
+      </div>
+      <div className="flex min-w-0 flex-wrap content-start items-start gap-1">
+        {touchedColumns.map(column => {
+          const placements = cells.get(column.key) || [];
+          const components = placements.filter(placement => placement.detail).map(placement => placement.detail);
+          return (
+            <span
+              key={column.key}
+              title={components.length ? `${column.label}: ${components.join(', ')}` : `${column.label}: mapped at ${placements[0]?.scope.toLowerCase()} level`}
+              className="inline-flex max-w-full items-center gap-1 truncate rounded-md border border-background-200 bg-background-100 px-1.5 py-0.5 text-[9px] font-bold text-foreground-600"
+            >
+              <AppIcon className={`${column.isModule ? 'ri-stack-line' : 'ri-calendar-check-line'} text-[10px]`}></AppIcon>
+              <span className="truncate">{column.short}{components.length ? ` · ${components[0]}` : ''}{components.length > 1 ? ` +${components.length - 1}` : ''}</span>
+            </span>
+          );
+        })}
+        {!touchedColumns.length && <span className="text-[9px] font-bold text-foreground-300">Not placed</span>}
+      </div>
+    </div>
+  );
+}
+
+function ModuleKsbHeatCell({ column, placements }: {
+  column: ReturnType<typeof moduleKsbHeatmapColumns>[number];
+  placements: ModuleKsbPlacement[];
+}) {
+  const count = placements.length;
+  // A week can hold the KSB at week level and again on its components; saying
+  // which is what tells an author whether the teaching is actually placed.
+  const scopes = Array.from(new Set(placements.map(placement => placement.scope)));
+  const title = count
+    ? `${column.label} — ${placements.map(placement => placement.label).join(', ')}`
+    : `${column.label} — not mapped`;
+  return (
+    <div
+      title={title}
+      className={`grid min-h-11 place-items-center rounded-lg border text-[11px] font-black ${moduleKsbHeatCellClass(count, column.isModule)}`}
+    >
+      {count ? (
+        <span className="flex flex-col items-center leading-none">
+          <span>{count}</span>
+          <span className="mt-0.5 text-[8px] font-bold uppercase opacity-80">{scopes.includes('Component') ? 'comp' : scopes[0].toLowerCase()}</span>
+        </span>
+      ) : (
+        <span className="text-[10px] font-bold">·</span>
+      )}
+    </div>
+  );
+}
+
+function ModuleKsbHeatmapLegend({ weekCount, coveredWeeks }: { weekCount: number; coveredWeeks: number }) {
+  return (
+    <div className="mb-3 flex flex-col gap-3 rounded-xl border border-background-200 bg-background-50 px-4 py-2.5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-wrap items-center gap-2">
+        {(['K', 'S', 'B'] as const).map(key => {
+          const tone = ksbVisualTone(key);
+          return (
+            <span key={key} className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[10px] font-bold ${tone.badgeClass}`}>
+              <AppIcon className={`${tone.icon} text-[11px]`}></AppIcon>
+              {tone.label}
+            </span>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-foreground-500">
+        <span>Placements per week</span>
+        <span className="grid h-5 w-8 place-items-center rounded border border-primary-100 bg-primary-50 text-primary-700">1</span>
+        <span className="grid h-5 w-8 place-items-center rounded border border-primary-300 bg-primary-200 text-primary-900">2</span>
+        <span className="grid h-5 w-8 place-items-center rounded border border-primary-500 bg-primary-600 text-white">3+</span>
+        <span className="grid h-5 w-14 place-items-center rounded border border-sky-200 bg-sky-50 text-[9px] text-sky-800">Module</span>
+        <span className="ml-1 text-foreground-400">
+          KSBs land in {coveredWeeks} of {weekCount} week{weekCount === 1 ? '' : 's'} · weight is the mapping total, not a per-week split
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function KsbCoverageMetric({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
   return (
     <div className={`rounded-lg border border-background-200 bg-background-100 ${compact ? 'px-2 py-1.5' : 'min-w-20 px-3 py-2'}`}>
       <p className="text-[8px] font-black uppercase text-foreground-400">{label}</p>
       <p className={`${compact ? 'text-[11px]' : 'text-[13px]'} mt-0.5 font-black text-foreground-900`}>{value}</p>
     </div>
+  );
+}
+
+/**
+ * A catalogue fact with the word for what it is next to it. A bare value —
+ * "Test-Zyad", "Sept 2026 / Group A", a date range — reads as an unexplained
+ * string to anyone who did not author the module, so the card names the field
+ * rather than leaving the reader to infer it from position.
+ */
+function ModuleFactPill({ icon, label, value, tone = 'default' }: { icon: string; label: string; value: string; tone?: 'default' | 'muted' }) {
+  const valueClass = tone === 'muted' ? 'text-foreground-400' : 'text-foreground-700';
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full border border-background-200 bg-background-100 px-2.5 py-1 text-[10px]"
+      title={`${label}: ${value}`}
+    >
+      <AppIcon className={`${icon} text-[11px] text-primary-600`}></AppIcon>
+      <span className="font-bold uppercase tracking-wide text-foreground-400">{label}</span>
+      <span className={`font-semibold ${valueClass}`}>{value}</span>
+    </span>
+  );
+}
+
+/** The same labelled fact, unboxed, for the delivery rows under the card. */
+function ModuleFact({ icon, label, value, valueClass = 'font-semibold text-foreground-600', title }: {
+  icon: string;
+  label: string;
+  value: string;
+  valueClass?: string;
+  title?: string;
+}) {
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px]" title={title || `${label}: ${value}`}>
+      <AppIcon className={`${icon} text-[12px] text-foreground-400`}></AppIcon>
+      <span className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</span>
+      <span className={valueClass}>{value}</span>
+    </span>
   );
 }
 
@@ -5645,35 +5953,50 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
         const sessions = usage.sessions || 0;
         const facts = (
           <>
-            <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-foreground-900">
-              <AppIcon className="ri-route-line text-[12px] text-primary-600"></AppIcon>
-              {formatDeliveryUsage(usage)}
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-foreground-500">
-              <AppIcon className="ri-calendar-event-line text-[12px]"></AppIcon>
-              {formatDateLabel(usage.startDate)} – {formatDateLabel(usage.endDate)}
-            </span>
+            <ModuleFact
+              icon="ri-group-line"
+              label="Cohort / group"
+              value={formatDeliveryUsage(usage)}
+              valueClass="font-bold text-foreground-900"
+            />
+            <ModuleFact
+              icon="ri-calendar-event-line"
+              label="Runs"
+              value={`${formatDateLabel(usage.startDate)} – ${formatDateLabel(usage.endDate)}`}
+            />
             {sessions > 0 && sessions !== expectedSessions && (
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700">
-                <AppIcon className="ri-calendar-2-line text-[12px]"></AppIcon>
-                {sessions} session{sessions === 1 ? '' : 's'}
-              </span>
+              <ModuleFact
+                icon="ri-calendar-2-line"
+                label="Sessions"
+                value={String(sessions)}
+                valueClass="font-semibold text-amber-700"
+                title={`Sessions: ${sessions} in this delivery, which differs from the module plan`}
+              />
             )}
-            <span className={`inline-flex items-center gap-1.5 text-[11px] font-semibold ${teams.tone}`}>
-              <AppIcon className="ri-vidicon-line text-[12px]"></AppIcon>
-              {teams.text}
-            </span>
+            <ModuleFact
+              icon="ri-vidicon-line"
+              label="Teams"
+              value={teams.text}
+              valueClass={`font-semibold ${teams.tone}`}
+            />
           </>
         );
-        if (!usage.deliveryModuleId) {
-          return <div key={usage.id} className={rowClasses}>{facts}</div>;
-        }
+        // The card's Open delivery button opens the first row. A module run for
+        // more than one group needs a way into the others, and each has to land
+        // on its own run rather than on whichever shares its catalogue id.
+        const href = usages.length > 1 ? deliveryUsageHref(usage) : '';
         return (
-          <div
-            key={usage.id}
-            className={rowClasses}
-          >
+          <div key={usage.id} className={rowClasses}>
             {facts}
+            {href && (
+              <Link
+                to={href}
+                className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[10px] font-bold text-primary-700 transition-smooth hover:border-primary-300 hover:bg-primary-100"
+              >
+                <AppIcon className="ri-external-link-line text-[12px]"></AppIcon>
+                Open delivery
+              </Link>
+            )}
           </div>
         );
       })}
@@ -5761,9 +6084,17 @@ function programmeFilterKeys(programmeName: string, programmes: CurriculumProgra
 }
 
 function usageMatchesProgrammeFilter(usage: ModuleDeliveryUsage, programmeName: string, programmes: CurriculumProgramme[]) {
+  return recordMatchesProgrammeFilter(usage.programme, usage.programmeId, programmeName, programmes);
+}
+
+/**
+ * The same programme test for a stored cohort or group, which carries its
+ * programme under the same two fields a delivery does.
+ */
+function recordMatchesProgrammeFilter(programme: string | undefined, programmeId: string | undefined, programmeName: string, programmes: CurriculumProgramme[]) {
   if (programmeName === 'All') return true;
   const selectedKeys = programmeFilterKeys(programmeName, programmes);
-  return [usage.programme, usage.programmeId]
+  return [programme, programmeId]
     .map(normaliseDeepLinkValue)
     .filter(Boolean)
     .some(key => selectedKeys.includes(key));
@@ -5786,10 +6117,11 @@ function deliveryFilterMatches(filter: string, id?: string, name?: string) {
 }
 
 function teamsMeetingLabel(summary?: CurriculumTeamsMeetingSummary) {
-  if (!summary) return { text: 'Teams not created', tone: 'text-foreground-400' };
+  // The row prints the field name, so the value says only what the state is.
+  if (!summary) return { text: 'Not created', tone: 'text-foreground-400' };
   if (summary.upcomingCount > 0) return { text: `${summary.upcomingCount} upcoming`, tone: 'text-emerald-700' };
   if (summary.occurrenceCount > 0) return { text: `${summary.occurrenceCount} held`, tone: 'text-foreground-600' };
-  return { text: 'Teams scheduled', tone: 'text-sky-700' };
+  return { text: 'Scheduled', tone: 'text-sky-700' };
 }
 
 function moduleBelongsToProgrammeFilter(module: ModuleBuilderListItem, programmeName: string, programmes: CurriculumProgramme[]) {
@@ -5851,6 +6183,7 @@ function moduleDeliveryUsage(module: ModuleCatalogueItem): ModuleDeliveryUsage |
   if (!cohort && !group) return null;
   return {
     deliveryModuleId: (module.sourceModule ? moduleIdentity(module.sourceModule) : '') || String(module.catalogueId || module.id || ''),
+    deliveryRowId: deliveryRowIdentity(module.sourceModule),
     id: [
       module.sourceModule?.id,
       module.sourceModule?.sourceId,
@@ -6072,6 +6405,26 @@ function moduleDeliverySearchText(module: ModuleBuilderListItem) {
 function tutorDisplayName(value?: string) {
   const text = String(value || '').trim();
   return text.toLowerCase() === 'unassigned' ? '' : text;
+}
+
+/** The delivery row's own id, which is what tells two runs of a module apart. */
+function deliveryRowIdentity(source?: CurriculumModule) {
+  return String(source?.deliveryRowId || source?.deliveryModuleId || '').trim();
+}
+
+/**
+ * Where a delivery row opens.
+ *
+ * The path segment stays the catalogue id, because that is the identity every
+ * per-module endpoint answers to. The delivery row rides in a query param: the
+ * modules list gives every run of the same authored module the same catalogue
+ * id, so a path-only link left the workspace to open whichever run it matched
+ * first — the wrong cohort, group, tutor and dates for every run but one.
+ */
+function deliveryUsageHref(usage: ModuleDeliveryUsage) {
+  if (!usage.deliveryModuleId) return '';
+  const base = `/curriculum/modules/${encodeURIComponent(usage.deliveryModuleId)}`;
+  return usage.deliveryRowId ? `${base}?delivery=${encodeURIComponent(usage.deliveryRowId)}` : base;
 }
 
 function formatDeliveryUsage(usage: ModuleDeliveryUsage) {
@@ -6325,6 +6678,59 @@ function uniqueMappings(mappings: KsbMapping[]) {
   });
 }
 
+/** The heatmap's first column: mappings made against the module as a whole. */
+const MODULE_KSB_COLUMN = 'module';
+
+function moduleKsbWeekColumnKey(index: number) {
+  return `week:${index}`;
+}
+
+/**
+ * The heatmap's columns, in delivery order. A module's children are its weeks,
+ * which is what the programme heatmap's module columns become one scope down —
+ * so a reader sees the same shape and asks the same question of it: where in the
+ * run is this KSB actually taught?
+ */
+function moduleKsbHeatmapColumns(module: ModuleCatalogueItem) {
+  return [
+    { key: MODULE_KSB_COLUMN, short: 'Module', label: 'Module level', isModule: true },
+    ...module.weekStructure.map((week, index) => ({
+      key: moduleKsbWeekColumnKey(index),
+      short: `W${week.weekNumber || index + 1}`,
+      label: week.title || `Week ${week.weekNumber || index + 1}`,
+      isModule: false,
+    })),
+  ];
+}
+
+/**
+ * One row's placements bucketed by column. A placement with no column key —
+ * only possible for rows built by the programme-wide builder — is dropped
+ * rather than guessed at.
+ *
+ * Deliberately no per-cell weight: the weight lives on the mapping, not the
+ * placement, so it cannot be split between the cells a KSB appears in without
+ * inventing precision. The row total gets its own column, and each cell says
+ * only what it can stand behind — how many times, at what scope, and where.
+ */
+function moduleKsbRowCells(row: ModuleKsbMapRow) {
+  const cells = new Map<string, ModuleKsbPlacement[]>();
+  row.placements.forEach(placement => {
+    if (!placement.columnKey) return;
+    cells.set(placement.columnKey, [...(cells.get(placement.columnKey) || []), placement]);
+  });
+  return cells;
+}
+
+/** Cell shading: how densely this KSB lands in one week, not its weight. */
+function moduleKsbHeatCellClass(count: number, isModule: boolean) {
+  if (!count) return 'border-dashed border-background-200 bg-background-100/40 text-foreground-300';
+  if (isModule) return 'border-sky-200 bg-sky-50 text-sky-800';
+  if (count >= 3) return 'border-primary-500 bg-primary-600 text-white';
+  if (count === 2) return 'border-primary-300 bg-primary-200 text-primary-900';
+  return 'border-primary-100 bg-primary-50 text-primary-700';
+}
+
 function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<string, string>, source?: KsbSourceOption | null, allowSelectedSourceCodeFallback = false): ModuleKsbMapRow[] {
   const rows = new Map<string, ModuleKsbMapRow>();
   const fallbackSourceFull = source ? (sourceLabels[source.id] || source.label) : '';
@@ -6398,24 +6804,30 @@ function moduleKsbMapRows(module: ModuleCatalogueItem, sourceLabels: Record<stri
     scope: 'Module' as const,
     otjh: Number(module.declaredTotalOtjh ?? module.totalOtjh ?? 0) || 0,
     points: module.weekStructure.reduce((total, week) => total + week.components.reduce((weekTotal, component) => weekTotal + Number(component.points || 0), 0), 0),
+    columnKey: MODULE_KSB_COLUMN,
   };
   module.moduleKsbMappings.forEach(mapping => addMapping(mapping, modulePlacement));
-  module.weekStructure.forEach(week => {
+  module.weekStructure.forEach((week, index) => {
     const weekLabel = week.title || `Week ${week.weekNumber}`;
+    const columnKey = moduleKsbWeekColumnKey(index);
     const weekPlacement = {
       label: weekLabel,
       scope: 'Week' as const,
       otjh: week.components.reduce((total, component) => total + Number(component.expectedOtjh || 0), 0),
       points: week.components.reduce((total, component) => total + Number(component.points || 0), 0),
+      columnKey,
     };
     week.ksbMappings.forEach(mapping => addMapping(mapping, weekPlacement));
     week.components.forEach(component => {
-      const location = `${weekLabel} / ${readableComponentTitle(component.title) || 'Component'}`;
+      const componentTitle = readableComponentTitle(component.title) || 'Component';
+      const location = `${weekLabel} / ${componentTitle}`;
       const componentPlacement = {
         label: location,
         scope: 'Component' as const,
         otjh: Number(component.expectedOtjh || 0),
         points: Number(component.points || 0),
+        columnKey,
+        detail: componentTitle,
       };
       component.ksbMappings.forEach(mapping => addMapping(mapping, componentPlacement));
     });

@@ -182,7 +182,8 @@ describe('Module Builder delivery catalogue', () => {
 
     const delivery = deliveryRowFor('Data Foundations', 'Sept 2026 / Group A');
     expect(delivery.getByText('02 Sept 2026 – 07 Oct 2026')).toBeInTheDocument();
-    expect(delivery.getByText('Teams not created')).toBeInTheDocument();
+    expect(delivery.getByText('Teams')).toBeInTheDocument();
+    expect(delivery.getByText('Not created')).toBeInTheDocument();
     // The card states the authored weeks; the delivery states its session count
     // only when it disagrees with the module's. Here they agree, so the delivery
     // stays quiet rather than repeating the same fact.

@@ -7,6 +7,7 @@ import {
   fetchCurriculumModuleKsbCoverage,
   previewModuleSessionPlan,
   type CurriculumKsbCoverageResponse,
+  type CurriculumModule,
   type CurriculumSessionPlanPreview,
 } from '@/lib/curriculumApi';
 import {
@@ -99,6 +100,28 @@ function teamsArtifactLabel(artifactType: string) {
   return artifactType;
 }
 
+/**
+ * The delivery this page is about.
+ *
+ * The modules list gives every run of the same authored module the same
+ * catalogue id under `id`, `moduleId`, `structureId` and `sourceId` alike — only
+ * `deliveryRowId` says which cohort/group run a row is. So a link that carries
+ * one (`?delivery=`) picks that exact run, and its cohort, group, tutor and
+ * dates are the ones the page reads. Without it, the first matching run wins,
+ * which is the long-standing behaviour for modules delivered only once.
+ */
+function findDeliveryRow(modules: CurriculumModule[], id: string, deliveryRowId: string) {
+  if (deliveryRowId) {
+    const wanted = normaliseKey(deliveryRowId);
+    const exact = modules.find(module => [module.deliveryRowId, module.deliveryModuleId]
+      .map(normaliseKey)
+      .filter(Boolean)
+      .includes(wanted));
+    if (exact) return exact;
+  }
+  return findModule(modules, id);
+}
+
 export default function ModuleWorkspacePage() {
   const { id = '' } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -116,7 +139,13 @@ export default function ModuleWorkspacePage() {
   // Editing a module is the shared module form's job, here as everywhere else:
   // this page opens it, it does not hold a second copy of those fields.
   const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
-  const module = useMemo(() => findModule(modules, id), [id, modules]);
+  // The delivery row asked for by name, when the link that opened this page knew
+  // which one it meant. See findDeliveryRow.
+  const deliveryRowId = cleanText(searchParams.get('delivery'));
+  const module = useMemo(
+    () => findDeliveryRow(modules, id, deliveryRowId),
+    [deliveryRowId, id, modules],
+  );
   const catalogueId = useMemo(
     () => (module ? moduleIdentity(module) : cleanText(id)),
     [id, module],
