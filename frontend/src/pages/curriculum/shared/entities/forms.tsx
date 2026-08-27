@@ -33,6 +33,7 @@ import {
   TextAreaControl,
   TextControl,
   WeekdayControl,
+  type FormChainStep,
 } from './ui';
 import { useFormSeedGuard } from './useDrawerState';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -48,11 +49,14 @@ import { DatePickerField } from '@/components/feature/DatePickerField';
 export function ProgrammeFormDrawer({
   open,
   programme,
+  chain,
   onClose,
   onSaved,
 }: {
   open: boolean;
   programme?: CurriculumProgramme | null;
+  /** Set when the structure wizard is driving this form as one step of a chain. */
+  chain?: FormChainStep;
   onClose: () => void;
   /**
    * Handed the programme a create just made, so the caller can carry straight on
@@ -107,6 +111,12 @@ export function ProgrammeFormDrawer({
       let created: CurriculumProgramme | null = null;
       if (programme) await updateCurriculumProgramme(programmeIdentity(programme), payload);
       else created = (await createCurriculumProgramme(payload)).programme || null;
+      // In a chain the record is handed straight back: the wizard moves to the
+      // next step and says what was created once, at the end of the run.
+      if (chain?.chained) {
+        await onSaved(created ? { programme: created } : undefined);
+        return;
+      }
       onClose();
       const refreshed = Promise.resolve(onSaved(created ? { programme: created } : undefined))
         .catch(() => undefined);
@@ -134,10 +144,17 @@ export function ProgrammeFormDrawer({
     <EntityDrawer
       open={open}
       title={programme ? 'Edit programme' : 'Add programme'}
-      subtitle="Programme-level details only. Cohorts, groups and modules are added later, from their own pages."
+      subtitle={chain
+        ? 'Programme-level details only. The cohort, group and module that go under it are the steps after this one.'
+        : 'Programme-level details only. Cohorts, groups and modules are added later, from their own pages.'}
+      banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
-      submitLabel={programme ? 'Save programme' : 'Create programme'}
+      submitLabel={chain?.submitLabel || (programme ? 'Save programme' : 'Create programme')}
+      cancelLabel={chain?.cancelLabel}
+      extraAction={chain?.extraAction}
+      backAction={chain?.backAction}
+      width={chain?.width}
       saving={saving}
       error={error}
       dirty={dirty}
@@ -170,6 +187,7 @@ export function CohortFormDrawer({
   defaults,
   programmes,
   holidays,
+  chain,
   onClose,
   onSaved,
 }: {
@@ -179,6 +197,8 @@ export function CohortFormDrawer({
   defaults?: CohortFormDefaults;
   programmes: CurriculumProgramme[];
   holidays: CurriculumHoliday[];
+  /** Set when the structure wizard is driving this form as one step of a chain. */
+  chain?: FormChainStep;
   onClose: () => void;
   /**
    * Handed the record the save wrote, so the list can paint it before the
@@ -408,6 +428,11 @@ export function CohortFormDrawer({
       } else {
         saved = (await createCurriculumCohort(payload)).cohort || null;
       }
+      // See the programme form: in a chain the wizard owns closing and confirming.
+      if (chain?.chained) {
+        await onSaved(saved ? { cohort: saved } : undefined);
+        return;
+      }
       onClose();
       // The refresh runs behind the confirmation rather than in front of it: it
       // takes seconds, and holding the message back until it returned is what
@@ -432,9 +457,14 @@ export function CohortFormDrawer({
       open={open}
       title={cohort ? 'Edit cohort' : 'Add cohort'}
       subtitle="A cohort belongs to one programme. Its practical end, EPA window and apprenticeship end date use the same rules as the rest of the LMS."
+      banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
-      submitLabel={cohort ? 'Save cohort' : 'Create cohort'}
+      submitLabel={chain?.submitLabel || (cohort ? 'Save cohort' : 'Create cohort')}
+      cancelLabel={chain?.cancelLabel}
+      extraAction={chain?.extraAction}
+      backAction={chain?.backAction}
+      width={chain?.width}
       saving={saving}
       error={error}
       dirty={dirty}
@@ -759,6 +789,7 @@ export function GroupFormDrawer({
   cohorts,
   coachNames,
   lockCohort = false,
+  chain,
   onClose,
   onSaved,
 }: {
@@ -770,6 +801,8 @@ export function GroupFormDrawer({
   coachNames: string[];
   /** True inside a Cohort workspace, where the parent is not up for debate. */
   lockCohort?: boolean;
+  /** Set when the structure wizard is driving this form as one step of a chain. */
+  chain?: FormChainStep;
   onClose: () => void;
   /** Handed the record the save wrote, so the list can paint it immediately. */
   onSaved: (result?: { group: CurriculumGroup }) => unknown | Promise<unknown>;
@@ -874,6 +907,11 @@ export function GroupFormDrawer({
       } else {
         saved = (await createCurriculumGroup(payload)).group || null;
       }
+      // See the programme form: in a chain the wizard owns closing and confirming.
+      if (chain?.chained) {
+        await onSaved(saved ? { group: saved } : undefined);
+        return;
+      }
       onClose();
       // As with the cohort drawer: confirm now, refresh behind it.
       const refreshed = Promise.resolve(onSaved(saved ? { group: saved } : undefined))
@@ -896,9 +934,14 @@ export function GroupFormDrawer({
       open={open}
       title={group ? 'Edit group' : 'Add group'}
       subtitle="Programme only narrows the cohort list. The group is stored against the cohort."
+      banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
-      submitLabel={group ? 'Save group' : 'Create group'}
+      submitLabel={chain?.submitLabel || (group ? 'Save group' : 'Create group')}
+      cancelLabel={chain?.cancelLabel}
+      extraAction={chain?.extraAction}
+      backAction={chain?.backAction}
+      width={chain?.width}
       saving={saving}
       error={error}
       dirty={dirty}

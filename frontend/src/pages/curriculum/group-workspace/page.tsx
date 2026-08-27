@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import { fetchCurriculumSessions, type CurriculumSession } from '@/lib/curriculumApi';
+import { fetchCurriculumSessions, type CurriculumGroup, type CurriculumSession } from '@/lib/curriculumApi';
 import {
   cleanText,
   findGroup,
@@ -13,6 +13,7 @@ import {
   programmeIdentity,
   resolveGroupContext,
   scheduleLabel,
+  upsertById,
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
 import { ModuleFormDrawer } from '../shared/entities/moduleForm';
@@ -42,7 +43,8 @@ const SESSION_GRID = 'grid grid-cols-[110px_minmax(170px,1.4fr)_minmax(140px,1fr
 export default function GroupWorkspacePage() {
   const { id = '' } = useParams();
   const {
-    programmes, cohorts, groups, modules, coaches, tutors, holidays, loading, loaded, error, reload,
+    programmes, cohorts, groups, modules, coaches, tutors, holidays,
+    loading, loaded, refreshing, error, reload, applyLocal,
   } = useCurriculumEntities({ includeStaff: true, includeHolidays: true });
 
   const [tab, setTab] = useState<Tab>('overview');
@@ -50,6 +52,16 @@ export default function GroupWorkspacePage() {
   const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
   const [sessions, setSessions] = useState<CurriculumSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+
+  // This page is about one group, so a save shows on it immediately rather than
+  // when the background refresh gets back. See the Cohorts list for the pattern.
+  const saveGroupLocally = async (result?: { group: CurriculumGroup }) => {
+    if (result?.group) {
+      const saved = result.group;
+      applyLocal(previous => ({ ...previous, groups: upsertById(previous.groups, saved) }));
+    }
+    await reload({ silent: true });
+  };
 
   const group = useMemo(() => findGroup(groups, id), [groups, id]);
   const context = useMemo(
@@ -216,10 +228,12 @@ export default function GroupWorkspacePage() {
                   </Link>
                 ) : cleanText(context?.cohortName, '—')}
               />
+              {/* Delivery owns cohorts and the groups beneath them, which is the
+                  level this group was reached from. */}
               <DetailRow
                 label="Programme"
                 value={context?.programme ? (
-                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}`} className="text-primary-700 hover:underline">
+                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=delivery`} className="text-primary-700 hover:underline">
                     {context.programmeName}
                   </Link>
                 ) : cleanText(context?.programmeName, '—')}
@@ -243,6 +257,7 @@ export default function GroupWorkspacePage() {
             rows={groupModules}
             rowKey={module => moduleIdentity(module) || module.id}
             loading={loading && !loaded}
+            refreshing={refreshing}
             empty={(
               <EntityEmptyState
                 icon="ri-stack-line"
@@ -320,7 +335,7 @@ export default function GroupWorkspacePage() {
         cohorts={cohorts}
         coachNames={coachNames}
         onClose={() => setDrawerOpen(false)}
-        onSaved={() => reload({ silent: true })}
+        onSaved={saveGroupLocally}
       />
 
       {/* Same form the Module Builder opens, with this group's parents fixed.

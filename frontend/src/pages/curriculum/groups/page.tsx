@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -13,10 +13,14 @@ import {
   matchesSearch,
   normaliseKey,
   programmeIdentity,
+  removeById,
   resolveGroupContext,
+  sameIdentifier,
   scheduleLabel,
+  upsertById,
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
+import { CurriculumStructureWizard, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
   EntityFilterBar,
@@ -51,7 +55,7 @@ function staffProfileName(profile: CurriculumStaffProfile) {
 export default function CurriculumGroupsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
-    programmes, cohorts, groups, modules, coaches, loading, loaded, error, reload,
+    programmes, cohorts, groups, modules, coaches, loading, loaded, refreshing, error, reload, applyLocal,
   } = useCurriculumEntities({ includeStaff: true });
 
   const [search, setSearch] = useState('');
@@ -60,6 +64,13 @@ export default function CurriculumGroupsPage() {
   const [coachFilter, setCoachFilter] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumGroup | null>(null);
+  // The guided run: the same group form, followed straight on by the module one,
+  // for a group that is being set up rather than added to a finished cohort.
+  const [wizardOpen, setWizardOpen] = useState(false);
+  // The group a save just wrote, marked in the table until it has been seen.
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const highlightTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
 
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
@@ -126,6 +137,9 @@ export default function CurriculumGroupsPage() {
       confirmButtonText: 'Archive group',
       onConfirm: async () => {
         await archiveCurriculumGroup(group.id);
+        // Drop the row now; the refresh behind this takes seconds and a group
+        // still listed after "Archive" reads as an archive that did not happen.
+        applyLocal(previous => ({ ...previous, groups: removeById(previous.groups, group.id) }));
         await reload({ silent: true });
       },
       successTitle: 'Group archived',
@@ -136,6 +150,41 @@ export default function CurriculumGroupsPage() {
     () => programmes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
     [programmes],
   );
+
+  // A filter that hides the group just saved reads as a save that did nothing,
+  // so whatever would keep it out of the list is cleared.
+  const revealGroup = (saved: CurriculumGroup) => {
+    if (coachFilter && normaliseKey(saved.coach) !== normaliseKey(coachFilter)) setCoachFilter('');
+    if (cohortFilter && !sameIdentifier(saved.cohortId, cohortFilter)) setCohortFilter('');
+    if (programmeFilter && !groupsForScope([saved], cohorts, programmes, { programmeId: programmeFilter }).length) {
+      setProgrammeFilter('');
+    }
+    if (search) {
+      const context = resolveGroupContext(saved, cohorts, programmes);
+      const hit = matchesSearch(search, [
+        saved.name, saved.id, context.cohortName, context.programmeName,
+        saved.coach, saved.tutor, scheduleLabel(saved),
+      ]);
+      if (!hit) setSearch('');
+    }
+  };
+
+  /**
+   * Paint the record the endpoint stored straight away; the background refresh
+   * behind it still replaces the list with the server's copy. Same handler as
+   * the one on the Cohorts page.
+   */
+  const handleSaved = async (result?: { group: CurriculumGroup }) => {
+    const saved = result?.group;
+    if (saved) {
+      applyLocal(previous => ({ ...previous, groups: upsertById(previous.groups, saved) }));
+      revealGroup(saved);
+      window.clearTimeout(highlightTimer.current);
+      setHighlightId(saved.id);
+    }
+    await reload({ silent: true });
+    if (saved) highlightTimer.current = window.setTimeout(() => setHighlightId(null), 3000);
+  };
 
   return (
     <WorkspaceShell
@@ -161,6 +210,16 @@ export default function CurriculumGroupsPage() {
             { icon: 'ri-stack-line', label: 'Modules', value: modules.length },
           ]}
           primaryAction={{ label: 'Add Group', onClick: () => { setEditing(null); setDrawerOpen(true); } }}
+          secondaryActions={(
+            <button
+              type="button"
+              onClick={() => setWizardOpen(true)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
+            >
+              <AppIcon className="ri-route-line text-base"></AppIcon>
+              Group + module
+            </button>
+          )}
         />
 
         {error && <InlineError message={error} onRetry={() => void reload()} />}
@@ -193,7 +252,9 @@ export default function CurriculumGroupsPage() {
             },
           ]}
           onReset={() => { setSearch(''); setProgrammeFilter(''); setCohortFilter(''); setCoachFilter(''); }}
-          summary={loaded ? `Showing ${visibleGroups.length} of ${groups.length} groups` : undefined}
+          summary={loaded
+            ? `Showing ${visibleGroups.length} of ${groups.length} groups${refreshing ? ' · updating…' : ''}`
+            : undefined}
         />
 
         <EntityTable
@@ -202,6 +263,8 @@ export default function CurriculumGroupsPage() {
           rows={visibleGroups}
           rowKey={group => group.id}
           loading={loading && !loaded}
+          refreshing={refreshing}
+          highlightKey={highlightId}
           empty={(
             <EntityEmptyState
               icon="ri-team-line"
@@ -229,7 +292,12 @@ export default function CurriculumGroupsPage() {
                 <StackedCell
                   href={context.cohortId ? `/curriculum/cohorts/${encodeURIComponent(context.cohortId)}` : undefined}
                   primary={context.cohortName}
-                  secondary={formatDateLabel(group.startDate)}
+                  // The group's own start date is only set once a module has
+                  // actually been scheduled against it; until then this fell
+                  // back to a blank dash even though the cohort itself has a
+                  // start date. Falling back to the cohort's keeps every row
+                  // showing a date under a column literally labelled "Cohort".
+                  secondary={formatDateLabel(group.startDate || context.cohort?.startDate)}
                 />
                 <PlainCell>{context.programmeName}</PlainCell>
                 <PlainCell>{cleanText(group.coach, 'Unassigned')}</PlainCell>
@@ -255,7 +323,21 @@ export default function CurriculumGroupsPage() {
         cohorts={cohorts}
         coachNames={coachNames}
         onClose={() => setDrawerOpen(false)}
-        onSaved={() => reload({ silent: true })}
+        onSaved={handleSaved}
+      />
+
+      {/* The same group form as above, with the module form chained behind it.
+          Only the group step reaches this page's list; the module it creates is
+          counted by the refresh that follows. */}
+      <CurriculumStructureWizard
+        open={wizardOpen}
+        from="group"
+        defaults={{ programmeId: programmeFilter, cohortId: cohortFilter }}
+        onClose={() => setWizardOpen(false)}
+        onStepSaved={async (created: StructureWizardCreated) => {
+          if (created.group) await handleSaved({ group: created.group });
+          else await reload({ silent: true });
+        }}
       />
     </WorkspaceShell>
   );
