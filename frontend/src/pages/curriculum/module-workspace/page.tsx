@@ -380,7 +380,7 @@ export default function ModuleWorkspacePage() {
     { key: 'schedule', label: 'Schedule', icon: 'ri-calendar-line' },
     { key: 'components', label: 'Components', icon: 'ri-layout-4-line', count: componentCount },
     { key: 'ksbs', label: 'KSBs', icon: 'ri-node-tree', count: ksbMappingCount },
-    { key: 'achievement', label: 'Achievement', icon: 'ri-medal-line' },
+    { key: 'achievement', label: 'Achievement KSBs', icon: 'ri-medal-line' },
     { key: 'teams', label: 'Teams meeting', icon: 'ri-vidicon-line', count: teamsSummary?.occurrenceCount },
   ];
 
@@ -440,10 +440,13 @@ export default function ModuleWorkspacePage() {
         {tab === 'overview' && (
           <div className="grid gap-5 xl:grid-cols-2">
             <WorkspacePanel title="Delivery context" description="Derived through this module's group — the only parent it has.">
+              {/* Modules, not Overview: this link is walked back up from a
+                  module, so the tab that lists the programme's modules is where
+                  the reader was. */}
               <DetailRow
                 label="Programme"
                 value={context?.programme ? (
-                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}`} className="text-primary-700 hover:underline">
+                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=modules`} className="text-primary-700 hover:underline">
                     {context.programmeName}
                   </Link>
                 ) : cleanText(context?.programmeName, '—')}

@@ -50,7 +50,11 @@ EVENT_JSON_TYPES = {
     "training-plan": "review",
 }
 
-BOOKABLE_TYPES = ("catch-up", "student-support")
+# What a learner can book for themselves. Monthly coaching and progress reviews
+# are also generated from the programme cycle on the coach side; a learner
+# booking one here adds a meeting rather than filling a scheduled slot, so the
+# cycle's own counts are unaffected.
+BOOKABLE_TYPES = ("catch-up", "student-support", "mcr", "progress-review")
 
 # The Microsoft Graph invite subject uses the same wording as the page — see
 # coach_api.BOOKED_EVENT_TITLES, which mirrors EVENT_TITLES above.

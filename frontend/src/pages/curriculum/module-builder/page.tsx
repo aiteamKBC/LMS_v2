@@ -256,10 +256,8 @@ export default function ModuleBuilder() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
-  const [saveSuccess, setSaveSuccess] = useState<{ title: string; message: string } | null>(null);
   const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
-  const [templatePickerWeekId, setTemplatePickerWeekId] = useState<string | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
@@ -936,7 +934,6 @@ export default function ModuleBuilder() {
   }, [catalogueModules, error, loading, openModule, workingModule]);
 
   const updateWorkingModule = useCallback((updater: (module: ModuleCatalogueItem) => ModuleCatalogueItem) => {
-    setSaveSuccess(null);
     setActionMessage(null);
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, []);
@@ -1006,7 +1003,6 @@ export default function ModuleBuilder() {
         updateWorkingModule(module => removeWeekFromModule(module, weekId));
         setDragState(null);
         if (lessonPickerWeekId === weekId) setLessonPickerWeekId(null);
-        if (templatePickerWeekId === weekId) setTemplatePickerWeekId(null);
         if (reusePickerWeekId === weekId) setReusePickerWeekId(null);
         if (selection?.weekId === weekId) {
           setSelection(nextSelectedWeek ? { kind: 'week', weekId: nextSelectedWeek.id } : null);
@@ -1015,8 +1011,13 @@ export default function ModuleBuilder() {
     });
   };
 
-  const persistWorkingModule = useCallback(async (options: { closeAfterSave?: boolean } = {}) => {
-    const closeAfterSave = options.closeAfterSave !== false;
+  // Saving keeps you exactly where you are, on the component you were editing.
+  // This used to take a `closeAfterSave` option that defaulted to true, and the
+  // footer passed this function straight to onClick -- so the click event
+  // arrived as `options`, `options.closeAfterSave` read undefined, and every
+  // save threw up a "Returning to the modules list" alert and then closed the
+  // workspace. Leaving is what the guarded Back button is for.
+  const persistWorkingModule = useCallback(async () => {
     if (!workingModule) return null;
     const scopedWorkingModule = workingModuleScopeLock?.locked ? {
       ...workingModule,
@@ -1027,7 +1028,6 @@ export default function ModuleBuilder() {
     const validationIssues = validateModuleAuthoringStructure(scopedWorkingModule);
     if (validationIssues.length) {
       setActionMessage(firstValidationMessage(validationIssues));
-      setSaveSuccess(null);
       return null;
     }
     const requestId = saveRequestRef.current + 1;
@@ -1035,7 +1035,6 @@ export default function ModuleBuilder() {
     setSaving(true);
     setSaveStartedAt(Date.now());
     setActionMessage(null);
-    setSaveSuccess(null);
     const normalisedModule = normaliseComponentTitles(scopedWorkingModule);
     const selectedKsbSourceId = cleanKsbSourceId(workingModuleScopeLock?.locked ? workingModuleScopeLock.ksbSourceId : normalisedModule.ksbProfileSourceId);
     const moduleToSave = recalculateModule({
@@ -1056,17 +1055,9 @@ export default function ModuleBuilder() {
       savedModuleSnapshotRef.current = moduleSnapshot(saved);
       setStorageVersion(version => version + 1);
       setActionMessage(null);
-      if (closeAfterSave) {
-        setSaveSuccess({
-          title: 'Module saved',
-          message: 'Module structure saved successfully. Returning to the modules list.',
-        });
-      } else {
-        setNoticeAlert({
-          title: 'Module saved',
-          message: 'Module structure saved successfully.',
-        });
-      }
+      // No dialog on a successful save. The footer already reads "All changes
+      // saved" with a green Saved button, and a modal on every save is an
+      // interruption in a screen people save constantly.
       reload();
       return saved;
     } catch (err) {
@@ -1188,7 +1179,6 @@ export default function ModuleBuilder() {
     setSettingsOpen(false);
     setPreviewOpen(false);
     setLessonPickerWeekId(null);
-    setSaveSuccess(null);
     setNoticeAlert(null);
     setActionMessage(null);
   };
@@ -1278,7 +1268,7 @@ export default function ModuleBuilder() {
       },
     });
     if (result.isConfirmed) {
-      const saved = await persistWorkingModule({ closeAfterSave: false });
+      const saved = await persistWorkingModule();
       if (saved) await onNavigate(saved);
       return;
     }
@@ -1366,23 +1356,6 @@ export default function ModuleBuilder() {
     };
   }, [noticeAlert]);
 
-  useEffect(() => {
-    if (!saveSuccess) return;
-    let active = true;
-    showCurriculumAlert({
-      title: saveSuccess.title,
-      text: saveSuccess.message,
-      icon: 'success',
-      timer: 3200,
-      confirmButtonText: 'Back to modules',
-    }).finally(() => {
-      if (active) closeWorkingModule();
-    });
-    return () => {
-      active = false;
-    };
-  }, [saveSuccess]);
-
   if (workingModule) {
     return (
       <WorkspaceShell role="curriculum" roleLabel="Curriculum Designer" navItems={curriculumNavItems} workspaceLabel="Curriculum Studio" pageTitle="Module Builder" pageSubtitle={`${workingModule.title} - authoring workspace`} userName="Rachel Myers" userRole="Curriculum Designer">
@@ -1415,11 +1388,10 @@ export default function ModuleBuilder() {
             }}
           />
 
-          {(saving || saveSuccess || (actionMessage && !deletingModuleId)) && (
+          {(saving || (actionMessage && !deletingModuleId)) && (
             <SaveStatusPanel
               saving={saving}
               elapsedSeconds={saveElapsedSeconds}
-              success={saveSuccess}
               error={actionMessage && !deletingModuleId ? actionMessage : null}
               module={workingModule}
             />
@@ -1519,7 +1491,6 @@ export default function ModuleBuilder() {
                     ...module,
                     weekStructure: module.weekStructure.map(week => week.id === selectedWeek.id ? { ...week, ...updates } : week),
                   }))}
-                  onApplyTemplate={() => setTemplatePickerWeekId(selectedWeek.id)}
                   onAddLesson={() => {
                     setLessonPickerWeekId(selectedWeek.id);
                   }}
@@ -1556,7 +1527,7 @@ export default function ModuleBuilder() {
             onEditModule={() => openPlacementForm(workingModule)}
             onModuleSettings={() => setSettingsOpen(true)}
             onDelete={() => confirmDeleteModule(workingModule)}
-            onSave={persistWorkingModule}
+            onSave={() => { void persistWorkingModule(); }}
           />
           <input
             ref={ksbImportInputRef}
@@ -1578,9 +1549,9 @@ export default function ModuleBuilder() {
             module={workingModule}
             ksbSourceLabels={ksbSourceLabels}
             saving={saving}
-            saved={Boolean(saveSuccess)}
+            saved={!hasUnsavedWorkingModuleChanges}
             onClose={() => setSettingsOpen(false)}
-            onSave={persistWorkingModule}
+            onSave={() => { void persistWorkingModule(); }}
             onChange={updates => updateWorkingModule(module => ({ ...module, ...updates }))}
             onCompletionChange={updates => updateWorkingModule(module => ({ ...module, completionCriteria: { ...module.completionCriteria, ...updates } }))}
             onAdvancedChange={updates => updateWorkingModule(module => ({ ...module, advancedDetails: { ...module.advancedDetails, ...updates } }))}
@@ -1614,6 +1585,7 @@ export default function ModuleBuilder() {
         )}
         {lessonPickerWeekId && (
           <ComponentTypeModal
+            description="Select one or more component types — use Select all for a blank set of everything. Each becomes an empty component to fill in; nothing is copied from a saved template."
             onClose={() => setLessonPickerWeekId(null)}
             onAdd={types => {
               const week = workingModule.weekStructure.find(item => item.id === lessonPickerWeekId);
@@ -1626,27 +1598,6 @@ export default function ModuleBuilder() {
               }));
               setSelection({ kind: 'component', weekId: week.id, componentId: components[components.length - 1].id });
               setLessonPickerWeekId(null);
-            }}
-          />
-        )}
-        {templatePickerWeekId && (
-          <ComponentTypeModal
-            title="Apply component template"
-            description="Select the component types to add to this week."
-            submitLabel="Apply template"
-            initialSelectedTypes={componentTypes.map(item => item.type)}
-            onClose={() => setTemplatePickerWeekId(null)}
-            onAdd={types => {
-              const week = workingModule.weekStructure.find(item => item.id === templatePickerWeekId);
-              if (!week) return;
-              const template = createWeekTemplateComponents(week, { types });
-              if (!template.length) return;
-              updateWorkingModule(module => ({
-                ...module,
-                weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...template] } : item),
-              }));
-              setSelection({ kind: 'component', weekId: week.id, componentId: template[template.length - 1].id });
-              setTemplatePickerWeekId(null);
             }}
           />
         )}
@@ -1958,30 +1909,25 @@ export default function ModuleBuilder() {
   );
 }
 
-function SaveStatusPanel({ saving, elapsedSeconds, success, error, module }: {
+// Only the two states worth taking space for: a save in flight, and one that
+// failed. A finished save says so in the footer and nowhere else.
+function SaveStatusPanel({ saving, elapsedSeconds, error, module }: {
   saving: boolean;
   elapsedSeconds: number;
-  success: { title: string; message: string } | null;
   error: string | null;
   module: ModuleCatalogueItem;
 }) {
   const componentCount = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
-  const tone = error ? 'red' : saving ? 'amber' : 'emerald';
-  const icon = error ? 'ri-error-warning-line' : saving ? 'ri-loader-4-line animate-spin' : 'ri-checkbox-circle-line';
-  const title = error ? 'Save failed' : saving ? (elapsedSeconds > 8 ? 'Still saving module structure' : 'Saving module structure') : (success?.title || 'Module saved');
-  const message = error || (saving
-    ? `${module.weekStructure.length} weeks and ${componentCount} components are being written to the curriculum database. ${elapsedSeconds ? `${elapsedSeconds}s elapsed.` : ''}`
-    : success?.message || 'Changes are saved.');
+  const tone = error ? 'red' : 'amber';
+  const icon = error ? 'ri-error-warning-line' : 'ri-loader-4-line animate-spin';
+  const title = error ? 'Save failed' : elapsedSeconds > 8 ? 'Still saving module structure' : 'Saving module structure';
+  const message = error
+    || `${module.weekStructure.length} weeks and ${componentCount} components are being written to the curriculum database. ${elapsedSeconds ? `${elapsedSeconds}s elapsed.` : ''}`;
   const classes = {
     amber: 'border-amber-200 bg-amber-50 text-amber-800',
-    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
     red: 'border-red-200 bg-red-50 text-red-800',
   }[tone];
-  const barClass = {
-    amber: 'bg-amber-500',
-    emerald: 'bg-emerald-500',
-    red: 'bg-red-500',
-  }[tone];
+  const barClass = { amber: 'bg-amber-500', red: 'bg-red-500' }[tone];
 
   return (
     <div className={`overflow-hidden rounded-xl border ${classes}`}>
@@ -2178,15 +2124,17 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   return (
     <aside className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm xl:sticky xl:top-4">
       <div className="border-b border-background-200 bg-background-50 p-3">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-[13px] font-heading font-bold text-foreground-950">Course structure</h3>
             <p className="mt-0.5 text-[11px] text-foreground-500">Weeks, in order</p>
           </div>
-          <div className="flex items-center gap-1.5">
-            <button onClick={onAddWeekFromTemplate} title="Add a week from a saved template" className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
-              <AppIcon className="ri-import-line"></AppIcon>
-              Template
+          <div className="flex shrink-0 items-center gap-1.5">
+            {/* The only control on this screen that reads the saved week-template
+                library, which is why it is the only one still called a template. */}
+            <button onClick={onAddWeekFromTemplate} title="Add a whole new week, built from a saved week template" className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100">
+              <AppIcon className="ri-folder-open-line"></AppIcon>
+              From template
             </button>
             <button onClick={onAddWeek} className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600">
               <AppIcon className="ri-add-line"></AppIcon>
@@ -2536,12 +2484,20 @@ function LoadingProgressBar({ tone = 'primary', complete }: { tone?: 'primary' |
 // The per-week panel, shown when a week is selected but no component is.
 // The parts timeline itself now lives inline under the week's row in
 // CourseStructure's accordion (WeekComponentRail, variant="nested") — this
-// panel just keeps the week-level header actions (Apply template, Session
-// KSB Mapping, bulk Add component) and the summary/KSB-coverage inspector.
-function ModuleWeekPanel({ week, onChange, onApplyTemplate, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
+// panel just keeps the week-level header actions (Reuse, Session KSB
+// Mapping, Add component) and the summary/KSB-coverage inspector.
+//
+// "Add component" used to have a sibling, "Blank set", that opened the exact
+// same multi-select modal and produced the exact same empty components — the
+// only differences were which types started ticked and the button's wording.
+// They were merged into this one button; the modal's own "Select all" already
+// covers what "Blank set" was for. "Reuse" is the one that is actually
+// different: it copies real authored components out of the library instead
+// of creating empty ones. The only saved-template control on this screen is
+// "From template" in the Course structure rail, which builds a whole new week.
+function ModuleWeekPanel({ week, onChange, onOpenSessionKsbMapping, onAddLesson, onReuseComponents }: {
   week: ModuleWeek;
   onChange: (updates: Partial<ModuleWeek>) => void;
-  onApplyTemplate: () => void;
   onOpenSessionKsbMapping?: () => void;
   onAddLesson: () => void;
   onReuseComponents: () => void;
@@ -2562,10 +2518,6 @@ function ModuleWeekPanel({ week, onChange, onApplyTemplate, onOpenSessionKsbMapp
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          <button onClick={onApplyTemplate} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
-            <AppIcon className="ri-sparkling-2-line"></AppIcon>
-            Apply template
-          </button>
           <button onClick={onReuseComponents} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100">
             <AppIcon className="ri-file-copy-line"></AppIcon>
             Reuse
@@ -2643,6 +2595,7 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
             liveProgrammes={liveProgrammes}
             quizzes={quizzes}
             quizzesLoading={quizzesLoading}
+            onChange={onChange}
             onSettingChange={onSettingChange}
             fieldError={fieldError}
           />
@@ -2662,7 +2615,11 @@ function ComponentEditor({ component, module, week, availableModules, liveProgra
               <Checkbox label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
             </div>
             <TextArea label="Completion rule" value={String(component.settings.completionRule ?? 'Mark complete')} onChange={value => onSettingChange('completionRule', value)} rows={2} />
-            <TextArea label="Reflection prompt" value={String(component.settings.reflectionPrompt ?? '')} onChange={value => onSettingChange('reflectionPrompt', value)} rows={3} error={fieldError('settings.reflectionPrompt')} />
+            {/* Only asked for once reflection is required — there is nowhere for
+                the learner's answer to go while the toggle above is off. */}
+            {component.reflectionRequired && (
+              <TextArea label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={3} error={fieldError('reflectionQuestion')} />
+            )}
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <SelectInput label="Status" value={String(component.settings.contentStatus ?? 'Draft')} options={CONTENT_STATUSES} onChange={value => onSettingChange('contentStatus', value)} error={fieldError('settings.contentStatus')} />
               <TextInput label="Version" value={String(component.settings.version ?? '0.1')} onChange={value => onSettingChange('version', value)} error={fieldError('settings.version')} />
@@ -2698,6 +2655,7 @@ function TypeSpecificFields({
   liveProgrammes,
   quizzes,
   quizzesLoading,
+  onChange,
   onSettingChange,
   fieldError,
 }: {
@@ -2708,6 +2666,7 @@ function TypeSpecificFields({
   liveProgrammes: CurriculumProgramme[];
   quizzes: QuizPackageSummary[];
   quizzesLoading: boolean;
+  onChange: (patch: Partial<ModuleComponent>) => void;
   onSettingChange: (key: string, value: string | number | boolean | string[]) => void;
   fieldError: (path: string) => string;
 }) {
@@ -2991,7 +2950,6 @@ function TypeSpecificFields({
           error={uploadError}
           onUpload={file => handleResourceUpload(file, 'powerpoint')}
         />
-        <TextInput label="Slide range or deck section" value={getString('slideRange')} onChange={value => onSettingChange('slideRange', value)} />
       </EditorBlock>
     );
   }
@@ -3017,7 +2975,10 @@ function TypeSpecificFields({
   if (component.type === 'reflection') {
     return (
       <EditorBlock title="Reflection and guidance">
-        <TextArea label="Reflection prompt" value={getString('reflectionPrompt')} onChange={value => onSettingChange('reflectionPrompt', value)} rows={4} />
+        {/* For a reflection component the question *is* its content, so this is
+            the same first-class field the assurance section edits -- not a
+            second copy of it in `settings`. */}
+        <TextArea label="Reflection question" value={component.reflectionQuestion} onChange={value => onChange({ reflectionQuestion: value })} rows={4} />
         <NumberInput label="Minimum word count" value={getNumber('minimumWordCount')} min={0} step={50} onChange={value => onSettingChange('minimumWordCount', value)} />
       </EditorBlock>
     );
@@ -6680,15 +6641,6 @@ function generateMissingLiveSessions(module: ModuleCatalogueItem): ModuleCatalog
 
 function countAddedLiveSessions(module: ModuleCatalogueItem) {
   return liveSessionShortfallByWeek(module).reduce((total, entry) => total + entry.shortfall, 0);
-}
-
-function createWeekTemplateComponents(week: ModuleWeek, options: { skipExistingTypes?: boolean; types?: ModuleComponentType[] } = {}) {
-  const existingTypes = new Set(week.components.map(component => component.type));
-  const requestedTypes = options.types?.length ? options.types : componentTypes.map(item => item.type);
-
-  return requestedTypes
-    .filter(type => !options.skipExistingTypes || !existingTypes.has(type))
-    .map((type, index) => createNamedComponent(week, type, week.components.length + index + 1));
 }
 
 function createNamedComponent(week: ModuleWeek, type: ModuleComponentType, index = week.components.length + 1) {

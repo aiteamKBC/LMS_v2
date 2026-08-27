@@ -44,8 +44,8 @@ export interface ComponentAuthoringDefinition {
   defaultSettings: ComponentSettings;
 }
 
-export const MEDIA_SOURCE_TYPES = ['HTML (MP4)', 'YouTube', 'Vimeo', 'External Link', 'Embed'] as const;
-export const PODCAST_SOURCE_TYPES = ['External URL', 'LMS resource', 'Device upload', 'Embed', 'Shortcode'] as const;
+export const MEDIA_SOURCE_TYPES = ['YouTube', 'External Link', 'Embed'] as const;
+export const PODCAST_SOURCE_TYPES = ['External URL', 'LMS resource', 'Device upload', 'Embed'] as const;
 export const READING_SOURCE_TYPES = ['Written in LMS', 'URL', 'LMS resource'] as const;
 export const CONTENT_STATUSES = ['Draft', 'Ready for QA', 'Needs changes', 'Approved'] as const;
 
@@ -148,8 +148,6 @@ const definitions: ComponentAuthoringDefinition[] = [
       embedCode: '',
       durationMinutes: 10,
       requiredProgressPercentage: 0,
-      lessonPreview: false,
-      captionsAvailable: false,
       shortDescription: '',
       learningBrief: '',
       lessonContent: '',
@@ -406,6 +404,7 @@ const WEEK_BUILDER_SHARED_KEYS = [
   'quizWeekId',
   'quizDuration',
   'quizStatus',
+  'assignmentSource',         // assignment Brief tab toggle ("Written brief" vs "Uploaded file")
   'assignmentContent',        // assignment written brief (Week Builder key)
   'uploadedFileName',         // reading/assignment uploaded-file metadata
   'uploadedFileUrl',
@@ -496,14 +495,15 @@ export function normaliseComponentSettings(type: ModuleComponentType, settings: 
 export function normaliseVideoSourceType(value: string) {
   const clean = String(value || '').trim();
   if ((MEDIA_SOURCE_TYPES as readonly string[]).includes(clean)) return clean;
-  if (clean === 'Upload file') return 'HTML (MP4)';
-  if (clean === 'External link') return 'External Link';
+  // HTML (MP4) and Vimeo are retired sources -- a component saved with one of
+  // them keeps its stored URL, which is still a plain link, so it lands on
+  // External Link instead of losing the value.
+  if (clean === 'Upload file' || clean === 'HTML (MP4)' || clean === 'Vimeo' || clean === 'External link') return 'External Link';
   if (clean === 'Shortcode') return 'YouTube';
   return 'YouTube';
 }
 
 export function providerForVideoSourceType(sourceType: string) {
-  if (sourceType === 'HTML (MP4)') return 'Upload file';
   if (sourceType === 'External Link') return 'External link';
   return sourceType;
 }
@@ -527,6 +527,7 @@ export type ComponentValidationTarget = {
   expectedOtjh: number;
   points: number;
   reflectionRequired: boolean;
+  reflectionQuestion?: string;
   workplaceEvidenceRequired: boolean;
   settings: ComponentSettings;
 };
@@ -551,7 +552,10 @@ export function validateComponentAuthoring(component: ComponentValidationTarget,
   if (!Number.isFinite(Number(component.points)) || Number(component.points) < 0) issues.push({ path: `${pathPrefix}.points`, message: 'Points cannot be negative.' });
   if (!CONTENT_STATUSES.includes(status as typeof CONTENT_STATUSES[number])) issues.push({ path: `${pathPrefix}.settings.contentStatus`, message: 'Status must be Draft, Ready for QA, Needs changes, or Approved.' });
   if (!/^\d+(?:\.\d+){0,2}$/.test(String(settings.version || '0.1'))) issues.push({ path: `${pathPrefix}.settings.version`, message: 'Version must use numbers such as 0.1 or 1.2.0.' });
-  if (component.reflectionRequired && !String(settings.reflectionPrompt || '').trim()) issues.push({ path: `${pathPrefix}.settings.reflectionPrompt`, message: 'Reflection prompt is required when reflection is enabled.' });
+  // The question moved out of `settings` into its own field; a component saved
+  // before that still carries the text in the legacy key, so both count.
+  const reflectionQuestion = String(component.reflectionQuestion || settings.reflectionPrompt || '').trim();
+  if (component.reflectionRequired && !reflectionQuestion) issues.push({ path: `${pathPrefix}.reflectionQuestion`, message: 'A reflection question is required when reflection is enabled.' });
   Object.keys(settings).forEach(key => {
     if (!allowed.has(key)) issues.push({ path: `${pathPrefix}.settings.${key}`, message: `Unsupported setting "${key}" for ${component.type}.` });
   });
@@ -572,8 +576,7 @@ export function validateComponentAuthoring(component: ComponentValidationTarget,
     const progress = Number(settings.requiredProgressPercentage || 0);
     if (!Number.isFinite(progress) || progress < 0 || progress > 100) issues.push({ path: `${pathPrefix}.settings.requiredProgressPercentage`, message: 'Required progress must be between 0 and 100.' });
     if (url && sourceType === 'YouTube' && !isYouTubeUrl(url)) issues.push({ path: `${pathPrefix}.settings.videoUrl`, message: 'Enter a valid YouTube URL.' });
-    if (url && sourceType === 'Vimeo' && !isVimeoUrl(url)) issues.push({ path: `${pathPrefix}.settings.videoUrl`, message: 'Enter a valid Vimeo URL.' });
-    if (url && ['External Link', 'HTML (MP4)'].includes(sourceType) && !isHttpUrl(url)) issues.push({ path: `${pathPrefix}.settings.videoUrl`, message: 'Enter a valid URL.' });
+    if (url && sourceType === 'External Link' && !isHttpUrl(url)) issues.push({ path: `${pathPrefix}.settings.videoUrl`, message: 'Enter a valid URL.' });
     if (sourceType === 'Embed' && status !== 'Draft' && !String(settings.embedCode || '').trim()) issues.push({ path: `${pathPrefix}.settings.embedCode`, message: 'Embed content is required before QA or approval.' });
     if (sourceType !== 'Embed' && status !== 'Draft' && !url) issues.push({ path: `${pathPrefix}.settings.videoUrl`, message: 'Video URL is required before QA or approval.' });
   }
@@ -642,8 +645,3 @@ function isYouTubeUrl(value: string) {
   return ['youtube.com', 'youtu.be', 'm.youtube.com'].includes(host) || host.endsWith('.youtube.com');
 }
 
-function isVimeoUrl(value: string) {
-  if (!isHttpUrl(value)) return false;
-  const host = new URL(value).hostname.replace(/^www\./, '').toLowerCase();
-  return host === 'vimeo.com' || host.endsWith('.vimeo.com');
-}

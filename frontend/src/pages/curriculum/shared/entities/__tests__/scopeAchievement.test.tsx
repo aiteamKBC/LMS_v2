@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -241,6 +242,89 @@ describe('ScopeAchievementPanel', () => {
     expect(row).not.toBeNull();
     expect(within(row!.parentElement!).getByText('2h')).toBeInTheDocument();
     expect(within(row!.parentElement!).getByText('3h')).toBeInTheDocument();
+  });
+
+  it('names the learner behind an activity instead of printing their id', async () => {
+    await renderPanel();
+    await userEvent.click(screen.getByRole('button', { name: /Activity/ }));
+
+    const row = screen.getByText('Intro assignment').closest('div')!;
+    expect(within(row).getByText('Amelia Hart')).toBeInTheDocument();
+    expect(within(row).queryByText('19')).not.toBeInTheDocument();
+  });
+
+  it('keeps what happened to an activity separate from whether it counted', async () => {
+    const [activity] = impact().learnerActivities;
+    const payload = impact({
+      learnerActivities: [
+        activity,
+        {
+          ...activity,
+          progressId: 2,
+          componentTitle: 'Elsewhere assignment',
+          scopeStatus: 'out_of_scope',
+        } as unknown as typeof activity,
+      ],
+      learnerActivityCount: 2,
+    });
+    await renderPanel('cohort', payload);
+    await userEvent.click(screen.getByRole('button', { name: /Activity/ }));
+
+    const inScope = screen.getByText('Intro assignment').closest('div')!;
+    expect(within(inScope).getByText('achieved')).toBeInTheDocument();
+    expect(within(inScope).getByText('Counted')).toBeInTheDocument();
+
+    // The out-of-scope row still reports its own status: "Elsewhere" is a
+    // separate fact now, not a replacement for it.
+    const elsewhere = screen.getByText('Elsewhere assignment').closest('div')!;
+    expect(within(elsewhere).getByText('achieved')).toBeInTheDocument();
+    expect(within(elsewhere).getByText('Elsewhere')).toBeInTheDocument();
+  });
+
+  it('marks an activity whose module has been deleted from the catalogue', async () => {
+    const [activity] = impact().learnerActivities;
+    const payload = impact({
+      learnerActivities: [
+        { ...activity, module: 'Shift 1', moduleStatus: 'deleted', moduleCatalogueId: 'MOD-1' },
+      ],
+    });
+    await renderPanel('cohort', payload);
+    await userEvent.click(screen.getByRole('button', { name: /Activity/ }));
+
+    const row = screen.getByText('Intro assignment').closest('div')!;
+    // The name still shows — the learner's work is real — but the row says the
+    // module is gone rather than sending the reader to search for it.
+    expect(within(row).getByText(/Shift 1/)).toBeInTheDocument();
+    expect(within(row).getByText('deleted')).toBeInTheDocument();
+  });
+
+  it('loads even though StrictMode aborts the first mount’s read', async () => {
+    fetchImpact.mockReset();
+    const payload = impact();
+    // The real client rejects the caller's promise when its signal aborts, so
+    // the discarded first pass settles as a failure. If the panel treats that
+    // as "already asked", the second pass never fetches and the spinner never
+    // clears.
+    fetchImpact.mockImplementation((...args: unknown[]) => {
+      const signal = args[3] as AbortSignal | undefined;
+      return new Promise((resolve, reject) => {
+        signal?.addEventListener('abort', () => {
+          const aborted = new Error('Aborted');
+          aborted.name = 'AbortError';
+          reject(aborted);
+        }, { once: true });
+        setTimeout(() => resolve(payload), 0);
+      });
+    });
+    const { ScopeAchievementPanel } = await import('../scopeAchievement');
+    render(
+      <StrictMode>
+        <ScopeAchievementPanel scope="cohort" identifier="COHORT-1" learnerStatus="all" />
+      </StrictMode>,
+    );
+
+    expect(await screen.findByText('Learners assigned')).toBeInTheDocument();
+    expect(screen.queryByText(/Loading learner achievement/)).not.toBeInTheDocument();
   });
 
   it('offers a retry rather than an empty panel when the read fails', async () => {

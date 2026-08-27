@@ -89,6 +89,11 @@ export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, option
 export type BookableSessionType =
   | 'catch-up'
   | 'student-support'
+  // Monthly coaching and progress reviews also come from the programme cycle,
+  // scheduled coach-side; booking one here adds a meeting of that kind rather
+  // than filling a scheduled slot.
+  | 'mcr'
+  | 'progress-review'
   // The three onboarding reviews, bookable while still Onboarding (they go to
   // the learner's case owner rather than a coach, who doesn't exist yet).
   | OnboardingReviewType;

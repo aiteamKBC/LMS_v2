@@ -8,7 +8,12 @@ import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
-import type { LearnerDetail, LearnerKind, LearnerVideoProgress } from '@/api/learnerDetail';
+import type {
+  LearnerComponentProgress,
+  LearnerDetail,
+  LearnerKind,
+  LearnerVideoProgress,
+} from '@/api/learnerDetail';
 import { learningReflectionStatusKey, loadLearningReflectionStatuses, type LearningReflectionStatusMap } from '@/api/reflectionSubmission';
 import { buildStations, type ModuleStation } from '@/components/feature/RealLearningJourneyView';
 import { fetchLearnerCalendarEvents, fetchLearnerCoach, type LearnerCalendarEvent } from '@/api/learnerCalendar';
@@ -34,12 +39,22 @@ import { displayValue, EMPTY_VALUE, ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM
    Real-learner component progress + current-week UI
    ───────────────────────────────────────────── */
 
-type CompState = 'passed' | 'attempted' | 'watched' | 'todo';
+type CompState = 'passed' | 'attempted' | 'watched' | 'completed' | 'todo';
 
-/** Derive a component's real progress from the learner's attempts/watches. */
-function componentProgress(c: JourneyComponent, videos: LearnerVideoProgress[]): {
-  state: CompState; label: string; percent: number; detail?: string;
-} {
+/**
+ * Derive a component's real progress from what the learner has recorded.
+ *
+ * Three kinds of completion, one per way a component can be finished: a quiz is
+ * graded, a video is watched, and everything else (reading, slides, podcast,
+ * assignment, reflection…) is completed through the component runner, which
+ * writes its own `component` record. Reading only the first two left every
+ * completed reading and slide deck showing "To do" — see LearnerComponentProgress.
+ */
+function componentProgress(
+  c: JourneyComponent,
+  videos: LearnerVideoProgress[],
+  completions: LearnerComponentProgress[] = [],
+): { state: CompState; label: string; percent: number; detail?: string } {
   if (c.isQuiz && c.quizAttempts && c.quizAttempts.length > 0) {
     const best = c.quizAttempts.reduce((b, a) => (gradePercent(a.grade) > gradePercent(b.grade) ? a : b));
     const pct = gradePercent(best.grade);
@@ -51,6 +66,16 @@ function componentProgress(c: JourneyComponent, videos: LearnerVideoProgress[]):
     const watched = videos.some((v) => v.componentId === c.componentId);
     if (watched) return { state: 'watched', label: 'Completed', percent: 100 };
   }
+  if (c.componentId) {
+    const done = completions.filter((entry) => entry.componentId === c.componentId);
+    if (done.length > 0) {
+      // An explicit false is a recorded failure and never counts as done; an
+      // absent `passed` is the normal ungraded completion.
+      return done.some((entry) => entry.passed !== false)
+        ? { state: 'completed', label: 'Completed', percent: 100 }
+        : { state: 'attempted', label: 'Attempted', percent: 0 };
+    }
+  }
   return { state: 'todo', label: 'To do', percent: 0 };
 }
 
@@ -58,6 +83,7 @@ const STATE_STYLE: Record<CompState, { pill: string; dot: string; bar: string }>
   passed:    { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
   attempted: { pill: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500', bar: 'bg-amber-500' },
   watched:   { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
+  completed: { pill: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' },
   todo:      { pill: 'bg-background-200 text-foreground-500', dot: 'bg-foreground-300', bar: 'bg-foreground-300' },
 };
 
@@ -388,7 +414,12 @@ export default function LearnerOverview() {
     const targetHours = parseHours(real?.targetHours);
     const distinctQuizzes = new Set((real?.quizAttempts ?? []).map((a) => a.quizId)).size;
     const videos = (real?.videoProgress ?? []).length;
-    const activities = distinctQuizzes + videos;
+    // Readings, slide decks, podcasts and the rest complete through the
+    // component runner and count the same as a quiz or a video.
+    const completions = new Set(
+      (real?.componentProgress ?? []).map((entry) => entry.componentId),
+    ).size;
+    const activities = distinctQuizzes + videos + completions;
     const percent = plannedHours > 0 ? Math.round((completedHours / plannedHours) * 100) : 0;
     // Progress vs the current-week target (the "should have reached by now" bar).
     const variance = real?.progressVariance ? parseFloat(real.progressVariance) : null;   // decimal, e.g. -0.86
@@ -763,6 +794,7 @@ export default function LearnerOverview() {
                         totalWeeks={currentWeek.totalWeeks}
                         components={currentWeek.week.components}
                         videos={real?.videoProgress ?? []}
+                        completions={real?.componentProgress ?? []}
                         kind={kind}
                         learnerId={id}
                         reflectionStatuses={reflectionStatuses}
@@ -953,18 +985,19 @@ function UpcomingRow({ day, month, timeLabel, title, subtitle, tone = 'neutral',
 }
 
 /** One component row inside the Continue Learning card. */
-function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
+function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
   c: JourneyComponent;
   videos: LearnerVideoProgress[];
+  completions: LearnerComponentProgress[];
   reflectionStatus?: string;
   onOpen?: () => void;
 }) {
   const meta = componentTypeMeta(c.title);
-  const prog = componentProgress(c, videos);
+  const prog = componentProgress(c, videos, completions);
   const style = STATE_STYLE[prog.state];
   const actionable = !!onOpen;
   const reflection = REFLECTION_STATUS[reflectionStatus || ''];
-  const completed = prog.state === 'watched' || prog.state === 'passed';
+  const completed = prog.state === 'watched' || prog.state === 'passed' || prog.state === 'completed';
   const unavailable = !hasComponentContent(c);
   return (
     <button
@@ -1011,6 +1044,7 @@ function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
         <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 ${style.pill}`}>
           {prog.state === 'passed' && <AppIcon className="ri-check-line text-[10px]" />}
           {prog.state === 'watched' && <AppIcon className="ri-check-line text-[10px]" />}
+          {prog.state === 'completed' && <AppIcon className="ri-check-line text-[10px]" />}
           {prog.label}{prog.detail ? ` · ${prog.detail}` : ''}
         </span>
         )}
@@ -1030,9 +1064,10 @@ function CurrentWeekRow({ c, videos, reflectionStatus, onOpen }: {
 }
 
 /** The Continue Learning card body: progress + this week's components. */
-function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, kind, learnerId, reflectionStatuses, canProgress }: {
+function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress }: {
   moduleTitle: string; weekLabel: string; weekIndex: number; totalWeeks: number; components: JourneyComponent[];
-  videos: LearnerVideoProgress[]; kind?: string; learnerId?: string;
+  videos: LearnerVideoProgress[]; completions: LearnerComponentProgress[];
+  kind?: string; learnerId?: string;
   reflectionStatuses: LearningReflectionStatusMap;
   /** False for a staff/coach viewer: the rows still show progress, but none of
    *  them opens the runner that would record progress as the learner. */
@@ -1042,8 +1077,8 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
   const availableComponents = components.filter(hasComponentContent);
   const total = availableComponents.length;
   const done = availableComponents.filter((c) => {
-    const s = componentProgress(c, videos).state;
-    return s === 'passed' || s === 'watched';
+    const s = componentProgress(c, videos, completions).state;
+    return s === 'passed' || s === 'watched' || s === 'completed';
   }).length;
   const percent = total ? Math.round((done / total) * 100) : 0;
   const period = weekPeriodLabel(weekLabel);
@@ -1099,6 +1134,7 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
               key={c.componentId || `${c.title}-${i}`}
               c={c}
               videos={videos}
+              completions={completions}
               reflectionStatus={reflectionStatusFor(c)}
               onOpen={openFor(c)}
             />
