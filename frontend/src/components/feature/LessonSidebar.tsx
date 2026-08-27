@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import {
-  buildLearnerJourney, componentTypeMeta, isOpenableComponent, gradePercent,
+  buildLearnerJourney, componentTypeMeta, hasComponentContent, isOpenableComponent, gradePercent,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
 import type { LearnerDetail } from '@/api/learnerDetail';
@@ -31,7 +31,7 @@ export function componentRoute(kind: string | undefined, id: string | undefined,
 
 /** Can this sidebar row be clicked (a quiz, or any other openable component)? */
 export function isNavigableComponent(c: JourneyComponent): boolean {
-  return (c.isQuiz && c.quizMeta?.quizId != null) || isOpenableComponent(c);
+  return (c.isQuiz && hasComponentContent(c)) || isOpenableComponent(c);
 }
 
 /** Locate a component (by its curriculum id) + its week/module context in the journey. */
@@ -104,7 +104,8 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
           {(ctx?.weekComponents ?? []).map((c) => {
             const cm = componentTypeMeta(c.title);
             const isCurrent = isActiveRow(c);
-            const clickable = isNavigableComponent(c) && !isCurrent;
+            const contentAvailable = hasComponentContent(c);
+            const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
             const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
             const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
             return (
@@ -113,7 +114,7 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
                   disabled={!clickable}
                   onClick={() => clickable && navigate(componentRoute(kind, id, c, moduleTitle, weekTitle))}
                   className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                    isCurrent ? 'bg-primary-50' : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
+                    !contentAvailable ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale' : isCurrent ? 'bg-primary-50' : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
                   }`}
                 >
                   <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${cm.bg}`}>
@@ -132,7 +133,9 @@ export function LessonSidebar({ ctx, kind, id, activeComponentId, activeQuizId, 
                       {gradePercent(lastAttempt.grade)}%
                     </span>
                   )}
-                  {isCurrent ? (
+                  {!contentAvailable ? (
+                    <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
+                  ) : isCurrent ? (
                     <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
                   ) : clickable ? (
                     <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />

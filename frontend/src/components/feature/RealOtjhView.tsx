@@ -87,6 +87,11 @@ export function OtjhBody({
 
   // Activity log: quiz attempts + video watches, newest first.
   const rows = useMemo<LogRow[]>(() => {
+    const componentTitleById = new Map(
+      (real?.components ?? [])
+        .filter((component) => component.componentId && component.component.trim())
+        .map((component) => [String(component.componentId), component.component.trim()]),
+    );
     const quiz = (real?.quizAttempts ?? []).map<LogRow>((a) => ({
       title: `Quiz attempt${a.attempt ? ` #${a.attempt}` : ''}`,
       type: 'Quiz', icon: 'ri-questionnaire-line',
@@ -95,7 +100,7 @@ export function OtjhBody({
       passed: a.passed, isQuiz: true,
     }));
     const video = (real?.videoProgress ?? []).map<LogRow>((v) => ({
-      title: 'Video watched',
+      title: componentTitleById.get(String(v.componentId)) || 'Video watched',
       type: 'Video', icon: 'ri-play-circle-line', tint: 'bg-red-100 text-red-600',
       at: v.submittedAt, ksbs: v.ksbs || [], hours: v.reportedTime || v.timeTaken || '—',
       isQuiz: false,

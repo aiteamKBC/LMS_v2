@@ -194,6 +194,7 @@ interface RawWeekTemplateComponent {
   expectedOtjh?: number;
   points?: number;
   reflectionRequired?: boolean;
+  reflectionQuestion?: string;
   workplaceEvidenceRequired?: boolean;
   tutorValidationRequired?: boolean;
   ksbMappings?: KsbMapping[];
@@ -232,6 +233,7 @@ function mapComponent(raw: RawWeekTemplateComponent, weekId: string): ModuleComp
     expectedOtjh: Number(raw.expectedOtjh) || 0,
     points: Number(raw.points) || 0,
     reflectionRequired: Boolean(raw.reflectionRequired),
+    reflectionQuestion: String(raw.reflectionQuestion || ''),
     workplaceEvidenceRequired: Boolean(raw.workplaceEvidenceRequired),
     tutorValidationRequired: Boolean(raw.tutorValidationRequired),
     ksbMappings: Array.isArray(raw.ksbMappings) ? raw.ksbMappings : [],
@@ -300,6 +302,9 @@ export interface WeekScope {
   programmeId: string;
   programmeName: string;
   moduleName: string;
+  /** The module/template's own delivery group, if it has exactly one — used to
+   * default a never-touched component to serving that group instead of none. */
+  groupName?: string;
 }
 
 const normScope = (value?: string | number | null) => String(value ?? '').trim().toLowerCase();

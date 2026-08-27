@@ -4,6 +4,7 @@ import {
   fetchLearningPlan,
   saveLearningPlan,
   formatHours,
+  formatPlanDate,
   type LearningPlanModule,
   type LearningPlanResponse,
 } from '@/api/learningPlan';
@@ -16,12 +17,20 @@ import { RowsSkeleton, SkeletonBlock } from '@/components/feature/Skeletons';
 //
 // Opens pre-filled with the module set attached to the learner's group, so the
 // common case is "looks right, close it". Staff can drop a module the learner
-// doesn't need, or add one taught to another group on the SAME programme —
-// crossing programmes is refused server-side, since those modules map to
-// different KSBs and funding.
+// doesn't need, or add any module in the catalogue: the picker opens on the
+// learner's own programme and a dropdown switches to any other.
+//
+// A module from another programme maps to different KSBs and sits under
+// different funding, so the picker and the plan both name the programme a
+// module came from whenever it is not the learner's own. The combination is
+// allowed; it is never silent.
 //
 // Each module carries its off-the-job hours, and the plan shows a running
 // total, because that total is the commitment being agreed.
+//
+// Each row also shows the module's delivery window, as scheduled in the
+// curriculum. Read-only: the plan decides which modules are taught, not when. A
+// module with no window shows a dash.
 // ============================================================================
 
 interface Props {
@@ -48,6 +57,8 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [picker, setPicker] = useState(false);
+  /** Which programme the picker is showing. '' = every programme at once. */
+  const [pickerProgramme, setPickerProgramme] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +68,9 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
         if (cancelled) return;
         setData(res);
         setPlan(res.plan);
+        // Default to the learner's own programme: adding from theirs is the
+        // ordinary case, and anything else is a deliberate choice.
+        setPickerProgramme(res.learner.programmeId || '');
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load the learning plan.');
       } finally {
@@ -82,11 +96,15 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
       seen.add(m.moduleId);
       return true;
     });
+    const scoped = pickerProgramme
+      ? unique.filter((m) => m.programmeId === pickerProgramme)
+      : unique;
     const q = search.trim().toLowerCase();
     return q
-      ? unique.filter((m) => `${m.moduleTitle} ${m.groupName}`.toLowerCase().includes(q))
-      : unique;
-  }, [data, chosen, search]);
+      ? scoped.filter((m) =>
+          `${m.moduleTitle} ${m.groupName} ${m.programmeName}`.toLowerCase().includes(q))
+      : scoped;
+  }, [data, chosen, search, pickerProgramme]);
 
   const totalHours = useMemo(
     () => plan.reduce((sum, m) => sum + Number(m.hours || 0), 0),
@@ -233,6 +251,8 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                 <tr className="bg-background-100/60 text-left">
                   <th className="py-2 px-3 font-semibold text-foreground-600">Module</th>
                   <th className="py-2 px-3 font-semibold text-foreground-600">Group</th>
+                  <th className="py-2 px-3 font-semibold text-foreground-600">Start</th>
+                  <th className="py-2 px-3 font-semibold text-foreground-600">End</th>
                   <th className="py-2 px-3 font-semibold text-foreground-600 text-right">Hours</th>
                   {!readOnly && <th className="py-2 px-3 w-10" />}
                 </tr>
@@ -240,7 +260,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
               <tbody>
                 {plan.length === 0 && (
                   <tr>
-                    <td colSpan={readOnly ? 3 : 4} className="py-8 text-center text-foreground-400">
+                    <td colSpan={readOnly ? 5 : 6} className="py-8 text-center text-foreground-400">
                       {readOnly
                         ? 'No modules on this plan.'
                         : 'No modules on this plan yet — add one below.'}
@@ -254,13 +274,29 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                       {m.orphaned && (
                         <span
                           className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
-                          title="Saved on this plan but no longer in the programme catalogue"
+                          title="Saved on this plan but no longer in the module catalogue"
                         >
                           Not in catalogue
                         </span>
                       )}
+                      {/* A module borrowed from another programme maps to
+                          different KSBs and funding, so the plan says which. */}
+                      {learner && m.programmeId && m.programmeId !== learner.programmeId && (
+                        <span
+                          className="ml-2 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
+                          title={`From the ${m.programmeName} programme, not ${learner.programme}`}
+                        >
+                          {m.programmeName}
+                        </span>
+                      )}
                     </td>
                     <td className="py-2 px-3 text-foreground-500">{m.groupName || '—'}</td>
+                    <td className="py-2 px-3 whitespace-nowrap text-foreground-500">
+                      {formatPlanDate(m.startDate)}
+                    </td>
+                    <td className="py-2 px-3 whitespace-nowrap text-foreground-500">
+                      {formatPlanDate(m.endDate)}
+                    </td>
                     <td className="py-2 px-3 text-right font-medium text-foreground-700">
                       {formatHours(m.hours)}
                     </td>
@@ -281,7 +317,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-foreground-300/50 bg-background-100/40">
-                  <td className="py-2 px-3 font-semibold text-foreground-700" colSpan={2}>
+                  <td className="py-2 px-3 font-semibold text-foreground-700" colSpan={4}>
                     Total
                   </td>
                   <td className="py-2 px-3 text-right font-bold text-foreground-900">
@@ -293,8 +329,8 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
             </table>
           </div>
 
-          {/* Add a module from another group on the same programme. Absent when
-              viewing: nothing here is meaningful without a save. */}
+          {/* Add a module from anywhere in the catalogue. Absent when viewing:
+              nothing here is meaningful without a save. */}
           {!readOnly && (
             <div>
               <div className="flex items-center justify-between gap-3 mb-2">
@@ -304,7 +340,7 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                   className="text-[12px] font-semibold text-primary-600 hover:underline cursor-pointer"
                 >
                   <i className={`ri-${picker ? 'subtract' : 'add'}-line mr-1`} />
-                  Add a module from this programme
+                  Add a module
                 </button>
                 {data && data.preset.length > 0 && (
                   <button
@@ -319,16 +355,33 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
 
               {picker && (
                 <div className="rounded-xl border border-foreground-200/60 p-3 space-y-2">
-                  <input
-                    className={inputClass}
-                    placeholder="Search modules on this programme…"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <select
+                      className={`${inputClass} sm:max-w-[16rem]`}
+                      value={pickerProgramme}
+                      onChange={(e) => setPickerProgramme(e.target.value)}
+                      aria-label="Programme to add modules from"
+                    >
+                      <option value="">All programmes</option>
+                      {(data?.programmes ?? []).map((p) => (
+                        <option key={p.programmeId} value={p.programmeId}>
+                          {p.programmeName} ({p.moduleCount})
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className={inputClass}
+                      placeholder="Search modules…"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
                   <div className="max-h-56 overflow-y-auto divide-y divide-foreground-200/40">
                     {addable.length === 0 && (
                       <p className="py-4 text-center text-[12px] text-foreground-400">
-                        No other modules available on {learner?.programme || 'this programme'}.
+                        {search.trim()
+                          ? 'No modules match that search.'
+                          : 'No modules left to add here.'}
                       </p>
                     )}
                     {addable.map((m) => (
@@ -337,7 +390,17 @@ export function LearningPlanModal({ learnerId, learnerName, onClose, onSaved, re
                           <span className="block truncate text-[13px] text-foreground-900">{m.moduleTitle}</span>
                           <span className="block text-[11px] text-foreground-400">
                             {m.groupName || 'No group'} · {formatHours(m.hours)}
+                            {/* Its window, where it has one — the same dates the
+                                plan table will show once it is added. */}
+                            {m.startDate && m.endDate && ` · ${formatPlanDate(m.startDate)} – ${formatPlanDate(m.endDate)}`}
                           </span>
+                          {/* Only worth saying when it is not where you would
+                              expect the module to come from. */}
+                          {learner && m.programmeId && m.programmeId !== learner.programmeId && (
+                            <span className="mt-0.5 inline-block rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                              {m.programmeName}
+                            </span>
+                          )}
                         </span>
                         <button
                           type="button"

@@ -15,6 +15,7 @@ import { RightSlidePanel } from '@/components/feature/RightSlidePanel';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { SelectMenu, type SelectOption } from '@/components/feature/SelectField';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { statusTone } from './model';
 import { AppIcon } from '@/components/feature/AppIcon';
 
@@ -182,6 +183,14 @@ export function EntityFilterBar({
 /**
  * A CSS-grid table. Rows are buttons so the whole row opens the record — the
  * action cell stops propagation for the inline edit/delete controls.
+ *
+ * Two states sit on top of the rows, both there because a save and the refresh
+ * that follows it are seconds apart. `refreshing` runs a bar under the header
+ * while a background load is in flight: the list stays readable and the user is
+ * told it is moving, rather than being shown a stale page with no explanation.
+ * `highlightKey` marks the record a save just wrote — the row flashes and is
+ * scrolled into view, so a create in a long list is something the user sees
+ * happen instead of something they have to go and find.
  */
 export function EntityTable<T>({
   columns,
@@ -190,6 +199,8 @@ export function EntityTable<T>({
   rowKey,
   renderRow,
   loading,
+  refreshing,
+  highlightKey,
   empty,
 }: {
   columns: Array<{ label: string; align?: 'left' | 'center' | 'right' }>;
@@ -198,8 +209,33 @@ export function EntityTable<T>({
   rowKey: (row: T) => string;
   renderRow: (row: T) => ReactNode;
   loading?: boolean;
+  /** A background reload is running behind the rows already on screen. */
+  refreshing?: boolean;
+  /** Row key of the record a save just wrote, or null. */
+  highlightKey?: string | null;
   empty: ReactNode;
 }) {
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  const rowNodes = useRef(new Map<string, HTMLDivElement>());
+  // Both cues below carry information, so a reduced-motion viewer keeps them and
+  // loses only the movement: the bar sits still and the row holds a flat tint
+  // for the same length of time.
+  const reduceMotion = useReducedMotion();
+
+  // `rows` is in the dependencies on purpose: the optimistic row is replaced by
+  // the server's copy when the refresh lands, and the highlight has to survive
+  // that swap rather than ending on the row that was thrown away.
+  useEffect(() => {
+    if (!highlightKey) { setFlashKey(null); return undefined; }
+    setFlashKey(highlightKey);
+    rowNodes.current.get(highlightKey)?.scrollIntoView({
+      block: 'center',
+      behavior: reduceMotion ? 'auto' : 'smooth',
+    });
+    const timer = setTimeout(() => setFlashKey(null), 2600);
+    return () => clearTimeout(timer);
+  }, [highlightKey, reduceMotion, rows]);
+
   return (
     <div className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
       <div className="overflow-x-auto">
@@ -214,17 +250,41 @@ export function EntityTable<T>({
               </span>
             ))}
           </div>
+          <div className="relative h-0.5 overflow-hidden" aria-hidden="true">
+            {refreshing && !loading && (
+              <span
+                className={reduceMotion
+                  ? 'absolute inset-0 bg-primary-500/40'
+                  : 'absolute inset-y-0 left-0 w-1/4 animate-entity-refresh rounded-full bg-primary-500/70'}
+              />
+            )}
+          </div>
+          <span className="sr-only" role="status" aria-live="polite">
+            {refreshing && !loading ? 'Refreshing the list' : ''}
+          </span>
           {loading ? (
             <div className="space-y-2 p-4">
               {Array.from({ length: 6 }).map((_, index) => <SkeletonBlock key={index} className="h-14 w-full" />)}
             </div>
           ) : rows.length ? (
             <div className="divide-y divide-background-200/70">
-              {rows.map(row => (
-                <div key={rowKey(row)} className={`${gridClass} gap-3 px-4 py-3 transition-smooth hover:bg-background-100/60`}>
-                  {renderRow(row)}
-                </div>
-              ))}
+              {rows.map(row => {
+                const key = rowKey(row);
+                return (
+                  <div
+                    key={key}
+                    ref={node => {
+                      if (node) rowNodes.current.set(key, node);
+                      else rowNodes.current.delete(key);
+                    }}
+                    className={`${gridClass} gap-3 px-4 py-3 transition-smooth hover:bg-background-100/60${
+                      flashKey === key ? (reduceMotion ? ' bg-primary-100/70' : ' animate-row-flash') : ''
+                    }`}
+                  >
+                    {renderRow(row)}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             empty
@@ -380,25 +440,49 @@ export function FormField({
   hint,
   error,
   required,
+  as = 'label',
 }: {
   label: string;
   children: ReactNode;
   hint?: string;
   error?: string;
   required?: boolean;
+  /**
+   * `'label'` for a field that is one control. `'group'` for a field made of
+   * several controls — a tick list, a row of toggles. A `<label>` names the
+   * labelable elements inside it, and `<button>` is labelable: wrapping a tick
+   * list in one gives every row the whole list's text as its accessible name,
+   * so screen readers (and tests) cannot tell the rows apart.
+   */
+  as?: 'label' | 'group';
 }) {
+  const heading = (
+    <span className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
+      {label}
+      {required && <span className="text-red-500">*</span>}
+    </span>
+  );
+  const footer = error ? (
+    <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>
+  ) : hint ? (
+    <span className="mt-1 block text-[11px] text-foreground-400">{hint}</span>
+  ) : null;
+
+  if (as === 'group') {
+    return (
+      <div className="block" role="group" aria-label={label}>
+        {heading}
+        {children}
+        {footer}
+      </div>
+    );
+  }
+
   return (
     <label className="block">
-      <span className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-foreground-400">
-        {label}
-        {required && <span className="text-red-500">*</span>}
-      </span>
+      {heading}
       {children}
-      {error ? (
-        <span className="mt-1 block text-[11px] font-semibold text-red-600">{error}</span>
-      ) : hint ? (
-        <span className="mt-1 block text-[11px] text-foreground-400">{hint}</span>
-      ) : null}
+      {footer}
     </label>
   );
 }
@@ -502,6 +586,121 @@ export function SelectControl({
   );
 }
 
+export interface MultiSelectOption {
+  value: string;
+  label: string;
+  /** Second line, for whatever tells two similarly-named rows apart. */
+  description?: string;
+  /** Short chip on the right, e.g. "already runs this". */
+  badge?: string;
+  /** Ticked and not togglable — something already true of this row. */
+  locked?: boolean;
+}
+
+/**
+ * A picker for "which of these, one or many" — the same list a `SelectControl`
+ * would draw, with a checkbox on every row instead of one radio-shaped choice.
+ *
+ * Written as a visible list rather than a dropdown with multi-select semantics:
+ * the point of the control is that picking a second row is obviously allowed,
+ * and a closed dropdown showing one value does not say that.
+ */
+export function MultiSelectControl({
+  value,
+  onChange,
+  options,
+  emptyMessage = 'Nothing to choose from.',
+  selectAllLabel,
+}: {
+  value: string[];
+  onChange: (value: string[]) => void;
+  options: MultiSelectOption[];
+  /** Shown in place of the list when there is nothing to pick. */
+  emptyMessage?: string;
+  /** Adds a select-all / clear toggle above the list, named by this. */
+  selectAllLabel?: string;
+}) {
+  const selected = new Set(value.map(String));
+  const togglable = options.filter(option => !option.locked);
+  const allSelected = togglable.length > 0 && togglable.every(option => selected.has(option.value));
+
+  const toggle = (option: MultiSelectOption) => {
+    if (option.locked) return;
+    // Order is preserved: the first pick stays first, which is what the module
+    // form reads as the delivery it patches.
+    onChange(selected.has(option.value)
+      ? value.filter(item => String(item) !== option.value)
+      : [...value, option.value]);
+  };
+
+  if (!options.length) {
+    return (
+      <p className="rounded-lg border border-background-200 bg-background-100 px-3 py-2.5 text-[12px] text-foreground-500">
+        {emptyMessage}
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {selectAllLabel && togglable.length > 1 && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] font-semibold text-foreground-500">
+            {selected.size} of {options.length} selected
+          </p>
+          <button
+            type="button"
+            onClick={() => onChange(allSelected
+              ? value.filter(item => !togglable.some(option => option.value === String(item)))
+              : Array.from(new Set([...value.map(String), ...togglable.map(option => option.value)])))}
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100"
+          >
+            <AppIcon className={allSelected ? 'ri-checkbox-blank-line text-sm' : 'ri-checkbox-multiple-line text-sm'}></AppIcon>
+            {allSelected ? `Clear ${selectAllLabel}` : `Select all ${selectAllLabel}`}
+          </button>
+        </div>
+      )}
+      <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-lg border border-background-200 bg-background-50 p-2">
+        {options.map(option => {
+          const active = selected.has(option.value);
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => toggle(option)}
+              aria-pressed={active}
+              disabled={option.locked}
+              className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-smooth ${
+                active ? 'border-primary-300 bg-primary-50' : 'border-transparent hover:bg-background-100'
+              } ${option.locked ? 'cursor-not-allowed opacity-70' : ''}`}
+            >
+              <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                active ? 'border-primary-600 bg-primary-600 text-white' : 'border-background-300'
+              }`}
+              >
+                {active && <AppIcon className="ri-check-line text-[10px]"></AppIcon>}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-[12px] font-semibold text-foreground-900">{option.label}</span>
+                  {option.badge && (
+                    <span className="shrink-0 rounded-full bg-background-200 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-foreground-600">
+                      {option.badge}
+                    </span>
+                  )}
+                </span>
+                {option.description && (
+                  <span className="block truncate text-[11px] text-foreground-400">{option.description}</span>
+                )}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 const COLOR_PRESETS = ['#6d28d9', '#2563eb', '#0f766e', '#16a34a', '#ea580c', '#dc2626', '#be123c', '#334155'];
 
 export function ColorControl({ value, onChange }: { value: string; onChange: (value: string) => void }) {
@@ -530,6 +729,10 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (va
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
+/** Saturday and Sunday are the weekend in England, so delivering on them is the exception. */
+export const WEEKEND_DAYS = ['Saturday', 'Sunday'];
+export const WEEKEND_HINT = 'Saturday and Sunday are weekend holidays in England — delivery on these days is unusual.';
+
 /** Delivery days as a comma-separated string, which is how the API stores them. */
 export function WeekdayControl({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const selected = value.split(',').map(day => day.trim()).filter(Boolean);
@@ -537,27 +740,98 @@ export function WeekdayControl({ value, onChange }: { value: string; onChange: (
     const next = selected.includes(day) ? selected.filter(item => item !== day) : [...selected, day];
     onChange(WEEKDAYS.filter(item => next.includes(item)).join(', '));
   };
+  const weekendPicked = WEEKEND_DAYS.some(day => selected.includes(day));
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {WEEKDAYS.map(day => {
-        const active = selected.includes(day);
-        return (
-          <button
-            key={day}
-            type="button"
-            onClick={() => toggle(day)}
-            className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth ${
-              active
-                ? 'border-primary-600 bg-primary-600 text-white'
-                : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
-            }`}
-          >
-            {day.slice(0, 3)}
-          </button>
-        );
-      })}
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {WEEKDAYS.map(day => {
+          const active = selected.includes(day);
+          const weekend = WEEKEND_DAYS.includes(day);
+          return (
+            <button
+              key={day}
+              type="button"
+              onClick={() => toggle(day)}
+              title={weekend ? WEEKEND_HINT : undefined}
+              className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth ${
+                active
+                  ? 'border-primary-600 bg-primary-600 text-white'
+                  : weekend
+                    ? 'border-dashed border-background-300 bg-background-50 text-foreground-400 hover:bg-background-100'
+                    : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
+              }`}
+            >
+              {day.slice(0, 3)}
+            </button>
+          );
+        })}
+      </div>
+      {weekendPicked && (
+        <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600">
+          <i className="ri-information-line mt-px" aria-hidden />
+          <span>{WEEKEND_HINT}</span>
+        </p>
+      )}
     </div>
   );
+}
+
+/**
+ * A third footer action, beside Cancel. Used by the structure wizard for "skip
+ * this step"; `confirmWhenDirty` is the sentence the confirm shows when the form
+ * holds answers the action would throw away, and without it the action fires
+ * straight away.
+ */
+export interface DrawerExtraAction {
+  label: string;
+  icon?: string;
+  onClick: () => void;
+  confirmWhenDirty?: string;
+}
+
+/**
+ * Asks before the drawer closes even when nothing has been typed. A form on its
+ * own page closes silently when it is clean; a step of a chain does not, because
+ * the cross there abandons a run, not just a form.
+ */
+export interface DrawerCloseConfirm {
+  title: string;
+  text: string;
+  /** The button that goes through with the close. Cancel always keeps editing. */
+  confirmLabel: string;
+}
+
+/**
+ * What a form is handed when something is driving it as one step of a chain —
+ * the structure wizard is the only such caller. It is deliberately additive:
+ * unset, every form behaves exactly as it does on its own page.
+ */
+export interface FormChainStep {
+  /** Rendered under the header, above the fields: which step this is. */
+  banner?: ReactNode;
+  /** Beside Cancel, e.g. "Use an existing cohort". */
+  extraAction?: DrawerExtraAction;
+  /**
+   * Returns to the previous step's form, reopened against the record it already
+   * saved. Absent on the first step of a chain, since there is nowhere to go back to.
+   */
+  backAction?: DrawerExtraAction;
+  /**
+   * The chain closes the drawer and confirms at the end of the run, so the form
+   * does neither: it saves, hands the record to `onSaved` and stops there.
+   */
+  chained?: boolean;
+  /** Overrides the submit button, e.g. "Create cohort & continue". */
+  submitLabel?: string;
+  /**
+   * Overrides the Cancel button. A chain that has already written records is not
+   * cancelling anything by closing, so it says "Stop here" instead.
+   */
+  cancelLabel?: string;
+  /** Overrides the drawer width, so a chain does not resize between steps. */
+  width?: string;
+  /** Asks before the cross, Escape or the backdrop ends the run, dirty or not. */
+  closeConfirm?: DrawerCloseConfirm;
 }
 
 /**
@@ -569,21 +843,32 @@ export function EntityDrawer({
   open,
   title,
   subtitle,
+  banner,
   onClose,
   onSubmit,
   submitLabel,
+  cancelLabel = 'Cancel',
+  extraAction,
+  backAction,
   saving,
   error,
   dirty = false,
+  closeConfirm,
   children,
   width = 'w-[520px]',
 }: {
   open: boolean;
   title: string;
   subtitle?: string;
+  /** Held above the scroll area, so a step rail stays put while the form scrolls. */
+  banner?: ReactNode;
   onClose: () => void;
   onSubmit: () => void | Promise<void>;
   submitLabel: string;
+  cancelLabel?: string;
+  extraAction?: DrawerExtraAction;
+  /** A step back in a chain, e.g. "Back to Cohort" — placed before `extraAction`. */
+  backAction?: DrawerExtraAction;
   saving?: boolean;
   error?: string | null;
   /**
@@ -591,6 +876,11 @@ export function EntityDrawer({
    * before it throws the answers away; a clean one closes straight away.
    */
   dirty?: boolean;
+  /**
+   * Asks on the way out even when the form is clean. The dirty question above
+   * still wins when there are answers to lose, since it is the more urgent one.
+   */
+  closeConfirm?: DrawerCloseConfirm;
   children: ReactNode;
   width?: string;
 }) {
@@ -610,16 +900,58 @@ export function EntityDrawer({
   // Cancel — comes through here, so none of them can lose typed answers.
   const requestClose = () => {
     if (saving) return;
-    if (!dirty) { onClose(); return; }
+    if (!dirty && !closeConfirm) { onClose(); return; }
+    if (confirmingDiscard.current) return;
+    confirmingDiscard.current = true;
+    // Unsaved answers are the more urgent question, so they are asked about even
+    // when the caller supplied its own; a clean form gets the caller's wording.
+    const ask = dirty
+      ? {
+        title: 'Discard unsaved changes?',
+        text: 'This form has answers that have not been saved. Closing it now throws them away.',
+        confirmLabel: 'Discard changes',
+      }
+      : closeConfirm!;
+    void showCurriculumConfirm({
+      title: ask.title,
+      text: ask.text,
+      icon: 'warning',
+      confirmButtonText: ask.confirmLabel,
+      cancelButtonText: 'Keep editing',
+      onConfirm: () => { onClose(); },
+    }).finally(() => { confirmingDiscard.current = false; });
+  };
+
+  // Skipping a step is a way out of the form too, so it asks about unsaved
+  // answers on the same terms the cross and Cancel do.
+  const runExtraAction = () => {
+    if (saving || !extraAction) return;
+    if (!dirty || !extraAction.confirmWhenDirty) { extraAction.onClick(); return; }
     if (confirmingDiscard.current) return;
     confirmingDiscard.current = true;
     void showCurriculumConfirm({
-      title: 'Discard unsaved changes?',
-      text: 'This form has answers that have not been saved. Closing it now throws them away.',
+      title: extraAction.label,
+      text: extraAction.confirmWhenDirty,
       icon: 'warning',
-      confirmButtonText: 'Discard changes',
+      confirmButtonText: extraAction.label,
       cancelButtonText: 'Keep editing',
-      onConfirm: () => { onClose(); },
+      onConfirm: () => { extraAction.onClick(); },
+    }).finally(() => { confirmingDiscard.current = false; });
+  };
+
+  // Same pattern as `runExtraAction`, for stepping back instead of forward.
+  const runBackAction = () => {
+    if (saving || !backAction) return;
+    if (!dirty || !backAction.confirmWhenDirty) { backAction.onClick(); return; }
+    if (confirmingDiscard.current) return;
+    confirmingDiscard.current = true;
+    void showCurriculumConfirm({
+      title: backAction.label,
+      text: backAction.confirmWhenDirty,
+      icon: 'warning',
+      confirmButtonText: backAction.label,
+      cancelButtonText: 'Keep editing',
+      onConfirm: () => { backAction.onClick(); },
     }).finally(() => { confirmingDiscard.current = false; });
   };
 
@@ -635,6 +967,7 @@ export function EntityDrawer({
         className="flex h-full min-h-0 flex-col"
         onSubmit={event => { event.preventDefault(); void onSubmit(); }}
       >
+        {banner && <div className="shrink-0 border-b border-background-200 bg-background-100 px-5 py-3.5">{banner}</div>}
         <div ref={firstFieldRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5">
           {subtitle && <p className="text-[12px] leading-5 text-foreground-500">{subtitle}</p>}
           {error && (
@@ -645,23 +978,49 @@ export function EntityDrawer({
           )}
           {children}
         </div>
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-background-200 px-5 py-4">
-          <button
-            type="button"
-            onClick={requestClose}
-            disabled={saving}
-            className="inline-flex h-10 items-center rounded-xl border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {saving && <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>}
-            {submitLabel}
-          </button>
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-background-200 px-5 py-4">
+          <div className="flex items-center">
+            {backAction && (
+              <button
+                type="button"
+                onClick={runBackAction}
+                disabled={saving}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl px-3 text-[12px] font-bold text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-700 disabled:opacity-50"
+              >
+                <AppIcon className="ri-arrow-left-line text-sm"></AppIcon>
+                {backAction.label}
+              </button>
+            )}
+            {extraAction && (
+              <button
+                type="button"
+                onClick={runExtraAction}
+                disabled={saving}
+                className="inline-flex h-10 items-center gap-1.5 rounded-xl px-3 text-[12px] font-bold text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-700 disabled:opacity-50"
+              >
+                {extraAction.icon && <AppIcon className={`${extraAction.icon} text-sm`}></AppIcon>}
+                {extraAction.label}
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={requestClose}
+              disabled={saving}
+              className="inline-flex h-10 items-center rounded-xl border border-background-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:opacity-50"
+            >
+              {cancelLabel}
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {saving && <AppIcon className="ri-loader-4-line animate-spin text-sm"></AppIcon>}
+              {submitLabel}
+            </button>
+          </div>
         </div>
       </form>
     </RightSlidePanel>

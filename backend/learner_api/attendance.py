@@ -44,6 +44,29 @@ def _summarize_attendance(rows):
     updated_values = [row['updated_at'] for row in rows if row['updated_at']]
     updated_at = max(updated_values) if updated_values else None
 
+    def row_status(row):
+        s = status(row)
+        if s == 'absent':
+            return 'missed'
+        if s == 'late' or (row['minutes_late'] or 0) > 0:
+            return 'late'
+        return 'attended'
+
+    session_history = [
+        {
+            'id': f"{row.get('session_id', '')}-{row['session_date'].isoformat()}",
+            'date': row['session_date'].isoformat(),
+            'title': row.get('session_title', '') or '',
+            'sessionType': row.get('session_type', '') or '',
+            'status': row_status(row),
+            'startTime': row['session_start_time'].strftime('%H:%M') if row.get('session_start_time') else '',
+            'endTime': row['session_end_time'].strftime('%H:%M') if row.get('session_end_time') else '',
+            'module': row.get('module_title', '') or '',
+            'coach': row.get('coach_name', '') or '',
+        }
+        for row in latest_first
+    ]
+
     return {
         'learnerEmail': latest['learner_email'],
         'learnerId': latest['learner_id'],
@@ -59,6 +82,7 @@ def _summarize_attendance(rows):
         'updatedAt': updated_at.isoformat() if updated_at else None,
         'attendanceRate': attendance_rate,
         'source': 'microsoft-teams',
+        'sessionHistory': session_history,
     }
 
 

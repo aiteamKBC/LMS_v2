@@ -7,6 +7,7 @@ import { curriculumNavItems } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
 import {
+  fetchCurriculumScopeLearnerRoster,
   fetchCurriculumSessions,
   fetchCurriculumTeamsMeetingSummaries,
   type CurriculumModule,
@@ -632,7 +633,7 @@ interface CreateForm {
 
 export default function CurriculumTeamsMeetingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { programmes, cohorts, groups, modules, holidays, loading, loaded, error, reload } = useCurriculumEntities({ includeHolidays: true });
+  const { programmes, cohorts, groups, modules, tutors, holidays, loading, loaded, error, reload } = useCurriculumEntities({ includeHolidays: true, includeStaff: true });
 
   const [summaries, setSummaries] = useState<CurriculumTeamsMeetingSummary[]>([]);
   const [sessions, setSessions] = useState<CurriculumSession[]>([]);
@@ -820,6 +821,56 @@ export default function CurriculumTeamsMeetingsPage() {
     });
   }, [cohorts, groups, modules, programmes, sessionsByModule, summaryByModule]);
 
+  // The tutor is the module's own assignment (a name, from `enrolment.Staff_users`
+  // by way of the curriculum staff directory), so the meeting's presenter is
+  // looked up from the same directory rather than typed in here.
+  const tutorEmailByName = useMemo(() => {
+    const map = new Map<string, string>();
+    tutors.forEach(profile => {
+      const key = normaliseKey(cleanText(profile.name));
+      const email = cleanText(profile.email);
+      if (key && email) map.set(key, email);
+    });
+    return map;
+  }, [tutors]);
+
+  const presentersFor = useCallback((row: MeetingRow): string[] => {
+    const tutorName = cleanText(row.module.tutor);
+    if (!tutorName || tutorName === 'Unassigned') return [];
+    const email = tutorEmailByName.get(normaliseKey(tutorName));
+    return email ? [email] : [];
+  }, [tutorEmailByName]);
+
+  // Learner emails come from enrolment's own roster (`Learner.learners.email`)
+  // for the group this module delivers to — never typed in by hand. Fetched on
+  // demand and cached per module, since most rows never open either dialog.
+  const [moduleLearnerEmails, setModuleLearnerEmails] = useState<Map<string, string[]>>(new Map());
+  const pendingLearnerFetches = useRef<Map<string, Promise<string[]>>>(new Map());
+  const ensureLearnerEmails = useCallback((catalogueId: string): Promise<string[]> => {
+    const key = normaliseKey(catalogueId);
+    if (!key) return Promise.resolve([]);
+    const cached = moduleLearnerEmails.get(key);
+    if (cached) return Promise.resolve(cached);
+    const pending = pendingLearnerFetches.current.get(key);
+    if (pending) return pending;
+    const request = fetchCurriculumScopeLearnerRoster('module', catalogueId)
+      .then(roster => {
+        const emails = Array.from(new Set(
+          (roster.assignedLearners || []).map(learner => cleanText(learner.email)).filter(Boolean),
+        ));
+        setModuleLearnerEmails(previous => {
+          const next = new Map(previous);
+          next.set(key, emails);
+          return next;
+        });
+        return emails;
+      })
+      .catch(() => [] as string[])
+      .finally(() => { pendingLearnerFetches.current.delete(key); });
+    pendingLearnerFetches.current.set(key, request);
+    return request;
+  }, [moduleLearnerEmails]);
+
   const visibleRows = useMemo(() => {
     const scoped = new Set(
       modulesForScope(modules, groups, cohorts, programmes, {
@@ -980,11 +1031,22 @@ export default function CurriculumTeamsMeetingsPage() {
     }
   };
 
-  const openPeople = (row: MeetingRow) => {
+  /**
+   * Presenters and attendees are not typed in here: the presenter is this
+   * module's tutor and the attendees are the learners enrolment placed in its
+   * group, both read fresh so the invite list always matches who is actually
+   * assigned. Fetched before the drawer opens rather than patched in after, so
+   * a plain close right afterwards is never mistaken for an unsaved edit.
+   */
+  const openPeople = async (row: MeetingRow) => {
     setDrawerTarget(row);
+    const [presenters, attendees] = await Promise.all([
+      Promise.resolve(presentersFor(row)),
+      ensureLearnerEmails(row.catalogueId),
+    ]);
     peopleDrawer.openWith({
-      attendees: (row.summary?.attendees || []).join('\n'),
-      presenters: (row.summary?.presenters || []).join('\n'),
+      attendees: attendees.join('\n'),
+      presenters: presenters.join('\n'),
     });
   };
 
@@ -1050,7 +1112,7 @@ export default function CurriculumTeamsMeetingsPage() {
    * it is the create form, so this runs when that dialog opens — from a row
    * click or from a `?module=` link — rather than from a button of its own.
    */
-  const seedCreateForm = (row: MeetingRow) => {
+  const seedCreateForm = (row: MeetingRow, presenters: string[], attendees: string[]) => {
     setDrawerTarget(row);
     createDrawer.openWith({
       // The meeting is named after the module itself. The module's stored notes
@@ -1059,8 +1121,11 @@ export default function CurriculumTeamsMeetingsPage() {
       // catalogue ids), and those would end up in the calendar invitation.
       title: cleanText(row.module.name, row.name),
       organizerEmail: defaultOrganizer,
-      attendees: '',
-      presenters: '',
+      // The presenter is this module's own tutor and the attendees are the
+      // learners enrolment placed in its group — read fresh rather than typed
+      // in, so the invite list always matches who is actually assigned.
+      attendees: attendees.join('\n'),
+      presenters: presenters.join('\n'),
       details: '',
       durationMinutes: String(row.durationMinutes),
       lobbyBypass: 'invited',
@@ -1152,23 +1217,27 @@ export default function CurriculumTeamsMeetingsPage() {
   };
 
   // Opening the dialog for a module with no calendar opens the create form with
-  // it. Keyed on the module and the organizer the backend reports, so a link
-  // straight to `?module=` is seeded the same way a row click is — and typing in
-  // the form never re-seeds it.
+  // it. Keyed on the module, the organizer the backend reports, and the tutor /
+  // learner emails once they arrive, so a link straight to `?module=` is seeded
+  // the same way a row click is — and typing in the form never re-seeds it.
   const seededCreateRef = useRef('');
   useEffect(() => {
     if (!selected || selected.summary || !selected.sessions.length) {
       seededCreateRef.current = '';
       return;
     }
-    const key = `${selected.catalogueId}:${defaultOrganizer}`;
+    const presenters = presentersFor(selected);
+    const cachedAttendees = moduleLearnerEmails.get(normaliseKey(selected.catalogueId));
+    if (!cachedAttendees) void ensureLearnerEmails(selected.catalogueId);
+    const attendees = cachedAttendees || [];
+    const key = `${selected.catalogueId}:${defaultOrganizer}:${presenters.join(',')}:${attendees.join(',')}`;
     if (seededCreateRef.current === key) return;
     seededCreateRef.current = key;
-    seedCreateForm(selected);
+    seedCreateForm(selected, presenters, attendees);
     // seedCreateForm is re-created every render; the ref above is what keeps
     // this from running twice for the same module.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultOrganizer, selected]);
+  }, [defaultOrganizer, selected, moduleLearnerEmails]);
 
   // True while the discard dialog is up. Escape reaches both this dialog and
   // SweetAlert's own handler in the same event, so without the flag dismissing
@@ -1487,7 +1556,7 @@ export default function CurriculumTeamsMeetingsPage() {
                   )}
                   <button
                     type="button"
-                    onClick={() => { setSelectedId(''); openPeople(selected); }}
+                    onClick={() => { setSelectedId(''); void openPeople(selected); }}
                     disabled={Boolean(busy) || !graphConfigured}
                     title="Edit who is invited and who can present, without moving any dates."
                     className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-2.5 text-[11px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"

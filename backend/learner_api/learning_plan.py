@@ -2,21 +2,32 @@
 
 A learner's group already carries a module set (curriculum.groups.module_ids),
 so the plan starts as that preset rather than blank. Staff then tune it: drop a
-module the learner doesn't need, or add one taught to a *different group on the
-same programme*. Crossing programmes is rejected — a plan assembled from another
-programme's modules would not map to this learner's KSBs or funding.
+module the learner doesn't need, or add any module in the catalogue — including
+one belonging to another programme, chosen from the programme picker.
+
+Cross-programme modules used to be refused here, because a module from another
+programme maps to different KSBs and sits under different funding. That is still
+true, and it is why every module carries its programme through to the plan and
+the picker: the combination is now allowed but never hidden, so whoever assembles
+the plan can see when they have crossed a programme boundary.
 
 Hours come from curriculum.modules.total_otjh (off-the-job hours), summed for
 the plan total so staff can see the commitment while editing.
 
+Each row also shows the module's delivery window (curriculum.modules
+start_date/end_date), set where the module is scheduled in the curriculum tree.
+Read-only here, and re-derived on every read like the hours — the plan decides
+which modules are taught, not when. Empty for a module with no window yet.
+
 The saved plan lives on enrolment."Created_users"."Learning_plan" (jsonb), which
 also feeds the delivery-side training plan.
 
-    GET   /learner_api/learning-plan/<pk>/            -> {plan, preset, available, totals}
+    GET   /learner_api/learning-plan/<pk>/            -> {plan, preset, available, programmes, totals}
     PATCH /learner_api/learning-plan/<pk>/            -> save {modules:[...]}
 """
 import json
 import logging
+from datetime import date, datetime
 
 from django.db import DatabaseError, connection
 from django.http import JsonResponse
@@ -48,14 +59,42 @@ def _hours(value):
     return float(value) if value is not None else 0.0
 
 
+def _iso_day(value):
+    """A date column as YYYY-MM-DD; "" when the module has no window set.
+
+    The column is a real `date`, but psycopg hands back a datetime on some
+    drivers and the older rows were written as text — so anything date-like is
+    reduced to its first ten characters rather than assumed.
+    """
+    if value in (None, ""):
+        return ""
+    if isinstance(value, (date, datetime)):
+        return value.strftime("%Y-%m-%d")
+    return _s(value)[:10]
+
+
 def _module_payload(row):
     return {
         "moduleId": _s(row.get("module_catalogue_id")),
         "moduleTitle": _s(row.get("title")) or _s(row.get("module_catalogue_id")),
         "groupName": _s(row.get("group_name")),
+        "programmeId": _s(row.get("programme_id")),
         "programmeName": _s(row.get("programme_name")),
         "hours": _hours(row.get("total_otjh")),
+        # When this module is delivered, per the curriculum tree. Not editable
+        # from the plan — see the module header.
+        "startDate": _iso_day(row.get("start_date")),
+        "endDate": _iso_day(row.get("end_date")),
     }
+
+
+#: Modules of a deleted programme, and soft-deleted modules, are not offerable.
+_LIVE_MODULE_SQL = """
+    SELECT module_catalogue_id, title, group_name, programme_id, programme_name,
+           total_otjh, start_date, end_date
+    FROM curriculum.modules
+    WHERE deleted_at IS NULL AND NOT is_programme_deleted
+"""
 
 
 def _programme_modules(programme):
@@ -65,14 +104,43 @@ def _programme_modules(programme):
     return [
         _module_payload(r)
         for r in _rows(
-            """
-            SELECT module_catalogue_id, title, group_name, programme_name, total_otjh
-            FROM curriculum.modules
-            WHERE programme_name = %s OR programme_id = %s
+            _LIVE_MODULE_SQL + """
+              AND (programme_name = %s OR programme_id = %s)
             ORDER BY group_name, title
             """,
             [programme, programme],
         )
+    ]
+
+
+def _all_modules():
+    """The whole catalogue, every programme.
+
+    The picker offers all of it, so the plan is validated against all of it too
+    — a module the client could choose has to be a module the server accepts.
+    """
+    return [
+        _module_payload(r)
+        for r in _rows(_LIVE_MODULE_SQL + " ORDER BY programme_name, group_name, title", [])
+    ]
+
+
+def _programmes(modules):
+    """The programmes to choose between, each with how many modules it offers.
+
+    Derived from the catalogue rather than queried separately, so the picker can
+    never list a programme whose modules it would then fail to show.
+    """
+    counts, names = {}, {}
+    for module in modules:
+        key = module["programmeId"] or module["programmeName"]
+        if not key:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+        names.setdefault(key, module["programmeName"] or key)
+    return [
+        {"programmeId": key, "programmeName": names[key], "moduleCount": counts[key]}
+        for key in sorted(counts, key=lambda k: names[k].lower())
     ]
 
 
@@ -126,6 +194,9 @@ def _orphan_module(entry):
         "groupName": _s(entry.get("groupName")),
         "programmeName": _s(entry.get("programmeName")),
         "hours": float(entry.get("hours") or 0),
+        # The saved snapshot is the only window left for a module that is gone.
+        "startDate": _iso_day(entry.get("startDate")),
+        "endDate": _iso_day(entry.get("endDate")),
         "orphaned": True,
     }
 
@@ -163,19 +234,27 @@ def _serialize(learner):
         plan = preset
 
     chosen = {_s(m.get("moduleId")) for m in plan}
+    everything = _all_modules()
+    learner_programme_id = next(
+        (m["programmeId"] for m in catalogue if m["programmeId"]), "",
+    )
     return {
         "learner": {
             "id": str(learner.id),
             "name": _s(learner.username),
             "programme": programme,
+            "programmeId": learner_programme_id,
             "cohort": _s(learner.cohort),
             "group": group,
             "programmeStatus": _s(learner.programme_status),
         },
         "plan": plan,
         "preset": preset,
-        # Same programme, not already on the plan — the add-a-module picker.
-        "available": [m for m in catalogue if m["moduleId"] not in chosen],
+        # Anything in the catalogue not already on the plan, whichever programme
+        # it belongs to. The picker defaults to the learner's own programme and
+        # the rest are a dropdown away.
+        "available": [m for m in everything if m["moduleId"] not in chosen],
+        "programmes": _programmes(everything),
         "saved": bool(saved),
         "totals": _totals(plan),
     }
@@ -216,13 +295,15 @@ def learning_plan(request, pk):
 
     programme = _s(learner.programme)
     try:
-        catalogue = {m["moduleId"]: m for m in _programme_modules(programme)}
+        catalogue = {m["moduleId"]: m for m in _all_modules()}
     except DatabaseError as exc:
         logger.exception("learning_plan: catalogue lookup failed")
         return _error(f"Database error: {exc}", 502)
 
     # Rebuild each entry from the catalogue rather than trusting the client's
-    # titles/hours, and reject anything outside this learner's programme.
+    # titles/hours/dates/programme, and reject anything that is not a live
+    # module. A module from another programme is allowed — it is recorded with
+    # its own programme, so the plan says plainly where each module came from.
     resolved, seen = [], set()
     for entry in modules:
         module_id = _s(entry.get("moduleId") if isinstance(entry, dict) else entry)
@@ -231,10 +312,7 @@ def learning_plan(request, pk):
         if module_id in seen:
             continue
         if module_id not in catalogue:
-            return _error(
-                f"Module '{module_id}' is not on the {programme or 'learner'} programme.",
-                400,
-            )
+            return _error(f"Module '{module_id}' is not in the module catalogue.", 400)
         seen.add(module_id)
         resolved.append(catalogue[module_id])
 

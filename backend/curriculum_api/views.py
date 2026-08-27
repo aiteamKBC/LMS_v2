@@ -1,6 +1,7 @@
 import contextlib
 import functools
 import hashlib
+import inspect
 import json
 import logging
 import calendar
@@ -100,7 +101,16 @@ def invalidate_curriculum_cache():
         cache.incr(_CURRICULUM_SHARED_EPOCH_KEY)
     except Exception:
         logger.warning('Unable to invalidate shared curriculum cache.', exc_info=True)
-    _TABLE_EXISTS_CACHE.clear()
+    # Only the negative answers are dropped. Whether a table exists changes on
+    # DDL, never on a curriculum write, and the ensure_* helpers only ever add
+    # tables -- so a cached True is still true, while a cached False may have
+    # been provisioned since and has to be asked again. Clearing the lot cost
+    # ~8 information_schema round trips on the rebuild straight after every
+    # write (~1-2s against a remote database) to re-learn a schema that had not
+    # moved. Tests that roll the schema away call reset_schema_ready_flags(),
+    # which still clears this outright.
+    for key in [key for key, exists in _TABLE_EXISTS_CACHE.items() if not exists]:
+        _TABLE_EXISTS_CACHE.pop(key, None)
 
 
 # Whole-table reads memoised for the duration of one payload build. build_programmes()
@@ -114,21 +124,31 @@ _CURRICULUM_READ_SCOPE = threading.local()
 
 
 @contextlib.contextmanager
-def curriculum_read_scope():
+def curriculum_read_scope(targeted_child_reads=False):
     """Deduplicate repeated whole-table curriculum reads inside one build.
 
     Reentrant: a nested ``with`` reuses the outermost scope, which owns the
     lifetime, so a payload build called from inside another one still sees a
     single set of reads.
+
+    ``targeted_child_reads`` is for a build that answers about one scope rather
+    than looping over every programme. It keeps weeks/components/mappings on the
+    ``module_catalogue_id in (...)`` query instead of the shared full read that
+    only pays off across many programmes — see authoring_child_rows_for_modules.
+    Dedup of the parent tables (modules, programmes, cohorts, groups) is
+    unaffected, and both read paths are memoised, so nothing is read twice
+    either way. Set on the outermost scope; a nested one inherits it.
     """
     if getattr(_CURRICULUM_READ_SCOPE, 'memo', None) is not None:
         yield
         return
     _CURRICULUM_READ_SCOPE.memo = {}
+    _CURRICULUM_READ_SCOPE.targeted_child_reads = bool(targeted_child_reads)
     try:
         yield
     finally:
         _CURRICULUM_READ_SCOPE.memo = None
+        _CURRICULUM_READ_SCOPE.targeted_child_reads = False
 
 
 def _scope_memo_key(value):
@@ -149,20 +169,28 @@ def scoped_curriculum_read(fn):
     write paths or for callers that have not opted in. An argument that cannot
     be reduced to a hashable key also passes straight through rather than
     failing the request.
+
+    Arguments are bound to the signature before keying, so a caller that spells
+    out a default (``ensure_tables=True``) shares the memo with one that leaves
+    it off. Without that, two reads of curriculum.modules that differ only in
+    how they were written cost two round trips.
     """
+    signature = inspect.signature(fn)
+
     @functools.wraps(fn)
     def wrapped(*args, **kwargs):
         memo = getattr(_CURRICULUM_READ_SCOPE, 'memo', None)
         if memo is None:
             return fn(*args, **kwargs)
         try:
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
             key = (
                 fn.__qualname__,
-                _scope_memo_key(args),
-                _scope_memo_key(tuple(sorted(kwargs.items()))),
+                _scope_memo_key(tuple(bound.arguments.items())),
             )
             hash(key)
-        except TypeError:
+        except (TypeError, ValueError):
             return fn(*args, **kwargs)
         if key not in memo:
             memo[key] = fn(*args, **kwargs)
@@ -185,18 +213,30 @@ def shared_curriculum_cache_key(key, epoch):
     return f'curriculum:v{epoch}:{digest}'
 
 
-def cached_curriculum_value(key, factory):
+def cached_curriculum_value(key, factory, force=False):
+    """The cached payload for ``key``, rebuilding it when it is not there.
+
+    ``force`` skips both cache layers and rebuilds from the database, then stores
+    the result the same way a normal miss does. It is for a caller that has just
+    written and is asking for the state it wrote: the invalidation on the write
+    path only reaches the process that handled it, and the shared epoch it bumps
+    lives in Django's cache -- which is per-process LocMemCache unless a Redis
+    ``CACHE_URL`` is configured. Under more than one worker that left every other
+    worker serving its own pre-write payload for the rest of the TTL, which is a
+    new group or programme that does not appear until the page is reloaded enough
+    times to land on the worker that took the write.
+    """
     now = datetime.now().timestamp()
     shared_epoch = shared_curriculum_epoch()
     with _CURRICULUM_CACHE_LOCK:
         entry = _CURRICULUM_CACHE.get(key)
-        if entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:
+        if not force and entry and entry['expires_at'] > now and entry.get('shared_epoch') == shared_epoch:
             return entry['value']
         epoch = _CURRICULUM_CACHE_EPOCH
 
     shared_key = shared_curriculum_cache_key(key, shared_epoch)
     try:
-        shared_value = cache.get(shared_key)
+        shared_value = None if force else cache.get(shared_key)
     except Exception:
         logger.warning('Unable to read shared curriculum payload cache.', exc_info=True)
         shared_value = None
@@ -5129,6 +5169,7 @@ def get_ksb_profile_rows():
     ''')
 
 
+@scoped_curriculum_read
 def get_skills_england_ksb_rows():
     if not table_exists('standard_ksbs'):
         return []
@@ -6085,6 +6126,7 @@ def detail_is_archived(detail):
     return clean_str((detail or {}).get('status')).lower() == 'archived'
 
 
+@scoped_curriculum_read
 def active_learner_programme_counts():
     """Count learners per programme from the canonical learner table.
 
@@ -6265,6 +6307,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
     return result
 
 
+@scoped_curriculum_read
 def active_learner_delivery_counts():
     """Count live learners by their programme/cohort/group delivery labels.
 
@@ -8886,13 +8929,25 @@ def curriculum_overview(request):
     def build_overview():
         return build_curriculum_payload(visibility, compact=compact)
 
-    return JsonResponse(cached_curriculum_value(cache_key, build_overview))
+    # A client that asks for fresh data gets it. Every Curriculum Studio screen
+    # reloads with `skipCache` straight after a save, which sends Cache-Control:
+    # no-cache -- and that reload is exactly the one that must not be answered
+    # out of a payload cache built before the write.
+    return JsonResponse(cached_curriculum_value(
+        cache_key,
+        build_overview,
+        force=request_bypasses_curriculum_cache(request),
+    ))
 
 
 def get_cached_payload(request, compact=False):
     visibility = curriculum_visibility(request)
     cache_key = f'overview:{visibility}:{"compact" if compact else "full"}'
-    return cached_curriculum_value(cache_key, lambda: build_curriculum_payload(visibility, compact=compact))
+    return cached_curriculum_value(
+        cache_key,
+        lambda: build_curriculum_payload(visibility, compact=compact),
+        force=request_bypasses_curriculum_cache(request),
+    )
 
 
 def find_programme(payload, identifier):
@@ -9153,6 +9208,18 @@ AUTHORING_COMPONENTS_TABLE = 'components'
 AUTHORING_KSB_MAPPINGS_TABLE = 'ksb_mappings'
 AUTHORING_COMPLETION_TABLE = 'module_completion_criteria'
 AUTHORING_ADVANCED_TABLE = 'module_details'
+
+# The reflection question an author writes for a component has its own column on
+# ``curriculum.components``. It was created as a quoted mixed-case identifier, so
+# it has to be spelled exactly this way everywhere: Postgres folds an unquoted
+# ``Reflection_Question`` to lower case and would then miss the column entirely.
+REFLECTION_QUESTION_COLUMN = 'Reflection_Question'
+# Where the same text lived before the column existed. Still written on save, so
+# the learner-side readers that look it up in settings keep working unchanged.
+LEGACY_REFLECTION_QUESTION_SETTING = 'reflectionPrompt'
+# The week-template copy of the column. That table is created by this module, so
+# it follows the snake_case convention the rest of the schema uses.
+WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN = 'reflection_question'
 
 
 def canonical_authoring_id(prefix, value=''):
@@ -9523,6 +9590,7 @@ def provision_module_authoring_tables():
                 expected_otjh numeric(8,2) not null default 2,
                 points integer not null default 0,
                 reflection_required boolean not null default false,
+                "Reflection_Question" text,
                 workplace_evidence_required boolean not null default false,
                 tutor_validation_required boolean not null default false,
                 display_order integer not null default 0,
@@ -9537,6 +9605,10 @@ def provision_module_authoring_tables():
             cursor.execute(f'''
                 alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
                 add column if not exists reflection_required boolean not null default false
+            ''')
+            cursor.execute(f'''
+                alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
+                add column if not exists "Reflection_Question" text
             ''')
             cursor.execute(f'''
                 alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)}
@@ -9572,6 +9644,8 @@ def provision_module_authoring_tables():
             columns = {row[1] for row in cursor.fetchall()}
             if 'reflection_required' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column reflection_required boolean not null default false')
+            if REFLECTION_QUESTION_COLUMN not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column {quote_ident(REFLECTION_QUESTION_COLUMN)} text')
             if 'workplace_evidence_required' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_COMPONENTS_TABLE)} add column workplace_evidence_required boolean not null default false')
             if 'tutor_validation_required' not in columns:
@@ -10893,7 +10967,6 @@ COMPONENT_SETTINGS_SCHEMA = {
         'source': 'MIS allocation',
         'recordingUrl': '',
         'expectedAvailability': 'After live session',
-        'captionsExpected': False,
     },
     'video': {
         **BASE_COMPONENT_SETTINGS,
@@ -10903,8 +10976,6 @@ COMPONENT_SETTINGS_SCHEMA = {
         'embedCode': '',
         'durationMinutes': 10,
         'requiredProgressPercentage': 0,
-        'lessonPreview': False,
-        'captionsAvailable': False,
         'shortDescription': '',
         'learningBrief': '',
         'lessonContent': '',
@@ -11138,8 +11209,8 @@ def validate_component_authoring_payload(component, path):
         errors.append({'path': f'{path}.settings.contentStatus', 'message': 'Status must be Draft, Ready for QA, Needs changes, or Approved.'})
     if not re.match(r'^\d+(?:\.\d+){0,2}$', version):
         errors.append({'path': f'{path}.settings.version', 'message': 'Version must use numbers such as 0.1 or 1.2.0.'})
-    if bool_payload(component.get('reflectionRequired')) and not clean_str(settings.get('reflectionPrompt')):
-        errors.append({'path': f'{path}.settings.reflectionPrompt', 'message': 'Reflection prompt is required when reflection is enabled.'})
+    if bool_payload(component.get('reflectionRequired')) and not payload_reflection_question(component, settings):
+        errors.append({'path': f'{path}.reflectionQuestion', 'message': 'A reflection question is required when reflection is enabled.'})
     for key in settings.keys():
         if key not in allowed:
             errors.append({'path': f'{path}.settings.{key}', 'message': f'Unsupported setting "{key}" for {component_type}.'})
@@ -11656,6 +11727,38 @@ def component_builder_settings(row):
     return settings
 
 
+def component_reflection_question(row, settings=None):
+    """The reflection question stored against a component row.
+
+    The column is the source of truth. Rows written before it existed kept the
+    same text under ``settings_json.reflectionPrompt``, so that is the fallback
+    - and a narrowed read that skipped ``settings_json`` simply falls back to
+    nothing rather than reporting the question as cleared.
+    """
+    stored = clean_str(row.get(REFLECTION_QUESTION_COLUMN))
+    if stored:
+        return stored
+    if settings is None:
+        settings = component_builder_settings(row)
+    settings = settings if isinstance(settings, dict) else {}
+    return clean_str(settings.get(LEGACY_REFLECTION_QUESTION_SETTING))
+
+
+def payload_reflection_question(component, settings=None):
+    """The reflection question a component payload is asking us to store.
+
+    ``reflectionQuestion`` is what the builders send, and an explicit empty
+    string there clears the question. A payload that names neither spelling is
+    older than the field, so its legacy ``settings.reflectionPrompt`` stands in.
+    """
+    if 'reflectionQuestion' in component or 'reflection_question' in component:
+        return clean_str(component.get('reflectionQuestion') or component.get('reflection_question'))
+    if settings is None:
+        settings = component.get('settings')
+    settings = settings if isinstance(settings, dict) else {}
+    return clean_str(settings.get(LEGACY_REFLECTION_QUESTION_SETTING))
+
+
 def component_week_label(row):
     week_number = parse_int(row.get('week_number'), 0)
     return f'Week {week_number}' if week_number else (row.get('title') or 'Week 1')
@@ -11763,6 +11866,7 @@ def component_builder_response(row, module_by_id=None, week_by_id=None, mappings
         'deletedAt': row.get('deleted_at'),
         'deletedViaParent': row.get('deleted_via_parent') or '',
         'reflectionRequired': bool_payload(row.get('reflection_required')),
+        'reflectionQuestion': component_reflection_question(row, settings),
         'workplaceEvidenceRequired': bool_payload(row.get('workplace_evidence_required')),
         'tutorValidationRequired': bool_payload(row.get('tutor_validation_required')),
         'ksbRefs': ksb_refs,
@@ -12089,11 +12193,19 @@ def save_component_builder_payload(payload, component_id=None):
     if component_rows:
         existing_settings = component_builder_settings(component_rows[0])
     incoming_settings = payload.get('settings') if isinstance(payload.get('settings'), dict) else {}
+    # The question has its own column now. The legacy settings key is kept in
+    # step with it so the learner-side readers that still look there agree with
+    # the column instead of serving whatever text they were last saved with.
+    reflection_question = payload_reflection_question(
+        payload,
+        {**component_builder_settings(existing_row), **incoming_settings},
+    )
     settings = {
         **component_builder_settings(existing_row),
         **payload_settings,
         **existing_settings,
         **incoming_settings,
+        LEGACY_REFLECTION_QUESTION_SETTING: reflection_question,
         'displayType': payload.get('type') or 'Self-study',
         'componentBuilderStatus': clean_str(payload.get('status') or 'draft').lower(),
         'durationMinutes': duration_minutes,
@@ -12156,6 +12268,7 @@ def save_component_builder_payload(payload, component_id=None):
             'points': parse_int(payload.get('points'), 0),
             'ksb_mappings': json_db_value(component_ksb_items),
             'reflection_required': reflection_required,
+            REFLECTION_QUESTION_COLUMN: reflection_question,
             'workplace_evidence_required': workplace_evidence_required,
             'tutor_validation_required': tutor_validation_required,
             'display_order': display_order,
@@ -12709,6 +12822,7 @@ def get_authoring_structure_payload(module_catalogue_id):
             'expectedOtjh': float(row.get('expected_otjh') or 0),
             'points': parse_int(row.get('points'), 0),
             'reflectionRequired': bool(row.get('reflection_required')),
+            'reflectionQuestion': component_reflection_question(row),
             'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
             'tutorValidationRequired': bool(row.get('tutor_validation_required')),
             'ksbMappings': component_mappings,
@@ -12907,6 +13021,7 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'expectedOtjh': float(row.get('expected_otjh') or 0),
             'points': parse_int(row.get('points'), 0),
             'reflectionRequired': bool(row.get('reflection_required')),
+            'reflectionQuestion': component_reflection_question(row),
             'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
             'tutorValidationRequired': bool(row.get('tutor_validation_required')),
             'ksbMappings': component_mappings,
@@ -12999,7 +13114,8 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
 CATALOGUE_SUMMARY_COMPONENT_COLUMNS = (
     'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'description',
     'expected_otjh', 'points', 'display_order',
-    'reflection_required', 'workplace_evidence_required', 'tutor_validation_required',
+    'reflection_required', REFLECTION_QUESTION_COLUMN,
+    'workplace_evidence_required', 'tutor_validation_required',
     'deleted_at', 'is_programme_deleted', 'library_state',
 )
 
@@ -13038,8 +13154,10 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
         ]
 
     summaries = {}
+    module_rows_by_catalogue_id = {}
     for row in module_rows:
         catalogue_id = str(row.get('module_catalogue_id'))
+        module_rows_by_catalogue_id[catalogue_id] = row
         group_row = group_rows_by_id.get(clean_str(row.get('group_id')), {})
         group_coach_name = clean_str(group_row.get('coach_name'))
         is_programme_deleted = programme_deleted_row(row) or programme_deleted_row(group_row)
@@ -13065,8 +13183,13 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
             'qualityScore': parse_int(row.get('quality_score'), 0),
             'isProgrammeDeleted': is_programme_deleted,
             'lastUpdated': format_date(row.get('updated_at')),
-            'weeks': module_stored_week_count(row),
-            'weeksNumber': module_stored_week_count(row),
+            # Seeded at zero because the week loop below counts up as it appends,
+            # and uses the running total as the week-number/display-order fallback.
+            # The stored count is applied once, after the loop -- seeding it here
+            # made the list serve `weeks_number` PLUS the authored week rows, so a
+            # 14-week module read back as 28 in the catalogue and in the drawer.
+            'weeks': 0,
+            'weeksNumber': 0,
             'weekStructure': [],
             'ksbCount': 0,
             'lessonCount': 0,
@@ -13117,6 +13240,7 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
                 'expectedOtjh': float(row.get('expected_otjh') or 0),
                 'points': parse_int(row.get('points'), 0),
                 'reflectionRequired': bool(row.get('reflection_required')),
+                'reflectionQuestion': component_reflection_question(row),
                 'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
                 'tutorValidationRequired': bool(row.get('tutor_validation_required')),
                 'ksbMappings': [],
@@ -13131,9 +13255,20 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
         if summary and code:
             summary['ksbCodes'].add(code)
 
-    for summary in summaries.values():
+    for catalogue_id, summary in summaries.items():
         summary['ksbCount'] = len(summary['ksbCodes'])
         summary['ksbCodes'] = sorted(summary['ksbCodes'])
+        # The authored week count the module actually holds, resolved the same way
+        # the structure endpoint resolves it: the stored `weeks_number` wins, and
+        # rows written before that column existed fall back to the weeks that were
+        # counted above. The two reads have to agree -- the catalogue card and the
+        # placement drawer read this one, the Module Builder rail reads the other.
+        authored_week_count = module_stored_week_count(
+            module_rows_by_catalogue_id.get(catalogue_id, {}),
+            len(summary.get('weekStructure') or []),
+        )
+        summary['weeks'] = authored_week_count
+        summary['weeksNumber'] = authored_week_count
 
     # The tutor is already on the module row. The coach belongs to the group, so
     # it is read from the group rather than from the person: staff carry no
@@ -14043,6 +14178,10 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             for component_index, component in enumerate(week.get('components') or []):
                 component_id = canonical_authoring_id('COMP', component.get('id'))
                 component_settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+                # Column first, legacy settings key kept in step with it - see
+                # payload_reflection_question().
+                component_reflection = payload_reflection_question(component, component_settings)
+                component_settings = {**component_settings, LEGACY_REFLECTION_QUESTION_SETTING: component_reflection}
                 component_ksb_items, component_mapping_payloads = normalise_component_ksb_mappings(
                     module_catalogue_id,
                     component.get('ksbMappings') or [],
@@ -14063,6 +14202,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                     'points': parse_int(component.get('points'), 0),
                     'ksb_mappings': json_db_value(component_ksb_items),
                     'reflection_required': bool_payload(component.get('reflectionRequired')),
+                    REFLECTION_QUESTION_COLUMN: component_reflection,
                     'workplace_evidence_required': False,
                     'tutor_validation_required': bool_payload(component.get('tutorValidationRequired')),
                     'display_order': component_index,
@@ -14433,11 +14573,213 @@ def save_free_programme_modules(programme_id, payload):
     return get_free_programme_modules_payload(programme_id)
 
 
+def _quiz_reference_id(value):
+    """Return a curriculum quiz id without accepting arbitrary component ids."""
+    try:
+        quiz_id = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return quiz_id if quiz_id > 0 else None
+
+
+def archive_module_child_quizzes(module_catalogue_id, *, include_deleted_children=False, apply=True):
+    """Move quizzes owned only by this module into the Quiz Archive.
+
+    A quiz can be attached through the Module Builder's ``linkedQuizId``, the
+    normalised module/course link table, or the older component link table.  A
+    shared quiz is not a child of one module, so an active reference from another
+    module (or a week template) keeps it live.  Attempts, questions and links are
+    deliberately preserved: ``trash`` is the Quiz Workspace's recoverable archive
+    state, not a hard delete.
+    """
+    module_catalogue_id = clean_str(module_catalogue_id)
+    if not module_catalogue_id or not table_exists('quizzes'):
+        return []
+
+    component_active_sql = ''
+    if not include_deleted_children and has_column(AUTHORING_COMPONENTS_TABLE, 'deleted_at'):
+        component_active_sql = ' and deleted_at is null'
+    module_components = authoring_fetch_all(
+        AUTHORING_COMPONENTS_TABLE,
+        f'module_catalogue_id = %s{component_active_sql}',
+        [module_catalogue_id],
+    )
+    component_ids = [clean_str(row.get('id')) for row in module_components if clean_str(row.get('id'))]
+    candidate_ids = set()
+    for component in module_components:
+        settings = parse_json_value(component.get('settings_json'), {})
+        quiz_id = _quiz_reference_id(settings.get('linkedQuizId') if isinstance(settings, dict) else None)
+        if quiz_id:
+            candidate_ids.add(quiz_id)
+
+    if table_exists('quiz_course_links'):
+        course_rows = fetch_all(
+            f'select quiz_id from {table_name("quiz_course_links")} where module_catalogue_id = %s',
+            [module_catalogue_id],
+        )
+        candidate_ids.update(
+            quiz_id for quiz_id in (_quiz_reference_id(row.get('quiz_id')) for row in course_rows) if quiz_id
+        )
+
+    if component_ids and table_exists('quiz_component_links'):
+        placeholders = ', '.join(['%s'] * len(component_ids))
+        component_link_rows = fetch_all(
+            f'select quiz_id from {table_name("quiz_component_links")} where component_id in ({placeholders})',
+            component_ids,
+        )
+        candidate_ids.update(
+            quiz_id for quiz_id in (_quiz_reference_id(row.get('quiz_id')) for row in component_link_rows) if quiz_id
+        )
+
+    # Legacy quizzes may carry only the module's week id/name metadata.
+    week_active_sql = ''
+    if not include_deleted_children and has_column(AUTHORING_WEEKS_TABLE, 'deleted_at'):
+        week_active_sql = ' and deleted_at is null'
+    module_weeks = authoring_fetch_all(
+        AUTHORING_WEEKS_TABLE,
+        f'module_catalogue_id = %s{week_active_sql}',
+        [module_catalogue_id],
+    )
+    week_ids = [clean_str(row.get('id')) for row in module_weeks if clean_str(row.get('id'))]
+    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+    module_row = module_rows[0] if module_rows else {}
+    legacy_clauses = []
+    legacy_params = []
+    if week_ids:
+        placeholders = ', '.join(['%s'] * len(week_ids))
+        legacy_clauses.append(f'week_id in ({placeholders})')
+        legacy_params.extend(week_ids)
+    module_title = clean_str(module_row.get('title'))
+    if module_title:
+        programme_id = clean_str(module_row.get('programme_id'))
+        programme_name = clean_str(module_row.get('programme_name'))
+        scope = []
+        scope_params = []
+        if programme_id:
+            scope.extend(['lower(coalesce(programme_id, \'\')) = lower(%s)', 'lower(coalesce(programme, \'\')) = lower(%s)'])
+            scope_params.extend([programme_id, programme_id])
+        if programme_name:
+            scope.extend(['lower(coalesce(programme, \'\')) = lower(%s)', 'lower(coalesce(programme_id, \'\')) = lower(%s)'])
+            scope_params.extend([programme_name, programme_name])
+        legacy_clauses.append(
+            '(lower(coalesce(module, \'\')) = lower(%s)'
+            + (f' and ({" or ".join(scope)})' if scope else '')
+            + ')'
+        )
+        legacy_params.append(module_title)
+        legacy_params.extend(scope_params)
+    if legacy_clauses:
+        legacy_rows = fetch_all(
+            f'select id from {table_name("quizzes")} where (' + ' or '.join(legacy_clauses) + ')',
+            legacy_params,
+        )
+        candidate_ids.update(
+            quiz_id for quiz_id in (_quiz_reference_id(row.get('id')) for row in legacy_rows) if quiz_id
+        )
+
+    if not candidate_ids:
+        return []
+
+    # Do not report/archive quizzes that are already in the Quiz Archive.
+    placeholders = ', '.join(['%s'] * len(candidate_ids))
+    current_quizzes = fetch_all(
+        f'select id, status from {table_name("quizzes")} where id in ({placeholders})',
+        sorted(candidate_ids),
+    )
+    candidate_ids = {
+        quiz_id
+        for row in current_quizzes
+        for quiz_id in [_quiz_reference_id(row.get('id'))]
+        if quiz_id and clean_str(row.get('status')).lower() != 'trash'
+    }
+    if not candidate_ids:
+        return []
+
+    # Preserve quizzes that still have an active owner outside this module.
+    shared_ids = set()
+    placeholders = ', '.join(['%s'] * len(candidate_ids))
+    candidate_params = sorted(candidate_ids)
+    if table_exists('quiz_course_links'):
+        other_links = fetch_all(
+            f'select quiz_id, module_catalogue_id from {table_name("quiz_course_links")} '
+            f'where quiz_id in ({placeholders}) and module_catalogue_id <> %s',
+            [*candidate_params, module_catalogue_id],
+        )
+        other_module_ids = {clean_str(row.get('module_catalogue_id')) for row in other_links if clean_str(row.get('module_catalogue_id'))}
+        active_other_ids = set()
+        if other_module_ids:
+            other_placeholders = ', '.join(['%s'] * len(other_module_ids))
+            other_modules = authoring_fetch_all(
+                AUTHORING_MODULES_TABLE,
+                f'module_catalogue_id in ({other_placeholders})',
+                sorted(other_module_ids),
+            )
+            active_other_ids = {
+                clean_str(row.get('module_catalogue_id'))
+                for row in other_modules
+                if not curriculum_row_effectively_deleted(row)
+            }
+        shared_ids.update(
+            quiz_id
+            for row in other_links
+            if clean_str(row.get('module_catalogue_id')) in active_other_ids
+            for quiz_id in [_quiz_reference_id(row.get('quiz_id'))]
+            if quiz_id
+        )
+
+    other_components = authoring_fetch_all(
+        AUTHORING_COMPONENTS_TABLE,
+        f'module_catalogue_id <> %s{component_active_sql}',
+        [module_catalogue_id],
+    )
+    active_other_component_ids = []
+    for component in other_components:
+        settings = parse_json_value(component.get('settings_json'), {})
+        quiz_id = _quiz_reference_id(settings.get('linkedQuizId') if isinstance(settings, dict) else None)
+        if quiz_id in candidate_ids:
+            shared_ids.add(quiz_id)
+        component_id = clean_str(component.get('id'))
+        if component_id:
+            active_other_component_ids.append(component_id)
+    if active_other_component_ids and table_exists('quiz_component_links'):
+        other_placeholders = ', '.join(['%s'] * len(active_other_component_ids))
+        other_component_links = fetch_all(
+            f'select quiz_id from {table_name("quiz_component_links")} '
+            f'where component_id in ({other_placeholders}) and quiz_id in ({placeholders})',
+            [*active_other_component_ids, *candidate_params],
+        )
+        shared_ids.update(
+            quiz_id for quiz_id in (_quiz_reference_id(row.get('quiz_id')) for row in other_component_links) if quiz_id
+        )
+
+    # A Week Builder template is another active owner and must not be broken.
+    if table_exists('week_template_components') and has_column('week_template_components', 'settings_json'):
+        template_rows = fetch_all(f'select settings_json from {table_name("week_template_components")}')
+        for row in template_rows:
+            settings = parse_json_value(row.get('settings_json'), {})
+            quiz_id = _quiz_reference_id(settings.get('linkedQuizId') if isinstance(settings, dict) else None)
+            if quiz_id in candidate_ids:
+                shared_ids.add(quiz_id)
+
+    archive_ids = sorted(candidate_ids - shared_ids)
+    if not archive_ids or not apply:
+        return archive_ids
+    placeholders = ', '.join(['%s'] * len(archive_ids))
+    update_rows(
+        'quizzes',
+        f'id in ({placeholders}) and lower(coalesce(status, \'\')) <> \'trash\'',
+        archive_ids,
+        {'status': 'trash', 'updated_at': datetime.utcnow()},
+    )
+    return archive_ids
+
+
 def delete_module_authoring_structure(module_catalogue_id):
     module_catalogue_id = clean_str(module_catalogue_id)
     ensure_module_authoring_tables()
     existing = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     with transaction.atomic():
+        archive_module_child_quizzes(module_catalogue_id)
         authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')
         authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')
         authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], via_parent=module_catalogue_id, deleted_by='module-delete')
@@ -16398,7 +16740,7 @@ def curriculum_week_component_upload(request, component_id):
 
     component_type = frontend_component_type(request.POST.get('componentType') or request.POST.get('type')) or 'reading'
     if component_type not in COMPONENT_UPLOAD_EXTENSIONS:
-        return json_error('Uploads are only supported for reading components.', status=400)
+        return json_error('Uploads are only supported for reading, podcast, PowerPoint and assignment components.', status=400)
 
     # Week template components live in their own table (not the module builder's
     # `components` table), and are saved wholesale on the next Save rather than
@@ -16601,11 +16943,17 @@ def authoring_child_rows_for_modules(table, module_ids, *, columns=None, exclude
     ``exclude_columns`` for that table. With settings_json excluded, one shared
     ~16 s read beats a targeted ~17 s read per programme, so the memo earns its
     keep again.
+
+    A scope opened with ``targeted_child_reads`` asks about one scope rather than
+    every programme, so the union is not the whole table and the targeted query
+    stays the cheaper read. The scoped memo still applies to it: an identical
+    module-id set is read once.
     """
     wanted = {clean_str(value) for value in module_ids if clean_str(value)}
     if not wanted:
         return []
-    if getattr(_CURRICULUM_READ_SCOPE, 'memo', None) is None:
+    scoped = getattr(_CURRICULUM_READ_SCOPE, 'memo', None) is not None
+    if not scoped or getattr(_CURRICULUM_READ_SCOPE, 'targeted_child_reads', False):
         ids = sorted(wanted)
         placeholders = ', '.join(['%s'] * len(ids))
         return authoring_fetch_all(
@@ -16959,6 +17307,7 @@ def learner_schema_table_exists(table):
         return False
 
 
+@scoped_curriculum_read
 def learner_schema_columns(table):
     if connection.vendor != 'postgresql':
         return set()
@@ -17304,12 +17653,24 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
                        max(p.expected_otjh) as progress_expected_otjh,
                        max(c.expected_otjh) as component_expected_otjh,
                        coalesce(max(nullif(c.title, '')), max(nullif(p.component_title, '')), '') as resolved_component_title,
+                       -- The progress row's module_title is a label written when
+                       -- the learner completed the activity, so a renamed module
+                       -- reads stale and a deleted one reads as though it were
+                       -- still in the catalogue. Resolve both live and say which.
+                       coalesce(max(nullif(m.title, '')), '') as live_module_title,
+                       coalesce(max(nullif(w.title, '')), '') as live_week_title,
+                       max(m.module_catalogue_id) as live_module_catalogue_id,
+                       bool_or(m.module_catalogue_id is not null) as module_found,
+                       bool_or(m.deleted_at is not null or coalesce(m.is_programme_deleted, false)) as module_deleted,
                        k.ksb_code,
                        coalesce(max(k.weight), 0) as weight,
                        coalesce(max(nullif(k.weight_class, '')), 'soft') as weight_class
                 from "Learner"."learner_progress_entries" p
                 join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
                 left join curriculum.components c on c.id = p.component_ref
+                left join curriculum.weeks w on w.id = c.week_id
+                left join curriculum.modules m
+                       on m.module_catalogue_id = coalesce(c.module_catalogue_id, w.module_catalogue_id)
                 where p.learner_id = any(%s)
                 group by p.learner_id, p.id, p.kind, p.component_ref,
                          p.component_title, p.component_type, p.quiz_ref,
@@ -17355,6 +17716,17 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
             planned_otjh, planned_otjh_source = component_expected, 'curriculum_component'
         else:
             planned_otjh, planned_otjh_source = None, 'not_returned'
+        # 'deleted' and 'unknown' are different answers to "why can't I find this
+        # module?": the first means it was removed from the catalogue, the second
+        # that the component itself no longer resolves to one. Both used to be
+        # indistinguishable from a live module that simply sits elsewhere.
+        live_module_title = clean_str(row.get('live_module_title'))
+        if row.get('module_deleted'):
+            module_status = 'deleted'
+        elif row.get('module_found'):
+            module_status = 'live'
+        else:
+            module_status = 'unknown'
         payload = {
             'source': 'progress',
             'learnerId': row.get('learner_id'),
@@ -17364,8 +17736,10 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
             'componentTitle': row.get('resolved_component_title') or row.get('component_title') or '',
             'componentType': row.get('component_type') or '',
             'quizId': row.get('quiz_ref') or '',
-            'module': row.get('module_title') or '',
-            'week': row.get('week_title') or '',
+            'module': live_module_title or clean_str(row.get('module_title')),
+            'moduleCatalogueId': clean_str(row.get('live_module_catalogue_id')),
+            'moduleStatus': module_status,
+            'week': clean_str(row.get('live_week_title')) or clean_str(row.get('week_title')),
             'submittedAt': row.get('submitted_at').isoformat() if row.get('submitted_at') else '',
             'plannedOtjh': planned_otjh,
             'plannedOtjhSource': planned_otjh_source,
@@ -17796,6 +18170,11 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
                 'componentTitle': '',
                 'componentType': '',
                 'module': '',
+                # Whether that module is still in the catalogue: 'live',
+                # 'deleted', or 'unknown' when the component no longer resolves
+                # to one. Empty for an activity with no progress row behind it.
+                'moduleStatus': '',
+                'moduleCatalogueId': '',
                 'week': '',
                 'submittedAt': '',
                 'progressStatus': '',
@@ -17836,6 +18215,8 @@ def learner_activity_trace(progress_rows, excluded_progress_rows, reflection_row
         fill(entry, 'componentTitle', row.get('componentTitle'))
         fill(entry, 'componentType', row.get('componentType'))
         fill(entry, 'module', row.get('module'))
+        fill(entry, 'moduleStatus', row.get('moduleStatus'))
+        fill(entry, 'moduleCatalogueId', row.get('moduleCatalogueId'))
         fill(entry, 'week', row.get('week'))
         fill(entry, 'submittedAt', row.get('submittedAt'))
         entry['progressStatus'] = row.get('achievementStatus') or entry['progressStatus']
@@ -18299,6 +18680,9 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
         required_codes.add(code)
         definitions.setdefault(code, {
             'title': clean_str(item.get('title')) or code,
+            # The standard's wording for the KSB. The table shows it under the
+            # code, so a row reads as the outcome rather than as "K1".
+            'description': clean_str(item.get('description')),
             'ksbType': clean_str(item.get('ksb_type') or item.get('ksbType')),
             'sourceType': clean_str(item.get('source_type') or item.get('sourceType')),
             'sourceId': clean_str(item.get('source_id') or item.get('sourceId')),
@@ -18360,6 +18744,7 @@ def scope_ksb_achievement(coverage_items, learner_consumption, learners, plan, l
         rows.append({
             'code': code,
             'title': definition.get('title') or code,
+            'description': definition.get('description') or '',
             'ksbType': definition.get('ksbType') or '',
             'sourceType': definition.get('sourceType') or '',
             'sourceId': definition.get('sourceId') or '',
@@ -18420,7 +18805,21 @@ def scope_learner_ksb_impact_payload(request, scope, identifier):
     have they actually consumed — so they share one implementation rather than
     six that drift. What changes per scope is only which components are in it and
     which learners it resolves to.
+
+    The build below reads the same handful of authoring tables from several
+    directions — the scope's own structure, the lineage that names it, the
+    learners enrolment placed in it — and on a remote database each repeat is a
+    round trip, not a cached scan: the programme view measured 43 queries and
+    ~14 s for a payload whose learner reads were 0.4 s of it. One read scope
+    collapses the repeats. It asks for targeted child reads because this answers
+    about one scope, so the whole-table read that pays off across every
+    programme would be the more expensive half of the trade here.
     """
+    with curriculum_read_scope(targeted_child_reads=True):
+        return _scope_learner_ksb_impact_payload(request, scope, identifier)
+
+
+def _scope_learner_ksb_impact_payload(request, scope, identifier):
     scope = clean_str(scope) or 'programme'
     identifier = clean_str(identifier)
     lineage = scope_placement_lineage(scope, identifier)
@@ -19368,6 +19767,23 @@ def curriculum_group_from_authoring_detail(detail):
         'tutor': detail.get('tutor') or '',
         'startDate': detail.get('startDate') or detail.get('start_date') or '',
         'endDate': detail.get('endDate') or detail.get('end_date') or '',
+        # The delivery slot in its own fields, not only folded into `schedule`.
+        # The group form edits these three directly, so a create response that
+        # carried the schedule sentence alone came back to the form as no
+        # delivery days and the default 09:00-11:00 -- losing what was just
+        # saved. Parsed back out of `schedule` when a caller only has that.
+        'weekDays': (
+            detail.get('weekDays') or detail.get('week_days') or detail.get('session_week_day')
+            or schedule_day_part(detail.get('schedule')) or ''
+        ),
+        'startTime': (
+            detail.get('startTime') or detail.get('start_time') or detail.get('session_start_time')
+            or schedule_time_parts(detail.get('schedule'))[0]
+        ),
+        'endTime': (
+            detail.get('endTime') or detail.get('end_time') or detail.get('session_end_time')
+            or schedule_time_parts(detail.get('schedule'))[1]
+        ),
         'schedule': detail.get('schedule') or '',
         'color': detail.get('color') or '',
         'mode': detail.get('mode') or 'Live',
@@ -21092,6 +21508,7 @@ def provision_week_template_tables():
                 expected_otjh numeric(8,2) not null default 2,
                 points integer not null default 0,
                 reflection_required boolean not null default false,
+                reflection_question text,
                 workplace_evidence_required boolean not null default false,
                 tutor_validation_required boolean not null default false,
                 ksb_mappings {json_type},
@@ -21127,10 +21544,29 @@ def provision_week_template_tables():
                         f'alter table {authoring_table_name(WEEK_TEMPLATES_TABLE)} '
                         f'add column {quote_ident(column)} {column_type}'
                     )
+        # The reflection question is authored in the same component editor the
+        # module builder uses, so a template has to be able to hold one too.
+        if connection.vendor == 'postgresql':
+            cursor.execute(
+                f'alter table {authoring_table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
+                f'add column if not exists {quote_ident(WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN)} text'
+            )
+        else:
+            cursor.execute(f'pragma table_info({quote_ident(WEEK_TEMPLATE_COMPONENTS_TABLE)})')
+            existing = {row[1] for row in cursor.fetchall()}
+            if WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN not in existing:
+                cursor.execute(
+                    f'alter table {authoring_table_name(WEEK_TEMPLATE_COMPONENTS_TABLE)} '
+                    f'add column {quote_ident(WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN)} text'
+                )
     # soft_delete_rows() decides what to write through has_column, so a cache
     # entry taken before those columns landed would make the archive a no-op.
     _TABLE_COLUMNS_CACHE.pop(WEEK_TEMPLATES_TABLE, None)
     _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{WEEK_TEMPLATES_TABLE}', None)
+    # insert_row() filters against the cached column list, so the same applies
+    # to the component table: a stale entry would silently drop the question.
+    _TABLE_COLUMNS_CACHE.pop(WEEK_TEMPLATE_COMPONENTS_TABLE, None)
+    _TABLE_COLUMNS_CACHE.pop(f'{CURRICULUM_SCHEMA}.{WEEK_TEMPLATE_COMPONENTS_TABLE}', None)
     _WEEK_TEMPLATE_TABLES_READY = True
 
 
@@ -21197,6 +21633,8 @@ def get_week_template_component_rows(template_id):
 
 
 def week_template_component_payload(row):
+    settings = as_json_value(row.get('settings_json'), {})
+    settings = settings if isinstance(settings, dict) else {}
     return {
         'id': row.get('id'),
         'weekTemplateId': row.get('week_template_id'),
@@ -21206,10 +21644,14 @@ def week_template_component_payload(row):
         'expectedOtjh': week_template_number(row.get('expected_otjh')),
         'points': parse_int(row.get('points'), 0),
         'reflectionRequired': bool(row.get('reflection_required')),
+        'reflectionQuestion': (
+            clean_str(row.get(WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN))
+            or clean_str(settings.get(LEGACY_REFLECTION_QUESTION_SETTING))
+        ),
         'workplaceEvidenceRequired': bool(row.get('workplace_evidence_required')),
         'tutorValidationRequired': bool(row.get('tutor_validation_required')),
         'ksbMappings': as_json_value(row.get('ksb_mappings'), []),
-        'settings': as_json_value(row.get('settings_json'), {}),
+        'settings': settings,
         'displayOrder': parse_int(row.get('display_order'), 0),
     }
 
@@ -21246,6 +21688,9 @@ def save_week_template_components(template_id, components):
     saved = []
     for index, component in enumerate(components or []):
         component_id = clean_str(component.get('id')) or unique_prefixed_id('WTC')
+        component_settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+        reflection_question = payload_reflection_question(component, component_settings)
+        component_settings = {**component_settings, LEGACY_REFLECTION_QUESTION_SETTING: reflection_question}
         row = insert_row(WEEK_TEMPLATE_COMPONENTS_TABLE, {
             'id': component_id,
             'week_template_id': template_id,
@@ -21255,10 +21700,11 @@ def save_week_template_components(template_id, components):
             'expected_otjh': week_template_number(component.get('expectedOtjh')),
             'points': parse_int(component.get('points'), 0),
             'reflection_required': bool(component.get('reflectionRequired')),
+            WEEK_TEMPLATE_REFLECTION_QUESTION_COLUMN: reflection_question,
             'workplace_evidence_required': bool(component.get('workplaceEvidenceRequired')),
             'tutor_validation_required': bool(component.get('tutorValidationRequired')),
             'ksb_mappings': json_db_value(component.get('ksbMappings') or []),
-            'settings_json': json_db_value(component.get('settings') or {}),
+            'settings_json': json_db_value(component_settings),
             'display_order': index,
             'created_at': datetime.utcnow(),
             'updated_at': datetime.utcnow(),

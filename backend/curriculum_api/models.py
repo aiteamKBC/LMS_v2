@@ -81,6 +81,9 @@ class ModuleAuthoringComponent(models.Model):
     tutor_validation_required = models.BooleanField(default=False)
     display_order = models.IntegerField(default=0)
     settings_json = models.JSONField(default=dict, blank=True)
+    reflection_question = models.TextField(
+        db_column='Reflection_Question', blank=True, null=True,
+    )
     live_sessions_link = models.TextField(blank=True, default='')
     deleted_at = models.DateTimeField(blank=True, null=True)
     deleted_by = models.CharField(max_length=255, blank=True, null=True)
