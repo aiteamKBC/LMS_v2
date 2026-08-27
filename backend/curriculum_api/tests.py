@@ -2821,10 +2821,18 @@ class CurriculumCacheTests(SimpleTestCase):
 
         self.assertEqual(views._CURRICULUM_CACHE, {})
 
-    def test_invalidation_clears_the_table_exists_cache(self):
+    def test_invalidation_forgets_missing_tables_but_keeps_known_ones(self):
+        """A curriculum write is not DDL.
+
+        A table that was there before the write is still there after it, and
+        re-asking information_schema for every one of them cost seconds on the
+        rebuild that runs straight after a save. A cached *miss* is still dropped:
+        the ensure_* helpers provision tables, so "not there" can go stale.
+        """
         views._TABLE_EXISTS_CACHE['curriculum.example'] = True
+        views._TABLE_EXISTS_CACHE['curriculum.not_yet_provisioned'] = False
         views.invalidate_curriculum_cache()
-        self.assertEqual(views._TABLE_EXISTS_CACHE, {})
+        self.assertEqual(views._TABLE_EXISTS_CACHE, {'curriculum.example': True})
 
 
 class CurriculumPayloadPerformanceTests(SimpleTestCase):

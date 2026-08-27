@@ -243,6 +243,8 @@ export interface CurriculumComponent {
   duration: number;
   expectedOtjh?: number;
   reflectionRequired?: boolean;
+  /** What the learner reflects on. Only meaningful while reflection is required. */
+  reflectionQuestion?: string;
   workplaceEvidenceRequired?: boolean;
   tutorValidationRequired?: boolean;
   ksbRefs: string[];
@@ -647,6 +649,8 @@ export interface CurriculumScopeOtjhAchievement {
 export interface CurriculumScopeKsbAchievementRow {
   code: string;
   title: string;
+  /** The standard's wording, shown under the code in the achievement table. */
+  description?: string;
   ksbType: string;
   sourceType: string;
   sourceId: string;
@@ -808,8 +812,18 @@ export interface CurriculumLearnerActivity {
   componentId: string;
   componentTitle: string;
   componentType: string;
+  /** Resolved live against the catalogue, not the label stored on the progress row. */
   module: string;
+  /**
+   * Whether that module is still in the catalogue. 'deleted' means it was
+   * removed; 'unknown' means the component no longer resolves to one at all.
+   * Empty for an activity with no progress row behind it.
+   */
+  moduleStatus?: 'live' | 'deleted' | 'unknown' | string;
+  moduleCatalogueId?: string;
   week: string;
+  /** Whether the activity belongs to the scope being reported on. */
+  scopeStatus?: 'in_scope' | 'out_of_scope' | 'unattributed' | string;
   submittedAt: string;
   progressStatus: 'achieved' | 'failed' | 'incomplete' | string;
   passed: boolean | null;
@@ -2158,6 +2172,8 @@ export type CurriculumModuleAttachmentInput = {
   notes?: string;
   holidays?: unknown[];
   linkedHolidays?: unknown[];
+  /** See CurriculumModuleInput.allowTutorConflict. */
+  allowTutorConflict?: boolean;
 };
 export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
   id: string;

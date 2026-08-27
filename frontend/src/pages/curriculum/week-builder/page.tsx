@@ -1344,6 +1344,9 @@ function GenericComponentBody({ component, onChange, setSetting, rulePoints }: C
           <Toggle label="Workplace evidence" checked={component.workplaceEvidenceRequired} onChange={value => onChange({ workplaceEvidenceRequired: value })} />
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
         </div>
+        {component.reflectionRequired && (
+          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder={`What should the learner reflect on after this ${weekTypeLabel(component.type).toLowerCase()}?`} className={`${inputClass} resize-none`} /></Field>
+        )}
       </Section>
 
       <Section title={`${weekTypeLabel(component.type)} settings`} hint={`${settingEntries.length} fields`}>
@@ -1408,7 +1411,7 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection prompt" className="mt-4"><textarea value={s('reflectionPrompt')} onChange={e => setSetting('reflectionPrompt', e.target.value)} rows={2} placeholder="What should the learner reflect on after this session?" className={`${inputClass} resize-none`} /></Field>
+          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this session?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -1457,11 +1460,6 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
           <Field label="Component duration (minutes)"><input type="number" min="0" value={Number(component.settings.durationMinutes) || 0} onChange={e => setSetting('durationMinutes', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Required progress (%)"><input type="number" min="0" max="100" value={Number(component.settings.requiredProgressPercentage) || 0} onChange={e => setSetting('requiredProgressPercentage', Number(e.target.value) || 0)} className={`${inputClass} tabular-nums`} /></Field>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Toggle label="Free preview" checked={Boolean(component.settings.lessonPreview)} onChange={value => setSetting('lessonPreview', value)} />
-          <Toggle label="Captions available" checked={Boolean(component.settings.captionsAvailable)} onChange={value => setSetting('captionsAvailable', value)} />
-        </div>
-
         <Field label="Component content" className="mt-4"><textarea value={s('lessonContent')} onChange={e => setSetting('lessonContent', e.target.value)} rows={6} placeholder="What the learner sees alongside the video…" className={`${inputClass} resize-none`} /></Field>
       </Section>
 
@@ -1479,7 +1477,7 @@ function VideoBody({ component, onChange, setSetting, rulePoints }: ComponentBod
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection prompt" className="mt-4"><textarea value={s('reflectionPrompt')} onChange={e => setSetting('reflectionPrompt', e.target.value)} rows={2} placeholder="What should the learner reflect on after this video?" className={`${inputClass} resize-none`} /></Field>
+          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this video?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -1569,7 +1567,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection prompt" className="mt-4"><textarea value={s('reflectionPrompt')} onChange={e => setSetting('reflectionPrompt', e.target.value)} rows={2} placeholder="What should the learner reflect on after this reading?" className={`${inputClass} resize-none`} /></Field>
+          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this reading?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -1680,7 +1678,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection prompt" className="mt-4"><textarea value={s('reflectionPrompt')} onChange={e => setSetting('reflectionPrompt', e.target.value)} rows={2} placeholder="What should the learner reflect on after this podcast?" className={`${inputClass} resize-none`} /></Field>
+          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this podcast?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -1813,7 +1811,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection prompt" className="mt-4"><textarea value={s('reflectionPrompt')} onChange={e => setSetting('reflectionPrompt', e.target.value)} rows={2} placeholder="What should the learner reflect on after this presentation?" className={`${inputClass} resize-none`} /></Field>
+          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this presentation?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -2037,7 +2035,7 @@ function QuizBody({ component, onChange, setSetting, rulePoints, weekScope }: Co
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection prompt" className="mt-4"><textarea value={s('reflectionPrompt')} onChange={e => setSetting('reflectionPrompt', e.target.value)} rows={2} placeholder="What should the learner reflect on after this quiz?" className={`${inputClass} resize-none`} /></Field>
+          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this quiz?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 
@@ -2110,7 +2108,7 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
           <Toggle label="Tutor validation" checked={component.tutorValidationRequired} onChange={value => onChange({ tutorValidationRequired: value })} />
         </div>
         {component.reflectionRequired && (
-          <Field label="Reflection prompt" className="mt-4"><textarea value={s('reflectionPrompt')} onChange={e => setSetting('reflectionPrompt', e.target.value)} rows={2} placeholder="What should the learner reflect on after this assignment?" className={`${inputClass} resize-none`} /></Field>
+          <Field label="Reflection question" className="mt-4"><textarea value={component.reflectionQuestion} onChange={e => onChange({ reflectionQuestion: e.target.value })} rows={2} placeholder="What should the learner reflect on after this assignment?" className={`${inputClass} resize-none`} /></Field>
         )}
       </Section>
 

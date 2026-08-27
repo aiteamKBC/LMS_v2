@@ -1,10 +1,11 @@
 import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { CardGridSkeleton } from '@/components/feature/Skeletons';
 import { ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
+import { CurriculumStructureWizard, type StructureWizardCreated, type StructureWizardRecordStep } from '@/pages/curriculum/shared/entities/structureWizard';
 import { ensureSharedEmptyKsbProfile, SHARED_EMPTY_KSB_PROFILE_NAME } from '@/pages/curriculum/shared/entities/programmeKsbProfile';
 import { visibleNotes } from '@/pages/curriculum/shared/entities/model';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -108,6 +109,8 @@ const PROGRAMMES_PER_PAGE = 6;
 
 type SelectOption = { value: string; label: string; meta?: string; color?: string; aliases?: string[] };
 type StructureWizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'review';
+/** Tabs the programme workspace owns; mirrors its `?tab=` values. */
+type ProgrammeDetailTab = 'overview' | 'delivery' | 'modules' | 'sessions' | 'ksb' | 'achievement';
 
 function showProgrammeSwalToast(title: string, text: string, icon: 'success' | 'error' | 'info' = 'success') {
   return showCurriculumAlert({
@@ -196,11 +199,23 @@ function programmeIsArchived(programme: CurriculumProgramme) {
 
 export default function CurriculumProgrammes() {
   const navigate = useNavigate();
-  const [search, setSearch] = useState('');
-  const [showArchived, setShowArchived] = useState(false);
-  const [programmePage, setProgrammePage] = useState(1);
+  // What the grid is showing lives in the URL, the same way the Cohorts and
+  // Groups pages carry their scope. Opening a programme and coming back is now
+  // the ordinary loop rather than a dead end, and local state made that loop
+  // lossy: the reader returned to page 1 of an unfiltered active list every
+  // time, having to retype the search and re-find the row they had just left.
+  // It also makes a filtered view something that can be linked to.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [search, setSearch] = useState(() => searchParams.get('q') || '');
+  const [showArchived, setShowArchived] = useState(() => searchParams.get('view') === 'archive');
+  const [programmePage, setProgrammePage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [programmeDrawerTarget, setProgrammeDrawerTarget] = useState<CurriculumProgramme | null>(null);
+  // The guided run. Two ways in, one wizard: the hero button starts at the
+  // programme form, for a programme being stood up from nothing; clicking a card
+  // starts at the cohort step with that programme already chosen, because the
+  // programme it names exists and what it is missing is the structure beneath it.
+  const [wizardRun, setWizardRun] = useState<{ from: StructureWizardRecordStep; programmeId?: string } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deletingProgrammeId, setDeletingProgrammeId] = useState<string | null>(null);
   const [restoringProgrammeId, setRestoringProgrammeId] = useState<string | null>(null);
@@ -255,13 +270,42 @@ export default function CurriculumProgrammes() {
     programmePage * PROGRAMMES_PER_PAGE,
   );
 
+  // Changing what is listed sends the reader back to the first page - but only
+  // when they change it. On the first render these are the values restored from
+  // the URL, and resetting there would throw away the page that was just
+  // restored alongside them.
+  const gridFiltersMounted = useRef(false);
   useEffect(() => {
+    if (!gridFiltersMounted.current) {
+      gridFiltersMounted.current = true;
+      return;
+    }
     setProgrammePage(1);
   }, [search, showArchived]);
 
   useEffect(() => {
+    // Not while the programmes are still in flight: `filtered` is empty until
+    // they land, so totalProgrammePages is 1 and a restored ?page= would be
+    // clamped away before the rows it points at exist.
+    if (loading) return;
     setProgrammePage(currentPage => Math.min(currentPage, totalProgrammePages));
-  }, [totalProgrammePages]);
+  }, [loading, totalProgrammePages]);
+
+  // One writer for the whole grid state, so the three values cannot fight over
+  // the query string. Defaults are omitted rather than spelled out, leaving a
+  // clean /curriculum/programmes for the unfiltered first page.
+  useEffect(() => {
+    const next = new URLSearchParams(searchParams);
+    const carry = (key: string, value: string) => {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    };
+    carry('q', search.trim());
+    carry('view', showArchived ? 'archive' : '');
+    carry('page', programmePage > 1 ? String(programmePage) : '');
+    if (next.toString() === searchParams.toString()) return;
+    setSearchParams(next, { replace: true });
+  }, [search, showArchived, programmePage, searchParams, setSearchParams]);
 
   const totalProgrammes = visibleProgrammes.length;
   const totalLearners = visibleProgrammes.reduce((a, b) => a + (b.learners || 0), 0);
@@ -329,6 +373,19 @@ export default function CurriculumProgrammes() {
     ]);
     setKsbSets(nextKsbSets);
     setStandards(nextStandards);
+  };
+
+  // The programme's own home: /curriculum/programmes/:id, where its cohorts,
+  // groups, modules, sessions, KSB coverage and learner achievement are each
+  // owned by a tab. This page never re-draws those views; it links into them.
+  //
+  // `tab` deep-links straight to the one the reader asked for, so the figures on
+  // the card are the navigation - a Cohorts count opens Delivery, a Modules
+  // count opens Modules - instead of landing everyone on Overview to hunt for
+  // the same number twice.
+  const openProgramme = (programme: CurriculumProgramme, tab?: ProgrammeDetailTab) => {
+    const programmeId = programme.sourceId || programme.id;
+    navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}${tab ? `?tab=${tab}` : ''}`);
   };
 
   // Editing programme-level details is a focused form. Structure edits live on
@@ -740,6 +797,18 @@ export default function CurriculumProgrammes() {
                   <AppIcon className="ri-add-line text-base"></AppIcon>
                   Add Programme
                 </button>
+                {/* The other way in: the same four forms, chained, so a new
+                    programme's first cohort, group and module can be set up
+                    without closing this drawer and picking the parent again on
+                    three more pages. */}
+                <button
+                  type="button"
+                  onClick={() => setWizardRun({ from: 'programme' })}
+                  className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
+                >
+                  <AppIcon className="ri-route-line text-base"></AppIcon>
+                  Guided setup
+                </button>
                 <button
                   type="button"
                   onClick={() => reload()}
@@ -911,8 +980,41 @@ export default function CurriculumProgrammes() {
               const cardColor = normaliseHex(prog.color || '#6941c6');
               const isDraftProgramme = programmeIsDraft(prog);
               const isArchivedProgramme = programmeIsArchived(prog);
+              // Clicking the card opens the programme it names. It used to start
+              // the guided setup instead, which is a different promise: the card
+              // shows what the programme already has, so the click that follows
+              // from reading it is "show me this", not "add more to this". The
+              // guided run keeps its own button in the row below.
+              //
+              // An archived programme opens too - read-only review is the whole
+              // point of the archive - but nothing is built out beneath it, so
+              // its wizard button is dropped rather than disabled.
+              const openCard = () => openProgramme(prog);
+              const openWizardForCard = isArchivedProgramme
+                ? undefined
+                : () => setWizardRun({ from: 'cohort', programmeId: prog.sourceId || prog.id });
+              // Deep links from the figures on the card into the tab that owns
+              // each one. Stops the card click from also firing behind them.
+              const openTab = (tab: ProgrammeDetailTab) => (event: { stopPropagation: () => void }) => {
+                event.stopPropagation();
+                openProgramme(prog, tab);
+              };
               return (
-              <article key={prog.id} className="programmes-card programme-color-card group relative flex h-full flex-col overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-4 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg" style={{ '--programme-card-color': cardColor } as CSSProperties}>
+              <article
+                key={prog.id}
+                className="programmes-card programme-color-card group relative flex h-full cursor-pointer flex-col overflow-hidden rounded-2xl border border-primary-100/70 bg-background-50 p-4 text-white shadow-sm transition-smooth hover:-translate-y-0.5 hover:border-primary-300/80 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                style={{ '--programme-card-color': cardColor } as CSSProperties}
+                onClick={openCard}
+                onKeyDown={event => {
+                  if (event.target !== event.currentTarget) return;
+                  if (event.key !== 'Enter' && event.key !== ' ') return;
+                  event.preventDefault();
+                  openCard();
+                }}
+                tabIndex={0}
+                aria-label={`Open ${prog.name}`}
+                title={`Open ${prog.name} — its cohorts, groups, modules, sessions and KSB coverage`}
+              >
                 <div className="programme-card-accent absolute inset-x-0 top-0 h-1" />
                 <div className="mb-2.5 flex items-start justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2.5">
@@ -944,6 +1046,15 @@ export default function CurriculumProgrammes() {
                       </div>
                     </div>
                   </div>
+                  {/* The card is clickable; say so rather than leaving it to be
+                      discovered. Dimmed at rest so a grid of six is not six
+                      arrows competing with the programme names. */}
+                  <span
+                    aria-hidden="true"
+                    className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-lg text-foreground-300 opacity-0 transition-smooth group-hover:bg-primary-50 group-hover:text-primary-600 group-hover:opacity-100 group-focus-within:opacity-100"
+                  >
+                    <AppIcon className="ri-arrow-right-line text-sm"></AppIcon>
+                  </span>
                 </div>
                 <button
                   type="button"
@@ -1053,13 +1164,20 @@ export default function CurriculumProgrammes() {
                     )}
                   </div>
                 )}
+                {/* Every figure here is a way in, not a read-out: each opens the
+                    tab of the programme workspace that owns it. */}
                 <div className="programmes-metrics mb-3 grid grid-cols-2 gap-2.5 rounded-xl border border-primary-100/70 bg-primary-50/65 p-2.5 sm:grid-cols-5">
-                  <Metric label="Cohorts" value={String(prog.cohorts)} />
-                  <Metric label="Groups" value={String(prog.groups || 0)} />
-                  <Metric label="Modules" value={String(prog.modules)} />
-                  <Metric label="Weeks" value={`${prog.weeks}`} />
-                  <Metric label="Learners" value={String(prog.learners)} />
-                  <div className="col-span-2 sm:col-span-5">
+                  <Metric label="Cohorts" value={String(prog.cohorts)} onOpen={openTab('delivery')} hint={`Open the ${prog.cohorts} cohorts of ${prog.name}`} />
+                  <Metric label="Groups" value={String(prog.groups || 0)} onOpen={openTab('delivery')} hint={`Open the groups of ${prog.name}`} />
+                  <Metric label="Modules" value={String(prog.modules)} onOpen={openTab('modules')} hint={`Open the ${prog.modules} modules of ${prog.name}`} />
+                  <Metric label="Weeks" value={`${prog.weeks}`} onOpen={openTab('modules')} hint={`Open the module plan of ${prog.name}`} />
+                  <Metric label="Learners" value={String(prog.learners)} onOpen={openTab('achievement')} hint={`Open learner achievement for ${prog.name}`} />
+                  <button
+                    type="button"
+                    onClick={openTab('ksb')}
+                    title={`Open KSB coverage for ${prog.name}`}
+                    className="col-span-2 rounded-lg px-1 py-0.5 text-left transition-smooth hover:bg-primary-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 sm:col-span-5"
+                  >
                     <div className="flex items-baseline justify-between gap-2">
                       <p className="text-[9px] text-foreground-400 uppercase">KSB Progress</p>
                       <p className="text-[9px] font-semibold text-foreground-400">
@@ -1081,56 +1199,75 @@ export default function CurriculumProgrammes() {
                           : learnerKsbLearnerCount === 0 ? 'No learners' : 'Needs mapping'}
                       </span>
                     </div>
-                  </div>
+                  </button>
                 </div>
                 {prog.description && <p className="mb-2.5 line-clamp-2 text-[12px] leading-5 text-foreground-500">{prog.description}</p>}
-                <div className="mt-auto flex flex-wrap items-center gap-1 border-t border-primary-100/70 pt-2.5">
-                  <button
-                    type="button"
-                    disabled
-                    title="Coming soon"
-                    className="programme-action-button programme-action-open inline-flex flex-1 cursor-not-allowed items-center justify-center gap-1.5 rounded-lg bg-background-200 px-2 py-1 text-[10px] font-bold text-foreground-400"
-                  >
-                    <AppIcon className="ri-time-line"></AppIcon>
-                    Coming soon
-                  </button>
-                  <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
-                    <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB Source
-                  </button>
-                  <button className="programme-action-button programme-action-learners inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-1.5 py-1 text-[10px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
-                    <AppIcon className="ri-user-follow-line text-sm"></AppIcon>Learners
-                  </button>
-                  <button className="programme-action-button programme-action-edit inline-flex items-center justify-center gap-1 rounded-lg border border-background-200 bg-background-50 px-1.5 py-1 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
-                    <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
-                  </button>
-                  {isArchivedProgramme && (
+                {/* Two tiers, because six equal chips gave the reader nothing to
+                    aim at. The top row is what a curriculum designer came to the
+                    card to do - open the programme, or build the next piece of
+                    it. The bottom row is upkeep on the record itself. */}
+                <div className="mt-auto space-y-1.5 border-t border-primary-100/70 pt-2.5">
+                  <div className="flex items-center gap-1.5">
                     <button
-                      className="programme-action-button programme-action-restore inline-flex items-center justify-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-1.5 py-1 text-[10px] font-bold text-amber-800 transition-smooth hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={restoringProgrammeId === (prog.sourceId || prog.id) || deletingProgrammeId === (prog.sourceId || prog.id)}
-                      onClick={e => { e.stopPropagation(); void restoreProgramme(prog); }}
-                      title="Restore this programme and the rows archived with it to the active list"
+                      type="button"
+                      onClick={e => { e.stopPropagation(); openCard(); }}
+                      title={`Open ${prog.name} — cohorts, groups, modules, sessions, KSB coverage and achievement`}
+                      className="programme-action-button programme-action-open inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-2 py-1.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                     >
-                      <AppIcon className={restoringProgrammeId === (prog.sourceId || prog.id)
-                        ? 'ri-loader-4-line animate-spin text-sm'
-                        : 'ri-inbox-unarchive-line text-sm'}></AppIcon>
-                      Restore
+                      <AppIcon className="ri-folder-open-line text-sm"></AppIcon>
+                      Open programme
                     </button>
-                  )}
-                  <button
-                    className={`programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border px-1.5 py-1 text-[10px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-60 ${isArchivedProgramme
-                      ? 'border-red-600 bg-red-600 text-white hover:bg-red-700'
-                      : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'}`}
-                    disabled={deletingProgrammeId === (prog.sourceId || prog.id) || restoringProgrammeId === (prog.sourceId || prog.id)}
-                    onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
-                    title={isArchivedProgramme
-                      ? 'Delete this programme and everything beneath it permanently'
-                      : 'Archive this programme; it can be deleted permanently afterwards'}
-                  >
-                    <AppIcon className={deletingProgrammeId === (prog.sourceId || prog.id)
-                      ? 'ri-loader-4-line animate-spin text-sm'
-                      : isArchivedProgramme ? 'ri-delete-bin-6-line text-sm' : 'ri-archive-line text-sm'}></AppIcon>
-                    {isArchivedProgramme ? 'Delete forever' : 'Archive'}
-                  </button>
+                    {openWizardForCard && (
+                      <button
+                        type="button"
+                        onClick={e => { e.stopPropagation(); openWizardForCard(); }}
+                        title={`Guided setup for ${prog.name} — its next cohort, group and module in one run`}
+                        className="programme-action-button programme-action-structure inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2 py-1.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                      >
+                        <AppIcon className="ri-route-line text-sm"></AppIcon>
+                        Add structure
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button className="programme-action-button programme-action-source inline-flex items-center justify-center gap-1 rounded-lg border border-primary-200 bg-primary-50 px-1.5 py-1 text-[10px] font-bold text-primary-700 transition-smooth hover:bg-primary-100" onClick={e => { e.stopPropagation(); setApplyProgramme(prog); }}>
+                      <AppIcon className="ri-node-tree text-sm"></AppIcon>KSB Source
+                    </button>
+                    <button className="programme-action-button programme-action-learners inline-flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-1.5 py-1 text-[10px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100" onClick={e => { e.stopPropagation(); void openProgrammeLearnerImpact(prog); }}>
+                      <AppIcon className="ri-user-follow-line text-sm"></AppIcon>Learners
+                    </button>
+                    <button className="programme-action-button programme-action-edit inline-flex items-center justify-center gap-1 rounded-lg border border-background-200 bg-background-50 px-1.5 py-1 text-[10px] font-bold text-foreground-700 transition-smooth hover:bg-background-100" onClick={e => { e.stopPropagation(); openEdit(prog); }}>
+                      <AppIcon className="ri-pencil-line text-sm"></AppIcon>Edit
+                    </button>
+                    {isArchivedProgramme && (
+                      <button
+                        className="programme-action-button programme-action-restore inline-flex items-center justify-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-1.5 py-1 text-[10px] font-bold text-amber-800 transition-smooth hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={restoringProgrammeId === (prog.sourceId || prog.id) || deletingProgrammeId === (prog.sourceId || prog.id)}
+                        onClick={e => { e.stopPropagation(); void restoreProgramme(prog); }}
+                        title="Restore this programme and the rows archived with it to the active list"
+                      >
+                        <AppIcon className={restoringProgrammeId === (prog.sourceId || prog.id)
+                          ? 'ri-loader-4-line animate-spin text-sm'
+                          : 'ri-inbox-unarchive-line text-sm'}></AppIcon>
+                        Restore
+                      </button>
+                    )}
+                    <button
+                      className={`programme-action-button programme-action-delete inline-flex items-center justify-center gap-1 rounded-lg border px-1.5 py-1 text-[10px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-60 ${isArchivedProgramme
+                        ? 'border-red-600 bg-red-600 text-white hover:bg-red-700'
+                        : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'}`}
+                      disabled={deletingProgrammeId === (prog.sourceId || prog.id) || restoringProgrammeId === (prog.sourceId || prog.id)}
+                      onClick={e => { e.stopPropagation(); void deleteProgramme(prog); }}
+                      title={isArchivedProgramme
+                        ? 'Delete this programme and everything beneath it permanently'
+                        : 'Archive this programme; it can be deleted permanently afterwards'}
+                    >
+                      <AppIcon className={deletingProgrammeId === (prog.sourceId || prog.id)
+                        ? 'ri-loader-4-line animate-spin text-sm'
+                        : isArchivedProgramme ? 'ri-delete-bin-6-line text-sm' : 'ri-archive-line text-sm'}></AppIcon>
+                      {isArchivedProgramme ? 'Delete forever' : 'Archive'}
+                    </button>
+                  </div>
                 </div>
               </article>
             );
@@ -1158,6 +1295,20 @@ export default function CurriculumProgrammes() {
           programme={programmeDrawerTarget}
           onClose={() => setProgrammeDrawerOpen(false)}
           onSaved={handleProgrammeSaved}
+        />
+
+        {/* The same forms the four pages open, chained. The KSB source picker is
+            held back to the end of the run rather than opening over the cohort
+            step — a new programme still cannot be mapped without one. */}
+        <CurriculumStructureWizard
+          open={Boolean(wizardRun)}
+          from={wizardRun?.from || 'programme'}
+          defaults={wizardRun?.programmeId ? { programmeId: wizardRun.programmeId } : undefined}
+          onClose={() => setWizardRun(null)}
+          onStepSaved={() => refreshProgrammeCards()}
+          onFinished={(created: StructureWizardCreated) => {
+            if (created.programme) setApplyProgramme(created.programme);
+          }}
         />
         {reviewProgramme && (
           <ProgrammeKsbReviewModal
@@ -3320,11 +3471,28 @@ function ArchiveConfirmDialog({
   return null;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="programmes-metric min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-primary-100/80">
+/**
+ * A count on a programme card. With `onOpen` it becomes the link to the tab that
+ * owns the records it counts, so the number and the way to reach them are the
+ * same target rather than two.
+ */
+function Metric({ label, value, onOpen, hint }: { label: string; value: string; onOpen?: (event: { stopPropagation: () => void }) => void; hint?: string }) {
+  const body = (
+    <>
       <p className="truncate text-[9px] font-bold uppercase tracking-wide text-foreground-400">{label}</p>
       <p className="mt-0.5 truncate text-sm font-bold text-foreground-950">{value}</p>
-    </div>
+    </>
+  );
+  const shell = 'programmes-metric min-w-0 rounded-lg bg-background-50 px-2.5 py-2 ring-1 ring-primary-100/80';
+  if (!onOpen) return <div className={shell}>{body}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title={hint}
+      className={`${shell} programmes-metric-link block w-full text-left transition-smooth hover:bg-primary-50 hover:ring-primary-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400`}
+    >
+      {body}
+    </button>
   );
 }
