@@ -157,16 +157,53 @@ describe('ModuleFormDrawer', () => {
   it('shows cohort and group names exactly as entered', async () => {
     renderDrawer();
 
-    const [, cohortSelect, groupSelect] = screen.getAllByRole('combobox');
+    const cohortSelect = screen.getByRole('combobox', { name: /^Cohort/ });
 
     await userEvent.click(cohortSelect);
     expect(screen.getByRole('option', { name: /^Sept 2026$/ })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: /Sept 2026.*Data Analyst/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('option', { name: /^Sept 2026$/ }));
 
-    await userEvent.click(groupSelect);
-    expect(screen.getByRole('option', { name: /^Group A$/ })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: /Group A.*Sept 2026/ })).not.toBeInTheDocument();
+    // Groups are a tick list rather than a dropdown: the same module regularly
+    // runs for more than one group of a cohort, and a closed dropdown showing one
+    // name does not say that a second is allowed.
+    expect(screen.getByRole('button', { name: /Group A/ })).toBeInTheDocument();
+  });
+
+  it('creates one delivery per ticked group', async () => {
+    const twoGroups = [
+      ...groups,
+      {
+        id: 'GROUP-2',
+        name: 'Group B',
+        cohortId: 'COHORT-1',
+        cohort: 'Sept 2026',
+        programme: 'Data Analyst',
+        weekDays: 'Monday, Thursday',
+        startTime: '14:00',
+        endTime: '16:00',
+      },
+    ] as unknown as CurriculumGroup[];
+    renderDrawer({ groups: twoGroups, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1' } });
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await userEvent.click(screen.getByRole('button', { name: /Group A/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Group B/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+
+    await waitFor(() => expect(createGroupModuleMock).toHaveBeenCalledTimes(2));
+    // Each group is attached on its own delivery days and times, not on the
+    // first group's: a second group frequently runs a different timetable.
+    expect(createGroupModuleMock).toHaveBeenCalledWith('GROUP-1', expect.objectContaining({
+      groupId: 'GROUP-1',
+      weekDays: 'Wednesday',
+      startTime: '10:00',
+    }));
+    expect(createGroupModuleMock).toHaveBeenCalledWith('GROUP-2', expect.objectContaining({
+      groupId: 'GROUP-2',
+      weekDays: 'Monday, Thursday',
+      startTime: '14:00',
+    }));
   });
 
   it('creates a module in a locked group through the group endpoint', async () => {
@@ -415,13 +452,10 @@ describe('ModuleFormDrawer', () => {
       },
     });
 
-    const selects = screen.getAllByRole('combobox');
-    const [programmeSelect, cohortSelect, groupSelect] = selects;
-    const tutorSelect = selects[5];
-    expect(programmeSelect).toHaveTextContent('Data Analyst');
-    expect(cohortSelect).toHaveTextContent('Sept 2026');
-    expect(groupSelect).toHaveTextContent('Group A');
-    expect(tutorSelect).toHaveTextContent('Tutor One');
+    expect(screen.getByRole('combobox', { name: /programme/i })).toHaveTextContent('Data Analyst');
+    expect(screen.getByRole('combobox', { name: /^Cohort/ })).toHaveTextContent('Sept 2026');
+    expect(screen.getByRole('button', { name: /Group A/, pressed: true })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /tutor/i })).toHaveTextContent('Tutor One');
     expect(screen.getByPlaceholderText('Optional delivery notes')).toHaveValue('Bring calculators.');
 
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));

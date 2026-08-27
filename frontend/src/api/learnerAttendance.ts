@@ -1,5 +1,19 @@
 import type { LearnerKind } from '@/api/learnerDetail';
 
+export type AttendanceSessionStatus = 'attended' | 'missed' | 'late';
+
+export interface AttendanceSessionRow {
+  id: string;
+  date: string;
+  title: string;
+  sessionType: string;
+  status: AttendanceSessionStatus;
+  startTime: string;
+  endTime: string;
+  module: string;
+  coach: string;
+}
+
 export interface LearnerAttendance {
   learnerEmail: string;
   learnerId: number;
@@ -15,6 +29,7 @@ export interface LearnerAttendance {
   updatedAt: string | null;
   attendanceRate: number;
   source?: 'microsoft-teams';
+  sessionHistory: AttendanceSessionRow[];
 }
 
 export async function fetchLearnerAttendance(kind: LearnerKind, learnerId: string): Promise<LearnerAttendance | null> {

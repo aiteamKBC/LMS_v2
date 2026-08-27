@@ -243,6 +243,8 @@ export interface CurriculumComponent {
   duration: number;
   expectedOtjh?: number;
   reflectionRequired?: boolean;
+  /** What the learner reflects on. Only meaningful while reflection is required. */
+  reflectionQuestion?: string;
   workplaceEvidenceRequired?: boolean;
   tutorValidationRequired?: boolean;
   ksbRefs: string[];
@@ -647,6 +649,8 @@ export interface CurriculumScopeOtjhAchievement {
 export interface CurriculumScopeKsbAchievementRow {
   code: string;
   title: string;
+  /** The standard's wording, shown under the code in the achievement table. */
+  description?: string;
   ksbType: string;
   sourceType: string;
   sourceId: string;
@@ -808,8 +812,18 @@ export interface CurriculumLearnerActivity {
   componentId: string;
   componentTitle: string;
   componentType: string;
+  /** Resolved live against the catalogue, not the label stored on the progress row. */
   module: string;
+  /**
+   * Whether that module is still in the catalogue. 'deleted' means it was
+   * removed; 'unknown' means the component no longer resolves to one at all.
+   * Empty for an activity with no progress row behind it.
+   */
+  moduleStatus?: 'live' | 'deleted' | 'unknown' | string;
+  moduleCatalogueId?: string;
   week: string;
+  /** Whether the activity belongs to the scope being reported on. */
+  scopeStatus?: 'in_scope' | 'out_of_scope' | 'unattributed' | string;
   submittedAt: string;
   progressStatus: 'achieved' | 'failed' | 'incomplete' | string;
   passed: boolean | null;
@@ -1572,11 +1586,18 @@ async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise
       multiTierCache.invalidateByEntity('cohort');
       multiTierCache.invalidateByEntity('group');
       multiTierCache.invalidateByEntity('module');
-    } else if (path.includes('/cohorts/')) {
+    } else if (path.includes('/cohorts/') || path.includes('/groups/') || path.includes('/modules/')) {
+      // The overview payload carries programmes, cohorts, groups AND modules in
+      // one document, and a programme's detail tree carries the same structure.
+      // Neither is tagged with an entity type, so an entity-scoped invalidation
+      // left both in place: creating a group refreshed the page you were on (that
+      // reload asks for fresh data explicitly) but the next page you opened read
+      // the pre-write overview out of cache and showed no new group until a full
+      // browser refresh threw the cache away.
+      multiTierCache.invalidateByPattern(/\/overview\//);
+      multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
       multiTierCache.invalidateByEntity('cohort');
-    } else if (path.includes('/groups/')) {
       multiTierCache.invalidateByEntity('group');
-    } else if (path.includes('/modules/')) {
       multiTierCache.invalidateByEntity('module');
     } else if (path.includes('/ksb-')) {
       multiTierCache.invalidateByEntity('ksb');
@@ -2151,6 +2172,8 @@ export type CurriculumModuleAttachmentInput = {
   notes?: string;
   holidays?: unknown[];
   linkedHolidays?: unknown[];
+  /** See CurriculumModuleInput.allowTutorConflict. */
+  allowTutorConflict?: boolean;
 };
 export type FreeProgrammeComponentInput = Partial<FreeProgrammeComponent> & {
   id: string;

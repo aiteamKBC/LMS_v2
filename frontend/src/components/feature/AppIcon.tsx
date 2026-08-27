@@ -4,6 +4,9 @@ import {
   AlarmClock,
   AlertCircle,
   AlertTriangle,
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Archive,
   ArrowDown,
   ArrowLeft,
@@ -12,6 +15,7 @@ import {
   ArrowUpRight,
   BarChart3,
   Bell,
+  Bold,
   BookOpen,
   Bot,
   Briefcase,
@@ -67,27 +71,37 @@ import {
   Headphones,
   Heart,
   HeartPulse,
+  Highlighter,
   History,
   Hammer,
+  ImageIcon,
+  IndentDecrease,
+  IndentIncrease,
   Info,
+  Italic,
   KeyRound,
   Layers3,
   LayoutDashboard,
   LayoutList,
   Lightbulb,
   Link,
+  List,
   ListChecks,
+  ListOrdered,
   Loader2,
   Lock,
   LockKeyhole,
   LogOut,
   Mail,
   Map,
+  Maximize2,
   Megaphone,
   MessageCircle,
   Mic,
+  Minimize2,
   Minus,
   MoreHorizontal,
+  Palette,
   Paperclip,
   Pencil,
   Phone,
@@ -97,10 +111,13 @@ import {
   Plug,
   Power,
   Presentation,
+  Redo2,
   RefreshCw,
+  RemoveFormatting,
   RotateCcw,
   Save,
   Search,
+  SeparatorHorizontal,
   Send,
   Settings2,
   Shield,
@@ -108,12 +125,15 @@ import {
   ShoppingBag,
   Sparkles,
   Star,
+  Strikethrough,
   Tag,
   ThumbsUp,
   Ticket,
   Timer,
   Trash2,
   Trophy,
+  Underline,
+  Undo2,
   Upload,
   User,
   UserCheck,
@@ -173,6 +193,29 @@ function resolveIcon(name: string): LucideIcon {
   if (/arrow-right-s/.test(key)) return ChevronRight;
   if (/arrow-up-s/.test(key)) return ChevronUp;
   if (/arrow-down-s/.test(key)) return ChevronDown;
+  // The rich-text toolbar (RichTextEditor.tsx) names most of its buttons with
+  // ri-* tokens that have no other branch below, so they all fell through to
+  // the bare Circle fallback -- a whole toolbar of identical unlabelled dots.
+  if (/undo/.test(key)) return Undo2;
+  if (/redo|go-forward/.test(key)) return Redo2;
+  if (/^bold$/.test(key)) return Bold;
+  if (/^italic$/.test(key)) return Italic;
+  if (/underline/.test(key)) return Underline;
+  if (/strikethrough|strike-through/.test(key)) return Strikethrough;
+  if (/font-color|text-color/.test(key)) return Palette;
+  if (/mark-pen|highlight/.test(key)) return Highlighter;
+  if (/image/.test(key)) return ImageIcon;
+  if (/separator|divider/.test(key)) return SeparatorHorizontal;
+  if (/align-left/.test(key)) return AlignLeft;
+  if (/align-center/.test(key)) return AlignCenter;
+  if (/align-right/.test(key)) return AlignRight;
+  if (/list-ordered|numbered/.test(key)) return ListOrdered;
+  if (/list-unordered|bullet/.test(key)) return List;
+  if (/indent-increase/.test(key)) return IndentIncrease;
+  if (/indent-decrease|outdent/.test(key)) return IndentDecrease;
+  if (/format-clear|clear-formatting/.test(key)) return RemoveFormatting;
+  if (/fullscreen-exit/.test(key)) return Minimize2;
+  if (/fullscreen/.test(key)) return Maximize2;
   if (/arrow-go-back|go-back/.test(key)) return RotateCcw;
   if (/arrow-left/.test(key)) return ArrowLeft;
   if (/arrow-right-up/.test(key)) return ArrowUpRight;

@@ -6,9 +6,6 @@ import type { SidebarNavItem } from '@/components/feature/Sidebar';
 export const learnerNavItems: SidebarNavItem[] = [
   // Overview — standalone (not grouped)
   { id: 'learner-overview', label: 'Overview', icon: 'ri-dashboard-line', href: '/workspace/learner' },
-  // Keep the learner's database-backed coach conversation directly available.
-  { id: 'learner-messages', label: 'Messages', icon: 'ri-message-3-line', href: '/learner/messages' },
-
   // The learner's own enrolment wizard — relevant while onboarding, and stays
   // available afterwards as a record of what they submitted.
   { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
@@ -17,44 +14,20 @@ export const learnerNavItems: SidebarNavItem[] = [
   // rest of DOC_TYPES as their generators land).
   { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-shield-check-line', href: '/learner/compliance-documents' },
 
-  // Learning group
-  {
-    id: 'learner-group-learning',
-    label: 'Learning',
-    icon: 'ri-book-open-line',
-    href: '',
-    children: [
-      { id: 'learner-training-plan', label: 'Training Plan', icon: 'ri-road-map-line', href: '/learner/training-plan' },
-      { id: 'learner-learning-journey', label: 'Learning Journey', icon: 'ri-compass-3-line', href: '/learner/modules' },
-      { id: 'learner-quizzes', label: 'Quizzes', icon: 'ri-questionnaire-line', href: '/learner/quizzes', badge: 1 },
-      { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
-    ],
-  },
+  // My Learning — training plan, learning journey and quizzes merged into
+  // Overview/Modules/Quizzes tabs on one page.
+  { id: 'learner-my-learning', label: 'My Learning', icon: 'ri-book-open-line', href: '/learner/my-learning', badge: 1 },
 
-  // Evidence & Progress
-  {
-    id: 'learner-group-evidence',
-    label: 'Evidence & Progress',
-    icon: 'ri-folder-upload-line',
-    href: '',
-    children: [
-      { id: 'learner-evidence', label: 'Evidence Library', icon: 'ri-folder-upload-line', href: '/learner/evidence', badge: 5 },
-      { id: 'learner-otjh', label: 'Off-the-job Hours', icon: 'ri-time-line', href: '/learner/otjh', badge: 2 },
-      { id: 'learner-ksbs', label: 'KSB Progress', icon: 'ri-bar-chart-2-line', href: '/learner/ksbs' },
-    ],
-  },
+  // Calendar
+  { id: 'learner-calendar', label: 'Calendar', icon: 'ri-calendar-2-line', href: '/learner/calendar', statusDot: 'green' },
 
-  // Attendance
-  {
-    id: 'learner-group-attendance',
-    label: 'Attendance',
-    icon: 'ri-calendar-2-line',
-    href: '',
-    children: [
-      { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
-      { id: 'learner-absence-report', label: 'Absence Report', icon: 'ri-file-warning-line', href: '/learner/report-absence' },
-    ],
-  },
+  // Evidence & Progress — evidence, OTJ hours and KSBs live together as tabs on
+  // the "My Progress" page. Labeled distinctly from the "My Progress" group
+  // below (Monthly Cycle/Coaching/Reviews) so the two aren't confused.
+  { id: 'learner-progress', label: 'Evidence & Progress', icon: 'ri-bar-chart-2-line', href: '/learner/progress', badge: 7 },
+
+  // Attendance — single item; reporting an absence is an action inside the page.
+  { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-check-line', href: '/learner/attendance' },
 
   // My Progress
   {
@@ -65,7 +38,7 @@ export const learnerNavItems: SidebarNavItem[] = [
     children: [
       { id: 'learner-monthly-cycle', label: 'Monthly Cycle', icon: 'ri-loop-left-line', href: '/learner/monthly-cycle' },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
     ],
   },
 
@@ -104,6 +77,10 @@ export const learnerNavItems: SidebarNavItem[] = [
       { id: 'learner-support', label: 'Support', icon: 'ri-chat-1-line', href: '/learner/support' },
     ],
   },
+
+  // Keep the learner's database-backed coach conversation directly available
+  // as the final destination in the sidebar.
+  { id: 'learner-messages', label: 'Messages', icon: 'ri-message-3-line', href: '/learner/messages' },
 ];
 
 // ============================================================================
@@ -178,7 +155,6 @@ export const coachNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const tutorNavItems: SidebarNavItem[] = [
   { id: 'tutor-dashboard', label: 'My Teaching', icon: 'ri-presentation-line', href: '/workspace/tutor' },
-  { id: 'tutor-students', label: 'My Learners', icon: 'ri-group-line', href: '/tutor/learners' },
   { id: 'tutor-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages' },
 ];
 

@@ -13,6 +13,8 @@ interface DatePickerFieldProps {
   max?: string;
   error?: string;
   helper?: string;
+  /** Non-blocking notice — shown in place of `helper` without disabling the picked date. */
+  warning?: string;
 }
 
 type PanelView = 'days' | 'months' | 'years';
@@ -36,6 +38,7 @@ export function DatePickerField({
   max,
   error,
   helper,
+  warning,
 }: DatePickerFieldProps) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<PanelView>('days');
@@ -520,7 +523,16 @@ export function DatePickerField({
         </button>
       </div>
       {picker}
-      {shownError ? <p className="mt-1 text-[11px] font-medium text-red-600">{shownError}</p> : helper ? <p className="mt-1 text-[11px] text-foreground-400">{helper}</p> : null}
+      {shownError ? (
+        <p className="mt-1 text-[11px] font-medium text-red-600">{shownError}</p>
+      ) : warning ? (
+        <p className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-amber-700">
+          <AppIcon className="ri-alert-line shrink-0 text-[12px]"></AppIcon>
+          {warning}
+        </p>
+      ) : helper ? (
+        <p className="mt-1 text-[11px] text-foreground-400">{helper}</p>
+      ) : null}
     </div>
   );
 }

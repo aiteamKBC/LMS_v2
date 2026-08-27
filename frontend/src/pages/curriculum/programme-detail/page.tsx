@@ -1,5 +1,5 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
@@ -259,7 +259,11 @@ interface DeliverySession {
   title: string;
   module: string;
   week: number;
+  /** The week's own title, empty when the author never gave it one. */
   weekTitle: string;
+  /** The week's first teaching date. Context for the row, never its schedule. */
+  weekStartDate: string;
+  /** The meeting's own scheduled date and time. Empty means unscheduled. */
   date: string;
   time: string;
   groups: string[];
@@ -270,6 +274,16 @@ interface DeliverySession {
   recordingExpected: boolean;
   ksbRefs: string[];
   status: CurriculumComponent['status'] | string;
+}
+
+// A week and a session are two different records and neither may borrow the
+// other's name or date. The week is the container the module authored; the
+// session is one Teams meeting inside it. So an untitled week prints as "Week 3"
+// instead of "Week 3 · Week 3", a week never inherits its first meeting's title,
+// and a meeting with no date of its own says so rather than showing its week's
+// start date under a column headed "Scheduled".
+function sessionWeekLabel(session: DeliverySession) {
+  return session.weekTitle ? `Week ${session.week} · ${session.weekTitle}` : `Week ${session.week}`;
 }
 
 // Classify a component as a Live session or a Recorded video. NOTE: the
@@ -317,6 +331,27 @@ function clean(value: unknown, fallback = '') {
 
 function normalise(value: unknown) {
   return clean(value).toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * The address behind a session's Watch/Join link.
+ *
+ * A component authored with the Embed source stores an `<iframe>` snippet, not
+ * an address, so handing it to an `href` made the browser resolve the whole tag
+ * as a relative path and land on the router's 404. The snippet's `src` is the
+ * part that can be opened. Anything that is not an absolute http(s) address is
+ * dropped rather than linked: a stray `javascript:` in authored settings would
+ * otherwise run on click.
+ */
+function watchableUrl(value: unknown) {
+  const text = clean(value);
+  if (!text) return '';
+  const source = text.includes('<')
+    ? clean(text.match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1]).replace(/&amp;/g, '&')
+    : text;
+  if (!source) return '';
+  const absolute = source.startsWith('//') ? `https:${source}` : source;
+  return /^https?:\/\//i.test(absolute) ? absolute : '';
 }
 
 function slugify(value: unknown) {
@@ -775,25 +810,43 @@ function programmeDetailToOverview(
 function useProgrammeDetailData(programmeId: string) {
   const [data, setData] = useState<CurriculumOverview | null>(null);
   const [loading, setLoading] = useState(true);
+  // A silent reload is in flight behind a page that is still showing real data.
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
+  // `silent` keeps what is on screen instead of dropping the whole page back to
+  // a skeleton. Every save used to take the loud path, so finishing a save blanked
+  // the programme for the length of the detail round trip -- seconds -- which read
+  // as the page throwing the edit away. `skipCache` goes with a post-write reload
+  // for the usual reason: the caller is asking for the state it just wrote.
+  const load = useCallback(async (
+    signal?: AbortSignal,
+    options: { silent?: boolean; skipCache?: boolean } = {},
+  ) => {
     if (!programmeId) {
       setData(null);
       setLoading(false);
+      setRefreshing(false);
       return null;
     }
-    setLoading(true);
+    if (options.silent) setRefreshing(true);
+    else setLoading(true);
     try {
       // Archived cohorts/groups are fetched so the status filter can reach them.
       // The default view still hides them (see filteredCohorts), but "All statuses"
       // would otherwise silently omit rows that exist in the database.
-      const detail = await fetchCurriculumProgrammeDetail(programmeId, signal, { visibility: 'all' });
+      const detail = await fetchCurriculumProgrammeDetail(programmeId, signal, {
+        visibility: 'all',
+        skipCache: options.skipCache,
+      });
       if (signal?.aborted) return null;
       const overview = programmeDetailToOverview(detail);
       setData(overview);
       setError(null);
       setLoading(false);
+      // The programme itself has landed; the supplemental collections below are
+      // additive and must not keep the refresh indicator running.
+      setRefreshing(false);
 
       void Promise.all([
         fetchCurriculumCoaches(signal).catch(() => []),
@@ -809,10 +862,15 @@ function useProgrammeDetailData(programmeId: string) {
     } catch (err) {
       if (signal?.aborted) return null;
       setError(err instanceof Error ? err.message : 'Unable to load programme detail');
-      setData(null);
+      // A failed background refresh leaves the good data on screen; only a
+      // failed first load has nothing to show.
+      if (!options.silent) setData(null);
       return null;
     } finally {
-      if (!signal?.aborted) setLoading(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [programmeId]);
 
@@ -822,7 +880,13 @@ function useProgrammeDetailData(programmeId: string) {
     return () => controller.abort();
   }, [load]);
 
-  return { data, loading, error, reload: () => load() };
+  return {
+    data,
+    loading,
+    refreshing,
+    error,
+    reload: (options?: { silent?: boolean }) => load(undefined, { skipCache: true, ...options }),
+  };
 }
 
 function rawSkillsStandardIdentifier(programme: Programme) {
@@ -921,7 +985,9 @@ function buildModuleWeeks(
     return {
       id: clean(authoredWeek?.id) || `${moduleId}-week-${weekNumber}`,
       number: weekNumber,
-      title: clean(authoredWeek?.title) || weekTitle || first?.title || `Week ${weekNumber}`,
+      // Deliberately no `first?.title` fallback: naming an untitled week after
+      // its first live session made a week wear a session's name.
+      title: clean(authoredWeek?.title) || weekTitle || `Week ${weekNumber}`,
       startDate: formatDateLabel(first?.date || ''),
       endDate: formatDateLabel(last?.date || first?.date || ''),
       otjh: Math.round((weekComponents.length ? componentOtjh : sessionOtjh) * 10) / 10,
@@ -1562,13 +1628,22 @@ const TAB_LABELS: Record<Tab, string> = {
   modules: 'Modules',
   sessions: 'Sessions',
   ksb: 'KSB coverage',
-  achievement: 'Achievement',
+  achievement: 'Achievement KSBs',
 };
+
+/**
+ * Whether a `?tab=` value names a real tab. An unknown or missing one falls back
+ * to Overview rather than rendering nothing, so a stale bookmark or a hand-typed
+ * URL still opens the programme.
+ */
+function isProgrammeDetailTab(value: string | null): value is Tab {
+  return Boolean(value) && Object.prototype.hasOwnProperty.call(TAB_LABELS, value as string);
+}
 
 export default function ProgrammeDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data, loading, error, reload } = useProgrammeDetailData(id || '');
+  const { data, loading, refreshing, error, reload } = useProgrammeDetailData(id || '');
   const [detailComponents, setDetailComponents] = useState<CurriculumComponent[]>([]);
   const hydratedData = useMemo(() => data ? { ...data, components: detailComponents } : data, [data, detailComponents]);
   const { programme: liveProgramme, found } = useMemo(() => buildLiveProgramme(hydratedData, id || ''), [hydratedData, id]);
@@ -1606,7 +1681,24 @@ export default function ProgrammeDetailPage() {
     };
   }, [backendCoverage, data, liveProgramme, programmeKsbSets, skillsStandards]);
 
-  const [tab, setTab] = useState<Tab>('overview');
+  // The tab lives in the query string, so a link can land on the view it means.
+  // The programme cards do exactly that: their Cohorts figure opens Delivery,
+  // their Modules figure opens Modules, and so on, instead of dropping the
+  // reader on Overview to find the same number a second time. It also makes the
+  // browser Back button walk tabs and a pasted URL reopen what the sender saw.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get('tab');
+  const tab: Tab = isProgrammeDetailTab(requestedTab) ? requestedTab : 'overview';
+  const setTab = useCallback((next: Tab) => {
+    // Replace rather than push: switching tabs is not a navigation the reader
+    // should have to unwind one step at a time to get back to the card grid.
+    setSearchParams(previous => {
+      const params = new URLSearchParams(previous);
+      if (next === 'overview') params.delete('tab');
+      else params.set('tab', next);
+      return params;
+    }, { replace: true });
+  }, [setSearchParams]);
   // Delivery tab: which cohort's groups are shown, and which group's learners.
   const [selectedCohort, setSelectedCohort] = useState('');
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -1904,18 +1996,22 @@ export default function ProgrammeDetailPage() {
           const sessionTimeUtc = parsedSessionDate && !Number.isNaN(parsedSessionDate.getTime())
             ? `${parsedSessionDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false })} UTC`
             : '';
-          const sessionUrl = clean(settings.liveSessionUrl || settings.videoUrl || settings.embedCode);
+          const sessionUrl = watchableUrl(settings.liveSessionUrl || settings.videoUrl || settings.embedCode);
           const groupNames = Array.isArray(settings.selectedGroupNames)
             ? (settings.selectedGroupNames as unknown[]).map(value => clean(value)).filter(Boolean)
             : [];
+          // A generic "Week 3" is the absence of a title, not a title, so the
+          // row is not made to print it twice.
+          const authoredWeekTitle = clean(wk.title);
           rows.push({
             id: component.id,
             kind,
             title: clean(component.title, kind === 'live' ? 'Live session' : 'Recorded video'),
             module: mod.name,
             week: wk.number,
-            weekTitle: clean(wk.title, `Week ${wk.number}`),
-            date: clean(settings.sessionDate) || clean(wk.startDate),
+            weekTitle: normalise(authoredWeekTitle) === `week ${wk.number}` ? '' : authoredWeekTitle,
+            weekStartDate: clean(wk.startDate),
+            date: clean(settings.sessionDate),
             time: clean(settings.sessionTime) || sessionTimeUtc,
             groups: groupNames,
             url: sessionUrl,
@@ -1942,7 +2038,7 @@ export default function ProgrammeDetailPage() {
     const query = normalise(sessionSearch);
     return activeSessions.filter(session => {
       const matchesModule = !sessionModuleFilter || session.module === sessionModuleFilter;
-      const matchesQuery = !query || [session.title, session.module, session.weekTitle, session.provider, session.date, session.time, ...session.groups, ...session.ksbRefs]
+      const matchesQuery = !query || [session.title, session.module, sessionWeekLabel(session), session.provider, session.date, session.time, session.weekStartDate, ...session.groups, ...session.ksbRefs]
         .some(value => normalise(value).includes(query));
       return matchesModule && matchesQuery;
     });
@@ -2406,6 +2502,7 @@ export default function ProgrammeDetailPage() {
               rows={filteredCohorts}
               rowKey={cohortItem => cohortItem.id}
               loading={loading && !PROGRAMME.cohorts.length}
+              refreshing={refreshing}
               empty={(
                 <EntityEmptyState
                   icon={PROGRAMME.cohorts.length ? 'ri-filter-off-line' : 'ri-group-line'}
@@ -2495,6 +2592,7 @@ export default function ProgrammeDetailPage() {
                   gridClass={GROUP_GRID}
                   rows={activeCohort.groups}
                   rowKey={group => group.id}
+                  refreshing={refreshing}
                   empty={(
                     <EntityEmptyState
                       icon="ri-team-line"
@@ -2619,6 +2717,7 @@ export default function ProgrammeDetailPage() {
               rows={filteredModules}
               rowKey={mod => mod.id}
               loading={loading && !PROGRAMME.modules.length}
+              refreshing={refreshing}
               empty={(
                 <EntityEmptyState
                   icon={PROGRAMME.modules.length ? 'ri-filter-off-line' : 'ri-stack-line'}
@@ -2759,6 +2858,7 @@ export default function ProgrammeDetailPage() {
               rows={pagedSessions}
               rowKey={session => session.id}
               loading={loading && !deliverySessions.length}
+              refreshing={refreshing}
               empty={(
                 <EntityEmptyState
                   icon={activeSessions.length ? 'ri-filter-off-line' : sessionKind === 'live' ? 'ri-broadcast-line' : 'ri-film-line'}
@@ -2787,12 +2887,16 @@ export default function ProgrammeDetailPage() {
                       ? [session.attendanceRequired ? 'Attendance tracked' : '', session.recordingExpected ? 'Recording enabled' : ''].filter(Boolean).join(' · ') || undefined
                       : session.ksbRefs.slice(0, 4).join(', ') || undefined}
                   />
-                  <StackedCell primary={session.module} secondary={`Week ${session.week} · ${session.weekTitle}`} />
+                  <StackedCell primary={session.module} secondary={sessionWeekLabel(session)} />
                   <StackedCell
                     primary={session.kind === 'live'
-                      ? formatDateLabel(session.date) || 'Date to be confirmed'
+                      ? formatDateLabel(session.date) || 'Date not set'
                       : clean(session.provider, 'Provider not set')}
-                    secondary={session.kind === 'live' ? (session.time || 'Time to be confirmed') : 'Recorded content'}
+                    secondary={session.kind === 'live'
+                      ? session.date
+                        ? (session.time || 'Time to be confirmed')
+                        : (session.weekStartDate ? `Its week starts ${session.weekStartDate}` : 'Not in the Teams calendar yet')
+                      : 'Recorded content'}
                   />
                   <PlainCell align="center">{session.durationMinutes ? `${session.durationMinutes}m` : '—'}</PlainCell>
                   <PlainCell>{session.groups.length ? session.groups.join(', ') : 'All assigned groups'}</PlainCell>
@@ -2999,7 +3103,7 @@ export default function ProgrammeDetailPage() {
         open={programmeDrawerOpen}
         programme={drawerProgramme}
         onClose={() => setProgrammeDrawerOpen(false)}
-        onSaved={() => reload()}
+        onSaved={() => reload({ silent: true })}
       />
       <CohortFormDrawer
         open={cohortDrawerOpen}
@@ -3007,7 +3111,7 @@ export default function ProgrammeDetailPage() {
         programmes={drawerProgrammes}
         holidays={data?.holidays || []}
         onClose={() => setCohortDrawerOpen(false)}
-        onSaved={() => reload()}
+        onSaved={() => reload({ silent: true })}
       />
       <GroupFormDrawer
         open={groupDrawerCohortId !== null}
@@ -3016,7 +3120,7 @@ export default function ProgrammeDetailPage() {
         cohorts={data?.cohorts || []}
         coachNames={drawerCoachNames}
         onClose={() => setGroupDrawerCohortId(null)}
-        onSaved={() => reload()}
+        onSaved={() => reload({ silent: true })}
       />
       <ModuleFormDrawer
         open={moduleDrawerOpen}
@@ -3027,7 +3131,7 @@ export default function ProgrammeDetailPage() {
         holidays={data?.holidays || []}
         tutorNames={drawerTutorNames}
         onClose={() => setModuleDrawerOpen(false)}
-        onSaved={() => reload()}
+        onSaved={() => reload({ silent: true })}
       />
       {ksbTraceOpen && (
         <KsbTraceModal
@@ -3462,10 +3566,21 @@ function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; module
   const gridTemplateColumns = `minmax(250px, 1.3fr) repeat(${Math.max(moduleNames.length, 1)}, minmax(220px, 0.9fr)) minmax(180px, 0.7fr) minmax(340px, 1.4fr)`;
 
   return (
-    <div className="overflow-x-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm">
+    // The matrix scrolls in its own box on both axes rather than pushing the
+    // page: one module per column means the grid outgrows the viewport
+    // sideways, and with the page scrolling instead, the horizontal bar sat
+    // below the last KSB - unreachable until you had scrolled past every row.
+    // Bounding the height puts it back under the reader's eye and gives the
+    // header something to stick to.
+    <div className="max-h-[70vh] overflow-auto rounded-2xl border border-background-200 bg-background-50 shadow-sm">
       <div className="min-w-[980px]">
-        <div className="grid items-center gap-3 border-b border-background-200 bg-background-100/80 px-4 py-3" style={{ gridTemplateColumns }}>
-          <span className="text-[10px] font-bold uppercase text-foreground-400">KSB outcome</span>
+        <div className="sticky top-0 z-30 grid items-center gap-3 border-b border-background-200 bg-background-100 px-4 py-3" style={{ gridTemplateColumns }}>
+          {/* Frozen in both directions: the column headings have to survive
+              scrolling down, and "KSB outcome" has to survive scrolling right,
+              or the module columns lose the row they belong to. The negative
+              margin lets the cell cover the grid's own left padding as it
+              parks, so nothing slides through the gap. */}
+          <span className="sticky left-0 z-10 -ml-4 bg-background-100 pl-4 text-[10px] font-bold uppercase text-foreground-400 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">KSB outcome</span>
           {moduleNames.map(moduleName => (
             <span key={moduleName} className="text-center text-[10px] font-bold uppercase text-foreground-400">{moduleName}</span>
           ))}
@@ -3478,8 +3593,11 @@ function KsbHeatmapMatrix({ rows, moduleNames }: { rows: KsbHeatmapRow[]; module
             const rowWeight = ksbRowWeight(row);
             const rowId = ksbRowId(row);
             return (
-              <div key={rowId} className={`grid items-stretch gap-3 px-4 py-3 transition-smooth ${ksbRowIsMapped(row) ? 'hover:bg-background-100/60' : 'bg-amber-50/30 hover:bg-amber-50/60'}`} style={{ gridTemplateColumns }}>
-                <div className="min-w-0">
+              // Opaque row tints, because the frozen column inherits this
+              // background to hide the cells passing beneath it - and a
+              // translucent one would let them show through.
+              <div key={rowId} className={`grid items-stretch gap-3 px-4 py-3 transition-smooth ${ksbRowIsMapped(row) ? 'bg-background-50 hover:bg-background-100' : 'bg-amber-50 hover:bg-amber-100'}`} style={{ gridTemplateColumns }}>
+                <div className="sticky left-0 z-10 -ml-4 min-w-0 bg-inherit pl-4 shadow-[6px_0_8px_-8px_rgba(15,23,42,0.35)]">
                   <div className="flex flex-wrap items-center gap-2">
                     <KsbBadge code={row.ksb} />
                     <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold ${ksbTone(kind)}`}>{ksbKindLabel(kind)}</span>

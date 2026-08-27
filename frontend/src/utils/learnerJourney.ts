@@ -17,6 +17,8 @@ export interface JourneyComponent {
   fileName?: string | null;
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
+  reflectionRequired?: boolean;
+  reflectionQuestion?: string | null;
   resourceUrl?: string | null;
   liveSessionUrl?: string | null;
   teamsLiveSessionId?: string | null;
@@ -290,16 +292,35 @@ export function componentNoun(type: string | null | undefined): string {
   } as Record<string, string>)[t] || 'activity';
 }
 
-/** Can the learner open + complete this component on the component page?
- * Every backend-configured non-quiz component is available through the shared
- * component flow. Videos still require a playable source for their dedicated
- * player; the other types can present their authored instructions/resources
- * and collect the completion reflection. */
+/** Does this activity contain something the learner can actually consume?
+ * An id/title alone is not content and must never lead to an empty runner. */
+export function hasComponentContent(c: JourneyComponent): boolean {
+  const hasText = (value?: string | null) => Boolean(value?.replace(/<[^>]*>/g, '').replace(/&nbsp;|\s/g, '').trim());
+  const hasUrl = (value?: string | null) => Boolean(value?.trim());
+  if (c.isQuiz) return c.quizMeta?.quizId != null && (c.quizMeta.questions ?? 0) > 0;
+
+  const type = (c.type || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  const hasDescription = hasText(c.description);
+  if (type === 'video') return hasUrl(c.videoUrl);
+  if (type === 'podcast' || type === 'audio') return hasUrl(c.audioUrl) || hasUrl(c.resourceUrl) || hasDescription;
+  if (type === 'reading') return hasText(c.contentHtml) || hasUrl(c.resourceUrl) || hasUrl(c.audioUrl) || hasDescription;
+  if (type === 'powerpoint' || type === 'presentation' || type === 'slides') return hasUrl(c.resourceUrl) || hasDescription;
+  if (type === 'reflection') return hasText(c.reflectionPrompt) || hasText(c.reflectionQuestion) || hasDescription;
+  if (type === 'live_session') {
+    return hasUrl(c.liveSessionUrl) || hasText(c.sessionDateTimeUtc) || hasText(c.sessionDate) || Boolean(c.teamsLiveSessionId) || hasDescription;
+  }
+  return hasUrl(c.resourceUrl)
+    || hasText(c.reflectionPrompt)
+    || hasText(c.reflectionQuestion)
+    || hasText(c.contentHtml)
+    || hasUrl(c.audioUrl)
+    || hasDescription;
+}
+
+/** Can the learner open + complete this non-quiz component? */
 export function isOpenableComponent(c: JourneyComponent): boolean {
   if (c.isQuiz || !c.componentId) return false;
-  const t = (c.type || '').toLowerCase();
-  if (t === 'video') return !!c.videoUrl;
-  return true;
+  return hasComponentContent(c);
 }
 export interface JourneyWeek {
   week: string;
@@ -471,7 +492,9 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             componentId: c.componentId, type: c.type, description: c.description,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
-            downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt, resourceUrl: c.resourceUrl,
+            downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
+            reflectionRequired: c.reflectionRequired, reflectionQuestion: c.reflectionQuestion,
+            resourceUrl: c.resourceUrl,
             liveSessionUrl: c.liveSessionUrl, sessionDate: c.sessionDate, sessionTime: c.sessionTime,
             teamsLiveSessionId: c.teamsLiveSessionId,
             sessionDateTimeUtc: c.sessionDateTimeUtc,

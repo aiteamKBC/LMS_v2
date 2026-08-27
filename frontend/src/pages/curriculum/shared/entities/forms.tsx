@@ -24,7 +24,7 @@ import {
   type CurriculumHoliday,
   type CurriculumProgramme,
 } from '@/lib/curriculumApi';
-import { cleanText, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, sameFormValues, sameIdentifier } from './model';
+import { cleanText, cohortWeekCapacity, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, sameFormValues, sameIdentifier } from './model';
 import {
   ColorControl,
   EntityDrawer,
@@ -33,7 +33,9 @@ import {
   TextAreaControl,
   TextControl,
   WeekdayControl,
+  type FormChainStep,
 } from './ui';
+import { useFormSeedGuard } from './useDrawerState';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { DatePickerField } from '@/components/feature/DatePickerField';
 
@@ -47,11 +49,14 @@ import { DatePickerField } from '@/components/feature/DatePickerField';
 export function ProgrammeFormDrawer({
   open,
   programme,
+  chain,
   onClose,
   onSaved,
 }: {
   open: boolean;
   programme?: CurriculumProgramme | null;
+  /** Set when the structure wizard is driving this form as one step of a chain. */
+  chain?: FormChainStep;
   onClose: () => void;
   /**
    * Handed the programme a create just made, so the caller can carry straight on
@@ -106,8 +111,15 @@ export function ProgrammeFormDrawer({
       let created: CurriculumProgramme | null = null;
       if (programme) await updateCurriculumProgramme(programmeIdentity(programme), payload);
       else created = (await createCurriculumProgramme(payload)).programme || null;
+      // In a chain the record is handed straight back: the wizard moves to the
+      // next step and says what was created once, at the end of the run.
+      if (chain?.chained) {
+        await onSaved(created ? { programme: created } : undefined);
+        return;
+      }
       onClose();
-      await onSaved(created ? { programme: created } : undefined);
+      const refreshed = Promise.resolve(onSaved(created ? { programme: created } : undefined))
+        .catch(() => undefined);
       await showCurriculumAlert({
         title: programme ? 'Programme updated' : 'Programme created',
         // A cohort used to be named as the next step, which is the wrong one:
@@ -120,6 +132,7 @@ export function ProgrammeFormDrawer({
           : `${payload.name} is saved. It has no KSB source yet — modules under it have nothing to map against and its coverage cannot be measured until one is applied.`,
         timer: programme ? 2200 : undefined,
       });
+      await refreshed;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The programme could not be saved.');
     } finally {
@@ -131,10 +144,18 @@ export function ProgrammeFormDrawer({
     <EntityDrawer
       open={open}
       title={programme ? 'Edit programme' : 'Add programme'}
-      subtitle="Programme-level details only. Cohorts, groups and modules are added later, from their own pages."
+      subtitle={chain
+        ? 'Programme-level details only. The cohort, group and module that go under it are the steps after this one.'
+        : 'Programme-level details only. Cohorts, groups and modules are added later, from their own pages.'}
+      banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
-      submitLabel={programme ? 'Save programme' : 'Create programme'}
+      closeConfirm={chain?.closeConfirm}
+      submitLabel={chain?.submitLabel || (programme ? 'Save programme' : 'Create programme')}
+      cancelLabel={chain?.cancelLabel}
+      extraAction={chain?.extraAction}
+      backAction={chain?.backAction}
+      width={chain?.width}
       saving={saving}
       error={error}
       dirty={dirty}
@@ -167,6 +188,7 @@ export function CohortFormDrawer({
   defaults,
   programmes,
   holidays,
+  chain,
   onClose,
   onSaved,
 }: {
@@ -176,8 +198,14 @@ export function CohortFormDrawer({
   defaults?: CohortFormDefaults;
   programmes: CurriculumProgramme[];
   holidays: CurriculumHoliday[];
+  /** Set when the structure wizard is driving this form as one step of a chain. */
+  chain?: FormChainStep;
   onClose: () => void;
-  onSaved: () => unknown | Promise<unknown>;
+  /**
+   * Handed the record the save wrote, so the list can paint it before the
+   * background refresh gets back — see `EntityTable`'s highlightKey.
+   */
+  onSaved: (result?: { cohort: CurriculumCohort }) => unknown | Promise<unknown>;
 }) {
   const [name, setName] = useState('');
   const [programmeId, setProgrammeId] = useState('');
@@ -198,8 +226,28 @@ export function CohortFormDrawer({
   // What the drawer opened with, for the unsaved-changes check further down.
   const baseline = useRef<Record<string, unknown>>({});
 
+  // Only an authored practical end date counts as an edit: in automatic mode the
+  // field mirrors whatever the backend preview returns, which is not something
+  // the user typed and must not make an untouched drawer ask before it closes.
+  const authoredPracticalEnd = practicalEndIsManual ? practicalEndDate : '';
+  const dirty = !sameFormValues({
+    name,
+    programmeId,
+    startDate,
+    durationMonths,
+    practicalEndDate: authoredPracticalEnd,
+    epaMonths,
+    apprenticeshipEndOverride,
+    color,
+    holidayIds,
+  }, baseline.current);
+  // `programmes` is in the seeding effect's dependencies and gets a new identity
+  // on every background refresh; without this the list landing mid-edit reset the
+  // form. See useFormSeedGuard.
+  const allowSeed = useFormSeedGuard(dirty);
+
   useEffect(() => {
-    if (!open) return;
+    if (!allowSeed(open, cleanText(cohort?.id) || 'new-cohort')) return;
     setError(null);
     setSaving(false);
     if (cohort) {
@@ -253,12 +301,11 @@ export function CohortFormDrawer({
     setApprenticeshipEndOverride(initial.apprenticeshipEndOverride);
     setColor(initial.color);
     setHolidayIds(initial.holidayIds);
-  }, [cohort, defaults?.programmeId, open, programmes]);
+  }, [allowSeed, cohort, defaults?.programmeId, open, programmes]);
 
-  // Only an authored date is sent to the preview: in automatic mode the backend
-  // works the practical end out from the start date and duration, and the field
-  // below mirrors whatever comes back.
-  const authoredPracticalEnd = practicalEndIsManual ? practicalEndDate : '';
+  // `authoredPracticalEnd` above is also what the preview is given: in automatic
+  // mode the backend works the practical end out from the start date and
+  // duration, and the field below mirrors whatever comes back.
 
   // The practical end / EPA / apprenticeship end dates come from the backend's
   // own calculation, so the preview cannot drift from what a save will store.
@@ -317,20 +364,21 @@ export function CohortFormDrawer({
     [programmes],
   );
 
-  // Only an authored practical end date counts as an edit: in automatic mode the
-  // field mirrors whatever the backend preview returns, which is not something
-  // the user typed and must not make an untouched drawer ask before it closes.
-  const dirty = !sameFormValues({
-    name,
-    programmeId,
-    startDate,
-    durationMonths,
-    practicalEndDate: authoredPracticalEnd,
-    epaMonths,
-    apprenticeshipEndOverride,
-    color,
-    holidayIds,
-  }, baseline.current);
+  // The ticked holidays themselves, so the week count below can say which weeks
+  // of the period one of them lands in.
+  const selectedHolidays = useMemo(() => {
+    const ids = new Set(holidayIds.map(String));
+    return holidays.filter(holiday => ids.has(String(holiday.id)));
+  }, [holidayIds, holidays]);
+
+  // The floor and the ceiling on how many weeks this cohort has to deliver in.
+  // The period itself never moves, so the two numbers bracket the same window:
+  // every week when nothing is ticked, and the weeks left once each week holding
+  // a ticked holiday is taken out.
+  const weekCapacity = useMemo(
+    () => cohortWeekCapacity(periodStart, periodEnd, selectedHolidays),
+    [periodEnd, periodStart, selectedHolidays],
+  );
 
   const submit = async () => {
     if (!name.trim()) { setError('Give the cohort a name.'); return; }
@@ -357,15 +405,47 @@ export function CohortFormDrawer({
         color,
         holidayIds,
       };
-      if (cohort) await updateCurriculumCohort(cohort.id, payload);
-      else await createCurriculumCohort(payload);
+      // What the list should show straight away. A create gets the stored row
+      // back from the endpoint; an edit merges the payload over the record the
+      // drawer opened on, with the dates the preview has already worked out.
+      let saved: CurriculumCohort | null = null;
+      if (cohort) {
+        await updateCurriculumCohort(cohort.id, payload);
+        saved = {
+          ...cohort,
+          name: payload.name,
+          programme: payload.programme,
+          programmeId: payload.programmeId,
+          startDate,
+          durationMonths: payload.durationMonths ?? cohort.durationMonths,
+          endDate: practicalEndDate || cohort.endDate,
+          practicalEndDate: practicalEndDate || cohort.practicalEndDate,
+          epaMonths: payload.epaMonths,
+          apprenticeshipEndDate: apprenticeshipEndDate || cohort.apprenticeshipEndDate,
+          apprenticeshipEndOverride: apprenticeshipEndOverride || '',
+          color,
+          holidayIds,
+        };
+      } else {
+        saved = (await createCurriculumCohort(payload)).cohort || null;
+      }
+      // See the programme form: in a chain the wizard owns closing and confirming.
+      if (chain?.chained) {
+        await onSaved(saved ? { cohort: saved } : undefined);
+        return;
+      }
       onClose();
-      await onSaved();
+      // The refresh runs behind the confirmation rather than in front of it: it
+      // takes seconds, and holding the message back until it returned is what
+      // made a finished save look like nothing had happened.
+      const refreshed = Promise.resolve(onSaved(saved ? { cohort: saved } : undefined))
+        .catch(() => undefined);
       await showCurriculumAlert({
         title: cohort ? 'Cohort updated' : 'Cohort created',
         text: `${payload.name} is saved against ${payload.programme}.`,
         timer: 1800,
       });
+      await refreshed;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The cohort could not be saved.');
     } finally {
@@ -378,9 +458,15 @@ export function CohortFormDrawer({
       open={open}
       title={cohort ? 'Edit cohort' : 'Add cohort'}
       subtitle="A cohort belongs to one programme. Its practical end, EPA window and apprenticeship end date use the same rules as the rest of the LMS."
+      banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
-      submitLabel={cohort ? 'Save cohort' : 'Create cohort'}
+      closeConfirm={chain?.closeConfirm}
+      submitLabel={chain?.submitLabel || (cohort ? 'Save cohort' : 'Create cohort')}
+      cancelLabel={chain?.cancelLabel}
+      extraAction={chain?.extraAction}
+      backAction={chain?.backAction}
+      width={chain?.width}
       saving={saving}
       error={error}
       dirty={dirty}
@@ -449,6 +535,27 @@ export function CohortFormDrawer({
           <div className="mt-2 space-y-1.5 text-[12px] text-foreground-700">
             <p><span className="font-bold">Practical:</span> {formatDateLabel(startDate)} – {formatDateLabel(practicalEndDate)}</p>
             <p><span className="font-bold">Apprenticeship:</span> {formatDateLabel(startDate)} – {formatDateLabel(apprenticeshipEndDate)}</p>
+            {weekCapacity.totalWeeks > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] font-bold">Weeks:</span>
+                <span className="inline-flex items-center gap-1 rounded-full border border-primary-200 bg-primary-100 px-2 py-0.5 text-[11px] font-bold text-primary-800">
+                  {weekCapacity.totalWeeks} min
+                </span>
+                {weekCapacity.holidayWeeks > 0 && (
+                  <>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-100 px-2 py-0.5 text-[11px] font-bold text-amber-800">
+                      +{weekCapacity.holidayDays} {weekCapacity.holidayDays === 1 ? 'day' : 'days'} holiday (~{weekCapacity.holidayWeeks} {weekCapacity.holidayWeeks === 1 ? 'week' : 'weeks'})
+                    </span>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-foreground-200 bg-white px-2 py-0.5 text-[11px] font-bold text-foreground-800">
+                      ~{weekCapacity.maxWeeks} max
+                    </span>
+                  </>
+                )}
+                {!weekCapacity.holidayWeeks && (
+                  <span className="text-[11px] text-foreground-500">no holidays ticked</span>
+                )}
+              </div>
+            )}
             {holidayIds.length > 0 && (
               <p className="text-[11px] text-foreground-500">
                 Selected holidays are saved for module scheduling. If a module session clashes with one, that module plan is extended; these cohort contract dates stay fixed.
@@ -482,8 +589,54 @@ export function CohortFormDrawer({
           periodLabel={periodLabel}
         />
       </FormField>
+
+      {weekCapacity.totalWeeks > 0 && (
+        <div className="rounded-xl border border-background-200 bg-background-100 p-3.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-foreground-500">Weeks in this cohort</p>
+          <div className="mt-2 grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-lg border border-primary-200 bg-primary-50 px-2 py-2">
+              <p className="text-lg font-heading font-bold text-primary-700">{weekCapacity.totalWeeks}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-primary-700">Minimum</p>
+            </div>
+            <div className={`rounded-lg border px-2 py-2 ${weekCapacity.holidayWeeks ? 'border-amber-200 bg-amber-50' : 'border-background-200 bg-background-50'}`}>
+              <p className={`text-lg font-heading font-bold ${weekCapacity.holidayWeeks ? 'text-amber-700' : 'text-foreground-300'}`}>~{weekCapacity.holidayWeeks}</p>
+              <p className={`text-[10px] font-bold uppercase tracking-wide ${weekCapacity.holidayWeeks ? 'text-amber-700' : 'text-foreground-400'}`}>
+                Holiday weeks{weekCapacity.holidayDays > 0 ? ` (${weekCapacity.holidayDays}d exact)` : ''}
+              </p>
+            </div>
+            <div className="rounded-lg border border-background-200 bg-background-50 px-2 py-2">
+              <p className="text-lg font-heading font-bold text-foreground-900">{weekCapacity.holidayWeeks ? '~' : ''}{weekCapacity.maxWeeks}</p>
+              <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Maximum</p>
+            </div>
+          </div>
+          <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-[11px] leading-5 text-foreground-500">
+            <span className="inline-flex items-center gap-1 rounded-full bg-primary-100 px-2 py-0.5 font-bold text-primary-800">{weekCapacity.totalWeeks} weeks</span>
+            <span>with no holiday ticked{periodLabel ? ` (${periodLabel})` : ''}.</span>
+            {weekCapacity.holidayWeeks ? (
+              <>
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-bold text-amber-800">
+                  {weekCapacity.holidayDays} ticked {weekCapacity.holidayDays === 1 ? 'holiday day' : 'holiday days'} (~{weekCapacity.holidayWeeks} {weekCapacity.holidayWeeks === 1 ? 'week' : 'weeks'})
+                </span>
+                <span>push a clashing module out by that much, up to roughly</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-foreground-900 px-2 py-0.5 font-bold text-white">~{weekCapacity.maxWeeks} weeks</span>
+                <span>— the cohort's own contract dates stay fixed either way.</span>
+              </>
+            ) : (
+              <span>Tick a holiday to see the maximum grow.</span>
+            )}
+          </div>
+        </div>
+      )}
     </EntityDrawer>
   );
+}
+
+/** How many days a holiday itself spans, start to end inclusive -- shown so a 2-day and a 5-day holiday read differently rather than both just being "a holiday". */
+function holidayDaySpan(holiday: CurriculumHoliday): number {
+  const start = Date.parse(`${cleanText(holiday.startDate)}T00:00:00Z`);
+  const end = Date.parse(`${cleanText(holiday.endDate) || cleanText(holiday.startDate)}T00:00:00Z`);
+  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return 0;
+  return Math.round((end - start) / 86400000) + 1;
 }
 
 function HolidayPicker({
@@ -546,6 +699,7 @@ function HolidayPicker({
   const holidayRow = (holiday: CurriculumHoliday, outside: boolean) => {
     const id = String(holiday.id);
     const active = selectedKeys.has(id);
+    const dayCount = holidayDaySpan(holiday);
     return (
       <button
         key={id}
@@ -564,6 +718,11 @@ function HolidayPicker({
             {outside && (
               <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700">
                 Outside period
+              </span>
+            )}
+            {dayCount > 0 && (
+              <span className="shrink-0 rounded-full bg-background-200 px-1.5 py-0.5 text-[9px] font-bold text-foreground-600">
+                {dayCount} {dayCount === 1 ? 'day' : 'days'}
               </span>
             )}
           </span>
@@ -632,6 +791,7 @@ export function GroupFormDrawer({
   cohorts,
   coachNames,
   lockCohort = false,
+  chain,
   onClose,
   onSaved,
 }: {
@@ -643,8 +803,11 @@ export function GroupFormDrawer({
   coachNames: string[];
   /** True inside a Cohort workspace, where the parent is not up for debate. */
   lockCohort?: boolean;
+  /** Set when the structure wizard is driving this form as one step of a chain. */
+  chain?: FormChainStep;
   onClose: () => void;
-  onSaved: () => unknown | Promise<unknown>;
+  /** Handed the record the save wrote, so the list can paint it immediately. */
+  onSaved: (result?: { group: CurriculumGroup }) => unknown | Promise<unknown>;
 }) {
   const [name, setName] = useState('');
   const [programmeId, setProgrammeId] = useState('');
@@ -659,8 +822,17 @@ export function GroupFormDrawer({
   // What the drawer opened with, for the unsaved-changes check below.
   const baseline = useRef<Record<string, unknown>>({});
 
+  const dirty = !sameFormValues(
+    { name, programmeId, cohortId, coach, weekDays, startTime, endTime, color },
+    baseline.current,
+  );
+  // `cohorts` is a dependency of the seeding effect and gets a new identity on
+  // every background refresh; without this a reload landing mid-edit reset the
+  // form. See useFormSeedGuard.
+  const allowSeed = useFormSeedGuard(dirty);
+
   useEffect(() => {
-    if (!open) return;
+    if (!allowSeed(open, cleanText(group?.id) || 'new-group')) return;
     setError(null);
     setSaving(false);
     if (group) {
@@ -706,12 +878,7 @@ export function GroupFormDrawer({
     setStartTime(initial.startTime);
     setEndTime(initial.endTime);
     setColor(initial.color);
-  }, [cohorts, defaults?.cohortId, defaults?.programmeId, group, open]);
-
-  const dirty = !sameFormValues(
-    { name, programmeId, cohortId, coach, weekDays, startTime, endTime, color },
-    baseline.current,
-  );
+  }, [allowSeed, cohorts, defaults?.cohortId, defaults?.programmeId, group, open]);
 
   const programmeOptions = useMemo(
     () => programmes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
@@ -735,15 +902,28 @@ export function GroupFormDrawer({
       // Status is deliberately absent: a group's status is not shown anywhere, and
       // the group PATCH only writes it when the key is present, so leaving it out
       // keeps whatever is stored.
-      if (group) await updateCurriculumGroup(group.id, payload);
-      else await createCurriculumGroup(payload);
+      let saved: CurriculumGroup | null = null;
+      if (group) {
+        await updateCurriculumGroup(group.id, payload);
+        saved = { ...group, ...payload };
+      } else {
+        saved = (await createCurriculumGroup(payload)).group || null;
+      }
+      // See the programme form: in a chain the wizard owns closing and confirming.
+      if (chain?.chained) {
+        await onSaved(saved ? { group: saved } : undefined);
+        return;
+      }
       onClose();
-      await onSaved();
+      // As with the cohort drawer: confirm now, refresh behind it.
+      const refreshed = Promise.resolve(onSaved(saved ? { group: saved } : undefined))
+        .catch(() => undefined);
       await showCurriculumAlert({
         title: group ? 'Group updated' : 'Group created',
         text: `${payload.name} is saved against its cohort.`,
         timer: 1800,
       });
+      await refreshed;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The group could not be saved.');
     } finally {
@@ -756,9 +936,15 @@ export function GroupFormDrawer({
       open={open}
       title={group ? 'Edit group' : 'Add group'}
       subtitle="Programme only narrows the cohort list. The group is stored against the cohort."
+      banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
-      submitLabel={group ? 'Save group' : 'Create group'}
+      closeConfirm={chain?.closeConfirm}
+      submitLabel={chain?.submitLabel || (group ? 'Save group' : 'Create group')}
+      cancelLabel={chain?.cancelLabel}
+      extraAction={chain?.extraAction}
+      backAction={chain?.backAction}
+      width={chain?.width}
       saving={saving}
       error={error}
       dirty={dirty}

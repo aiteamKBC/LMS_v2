@@ -6,7 +6,7 @@ import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind, LearnerQuizAttempt, LearnerQuizQuestionResult } from '@/api/learnerDetail';
 import { fetchQuiz, type Quiz } from '@/api/quizzes';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
-import { buildLearnerJourney, componentTypeMeta, gradePercent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
+import { buildLearnerJourney, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
@@ -100,6 +100,7 @@ export function LearnerPlanBody({
   kind,
   learnerId,
   showHero = true,
+  compact = false,
 }: {
   real: LearnerDetail | null;
   loading: boolean;
@@ -109,6 +110,12 @@ export function LearnerPlanBody({
   kind?: string;
   learnerId?: string;
   showHero?: boolean;
+  /** Tighter module/week UI: the current (first not-fully-complete) week opens
+   *  by default instead of just the first module, and each week shows its own
+   *  completion bar. Used by the "Modules" tab of My Learning; off by default
+   *  so the employer portal and the legacy /learner/training-plan route are
+   *  unaffected. */
+  compact?: boolean;
 }) {
   const journey = buildLearnerJourney(real);
   // Component ids the learner has already completed (videos + generic components).
@@ -116,6 +123,18 @@ export function LearnerPlanBody({
     ...(real?.videoProgress || []).map((v) => v.componentId),
     ...(real?.componentProgress || []).map((c) => c.componentId),
   ]);
+  // The "you are here" week — the first one, in plan order, that isn't fully
+  // done. Only computed for `compact`, but cheap enough to always derive.
+  const currentWeekKey = (() => {
+    for (const mod of journey) {
+      for (const w of mod.weeks) {
+        const openable = w.components.filter(hasComponentContent);
+        const done = openable.filter((c) => c.isQuiz ? (c.quizAttempts?.length ?? 0) > 0 : !!c.componentId && completedIds.has(c.componentId)).length;
+        if (openable.length > 0 && done < openable.length) return `${mod.module}::${w.week}`;
+      }
+    }
+    return null;
+  })();
   const totalOtjh = real?.totalExpectedOtjh ?? 0;
   const totalWeeks = journey.reduce((n, m) => n + m.weeks.length, 0);
   const totalComponents = journey.reduce((n, m) => n + m.weeks.reduce((k, w) => k + w.components.length, 0), 0);
@@ -184,9 +203,18 @@ export function LearnerPlanBody({
         ) : journey.length === 0 ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="No training plan built for this learner yet." /></div>
         ) : (
-          <div className="space-y-4">
+          <div className={compact ? 'space-y-3' : 'space-y-4'}>
             {journey.map((mod, i) => (
-              <ModuleSection key={mod.module} module={mod} defaultOpen={i === 0} kind={kind} learnerId={learnerId} completedIds={completedIds} />
+              <ModuleSection
+                key={mod.module}
+                module={mod}
+                defaultOpen={compact ? mod.weeks.some((w) => `${mod.module}::${w.week}` === currentWeekKey) : i === 0}
+                kind={kind}
+                learnerId={learnerId}
+                completedIds={completedIds}
+                compact={compact}
+                currentWeekKey={currentWeekKey}
+              />
             ))}
           </div>
         )}
@@ -214,8 +242,9 @@ export function LearnerPlanBody({
 /* ═══════════════════════════════════════════════════════
    MODULE SECTION — collapsible group of weeks
    ═══════════════════════════════════════════════════════ */
-function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
+function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds, compact, currentWeekKey }: {
   module: JourneyModule; defaultOpen: boolean; kind?: string; learnerId?: string; completedIds: Set<string>;
+  compact?: boolean; currentWeekKey?: string | null;
 }) {
   const [collapsed, setCollapsed] = useState(!defaultOpen);
   const weekCount = module.weeks.length;
@@ -223,13 +252,13 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
   const moduleOtjh = module.weeks.reduce((n, w) => n + w.otjh, 0);
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-background-300 bg-background-50 shadow-[0_8px_24px_-22px_rgba(15,23,42,0.7)] transition-all hover:border-primary-200/80">
+    <div className={`overflow-hidden rounded-2xl border border-background-300 bg-background-50 transition-all hover:border-primary-200/80 ${compact ? '' : 'shadow-[0_8px_24px_-22px_rgba(15,23,42,0.7)]'}`}>
       {/* Module header */}
       <button
         onClick={() => setCollapsed((c) => !c)}
-        className="flex w-full cursor-pointer items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-primary-50/30 sm:gap-4 sm:px-5 md:px-6"
+        className={`flex w-full cursor-pointer items-center gap-3 text-left transition-colors hover:bg-primary-50/30 sm:gap-4 ${compact ? 'px-3.5 py-3 sm:px-4' : 'px-4 py-4 sm:px-5 md:px-6'}`}
       >
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary-200/70 bg-primary-100 sm:h-11 sm:w-11">
+        <div className={`flex shrink-0 items-center justify-center rounded-xl border border-primary-200/70 bg-primary-100 ${compact ? 'h-9 w-9' : 'h-10 w-10 sm:h-11 sm:w-11'}`}>
           <AppIcon className="ri-book-2-line text-lg text-primary-600" />
         </div>
         <div className="flex-1 min-w-0">
@@ -254,10 +283,19 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
           {weekCount === 0 ? (
             <p className="px-5 py-4 text-[12px] text-foreground-400 italic">No weeks added yet</p>
           ) : (
-            <div className="bg-background-100/35 p-2.5 sm:p-3 md:p-5">
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+            <div className={compact ? 'bg-background-100/35 p-2 sm:p-2.5' : 'bg-background-100/35 p-2.5 sm:p-3 md:p-5'}>
+              <div className={`grid grid-cols-1 gap-2.5 ${compact ? '' : 'xl:grid-cols-2'}`}>
                 {module.weeks.map((w) => (
-                  <WeekCard key={w.week} week={w} module={module.module} kind={kind} learnerId={learnerId} completedIds={completedIds} />
+                  <WeekCard
+                    key={w.week}
+                    week={w}
+                    module={module.module}
+                    kind={kind}
+                    learnerId={learnerId}
+                    completedIds={completedIds}
+                    compact={compact}
+                    isCurrentWeek={compact && currentWeekKey === `${module.module}::${w.week}`}
+                  />
                 ))}
               </div>
             </div>
@@ -271,10 +309,11 @@ function ModuleSection({ module, defaultOpen, kind, learnerId, completedIds }: {
 /* ═══════════════════════════════════════════════════════
    WEEK CARD — collapsible list of components
    ═══════════════════════════════════════════════════════ */
-function WeekCard({ week, module, kind, learnerId, completedIds }: {
+function WeekCard({ week, module, kind, learnerId, completedIds, compact, isCurrentWeek }: {
   week: JourneyWeek; module: string; kind?: string; learnerId?: string; completedIds: Set<string>;
+  compact?: boolean; isCurrentWeek?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!isCurrentWeek);
   const navigate = useNavigate();
   const componentCount = week.components.length;
   // A staff or coach viewer reads this plan; only the learner works through
@@ -282,20 +321,44 @@ function WeekCard({ week, module, kind, learnerId, completedIds }: {
   const { canProgress } = useLearnerWorkspaceAccess(learnerId);
   const canStartQuiz = !!(kind && learnerId) && canProgress;
 
+  const openableComponents = week.components.filter(hasComponentContent);
+  const doneCount = openableComponents.filter((c) => c.isQuiz ? (c.quizAttempts?.length ?? 0) > 0 : !!c.componentId && completedIds.has(c.componentId)).length;
+  const weekPercent = openableComponents.length ? Math.round((doneCount / openableComponents.length) * 100) : 0;
+
   return (
-    <div className={`min-w-0 transition-all ${open ? 'xl:col-span-2' : ''}`}>
-      <div className="overflow-hidden rounded-xl border border-background-300 bg-white shadow-[0_6px_18px_-18px_rgba(15,23,42,0.8)] transition-all duration-200 hover:border-primary-200 hover:shadow-sm">
+    <div className={`min-w-0 transition-all ${open && !compact ? 'xl:col-span-2' : ''}`}>
+      <div className={`overflow-hidden rounded-xl border bg-white transition-all duration-200 hover:border-primary-200 hover:shadow-sm ${
+        isCurrentWeek ? 'border-primary-300' : 'border-background-300'
+      } ${compact ? '' : 'shadow-[0_6px_18px_-18px_rgba(15,23,42,0.8)]'}`}>
         {/* Header */}
         <button
           onClick={() => setOpen((o) => !o)}
-          className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-3.5 text-left transition-colors hover:bg-primary-50/30 sm:gap-3 sm:px-4"
+          className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-3 text-left transition-colors hover:bg-primary-50/30 sm:gap-3 sm:px-4"
         >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-background-300 bg-background-100 font-heading text-sm font-bold text-foreground-600">
+          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-heading text-sm font-bold ${
+            isCurrentWeek ? 'border-primary-200 bg-primary-100 text-primary-700' : 'border-background-300 bg-background-100 text-foreground-600'
+          }`}>
             <AppIcon className="ri-calendar-line" />
           </span>
           <div className="flex-1 min-w-0">
-            <span className="font-heading text-sm font-bold text-foreground-900 md:text-[15px]">{week.week}</span>
-            <p className="mt-1 text-xs text-foreground-500">{componentCount} {componentCount === 1 ? 'component' : 'components'}</p>
+            <span className="flex items-center gap-1.5 font-heading text-sm font-bold text-foreground-900 md:text-[15px]">
+              {week.week}
+              {isCurrentWeek && <span className="rounded-full bg-primary-500 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white">Current</span>}
+            </span>
+            {compact ? (
+              openableComponents.length > 0 ? (
+                <div className="mt-1.5 flex items-center gap-2">
+                  <div className="h-1.5 w-20 overflow-hidden rounded-full bg-background-200">
+                    <div className={`h-full rounded-full ${weekPercent >= 100 ? 'bg-emerald-500' : 'bg-primary-500'}`} style={{ width: `${Math.max(4, weekPercent)}%` }} />
+                  </div>
+                  <span className="text-[11px] font-semibold text-foreground-500">{doneCount}/{openableComponents.length}</span>
+                </div>
+              ) : (
+                <p className="mt-1 text-xs text-foreground-500">{componentCount} {componentCount === 1 ? 'component' : 'components'}</p>
+              )
+            ) : (
+              <p className="mt-1 text-xs text-foreground-500">{componentCount} {componentCount === 1 ? 'component' : 'components'}</p>
+            )}
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {week.otjh > 0 && <span className="rounded-md bg-background-100 px-2 py-1 text-xs font-semibold text-foreground-600">{Math.round(week.otjh * 10) / 10}h</span>}
@@ -353,6 +416,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   const meta = componentTypeMeta(c.title);
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+  const contentAvailable = hasComponentContent(c);
   const canOpenComponent = canStartQuiz && isOpenableComponent(c);
   // Only assignments collect uploaded evidence, so only they get the view-file affordance.
   const isAssignment = (c.type || '').toLowerCase() === 'assignment';
@@ -382,13 +446,17 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
 
   return (
     <div>
-      <div className="flex w-full flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
-          <AppIcon className={`${meta.icon} text-[13px] ${meta.color}`} />
+      <div className={`flex w-full flex-wrap items-center gap-3 px-3 py-3 transition-colors sm:px-4 ${
+        !contentAvailable
+          ? 'bg-background-100/70 opacity-55 grayscale'
+          : completed ? 'border-l-4 border-emerald-500 bg-emerald-50/70' : ''
+      }`}>
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : meta.bg}`}>
+          <AppIcon className={`${completed ? 'ri-check-line text-emerald-700' : `${meta.icon} ${meta.color}`} text-[13px]`} />
         </div>
         <div className="flex-1 min-w-0">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{meta.label}</span>
-          <p className="text-sm font-semibold leading-snug text-foreground-900">{meta.detail || meta.label}</p>
+          <p className={`text-sm font-semibold leading-snug ${completed ? 'text-emerald-950' : 'text-foreground-900'}`}>{meta.detail || meta.label}</p>
         </div>
         {c.isQuiz && c.quizMeta?.questions != null ? (
           <span className="shrink-0 text-[11px] text-foreground-400 inline-flex items-center gap-1">
@@ -418,7 +486,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             </span>
           </button>
         )}
-        {c.isQuiz && c.quizMeta?.quizId != null && canStartQuiz && (
+        {c.isQuiz && contentAvailable && canStartQuiz && (
           <button
             onClick={() => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
             className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
@@ -432,10 +500,17 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             <AppIcon className="ri-checkbox-circle-line text-[10px]" />Done
           </span>
         )}
+        {!contentAvailable && (
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[11px] font-semibold text-foreground-500">
+            <AppIcon className="ri-lock-line text-[10px]" />Content unavailable
+          </span>
+        )}
         {c.type === 'video' && c.videoUrl && c.componentId && canStartQuiz && (
           <button
             onClick={() => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
-            className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-red-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
+            className={`inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white transition-colors sm:w-auto sm:py-1.5 sm:text-[11px] ${
+              completed ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'
+            }`}
           >
             <AppIcon className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
             {completed ? 'Rewatch' : 'Play'}

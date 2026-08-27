@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
-import type { CurriculumGroup } from '@/lib/curriculumApi';
+import type { CurriculumCohort, CurriculumGroup } from '@/lib/curriculumApi';
 import {
   cleanText,
   cohortProgramme,
@@ -13,6 +13,7 @@ import {
   normaliseKey,
   programmeIdentity,
   scheduleLabel,
+  upsertById,
 } from '../shared/entities/model';
 import { CohortFormDrawer, GroupFormDrawer } from '../shared/entities/forms';
 import { ScopeAchievementPanel } from '../shared/entities/scopeAchievement';
@@ -42,13 +43,18 @@ const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.4fr)_minmax(140px,1fr)_minma
 export default function CohortWorkspacePage() {
   const { id = '' } = useParams();
   const {
-    programmes, cohorts, groups, modules, holidays, coaches, loading, loaded, error, reload,
+    programmes, cohorts, groups, modules, holidays, coaches,
+    loading, loaded, refreshing, error, reload, applyLocal,
   } = useCurriculumEntities({ includeHolidays: true, includeStaff: true });
 
   const [tab, setTab] = useState<Tab>('overview');
   const [cohortDrawerOpen, setCohortDrawerOpen] = useState(false);
   const [groupDrawerOpen, setGroupDrawerOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<CurriculumGroup | null>(null);
+  // The group a save just wrote, marked in the table below until it is seen.
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const highlightTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
 
   const cohort = useMemo(() => findCohort(cohorts, id), [cohorts, id]);
   const programme = useMemo(
@@ -113,6 +119,28 @@ export default function CohortWorkspacePage() {
     { key: 'learners', label: 'Learners', icon: 'ri-graduation-cap-line', count: cohort?.learners || undefined },
     { key: 'holidays', label: 'Holidays', icon: 'ri-calendar-close-line', count: selectedHolidays.length },
   ];
+
+  // Both drawers hand back the record the endpoint stored, so this page shows
+  // the edit before the background refresh returns — the same reason the
+  // Cohorts and Groups lists do it. The refresh still runs straight behind.
+  const saveCohortLocally = async (result?: { cohort: CurriculumCohort }) => {
+    if (result?.cohort) {
+      const saved = result.cohort;
+      applyLocal(previous => ({ ...previous, cohorts: upsertById(previous.cohorts, saved) }));
+    }
+    await reload({ silent: true });
+  };
+
+  const saveGroupLocally = async (result?: { group: CurriculumGroup }) => {
+    const saved = result?.group;
+    if (saved) {
+      applyLocal(previous => ({ ...previous, groups: upsertById(previous.groups, saved) }));
+      window.clearTimeout(highlightTimer.current);
+      setHighlightId(saved.id);
+    }
+    await reload({ silent: true });
+    if (saved) highlightTimer.current = window.setTimeout(() => setHighlightId(null), 3000);
+  };
 
   return (
     <WorkspaceShell
@@ -192,10 +220,12 @@ export default function CohortWorkspacePage() {
               />
             </WorkspacePanel>
             <WorkspacePanel title="Context" description="Where this cohort sits in the curriculum.">
+              {/* Delivery, not Overview: the reader came from a cohort, and
+                  Delivery is the tab that lists this programme's cohorts. */}
               <DetailRow
                 label="Programme"
                 value={programme ? (
-                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(programme))}`} className="text-primary-700 hover:underline">
+                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(programme))}?tab=delivery`} className="text-primary-700 hover:underline">
                     {programme.name}
                   </Link>
                 ) : cleanText(cohort?.programme, '—')}
@@ -220,6 +250,8 @@ export default function CohortWorkspacePage() {
             rows={cohortGroups}
             rowKey={group => group.id}
             loading={loading && !loaded}
+            refreshing={refreshing}
+            highlightKey={highlightId}
             empty={(
               <EntityEmptyState
                 icon="ri-team-line"
@@ -341,7 +373,7 @@ export default function CohortWorkspacePage() {
         programmes={programmes}
         holidays={holidays}
         onClose={() => setCohortDrawerOpen(false)}
-        onSaved={() => reload({ silent: true })}
+        onSaved={saveCohortLocally}
       />
       <GroupFormDrawer
         open={groupDrawerOpen}
@@ -352,7 +384,7 @@ export default function CohortWorkspacePage() {
         coachNames={coachNames}
         lockCohort
         onClose={() => setGroupDrawerOpen(false)}
-        onSaved={() => reload({ silent: true })}
+        onSaved={saveGroupLocally}
       />
     </WorkspaceShell>
   );
