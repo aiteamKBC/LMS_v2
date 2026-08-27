@@ -1837,7 +1837,7 @@ export default function CurriculumTeamsMeetingsPage() {
                       href={selected.summary.joinUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+                      className="meeting-join-action inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11px] font-bold transition-smooth"
                     >
                       <AppIcon className="ri-microsoft-teams-line text-sm"></AppIcon>
                       Join Teams meeting
@@ -1912,10 +1912,10 @@ export default function CurriculumTeamsMeetingsPage() {
                         href={joinUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className={`inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${
+                        className={`meeting-join-action inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${
                           runState === 'live'
-                            ? 'bg-primary-600 text-white hover:bg-primary-700'
-                            : 'border border-background-200 bg-background-50 text-primary-700 hover:bg-background-100'
+                            ? ''
+                            : 'opacity-80 hover:opacity-100'
                         }`}
                       >
                         <AppIcon className="ri-microsoft-teams-line text-sm"></AppIcon>

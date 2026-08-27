@@ -302,7 +302,7 @@ function ActivityCard({ activity }: { activity: MonthActivity }) {
           )}
 
           {activity.meetingLink && activity.status !== 'cancelled' && (
-            <a href={activity.meetingLink} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-primary-600 hover:text-primary-700">
+            <a href={activity.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action mt-3 inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold">
               <AppIcon className="ri-video-chat-line"></AppIcon>Open meeting
             </a>
           )}

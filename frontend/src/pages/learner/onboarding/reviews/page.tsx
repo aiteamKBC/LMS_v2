@@ -143,7 +143,7 @@ function ReviewCard({
                 <span><i className={`ri-time-line mr-1 ${notInvited ? 'text-amber-600' : 'text-emerald-600'}`} />{review.event.scheduledTime || 'Time TBC'}</span>
                 {review.event.coachName && <span><i className={`ri-user-line mr-1 ${notInvited ? 'text-amber-600' : 'text-emerald-600'}`} />{review.event.coachName}</span>}
                 {review.event.meetingLink && (
-                  <a href={review.event.meetingLink} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline">
+                  <a href={review.event.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex items-center rounded-lg px-2.5 py-1.5 text-[11px] font-semibold">
                     <i className="ri-video-chat-line mr-1" />Join Teams meeting
                   </a>
                 )}

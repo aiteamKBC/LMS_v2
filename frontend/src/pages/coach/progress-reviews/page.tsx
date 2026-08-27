@@ -962,7 +962,7 @@ export default function CoachProgressReviews() {
                   actions={(
                     <div className="hidden shrink-0 items-center gap-2 md:flex">
                       {joinAvailable ? (
-                        <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="primary" disabled={isBusy} onClick={() => { handleJoin(review); }} />
+                        <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={isBusy} onClick={() => { handleJoin(review); }} />
                       ) : null}
                       <RowAction
                         label={isSlidesBusy ? 'Creating slides' : 'Create slides'}
@@ -1018,7 +1018,7 @@ export default function CoachProgressReviews() {
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           {joinAvailable ? (
-                            <RowAction label="Join Meeting" icon="ri-video-on-line" onClick={() => { handleJoin(review); }} disabled={isBusy} />
+                            <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" onClick={() => { handleJoin(review); }} disabled={isBusy} />
                           ) : null}
                           <RowAction
                             label={isSlidesBusy ? 'Creating slides' : 'Create slides'}

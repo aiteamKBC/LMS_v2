@@ -49,8 +49,8 @@ export const AttentionQueue = memo(function AttentionQueue({
       count: counts.critical,
       description: 'Overdue gateway, red RAG or serious learner risk.',
       dot: 'bg-red-500',
-      activeClass: 'border-red-300 bg-red-50/70 ring-1 ring-red-200',
-      idleClass: 'border-foreground-200/70 bg-white hover:border-red-200',
+      activeClass: 'bg-red-50/70 ring-1 ring-red-200',
+      idleClass: 'bg-white hover:bg-red-50/40',
     },
     {
       filter: 'need-attention',
@@ -58,8 +58,8 @@ export const AttentionQueue = memo(function AttentionQueue({
       count: counts.attention,
       description: 'Attendance, OTJH or progress concerns.',
       dot: 'bg-amber-500',
-      activeClass: 'border-amber-300 bg-amber-50/70 ring-1 ring-amber-200',
-      idleClass: 'border-foreground-200/70 bg-white hover:border-amber-200',
+      activeClass: 'bg-amber-50/70 ring-1 ring-amber-200',
+      idleClass: 'bg-white hover:bg-amber-50/40',
     },
     {
       filter: 'upcoming',
@@ -67,8 +67,8 @@ export const AttentionQueue = memo(function AttentionQueue({
       count: counts.upcoming,
       description: 'Gateway reviews and deadlines approaching.',
       dot: 'bg-accent-500',
-      activeClass: 'border-accent-300 bg-accent-50/70 ring-1 ring-accent-200',
-      idleClass: 'border-foreground-200/70 bg-white hover:border-accent-300',
+      activeClass: 'bg-accent-50/70 ring-1 ring-accent-200',
+      idleClass: 'bg-white hover:bg-accent-50/40',
     },
   ];
 
@@ -123,7 +123,7 @@ export const AttentionQueue = memo(function AttentionQueue({
           return (
             <div
               key={tile.filter}
-              className={`rounded-lg border px-3 py-2.5 transition ${active ? tile.activeClass : tile.idleClass}`}
+              className={`rounded-lg px-3 py-2.5 transition ${active ? tile.activeClass : tile.idleClass}`}
             >
               <button
                 type="button"

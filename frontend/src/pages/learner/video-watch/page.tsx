@@ -933,7 +933,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
             </div>
 
             {component.liveSessionUrl ? (
-              <a href={component.liveSessionUrl} target="_blank" rel="noreferrer" className="inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 text-[12px] font-black text-primary-700 shadow-lg transition-transform hover:-translate-y-0.5 hover:bg-primary-50">
+              <a href={component.liveSessionUrl} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-[12px] font-black shadow-lg transition-transform hover:-translate-y-0.5">
                 <AppIcon className="ri-microsoft-teams-line text-base" />
                 Join live session
                 <AppIcon className="ri-external-link-line text-xs" />

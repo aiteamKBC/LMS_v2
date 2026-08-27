@@ -6,8 +6,8 @@
 export function TimetableSurfaceSkeleton() {
   return (
     <div className="pointer-events-none absolute inset-0 z-20 rounded-2xl bg-background-50/94 backdrop-blur-[1px]">
-      <div className="space-y-5">
-        <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm">
+      <div className="calendar-layout-grid grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(360px,1fr)] xl:gap-2">
+        <div className="rounded-2xl border border-background-200 bg-white p-3 shadow-sm xl:col-start-1 xl:row-start-1">
           <div className="grid gap-3 xl:grid-cols-[auto_minmax(260px,360px)] xl:items-center xl:justify-between">
             <div className="flex flex-wrap items-center gap-2">
               <div className="h-11 w-[176px] animate-pulse rounded-lg bg-background-100"></div>
@@ -21,12 +21,12 @@ export function TimetableSurfaceSkeleton() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,2fr)_minmax(380px,1fr)]">
-          <div className="space-y-4">
+        <div className="calendar-main-grid grid grid-cols-1 gap-5 xl:contents">
+          <div className="calendar-column space-y-4 xl:col-start-1 xl:row-start-2">
             <div className="h-[520px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm"></div>
             <div className="h-[156px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm"></div>
           </div>
-          <div className="space-y-4">
+          <div className="calendar-sidebar space-y-4 xl:col-start-2 xl:row-span-2 xl:row-start-1">
             <div className="h-[430px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm"></div>
             <div className="h-[220px] animate-pulse rounded-2xl border border-background-200 bg-white shadow-sm"></div>
           </div>

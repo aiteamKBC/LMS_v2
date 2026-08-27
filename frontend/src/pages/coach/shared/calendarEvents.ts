@@ -305,16 +305,16 @@ export function statusLabel(status: CoachCalendarStatus) {
 
 export function statusPillClass(status: CoachCalendarStatus) {
   if (status === 'completed' || status === 'confirmed') return 'bg-emerald-100 text-emerald-700';
-  if (status === 'scheduled') return 'bg-amber-100 text-amber-700';
+  if (status === 'scheduled') return 'bg-primary-100 text-primary-700';
   if (status === 'in-progress') return 'bg-primary-100 text-primary-700';
   if (status === 'awaiting-signature') return 'bg-violet-100 text-violet-700';
   if (status === 'cancelled') return 'bg-red-100 text-red-700';
-  return 'bg-orange-100 text-orange-700';
+  return 'bg-rose-100 text-rose-700';
 }
 
 export function avatarClass(event: CoachCalendarEvent) {
   if (event.status === 'cancelled') return 'bg-red-100 text-red-700 ring-red-200';
-  if (event.priority === 'urgent' || event.priority === 'high') return 'bg-amber-100 text-amber-700 ring-amber-200';
+  if (event.priority === 'urgent' || event.priority === 'high') return 'bg-rose-100 text-rose-700 ring-rose-200';
   if (event.status === 'completed' || event.status === 'confirmed') return 'bg-emerald-100 text-emerald-700 ring-emerald-200';
   return 'bg-primary-100 text-primary-700 ring-primary-200';
 }
