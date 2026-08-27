@@ -756,7 +756,7 @@ def provision_live_session_tracking_tables():
                 page_url text not null default '', referrer text not null default '', metadata {json_type},
                 created_at timestamp not null default current_timestamp,
                 foreign key (live_session_id) references {live_sessions} (id) on delete cascade,
-                foreign key (artifact_id) references {artifacts} (id) on delete cascade
+                foreign key (artifact_id) references {artifacts} (id) on delete cascade on update cascade
             )
         ''')
         cursor.execute(f'create index if not exists curriculum_live_occurrence_series_idx on {occurrences} (live_session_id)')
@@ -2100,8 +2100,18 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
     graph_id = clean_str(artifact.get('id'))
     if not graph_id:
         return False
+    # Deterministic, not uuid4(): the upsert key below (occurrence_id +
+    # artifact_type + graph_artifact_id) already recognises a re-synced
+    # artifact as the same row, but a random id here still overwrote its own
+    # primary key on every sync -- so a link or an open preview holding
+    # yesterday's id 404'd the moment someone re-fetched attendance, even
+    # though the underlying Teams artifact never changed. Hashing the same
+    # key this row is matched on gives it one id for life.
+    artifact_id = 'ART-' + hashlib.sha256(
+        f"{occurrence['id']}|{artifact_type}|{graph_id}".encode('utf-8')
+    ).hexdigest()[:32].upper()
     authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], {
-        'id': f'ART-{uuid.uuid4().hex.upper()}',
+        'id': artifact_id,
         'occurrence_id': occurrence['id'],
         'artifact_type': artifact_type,
         'graph_artifact_id': graph_id,
