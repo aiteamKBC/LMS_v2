@@ -6,7 +6,7 @@ import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { fetchLmsSchema, type LmsCourse, type LmsMaterial, type LmsSection, type LmsStudent } from '@/api/lmsSchema';
 import {
-  buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, isOpenableComponent,
+  buildLearnerJourney, quizAggregateStats, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent,
   type JourneyModule, type JourneyWeek, type JourneyComponent,
 } from '@/utils/learnerJourney';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
@@ -555,12 +555,13 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
   const gradeLabel = lastAttempt ? `${gradePercent(lastAttempt.grade)}%` : '';
+  const contentAvailable = hasComponentContent(c);
   const canOpenComponent = canStartQuiz && isOpenableComponent(c);
   // Only assignments collect uploaded evidence, so only they get the view-file affordance.
   const isAssignment = (c.type || '').toLowerCase() === 'assignment';
 
   return (
-    <div className="w-full flex items-center gap-3 px-4 py-3">
+    <div className={`w-full flex items-center gap-3 px-4 py-3 ${!contentAvailable ? 'bg-background-100/70 opacity-55 grayscale' : ''}`}>
       <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
         <AppIcon className={`${meta.icon} text-[13px] ${meta.color}`} />
       </div>
@@ -585,7 +586,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
           {gradeLabel}
         </span>
       )}
-      {c.isQuiz && c.quizMeta?.quizId != null && canStartQuiz && (
+      {c.isQuiz && contentAvailable && canStartQuiz && (
         <button
           onClick={() => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
           className="shrink-0 inline-flex items-center gap-1.5 text-[11px] font-semibold px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 transition-colors cursor-pointer"
@@ -597,6 +598,11 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
       {completed && !c.isQuiz && (
         <span className="shrink-0 text-[11px] font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1 bg-emerald-100 text-emerald-700">
           <AppIcon className="ri-checkbox-circle-line text-[10px]" />Done
+        </span>
+      )}
+      {!contentAvailable && (
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[11px] font-semibold text-foreground-500">
+          <AppIcon className="ri-lock-line text-[10px]" />Content unavailable
         </span>
       )}
       {c.type === 'video' && c.videoUrl && c.componentId && canStartQuiz && (

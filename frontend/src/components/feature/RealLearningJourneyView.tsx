@@ -5,7 +5,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
-import { buildLearnerJourney, quizAggregateStats, parseHours, formatHoursMinutes, isOpenableComponent, type JourneyModule } from '@/utils/learnerJourney';
+import { buildLearnerJourney, quizAggregateStats, parseHours, formatHoursMinutes, hasComponentContent, isOpenableComponent, type JourneyModule } from '@/utils/learnerJourney';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
@@ -72,7 +72,7 @@ export function buildStations(journey: JourneyModule[], real: LearnerDetail | nu
       for (const c of w.components) {
         componentCount += 1;
         otjhPlanned += c.expectedOtjh || 0;
-        if (c.isQuiz) {
+        if (c.isQuiz && hasComponentContent(c)) {
           quizTotal += 1; trackableTotal += 1; wTotal += 1;
           const attempts = c.quizAttempts || [];
           if (attempts.length > 0) { quizTaken += 1; trackableDone += 1; wDone += 1; }
