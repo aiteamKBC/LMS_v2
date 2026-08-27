@@ -437,7 +437,12 @@ export function CurriculumStructureWizard({
   const nextStep = steps[position + 1];
   const previousStep = position > 0 ? steps[position - 1] : undefined;
 
-  const finish = (result: StructureWizardCreated) => {
+  /**
+   * `announce` is off when the run was stopped from the leave confirm: that
+   * dialog has just named what stays saved, and following it with a second modal
+   * saying the same thing only makes the way out feel like an obstacle course.
+   */
+  const finish = (result: StructureWizardCreated, announce = true) => {
     onClose();
     onFinished?.(result);
     const trail = [
@@ -446,7 +451,7 @@ export function CurriculumStructureWizard({
       cleanText(result.group?.name),
       cleanText(result.module?.name),
     ].filter(Boolean);
-    if (!trail.length) return;
+    if (!announce || !trail.length) return;
     void showCurriculumAlert({
       title: trail.length > 1 ? 'Structure created' : 'Saved',
       // The KSB warning the programme form would have given on its own is said
@@ -490,7 +495,7 @@ export function CurriculumStructureWizard({
   };
 
   /** Cancel, Escape, the backdrop or the cross — the run stops where it is. */
-  const exit = () => finish(created);
+  const exit = () => finish(created, false);
 
   // Nothing this run wrote is undone by leaving, so once a step has saved the
   // way out stops calling itself Cancel.
@@ -503,6 +508,30 @@ export function CurriculumStructureWizard({
     if (target === 'group') return [chainNames.programme, chainNames.cohort];
     if (target === 'module') return [chainNames.programme, chainNames.cohort, chainNames.group];
     return [chainNames.module];
+  };
+
+  /**
+   * The cross, Escape and the backdrop end the whole run, not just this form, so
+   * a step asks before it goes — even with nothing typed, which a form on its own
+   * page would close silently. What the run already wrote is named, so "discard"
+   * is never read as undoing it.
+   */
+  const closeConfirmFor = (target: StructureWizardStep): FormChainStep['closeConfirm'] => {
+    if (target === 'outline') return undefined;
+    const saved = [
+      cleanText(created.programme?.name),
+      cleanText(created.cohort?.name),
+      cleanText(created.group?.name),
+      cleanText(created.module?.name),
+    ].filter(Boolean);
+    const step = STEP_META[target].label.toLowerCase();
+    return {
+      title: saved.length ? 'Stop the guided setup here?' : 'Leave the guided setup?',
+      text: saved.length
+        ? `${saved.join(' → ')} ${saved.length > 1 ? 'stay' : 'stays'} saved. This ${step} has not been created yet, and closing now ends the run without it.`
+        : `Nothing has been created yet. Closing now ends the run and this ${step} is not saved.`,
+      confirmLabel: saved.length ? 'Stop here' : 'Discard',
+    };
   };
 
   const siblingCountFor = (target: StructureWizardStep): number =>
@@ -524,6 +553,7 @@ export function CurriculumStructureWizard({
     // always last and says Finish.
     submitLabel: target === 'outline' || nextStep ? STEP_META[target].continueLabel : undefined,
     cancelLabel: written ? 'Stop here' : undefined,
+    closeConfirm: closeConfirmFor(target),
     // The weeks handoff creates nothing, so it carries no skip label and is the
     // only step without this button.
     extraAction: STEP_META[target].skipLabel ? {

@@ -729,6 +729,10 @@ export function ColorControl({ value, onChange }: { value: string; onChange: (va
 
 const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
+/** Saturday and Sunday are the weekend in England, so delivering on them is the exception. */
+export const WEEKEND_DAYS = ['Saturday', 'Sunday'];
+export const WEEKEND_HINT = 'Saturday and Sunday are weekend holidays in England — delivery on these days is unusual.';
+
 /** Delivery days as a comma-separated string, which is how the API stores them. */
 export function WeekdayControl({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const selected = value.split(',').map(day => day.trim()).filter(Boolean);
@@ -736,25 +740,38 @@ export function WeekdayControl({ value, onChange }: { value: string; onChange: (
     const next = selected.includes(day) ? selected.filter(item => item !== day) : [...selected, day];
     onChange(WEEKDAYS.filter(item => next.includes(item)).join(', '));
   };
+  const weekendPicked = WEEKEND_DAYS.some(day => selected.includes(day));
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {WEEKDAYS.map(day => {
-        const active = selected.includes(day);
-        return (
-          <button
-            key={day}
-            type="button"
-            onClick={() => toggle(day)}
-            className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth ${
-              active
-                ? 'border-primary-600 bg-primary-600 text-white'
-                : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
-            }`}
-          >
-            {day.slice(0, 3)}
-          </button>
-        );
-      })}
+    <div>
+      <div className="flex flex-wrap gap-1.5">
+        {WEEKDAYS.map(day => {
+          const active = selected.includes(day);
+          const weekend = WEEKEND_DAYS.includes(day);
+          return (
+            <button
+              key={day}
+              type="button"
+              onClick={() => toggle(day)}
+              title={weekend ? WEEKEND_HINT : undefined}
+              className={`h-9 rounded-lg border px-3 text-[11px] font-bold transition-smooth ${
+                active
+                  ? 'border-primary-600 bg-primary-600 text-white'
+                  : weekend
+                    ? 'border-dashed border-background-300 bg-background-50 text-foreground-400 hover:bg-background-100'
+                    : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
+              }`}
+            >
+              {day.slice(0, 3)}
+            </button>
+          );
+        })}
+      </div>
+      {weekendPicked && (
+        <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-amber-600">
+          <i className="ri-information-line mt-px" aria-hidden />
+          <span>{WEEKEND_HINT}</span>
+        </p>
+      )}
     </div>
   );
 }
@@ -770,6 +787,18 @@ export interface DrawerExtraAction {
   icon?: string;
   onClick: () => void;
   confirmWhenDirty?: string;
+}
+
+/**
+ * Asks before the drawer closes even when nothing has been typed. A form on its
+ * own page closes silently when it is clean; a step of a chain does not, because
+ * the cross there abandons a run, not just a form.
+ */
+export interface DrawerCloseConfirm {
+  title: string;
+  text: string;
+  /** The button that goes through with the close. Cancel always keeps editing. */
+  confirmLabel: string;
 }
 
 /**
@@ -801,6 +830,8 @@ export interface FormChainStep {
   cancelLabel?: string;
   /** Overrides the drawer width, so a chain does not resize between steps. */
   width?: string;
+  /** Asks before the cross, Escape or the backdrop ends the run, dirty or not. */
+  closeConfirm?: DrawerCloseConfirm;
 }
 
 /**
@@ -822,6 +853,7 @@ export function EntityDrawer({
   saving,
   error,
   dirty = false,
+  closeConfirm,
   children,
   width = 'w-[520px]',
 }: {
@@ -844,6 +876,11 @@ export function EntityDrawer({
    * before it throws the answers away; a clean one closes straight away.
    */
   dirty?: boolean;
+  /**
+   * Asks on the way out even when the form is clean. The dirty question above
+   * still wins when there are answers to lose, since it is the more urgent one.
+   */
+  closeConfirm?: DrawerCloseConfirm;
   children: ReactNode;
   width?: string;
 }) {
@@ -863,14 +900,23 @@ export function EntityDrawer({
   // Cancel — comes through here, so none of them can lose typed answers.
   const requestClose = () => {
     if (saving) return;
-    if (!dirty) { onClose(); return; }
+    if (!dirty && !closeConfirm) { onClose(); return; }
     if (confirmingDiscard.current) return;
     confirmingDiscard.current = true;
+    // Unsaved answers are the more urgent question, so they are asked about even
+    // when the caller supplied its own; a clean form gets the caller's wording.
+    const ask = dirty
+      ? {
+        title: 'Discard unsaved changes?',
+        text: 'This form has answers that have not been saved. Closing it now throws them away.',
+        confirmLabel: 'Discard changes',
+      }
+      : closeConfirm!;
     void showCurriculumConfirm({
-      title: 'Discard unsaved changes?',
-      text: 'This form has answers that have not been saved. Closing it now throws them away.',
+      title: ask.title,
+      text: ask.text,
       icon: 'warning',
-      confirmButtonText: 'Discard changes',
+      confirmButtonText: ask.confirmLabel,
       cancelButtonText: 'Keep editing',
       onConfirm: () => { onClose(); },
     }).finally(() => { confirmingDiscard.current = false; });
