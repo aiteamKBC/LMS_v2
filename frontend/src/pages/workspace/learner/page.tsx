@@ -7,7 +7,7 @@ import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
+import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
 import type {
   LearnerComponentProgress,
   LearnerDetail,
@@ -997,7 +997,7 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
   const style = STATE_STYLE[prog.state];
   const actionable = !!onOpen;
   const reflection = REFLECTION_STATUS[reflectionStatus || ''];
-  const completed = prog.state === 'watched' || prog.state === 'passed';
+  const completed = prog.state === 'watched' || prog.state === 'passed' || prog.state === 'completed';
   const unavailable = !hasComponentContent(c);
   return (
     <button
@@ -1064,8 +1064,8 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
 }
 
 /** The Continue Learning card body: progress + this week's components. */
-function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress }: {
-  moduleTitle: string; weekLabel: string; components: JourneyComponent[];
+function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress }: {
+  moduleTitle: string; weekLabel: string; weekIndex: number; totalWeeks: number; components: JourneyComponent[];
   videos: LearnerVideoProgress[]; completions: LearnerComponentProgress[];
   kind?: string; learnerId?: string;
   reflectionStatuses: LearningReflectionStatusMap;
@@ -1077,8 +1077,8 @@ function CurrentWeekCard({ moduleTitle, weekLabel, components, videos, completio
   const availableComponents = components.filter(hasComponentContent);
   const total = availableComponents.length;
   const done = availableComponents.filter((c) => {
-    const s = componentProgress(c, videos).state;
-    return s === 'passed' || s === 'watched';
+    const s = componentProgress(c, videos, completions).state;
+    return s === 'passed' || s === 'watched' || s === 'completed';
   }).length;
   const percent = total ? Math.round((done / total) * 100) : 0;
   const period = weekPeriodLabel(weekLabel);
