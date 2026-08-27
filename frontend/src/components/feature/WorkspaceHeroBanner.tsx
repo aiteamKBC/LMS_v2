@@ -1,4 +1,8 @@
+/* This file intentionally exports the animation hook beside the banner so the
+   existing page imports stay stable. */
+/* eslint-disable react-refresh/only-export-components */
 import { useEffect, useRef } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 
 interface WorkspaceHeroBannerProps {
   title: string;
@@ -14,6 +18,7 @@ export function WorkspaceHeroBanner({
   title,
   description,
   stats,
+  icon,
 }: WorkspaceHeroBannerProps) {
   const bannerRef = useRef<HTMLDivElement>(null);
 
@@ -32,37 +37,27 @@ export function WorkspaceHeroBanner({
   return (
     <div
       ref={bannerRef}
-      className="workspace-hero-banner relative overflow-hidden rounded-[1.25rem] border border-foreground-200/60 bg-background-50 shadow-lg shadow-foreground-950/10"
+      className="workspace-hero-banner relative overflow-hidden rounded-2xl shadow-sm"
+      style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
     >
-      {/* Subtle top line */}
-      <div className="absolute inset-x-0 top-0 h-px bg-primary-200/70" />
-      {/* Subtle bottom line */}
-      <div className="absolute inset-x-0 bottom-0 h-px bg-foreground-200/60" />
-      {/* Liquid blob decorations */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
-        <div className="absolute opacity-10" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
-        <div className="absolute opacity-8" style={{ width: '50%', height: '25%', left: '20%', bottom: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--primary-500) / 0.2) 0%, transparent 70%)', filter: 'blur(50px)' }} />
-      </div>
+      <div className="relative flex flex-col items-start gap-5 p-5 sm:flex-row sm:items-center sm:p-7">
+        <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 backdrop-blur-sm">
+          <AppIcon className={`${icon || 'ri-dashboard-line'} text-2xl text-white`}></AppIcon>
+        </span>
 
-      <div className="relative flex flex-col lg:flex-row items-stretch min-h-[200px]">
-        {/* Left: Title + Description */}
-        <div className="flex-1 px-5 md:px-7 py-5 md:py-6 flex flex-col justify-center min-w-0">
-          <h2 className="text-lg md:text-xl font-heading font-bold text-foreground-950 tracking-tight mb-1.5">{title}</h2>
-          <p className="text-sm text-foreground-500 max-w-2xl leading-relaxed">{description}</p>
+        <div className="min-w-0 flex-1">
+          <h2 className="mb-1 font-heading text-lg font-bold text-white">{title}</h2>
+          <p className="text-[13px] leading-relaxed text-white/80">{description}</p>
         </div>
 
-        {/* Right: Stats */}
         {stats && stats.length > 0 && (
-          <div className="lg:w-[440px] shrink-0 px-5 md:px-7 py-5 md:py-6 border-t lg:border-t-0 lg:border-l border-foreground-200/60 flex items-center">
-            <div className="flex items-center gap-3 w-full flex-wrap">
-              {stats.map((stat, i) => (
-                <div key={i} className="bg-primary-50 border border-primary-100/70 rounded-xl px-4 py-3 text-center flex-1 min-w-[80px]">
-                  <p className="text-xl font-bold text-foreground-900">{stat.value}</p>
-                  <p className="text-[10px] text-foreground-500 uppercase tracking-wide">{stat.label}</p>
-                </div>
-              ))}
-            </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-3">
+            {stats.map((stat, i) => (
+              <div key={i} className="min-w-[80px] rounded-xl border border-white/60 bg-white/50 px-4 py-3 text-center backdrop-blur-sm">
+                <p className="text-2xl font-bold text-primary-900">{stat.value}</p>
+                <p className="whitespace-nowrap text-[10px] uppercase tracking-wide text-primary-800/75">{stat.label}</p>
+              </div>
+            ))}
           </div>
         )}
       </div>

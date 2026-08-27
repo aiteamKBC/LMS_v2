@@ -100,7 +100,15 @@ function StateShell({
   );
 }
 
-export function CaseloadError({ message, onRetry }: { message: string; onRetry: () => void }) {
+export function CaseloadError({
+  message,
+  onRetry,
+  action,
+}: {
+  message: string;
+  onRetry: () => void;
+  action?: { label: string; onClick: () => void };
+}) {
   return (
     <StateShell
       icon="ri-error-warning-line"
@@ -116,6 +124,16 @@ export function CaseloadError({ message, onRetry }: { message: string; onRetry: 
         <AppIcon className="ri-refresh-line"></AppIcon>
         Try again
       </button>
+      {action ? (
+        <button
+          type="button"
+          onClick={action.onClick}
+          className="inline-flex h-9 items-center gap-1.5 rounded-md border border-primary-200 bg-white px-3.5 text-[12px] font-semibold text-primary-700 transition hover:bg-primary-50"
+        >
+          <AppIcon className="ri-login-box-line"></AppIcon>
+          {action.label}
+        </button>
+      ) : null}
     </StateShell>
   );
 }

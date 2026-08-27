@@ -55,7 +55,7 @@ export function ActionRow({
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-2xl border border-foreground-200/70 bg-background-50 shadow-sm',
+        'relative overflow-hidden rounded-xl bg-background-50 shadow-sm',
         className,
       )}
     >
@@ -119,7 +119,7 @@ export function RowAction({
   label: string;
   icon?: string;
   onClick: () => void;
-  emphasis?: 'primary' | 'secondary';
+  emphasis?: 'primary' | 'secondary' | 'meeting';
   disabled?: boolean;
 }) {
   return (
@@ -129,9 +129,11 @@ export function RowAction({
       disabled={disabled}
       className={cn(
         'inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-[12px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60',
-        emphasis === 'primary'
-          ? 'bg-primary-600 text-white hover:bg-primary-700'
-          : 'border border-foreground-200 bg-background-50 text-foreground-700 hover:border-foreground-300 hover:text-foreground-900',
+        emphasis === 'meeting'
+          ? 'meeting-join-action'
+          : emphasis === 'primary'
+            ? 'bg-primary-600 text-white hover:bg-primary-700'
+            : 'border border-foreground-200 bg-background-50 text-foreground-700 hover:border-foreground-300 hover:text-foreground-900',
       )}
     >
       {icon ? <AppIcon className={icon}></AppIcon> : null}

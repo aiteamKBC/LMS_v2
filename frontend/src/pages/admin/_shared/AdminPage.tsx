@@ -49,7 +49,7 @@ export function AdminPage({
       userRole="Super Administrator"
     >
       <div className="p-3 md:p-6 space-y-4 md:space-y-6">
-        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
+        <div className="relative rounded-2xl overflow-hidden" style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}>
           <div className="absolute inset-x-0 top-0 h-px bg-white/10" />
           <div className="absolute inset-x-0 bottom-0 h-px bg-white/5" />
           <div className="relative p-5 sm:p-7 flex flex-col sm:flex-row items-start sm:items-center gap-5">
@@ -63,9 +63,9 @@ export function AdminPage({
             {stats && stats.length > 0 && (
               <div className="flex items-center gap-3 shrink-0 flex-wrap">
                 {stats.map(s => (
-                  <div key={s.label} className="bg-white/15 backdrop-blur-sm rounded-xl px-4 py-3 text-center min-w-[80px]">
-                    <p className="text-2xl font-bold text-white">{s.value}</p>
-                    <p className="text-[10px] text-white/70 uppercase tracking-wide whitespace-nowrap">{s.label}</p>
+                  <div key={s.label} className="bg-white/50 border border-white/60 backdrop-blur-sm rounded-xl px-4 py-3 text-center min-w-[80px]">
+                    <p className="text-2xl font-bold text-primary-900">{s.value}</p>
+                    <p className="text-[10px] text-primary-800/75 uppercase tracking-wide whitespace-nowrap">{s.label}</p>
                   </div>
                 ))}
               </div>
@@ -98,7 +98,7 @@ export function DataPanel({
     // console page, so what is arriving is always a list of things — and the
     // page keeps its height instead of collapsing and jumping back.
     return (
-      <div className={`bg-background-50 rounded-xl border border-foreground-200/60 p-5 ${className}`}>
+      <div className={`bg-background-50 rounded-xl p-5 shadow-sm ${className}`}>
         {skeleton ?? <RowsSkeleton rows={5} />}
       </div>
     );
@@ -121,7 +121,7 @@ export function DataPanel({
   }
   if (empty) {
     return (
-      <div className={`bg-background-50 rounded-xl border border-foreground-200/60 p-10 text-center ${className}`}>
+      <div className={`bg-background-50 rounded-xl p-10 text-center shadow-sm ${className}`}>
         <span className="w-10 h-10 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-3">
           <AppIcon className="ri-inbox-line text-foreground-300 text-lg"></AppIcon>
         </span>
