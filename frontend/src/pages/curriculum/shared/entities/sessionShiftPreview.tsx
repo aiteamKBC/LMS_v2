@@ -11,19 +11,22 @@ export interface HolidayShiftSessionLike {
 /**
  * The plan a holiday rewrote, hop by hop.
  *
- * The backend walks the group's delivery day forward and either books a session
- * on it or records it as skipped, so putting the booked dates and the skipped
- * ones back together rebuilds the unshifted plan: slot i is where session i + 1
- * was due before any holiday touched it.
+ * The backend walks the group's delivery day forward, and a session that steps
+ * over a closed date before landing carries every date it skipped, in order, in
+ * its own `skippedHolidays` — the first of those is exactly where it was due
+ * before any holiday touched it. That is the only fact this reads: a session's
+ * shift is entirely its own `skippedHolidays`, never anything read off the rest
+ * of the series.
  *
- * That matters because a closure moves far more than the one session it lands
- * on. The session rolls to the next delivery day; if that day is closed too it
- * rolls again; and every later session rolls with it because its own slot is
- * now taken. Only the session that stepped over a closed date carries it in
- * `skippedHolidays`, so read on its own the rest of the plan looks untouched
- * when in fact the whole tail — and the module's end date — moved. Every hop is
- * named here so callers can say which date closed, which date was already
- * taken, and where the session finally lands.
+ * A closure still moves more than the one session it lands on — the next
+ * session naturally starts one slot later too — but a session carried along
+ * that way clashed with nothing itself (`skippedHolidays` is empty), so it is
+ * not reported as moved. Reporting it against a slot borrowed from a neighbour
+ * is exactly the bug this replaced: a date pooled from every session in the
+ * series and re-handed out by array position drifts by one slot after the
+ * first real closure, so a later, genuinely unaffected session could inherit
+ * an earlier one's clash and a genuinely blocked session could be shown against
+ * the date before its own.
  */
 export interface SessionShift {
   sessionNumber: number;
@@ -33,7 +36,7 @@ export interface SessionShift {
   gapLabel: string;
   /** The closed dates this session itself landed on, in the order it hit them. */
   clashes: Array<{ date: string; holiday: string }>;
-  /** The holidays that moved the sessions ahead of it, when it has no clash of its own. */
+  /** Unused now that a shift is read solely off the session's own clashes; kept for callers matching on the shape. */
   causeNames: string[];
   headline: string;
   detail: string;
@@ -61,39 +64,28 @@ function gapBetween(fromIso: string, toIso: string): string {
   return `${days} day${days === 1 ? '' : 's'} later`;
 }
 
+/** `2026-09-10` shifted by whole weeks, forward or back. */
+function shiftByWeeks(iso: string, weeks: number): string {
+  const parsed = Date.parse(`${iso}T00:00:00Z`);
+  if (Number.isNaN(parsed) || !weeks) return iso;
+  return new Date(parsed + weeks * 7 * 86400000).toISOString().slice(0, 10);
+}
+
 export function buildHolidayShiftPlan<S extends HolidayShiftSessionLike>(
   sessions: S[],
   holidayLabelFor?: (date: string) => string,
 ): HolidayShiftPlan {
-  const booked = sessions.map(session => cleanText(session.date));
-  const closedDates = Array.from(new Set(
-    sessions.flatMap(session => (session.skippedHolidays || []).map(date => cleanText(date))).filter(Boolean),
-  )).sort();
-  const closedSet = new Set(closedDates);
-  // Booked dates and closed dates interleaved are the delivery slots the
-  // backend walked, so the nth slot is the nth session's original date.
-  const slots = Array.from(new Set([...booked, ...closedDates].filter(Boolean))).sort();
-
   const shifts: SessionShift[] = sessions.map((session, index) => {
-    const actualDate = booked[index];
-    const originalDate = slots[index] || actualDate;
-    const from = slots.indexOf(originalDate);
-    const to = slots.indexOf(actualDate);
-    // Its own clashes are the closed dates between where it was due and where
-    // it runs. Everything else on that walk is a day an earlier session took,
-    // which is the same story told once at the top rather than per row.
-    const walked = from >= 0 && to >= from ? slots.slice(from, to) : [];
-    const clashes = walked
-      .filter(date => closedSet.has(date))
+    const actualDate = cleanText(session.date);
+    // The walk hits its own closed dates in order before landing on
+    // actualDate, so the first one is where this session was due.
+    const clashes = (session.skippedHolidays || [])
+      .map(date => cleanText(date))
+      .filter(Boolean)
       .map(date => ({ date, holiday: cleanText(holidayLabelFor?.(date)) }));
-    const moved = Boolean(actualDate) && actualDate !== originalDate;
+    const moved = clashes.length > 0;
+    const originalDate = moved ? clashes[0].date : actualDate;
     const clashNames = Array.from(new Set(clashes.map(clash => clash.holiday).filter(Boolean)));
-    const causeNames = Array.from(new Set(
-      closedDates
-        .filter(date => date < actualDate)
-        .map(date => cleanText(holidayLabelFor?.(date)))
-        .filter(Boolean),
-    ));
     return {
       sessionNumber: index + 1,
       originalDate,
@@ -101,12 +93,10 @@ export function buildHolidayShiftPlan<S extends HolidayShiftSessionLike>(
       moved,
       gapLabel: moved ? gapBetween(originalDate, actualDate) : '',
       clashes,
-      causeNames,
+      causeNames: [],
       headline: !moved
         ? ''
-        : clashes.length
-          ? clashNames.length ? `Clashes with ${clashNames.join(', ')}` : 'Clashes with a holiday'
-          : causeNames.length ? `Pushed by ${causeNames.join(', ')}` : 'Pushed by an earlier clash',
+        : clashNames.length ? `Clashes with ${clashNames.join(', ')}` : 'Clashes with a holiday',
       detail: !moved
         ? ''
         : [
@@ -120,6 +110,10 @@ export function buildHolidayShiftPlan<S extends HolidayShiftSessionLike>(
   const movedNumbers = shifts.filter(shift => shift.moved).map(shift => shift.sessionNumber);
   const contiguous = movedNumbers.length > 1
     && movedNumbers[movedNumbers.length - 1] - movedNumbers[0] === movedNumbers.length - 1;
+  const closedDates = Array.from(new Set(
+    sessions.flatMap(session => (session.skippedHolidays || []).map(date => cleanText(date))).filter(Boolean),
+  )).sort();
+  const shiftedEndDate = cleanText(sessions[sessions.length - 1]?.date);
   return {
     shifts,
     closures: closedDates.map(date => ({ date, label: cleanText(holidayLabelFor?.(date)) })),
@@ -131,8 +125,12 @@ export function buildHolidayShiftPlan<S extends HolidayShiftSessionLike>(
         : contiguous
           ? `Sessions ${movedNumbers[0]}–${movedNumbers[movedNumbers.length - 1]}`
           : `Sessions ${movedNumbers.join(', ')}`,
-    originalEndDate: slots[sessions.length - 1] || '',
-    shiftedEndDate: booked[booked.length - 1] || '',
+    // Every closed date delays the series by exactly one week (a closure only
+    // ever blocks a candidate on the module's own delivery weekday), so
+    // stepping the actual end date back by the closure count recovers where
+    // it would have landed with none of them.
+    originalEndDate: shiftedEndDate ? shiftByWeeks(shiftedEndDate, -closedDates.length) : '',
+    shiftedEndDate,
   };
 }
 
