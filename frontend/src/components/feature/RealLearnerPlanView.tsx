@@ -6,7 +6,7 @@ import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail, LearnerKind, LearnerQuizAttempt, LearnerQuizQuestionResult } from '@/api/learnerDetail';
 import { fetchQuiz, type Quiz } from '@/api/quizzes';
 import { EvidenceFilesButton } from '@/components/feature/EvidenceFilesButton';
-import { buildLearnerJourney, componentTypeMeta, gradePercent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
+import { buildLearnerJourney, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent, type JourneyModule, type JourneyWeek, type JourneyComponent } from '@/utils/learnerJourney';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
@@ -128,9 +128,9 @@ export function LearnerPlanBody({
   const currentWeekKey = (() => {
     for (const mod of journey) {
       for (const w of mod.weeks) {
-        const openable = w.components.filter((c) => c.componentId);
-        const done = openable.filter((c) => completedIds.has(c.componentId!)).length;
-        if (done < openable.length || openable.length === 0) return `${mod.module}::${w.week}`;
+        const openable = w.components.filter(hasComponentContent);
+        const done = openable.filter((c) => c.isQuiz ? (c.quizAttempts?.length ?? 0) > 0 : !!c.componentId && completedIds.has(c.componentId)).length;
+        if (openable.length > 0 && done < openable.length) return `${mod.module}::${w.week}`;
       }
     }
     return null;
@@ -321,8 +321,8 @@ function WeekCard({ week, module, kind, learnerId, completedIds, compact, isCurr
   const { canProgress } = useLearnerWorkspaceAccess(learnerId);
   const canStartQuiz = !!(kind && learnerId) && canProgress;
 
-  const openableComponents = week.components.filter((c) => c.componentId);
-  const doneCount = openableComponents.filter((c) => completedIds.has(c.componentId!)).length;
+  const openableComponents = week.components.filter(hasComponentContent);
+  const doneCount = openableComponents.filter((c) => c.isQuiz ? (c.quizAttempts?.length ?? 0) > 0 : !!c.componentId && completedIds.has(c.componentId)).length;
   const weekPercent = openableComponents.length ? Math.round((doneCount / openableComponents.length) * 100) : 0;
 
   return (
@@ -416,6 +416,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
   const meta = componentTypeMeta(c.title);
   const attempts = c.quizAttempts || [];
   const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
+  const contentAvailable = hasComponentContent(c);
   const canOpenComponent = canStartQuiz && isOpenableComponent(c);
   // Only assignments collect uploaded evidence, so only they get the view-file affordance.
   const isAssignment = (c.type || '').toLowerCase() === 'assignment';
@@ -445,13 +446,17 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
 
   return (
     <div>
-      <div className="flex w-full flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
-        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${meta.bg}`}>
-          <AppIcon className={`${meta.icon} text-[13px] ${meta.color}`} />
+      <div className={`flex w-full flex-wrap items-center gap-3 px-3 py-3 transition-colors sm:px-4 ${
+        !contentAvailable
+          ? 'bg-background-100/70 opacity-55 grayscale'
+          : completed ? 'border-l-4 border-emerald-500 bg-emerald-50/70' : ''
+      }`}>
+        <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : meta.bg}`}>
+          <AppIcon className={`${completed ? 'ri-check-line text-emerald-700' : `${meta.icon} ${meta.color}`} text-[13px]`} />
         </div>
         <div className="flex-1 min-w-0">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground-400">{meta.label}</span>
-          <p className="text-sm font-semibold leading-snug text-foreground-900">{meta.detail || meta.label}</p>
+          <p className={`text-sm font-semibold leading-snug ${completed ? 'text-emerald-950' : 'text-foreground-900'}`}>{meta.detail || meta.label}</p>
         </div>
         {c.isQuiz && c.quizMeta?.questions != null ? (
           <span className="shrink-0 text-[11px] text-foreground-400 inline-flex items-center gap-1">
@@ -481,7 +486,7 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             </span>
           </button>
         )}
-        {c.isQuiz && c.quizMeta?.quizId != null && canStartQuiz && (
+        {c.isQuiz && contentAvailable && canStartQuiz && (
           <button
             onClick={() => navigate(`/learner/quiz/${kind}/${learnerId}/${c.quizMeta!.quizId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
             className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-primary-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
@@ -495,10 +500,17 @@ function ComponentRow({ component: c, module, week, kind, learnerId, canStartQui
             <AppIcon className="ri-checkbox-circle-line text-[10px]" />Done
           </span>
         )}
+        {!contentAvailable && (
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-background-200 px-2 py-0.5 text-[11px] font-semibold text-foreground-500">
+            <AppIcon className="ri-lock-line text-[10px]" />Content unavailable
+          </span>
+        )}
         {c.type === 'video' && c.videoUrl && c.componentId && canStartQuiz && (
           <button
             onClick={() => navigate(`/learner/video/${kind}/${learnerId}/${c.componentId}?module=${encodeURIComponent(module)}&week=${encodeURIComponent(week)}`)}
-            className="inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-red-700 sm:w-auto sm:py-1.5 sm:text-[11px]"
+            className={`inline-flex w-full shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-semibold text-white transition-colors sm:w-auto sm:py-1.5 sm:text-[11px] ${
+              completed ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'
+            }`}
           >
             <AppIcon className={`${completed ? 'ri-refresh-line' : 'ri-play-fill'} text-[10px]`} />
             {completed ? 'Rewatch' : 'Play'}
