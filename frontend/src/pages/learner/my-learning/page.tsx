@@ -8,7 +8,7 @@ import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { LearnerPlanBody } from '@/components/feature/RealLearnerPlanView';
 import { buildStations } from '@/components/feature/RealLearningJourneyView';
-import { buildLinkedQuizzes, type LinkedQuiz } from '@/utils/linkedQuizzes';
+import { buildLinkedQuizzes, splitLinkedQuizWeek, type LinkedQuiz } from '@/utils/linkedQuizzes';
 import {
   buildLearnerJourney, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent,
   formatHoursMinutes, parseHours, type JourneyComponent, type JourneyModule,
@@ -474,6 +474,7 @@ function QuizzesTab({ real, loading, loadError, kind, id, canTake, navigate }: {
                 <tr className="border-b border-foreground-200/60 bg-background-100/60">
                   <th className="whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Quiz</th>
                   <th className="whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Week</th>
+                  <th className="whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Date</th>
                   <th className="whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Score</th>
                   <th className="whitespace-nowrap px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">Status</th>
                   <th className="px-4 py-2.5"></th>
@@ -500,13 +501,15 @@ function QuizListRow({ quiz, canTake, onTake }: {
   onTake: () => void;
 }) {
   const { best, status } = quiz;
+  const { label: weekLabel, date: weekDate } = splitLinkedQuizWeek(quiz.week);
   return (
     <tr className="transition-colors hover:bg-background-100/40">
       <td className="px-4 py-3">
         <p className="text-[13px] font-semibold text-foreground-900">{quiz.name}</p>
         {quiz.module && <p className="text-[11px] text-foreground-400">{quiz.module}</p>}
       </td>
-      <td className="whitespace-nowrap px-4 py-3 text-[12px] text-foreground-600">{quiz.week || EMPTY_VALUE}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-[12px] text-foreground-600">{weekLabel || EMPTY_VALUE}</td>
+      <td className="whitespace-nowrap px-4 py-3 text-[12px] text-foreground-600">{weekDate || EMPTY_VALUE}</td>
       <td className="whitespace-nowrap px-4 py-3 text-[12px] font-semibold text-foreground-800">
         {best ? `${gradePercent(best.grade)}%` : EMPTY_VALUE}
       </td>
