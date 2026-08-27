@@ -130,6 +130,9 @@ function freeModuleComponentToCourseComponent(component: FreeProgrammeModule['co
     expectedOtjh: component.expectedOtjh,
     points: component.points,
     reflectionRequired: component.reflectionRequired,
+    // Free courses keep their components in their own tables, which have no
+    // reflection-question column — the legacy settings key is all there is.
+    reflectionQuestion: String(component.settings?.reflectionPrompt ?? ''),
     workplaceEvidenceRequired: component.workplaceEvidenceRequired,
     tutorValidationRequired: component.tutorValidationRequired,
     ksbMappings: [],

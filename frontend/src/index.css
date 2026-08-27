@@ -2619,10 +2619,24 @@ table tbody td:last-child {
   color: white !important;
 }
 
-.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-source {
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-source,
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-structure {
   border-color: oklch(var(--primary-200)) !important;
   background: oklch(var(--primary-50)) !important;
   color: oklch(var(--primary-700)) !important;
+}
+
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-structure:hover {
+  background: oklch(var(--primary-100)) !important;
+}
+
+/* A metric that links into the tab owning its records. The flat rule above wins
+   on background !important, so the hover state has to be stated here too or the
+   only feedback a click target gives is the cursor. */
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programmes-metric-link:hover,
+.dashboard-theme .workspace-main .programmes-page .programme-color-card .programmes-metric-link:focus-visible {
+  background: oklch(var(--primary-50)) !important;
+  box-shadow: inset 0 0 0 1px oklch(var(--primary-300)) !important;
 }
 
 .dashboard-theme .workspace-main .programmes-page .programme-color-card .programme-action-learners {

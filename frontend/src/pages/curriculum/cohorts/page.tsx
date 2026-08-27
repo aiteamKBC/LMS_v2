@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -12,8 +12,12 @@ import {
   matchesSearch,
   normaliseKey,
   programmeIdentity,
+  removeById,
+  sameIdentifier,
+  upsertById,
 } from '../shared/entities/model';
 import { CohortFormDrawer } from '../shared/entities/forms';
+import { CurriculumStructureWizard, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
   EntityFilterBar,
@@ -46,7 +50,7 @@ const COLUMNS = [
 export default function CurriculumCohortsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const {
-    programmes, cohorts, groups, holidays, loading, loaded, error, reload,
+    programmes, cohorts, groups, holidays, loading, loaded, refreshing, error, reload, applyLocal,
   } = useCurriculumEntities({ includeHolidays: true });
 
   const [search, setSearch] = useState('');
@@ -54,6 +58,14 @@ export default function CurriculumCohortsPage() {
   const [yearFilter, setYearFilter] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editing, setEditing] = useState<CurriculumCohort | null>(null);
+  // The guided run: this same cohort form, then the group and module ones, for a
+  // cohort that is being stood up rather than added to a running programme.
+  const [wizardOpen, setWizardOpen] = useState(false);
+  // The cohort a save just wrote, marked in the table until the eye has had a
+  // chance to land on it.
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const highlightTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
 
   // Keep the programme scope in the URL so a filtered list can be linked to —
   // the Programme workspace's Cohorts tab hands off here.
@@ -112,6 +124,10 @@ export default function CurriculumCohortsPage() {
       confirmButtonText: 'Archive cohort',
       onConfirm: async () => {
         await archiveCurriculumCohort(cohort.id);
+        // Drop the row now, for the same reason a create paints one now: the
+        // refresh behind this takes seconds, and a cohort still sitting in the
+        // list after "Archive" reads as an archive that did not happen.
+        applyLocal(previous => ({ ...previous, cohorts: removeById(previous.cohorts, cohort.id) }));
         await reload({ silent: true });
       },
       successTitle: 'Cohort archived',
@@ -122,6 +138,38 @@ export default function CurriculumCohortsPage() {
     () => programmes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
     [programmes],
   );
+
+  // A cohort is saved under whatever filters happen to be on screen, and a
+  // filter that hides it reads as a save that did not work. Anything that would
+  // keep the new record out of the list is dropped, so what the page shows is
+  // the row the user just wrote.
+  const revealCohort = (saved: CurriculumCohort) => {
+    if (yearFilter && cohortYear(saved) !== yearFilter) setYearFilter('');
+    if (programmeFilter && !cohortsForProgramme([saved], programmes, programmeFilter).length) setProgrammeFilter('');
+    if (search && !matchesSearch(search, [saved.name, saved.programme, saved.startDate, saved.endDate, saved.id])) {
+      setSearch('');
+    }
+  };
+
+  /**
+   * The drawer hands back the record the endpoint stored, so the row goes in
+   * now rather than when the background refresh returns a few seconds later.
+   * The refresh still runs straight behind it and replaces the whole list with
+   * the server's copy — this only closes the gap the user was staring at.
+   */
+  const handleSaved = async (result?: { cohort: CurriculumCohort }) => {
+    const saved = result?.cohort;
+    if (saved) {
+      applyLocal(previous => ({ ...previous, cohorts: upsertById(previous.cohorts, saved) }));
+      revealCohort(saved);
+      window.clearTimeout(highlightTimer.current);
+      setHighlightId(saved.id);
+    }
+    await reload({ silent: true });
+    // Held until the server's copy has replaced the optimistic row, so the mark
+    // ends on the row that stays rather than the one that was swapped out.
+    if (saved) highlightTimer.current = window.setTimeout(() => setHighlightId(null), 3000);
+  };
 
   return (
     <WorkspaceShell
@@ -147,6 +195,16 @@ export default function CurriculumCohortsPage() {
             { icon: 'ri-graduation-cap-line', label: 'Learners', value: totals.learners },
           ]}
           primaryAction={{ label: 'Add Cohort', onClick: openCreate }}
+          secondaryActions={(
+            <button
+              type="button"
+              onClick={() => setWizardOpen(true)}
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/10 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-white/15"
+            >
+              <AppIcon className="ri-route-line text-base"></AppIcon>
+              Cohort + group + module
+            </button>
+          )}
         />
 
         {error && <InlineError message={error} onRetry={() => void reload()} />}
@@ -170,7 +228,9 @@ export default function CurriculumCohortsPage() {
             },
           ]}
           onReset={() => { setSearch(''); setProgrammeFilter(''); setYearFilter(''); }}
-          summary={loaded ? `Showing ${visibleCohorts.length} of ${cohorts.length} cohorts` : undefined}
+          summary={loaded
+            ? `Showing ${visibleCohorts.length} of ${cohorts.length} cohorts${refreshing ? ' · updating…' : ''}`
+            : undefined}
         />
 
         <EntityTable
@@ -179,6 +239,8 @@ export default function CurriculumCohortsPage() {
           rows={visibleCohorts}
           rowKey={cohort => cohort.id}
           loading={loading && !loaded}
+          refreshing={refreshing}
+          highlightKey={highlightId}
           empty={(
             <EntityEmptyState
               icon="ri-calendar-event-line"
@@ -233,7 +295,21 @@ export default function CurriculumCohortsPage() {
         programmes={programmes}
         holidays={holidays}
         onClose={() => setDrawerOpen(false)}
-        onSaved={() => reload({ silent: true })}
+        onSaved={handleSaved}
+      />
+
+      {/* The same cohort form as above, with the group and module ones chained
+          behind it. Only the cohort step reaches this page's list; what the later
+          steps create is picked up by the refresh that follows each one. */}
+      <CurriculumStructureWizard
+        open={wizardOpen}
+        from="cohort"
+        defaults={{ programmeId: programmeFilter }}
+        onClose={() => setWizardOpen(false)}
+        onStepSaved={async (created: StructureWizardCreated) => {
+          if (created.cohort) await handleSaved({ cohort: created.cohort });
+          else await reload({ silent: true });
+        }}
       />
     </WorkspaceShell>
   );

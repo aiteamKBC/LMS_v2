@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { ProgrammeFilter } from '@/components/feature/ProgrammeFilter';
 import { useToast } from '@/hooks/useToast';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { LearnerProfilePanel } from '@/pages/engagement/LearnerProfilePanel';
 import { roleNavMap } from '@/mocks/navigation';
 import {
@@ -1026,20 +1027,6 @@ function TopAchieverCard({ learner }: { learner: EngagementLearner }) {
 }
 
 const CONFETTI_COLORS = ['#ffffff', '#F7D77C', RANK_COLORS.first, '#CBB7FF', '#F3B991'];
-
-function useReducedMotion() {
-  const [reduceMotion, setReduceMotion] = useState(false);
-
-  useEffect(() => {
-    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const updatePreference = () => setReduceMotion(query.matches);
-    updatePreference();
-    query.addEventListener('change', updatePreference);
-    return () => query.removeEventListener('change', updatePreference);
-  }, []);
-
-  return reduceMotion;
-}
 
 function useCountUp(target: number, delay: number, reduceMotion: boolean) {
   const [value, setValue] = useState(reduceMotion ? target : 0);

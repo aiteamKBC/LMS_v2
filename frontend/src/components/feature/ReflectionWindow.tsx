@@ -80,6 +80,7 @@ export function ReflectionWindow({
   learnerKind,
   learnerId,
   evidenceSectionRef,
+  reflectionQuestion,
   onClose,
 }: {
   learnerKsbs: LearnerKsbItem[];
@@ -110,8 +111,11 @@ export function ReflectionWindow({
   learnerKind?: LearnerKind;
   learnerId?: string;
   evidenceSectionRef?: string;
+  reflectionQuestion?: string | null;
   onClose?: () => void;
 }) {
+  const applyQuestion = reflectionQuestion?.trim()
+    || 'How can this learning be applied in your workplace?';
   // Two decimals, and no trailing ".00" — the field takes a plain hours number,
   // so "1.71" and "2" both read correctly while 102 minutes can no longer
   // arrive as 102 hours. Falls back to blank rather than to a parsed label: an
@@ -797,7 +801,7 @@ export function ReflectionWindow({
 
         {tab === 'apply' && (
           <section>
-            <h2 className="text-sm font-semibold text-foreground-900">How can this learning be applied in your workplace?</h2>
+            <h2 className="text-sm font-semibold text-foreground-900">{applyQuestion}</h2>
             <div className="mt-3 space-y-2">
               {[
                 ['already', 'I have already applied this learning'],

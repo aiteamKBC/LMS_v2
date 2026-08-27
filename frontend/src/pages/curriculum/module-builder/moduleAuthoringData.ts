@@ -65,6 +65,12 @@ export interface ModuleComponent {
   expectedOtjh: number;
   points: number;
   reflectionRequired: boolean;
+  /**
+   * What the learner is asked to reflect on. Stored in its own column on
+   * `curriculum.components` rather than in `settings`, and only editable while
+   * `reflectionRequired` is on — the answer has nowhere to go otherwise.
+   */
+  reflectionQuestion: string;
   workplaceEvidenceRequired: boolean;
   tutorValidationRequired: boolean;
   ksbMappings: KsbMapping[];
@@ -332,6 +338,7 @@ export function createEmptyComponent(weekId: string, type: ModuleComponentType, 
     expectedOtjh: definition.defaultOtjh,
     points: definition.defaultPoints,
     reflectionRequired: definition.reflectionDefault,
+    reflectionQuestion: String(getDefaultComponentSettings(type).reflectionPrompt || ''),
     workplaceEvidenceRequired: definition.workplaceEvidenceDefault,
     tutorValidationRequired: definition.tutorValidationDefault,
     ksbMappings: [],
@@ -505,6 +512,28 @@ export async function duplicateModuleStructure(source: ModuleCatalogueItem) {
   }
 }
 
+// Keys that describe a component's relationship to *its own* week/module — a
+// copy lands in a different one, so carrying these forward is always wrong:
+// stale group ids from the source's context, and (worse) placedCopy* pointers
+// that would make the clone's "Assigned groups" cascade-delete reach into
+// whatever module/week the *source* had placed a copy in, not its own. The
+// clone starts with a clean slate; the target's own AssignedGroupsSection
+// re-derives its locked group on first render.
+const GROUP_ASSIGNMENT_SETTING_KEYS = [
+  'selectedGroupKeys',
+  'selectedGroupNames',
+  'placedCopyGroupKeys',
+  'placedCopyModuleCatalogueIds',
+  'placedCopyWeekIds',
+  'placedCopyComponentIds',
+] as const;
+
+function withoutGroupAssignmentSettings(settings: ComponentSettings): ComponentSettings {
+  const next = { ...settings };
+  GROUP_ASSIGNMENT_SETTING_KEYS.forEach(key => { delete next[key]; });
+  return next;
+}
+
 /**
  * Copy a component out of the reuse library into a week, as a snapshot.
  *
@@ -537,6 +566,12 @@ export function copyComponentIntoWeek(
     expectedOtjh: Number(source.expectedOtjh ?? definition.defaultOtjh) || 0,
     points: Number(source.points ?? definition.defaultPoints) || 0,
     reflectionRequired: Boolean(source.reflectionRequired ?? definition.reflectionDefault),
+    reflectionQuestion: String(
+      source.reflectionQuestion
+      ?? (source.settings as ComponentSettings | undefined)?.reflectionPrompt
+      ?? getDefaultComponentSettings(type).reflectionPrompt
+      ?? '',
+    ),
     workplaceEvidenceRequired: Boolean(source.workplaceEvidenceRequired ?? definition.workplaceEvidenceDefault),
     tutorValidationRequired: Boolean(source.tutorValidationRequired ?? definition.tutorValidationDefault),
     ksbMappings: (source.ksbMappings || []).map(mapping => {
@@ -553,10 +588,34 @@ export function copyComponentIntoWeek(
         weight_class: weightClass,
       };
     }),
-    settings: normaliseComponentSettings(type, {
+    settings: normaliseComponentSettings(type, withoutGroupAssignmentSettings({
       ...getDefaultComponentSettings(type),
       ...((source.settings || {}) as ComponentSettings),
-    }),
+    })),
+  };
+}
+
+/**
+ * Copy a component that's being edited into a *different* week — possibly in
+ * another group's module entirely — as an independent snapshot.
+ *
+ * Same id-regeneration + `copiedFromId` provenance convention as
+ * `copyComponentIntoWeek`: the placed copy never reaches back into the
+ * component it came from, and vice versa.
+ */
+export function copyComponentToWeek(
+  source: ModuleComponent,
+  targetWeekId: string,
+  targetModuleId: string,
+): ModuleComponent {
+  return {
+    ...source,
+    id: makeAuthoringId('component'),
+    copiedFromId: source.id,
+    moduleId: targetModuleId,
+    weekId: targetWeekId,
+    settings: withoutGroupAssignmentSettings(source.settings),
+    ksbMappings: source.ksbMappings.map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
   };
 }
 
@@ -568,7 +627,7 @@ export async function deleteModuleStructure(moduleCatalogueId: string) {
 
 export async function loadModuleStructure(catalogueId: string): Promise<ModuleCatalogueItem | null> {
   try {
-    return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`));
+    return recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(catalogueId)}/structure/`, { timeoutMs: 15000 }));
   } catch (err) {
     const status = err instanceof ApiError ? err.status : 0;
     if (status === 404) return null;
@@ -713,6 +772,7 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
         expectedOtjh: Number(component.expectedOtjh ?? component.duration ?? 0) || 0,
         points: Number(component.points ?? 0) || 0,
         reflectionRequired: Boolean(component.reflectionRequired),
+        reflectionQuestion: String(component.reflectionQuestion || ''),
         workplaceEvidenceRequired: Boolean(component.workplaceEvidenceRequired),
         tutorValidationRequired: Boolean(component.tutorValidationRequired),
         ksbMappings: (component.ksbMappings || []) as KsbMapping[],
@@ -1534,9 +1594,9 @@ export function getLegacyDefaultComponentSettings(type: ModuleComponentType): Re
     case 'live-session':
       return { ...componentAdvancedDefaults(type), sessionPurpose: '', preparationInstructions: '', reflectionQuestions: '', attendanceRequired: true, recordingExpected: true };
     case 'recording-placeholder':
-      return { ...componentAdvancedDefaults(type), recordingPurpose: '', source: 'MIS allocation', expectedAvailability: 'After live session', captionsExpected: false };
+      return { ...componentAdvancedDefaults(type), recordingPurpose: '', source: 'MIS allocation', expectedAvailability: 'After live session' };
     case 'video':
-      return { ...componentAdvancedDefaults(type), provider: 'YouTube', videoUrl: '', durationMinutes: 10, captionsAvailable: false, learningBrief: '', postWatchTask: '' };
+      return { ...componentAdvancedDefaults(type), provider: 'YouTube', videoUrl: '', durationMinutes: 10, learningBrief: '', postWatchTask: '' };
     case 'podcast':
       return { ...componentAdvancedDefaults(type), podcastSource: 'External URL', podcastUrl: '', durationMinutes: 20, listeningFocus: '', podcastReflectionQuestion: '' };
     case 'reading':
