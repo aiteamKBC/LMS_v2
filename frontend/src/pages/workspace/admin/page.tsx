@@ -196,24 +196,59 @@ export default function AdminDashboard() {
       userName={auth.account?.displayName || auth.user?.fullName || 'Platform Admin'}
       userRole="Super Administrator"
     >
-      <div className="p-3 md:p-6 space-y-4 md:space-y-6">
-        {/* ============================================================ */}
-        {/* Header                                                        */}
-        {/* ============================================================ */}
-        <div className="relative rounded-2xl overflow-hidden h-36 md:h-40" style={{ background: 'linear-gradient(180deg, oklch(var(--primary-950)) 0%, oklch(var(--primary-900)) 50%, oklch(var(--primary-800)) 100%)' }}>
+      <div className="space-y-4 p-3 md:space-y-5 md:p-6">
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+          <div>
+            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, Super Admin 👋</h1>
+            <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor platform health, user engagement and system performance in real time.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40">
+              <AppIcon className="ri-calendar-line text-sm text-foreground-500"></AppIcon>
+              <span>May 13 - May 19, 2024</span>
+              <AppIcon className="ri-arrow-down-s-line text-xs text-foreground-400"></AppIcon>
+            </button>
+            <button type="button" className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40">
+              <AppIcon className="ri-equalizer-line text-sm text-foreground-500"></AppIcon>
+              <span>Filters</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-[minmax(0,1fr)_26rem]">
+        <section className="relative min-h-[180px] overflow-hidden rounded-xl border border-primary-200/60 p-5 shadow-sm md:p-6" style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 28%, oklch(var(--primary-100)) 62%, oklch(var(--background-50)) 100%)' }}>
           <div className="absolute top-0 left-0 right-0 h-px bg-white/10"></div>
           <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute opacity-20" style={{ width: '60%', height: '30%', left: '-10%', top: '-10%', background: 'radial-gradient(ellipse at center, oklch(var(--accent-500) / 0.3) 0%, transparent 70%)', filter: 'blur(60px)' }} />
             <div className="absolute opacity-10" style={{ width: '70%', height: '35%', right: '-15%', top: '15%', background: 'radial-gradient(ellipse at center, oklch(var(--secondary-400) / 0.2) 0%, transparent 70%)', filter: 'blur(55px)' }} />
           </div>
-          <div className="relative h-full flex flex-col justify-center px-6 md:px-8">
-            <h2 className="text-2xl md:text-3xl font-heading font-bold text-white tracking-tight mb-1.5">Platform Control</h2>
+          <div className="relative z-10 flex h-full max-w-[54%] flex-col justify-center">
+            <h2 className="mb-1.5 font-heading text-xl font-bold tracking-tight text-white md:text-2xl">Platform Control</h2>
             <p className="text-[13px] text-white/50">
               {overview
                 ? <>Accounts, access and platform records · updated {timeAgo(overview.generatedAt)}</>
                 : 'Reading platform records…'}
             </p>
+            <span className="mt-5 inline-flex w-fit items-center gap-1.5 rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-medium text-white/95 ring-1 ring-inset ring-white/15"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300"></span>Updated just now</span>
           </div>
+          <div aria-hidden="true" className="pointer-events-none absolute right-[10%] top-1/2 hidden h-32 w-44 -translate-y-1/2 md:block">
+            <div className="absolute left-8 top-12 h-16 w-24 rotate-[28deg] rounded-xl border border-white/55 bg-white/15 shadow-[0_18px_28px_rgba(54,18,130,0.18)]"></div>
+            <div className="absolute left-5 top-7 h-16 w-24 rotate-[28deg] rounded-xl border border-white/70 bg-white/30"></div>
+            <div className="absolute left-[4.25rem] top-7 h-10 w-10 rounded-xl bg-white/75 shadow-lg shadow-primary-900/20"></div>
+            <AppIcon className="absolute left-[4.8rem] top-[3.05rem] ri-stack-line text-lg text-primary-500"></AppIcon>
+            <span className="absolute left-1 top-5 h-2 w-2 rounded-full bg-white/80"></span><span className="absolute right-2 top-9 h-2 w-2 rounded-full bg-white/80"></span><span className="absolute right-8 bottom-2 h-2 w-2 rounded-full bg-white/70"></span>
+          </div>
+        </section>
+
+        <section className="h-fit rounded-xl border border-foreground-200/70 bg-background-50 p-3.5 shadow-sm md:p-4">
+          <div className="mb-2 flex items-center gap-2"><AppIcon className="ri-flashlight-line text-sm text-primary-600"></AppIcon><h2 className="font-heading text-sm font-semibold text-foreground-900">Quick actions</h2></div>
+          <div className="divide-y divide-foreground-100/70">
+            <QuickAction href="/admin/users" icon="ri-user-add-line" label="Invite new user" />
+            <QuickAction href="/curriculum/cohorts" icon="ri-group-line" label="Create cohort" />
+            <QuickAction href="/admin/platform-report" icon="ri-file-chart-line" label="Generate platform report" />
+            <QuickAction href="/admin/access-logs" icon="ri-shield-check-line" label="View audit logs" />
+          </div>
+        </section>
         </div>
 
         {error && (
@@ -307,20 +342,15 @@ export default function AdminDashboard() {
         {/* ============================================================ */}
         {/* Stat cards                                                    */}
         {/* ============================================================ */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 md:gap-4">
-          <MiniStat loading={loading} label="Sign-in accounts" value={acc?.total} sub={`${acc?.active ?? 0} able to sign in`} icon="ri-shield-user-line" color="primary" href="/admin/users" />
-          <MiniStat loading={loading} label="Active last 30 days" value={acc?.activeLast30d} sub={`${acc?.liveSessions ?? 0} live sessions`} icon="ri-pulse-line" color="secondary" href="/admin/access-logs" />
-          <MiniStat loading={loading} label="Awaiting first sign-in" value={acc?.neverSignedIn} sub={`${overview?.invitations.pending ?? 0} invitations pending`} icon="ri-mail-send-line" color="accent" href="/admin/users?status=invited" />
-          <MiniStat loading={loading} label="Suspended or locked" value={(acc?.suspended ?? 0) + (acc?.locked ?? 0)} sub={`${acc?.suspended ?? 0} suspended · ${acc?.locked ?? 0} locked`} icon="ri-lock-line" color="primary" href="/admin/users?status=suspended" />
-
-          {people?.available && <>
-            <MiniStat loading={loading} label="Learners" value={people.learners} sub={`${people.apprenticeship} apprenticeship · ${people.commercial} commercial`} icon="ri-user-line" color="secondary" href="/users" />
-            <MiniStat loading={loading} label="Employers" value={people.employers} sub={`${people.organisations} organisations`} icon="ri-building-2-line" color="accent" href="/admin/platform-report" />
-          </>}
-          {overview?.curriculum.available && <>
-            <MiniStat loading={loading} label="Programmes" value={overview.curriculum.programmes} sub={`${overview.curriculum.modules} modules authored`} icon="ri-stack-line" color="primary" href="/admin/platform-report" />
-            <MiniStat loading={loading} label="Cohorts" value={overview.curriculum.cohorts} sub="in the curriculum schema" icon="ri-group-2-line" color="secondary" href="/admin/platform-report" />
-          </>}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+          <MiniStat loading={loading} label="Sign-in accounts" value={acc?.total} sub={`${acc?.active ?? 0} able to sign in`} icon="ri-user-line" color="primary" href="/admin/users" />
+          <MiniStat loading={loading} label="Active last 30 days" value={acc?.activeLast30d} sub={`${acc?.liveSessions ?? 0} live sessions`} icon="ri-circle-line" color="blue" href="/admin/access-logs" />
+          <MiniStat loading={loading} label="Awaiting first sign-in" value={acc?.neverSignedIn} sub={`${overview?.invitations.pending ?? 0} invitations pending`} icon="ri-mail-line" color="amber" href="/admin/users?status=invited" />
+          <MiniStat loading={loading} label="Suspended or locked" value={(acc?.suspended ?? 0) + (acc?.locked ?? 0)} sub={`${acc?.suspended ?? 0} suspended · ${acc?.locked ?? 0} locked`} icon="ri-lock-line" color="danger" href="/admin/users?status=suspended" />
+          <MiniStat loading={loading} label="Learners" value={people?.available ? people.learners : undefined} sub={people?.available ? `${people.apprenticeship} apprenticeship · ${people.commercial} commercial` : 'Schema unavailable'} icon="ri-user-line" color="green" href="/users" />
+          <MiniStat loading={loading} label="Employers" value={people?.available ? people.employers : undefined} sub={people?.available ? `${people.organisations} organisations` : 'Schema unavailable'} icon="ri-briefcase-line" color="primary" href="/admin/platform-report" />
+          <MiniStat loading={loading} label="Programmes" value={overview?.curriculum.available ? overview.curriculum.programmes : undefined} sub={overview?.curriculum.available ? `${overview.curriculum.modules} modules authored` : 'Schema unavailable'} icon="ri-stack-line" color="blue" href="/admin/platform-report" />
+          <MiniStat loading={loading} label="Cohorts" value={overview?.curriculum.available ? overview.curriculum.cohorts : undefined} sub={overview?.curriculum.available ? 'In the curriculum schema' : 'Schema unavailable'} icon="ri-group-line" color="teal" href="/admin/platform-report" />
         </div>
 
         {/* ============================================================ */}
@@ -530,24 +560,39 @@ export default function AdminDashboard() {
 /* ======================================================================== */
 /* Stat card — links through to the filtered list it summarises              */
 /* ======================================================================== */
+function QuickAction({ href, icon, label }: { href: string; icon: string; label: string }) {
+  return (
+    <Link to={href} className="flex items-center gap-2.5 py-2.5 text-[11px] text-foreground-700 transition-smooth hover:text-primary-600">
+      <span className="flex h-6 w-6 items-center justify-center rounded-md bg-primary-50 text-primary-500"><AppIcon className={`${icon} text-xs`}></AppIcon></span>
+      <span className="flex-1">{label}</span>
+      <AppIcon className="ri-arrow-right-s-line text-foreground-300"></AppIcon>
+    </Link>
+  );
+}
+
 function MiniStat({ label, value, sub, icon, color, href, loading }: {
   label: string; value: number | undefined; sub: string; icon: string; color: string; href: string; loading: boolean;
 }) {
   const bgMap: Record<string, string> = {
-    primary: 'bg-primary-100 text-primary-600',
-    secondary: 'bg-secondary-100 text-secondary-600',
-    accent: 'bg-accent-50 text-accent-700',
+    primary: 'bg-primary-50 text-primary-600',
+    blue: 'bg-blue-50 text-blue-500',
+    amber: 'bg-amber-50 text-amber-600',
+    danger: 'bg-red-50 text-red-500',
+    green: 'bg-emerald-50 text-emerald-600',
+    teal: 'bg-teal-50 text-teal-500',
   };
   return (
-    <Link to={href} className="block bg-background-50 rounded-xl border border-foreground-200/60 p-3 md:p-4 card-premium cursor-pointer">
-      <span className={`w-7 md:w-8 h-7 md:h-8 rounded-lg flex items-center justify-center ${bgMap[color] || bgMap.primary} mb-2 md:mb-3`}>
-        <AppIcon className={`${icon} text-xs md:text-sm`}></AppIcon>
+    <Link to={href} className="flex min-w-0 items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-3.5 py-3 card-premium cursor-pointer md:px-4">
+      <span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${bgMap[color] || bgMap.primary}`}>
+        <AppIcon className={`${icon} text-lg`}></AppIcon>
       </span>
-      <p className="text-xl md:text-2xl font-heading font-semibold text-foreground-900">
-        {loading && value === undefined ? <span className="inline-block w-8 h-6 rounded bg-background-200 animate-pulse" /> : value ?? 0}
-      </p>
-      <p className="text-[10px] md:text-[11px] text-foreground-400 mt-1">{label}</p>
-      <p className="text-[10px] text-foreground-300 truncate">{sub}</p>
+      <span className="min-w-0">
+        <p className="font-heading text-xl font-semibold leading-none text-foreground-900">
+          {loading && value === undefined ? <span className="inline-block h-5 w-8 animate-pulse rounded bg-background-200" /> : value ?? 0}
+        </p>
+        <p className="mt-1.5 truncate text-[10px] font-medium leading-tight text-foreground-500">{label}</p>
+        <p className="truncate text-[9px] leading-tight text-foreground-300">{sub}</p>
+      </span>
     </Link>
   );
 }

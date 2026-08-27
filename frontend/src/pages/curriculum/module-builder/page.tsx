@@ -2742,7 +2742,7 @@ function TypeSpecificFields({
             <div className="min-w-0">
               <p className="text-[10px] font-bold uppercase text-foreground-400">Microsoft Teams meeting</p>
               {getString('liveSessionUrl') ? (
-                <a href={getString('liveSessionUrl')} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[12px] font-bold text-primary-600 hover:text-primary-700">
+                <a href={getString('liveSessionUrl')} target="_blank" rel="noreferrer" className="meeting-join-action mt-1 inline-flex max-w-full items-center gap-1 rounded-lg px-2.5 py-1.5 text-[12px] font-bold">
                   <AppIcon className="ri-microsoft-teams-line mr-1"></AppIcon>
                   Open meeting link
                 </a>

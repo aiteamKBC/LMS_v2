@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
@@ -9,7 +9,6 @@ import { cn } from '@/lib/cn';
 import { EMPTY_VALUE } from '@/lib/format';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { CompactMetric } from '@/components/ui/MetricCard';
 import { PageTabs, PageTabsBar, type PageTabItem } from '@/components/ui/PageTabs';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -323,27 +322,26 @@ export default function CoachMarkingQueue() {
           icon="ri-file-list-3-line"
           title="Marking Queue"
           description="Review complete learning submissions, validate KSB development and confirm OTJH."
-          meta={
-            <>
-              <CompactMetric label="Active learners" value={summary.activeLearners} />
-              <CompactMetric label="Pending" value={summary.pendingItems} tone="caution" />
-              <CompactMetric
-                label="Overdue"
-                value={summary.overdueItems}
-                tone={summary.overdueItems > 0 ? 'critical' : 'neutral'}
-                note={`Oldest pending: ${summary.oldestSubmission}`}
-              />
-            </>
-          }
         />
 
         <PageTabsBar actions={<RowAction label="Refresh" icon="ri-refresh-line" onClick={() => void loadQueue()} />}>
-          <PageTabs
-            label="Filter submissions by status"
-            value={filter}
-            onChange={(next) => { setFilter(next as QueueFilter); setPage(1); }}
-            items={FILTER_TABS.map((tab) => ({ ...tab, count: filterCounts[tab.value as QueueFilter] }))}
-          />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Link
+              to="/coach/caseload"
+              className="inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-600 transition hover:border-foreground-300 hover:text-foreground-900"
+            >
+              Active learners
+              <span className="inline-flex min-w-[20px] justify-center rounded bg-background-100 px-1 py-0.5 text-[12px] font-bold tabular-nums text-foreground-500">
+                {summary.activeLearners}
+              </span>
+            </Link>
+            <PageTabs
+              label="Filter submissions by status"
+              value={filter}
+              onChange={(next) => { setFilter(next as QueueFilter); setPage(1); }}
+              items={FILTER_TABS.map((tab) => ({ ...tab, count: filterCounts[tab.value as QueueFilter] }))}
+            />
+          </div>
         </PageTabsBar>
 
         <DataTable

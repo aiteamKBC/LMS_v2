@@ -4,26 +4,19 @@ import { useAuth } from '@/hooks/useAuth';
 import { BrandLockup } from '@/components/BrandLockup';
 import { AuthError, apiAuthHealth, apiMicrosoftStart, type Role } from '@/api/auth';
 
-/** Where each backend role lands after signing in. */
 /**
  * Where an account lands, in preference order.
  *
  * A staff account's `accessHome` wins: the backend derives it from the access
  * grant (ACCESS_HOME_ROUTES), so an enrolment officer opens the enrolment
- * console and a coach their own workspace, rather than every non-admin landing
- * on the user directory. Falls back to the coarse role for accounts with no
- * access recorded, and for learners and employers, which have no grant.
+ * console and a coach their own workspace. Falls back to the coarse role for
+ * accounts with no access recorded, and for learners and employers.
  */
 function homeFor(account: {
   role: Role;
   accessHome?: string | null;
   subjectId?: number | null;
 }): string {
-  // An employer's console is their own record, so the route needs their id —
-  // there is no single static path to send them to. `subjectId` is the
-  // employer's Employers.id, which is exactly what /employers/:employerId
-  // names. The generic workspace dashboard stays the fallback for an account
-  // with no usable subject id.
   if (account.role === 'employer' && account.subjectId) {
     return `/employers/${account.subjectId}`;
   }
@@ -54,10 +47,8 @@ export default function LoginPage() {
   // Where the user was heading before RequireAuth sent them here.
   const from = (location.state as { from?: string } | null)?.from;
 
-  // A refused Microsoft sign-in comes back as a redirect to this page carrying
-  // ?sso_error=..., because the callback is a browser navigation and cannot
-  // answer with JSON. Lift it into the same error box the form uses, then strip
-  // it from the URL so a reload does not resurrect a stale message.
+  // A refused Microsoft sign-in comes back with ?sso_error=... . Lift it into
+  // the form's error box, then strip it so a refresh cannot resurrect it.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const ssoError = params.get('sso_error');
@@ -68,9 +59,7 @@ export default function LoginPage() {
     navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '' }, { replace: true });
   }, [location.search, location.pathname, navigate]);
 
-  // Is a Microsoft app registration actually wired up? A sign-in button that
-  // cannot work is worse than no button — the same reasoning that had the
-  // original Google/Microsoft buttons removed.
+  // Only show Microsoft sign-in when the backend confirms it is configured.
   useEffect(() => {
     let cancelled = false;
     apiAuthHealth()
@@ -79,13 +68,10 @@ export default function LoginPage() {
     return () => { cancelled = true; };
   }, []);
 
-  // Bounce an already-signed-in visitor to their console. Waits for
-  // isInitialized so it does not fire before the session has been resolved.
+  // Bounce an already-signed-in visitor to their console after the server
+  // session has been resolved.
   useEffect(() => {
     if (!isInitialized || !auth.isAuthenticated) return;
-    // Never fall back to '/': this page *is* '/', so an authenticated session
-    // with no resolved account would bounce here forever. /home is the public
-    // launcher and always renders.
     const home = auth.account ? homeFor(auth.account) : '/home';
     navigate(from || home, { replace: true });
   }, [isInitialized, auth.isAuthenticated, auth.account, from, navigate]);
@@ -102,12 +88,8 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       const account = await login(email.trim(), password, rememberMe);
-      // Navigate straight away rather than relying on the effect above, so a
-      // slow re-render cannot leave the form looking unresponsive.
       navigate(from || homeFor(account), { replace: true });
     } catch (err) {
-      // The server owns the wording — it distinguishes a bad password from a
-      // locked account and from being rate-limited.
       setError(
         err instanceof AuthError
           ? err.message
@@ -121,8 +103,8 @@ export default function LoginPage() {
     setError('');
     setSsoLoading(true);
     try {
-      // A full navigation, not a fetch: the browser has to visit Microsoft and
-      // come back to the callback, which is what sets the session cookie.
+      // This is a full navigation so Microsoft can return to the callback that
+      // creates the server session cookie.
       window.location.href = await apiMicrosoftStart(from);
     } catch (err) {
       setError(
@@ -135,177 +117,211 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex bg-foreground-950">
-      {/* ── Left: Image Background Panel ── */}
-      <div className="hidden lg:flex lg:w-[480px] xl:w-[540px] relative overflow-hidden">
-        <img
-          src="https://storage.readdy-site.link/project_files/618bc44b-5728-4a0b-8f4f-ee80cff7baf6/a4d6c15d-8e73-478b-bdf9-c01002333189_ChatGPT-Image-Jun-11-2026-05_01_27-AM.png"
-          alt="London skyline professional background"
-          className="absolute inset-0 w-full h-full object-cover object-top"
-        />
+    <div className="relative isolate flex min-h-screen items-center justify-center overflow-hidden bg-[#fbfaff] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+      {/* Keep the page canvas quiet: only a few oversized lavender curves sit
+          at the viewport edges, as in the supplied reference. */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+        <span className="absolute -left-[20rem] -top-[24rem] h-[44rem] w-[44rem] rounded-full bg-primary-100/65" />
+        <span className="absolute -left-[12rem] -top-[16rem] h-[34rem] w-[34rem] rounded-full border-[5rem] border-primary-50/90" />
+        <span className="absolute -bottom-[26rem] -right-[20rem] h-[48rem] w-[48rem] rounded-full bg-primary-100/60" />
+        <span className="absolute -bottom-[17rem] -right-[6rem] h-[34rem] w-[34rem] rounded-full border-[5rem] border-primary-50/90" />
       </div>
 
-      {/* ── Right: Login Form ── */}
-      <div className="flex-1 flex items-center justify-center p-6 md:p-8 lg:p-12 bg-background-50">
-        <div className="w-full max-w-[420px] animate-login-fade-in">
-          {/* Logo */}
-          <BrandLockup size="default" className="mb-10 animate-login-slide-up" />
+      <main className="relative z-10 flex w-full max-w-[1350px] flex-col overflow-hidden rounded-[28px] bg-white shadow-[0_28px_80px_rgba(76,50,145,0.16)] animate-login-fade-in lg:h-[min(918px,calc(100vh-72px))] lg:min-h-[700px] lg:w-[86.5%] lg:block">
+        {/* Form side */}
+        <section className="relative z-20 flex min-h-[680px] w-full flex-col bg-white px-6 py-10 sm:px-10 sm:py-12 lg:h-full lg:w-[54%] lg:bg-transparent lg:px-10 lg:py-10 xl:px-[clamp(48px,5vw,72px)] xl:py-[54px]">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 hidden lg:block"
+            style={{
+              background: 'linear-gradient(90deg, #ffffff 0%, #ffffff 75%, rgba(255,255,255,0.95) 86%, rgba(255,255,255,0) 100%)',
+            }}
+          />
 
-          <div className="mb-8 animate-login-slide-up" style={{ animationDelay: '200ms' }}>
-            <h2 className="text-[32px] font-heading font-semibold text-foreground-950 mb-2 tracking-tight leading-tight">Welcome back</h2>
-            <p className="text-[14px] text-foreground-500">
-              Sign in to your workspace
-            </p>
-          </div>
+          <div className="relative z-10 mx-auto flex w-full max-w-[424px] flex-1 flex-col">
+            <BrandLockup size="default" className="mb-8 animate-login-slide-up" />
 
-          {/* Login Form */}
-          <form onSubmit={handleLogin} className="space-y-5 animate-login-slide-up" style={{ animationDelay: '300ms' }}>
-            <div>
-              <label htmlFor="email" className="block text-[12px] font-semibold text-foreground-600 mb-2">
-                Email address
-              </label>
-              <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400">
-                  <AppIcon className="ri-mail-line text-[15px]"></AppIcon>
-                </span>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => { setEmail(e.target.value); setError(''); }}
-                  placeholder="your.email@kbc.test"
-                  className="w-full pl-10 pr-3.5 py-3 rounded-xl border border-background-200 bg-background-50 text-[14px] text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200/50 transition-all duration-200 outline-none"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label htmlFor="password" className="block text-[12px] font-semibold text-foreground-600">
-                  Password
-                </label>
-                <button type="button" onClick={() => navigate('/forgot-password')} className="text-[11px] text-primary-600 hover:text-primary-700 font-medium cursor-pointer">
-                  Forgot password?
-                </button>
-              </div>
-              <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400">
-                  <AppIcon className="ri-lock-line text-[15px]"></AppIcon>
-                </span>
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => { setPassword(e.target.value); setError(''); }}
-                  placeholder="Enter your password"
-                  className="w-full pl-10 pr-3.5 py-3 rounded-xl border border-background-200 bg-background-50 text-[14px] text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200/50 transition-all duration-200 outline-none"
-                  required
-                />
-              </div>
-              <p className="text-[11px] text-foreground-300 mt-1.5">
-                First time here? Use the link in your invitation email to set a password.
+            <div className="mb-8 animate-login-slide-up" style={{ animationDelay: '140ms' }}>
+              <h1 className="font-heading text-[32px] font-semibold leading-[1.08] tracking-tight text-foreground-950 xl:text-[38px]">
+                Welcome back
+              </h1>
+              <p className="mt-3 text-[15px] text-foreground-500 xl:text-[16px]">
+                Sign in to your workspace
               </p>
             </div>
 
-            {/* Remember me */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setRememberMe(!rememberMe)}
-                className="flex items-center gap-2 cursor-pointer group"
-              >
-                <div className={`w-4 h-4 rounded border transition-all duration-200 flex items-center justify-center ${rememberMe ? 'bg-primary-500 border-primary-500' : 'border-background-300 bg-background-50 group-hover:border-background-400'}`}>
-                  {rememberMe && <AppIcon className="ri-check-line text-[10px] text-white" />}
+            <form onSubmit={handleLogin} className="flex flex-col gap-6 animate-login-slide-up" style={{ animationDelay: '240ms' }}>
+              <div>
+                <label htmlFor="email" className="mb-2.5 block text-[13px] font-semibold text-foreground-700">
+                  Email address
+                </label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-foreground-400">
+                    <AppIcon className="ri-mail-line text-[18px]"></AppIcon>
+                  </span>
+                  <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                    placeholder="your.email@kbc.test"
+                    className="h-[58px] w-full rounded-[14px] border border-background-200 bg-background-100/55 pl-12 pr-4 text-[14px] text-foreground-900 shadow-sm outline-none transition-all duration-200 placeholder:text-foreground-300 hover:border-background-300 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-200/50"
+                    required
+                  />
                 </div>
-                <span className="text-[12px] text-foreground-500 font-medium">Remember me</span>
-              </button>
-            </div>
-
-            {/* Error message */}
-            {error && (
-              <div className="flex items-center gap-2 px-3.5 py-3 rounded-xl bg-red-50 border border-red-200 text-[13px] text-red-700">
-                <AppIcon className="ri-error-warning-line text-sm shrink-0"></AppIcon>
-                <span>{error}</span>
               </div>
-            )}
 
-            <button
-              type="submit"
-              disabled={!email || !password || isLoading}
-              className="w-full py-3.5 rounded-xl bg-primary-500 text-white text-[14px] font-semibold hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 whitespace-nowrap shadow-md shadow-primary-500/15 cursor-pointer"
-            >
-              {isLoading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-                  Signing in...
-                </span>
-              ) : (
-                'Sign in to Workspace'
+              <div>
+                <div className="mb-2.5 flex items-center justify-between gap-3">
+                  <label htmlFor="password" className="block text-[13px] font-semibold text-foreground-700">
+                    Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/forgot-password')}
+                    className="cursor-pointer text-[13px] font-medium text-primary-600 transition-colors hover:text-primary-700"
+                  >
+                    Forgot password?
+                  </button>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-foreground-400">
+                    <AppIcon className="ri-lock-line text-[18px]"></AppIcon>
+                  </span>
+                  <input
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                    placeholder="Enter your password"
+                    className="h-[58px] w-full rounded-[14px] border border-background-200 bg-background-100/55 pl-12 pr-4 text-[14px] text-foreground-900 shadow-sm outline-none transition-all duration-200 placeholder:text-foreground-300 hover:border-background-300 focus:border-primary-400 focus:bg-white focus:ring-2 focus:ring-primary-200/50"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setRememberMe(!rememberMe)}
+                  aria-pressed={rememberMe}
+                  className="group flex cursor-pointer items-center gap-2.5"
+                >
+                  <span className={`flex h-[19px] w-[19px] items-center justify-center rounded-[4px] border transition-all duration-200 ${rememberMe ? 'border-primary-500 bg-primary-500' : 'border-foreground-300 bg-white group-hover:border-primary-300'}`}>
+                    {rememberMe && <AppIcon className="ri-check-line text-[11px] text-white" />}
+                  </span>
+                  <span className="text-[13px] font-medium text-foreground-600">Remember me</span>
+                </button>
+              </div>
+
+              {error && (
+                <div className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-[13px] text-red-700" role="alert">
+                  <AppIcon className="ri-error-warning-line shrink-0 text-sm"></AppIcon>
+                  <span>{error}</span>
+                </div>
               )}
-            </button>
-          </form>
-
-          {/* Sign in with Microsoft.
-              Rendered only once /login_api/health/ confirms an app registration
-              is configured — the button that used to sit here was removed
-              precisely because it did nothing, and that must not come back on a
-              deployment with no provider. Sits outside the <form> so it can
-              never be submitted by Enter in the password field. */}
-          {ssoAvailable && (
-            <div className="mt-6 animate-login-slide-up" style={{ animationDelay: '450ms' }}>
-              <div className="flex items-center gap-3 mb-5">
-                <div className="h-px flex-1 bg-background-200" />
-                <span className="text-[11px] text-foreground-400 font-medium">or</span>
-                <div className="h-px flex-1 bg-background-200" />
-              </div>
 
               <button
-                type="button"
-                onClick={handleMicrosoftLogin}
-                disabled={ssoLoading || isLoading}
-                className="w-full py-3.5 rounded-xl border border-background-200 bg-background-50 text-[14px] font-semibold text-foreground-700 hover:bg-background-100 hover:border-background-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2.5 cursor-pointer"
+                type="submit"
+                disabled={!email || !password || isLoading}
+                className="flex h-[58px] w-full cursor-pointer items-center justify-center rounded-[14px] bg-gradient-to-r from-primary-600 to-primary-500 px-5 text-[16px] font-semibold text-white shadow-[0_10px_22px_rgba(100,62,230,0.22)] transition-all duration-200 hover:-translate-y-0.5 hover:from-primary-700 hover:to-primary-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0"
               >
-                {ssoLoading ? (
-                  <>
-                    <AppIcon className="ri-loader-4-line animate-spin" />
-                    Redirecting to Microsoft...
-                  </>
+                {isLoading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
+                    Signing in...
+                  </span>
                 ) : (
-                  <>
-                    {/* The Microsoft mark, inline rather than from a font: the
-                        brand guidelines require these four exact colours, and
-                        the icon set this project uses has no faithful glyph. */}
-                    <svg className="w-[18px] h-[18px] shrink-0" viewBox="0 0 21 21" aria-hidden="true">
-                      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
-                      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
-                      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
-                      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
-                    </svg>
-                    Sign in with Microsoft
-                  </>
+                  'Sign in to Workspace'
                 )}
               </button>
 
-              <p className="text-[11px] text-foreground-300 mt-2 text-center">
-                Use your work account. You must already have access to this platform.
+              {/* This invitation guidance is still the application's existing
+                  message; it is simply placed beneath the primary action. */}
+              <p className="-mt-3 text-center text-[11px] leading-relaxed text-foreground-400">
+                First time here? Use the link in your invitation email to set a password.
               </p>
-            </div>
-          )}
+            </form>
 
-          <div className="mt-8 pt-6 border-t border-background-200 animate-login-slide-up" style={{ animationDelay: '600ms' }}>
-            <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
-              <span className="inline-flex items-center gap-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium border border-emerald-200/50">
-                <AppIcon className="ri-shield-check-line text-[10px]"></AppIcon>
-                Secure sign-in
-              </span>
+            {/* Kept outside the form so Enter in the password field cannot
+                accidentally start the Microsoft flow. */}
+            {ssoAvailable && (
+              <div className="mt-8 animate-login-slide-up" style={{ animationDelay: '360ms' }}>
+                <div className="mb-6 flex items-center gap-4">
+                  <div className="h-px flex-1 bg-background-200" />
+                  <span className="text-[12px] font-medium uppercase tracking-[0.08em] text-foreground-400">OR</span>
+                  <div className="h-px flex-1 bg-background-200" />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleMicrosoftLogin}
+                  disabled={ssoLoading || isLoading}
+                  className="flex h-[58px] w-full cursor-pointer items-center justify-center gap-2.5 rounded-[14px] border border-background-200 bg-white px-4 text-[16px] font-semibold text-foreground-800 shadow-sm transition-all duration-200 hover:border-primary-200 hover:bg-primary-50/45 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {ssoLoading ? (
+                    <>
+                      <AppIcon className="ri-loader-4-line animate-spin" />
+                      Redirecting to Microsoft...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 21 21" aria-hidden="true">
+                        <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                        <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                        <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                        <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+                      </svg>
+                      Sign in with Microsoft
+                    </>
+                  )}
+                </button>
+
+                <p className="mt-3 text-center text-[11px] leading-relaxed text-foreground-400">
+                  Use your work account. You must already have access to this platform.
+                </p>
+              </div>
+            )}
+
+            <div className="mt-auto pt-10 animate-login-slide-up" style={{ animationDelay: '480ms' }}>
+              <div className="border-t border-background-200 pt-7">
+                <p className="flex items-center justify-center gap-2 text-[13px] text-foreground-400">
+                  <AppIcon className="ri-shield-check-line text-[17px] text-primary-500" />
+                  Secure sign-in
+                </p>
+              </div>
             </div>
-            <p className="text-[11px] text-center text-foreground-300">
-              KBC LearningOS &middot; Kent Business College
-            </p>
           </div>
-        </div>
-      </div>
+        </section>
+
+        {/* The hero panel is layered behind the white form edge so the purple
+            circles create a soft transition instead of a straight divider. */}
+        <aside className="relative order-2 hidden min-h-[350px] overflow-hidden bg-primary-100 md:block lg:absolute lg:inset-y-0 lg:right-0 lg:h-full lg:w-[58%] lg:overflow-visible">
+          <span
+            aria-hidden="true"
+            className="absolute inset-0"
+            style={{ background: 'linear-gradient(145deg, #eeeaff 0%, #c8b7ff 34%, #8e6cf5 72%, #7452e8 100%)' }}
+          />
+          <span aria-hidden="true" className="absolute -left-[48%] -top-[16%] h-[132%] w-[116%] rounded-full bg-[#e8e1ff]" />
+          <span aria-hidden="true" className="absolute -left-[31%] top-[8%] h-[112%] w-[104%] rounded-full bg-gradient-to-br from-[#d0c1ff] to-[#a88dff]" />
+          <span aria-hidden="true" className="absolute -left-[10%] top-[20%] h-[91%] w-[88%] rounded-full bg-gradient-to-br from-[#aa91ff] to-[#7a58ed]" />
+          <span aria-hidden="true" className="absolute left-[13%] top-[31%] h-[70%] w-[69%] rounded-full bg-gradient-to-br from-[#7c5af0] to-[#6039d9]" />
+          <span aria-hidden="true" className="absolute left-[30%] top-[40%] h-[53%] w-[52%] rounded-full bg-primary-950/20" />
+
+          <span aria-hidden="true" className="absolute right-[13%] top-[8%] h-24 w-24 rounded-full bg-white/15 blur-2xl" />
+          <span aria-hidden="true" className="absolute bottom-[12%] right-[8%] h-16 w-16 rounded-full bg-accent-300/30 blur-xl" />
+
+          <div className="absolute left-[9%] top-1/2 z-10 h-[60%] w-[78%] -translate-y-1/2 overflow-hidden rounded-[24px] shadow-[0_26px_46px_rgba(35,15,100,0.32)] xl:left-[8%] xl:w-[79%]">
+            <img
+              src="/hero-clean.png"
+              alt="Professional working beside the London skyline"
+              className="absolute inset-0 h-full w-full object-cover object-[65%_center]"
+            />
+            <div className="absolute inset-0 bg-gradient-to-r from-primary-950/35 via-primary-800/5 to-primary-950/25" />
+            <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-primary-950/60 to-transparent" />
+          </div>
+        </aside>
+      </main>
     </div>
   );
 }

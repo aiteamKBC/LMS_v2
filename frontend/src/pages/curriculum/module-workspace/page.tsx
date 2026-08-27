@@ -336,7 +336,7 @@ export default function ModuleWorkspacePage() {
               href={teamsSummary.joinUrl}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex h-6 items-center gap-1 rounded-lg bg-primary-600 px-2 text-[10px] font-bold text-white transition-smooth hover:bg-primary-700"
+              className="meeting-join-action inline-flex h-6 items-center gap-1 rounded-lg px-2 text-[10px] font-bold transition-smooth"
             >
               <AppIcon className="ri-microsoft-teams-line text-xs"></AppIcon>
               Open

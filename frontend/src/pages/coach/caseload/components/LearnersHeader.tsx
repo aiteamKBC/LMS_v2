@@ -97,7 +97,7 @@ export function LearnersHeaderActions({
             type="button"
             onClick={onCancelSelection}
             disabled={isExporting}
-            className="inline-flex h-9 items-center rounded-md border border-foreground-200 bg-white px-3 text-[12px] font-semibold text-foreground-600 transition hover:bg-background-100 disabled:opacity-50"
+            className="inline-flex h-9 items-center rounded-md bg-white px-3 text-[12px] font-semibold text-foreground-600 transition hover:bg-background-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -110,11 +110,11 @@ export function LearnersHeaderActions({
             disabled={isExporting}
             aria-haspopup="menu"
             aria-expanded={exportOpen}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-foreground-200 bg-white px-3 text-[12px] font-semibold text-foreground-700 transition hover:border-foreground-300 disabled:opacity-50"
+            className="relative inline-flex h-9 min-w-[104px] items-center justify-center rounded-md bg-white px-9 text-[12px] font-semibold text-foreground-700 transition hover:bg-background-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 disabled:opacity-50"
           >
-            <AppIcon className={isExporting ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'}></AppIcon>
-            Export
-            <AppIcon className={`ri-arrow-down-s-line text-[14px] text-foreground-400 transition-transform ${exportOpen ? 'rotate-180' : ''}`}></AppIcon>
+            <AppIcon className={`${isExporting ? 'ri-loader-4-line animate-spin' : 'ri-download-2-line'} absolute left-3`}></AppIcon>
+            <span>Export</span>
+            <AppIcon className={`ri-arrow-down-s-line absolute right-3 text-[14px] text-foreground-400 transition-transform ${exportOpen ? 'rotate-180' : ''}`}></AppIcon>
           </button>
 
           {exportOpen ? (
@@ -159,7 +159,7 @@ export function LearnersHeaderActions({
         </div>
       )}
 
-      <div className="inline-flex h-9 items-center rounded-md border border-foreground-200 bg-white p-0.5">
+      <div className="inline-flex h-9 items-center rounded-md bg-white p-0.5">
         {(['cards', 'table'] as const).map((mode) => (
           <button
             key={mode}
@@ -167,9 +167,11 @@ export function LearnersHeaderActions({
             onClick={() => onViewModeChange(mode)}
             aria-pressed={viewMode === mode}
             title={mode === 'cards' ? 'Card view' : 'Table view'}
-            className={`inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] font-semibold transition ${
-              viewMode === mode ? 'bg-primary-600 text-white' : 'text-foreground-500 hover:text-foreground-800'
-            }`}
+              className={`inline-flex h-8 items-center gap-1.5 rounded px-2.5 text-[12px] font-semibold transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${
+                viewMode === mode
+                  ? 'bg-primary-600 !text-white'
+                  : 'text-foreground-950 hover:text-foreground-950'
+              }`}
           >
             <AppIcon className={mode === 'cards' ? 'ri-layout-grid-line' : 'ri-table-line'}></AppIcon>
             <span className="hidden sm:inline">{mode === 'cards' ? 'Cards' : 'Table'}</span>

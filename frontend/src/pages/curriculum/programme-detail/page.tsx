@@ -2804,7 +2804,7 @@ export default function ProgrammeDetailPage() {
                         target="_blank"
                         rel="noreferrer"
                         title={session.kind === 'live' ? 'Join this meeting in Microsoft Teams' : 'Open this recording'}
-                        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-primary-600 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-700"
+                        className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${session.kind === 'live' ? 'meeting-join-action' : 'bg-primary-600 text-white hover:bg-primary-700'}`}
                       >
                         <AppIcon className={`${session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-play-circle-line'} text-sm`}></AppIcon>
                         {session.kind === 'live' ? 'Join' : 'Watch'}
