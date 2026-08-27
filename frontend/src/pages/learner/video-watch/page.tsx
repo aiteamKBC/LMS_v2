@@ -8,7 +8,7 @@ import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
-  buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, isOpenableComponent, gradePercent, formatHoursMinutes,
+  buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
   componentCriteria, componentRequiresEvidence,
   type JourneyComponent,
 } from '@/utils/learnerJourney';
@@ -54,7 +54,7 @@ function componentRoute(kind: string | undefined, id: string | undefined, c: Jou
 
 /** Can this sidebar row be clicked (a quiz, or any other openable component)? */
 function isNavigableComponent(c: JourneyComponent): boolean {
-  return (c.isQuiz && c.quizMeta?.quizId != null) || isOpenableComponent(c);
+  return (c.isQuiz && hasComponentContent(c)) || isOpenableComponent(c);
 }
 
 /** Find the target component + its week/module context inside the built journey. */
@@ -435,7 +435,8 @@ export default function ComponentViewPage() {
                   {(ctx?.weekComponents ?? []).map((c) => {
                     const cm = componentTypeMeta(c.title);
                     const isCurrent = !c.isQuiz && c.componentId === componentId;
-                    const clickable = isNavigableComponent(c) && !isCurrent;
+                    const contentAvailable = hasComponentContent(c);
+                    const clickable = contentAvailable && isNavigableComponent(c) && !isCurrent;
                     const attempts = c.isQuiz ? (c.quizAttempts || []) : [];
                     const lastAttempt = attempts.length > 0 ? attempts[attempts.length - 1] : null;
                     return (
@@ -444,7 +445,7 @@ export default function ComponentViewPage() {
                           disabled={!clickable}
                           onClick={() => clickable && navigate(componentRoute(kind, id, c, moduleTitle, weekTitle))}
                           className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                            isCurrent ? 'bg-primary-50' : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
+                            !contentAvailable ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale' : isCurrent ? 'bg-primary-50' : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
                           }`}
                         >
                           <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${cm.bg}`}>
@@ -463,7 +464,9 @@ export default function ComponentViewPage() {
                               {gradePercent(lastAttempt.grade)}%
                             </span>
                           )}
-                          {isCurrent ? (
+                          {!contentAvailable ? (
+                            <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
+                          ) : isCurrent ? (
                             <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
                           ) : clickable ? (
                             <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />

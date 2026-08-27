@@ -516,9 +516,16 @@ def build_catchup_template_event_key(owner_email: str, learner_id: int) -> str:
 # generated mcr / progress-review events which only the coach schedules).
 # The three onboarding reviews are booked the same way, but with the learner's
 # case owner rather than their coach (see learner_api.calendar).
+# Membership here means "a learner booked this", which decides more than the
+# title: the invite says who booked it, the coach is added as an attendee, and
+# the event is organised on the learner's mailbox so the coach actually receives
+# an email (see graph_organizer_mailbox). Any type a learner can book needs an
+# entry, or their booking is treated as a system-generated slot.
 BOOKED_EVENT_TITLES = {
     "catch-up": "Catch-up Session",
     "student-support": "Student Support",
+    "mcr": "Monthly Coaching",
+    "progress-review": "Progress Review",
     "eligibility-review": "Eligibility Review & FS Discussion",
     "workspace": "RPL And Experience",
     "training-plan": "Workplace Health & Safety Declaration",

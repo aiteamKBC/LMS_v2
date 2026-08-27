@@ -375,6 +375,7 @@ export function LearnerCalendarContent() {
   const [addToCalendarToast, setAddToCalendarToast] = useState<string | null>(null);
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showDayDrawer, setShowDayDrawer] = useState(false);
   const [customTitle, setCustomTitle] = useState('');
   const [customDate, setCustomDate] = useState(() => todayISO());
   const [customStartTime, setCustomStartTime] = useState('14:00');
@@ -443,6 +444,14 @@ export function LearnerCalendarContent() {
   const monthCells = useMemo(() => getMonthData(viewYear, viewMonth), [viewYear, viewMonth]);
   const weekDates = useMemo(() => getWeekDates(viewYear, viewMonth, selectedDay), [viewYear, viewMonth, selectedDay]);
   const selectedDayEvents = useMemo(() => getEventsForDay(selectedDay, viewMonth), [selectedDay, viewMonth, getEventsForDay]);
+  const selectedDaySorted = useMemo(
+    () => [...selectedDayEvents].sort((a, b) => getEventTimeRange(a.time).start - getEventTimeRange(b.time).start),
+    [selectedDayEvents],
+  );
+  const selectedIso = useMemo(
+    () => `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`,
+    [viewYear, viewMonth, selectedDay],
+  );
   const confirmedCount = myEvents.filter((ev) => ev.status === 'confirmed').length;
   const pendingCount = myEvents.filter((ev) => ev.status === 'pending').length;
   const totalPoints = myEvents.filter((ev) => ev.status === 'confirmed').reduce((s, ev) => s + ev.points, 0);
@@ -450,6 +459,8 @@ export function LearnerCalendarContent() {
   useEffect(() => {
     if ('Notification' in window) { setNotificationPermission(Notification.permission); restoreNotifications(); }
   }, []);
+
+  useEffect(() => { if (viewMode !== 'monthly') setShowDayDrawer(false); }, [viewMode]);
 
   useEffect(() => {
     reloadCalendarConnections().catch(() => setCalendarConnections([]));
@@ -587,14 +598,16 @@ export function LearnerCalendarContent() {
   };
 
   const handlePrev = () => {
+    setShowDayDrawer(false);
     if (viewMode === 'daily') { const d = new Date(viewYear, viewMonth, selectedDay); d.setDate(d.getDate() - 1); setViewYear(d.getFullYear()); setViewMonth(d.getMonth()); setSelectedDay(d.getDate()); }
     else { if (viewMonth === 0) { setViewMonth(11); setViewYear(viewYear - 1); } else setViewMonth(viewMonth - 1); }
   };
   const handleNext = () => {
+    setShowDayDrawer(false);
     if (viewMode === 'daily') { const d = new Date(viewYear, viewMonth, selectedDay); d.setDate(d.getDate() + 1); setViewYear(d.getFullYear()); setViewMonth(d.getMonth()); setSelectedDay(d.getDate()); }
     else { if (viewMonth === 11) { setViewMonth(0); setViewYear(viewYear + 1); } else setViewMonth(viewMonth + 1); }
   };
-  const handleToday = () => { setViewYear(today.getFullYear()); setViewMonth(today.getMonth()); setSelectedDay(today.getDate()); };
+  const handleToday = () => { setShowDayDrawer(false); setViewYear(today.getFullYear()); setViewMonth(today.getMonth()); setSelectedDay(today.getDate()); };
 
   const handleAddToCalendar = (event: CalendarEvent) => {
     const alreadyIn = myEvents.some((e) => e.id === event.id);
@@ -762,6 +775,8 @@ export function LearnerCalendarContent() {
                   {([
                     { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
                     { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
+                    { value: 'progress-review' as BookableSessionType, label: 'Progress Review', icon: 'ri-line-chart-line', desc: 'Review your progress and targets' },
+                    { value: 'mcr' as BookableSessionType, label: 'Monthly Coaching', icon: 'ri-calendar-check-line', desc: 'Your monthly coaching meeting' },
                   ]).map((t) => (
                     <button key={t.value} onClick={() => setBookType(t.value)}
                       className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
@@ -890,6 +905,67 @@ export function LearnerCalendarContent() {
         </div>
       )}
 
+      {/* ═══════════ SELECTED DAY DRAWER ═══════════ */}
+      {showDayDrawer && (
+        <>
+          <div className="fixed inset-0 z-30 bg-black/30 backdrop-blur-[1px] animate-in fade-in duration-150" onClick={() => setShowDayDrawer(false)} />
+          <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-sm flex-col border-l-2 border-background-300 bg-background-50 shadow-2xl animate-in slide-in-from-right duration-200">
+            <div className="flex items-center justify-between gap-3 border-b border-background-200 px-5 py-4">
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-primary-600">
+                  {isToday(selectedDay, viewMonth, viewYear) ? 'Today' : DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}
+                </p>
+                <h3 className="mt-0.5 truncate text-base font-heading font-bold text-foreground-900">{MONTH_NAMES[viewMonth]} {selectedDay}, {viewYear}</h3>
+              </div>
+              <button type="button" onClick={() => setShowDayDrawer(false)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-foreground-400 transition-smooth hover:bg-background-100 cursor-pointer"><AppIcon className="ri-close-line"></AppIcon></button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4">
+              {selectedDaySorted.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-background-100"><AppIcon className="ri-calendar-2-line text-lg text-foreground-300"></AppIcon></span>
+                  <p className="text-sm text-foreground-500">No events scheduled</p>
+                  <button
+                    type="button"
+                    onClick={() => { setCustomDate(selectedIso); setShowDayDrawer(false); setShowCreateModal(true); }}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-primary-500 px-4 py-2 text-xs font-semibold text-white transition-smooth hover:bg-primary-600 cursor-pointer whitespace-nowrap"
+                  >
+                    <AppIcon className="ri-add-line text-sm"></AppIcon>Create Event
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {selectedDaySorted.map((ev) => {
+                    const [startTime, endTime] = ev.time.split('–');
+                    return (
+                      <button
+                        key={ev.id}
+                        type="button"
+                        onClick={() => setShowEventDetails(ev)}
+                        className="group flex w-full items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left transition-smooth hover:border-primary-200 hover:bg-primary-50/20 cursor-pointer"
+                      >
+                        <div className="w-12 shrink-0 pt-0.5">
+                          <p className="text-[11px] font-bold leading-tight text-foreground-700">{startTime}</p>
+                          {endTime && <p className="text-[10px] leading-tight text-foreground-400">{endTime}</p>}
+                        </div>
+                        <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${getEventDotColor(ev.type, ev.color)}`}></span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-foreground-900 transition-colors group-hover:text-primary-700">{ev.title}</p>
+                          <div className="mt-0.5 flex items-center gap-2">
+                            <span className="text-[10px] font-semibold uppercase tracking-wide text-foreground-400">{ev.type}</span>
+                            <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
+                          </div>
+                        </div>
+                        <AppIcon className="ri-arrow-right-s-line mt-1 shrink-0 text-foreground-300 transition-colors group-hover:text-primary-500"></AppIcon>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
       {/* ═══════════ NOTIFICATION SETTINGS MODAL ═══════════ */}
       {showNotificationSettings && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => setShowNotificationSettings(false)}>
@@ -987,7 +1063,7 @@ export function LearnerCalendarContent() {
                     return (
                       <button
                         key={`d-${day}`}
-                        onClick={() => { setSelectedDay(day); }}
+                        onClick={() => { setSelectedDay(day); setShowDayDrawer(true); }}
                         className={`flex aspect-square cursor-pointer flex-col border-b border-r border-background-300 p-1 text-left transition-all duration-150 hover:z-10 hover:bg-primary-50/20 sm:aspect-[4/3] sm:border-b-2 sm:border-r-2 sm:p-1.5 ${isSel ? 'ring-2 ring-primary-400 ring-inset bg-primary-50/30 z-10' : isTdy ? 'bg-primary-50/15' : 'bg-background-50'}`}
                       >
                         <span className={`mb-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold sm:mb-1 sm:h-6 sm:w-6 sm:text-xs ${isTdy ? 'bg-primary-500 text-white' : isSel ? 'bg-primary-100 text-primary-700' : 'text-foreground-500'}`}>{day}</span>
@@ -1132,44 +1208,6 @@ export function LearnerCalendarContent() {
               </div>
             )}
 
-            {/* Selected day events list (monthly mode only) */}
-            {viewMode === 'monthly' && (
-              <div className="rounded-2xl border border-background-300 bg-background-50 p-4 sm:border-2 sm:p-5">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-sm font-heading font-bold text-foreground-900 flex items-center gap-2">
-                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ${isToday(selectedDay, viewMonth, viewYear) ? 'bg-primary-500 text-white' : 'bg-background-100 text-foreground-600'}`}>{selectedDay}</span>
-                    {DAYS_OF_WEEK[new Date(viewYear, viewMonth, selectedDay).getDay() === 0 ? 6 : new Date(viewYear, viewMonth, selectedDay).getDay() - 1]}, {MONTH_NAMES[viewMonth]} {selectedDay}
-                  </h3>
-                  <button onClick={() => setShowCreateModal(true)} className="px-3 py-1.5 bg-primary-500 text-white rounded-lg text-xs font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-add-line mr-1"></AppIcon>New Event</button>
-                </div>
-                {selectedDayEvents.length === 0 ? (
-                  <div className="text-center py-10">
-                    <span className="w-12 h-12 rounded-2xl bg-background-100 flex items-center justify-center mx-auto mb-3"><AppIcon className="ri-calendar-2-line text-foreground-300 text-lg"></AppIcon></span>
-                    <p className="text-sm text-foreground-500 mb-3">No events scheduled for this day</p>
-                    <button onClick={() => setShowCreateModal(true)} className="px-4 py-2 bg-primary-500 text-white rounded-xl text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-add-line mr-1"></AppIcon>Create Event</button>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {selectedDayEvents.map((ev) => {
-                      const typeColor = getEventColorClass(ev.type, ev.color);
-                      return (
-                        <div key={ev.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-background-100/60 transition-smooth cursor-pointer group" onClick={() => setShowEventDetails(ev)}>
-                          <span className={`w-2 h-10 rounded-full shrink-0 ${getEventDotColor(ev.type, ev.color)}`}></span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-foreground-900 group-hover:text-primary-700 transition-colors">{ev.title}</p>
-                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5 text-xs text-foreground-400">
-                              <span className="flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]"></AppIcon>{ev.time}</span>
-                              <span className="flex items-center gap-1"><AppIcon className="ri-map-pin-line text-[10px]"></AppIcon>{ev.location}</span>
-                            </div>
-                          </div>
-                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${statusConfig[ev.status].cls}`}>{statusConfig[ev.status].label}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
 
           {/* ── SIDEBAR (1/3) ── */}
@@ -1207,8 +1245,8 @@ export function LearnerCalendarContent() {
                   const todayDate = new Date(viewYear, viewMonth, selectedDay);
                   return evDate2 >= todayDate;
                 }).length === 0 && (
-                  <div className="text-center py-6">
-                    <span className="w-10 h-10 rounded-xl bg-background-100 flex items-center justify-center mx-auto mb-2"><AppIcon className="ri-calendar-2-line text-foreground-300"></AppIcon></span>
+                  <div className="flex items-center gap-2 rounded-xl bg-background-100/60 px-3 py-2.5">
+                    <AppIcon className="ri-calendar-2-line text-sm text-foreground-300"></AppIcon>
                     <p className="text-xs text-foreground-400">No upcoming events</p>
                   </div>
                 )}

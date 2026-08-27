@@ -10,7 +10,7 @@ import { LearnerPlanBody } from '@/components/feature/RealLearnerPlanView';
 import { buildStations } from '@/components/feature/RealLearningJourneyView';
 import { buildLinkedQuizzes, type LinkedQuiz } from '@/utils/linkedQuizzes';
 import {
-  buildLearnerJourney, componentTypeMeta, gradePercent, isOpenableComponent,
+  buildLearnerJourney, componentTypeMeta, gradePercent, hasComponentContent, isOpenableComponent,
   formatHoursMinutes, parseHours, type JourneyComponent, type JourneyModule,
 } from '@/utils/learnerJourney';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -59,9 +59,9 @@ export default function MyLearningPage() {
   const currentWeek = useMemo(() => {
     for (const mod of journey) {
       for (const w of mod.weeks) {
-        const openable = w.components.filter((c) => c.componentId);
-        const done = openable.filter((c) => completedIds.has(c.componentId!)).length;
-        if (done < openable.length || openable.length === 0) return { module: mod.module, week: w };
+        const openable = w.components.filter(hasComponentContent);
+        const done = openable.filter((c) => c.isQuiz ? (c.quizAttempts?.length ?? 0) > 0 : !!c.componentId && completedIds.has(c.componentId)).length;
+        if (openable.length > 0 && done < openable.length) return { module: mod.module, week: w };
       }
     }
     return null;
@@ -84,6 +84,7 @@ export default function MyLearningPage() {
   const nextComponent = useMemo(() => {
     if (!currentWeek) return null;
     return currentWeek.week.components.find((c) => {
+      if (!hasComponentContent(c)) return false;
       if (c.isQuiz) return true; // a quiz's own attempt history decides "done", not completedIds
       return c.componentId ? !completedIds.has(c.componentId) : false;
     }) || null;
@@ -92,7 +93,7 @@ export default function MyLearningPage() {
   const nextComponentHref = useMemo(() => {
     if (!nextComponent || !kind || !id || !canProgress || !currentWeek) return null;
     const q = `?module=${encodeURIComponent(currentWeek.module)}&week=${encodeURIComponent(currentWeek.week.week)}`;
-    if (nextComponent.isQuiz && nextComponent.quizMeta?.quizId != null) return `/learner/quiz/${kind}/${id}/${nextComponent.quizMeta.quizId}${q}`;
+    if (nextComponent.isQuiz && hasComponentContent(nextComponent)) return `/learner/quiz/${kind}/${id}/${nextComponent.quizMeta!.quizId}${q}`;
     if (nextComponent.type === 'video' && nextComponent.videoUrl && nextComponent.componentId) return `/learner/video/${kind}/${id}/${nextComponent.componentId}${q}`;
     if (isOpenableComponent(nextComponent)) return `/learner/component/${kind}/${id}/${nextComponent.componentId}${q}`;
     return null;
