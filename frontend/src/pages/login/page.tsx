@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { BrandLockup } from '@/components/BrandLockup';
 import { AuthError, apiAuthHealth, apiMicrosoftStart, type Role } from '@/api/auth';
+import styles from './page.module.css';
 
 /** Where each backend role lands after signing in. */
 /**
@@ -46,6 +46,7 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [ssoLoading, setSsoLoading] = useState(false);
   // Undefined until the health check answers, so the button is not flashed in
   // and then taken away on a deployment that has no provider configured.
@@ -135,177 +136,167 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex bg-foreground-950">
-      {/* ── Left: Image Background Panel ── */}
-      <div className="hidden lg:flex lg:w-[480px] xl:w-[540px] relative overflow-hidden">
-        <img
-          src="https://storage.readdy-site.link/project_files/618bc44b-5728-4a0b-8f4f-ee80cff7baf6/a4d6c15d-8e73-478b-bdf9-c01002333189_ChatGPT-Image-Jun-11-2026-05_01_27-AM.png"
-          alt="London skyline professional background"
-          className="absolute inset-0 w-full h-full object-cover object-top"
-        />
-      </div>
+    <main className={styles.page}>
+      <section className={styles.card} aria-labelledby="login-heading">
+        <div className={styles.formPanel}>
+          <div className={styles.formContent}>
+            <img
+              src="/assets/kbc-logo.png"
+              alt="Kent Business College"
+              className={styles.logo}
+            />
 
-      {/* ── Right: Login Form ── */}
-      <div className="flex-1 flex items-center justify-center p-6 md:p-8 lg:p-12 bg-background-50">
-        <div className="w-full max-w-[420px] animate-login-fade-in">
-          {/* Logo */}
-          <BrandLockup size="default" className="mb-10 animate-login-slide-up" />
+            <header className={styles.intro}>
+              <h1 id="login-heading">Welcome back</h1>
+              <p>Sign in to your workspace</p>
+            </header>
 
-          <div className="mb-8 animate-login-slide-up" style={{ animationDelay: '200ms' }}>
-            <h2 className="text-[32px] font-heading font-semibold text-foreground-950 mb-2 tracking-tight leading-tight">Welcome back</h2>
-            <p className="text-[14px] text-foreground-500">
-              Sign in to your workspace
-            </p>
-          </div>
-
-          {/* Login Form */}
-          <form onSubmit={handleLogin} className="space-y-5 animate-login-slide-up" style={{ animationDelay: '300ms' }}>
-            <div>
-              <label htmlFor="email" className="block text-[12px] font-semibold text-foreground-600 mb-2">
-                Email address
-              </label>
-              <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400">
-                  <AppIcon className="ri-mail-line text-[15px]"></AppIcon>
-                </span>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => { setEmail(e.target.value); setError(''); }}
-                  placeholder="your.email@kbc.test"
-                  className="w-full pl-10 pr-3.5 py-3 rounded-xl border border-background-200 bg-background-50 text-[14px] text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200/50 transition-all duration-200 outline-none"
-                  required
-                />
+            <form onSubmit={handleLogin} className={styles.form} noValidate={false}>
+              <div className={styles.fieldGroup}>
+                <label htmlFor="email">Email address</label>
+                <div className={styles.inputShell}>
+                  <AppIcon className={`ri-mail-line ${styles.inputIcon}`} aria-hidden="true" />
+                  <input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                    placeholder="your.email@kbc.test"
+                    autoComplete="email"
+                    aria-invalid={!!error}
+                    aria-describedby={error ? 'login-error' : undefined}
+                    required
+                  />
+                </div>
               </div>
-            </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label htmlFor="password" className="block text-[12px] font-semibold text-foreground-600">
-                  Password
-                </label>
-                <button type="button" onClick={() => navigate('/forgot-password')} className="text-[11px] text-primary-600 hover:text-primary-700 font-medium cursor-pointer">
-                  Forgot password?
-                </button>
+              <div className={styles.fieldGroup}>
+                <div className={styles.labelRow}>
+                  <label htmlFor="password">Password</label>
+                  <button type="button" onClick={() => navigate('/forgot-password')} className={styles.forgotButton}>
+                    Forgot password?
+                  </button>
+                </div>
+                <div className={styles.inputShell}>
+                  <AppIcon className={`ri-lock-line ${styles.inputIcon}`} aria-hidden="true" />
+                  <input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                    placeholder="Enter your password"
+                    autoComplete="current-password"
+                    aria-invalid={!!error}
+                    aria-describedby={error ? 'login-error' : undefined}
+                    required
+                  />
+                  <button
+                    type="button"
+                    className={styles.passwordToggle}
+                    onClick={() => setShowPassword((visible) => !visible)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    aria-pressed={showPassword}
+                  >
+                    <AppIcon className={showPassword ? 'ri-eye-off-line' : 'ri-eye-line'} aria-hidden="true" />
+                  </button>
+                </div>
               </div>
-              <div className="relative">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-foreground-400">
-                  <AppIcon className="ri-lock-line text-[15px]"></AppIcon>
-                </span>
-                <input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => { setPassword(e.target.value); setError(''); }}
-                  placeholder="Enter your password"
-                  className="w-full pl-10 pr-3.5 py-3 rounded-xl border border-background-200 bg-background-50 text-[14px] text-foreground-900 placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200/50 transition-all duration-200 outline-none"
-                  required
-                />
-              </div>
-              <p className="text-[11px] text-foreground-300 mt-1.5">
-                First time here? Use the link in your invitation email to set a password.
-              </p>
-            </div>
 
-            {/* Remember me */}
-            <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setRememberMe(!rememberMe)}
-                className="flex items-center gap-2 cursor-pointer group"
+                className={styles.rememberRow}
+                aria-pressed={rememberMe}
+                onClick={() => setRememberMe((remembered) => !remembered)}
               >
-                <div className={`w-4 h-4 rounded border transition-all duration-200 flex items-center justify-center ${rememberMe ? 'bg-primary-500 border-primary-500' : 'border-background-300 bg-background-50 group-hover:border-background-400'}`}>
-                  {rememberMe && <AppIcon className="ri-check-line text-[10px] text-white" />}
-                </div>
-                <span className="text-[12px] text-foreground-500 font-medium">Remember me</span>
+                <span className={styles.checkboxVisual} aria-hidden="true">
+                  <AppIcon className="ri-check-line" />
+                </span>
+                <span>Remember me</span>
               </button>
-            </div>
 
-            {/* Error message */}
-            {error && (
-              <div className="flex items-center gap-2 px-3.5 py-3 rounded-xl bg-red-50 border border-red-200 text-[13px] text-red-700">
-                <AppIcon className="ri-error-warning-line text-sm shrink-0"></AppIcon>
-                <span>{error}</span>
+              {error && (
+                <div id="login-error" className={styles.error} role="alert" aria-live="polite">
+                  <AppIcon className="ri-error-warning-line" aria-hidden="true" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={!email || !password || isLoading}
+                className={styles.primaryButton}
+              >
+                {isLoading ? (
+                  <span className={styles.loadingLabel}>
+                    <AppIcon className="ri-loader-4-line animate-spin" aria-hidden="true" />
+                    Signing in...
+                  </span>
+                ) : (
+                  'Sign in to Workspace'
+                )}
+              </button>
+            </form>
+
+            {ssoAvailable && (
+              <div className={styles.ssoBlock}>
+                <div className={styles.divider} aria-hidden="true">
+                  <span />
+                  <strong>OR</strong>
+                  <span />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleMicrosoftLogin}
+                  disabled={ssoLoading || isLoading}
+                  className={styles.microsoftButton}
+                >
+                  {ssoLoading ? (
+                    <>
+                      <AppIcon className="ri-loader-4-line animate-spin" aria-hidden="true" />
+                      Redirecting to Microsoft...
+                    </>
+                  ) : (
+                    <>
+                      <svg className={styles.microsoftMark} viewBox="0 0 21 21" aria-hidden="true">
+                        <rect x="1" y="1" width="9" height="9" fill="#F25022" />
+                        <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
+                        <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
+                        <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
+                      </svg>
+                      Sign in with Microsoft
+                    </>
+                  )}
+                </button>
+
+                <p className={styles.ssoHint}>
+                  Use your work account. You must already have access to this platform.
+                </p>
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={!email || !password || isLoading}
-              className="w-full py-3.5 rounded-xl bg-primary-500 text-white text-[14px] font-semibold hover:bg-primary-600 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 whitespace-nowrap shadow-md shadow-primary-500/15 cursor-pointer"
-            >
-              {isLoading ? (
-                <span className="flex items-center justify-center gap-2">
-                  <AppIcon className="ri-loader-4-line animate-spin"></AppIcon>
-                  Signing in...
-                </span>
-              ) : (
-                'Sign in to Workspace'
-              )}
-            </button>
-          </form>
-
-          {/* Sign in with Microsoft.
-              Rendered only once /login_api/health/ confirms an app registration
-              is configured — the button that used to sit here was removed
-              precisely because it did nothing, and that must not come back on a
-              deployment with no provider. Sits outside the <form> so it can
-              never be submitted by Enter in the password field. */}
-          {ssoAvailable && (
-            <div className="mt-6 animate-login-slide-up" style={{ animationDelay: '450ms' }}>
-              <div className="flex items-center gap-3 mb-5">
-                <div className="h-px flex-1 bg-background-200" />
-                <span className="text-[11px] text-foreground-400 font-medium">or</span>
-                <div className="h-px flex-1 bg-background-200" />
-              </div>
-
-              <button
-                type="button"
-                onClick={handleMicrosoftLogin}
-                disabled={ssoLoading || isLoading}
-                className="w-full py-3.5 rounded-xl border border-background-200 bg-background-50 text-[14px] font-semibold text-foreground-700 hover:bg-background-100 hover:border-background-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center gap-2.5 cursor-pointer"
-              >
-                {ssoLoading ? (
-                  <>
-                    <AppIcon className="ri-loader-4-line animate-spin" />
-                    Redirecting to Microsoft...
-                  </>
-                ) : (
-                  <>
-                    {/* The Microsoft mark, inline rather than from a font: the
-                        brand guidelines require these four exact colours, and
-                        the icon set this project uses has no faithful glyph. */}
-                    <svg className="w-[18px] h-[18px] shrink-0" viewBox="0 0 21 21" aria-hidden="true">
-                      <rect x="1" y="1" width="9" height="9" fill="#F25022" />
-                      <rect x="11" y="1" width="9" height="9" fill="#7FBA00" />
-                      <rect x="1" y="11" width="9" height="9" fill="#00A4EF" />
-                      <rect x="11" y="11" width="9" height="9" fill="#FFB900" />
-                    </svg>
-                    Sign in with Microsoft
-                  </>
-                )}
-              </button>
-
-              <p className="text-[11px] text-foreground-300 mt-2 text-center">
-                Use your work account. You must already have access to this platform.
-              </p>
-            </div>
-          )}
-
-          <div className="mt-8 pt-6 border-t border-background-200 animate-login-slide-up" style={{ animationDelay: '600ms' }}>
-            <div className="flex items-center justify-center gap-2 flex-wrap mb-3">
-              <span className="inline-flex items-center gap-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full font-medium border border-emerald-200/50">
-                <AppIcon className="ri-shield-check-line text-[10px]"></AppIcon>
+            <footer className={styles.secureFooter}>
+              <span>
+                <AppIcon className="ri-shield-check-line" aria-hidden="true" />
                 Secure sign-in
               </span>
-            </div>
-            <p className="text-[11px] text-center text-foreground-300">
-              KBC LearningOS &middot; Kent Business College
-            </p>
+            </footer>
           </div>
         </div>
-      </div>
-    </div>
+
+        <aside className={styles.visualPanel} aria-label="Kent Business College digital workspace">
+          <span className={styles.shapeRibbon} aria-hidden="true" />
+          <span className={styles.shapeOrb} aria-hidden="true" />
+          <span className={styles.shapeArc} aria-hidden="true" />
+
+          <div className={styles.imageCard}>
+            <img
+              src="/login-workspace.png"
+              alt="Learning management system workspace illustration"
+            />
+          </div>
+        </aside>
+      </section>
+    </main>
   );
 }

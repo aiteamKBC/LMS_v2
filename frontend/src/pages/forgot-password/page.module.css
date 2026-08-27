@@ -1,0 +1,49 @@
+.successContent {
+  display: grid;
+  gap: 18px;
+}
+
+.successMessage {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #bbefd2;
+  border-radius: 13px;
+  background: #f1fcf6;
+  color: #18794e;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.successMessage i {
+  margin-top: 2px;
+  flex: 0 0 auto;
+  font-size: 17px;
+}
+
+.supportingText {
+  margin: 0;
+  color: #777181;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.returnFooter p {
+  margin: 0;
+}
+
+.returnFooter button {
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #5b24e8;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.returnFooter button:hover {
+  color: #4b176d;
+}
