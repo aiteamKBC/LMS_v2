@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -16,6 +17,7 @@ import {
 } from '@/lib/curriculumApi';
 import {
   createTeamsMeeting,
+  fetchModuleMeetingInvitees,
   formatCalendarDateTime,
   getCalendarTimeZone,
   loadTeamsMeetingArtifacts,
@@ -160,6 +162,131 @@ const calendarLabel = formatCalendarDateTime;
 
 function emailList(value: string): string[] {
   return value.split(/[\s,;]+/).map(item => item.trim()).filter(Boolean);
+}
+
+const EMAIL_PATTERN = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/**
+ * Presenters/Attendees as removable chips instead of a raw "one per line"
+ * textarea — each name typed or pasted becomes its own pill, invalid-looking
+ * addresses are flagged in place, and Enter/comma/semicolon/paste all commit
+ * a chip the same way. The value stays the newline-joined string every other
+ * caller already reads and writes (`emailList()` at submit, `patch()` from
+ * Prefill) — this only changes how it is edited, not what it is.
+ */
+function EmailChipsInput({ value, onChange, placeholder = 'Type an email and press Enter…' }: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  const emails = useMemo(() => emailList(value), [value]);
+  const [draft, setDraft] = useState('');
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  // The outside-click listener below fires from a document-level handler, so
+  // it needs whatever was last typed without re-subscribing on every
+  // keystroke.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  const commit = useCallback((raw: string) => {
+    const additions = emailList(raw).map(email => email.toLowerCase());
+    if (!additions.length) { setDraft(''); return; }
+    onChange(Array.from(new Set([...emails, ...additions])).join('\n'));
+    setDraft('');
+  }, [emails, onChange]);
+
+  const removeAt = (index: number) => {
+    onChange(emails.filter((_, i) => i !== index).join('\n'));
+  };
+
+  // A half-typed draft is only ever committed by Enter/comma/paste, or by a
+  // click that lands outside the whole box -- never by a click landing
+  // *inside* it (another chip's remove or edit button, empty padding, a
+  // non-focusable area), which blur alone cannot tell apart from a real
+  // "I'm done here" click.
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!draftRef.current.trim()) return;
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        commit(draftRef.current);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [commit]);
+
+  // Editing is "un-commit this chip back into the draft" rather than typing
+  // in place inside the pill: the same Enter-to-commit path then re-validates
+  // whatever comes out, so a correction can't skip the checks a fresh chip
+  // gets.
+  const editAt = (index: number) => {
+    setDraft(emails[index]);
+    onChange(emails.filter((_, i) => i !== index).join('\n'));
+    inputRef.current?.focus();
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="flex min-h-[84px] w-full flex-wrap items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-2.5 py-2 outline-none transition-smooth focus-within:border-primary-300"
+      onClick={() => inputRef.current?.focus()}
+    >
+      {emails.map((email, index) => {
+        const valid = EMAIL_PATTERN.test(email);
+        return (
+          <span
+            key={`${email}-${index}`}
+            className={`inline-flex max-w-full items-center gap-1 rounded-full border py-1 pl-2 pr-1 text-[11px] font-semibold ${
+              valid ? 'border-primary-200 bg-primary-50 text-primary-800' : 'border-red-200 bg-red-50 text-red-700'
+            }`}
+          >
+            <AppIcon className="ri-circle-fill shrink-0 text-[5px]"></AppIcon>
+            <button
+              type="button"
+              onClick={event => { event.stopPropagation(); editAt(index); }}
+              className="max-w-full truncate rounded-sm text-left hover:underline"
+              title="Click to edit"
+            >
+              {email}
+            </button>
+            <button
+              type="button"
+              onClick={event => { event.stopPropagation(); removeAt(index); }}
+              className="shrink-0 rounded-full p-0.5 transition-smooth hover:bg-black/10"
+              aria-label={`Remove ${email}`}
+            >
+              <AppIcon className="ri-close-line text-[11px]"></AppIcon>
+            </button>
+          </span>
+        );
+      })}
+      <input
+        ref={inputRef}
+        type="text"
+        inputMode="email"
+        value={draft}
+        onChange={event => setDraft(event.target.value)}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ',' || event.key === ';') {
+            event.preventDefault();
+            commit(draft);
+          } else if (event.key === 'Backspace' && !draft && emails.length) {
+            removeAt(emails.length - 1);
+          }
+        }}
+        onPaste={event => {
+          const text = event.clipboardData.getData('text');
+          if (/[\s,;]/.test(text.trim())) {
+            event.preventDefault();
+            commit(text);
+          }
+        }}
+        placeholder={emails.length ? '' : placeholder}
+        className="min-w-[160px] flex-1 border-0 bg-transparent p-1 text-[13px] text-foreground-900 outline-none placeholder:text-foreground-400"
+      />
+    </div>
+  );
 }
 
 /**
@@ -553,7 +680,7 @@ function RecordingPreview({ liveSessionId, artifact, title, onClose }: {
     };
   }, [flush, record]);
 
-  return (
+  const preview = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-6" onClick={onClose}>
       <div
         role="dialog"
@@ -611,6 +738,133 @@ function RecordingPreview({ liveSessionId, artifact, title, onClose }: {
       </div>
     </div>
   );
+  // A plain child of the page sits inside the same DOM branch as the module
+  // detail Modal it is opened from, and that Modal already portals itself to
+  // document.body -- so this stayed a sibling of #root while the Modal's own
+  // content moved past it, and lost the paint order regardless of matching
+  // z-index. Portalling here too puts both at the same level, and this one
+  // mounts after (only once "Watch recording" is clicked), so it paints on top.
+  return typeof document === 'undefined' ? preview : createPortal(preview, document.body);
+}
+
+interface TranscriptCue {
+  start: string;
+  speaker: string;
+  text: string;
+}
+
+/** `00:12:03.400` -> `12:03`; drops the hour segment when it is `00`. */
+function formatVttTimestamp(value: string): string {
+  const match = /^(\d+):(\d{2}):(\d{2})/.exec(value.trim());
+  if (!match) return value.trim();
+  const [, hours, minutes, seconds] = match;
+  return hours === '00' ? `${minutes}:${seconds}` : `${hours}:${minutes}:${seconds}`;
+}
+
+/** WEBVTT text, one cue per timed block, into `{ start, speaker, text }`. */
+function parseVttCues(vtt: string): TranscriptCue[] {
+  return vtt
+    .replace(/\r/g, '')
+    .split(/\n\n+/)
+    .map((block): TranscriptCue | null => {
+      const lines = block.split('\n').filter(Boolean);
+      const timeIndex = lines.findIndex(line => line.includes('-->'));
+      if (timeIndex === -1) return null;
+      const start = formatVttTimestamp(lines[timeIndex].split('-->')[0]);
+      const raw = lines.slice(timeIndex + 1).join(' ');
+      const speakerMatch = /<v\s+([^>]+)>/.exec(raw);
+      const text = raw.replace(/<\/?v[^>]*>/g, '').trim();
+      return text ? { start, speaker: speakerMatch?.[1].trim() || '', text } : null;
+    })
+    .filter((cue): cue is TranscriptCue => cue !== null);
+}
+
+/**
+ * The transcript, read in place rather than downloaded as a `.vtt` file — the
+ * same "watch it here" treatment `RecordingPreview` gives the recording, and
+ * portalled to `document.body` for the same reason: a plain child would sit
+ * inside the module detail Modal's DOM branch and lose the paint order to it
+ * even at an equal z-index, because that Modal already portals itself out.
+ */
+function TranscriptPreview({ liveSessionId, artifact, title, onClose }: {
+  liveSessionId: string;
+  artifact: TeamsMeetingArtifact;
+  title: string;
+  onClose: () => void;
+}) {
+  const [state, setState] = useState<
+    | { status: 'loading' }
+    | { status: 'error'; message: string }
+    | { status: 'ready'; cues: TranscriptCue[] }
+  >({ status: 'loading' });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: 'loading' });
+    fetch(teamsMeetingArtifactPreviewUrl(liveSessionId, artifact.id))
+      .then(response => {
+        if (!response.ok) throw new Error(`The transcript could not be loaded (${response.status}).`);
+        return response.text();
+      })
+      .then(text => { if (!cancelled) setState({ status: 'ready', cues: parseVttCues(text) }); })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setState({ status: 'error', message: err instanceof Error ? err.message : 'The transcript could not be loaded.' });
+        }
+      });
+    return () => { cancelled = true; };
+  }, [artifact.id, liveSessionId]);
+
+  const preview = (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-3 backdrop-blur-sm sm:p-6" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Transcript — ${title}`}
+        className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-background-200 bg-background-50 shadow-2xl"
+        onClick={event => event.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-background-200 px-5 py-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary-600">Session transcript</p>
+            <h3 className="mt-0.5 truncate text-[15px] font-heading font-bold text-foreground-950">{title}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
+          >
+            <AppIcon className="ri-close-line text-sm"></AppIcon>
+            Close
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          {state.status === 'loading' && (
+            <p className="text-[12px] font-semibold text-foreground-500">Loading transcript…</p>
+          )}
+          {state.status === 'error' && (
+            <p className="text-[12px] font-semibold text-red-600">{state.message}</p>
+          )}
+          {state.status === 'ready' && (
+            state.cues.length ? (
+              <ul className="space-y-3">
+                {state.cues.map((cue, index) => (
+                  <li key={index} className="text-[13px] leading-relaxed">
+                    <span className="font-bold text-foreground-400">{cue.start}</span>
+                    {cue.speaker && <span className="ml-2 font-bold text-primary-700">{cue.speaker}</span>}
+                    <p className="mt-0.5 text-foreground-800">{cue.text}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-[12px] font-semibold text-foreground-500">No transcript text was found.</p>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+  return typeof document === 'undefined' ? preview : createPortal(preview, document.body);
 }
 
 interface PeopleForm {
@@ -656,6 +910,7 @@ export default function CurriculumTeamsMeetingsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ liveSessionId: string; artifact: TeamsMeetingArtifact; title: string } | null>(null);
+  const [transcriptPreview, setTranscriptPreview] = useState<{ liveSessionId: string; artifact: TeamsMeetingArtifact; title: string } | null>(null);
   // Whether a session is joinable or over is a fact about right now, so the
   // page keeps its own minute hand rather than freezing at first render.
   const [now, setNow] = useState(() => Date.now());
@@ -671,6 +926,10 @@ export default function CurriculumTeamsMeetingsPage() {
     lobbyBypass: 'invited', recording: 'record-transcribe', spokenLanguage: 'en-GB', meetingType: 'live-session',
   });
   const [drawerTarget, setDrawerTarget] = useState<MeetingRow | null>(null);
+  const [invitedPrefilling, setInvitedPrefilling] = useState(false);
+  // Guards a fetchModuleMeetingInvitees() response against landing after the
+  // caller has since opened a different module's drawer (or closed it).
+  const inviteesRequestId = useRef(0);
 
   // ------------------------------------------------------------------ loads
 
@@ -1032,6 +1291,34 @@ export default function CurriculumTeamsMeetingsPage() {
   };
 
   /**
+   * Presenters/Attendees derived from the module itself: its assigned tutor as
+   * presenter, every learner whose training plan carries this module as
+   * attendee. Only ever a starting point — it patches whichever drawer form is
+   * open, never sends anything on its own, and a response arriving after the
+   * caller has since switched modules or closed the drawer is dropped rather
+   * than applied to the wrong one.
+   */
+  const prefillInvitees = async (
+    row: MeetingRow,
+    patch: (value: { attendees: string; presenters: string }) => void,
+  ) => {
+    const requestId = ++inviteesRequestId.current;
+    setInvitedPrefilling(true);
+    try {
+      const result = await fetchModuleMeetingInvitees(row.catalogueId);
+      if (inviteesRequestId.current !== requestId) return;
+      patch({
+        attendees: result.attendees.join('\n'),
+        presenters: result.presenters.join('\n'),
+      });
+    } catch {
+      // Best-effort: the form stays usable with people typed in by hand.
+    } finally {
+      if (inviteesRequestId.current === requestId) setInvitedPrefilling(false);
+    }
+  };
+
+  /**
    * Presenters and attendees are not typed in here: the presenter is this
    * module's tutor and the attendees are the learners enrolment placed in its
    * group, both read fresh so the invite list always matches who is actually
@@ -1133,6 +1420,8 @@ export default function CurriculumTeamsMeetingsPage() {
       spokenLanguage: 'en-GB',
       meetingType: 'live-session',
     });
+    // Starts from blank, so there is nothing typed by hand to overwrite.
+    void prefillInvitees(row, createDrawer.patch);
   };
 
   const createCalendar = async (target?: MeetingRow) => {
@@ -1665,6 +1954,21 @@ export default function CurriculumTeamsMeetingsPage() {
                             <AppIcon className="ri-play-circle-line text-sm"></AppIcon>
                             Watch recording
                           </button>
+                        ) : artifact.artifact_type === 'transcript' ? (
+                          // Read here rather than downloaded, matching the
+                          // recording's own in-place preview.
+                          <button
+                            key={artifact.id}
+                            type="button"
+                            onClick={() => setTranscriptPreview({
+                              liveSessionId: selected.summary!.liveSessionId,
+                              artifact,
+                              title: `${selected.name} — meeting ${index + 1}`,
+                            })}
+                            className="font-bold text-primary-700 hover:underline"
+                          >
+                            Transcript
+                          </button>
                         ) : (
                           <a
                             key={artifact.id}
@@ -1673,7 +1977,7 @@ export default function CurriculumTeamsMeetingsPage() {
                             rel="noreferrer"
                             className="font-bold text-primary-700 hover:underline"
                           >
-                            {artifact.artifact_type === 'transcript' ? 'Transcript' : artifact.artifact_type}
+                            {artifact.artifact_type}
                           </a>
                         )))}
                       </>
@@ -1783,18 +2087,27 @@ export default function CurriculumTeamsMeetingsPage() {
                           rows={2}
                         />
                       </FormField>
-                      <FormField label="Presenters" hint="One email per line. These people can share and record.">
-                        <TextAreaControl
+                      <div className="sm:col-span-2 -mb-2 flex items-center justify-end">
+                        <button
+                          type="button"
+                          disabled={invitedPrefilling}
+                          onClick={() => void prefillInvitees(selected, createDrawer.patch)}
+                          className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:underline disabled:opacity-50"
+                        >
+                          <AppIcon className="ri-refresh-line text-sm"></AppIcon>
+                          {invitedPrefilling ? 'Loading…' : "Prefill from the module's tutor and learner plans"}
+                        </button>
+                      </div>
+                      <FormField label="Presenters" hint="These people can share and record.">
+                        <EmailChipsInput
                           value={createDrawer.form.presenters}
                           onChange={value => createDrawer.patch({ presenters: value })}
-                          rows={3}
                         />
                       </FormField>
-                      <FormField label="Attendees" hint="One email per line. Presenters are invited automatically.">
-                        <TextAreaControl
+                      <FormField label="Attendees" hint="Presenters are invited automatically.">
+                        <EmailChipsInput
                           value={createDrawer.form.attendees}
                           onChange={value => createDrawer.patch({ attendees: value })}
-                          rows={3}
                         />
                       </FormField>
                     </div>
@@ -1817,6 +2130,15 @@ export default function CurriculumTeamsMeetingsPage() {
         />
       )}
 
+      {transcriptPreview && (
+        <TranscriptPreview
+          liveSessionId={transcriptPreview.liveSessionId}
+          artifact={transcriptPreview.artifact}
+          title={transcriptPreview.title}
+          onClose={() => setTranscriptPreview(null)}
+        />
+      )}
+
       <EntityDrawer
         open={peopleDrawer.open}
         title="Attendees and presenters"
@@ -1830,11 +2152,22 @@ export default function CurriculumTeamsMeetingsPage() {
         error={peopleDrawer.error}
         dirty={peopleDrawer.dirty}
       >
-        <FormField label="Presenters" hint="One email per line. Only these people get the presenter role in Teams.">
-          <TextAreaControl value={peopleDrawer.form.presenters} onChange={value => peopleDrawer.patch({ presenters: value })} rows={4} />
+        <div className="-mb-2 flex items-center justify-end">
+          <button
+            type="button"
+            disabled={invitedPrefilling || !drawerTarget}
+            onClick={() => drawerTarget && void prefillInvitees(drawerTarget, peopleDrawer.patch)}
+            className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:underline disabled:opacity-50"
+          >
+            <AppIcon className="ri-refresh-line text-sm"></AppIcon>
+            {invitedPrefilling ? 'Loading…' : "Prefill from the module's tutor and learner plans"}
+          </button>
+        </div>
+        <FormField label="Presenters" hint="Only these people get the presenter role in Teams.">
+          <EmailChipsInput value={peopleDrawer.form.presenters} onChange={value => peopleDrawer.patch({ presenters: value })} />
         </FormField>
-        <FormField label="Attendees" hint="One email per line. Presenters are invited automatically — no need to repeat them.">
-          <TextAreaControl value={peopleDrawer.form.attendees} onChange={value => peopleDrawer.patch({ attendees: value })} rows={6} />
+        <FormField label="Attendees" hint="Presenters are invited automatically — no need to repeat them.">
+          <EmailChipsInput value={peopleDrawer.form.attendees} onChange={value => peopleDrawer.patch({ attendees: value })} />
         </FormField>
       </EntityDrawer>
     </WorkspaceShell>

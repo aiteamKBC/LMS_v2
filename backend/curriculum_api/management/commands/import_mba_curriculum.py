@@ -510,6 +510,10 @@ class Command(BaseCommand):
                 'title': course_label(record),
                 'description': views.clean_str(record.get('course_category')),
                 'tutor_name': views.clean_str(record.get('tutor_name')),
+                'tutor_email': (
+                    views.clean_str(record.get('tutor_email'))
+                    or views.resolve_staff_assignment_email('tutor', record.get('tutor_name'))
+                ),
                 'total_otjh': round(module_otjh, 2),
                 'weeks_number': len(week_payloads),
                 'sessions_number': len(week_payloads),
