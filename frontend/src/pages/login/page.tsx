@@ -4,26 +4,19 @@ import { useAuth } from '@/hooks/useAuth';
 import { AuthError, apiAuthHealth, apiMicrosoftStart, type Role } from '@/api/auth';
 import styles from './page.module.css';
 
-/** Where each backend role lands after signing in. */
 /**
  * Where an account lands, in preference order.
  *
  * A staff account's `accessHome` wins: the backend derives it from the access
  * grant (ACCESS_HOME_ROUTES), so an enrolment officer opens the enrolment
- * console and a coach their own workspace, rather than every non-admin landing
- * on the user directory. Falls back to the coarse role for accounts with no
- * access recorded, and for learners and employers, which have no grant.
+ * console and a coach their own workspace. Falls back to the coarse role for
+ * accounts with no access recorded, and for learners and employers.
  */
 function homeFor(account: {
   role: Role;
   accessHome?: string | null;
   subjectId?: number | null;
 }): string {
-  // An employer's console is their own record, so the route needs their id —
-  // there is no single static path to send them to. `subjectId` is the
-  // employer's Employers.id, which is exactly what /employers/:employerId
-  // names. The generic workspace dashboard stays the fallback for an account
-  // with no usable subject id.
   if (account.role === 'employer' && account.subjectId) {
     return `/employers/${account.subjectId}`;
   }
@@ -55,10 +48,8 @@ export default function LoginPage() {
   // Where the user was heading before RequireAuth sent them here.
   const from = (location.state as { from?: string } | null)?.from;
 
-  // A refused Microsoft sign-in comes back as a redirect to this page carrying
-  // ?sso_error=..., because the callback is a browser navigation and cannot
-  // answer with JSON. Lift it into the same error box the form uses, then strip
-  // it from the URL so a reload does not resurrect a stale message.
+  // A refused Microsoft sign-in comes back with ?sso_error=... . Lift it into
+  // the form's error box, then strip it so a refresh cannot resurrect it.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const ssoError = params.get('sso_error');
@@ -69,9 +60,7 @@ export default function LoginPage() {
     navigate({ pathname: location.pathname, search: rest ? `?${rest}` : '' }, { replace: true });
   }, [location.search, location.pathname, navigate]);
 
-  // Is a Microsoft app registration actually wired up? A sign-in button that
-  // cannot work is worse than no button — the same reasoning that had the
-  // original Google/Microsoft buttons removed.
+  // Only show Microsoft sign-in when the backend confirms it is configured.
   useEffect(() => {
     let cancelled = false;
     apiAuthHealth()
@@ -80,13 +69,10 @@ export default function LoginPage() {
     return () => { cancelled = true; };
   }, []);
 
-  // Bounce an already-signed-in visitor to their console. Waits for
-  // isInitialized so it does not fire before the session has been resolved.
+  // Bounce an already-signed-in visitor to their console after the server
+  // session has been resolved.
   useEffect(() => {
     if (!isInitialized || !auth.isAuthenticated) return;
-    // Never fall back to '/': this page *is* '/', so an authenticated session
-    // with no resolved account would bounce here forever. /home is the public
-    // launcher and always renders.
     const home = auth.account ? homeFor(auth.account) : '/home';
     navigate(from || home, { replace: true });
   }, [isInitialized, auth.isAuthenticated, auth.account, from, navigate]);
@@ -103,12 +89,8 @@ export default function LoginPage() {
     setIsLoading(true);
     try {
       const account = await login(email.trim(), password, rememberMe);
-      // Navigate straight away rather than relying on the effect above, so a
-      // slow re-render cannot leave the form looking unresponsive.
       navigate(from || homeFor(account), { replace: true });
     } catch (err) {
-      // The server owns the wording — it distinguishes a bad password from a
-      // locked account and from being rate-limited.
       setError(
         err instanceof AuthError
           ? err.message
@@ -122,8 +104,8 @@ export default function LoginPage() {
     setError('');
     setSsoLoading(true);
     try {
-      // A full navigation, not a fetch: the browser has to visit Microsoft and
-      // come back to the callback, which is what sets the session cookie.
+      // This is a full navigation so Microsoft can return to the callback that
+      // creates the server session cookie.
       window.location.href = await apiMicrosoftStart(from);
     } catch (err) {
       setError(

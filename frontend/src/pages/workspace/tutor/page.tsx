@@ -97,7 +97,7 @@ function MeetingJoinButton({ session, compact = false }: { session: TutorNextSes
     ? 'shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] font-semibold transition-colors'
     : 'mt-4 inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13px] font-semibold transition-colors';
   const stateClassName = isEnabled
-    ? 'cursor-pointer bg-primary-600 text-white hover:bg-primary-700'
+    ? 'meeting-join-action cursor-pointer'
     : 'cursor-not-allowed bg-foreground-200 text-foreground-400';
   const label = compact ? 'Join' : 'Join the meeting';
 

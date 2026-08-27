@@ -26,15 +26,17 @@ import {
 
 function avatarTone(event: CoachCalendarEvent): StatusTone {
   if (isCancelledEvent(event)) return 'critical';
-  if (isUrgentEvent(event)) return 'caution';
   if (isCompletedEvent(event)) return 'positive';
+  if (event.status === 'scheduled' || event.status === 'in-progress') return 'info';
+  if (isUrgentEvent(event)) return 'caution';
   return 'neutral';
 }
 
-/** The rail colour: overdue is a genuine problem, due soon is worth noticing, everything else is quiet. */
+/** The rail colour: warning states are rose; active meeting states use the purple brand accent. */
 function rowTone(event: CoachCalendarEvent): StatusTone {
   if (isAtRiskEvent(event)) return 'critical';
   if (isDueSoonEvent(event)) return 'caution';
+  if (event.status === 'scheduled' || event.status === 'in-progress') return 'info';
   return 'neutral';
 }
 

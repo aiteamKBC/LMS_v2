@@ -1928,7 +1928,7 @@ table tbody td:last-child {
 .dashboard-theme .card-premium,
 .dashboard-theme :is(div, section, article).bg-background-50.rounded-xl,
 .dashboard-theme :is(div, section, article).bg-background-50.rounded-2xl {
-  border-color: oklch(var(--foreground-200) / 0.54);
+  border-color: transparent;
   border-radius: 1.05rem;
   box-shadow:
     0 18px 38px -25px oklch(var(--foreground-950) / 0.5),
@@ -1938,10 +1938,10 @@ table tbody td:last-child {
 .dashboard-theme .card-premium:hover,
 .dashboard-theme :is(div, section, article).bg-background-50.rounded-xl:hover,
 .dashboard-theme :is(div, section, article).bg-background-50.rounded-2xl:hover {
-  border-color: oklch(var(--primary-300) / 0.62);
+  border-color: transparent;
   box-shadow:
     0 20px 42px -30px oklch(var(--foreground-950) / 0.46),
-    0 0 0 1px oklch(var(--primary-200) / 0.22);
+    0 3px 10px -6px oklch(var(--foreground-950) / 0.18);
 }
 
 .dashboard-theme .rounded-2xl { border-radius: 1.05rem; }
@@ -2193,6 +2193,13 @@ table tbody td:last-child {
   min-width: 0;
 }
 
+/* Page roots should inherit the calm dashboard canvas. Individual cards still
+   keep their own white surface, while older routes that wrapped the whole page
+   in `bg-background-50` no longer create a separate full-screen theme. */
+.dashboard-theme .workspace-main > .bg-background-50 {
+  background: transparent;
+}
+
 .dashboard-theme .workspace-main > [class*="p-3"],
 .dashboard-theme .workspace-main > [class*="p-4"],
 .dashboard-theme .workspace-main > [class*="p-5"],
@@ -2226,7 +2233,7 @@ table tbody td:last-child {
 .dashboard-theme .workspace-main .card-premium,
 .dashboard-theme .workspace-main :is(section, article)[class*="bg-background-50"][class*="rounded-"],
 .dashboard-theme .workspace-main :is(div)[class*="card-premium"] {
-  border-color: oklch(var(--foreground-200) / 0.58);
+  border-color: transparent;
   border-radius: 1.1rem;
   background: oklch(var(--background-50) / 0.96);
   box-shadow:
@@ -2236,35 +2243,41 @@ table tbody td:last-child {
 
 .dashboard-theme .workspace-main .card-premium:hover,
 .dashboard-theme .workspace-main :is(section, article)[class*="bg-background-50"][class*="rounded-"]:hover {
-  border-color: oklch(var(--primary-300) / 0.72);
+  border-color: transparent;
   box-shadow:
     0 22px 44px -30px oklch(var(--foreground-950) / 0.42),
-    0 0 0 1px oklch(var(--primary-200) / 0.2);
+    0 3px 10px -6px oklch(var(--foreground-950) / 0.18);
 }
 
 .dashboard-theme .workspace-main .workspace-hero-banner {
   min-height: 9.5rem;
-  background: oklch(var(--background-50));
-}
-
-.dashboard-theme .workspace-main .workspace-hero-banner > .pointer-events-none {
-  opacity: 0;
-}
-
-.dashboard-theme .workspace-main .workspace-hero-banner [class*="bg-white/"],
-.dashboard-theme .workspace-main .workspace-hero-banner [class*="text-white"] {
-  color: oklch(var(--foreground-700)) !important;
-}
-
-.dashboard-theme .workspace-main .workspace-hero-banner [class*="bg-white/"] {
-  background: oklch(var(--primary-50)) !important;
-  border-color: oklch(var(--primary-100) / 0.75) !important;
+  background: linear-gradient(
+    108deg,
+    oklch(var(--primary-700)) 0%,
+    oklch(var(--primary-500)) 30%,
+    oklch(var(--primary-100)) 66%,
+    oklch(var(--background-50)) 100%
+  );
 }
 
 .dashboard-theme .workspace-main .workspace-hero-banner h2,
 .dashboard-theme .workspace-main .workspace-hero-banner p {
   position: relative;
   z-index: 1;
+}
+
+.dashboard-theme .workspace-main .page-header {
+  background: linear-gradient(
+    108deg,
+    oklch(var(--primary-700)) 0%,
+    oklch(var(--primary-500)) 30%,
+    oklch(var(--primary-100)) 66%,
+    oklch(var(--background-50)) 100%
+  );
+}
+
+.dashboard-theme .workspace-main .page-header :is(.text-foreground-300, .text-foreground-400, .text-foreground-500, .text-foreground-600) {
+  color: oklch(var(--background-50) / 0.78);
 }
 
 .dashboard-theme .workspace-main :is(input, textarea, select) {
@@ -2782,6 +2795,246 @@ table tbody td:last-child {
 
 .dialog-card-in {
   animation: dialog-card-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Shared treatment for actions that open a live meeting or session. */
+.meeting-join-action {
+  border: 1px solid #c9edce;
+  background-color: #edfaeb;
+  color: #166534;
+}
+
+.meeting-join-action:hover {
+  background-color: #dff5e2;
+}
+
+.meeting-join-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* ========================================================================== *
+   Coach calendar reference treatment
+
+   The calendar is intentionally scoped instead of changing the shared shell
+   for every workspace route. It keeps the first reference's white canvas,
+   compact two-column rhythm, and light purple information surfaces while the
+   timetable page continues to own all of its existing interactions.
+   ========================================================================== */
+.workspace-content:has(.coach-calendar-page) .workspace-breadcrumbs,
+.workspace-main:has(.coach-calendar-page) {
+  background: oklch(var(--background-50));
+}
+
+.coach-calendar-page {
+  padding: 0.75rem 1rem 1.5rem;
+}
+
+.coach-calendar-page > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.75rem;
+}
+
+.calendar-page-header {
+  min-height: 8.75rem;
+  padding: 1rem 1.25rem !important;
+  border-radius: 0.8rem !important;
+  background:
+    radial-gradient(circle at 70% 42%, oklch(var(--background-50) / 0.16), transparent 13%),
+    linear-gradient(106deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 34%, oklch(var(--primary-300)) 64%, oklch(var(--primary-100)) 100%) !important;
+  box-shadow: 0 12px 24px -18px oklch(var(--primary-900) / 0.52);
+}
+
+/* The header calendar is a CSS illustration so it stays crisp at every
+   viewport size and does not introduce another asset dependency. */
+.calendar-hero-art {
+  position: absolute;
+  top: 1rem;
+  right: 24%;
+  width: 12rem;
+  height: 6.75rem;
+  opacity: 0.94;
+}
+
+.calendar-hero-art__dots {
+  position: absolute;
+  top: 1.2rem;
+  left: 0;
+  width: 3.3rem;
+  height: 3rem;
+  background-image: radial-gradient(circle, oklch(var(--background-50) / 0.82) 0 0.11rem, transparent 0.13rem);
+  background-position: 0 0;
+  background-size: 0.62rem 0.62rem;
+  opacity: 0.72;
+}
+
+.calendar-hero-art__sprig {
+  position: absolute;
+  right: 0.85rem;
+  top: 1.4rem;
+  width: 1.55rem;
+  height: 4.6rem;
+  border-left: 0.18rem solid oklch(var(--primary-700) / 0.38);
+  border-radius: 50%;
+  transform: rotate(-18deg);
+}
+
+.calendar-hero-art__sprig::before,
+.calendar-hero-art__sprig::after {
+  content: '';
+  position: absolute;
+  width: 0.65rem;
+  height: 1.3rem;
+  border-radius: 100% 0 100% 0;
+  background: oklch(var(--primary-700) / 0.4);
+}
+
+.calendar-hero-art__sprig::before {
+  top: 0.4rem;
+  left: -0.55rem;
+  transform: rotate(-34deg);
+}
+
+.calendar-hero-art__sprig::after {
+  top: 1.5rem;
+  left: 0.18rem;
+  transform: rotate(30deg);
+}
+
+.calendar-hero-art__back-page {
+  position: absolute;
+  right: 1.45rem;
+  bottom: 0.2rem;
+  width: 6.4rem;
+  height: 4.6rem;
+  border-radius: 0.35rem;
+  background: oklch(var(--primary-500) / 0.48);
+  box-shadow: 0.45rem 0.45rem 0 oklch(var(--primary-700) / 0.2);
+  transform: rotate(12deg) skewX(-7deg);
+}
+
+.calendar-hero-art__calendar {
+  position: absolute;
+  top: 1.05rem;
+  left: 2.25rem;
+  width: 7.25rem;
+  height: 4.7rem;
+  overflow: visible;
+  border: 0.18rem solid oklch(var(--background-50) / 0.88);
+  border-radius: 0.35rem;
+  background: oklch(var(--background-50) / 0.9);
+  box-shadow: 0 0.9rem 1.35rem -0.8rem oklch(var(--primary-950) / 0.5);
+  transform: rotate(7deg) skewX(-6deg);
+}
+
+.calendar-hero-art__calendar-top {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 0.85rem;
+  border-radius: 0.16rem 0.16rem 0 0;
+  background: oklch(var(--background-50) / 0.92);
+}
+
+.calendar-hero-art__calendar-grid {
+  position: absolute;
+  inset: 1.02rem 0.55rem 0.42rem;
+  border-top: 0.12rem solid oklch(var(--primary-300) / 0.42);
+  background:
+    repeating-linear-gradient(90deg, transparent 0 0.95rem, oklch(var(--primary-300) / 0.33) 0.95rem 1.04rem),
+    repeating-linear-gradient(180deg, transparent 0 0.62rem, oklch(var(--primary-300) / 0.33) 0.62rem 0.7rem),
+    oklch(var(--primary-50) / 0.42);
+}
+
+.calendar-hero-art__ring {
+  position: absolute;
+  top: -0.78rem;
+  z-index: 2;
+  width: 0.62rem;
+  height: 1.05rem;
+  border: 0.17rem solid oklch(var(--background-50) / 0.9);
+  border-bottom: 0;
+  border-radius: 999px 999px 0 0;
+}
+
+.calendar-hero-art__ring--one { left: 0.65rem; }
+.calendar-hero-art__ring--two { left: 1.85rem; }
+.calendar-hero-art__ring--three { left: 3.05rem; }
+.calendar-hero-art__ring--four { left: 4.25rem; }
+.calendar-hero-art__ring--five { left: 5.45rem; }
+
+.calendar-page-header > .relative.z-10.flex > .flex > span {
+  height: 3.2rem;
+  width: 3.2rem;
+  border-radius: 0.8rem;
+}
+
+.calendar-page-header > .relative.z-10.flex > .flex > div {
+  max-width: 29rem;
+}
+
+.calendar-page-header > .relative.z-10.flex > .flex > div p {
+  max-width: 27rem;
+}
+
+.calendar-layout-grid > .rounded-2xl {
+  border-radius: 0.8rem;
+  box-shadow: 0 10px 20px -18px oklch(var(--foreground-950) / 0.38);
+}
+
+.calendar-column > :is(.rounded-2xl, .overflow-hidden),
+.calendar-sidebar > :is(.rounded-2xl, .overflow-hidden) {
+  box-shadow: 0 10px 20px -18px oklch(var(--foreground-950) / 0.34);
+}
+
+.calendar-sidebar > .overflow-hidden:first-child {
+  min-height: 14.7rem;
+}
+
+.calendar-sidebar > .overflow-hidden:first-child .py-7 {
+  padding-block: 0.5rem;
+}
+
+.calendar-sidebar > .overflow-hidden:nth-child(2) {
+  min-height: 25rem;
+}
+
+@media (min-width: 1024px) {
+  .workspace-content:has(.coach-calendar-page) .workspace-breadcrumbs {
+    height: 2.5rem;
+    padding-inline: 1.5rem;
+    border-bottom-color: oklch(var(--foreground-200) / 0.34);
+  }
+
+  .workspace-main:has(.coach-calendar-page) {
+    padding: 0;
+  }
+
+  .coach-calendar-page {
+    padding: 0 1.5rem 1.5rem;
+  }
+}
+
+@media (max-width: 1279px) {
+  .calendar-hero-art { right: 16%; }
+
+  .calendar-sidebar > .overflow-hidden:first-child,
+  .calendar-sidebar > .overflow-hidden:nth-child(2) {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .coach-calendar-page {
+    padding: 0.75rem;
+  }
+
+  .calendar-hero-art {
+    right: 4%;
+    opacity: 0.42;
+  }
+
+  .calendar-page-header > .relative.z-10.flex > .flex > div {
+    max-width: calc(100vw - 7rem);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -67,7 +67,7 @@ function withoutCommercialCompliance(items: SidebarNavItem[]): SidebarNavItem[] 
   ]);
   return items.flatMap((item) => {
     const searchable = `${item.id} ${item.label}`.toLowerCase();
-    if (commercialHiddenIds.has(item.id) || /document|compliance|review/.test(searchable)) return [];
+    if (commercialHiddenIds.has(item.id) || /document|compliance/.test(searchable)) return [];
     if (!item.children?.length) return [item];
     const children = withoutCommercialCompliance(item.children);
     return children.length ? [{ ...item, children }] : [];

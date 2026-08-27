@@ -851,6 +851,7 @@ export function ModuleFormDrawer({
       banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
+      closeConfirm={chain?.closeConfirm}
       submitLabel={chain?.submitLabel || (module ? 'Save module' : 'Create module')}
       cancelLabel={chain?.cancelLabel}
       extraAction={chain?.extraAction}

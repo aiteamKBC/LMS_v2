@@ -456,7 +456,7 @@ export default function ThisWeekPage() {
                     href={priority.teamsMeetingUrl || '#'}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="px-5 py-3 rounded-xl bg-accent-500 text-foreground-950 text-sm font-semibold font-label hover:bg-accent-600 transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 shadow-sm shadow-accent-500/15"
+                    className="meeting-join-action px-5 py-3 rounded-xl text-sm font-semibold font-label transition-smooth cursor-pointer whitespace-nowrap flex items-center gap-2 shadow-sm"
                   >
                     <AppIcon className="ri-microsoft-line"></AppIcon> Join Teams Session
                   </a>

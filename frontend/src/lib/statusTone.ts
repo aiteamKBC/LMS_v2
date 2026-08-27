@@ -7,8 +7,8 @@
 //
 // The rules the table encodes:
 //
-//  - Green / amber / red carry risk, and only risk.
-//  - Gold (the brand accent) is the "coming up, not a problem yet" band, which
+//  - Green / rose / red carry risk, and only risk.
+//  - Rose is the "coming up, not a problem yet" band, which
 //    needs to be visible without being alarming.
 //  - Blue is a neutral fact about time — live now, scheduled, in progress. It is
 //    deliberately not green: "scheduled" is not an achievement.
@@ -54,11 +54,11 @@ const TONE_STYLE: Record<StatusTone, ToneStyle> = {
     icon: 'ri-check-line',
   },
   caution: {
-    dot: 'bg-amber-500',
-    bg: 'bg-amber-50',
-    text: 'text-amber-700',
-    border: 'border-amber-200',
-    ring: 'ring-amber-300',
+    dot: 'bg-rose-500',
+    bg: 'bg-rose-50',
+    text: 'text-rose-700',
+    border: 'border-rose-200',
+    ring: 'ring-rose-300',
     icon: 'ri-error-warning-line',
   },
   critical: {
@@ -70,19 +70,19 @@ const TONE_STYLE: Record<StatusTone, ToneStyle> = {
     icon: 'ri-alarm-warning-line',
   },
   upcoming: {
-    dot: 'bg-accent-500',
-    bg: 'bg-accent-50',
-    text: 'text-accent-700',
-    border: 'border-accent-200',
-    ring: 'ring-accent-300',
+    dot: 'bg-rose-500',
+    bg: 'bg-rose-50',
+    text: 'text-rose-700',
+    border: 'border-rose-200',
+    ring: 'ring-rose-300',
     icon: 'ri-calendar-event-line',
   },
   info: {
-    dot: 'bg-sky-500',
-    bg: 'bg-sky-50',
-    text: 'text-sky-700',
-    border: 'border-sky-200',
-    ring: 'ring-sky-300',
+    dot: 'bg-primary-500',
+    bg: 'bg-primary-50',
+    text: 'text-primary-700',
+    border: 'border-primary-200',
+    ring: 'ring-primary-300',
     icon: 'ri-information-line',
   },
   brand: {
