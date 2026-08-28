@@ -213,7 +213,9 @@ export default function CurriculumProgrammes() {
   const [programmePage, setProgrammePage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [programmeDrawerTarget, setProgrammeDrawerTarget] = useState<CurriculumProgramme | null>(null);
-  const [newProgrammeNext, setNewProgrammeNext] = useState<CurriculumProgramme | null>(null);
+  // A just-created programme goes to Design as soon as its required KSB source
+  // is applied. This keeps one recommended path without hiding Delivery.
+  const [newProgrammeDesignTarget, setNewProgrammeDesignTarget] = useState<CurriculumProgramme | null>(null);
   // Direct actions from Curriculum Home open the one canonical programme form
   // immediately instead of making the person find the same button on this page.
   useEffect(() => {
@@ -692,14 +694,27 @@ export default function CurriculumProgrammes() {
       // Refresh in parallel and silently: the source override is already applied
       // optimistically above, so the cards should not collapse to skeletons while
       // the uncached programme/tree requests come back.
-      await Promise.all([
+      const refreshAfterApply = Promise.all([
         reload({ skipCache: true, silent: true }),
         reloadCurriculumData({ skipCache: true, silent: true }),
         fetchCurriculumKsbSets(undefined, { all: true }).then(setKsbSets),
         fetchCurriculumStandards().then(setStandards),
-      ]);
+      ]).catch(error => {
+        // The source is already persisted. A slow cache refresh must not hold
+        // the user in the picker or turn a successful save into an error.
+        console.warn('Unable to refresh curriculum caches after applying a KSB source.', error);
+      });
+      const shouldOpenDesign = Boolean(
+        newProgrammeDesignTarget
+        && normalise(newProgrammeDesignTarget.sourceId || newProgrammeDesignTarget.id) === normalise(programmeId),
+      );
+      const appliedToast = showProgrammeSwalToast('KSB Source applied', `${programme.name} will now use the selected ${kind === 'profile' ? 'KSB profile' : 'standard'} for coverage.`, 'success');
       setApplyProgramme(null);
-      await showProgrammeSwalToast('KSB Source applied', `${programme.name} will now use the selected ${kind === 'profile' ? 'KSB profile' : 'standard'} for coverage.`, 'success');
+      if (shouldOpenDesign) {
+        setNewProgrammeDesignTarget(null);
+        navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=design`);
+      }
+      await Promise.all([refreshAfterApply, appliedToast]);
     } catch (err) {
       await showProgrammeSwalToast('Unable to apply KSB Source', err instanceof Error ? err.message : 'The programme KSB Source could not be saved.', 'error');
     } finally {
@@ -793,7 +808,7 @@ export default function CurriculumProgrammes() {
     // it reads as a save that did not happen.
     if (result?.programme) upsertProgramme(result.programme);
     if (result?.programme) {
-      setNewProgrammeNext(result.programme);
+      setNewProgrammeDesignTarget(result.programme);
       setApplyProgramme(result.programme);
     }
     await refreshProgrammeCards();
@@ -1405,26 +1420,10 @@ export default function CurriculumProgrammes() {
               // Cancelling the required source step is a deliberate pause. Do
               // not immediately claim the programme is ready or push the user
               // into Design/Delivery while the prerequisite is still missing.
-              setNewProgrammeNext(null);
+              setNewProgrammeDesignTarget(null);
             }}
             onApply={sourceValue => applyProgrammeKsbSource(applyProgramme, sourceValue)}
             onUnapply={() => unapplyProgrammeKsbSource(applyProgramme, programmeKsbSources.get(applyProgramme.sourceId || applyProgramme.id) || resolveProgrammeAppliedKsbSource(applyProgramme, ksbSets, standards))}
-          />
-        )}
-        {newProgrammeNext && !applyProgramme && (
-          <ProgrammeNextStepModal
-            programme={newProgrammeNext}
-            onClose={() => setNewProgrammeNext(null)}
-            onDesign={() => {
-              const programmeId = newProgrammeNext.sourceId || newProgrammeNext.id;
-              setNewProgrammeNext(null);
-              navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=design`);
-            }}
-            onDelivery={() => {
-              const programmeId = newProgrammeNext.sourceId || newProgrammeNext.id;
-              setNewProgrammeNext(null);
-              navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=delivery`);
-            }}
           />
         )}
         {sourceReview && (
@@ -1435,42 +1434,6 @@ export default function CurriculumProgrammes() {
         )}
       </div>
     </WorkspaceShell>
-  );
-}
-
-function ProgrammeNextStepModal({ programme, onClose, onDesign, onDelivery }: { programme: CurriculumProgramme; onClose: () => void; onDesign: () => void; onDelivery: () => void }) {
-  return (
-    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-foreground-950/45 p-4 backdrop-blur-sm" onClick={onClose}>
-      <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-primary-100 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
-        <div className="border-b border-background-200 px-5 py-5 sm:px-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-primary-600">Programme created</p>
-              <h2 className="mt-1 font-heading text-xl font-bold text-foreground-950">What do you want to do next?</h2>
-              <p className="mt-1 text-[12px] leading-5 text-foreground-500">{programme.name} is ready. Design and delivery are independent, so you can start with either one.</p>
-            </div>
-            <button type="button" onClick={onClose} aria-label="Close next step" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
-          </div>
-        </div>
-        <div className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6">
-          <button type="button" onClick={onDesign} className="group flex min-h-44 flex-col rounded-2xl border-2 border-primary-200 bg-primary-50/55 p-5 text-left transition-smooth hover:border-primary-400 hover:bg-primary-50 hover:shadow-md">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-600 text-white"><AppIcon className="ri-layout-4-line text-xl"></AppIcon></span>
-            <span className="mt-4 font-heading text-base font-bold text-foreground-950">Start designing</span>
-            <span className="mt-1 text-[11px] leading-5 text-foreground-500">Add reusable modules, weeks and components. Delivery details can wait.</span>
-            <span className="mt-auto inline-flex items-center gap-1 pt-4 text-[11px] font-bold text-primary-700">Open Design <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5"></AppIcon></span>
-          </button>
-          <button type="button" onClick={onDelivery} className="group flex min-h-44 flex-col rounded-2xl border border-foreground-200 bg-background-100/60 p-5 text-left transition-smooth hover:border-sky-300 hover:bg-sky-50/60 hover:shadow-md">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-sky-100 text-sky-700"><AppIcon className="ri-calendar-schedule-line text-xl"></AppIcon></span>
-            <span className="mt-4 font-heading text-base font-bold text-foreground-950">Set up delivery</span>
-            <span className="mt-1 text-[11px] leading-5 text-foreground-500">Create cohorts and groups, then assign dates, coaches and tutors.</span>
-            <span className="mt-auto inline-flex items-center gap-1 pt-4 text-[11px] font-bold text-sky-700">Open Delivery <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5"></AppIcon></span>
-          </button>
-        </div>
-        <div className="border-t border-background-200 bg-background-100/55 px-5 py-3 text-center sm:px-6">
-          <button type="button" onClick={onClose} className="text-[11px] font-bold text-foreground-500 hover:text-foreground-800">I’ll do this later</button>
-        </div>
-      </div>
-    </div>
   );
 }
 

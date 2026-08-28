@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumProgramme } from '@/lib/curriculumApi';
@@ -108,7 +108,12 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
 
 async function renderProgrammes() {
   const { default: Page } = await import('../page');
-  return render(<MemoryRouter><Page /></MemoryRouter>);
+  return render(<MemoryRouter><Page /><LocationProbe /></MemoryRouter>);
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <output data-testid="location">{`${location.pathname}${location.search}`}</output>;
 }
 
 function cardFor(name: string) {
@@ -230,7 +235,7 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(createCurriculumKsbFramework).not.toHaveBeenCalled();
   });
 
-  it('only offers the next workspace after the new programme has a KSB source', async () => {
+  it('opens Design directly after the new programme has a KSB source', async () => {
     await renderProgrammes();
     expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
 
@@ -243,9 +248,8 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     await userEvent.click(sourceModal.getByRole('button', { name: /Project Control Professional/ }));
     await userEvent.click(sourceModal.getByRole('button', { name: 'Apply source' }));
 
-    expect(await screen.findByText('What do you want to do next?')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Start designing/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Set up delivery/ })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/curriculum/programmes/PROG-NEW?tab=design'));
+    expect(screen.queryByText('What do you want to do next?')).not.toBeInTheDocument();
   });
 
   it('drops the notice once every programme has a filled-in source', async () => {
