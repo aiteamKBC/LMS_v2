@@ -8,6 +8,7 @@ import {
   type CurriculumKsbItemInput,
   type CurriculumKsbSet,
   type CurriculumProgramme,
+  type CurriculumStandard,
 } from '@/lib/curriculumApi';
 import { useToast } from '@/hooks/useToast';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
@@ -32,6 +33,7 @@ type KsbDraft = {
 type FrameworkForm = {
   name: string;
   programmeName: string;
+  standardSourceId: string;
   notes: string;
   status: 'active' | 'draft' | 'archived';
 };
@@ -52,7 +54,7 @@ type ImportResult = {
   applied: boolean;
 };
 
-const EMPTY_FORM: FrameworkForm = { name: '', programmeName: '', notes: '', status: 'active' };
+const EMPTY_FORM: FrameworkForm = { name: '', programmeName: '', standardSourceId: '', notes: '', status: 'active' };
 const TEMPLATE_SHEET = 'KSB Framework Template';
 
 function typeLabel(type: KsbType) {
@@ -107,6 +109,7 @@ function formFromFramework(framework: CurriculumKsbFramework | null): FrameworkF
   return {
     name: framework.name || '',
     programmeName: framework.programmeName || framework.ifateRef || framework.programmes?.[0] || '',
+    standardSourceId: framework.standardSourceId || '',
     notes: framework.notes || '',
     status: framework.status === 'archived' ? 'archived' : framework.status === 'draft' ? 'draft' : 'active',
   };
@@ -187,6 +190,9 @@ function downloadTemplate(items: KsbDraft[], frameworkName: string) {
   XLSX.writeFile(workbook, templateFileName(items.length ? frameworkName : ''), { compression: true });
 }
 
+// Imported by the focused spreadsheet parser tests; keeping the parser beside
+// the form avoids a second, drifting copy of the template rules.
+// eslint-disable-next-line react-refresh/only-export-components
 export async function parseTemplate(file: File): Promise<{ items: KsbDraft[]; result: ImportResult }> {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
@@ -298,6 +304,7 @@ export function KsbFrameworkManager({
   frameworks,
   ksbSets,
   programmes = [],
+  standards = [],
   loading,
   onRefresh,
   onClose,
@@ -305,6 +312,7 @@ export function KsbFrameworkManager({
   frameworks: CurriculumKsbFramework[];
   ksbSets: CurriculumKsbSet[];
   programmes?: CurriculumProgramme[];
+  standards?: CurriculumStandard[];
   loading?: boolean;
   onRefresh: () => void;
   onClose?: () => void;
@@ -329,6 +337,10 @@ export function KsbFrameworkManager({
     [frameworks, selectedId],
   );
   const selectedSet = useMemo(() => getFrameworkSet(creating ? null : selectedFramework, ksbSets), [creating, selectedFramework, ksbSets]);
+  const linkedStandard = useMemo(
+    () => standards.find(standard => standard.id === form.standardSourceId) || null,
+    [form.standardSourceId, standards],
+  );
 
   useEffect(() => {
     if (!frameworks.length || selectedId) return;
@@ -382,6 +394,7 @@ export function KsbFrameworkManager({
   const frameworkPayload = (draft: KsbDraft[]) => ({
     name: form.name.trim(),
     programmeName: form.programmeName.trim(),
+    standardSourceId: form.standardSourceId.trim(),
     description: form.notes.trim(),
     notes: form.notes.trim(),
     isActive: form.status !== 'archived',
@@ -678,6 +691,16 @@ export function KsbFrameworkManager({
                 <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Field label="Framework/Profile Name" required value={form.name} error={errors.name} onChange={value => setForm(prev => ({ ...prev, name: value }))} />
                   <ProgrammeSelect programmes={programmes} value={form.programmeName} error={errors.programmeName} onChange={value => setForm(prev => ({ ...prev, programmeName: value }))} />
+                  <StandardSelect standards={standards} value={form.standardSourceId} onChange={value => setForm(prev => ({ ...prev, standardSourceId: value }))} />
+                  {linkedStandard && (
+                    <div className="md:col-span-2 flex flex-wrap gap-1.5 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[10px] font-semibold text-emerald-800">
+                      <span className="font-bold">Inherited compliance details:</span>
+                      {linkedStandard.minimumHours && <span>{linkedStandard.minimumHours} hrs minimum</span>}
+                      {linkedStandard.maxFunding && <span>· {linkedStandard.maxFunding} max funding</span>}
+                      {linkedStandard.duration && <span>· {linkedStandard.duration}</span>}
+                      {linkedStandard.larsCode && <span>· LARS {linkedStandard.larsCode}</span>}
+                    </div>
+                  )}
                   <label className="md:col-span-2">
                     <span className="text-[10px] font-semibold text-foreground-500 uppercase">Notes</span>
                     <textarea value={form.notes} onChange={event => setForm(prev => ({ ...prev, notes: event.target.value }))} rows={3} className="mt-1 w-full rounded-lg border border-background-200 px-3 py-2 text-sm outline-none focus:border-primary-300" />
@@ -791,6 +814,31 @@ function ProgrammeSelect({ programmes, value, onChange, error }: { programmes: C
         ))}
       </select>
       {error && <span className="mt-1 block text-[11px] text-red-600">{error}</span>}
+    </label>
+  );
+}
+
+function StandardSelect({ standards, value, onChange }: { standards: CurriculumStandard[]; value: string; onChange: (value: string) => void }) {
+  const hasCurrentValue = !value || standards.some(standard => standard.id === value);
+  return (
+    <label className="md:col-span-2">
+      <span className="text-[10px] font-semibold uppercase text-foreground-500">Skills England Standard</span>
+      <select
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        className="mt-1 h-10 w-full rounded-lg border border-background-200 px-3 text-sm outline-none focus:border-primary-300"
+      >
+        <option value="">No linked standard</option>
+        {!hasCurrentValue && <option value={value}>{value} (unavailable)</option>}
+        {standards.map(standard => (
+          <option key={standard.id} value={standard.id}>
+            {standard.name} · {standard.code || standard.standardRef} · {standard.level || 'Level not set'}
+          </option>
+        ))}
+      </select>
+      <span className="mt-1 block text-[11px] text-foreground-400">
+        Links funding, minimum hours, duration and LARS metadata without changing this profile&apos;s KSB definitions.
+      </span>
     </label>
   );
 }

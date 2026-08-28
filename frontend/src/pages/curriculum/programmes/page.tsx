@@ -1,4 +1,4 @@
-import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -213,9 +213,9 @@ export default function CurriculumProgrammes() {
   const [programmePage, setProgrammePage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [programmeDrawerTarget, setProgrammeDrawerTarget] = useState<CurriculumProgramme | null>(null);
-  // A just-created programme goes to Design as soon as its required KSB source
-  // is applied. This keeps one recommended path without hiding Delivery.
-  const [newProgrammeDesignTarget, setNewProgrammeDesignTarget] = useState<CurriculumProgramme | null>(null);
+  // A just-created programme goes to Delivery as soon as its required KSB
+  // source is applied, so its first cohort can be established before modules.
+  const [newProgrammeDeliveryTarget, setNewProgrammeDeliveryTarget] = useState<CurriculumProgramme | null>(null);
   // Direct actions from Curriculum Home open the one canonical programme form
   // immediately instead of making the person find the same button on this page.
   useEffect(() => {
@@ -247,6 +247,8 @@ export default function CurriculumProgrammes() {
   const [sourceReview, setSourceReview] = useState<ProgrammeKsbSourceReview | null>(null);
   const [ksbSets, setKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
+  const [ksbSourcesLoading, setKsbSourcesLoading] = useState(true);
+  const [ksbSourcesError, setKsbSourcesError] = useState<string | null>(null);
   const [programmeSourceOverrides, setProgrammeSourceOverrides] = useState<Map<string, string>>(new Map());
   // skipCache on this page: it *is* the list of programmes, so arriving on it
   // must show what exists now. The 30s collection cache is there to spare other
@@ -257,16 +259,31 @@ export default function CurriculumProgrammes() {
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 
+  const loadKsbSources = useCallback(async (signal?: AbortSignal) => {
+    setKsbSourcesLoading(true);
+    setKsbSourcesError(null);
+    const [setsResult, standardsResult] = await Promise.allSettled([
+      fetchCurriculumKsbSets(signal, { all: true }),
+      fetchCurriculumStandards(signal),
+    ]);
+    if (signal?.aborted) return;
+    if (setsResult.status === 'fulfilled') setKsbSets(setsResult.value);
+    if (standardsResult.status === 'fulfilled') setStandards(standardsResult.value);
+    const failures = [setsResult, standardsResult].filter(result => result.status === 'rejected');
+    if (failures.length) {
+      const firstFailure = failures[0] as PromiseRejectedResult;
+      const message = firstFailure.reason instanceof Error ? firstFailure.reason.message : 'Unable to load KSB sources.';
+      setKsbSourcesError(message);
+      console.warn('Unable to load all KSB sources for programme review.', firstFailure.reason);
+    }
+    setKsbSourcesLoading(false);
+  }, []);
+
   useEffect(() => {
     const controller = new AbortController();
-    void Promise.all([
-      fetchCurriculumKsbSets(controller.signal, { all: true }).then(setKsbSets),
-      fetchCurriculumStandards(controller.signal).then(setStandards),
-    ]).catch(err => {
-      if (!controller.signal.aborted) console.warn('Unable to load KSB descriptions for programme review.', err);
-    });
+    void loadKsbSources(controller.signal);
     return () => controller.abort();
-  }, []);
+  }, [loadKsbSources]);
 
   const visibleProgrammes = useMemo(
     () => programmes.filter(programme => !programmeIsArchived(programme)),
@@ -704,15 +721,15 @@ export default function CurriculumProgrammes() {
         // the user in the picker or turn a successful save into an error.
         console.warn('Unable to refresh curriculum caches after applying a KSB source.', error);
       });
-      const shouldOpenDesign = Boolean(
-        newProgrammeDesignTarget
-        && normalise(newProgrammeDesignTarget.sourceId || newProgrammeDesignTarget.id) === normalise(programmeId),
+      const shouldOpenDelivery = Boolean(
+        newProgrammeDeliveryTarget
+        && normalise(newProgrammeDeliveryTarget.sourceId || newProgrammeDeliveryTarget.id) === normalise(programmeId),
       );
       const appliedToast = showProgrammeSwalToast('KSB Source applied', `${programme.name} will now use the selected ${kind === 'profile' ? 'KSB profile' : 'standard'} for coverage.`, 'success');
       setApplyProgramme(null);
-      if (shouldOpenDesign) {
-        setNewProgrammeDesignTarget(null);
-        navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=design`);
+      if (shouldOpenDelivery) {
+        setNewProgrammeDeliveryTarget(null);
+        navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=cohorts`);
       }
       await Promise.all([refreshAfterApply, appliedToast]);
     } catch (err) {
@@ -808,7 +825,7 @@ export default function CurriculumProgrammes() {
     // it reads as a save that did not happen.
     if (result?.programme) upsertProgramme(result.programme);
     if (result?.programme) {
-      setNewProgrammeDesignTarget(result.programme);
+      setNewProgrammeDeliveryTarget(result.programme);
       setApplyProgramme(result.programme);
     }
     await refreshProgrammeCards();
@@ -1413,6 +1430,8 @@ export default function CurriculumProgrammes() {
             programme={applyProgramme}
             ksbSets={ksbSets}
             standards={standards}
+            sourcesLoading={ksbSourcesLoading}
+            sourcesError={ksbSourcesError}
             currentSource={programmeKsbSources.get(applyProgramme.sourceId || applyProgramme.id) || resolveProgrammeAppliedKsbSource(applyProgramme, ksbSets, standards)}
             applying={applyingKsbSource}
             onClose={() => {
@@ -1420,10 +1439,11 @@ export default function CurriculumProgrammes() {
               // Cancelling the required source step is a deliberate pause. Do
               // not immediately claim the programme is ready or push the user
               // into Design/Delivery while the prerequisite is still missing.
-              setNewProgrammeDesignTarget(null);
+              setNewProgrammeDeliveryTarget(null);
             }}
             onApply={sourceValue => applyProgrammeKsbSource(applyProgramme, sourceValue)}
             onUnapply={() => unapplyProgrammeKsbSource(applyProgramme, programmeKsbSources.get(applyProgramme.sourceId || applyProgramme.id) || resolveProgrammeAppliedKsbSource(applyProgramme, ksbSets, standards))}
+            onRetry={() => { void loadKsbSources(); }}
           />
         )}
         {sourceReview && (
@@ -2001,20 +2021,26 @@ function ApplyProgrammeKsbSourceModal({
   programme,
   ksbSets,
   standards,
+  sourcesLoading,
+  sourcesError,
   currentSource,
   applying,
   onClose,
   onApply,
   onUnapply,
+  onRetry,
 }: {
   programme: CurriculumProgramme;
   ksbSets: CurriculumKsbSet[];
   standards: CurriculumStandard[];
+  sourcesLoading: boolean;
+  sourcesError: string | null;
   currentSource: ProgrammeAppliedKsbSource;
   applying: boolean;
   onClose: () => void;
   onApply: (sourceValue: string) => void;
   onUnapply: () => void;
+  onRetry: () => void;
 }) {
   const [sourceKind, setSourceKind] = useState<'profile' | 'standard'>(currentSource.kind === 'standard' ? 'standard' : 'profile');
   const profileOptions = useMemo(() => ksbSets.map(set => ({
@@ -2099,7 +2125,24 @@ function ApplyProgrammeKsbSourceModal({
                 </button>
               );
             })}
-            {!options.length && (
+            {sourcesLoading && !options.length && (
+              <div className="rounded-xl border border-primary-100 bg-primary-50 p-6 text-center">
+                <AppIcon className="ri-loader-4-line mb-2 inline-block animate-spin text-xl text-primary-600"></AppIcon>
+                <p className="text-sm font-bold text-foreground-800">Loading KSB sources...</p>
+                <p className="mt-1 text-[12px] text-foreground-500">Your existing programme assignment is kept while the source details load.</p>
+              </div>
+            )}
+            {!sourcesLoading && sourcesError && !options.length && (
+              <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
+                <p className="text-sm font-bold text-red-800">KSB sources could not be loaded</p>
+                <p className="mt-1 text-[12px] text-red-700">The programme assignment has not been removed. Retry loading the source list.</p>
+                <button type="button" onClick={onRetry} className="mt-3 inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-4 text-[12px] font-bold text-red-700 hover:bg-red-100">
+                  <AppIcon className="ri-refresh-line"></AppIcon>
+                  Retry
+                </button>
+              </div>
+            )}
+            {!sourcesLoading && !sourcesError && !options.length && (
               <div className="rounded-xl border border-dashed border-foreground-200 bg-background-100 p-6 text-center">
                 <p className="text-sm font-bold text-foreground-800">No {sourceKind === 'profile' ? 'KSB profiles' : 'KSB standards'} available</p>
                 <p className="mt-1 text-[12px] text-foreground-500">Add the source first, then come back to apply it to this programme.</p>
@@ -2787,6 +2830,9 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
     if (explicitKind === 'profile') {
       const profile = findProgrammeKsbSetBySourceId(ksbSets, explicitId);
       if (profile) {
+        const linkedStandard = profile.standardSourceId
+          ? standards.find(item => normalise(item.id) === normalise(profile.standardSourceId))
+          : undefined;
         return {
           value: `profile:${ksbSourceIdForProgrammeCard(profile)}`,
           kind: 'profile',
@@ -2794,8 +2840,20 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
           subtitle: `${profile.programmeName || programme.name} - ${profile.ksbs.length} KSBs`,
           detail: ksbSetCountsLabel(profile),
           ksbCount: profile.ksbs.length,
+          standard: linkedStandard,
         };
       }
+      // The programme row is the authority for whether a source is assigned.
+      // Source metadata is a slower, separate request; an empty/loading response
+      // must not rewrite a real assignment into "No KSB source" on every card.
+      return {
+        value: `profile:${explicitId}`,
+        kind: 'profile',
+        title: 'Assigned KSB profile',
+        subtitle: `Source ${explicitId} - details are loading`,
+        detail: 'Assigned',
+        ksbCount: Math.max(1, Number(programme.ksbTotal || 0)),
+      };
     }
     if (explicitKind === 'standard') {
       const standard = standards.find(item => normalise(item.id) === normalise(explicitId));
@@ -2810,6 +2868,14 @@ function resolveProgrammeAppliedKsbSource(programme: CurriculumProgramme, ksbSet
           standard,
         };
       }
+      return {
+        value: `standard:${explicitId}`,
+        kind: 'standard',
+        title: programme.standard || 'Assigned KSB standard',
+        subtitle: `Source ${explicitId} - details are loading`,
+        detail: 'Assigned',
+        ksbCount: Math.max(1, Number(programme.ksbTotal || 0)),
+      };
     }
   }
 

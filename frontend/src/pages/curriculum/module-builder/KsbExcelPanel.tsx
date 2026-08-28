@@ -5,9 +5,10 @@ import { AppIcon } from '@/components/feature/AppIcon';
 // component to a sheet, copy the ChatGPT prompt (pinned to the KSB profile) that
 // fills it, then import the returned file back onto the components. Shared by the
 // Module Builder and Week Builder so the flow reads identically in both.
-export function KsbExcelPanel({ prompt, profileCount, onExport, onImport }: {
+export function KsbExcelPanel({ prompt, profileCount, loading = false, onExport, onImport }: {
   prompt: string;
   profileCount: number;
+  loading?: boolean;
   onExport: () => void;
   onImport: () => void;
 }) {
@@ -43,11 +44,11 @@ export function KsbExcelPanel({ prompt, profileCount, onExport, onImport }: {
           <AppIcon className="ri-file-upload-line text-[12px]"></AppIcon>Import
         </button>
       </div>
-      <button onClick={() => void copyPrompt()} className={`mt-1.5 inline-flex h-8 w-full items-center justify-center gap-1 rounded-md px-2 text-[10px] font-bold text-white transition-smooth ${copied ? 'bg-emerald-500' : 'bg-primary-500 hover:bg-primary-600'}`}>
-        <AppIcon className={copied ? 'ri-check-line text-[12px]' : 'ri-clipboard-line text-[12px]'}></AppIcon>
-        {copied ? 'Prompt copied' : 'Copy ChatGPT prompt'}
+      <button disabled={loading} onClick={() => void copyPrompt()} className={`mt-1.5 inline-flex h-8 w-full items-center justify-center gap-1 rounded-md px-2 text-[10px] font-bold text-white transition-smooth disabled:cursor-wait disabled:opacity-60 ${copied ? 'bg-emerald-500' : 'bg-primary-500 hover:bg-primary-600'}`}>
+        <AppIcon className={loading ? 'ri-loader-4-line animate-spin text-[12px]' : copied ? 'ri-check-line text-[12px]' : 'ri-clipboard-line text-[12px]'}></AppIcon>
+        {loading ? 'Loading KSB source...' : copied ? 'Prompt copied' : 'Copy ChatGPT prompt'}
       </button>
-      {profileCount === 0 && (
+      {!loading && profileCount === 0 && (
         <p className="mt-1.5 flex items-start gap-1 text-[9px] font-semibold leading-3 text-amber-600">
           <AppIcon className="ri-error-warning-line text-[11px]"></AppIcon>
           No KSB source is set, so the prompt lists no profile. Attach a KSB source for a stricter mapping.

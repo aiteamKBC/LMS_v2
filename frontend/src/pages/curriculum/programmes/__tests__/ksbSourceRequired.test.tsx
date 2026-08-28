@@ -66,8 +66,16 @@ vi.mock('@/hooks/useCurriculumStaffProfiles', () => ({
 
 const realProfile = {
   id: 'KSB-1', frameworkId: 'KSB-1', standard: 'Project Control Professional',
+  standardSourceId: 'st0845-v1-1',
   programmeName: 'Project Control', knowledge: 31, skills: 29, behaviours: 11,
   ksbs: new Array(71).fill({ code: 'K1' }),
+};
+
+const linkedStandard = {
+  id: 'st0845-v1-1', code: 'ST0845', standardRef: 'ST0845', version: '1.1',
+  name: 'Project controls professional', level: 'Level 6', levelValue: '6',
+  minimumHours: '348', maxFunding: '£27,000', duration: '18 months', larsCode: '128',
+  knowledge: 31, skills: 29, behaviours: 11, total: 71, ksbs: [],
 };
 
 // The one shared placeholder. Not owned by a programme: several can be parked on
@@ -100,7 +108,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   updateCurriculumKsbFramework: (...args: unknown[]) => updateCurriculumKsbFramework(...(args as [])),
   updateCurriculumProgramme: (...args: unknown[]) => updateCurriculumProgramme(...(args as [])),
   fetchCurriculumKsbSets: vi.fn(async () => ksbSets),
-  fetchCurriculumStandards: vi.fn(async () => []),
+  fetchCurriculumStandards: vi.fn(async () => [linkedStandard]),
   fetchCurriculumModules: vi.fn(async () => []),
   fetchCurriculumProgrammeKsbCoverage: vi.fn(async () => null),
   fetchCurriculumProgrammeLearnerKsbImpact: vi.fn(async () => null),
@@ -202,6 +210,8 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(mapped.queryByText('Needs KSB source')).not.toBeInTheDocument();
     expect(mapped.getByText('Applied KSB Source')).toBeInTheDocument();
     expect(mapped.getByText('Project Control Professional')).toBeInTheDocument();
+    expect(mapped.getByText('348 hrs min')).toBeInTheDocument();
+    expect(mapped.getByText('£27,000 max funding')).toBeInTheDocument();
   });
 
   it('marks a programme parked on the empty profile', async () => {
@@ -235,7 +245,7 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     expect(createCurriculumKsbFramework).not.toHaveBeenCalled();
   });
 
-  it('opens Design directly after the new programme has a KSB source', async () => {
+  it('opens Delivery directly after the new programme has a KSB source', async () => {
     await renderProgrammes();
     expect(await screen.findByText('Test-Zyad')).toBeInTheDocument();
 
@@ -248,7 +258,7 @@ describe('Programmes page — a programme with no usable KSB source', { timeout:
     await userEvent.click(sourceModal.getByRole('button', { name: /Project Control Professional/ }));
     await userEvent.click(sourceModal.getByRole('button', { name: 'Apply source' }));
 
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/curriculum/programmes/PROG-NEW?tab=design'));
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/curriculum/programmes/PROG-NEW?tab=cohorts'));
     expect(screen.queryByText('What do you want to do next?')).not.toBeInTheDocument();
   });
 

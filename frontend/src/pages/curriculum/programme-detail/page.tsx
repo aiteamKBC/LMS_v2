@@ -3,12 +3,11 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
-import { programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
-// Editing the programme, or adding a cohort, a group or a module from this page,
+import { namedCurriculumWorkspacePath, programmeIdentity, visibleNotes } from '@/pages/curriculum/shared/entities/model';
+// Editing the programme, or adding a cohort or group from this page,
 // opens the same drawer that record's own page opens. One form per record type in
 // the whole studio, so nothing behaves differently depending on the door taken.
 import { CohortFormDrawer, GroupFormDrawer, ProgrammeFormDrawer } from '@/pages/curriculum/shared/entities/forms';
-import { ModuleFormDrawer } from '@/pages/curriculum/shared/entities/moduleForm';
 import { ScopeAchievementPanel } from '@/pages/curriculum/shared/entities/scopeAchievement';
 // The same rule applies to reading: the record tables, filter bars and workspace
 // chrome here are the shared ones the Cohort, Group and Module workspaces use, so
@@ -183,6 +182,8 @@ function moduleBuilderUrl(module: Pick<Module, 'id' | 'sourceId' | 'moduleId' | 
   if (moduleId) params.set('module', moduleId);
   const programmeId = clean(programme?.sourceId || programme?.id || programme?.name);
   if (programmeId) params.set('programme', programmeId);
+  const programmeName = clean(programme?.name);
+  if (programmeName) params.set('programmeName', programmeName);
   const query = params.toString();
   return `/curriculum/module-builder${query ? `?${query}` : ''}`;
 }
@@ -192,12 +193,12 @@ function moduleBuilderUrl(module: Pick<Module, 'id' | 'sourceId' | 'moduleId' | 
  * series and sessions. The identity precedence matches `moduleIdentity` in the
  * shared model, which is what that page resolves the route param with.
  */
-function moduleWorkspaceUrl(module: Pick<Module, 'id' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId'>) {
+function moduleWorkspaceUrl(module: Pick<Module, 'id' | 'moduleId' | 'moduleCatalogueId' | 'catalogueId' | 'name'>) {
   const identity = clean(module.moduleCatalogueId)
     || clean(module.catalogueId)
     || clean(module.moduleId)
     || clean(module.id);
-  return identity ? `/curriculum/modules/${encodeURIComponent(identity)}` : '';
+  return identity ? namedCurriculumWorkspacePath('modules', identity, module.name) : '';
 }
 
 interface Group {
@@ -1615,28 +1616,31 @@ function EnrolledLearnersPanel({
  * chrome, and every one of them now has exactly one home.
  */
 
-type Tab = 'overview' | 'design' | 'delivery' | 'coverage' | 'quality';
-type DeliveryView = 'structure' | 'sessions';
-type CoverageView = 'mapping' | 'achievement';
+type Tab = 'overview' | 'cohorts' | 'groups' | 'modules' | 'sessions' | 'coverage' | 'achievement' | 'quality';
 
 const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(100px,.8fr)_120px]';
-const GROUP_GRID = 'grid grid-cols-[minmax(160px,1.3fr)_minmax(170px,1.1fr)_minmax(150px,1fr)_80px_80px_130px]';
+// Actions need room for both "Add first module" and "Learners" on one line.
+// Below this width EntityTable scrolls horizontally instead of squeezing the
+// buttons or turning a single row into an uneven two-line layout.
+const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_90px_minmax(210px,auto)]';
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_120px]';
 const SESSION_GRID = 'grid grid-cols-[minmax(200px,1.6fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_90px_minmax(130px,1fr)_170px]';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: 'Overview',
-  design: 'Design',
-  delivery: 'Delivery',
-  coverage: 'Coverage',
+  cohorts: 'Cohorts',
+  groups: 'Groups',
+  modules: 'Modules',
+  sessions: 'Sessions',
+  coverage: 'KSB Coverage',
+  achievement: 'Achievement KSBs',
   quality: 'Quality',
 };
 
-const LEGACY_TAB_MAP: Record<string, { tab: Tab; view?: DeliveryView | CoverageView }> = {
-  modules: { tab: 'design' },
-  sessions: { tab: 'delivery', view: 'sessions' },
-  ksb: { tab: 'coverage', view: 'mapping' },
-  achievement: { tab: 'coverage', view: 'achievement' },
+const LEGACY_TAB_MAP: Record<string, Tab> = {
+  design: 'modules',
+  delivery: 'cohorts',
+  ksb: 'coverage',
 };
 
 /**
@@ -1696,11 +1700,13 @@ export default function ProgrammeDetailPage() {
   // browser Back button walk tabs and a pasted URL reopen what the sender saw.
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const legacyTab = requestedTab ? LEGACY_TAB_MAP[requestedTab] : undefined;
-  const tab: Tab = isProgrammeDetailTab(requestedTab) ? requestedTab : legacyTab?.tab || 'overview';
   const requestedView = searchParams.get('view');
-  const deliveryView: DeliveryView = legacyTab?.view === 'sessions' || requestedView === 'sessions' ? 'sessions' : 'structure';
-  const coverageView: CoverageView = legacyTab?.view === 'achievement' || requestedView === 'achievement' ? 'achievement' : 'mapping';
+  const compatibleTab = requestedTab === 'delivery' && requestedView === 'sessions'
+    ? 'sessions'
+    : requestedTab === 'coverage' && requestedView === 'achievement'
+      ? 'achievement'
+      : requestedTab && LEGACY_TAB_MAP[requestedTab];
+  const tab: Tab = compatibleTab || (isProgrammeDetailTab(requestedTab) ? requestedTab : 'overview');
   const setTab = useCallback((next: Tab) => {
     // Replace rather than push: switching tabs is not a navigation the reader
     // should have to unwind one step at a time to get back to the card grid.
@@ -1712,19 +1718,13 @@ export default function ProgrammeDetailPage() {
       return params;
     }, { replace: true });
   }, [setSearchParams]);
-  const setWorkspaceView = useCallback((next: DeliveryView | CoverageView) => {
-    setSearchParams(previous => {
-      const params = new URLSearchParams(previous);
-      params.set('tab', tab);
-      params.set('view', next);
-      return params;
-    }, { replace: true });
-  }, [setSearchParams, tab]);
   // Delivery tab: which cohort's groups are shown, and which group's learners.
   const [selectedCohort, setSelectedCohort] = useState('');
   const [selectedGroup, setSelectedGroup] = useState('');
   const [cohortSearch, setCohortSearch] = useState('');
   const [cohortStatusFilter, setCohortStatusFilter] = useState('');
+  const [groupSearch, setGroupSearch] = useState('');
+  const [groupCoachFilter, setGroupCoachFilter] = useState('');
   const [moduleSearch, setModuleSearch] = useState('');
   const [moduleCohortFilter, setModuleCohortFilter] = useState('');
   const [moduleGroupFilter, setModuleGroupFilter] = useState('');
@@ -1739,7 +1739,6 @@ export default function ProgrammeDetailPage() {
   const [cohortDrawerOpen, setCohortDrawerOpen] = useState(false);
   // The cohort the new group belongs to; '' when the user has not narrowed it.
   const [groupDrawerCohortId, setGroupDrawerCohortId] = useState<string | null>(null);
-  const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
   const [savingAction, setSavingAction] = useState<string | null>(null);
 
   const coverageProgrammeIds = useMemo(() => {
@@ -1802,7 +1801,7 @@ export default function ProgrammeDetailPage() {
   // Overview reads the same coverage the KSB tab draws — its readiness figure and
   // the header's coverage stat are that heatmap counted, not a second calculation
   // — so landing on the page loads it once and both agree.
-  const needsCoverage = tab === 'overview' || tab === 'coverage' || tab === 'quality' || ksbTraceOpen;
+  const needsCoverage = tab === 'overview' || tab === 'coverage' || tab === 'achievement' || tab === 'quality' || ksbTraceOpen;
 
   useEffect(() => {
     if (!needsCoverage) return;
@@ -1851,7 +1850,7 @@ export default function ProgrammeDetailPage() {
   }, [coverageProgrammeIds]);
 
   useEffect(() => {
-    if (tab !== 'delivery') return;
+    if (tab !== 'groups') return;
     const rosterKey = coverageProgrammeIds.join('|');
     if (!rosterKey || rosterRequestKeyRef.current === rosterKey) return;
     rosterRequestKeyRef.current = rosterKey;
@@ -1972,14 +1971,33 @@ export default function ProgrammeDetailPage() {
     }
   }, [filteredCohorts, selectedCohort]);
 
+  const groupCohorts = useMemo(
+    () => PROGRAMME.cohorts.filter(cohortItem => normalise(cohortItem.status) !== 'archived'),
+    [PROGRAMME.cohorts],
+  );
   const activeCohort = useMemo(
-    () => filteredCohorts.find(cohortItem => cohortItem.id === selectedCohort) || null,
-    [filteredCohorts, selectedCohort],
+    () => groupCohorts.find(cohortItem => cohortItem.id === selectedCohort) || groupCohorts[0] || null,
+    [groupCohorts, selectedCohort],
   );
+  const filteredGroups = useMemo(() => {
+    const query = normalise(groupSearch);
+    return (activeCohort?.groups || []).filter(group => {
+      const matchesQuery = !query || [group.name, group.coach, group.schedule, group.mode]
+        .some(value => normalise(value).includes(query));
+      const hasCoach = isStaffAssigned(group.coach);
+      const matchesCoach = !groupCoachFilter
+        || (groupCoachFilter === 'assigned' ? hasCoach : !hasCoach);
+      return matchesQuery && matchesCoach;
+    });
+  }, [activeCohort, groupCoachFilter, groupSearch]);
   const activeGroup = useMemo(
-    () => activeCohort?.groups.find(group => group.id === selectedGroup) || null,
-    [activeCohort, selectedGroup],
+    () => filteredGroups.find(group => group.id === selectedGroup) || null,
+    [filteredGroups, selectedGroup],
   );
+
+  useEffect(() => {
+    if (selectedGroup && !filteredGroups.some(group => group.id === selectedGroup)) setSelectedGroup('');
+  }, [filteredGroups, selectedGroup]);
 
   // ----------------------------------------------------------------- modules
 
@@ -2165,17 +2183,7 @@ export default function ProgrammeDetailPage() {
     () => (drawerProgramme ? programmeIdentity(drawerProgramme) : clean(liveProgramme.sourceId) || clean(liveProgramme.id) || clean(id || '')),
     [drawerProgramme, id, liveProgramme.id, liveProgramme.sourceId],
   );
-  const moduleDrawerDefaults = useMemo(() => {
-    const cohortRecord = (data?.cohorts || []).find(item => normalise(item.name) === normalise(moduleCohortFilter));
-    const groupRecord = (data?.groups || []).find(item => normalise(item.name) === normalise(moduleGroupFilter));
-    return {
-      programmeId: drawerProgrammeId,
-      cohortId: cohortRecord?.id || groupRecord?.cohortId || undefined,
-      groupId: groupRecord?.id || undefined,
-    };
-  }, [data, drawerProgrammeId, moduleCohortFilter, moduleGroupFilter]);
   const drawerCoachNames = useMemo(() => staffNameOptions(data?.coaches, (data?.groups || []).map(group => group.coach)), [data]);
-  const drawerTutorNames = useMemo(() => staffNameOptions(data?.tutors, (data?.modules || []).map(module => module.tutor)), [data]);
 
   // Assign a group's coach straight from the Delivery tab. The group PATCH is the
   // canonical endpoint, so nothing here bypasses the rules the form applies.
@@ -2201,7 +2209,21 @@ export default function ProgrammeDetailPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const moduleBuilderProgrammeUrl = `/curriculum/module-builder?programme=${encodeURIComponent(clean(PROGRAMME.sourceId) || PROGRAMME.name)}`;
+  const moduleBuilderProgrammeParams = new URLSearchParams({
+    programme: clean(PROGRAMME.sourceId) || PROGRAMME.name,
+    programmeName: PROGRAMME.name,
+  });
+  const moduleBuilderProgrammeUrl = `/curriculum/module-builder?${moduleBuilderProgrammeParams.toString()}`;
+  const moduleBuilderGroupUrl = (cohortId: string, groupId: string) => {
+    const params = new URLSearchParams({
+      programme: clean(PROGRAMME.sourceId) || PROGRAMME.name,
+      programmeName: PROGRAMME.name,
+      cohort: cohortId,
+      group: groupId,
+      create: '1',
+    });
+    return `/curriculum/module-builder?${params.toString()}`;
+  };
 
   if (loading && !found) {
     return (
@@ -2245,9 +2267,12 @@ export default function ProgrammeDetailPage() {
 
   const tabs = [
     { key: 'overview', label: TAB_LABELS.overview, icon: 'ri-dashboard-line' },
-    { key: 'design', label: TAB_LABELS.design, icon: 'ri-layout-4-line', count: PROGRAMME.modules.length },
-    { key: 'delivery', label: TAB_LABELS.delivery, icon: 'ri-calendar-schedule-line', count: liveCohortCount },
+    { key: 'cohorts', label: TAB_LABELS.cohorts, icon: 'ri-group-line', count: liveCohortCount },
+    { key: 'groups', label: TAB_LABELS.groups, icon: 'ri-team-line', count: totalGroups },
+    { key: 'modules', label: TAB_LABELS.modules, icon: 'ri-stack-line', count: PROGRAMME.modules.length },
+    { key: 'sessions', label: TAB_LABELS.sessions, icon: 'ri-time-line', count: totalSessions || undefined },
     { key: 'coverage', label: TAB_LABELS.coverage, icon: 'ri-node-tree', count: missingKsbCount || undefined },
+    { key: 'achievement', label: TAB_LABELS.achievement, icon: 'ri-medal-line' },
     { key: 'quality', label: TAB_LABELS.quality, icon: 'ri-shield-check-line' },
   ];
 
@@ -2289,74 +2314,51 @@ export default function ProgrammeDetailPage() {
             },
           ]}
           actions={(
-            <>
-              <button
-                type="button"
-                onClick={() => setProgrammeDrawerOpen(true)}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
-              >
-                <AppIcon className="ri-edit-line text-sm"></AppIcon>
-                Edit programme
-              </button>
-              <button
-                type="button"
-                onClick={() => setCohortDrawerOpen(true)}
-                className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
-              >
-                <AppIcon className="ri-add-line text-sm"></AppIcon>
-                Add cohort
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={() => setProgrammeDrawerOpen(true)}
+              className="inline-flex h-10 items-center gap-2 rounded-xl bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+            >
+              <AppIcon className="ri-edit-line text-sm"></AppIcon>
+              Edit programme
+            </button>
           )}
         />
 
-        <WorkspaceTabs tabs={tabs} active={tab} onChange={key => setTab(key as Tab)} />
-
-        {tab !== 'overview' && (
+        {tab === 'overview' && (
           <div className="flex flex-col gap-3 rounded-2xl border border-primary-100 bg-primary-50/45 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex min-w-0 items-start gap-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background-50 text-primary-700 shadow-sm">
-                <AppIcon className={tab === 'design' ? 'ri-layout-4-line' : tab === 'delivery' ? 'ri-calendar-schedule-line' : tab === 'coverage' ? 'ri-node-tree' : 'ri-shield-check-line'}></AppIcon>
+                <AppIcon className="ri-calendar-schedule-line"></AppIcon>
               </span>
               <div className="min-w-0">
-                <p className="text-[11px] font-extrabold uppercase tracking-wide text-primary-700">
-                  {tab === 'design' ? 'Shared programme design' : tab === 'delivery' ? 'Delivery instance' : tab === 'coverage' ? 'Coverage scope' : 'Live curriculum checks'}
-                </p>
+                <p className="text-[11px] font-extrabold uppercase tracking-wide text-primary-700">Delivery setup</p>
                 <p className="mt-0.5 text-[11px] leading-5 text-foreground-600">
-                  {tab === 'design'
-                    ? 'Modules, weeks and components are authored once and reused by every delivery group.'
-                    : tab === 'delivery'
-                      ? 'Choose the delivery structure or its scheduled sessions. Cohort and group filters only change delivery data.'
-                      : tab === 'coverage'
-                        ? 'Switch between what the design maps and what assigned learners have achieved.'
-                        : 'Only checks backed by live programme records are shown here.'}
+                  Start with cohorts and groups, then assign tutors, coaches and scheduled sessions for this programme.
                 </p>
               </div>
             </div>
-            {tab === 'design' && (
-              <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-                <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700">
-                  <AppIcon className="ri-tools-line"></AppIcon> Open 3-column editor
-                </button>
-                <button type="button" onClick={() => setTab('delivery')} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-background-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100">
-                  Set up delivery instead <AppIcon className="ri-arrow-right-line"></AppIcon>
-                </button>
-              </div>
-            )}
-            {tab === 'delivery' && (
-              <div className="inline-flex shrink-0 rounded-xl border border-primary-100 bg-background-50 p-1 shadow-sm">
-                <ContextSwitch active={deliveryView === 'structure'} label="Cohorts & groups" icon="ri-group-line" onClick={() => setWorkspaceView('structure')} />
-                <ContextSwitch active={deliveryView === 'sessions'} label="Sessions" icon="ri-time-line" onClick={() => setWorkspaceView('sessions')} />
-              </div>
-            )}
-            {tab === 'coverage' && (
-              <div className="inline-flex shrink-0 rounded-xl border border-primary-100 bg-background-50 p-1 shadow-sm">
-                <ContextSwitch active={coverageView === 'mapping'} label="Design mapping" icon="ri-node-tree" onClick={() => setWorkspaceView('mapping')} />
-                <ContextSwitch active={coverageView === 'achievement'} label="Learner achievement" icon="ri-medal-line" onClick={() => setWorkspaceView('achievement')} />
-              </div>
-            )}
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:shrink-0 sm:flex-row">
+              <button type="button" onClick={() => liveCohortCount ? setTab('cohorts') : setCohortDrawerOpen(true)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700">
+                <AppIcon className="ri-group-line"></AppIcon> {liveCohortCount ? 'Manage Cohorts & Groups' : 'Add First Cohort'}
+              </button>
+              <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-background-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100">
+                Open Module Builder <AppIcon className="ri-arrow-right-line"></AppIcon>
+              </button>
+            </div>
           </div>
         )}
+
+        <WorkspaceTabs
+          tabs={tabs}
+          active={tab}
+          onChange={key => setTab(key as Tab)}
+          trailing={tab === 'modules' ? (
+            <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700 sm:w-auto">
+              <AppIcon className="ri-tools-line"></AppIcon> Open Module Builder
+            </button>
+          ) : undefined}
+        />
 
         {/* ═══════════════════════════════════════════════════════════════════
             Overview — the only view that spans the whole programme
@@ -2439,7 +2441,7 @@ export default function ProgrammeDetailPage() {
                       tone="amber"
                       title={`${unstaffedGroupCount} ${unstaffedGroupCount === 1 ? 'group has' : 'groups have'} no coach`}
                       detail="A group without a coach has nobody supporting its learners."
-                      action={{ label: 'Open Delivery', onClick: () => goToTab('delivery') }}
+                      action={{ label: 'Open Groups', onClick: () => goToTab('groups') }}
                     />
                   )}
                   {untutoredModules.length > 0 && (
@@ -2448,7 +2450,7 @@ export default function ProgrammeDetailPage() {
                       tone="amber"
                       title={`${untutoredModules.length} ${untutoredModules.length === 1 ? 'module has' : 'modules have'} no tutor`}
                       detail="The tutor is set on the module, and its sessions cannot be timetabled without one."
-                      action={{ label: 'Open Design', onClick: () => goToTab('design') }}
+                      action={{ label: 'Open Modules', onClick: () => goToTab('modules') }}
                     />
                   )}
                   {unlinkedModules.length > 0 && (
@@ -2457,7 +2459,7 @@ export default function ProgrammeDetailPage() {
                       tone="rose"
                       title={`${unlinkedModules.length} ${unlinkedModules.length === 1 ? 'module is' : 'modules are'} not attached to a live cohort`}
                       detail={`Stored against ${unlinkedModules.slice(0, 2).map(mod => clean(mod.cohort, 'no cohort')).join(', ')}${unlinkedModules.length > 2 ? '…' : ''}, which is not a cohort record on this programme.`}
-                      action={{ label: 'Open Design', onClick: () => goToTab('design') }}
+                      action={{ label: 'Open Modules', onClick: () => goToTab('modules') }}
                     />
                   )}
                   {emptyWeekCount > 0 && (
@@ -2521,7 +2523,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             Delivery — cohorts, and the groups under the one being read
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'delivery' && deliveryView === 'structure' && (
+        {tab === 'cohorts' && (
           <div className="space-y-5">
             <EntityFilterBar
               search={cohortSearch}
@@ -2542,10 +2544,11 @@ export default function ProgrammeDetailPage() {
                 ],
               }]}
               onReset={() => { setCohortSearch(''); setCohortStatusFilter(''); }}
+              disabled={!PROGRAMME.cohorts.length}
               summary={cohortStatusFilter === 'archived'
                 ? `Showing ${filteredCohorts.length} of ${archivedCohortCount} archived cohorts`
                 : `Showing ${filteredCohorts.length} of ${liveCohortCount} cohorts${archivedCohortCount > 0 ? ` · ${archivedCohortCount} archived` : ''}`}
-              trailing={(
+              trailing={PROGRAMME.cohorts.length ? (
                 <button
                   type="button"
                   onClick={() => setCohortDrawerOpen(true)}
@@ -2554,7 +2557,7 @@ export default function ProgrammeDetailPage() {
                   <AppIcon className="ri-add-line text-sm"></AppIcon>
                   Add cohort
                 </button>
-              )}
+              ) : undefined}
             />
 
             <EntityTable
@@ -2615,41 +2618,86 @@ export default function ProgrammeDetailPage() {
                     </PlainCell>
                     <NamedActions
                       actions={[{
-                        icon: selected ? 'ri-eye-line' : 'ri-team-line',
+                        icon: 'ri-team-line',
                         label: 'Groups',
-                        title: selected
-                          ? `${cohortItem.name}'s groups are shown below`
-                          : `Show ${cohortItem.name}'s groups below`,
+                        title: `Open the groups in ${cohortItem.name}`,
                         primary: selected,
-                        disabled: selected,
-                        onClick: () => { setSelectedCohort(cohortItem.id); setSelectedGroup(''); },
+                        onClick: () => {
+                          setSelectedCohort(cohortItem.id);
+                          setSelectedGroup('');
+                          setTab('groups');
+                        },
                       }]}
                     />
                   </>
                 );
               }}
             />
+          </div>
+        )}
+
+        {tab === 'groups' && (
+          <div className="space-y-5">
+            <EntityFilterBar
+              search={groupSearch}
+              onSearch={setGroupSearch}
+              placeholder="Search groups, coaches, days or mode..."
+              selects={[
+                {
+                  label: 'Cohort',
+                  value: activeCohort?.id || '',
+                  onChange: value => { setSelectedCohort(value); setSelectedGroup(''); },
+                  options: groupCohorts.length
+                    ? groupCohorts.map(item => ({ value: item.id, label: `${item.name} · ${item.groups.length} groups` }))
+                    : [{ value: '', label: 'No cohorts yet' }],
+                  disabled: !groupCohorts.length,
+                  disabledHint: 'Add a cohort before filtering groups.',
+                },
+                {
+                  label: 'Coaching',
+                  value: groupCoachFilter,
+                  onChange: setGroupCoachFilter,
+                  options: [
+                    { value: '', label: 'All coaching states' },
+                    { value: 'assigned', label: 'Coach assigned' },
+                    { value: 'unassigned', label: 'Needs a coach' },
+                  ],
+                  disabled: !activeCohort?.groups.length,
+                  disabledHint: activeCohort
+                    ? 'Add a group before filtering by coaching status.'
+                    : 'Choose or create a cohort first.',
+                },
+              ]}
+              onReset={() => { setGroupSearch(''); setGroupCoachFilter(''); }}
+              searchDisabled={!activeCohort?.groups.length}
+              isDirty={Boolean(activeCohort?.groups.length && (groupSearch || groupCoachFilter))}
+              summary={activeCohort
+                ? `Showing ${filteredGroups.length} of ${activeCohort.groups.length} groups in ${activeCohort.name}`
+                : 'Showing 0 groups · add a cohort first'}
+              trailing={activeCohort && activeCohort.groups.length ? (
+                <button
+                  type="button"
+                  onClick={() => setGroupDrawerCohortId(activeCohort.id)}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
+                >
+                  <AppIcon className="ri-add-line text-sm"></AppIcon>
+                  Add group
+                </button>
+              ) : undefined}
+            />
 
             {activeCohort && (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-end justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="text-[13px] font-heading font-bold text-foreground-950">Groups in {activeCohort.name}</h3>
-                    <p className="mt-0.5 text-[12px] text-foreground-500">
-                      A group is the timetabled class learners attend. Its tutor comes from the modules it delivers, so only the coach is set here.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setGroupDrawerCohortId(activeCohort.id)}
-                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
-                  >
-                    <AppIcon className="ri-add-line text-sm"></AppIcon>
-                    Add group
-                  </button>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-[13px] font-heading font-bold text-foreground-950">Groups in {activeCohort.name}</h3>
+                  <p className="mt-0.5 text-[12px] text-foreground-500">
+                    Open a group to manage its learners, or add its first module to continue building the programme.
+                  </p>
                 </div>
+              </div>
+            )}
 
-                <EntityTable
+            <EntityTable
                   columns={[
                     { label: 'Group' },
                     { label: 'Coach' },
@@ -2659,21 +2707,30 @@ export default function ProgrammeDetailPage() {
                     { label: 'Actions', align: 'right' },
                   ]}
                   gridClass={GROUP_GRID}
-                  rows={activeCohort.groups}
+                  rows={filteredGroups}
                   rowKey={group => group.id}
                   refreshing={refreshing}
-                  empty={(
+                  empty={activeCohort ? (
                     <EntityEmptyState
-                      icon="ri-team-line"
-                      title="This cohort has no groups"
-                      message="Groups carry the weekly timetable and the coach who supports it. Add one to start scheduling."
-                      action={{ label: 'Add group', onClick: () => setGroupDrawerCohortId(activeCohort.id) }}
+                      icon={activeCohort.groups.length ? 'ri-filter-off-line' : 'ri-team-line'}
+                      title={activeCohort.groups.length ? 'No groups match these filters' : 'This cohort has no groups'}
+                      message={activeCohort.groups.length
+                        ? 'Clear a filter, or search for a different group.'
+                        : 'Groups carry the weekly timetable and the coach who supports it. Add the first one to start scheduling.'}
+                      action={activeCohort.groups.length ? undefined : { label: 'Add group', onClick: () => setGroupDrawerCohortId(activeCohort.id) }}
+                    />
+                  ) : (
+                    <EntityEmptyState
+                      icon="ri-group-line"
+                      title="Add a cohort before creating groups"
+                      message="Groups always belong to a cohort. Create the programme's first cohort, then return here to add its delivery groups."
+                      action={{ label: 'Add first cohort', onClick: () => setCohortDrawerOpen(true) }}
                     />
                   )}
                   renderRow={group => (
                     <>
                       <StackedCell
-                        href={`/curriculum/groups/${encodeURIComponent(group.id)}`}
+                        href={namedCurriculumWorkspacePath('groups', group.id, group.name)}
                         primary={group.name}
                         secondary={[group.startDate, group.endDate].filter(Boolean).join(' – ') || undefined}
                       />
@@ -2689,22 +2746,30 @@ export default function ProgrammeDetailPage() {
                       <PlainCell align="center">{group.learners}</PlainCell>
                       <PlainCell align="center">{group.modules.length}</PlainCell>
                       <NamedActions
-                        actions={[{
-                          icon: group.id === selectedGroup ? 'ri-eye-line' : 'ri-graduation-cap-line',
-                          label: 'Learners',
-                          title: group.id === selectedGroup
-                            ? `${group.name}'s learners are shown below`
-                            : `Show the learners enrolment has assigned to ${group.name}`,
-                          primary: group.id === selectedGroup,
-                          disabled: group.id === selectedGroup,
-                          onClick: () => setSelectedGroup(group.id),
-                        }]}
+                        actions={[
+                          {
+                            icon: 'ri-add-line',
+                            label: group.modules.length ? 'Add module' : 'Add first module',
+                            title: `Create a module for ${group.name}`,
+                            primary: group.modules.length === 0,
+                            onClick: () => navigate(moduleBuilderGroupUrl(activeCohort?.id || '', group.id)),
+                          },
+                          {
+                            icon: group.id === selectedGroup ? 'ri-eye-line' : 'ri-graduation-cap-line',
+                            label: 'Learners',
+                            title: group.id === selectedGroup
+                              ? `${group.name}'s learners are shown below`
+                              : `Show the learners enrolment has assigned to ${group.name}`,
+                            disabled: group.id === selectedGroup,
+                            onClick: () => setSelectedGroup(group.id),
+                          },
+                        ]}
                       />
                     </>
                   )}
                 />
 
-                {activeGroup && (
+            {activeCohort && activeGroup && (
                   <WorkspacePanel
                     title={`Learners in ${activeGroup.name}`}
                     description="Placed by the enrolment team. Curriculum owns the delivery structure, not the placements, so this is read-only."
@@ -2728,8 +2793,6 @@ export default function ProgrammeDetailPage() {
                       emptyHint={`No learners have been assigned to ${activeGroup.name} by the enrolment team yet.`}
                     />
                   </WorkspacePanel>
-                )}
-              </div>
             )}
           </div>
         )}
@@ -2737,7 +2800,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             Modules — every module at once; each one opens its own workspace
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'design' && (
+        {tab === 'modules' && (
           <div className="space-y-5">
             <EntityFilterBar
               search={moduleSearch}
@@ -2758,17 +2821,8 @@ export default function ProgrammeDetailPage() {
                 },
               ]}
               onReset={() => { setModuleSearch(''); setModuleCohortFilter(''); setModuleGroupFilter(''); }}
+              disabled={!PROGRAMME.modules.length}
               summary={`Showing ${filteredModules.length} of ${PROGRAMME.modules.length} modules · content, Teams meetings and KSB weights open in the module`}
-              trailing={(
-                <button
-                  type="button"
-                  onClick={() => setModuleDrawerOpen(true)}
-                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700"
-                >
-                  <AppIcon className="ri-add-line text-sm"></AppIcon>
-                  Add module
-                </button>
-              )}
             />
 
             <EntityTable
@@ -2793,8 +2847,8 @@ export default function ProgrammeDetailPage() {
                   title={PROGRAMME.modules.length ? 'No modules match these filters' : 'No modules yet'}
                   message={PROGRAMME.modules.length
                     ? 'Clear a filter, or search for a different module.'
-                    : 'Modules carry the weekly content, sessions and OTJH for this programme. Add the first one to start building the curriculum.'}
-                  action={PROGRAMME.modules.length ? undefined : { label: 'Add module', onClick: () => setModuleDrawerOpen(true) }}
+                    : 'Modules carry the weekly content, sessions and OTJH for this programme. Create and author the first one in Module Builder.'}
+                  action={PROGRAMME.modules.length ? undefined : { label: 'Open Module Builder', onClick: () => navigate(moduleBuilderProgrammeUrl) }}
                 />
               )}
               renderRow={mod => {
@@ -2858,11 +2912,11 @@ export default function ProgrammeDetailPage() {
                   </span>
                   <div>
                     <p className="text-[12px] font-extrabold text-emerald-950">Design foundation ready</p>
-                    <p className="mt-0.5 text-[11px] leading-5 text-emerald-800">This programme has a module, an authored week and learner-facing content. You can now organise its delivery.</p>
+                    <p className="mt-0.5 text-[11px] leading-5 text-emerald-800">This programme has a module, an authored week and learner-facing content. You can now review its KSB coverage.</p>
                   </div>
                 </div>
-                <button type="button" onClick={() => setTab('delivery')} className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-emerald-800">
-                  Continue to Delivery <AppIcon className="ri-arrow-right-line"></AppIcon>
+                <button type="button" onClick={() => setTab('coverage')} className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-emerald-800">
+                  Continue to KSB Coverage <AppIcon className="ri-arrow-right-line"></AppIcon>
                 </button>
               </div>
             )}
@@ -2872,7 +2926,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             Sessions — every live session and recording across every module
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'delivery' && deliveryView === 'sessions' && (
+        {tab === 'sessions' && (
           <div className="space-y-5">
             <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="inline-flex rounded-xl border border-background-200 bg-background-100 p-1">
@@ -3052,7 +3106,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             KSB coverage — the programme-wide roll-up, which exists nowhere else
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'coverage' && coverageView === 'mapping' && (
+        {tab === 'coverage' && (
           <WorkspacePanel
             title="KSB coverage heatmap"
             description="Component KSB mappings rolled up into weeks, modules and programme coverage. An empty cell means the KSB is not addressed in that module."
@@ -3159,7 +3213,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             Achievement — what the learners actually earned, at any level
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'coverage' && coverageView === 'achievement' && (
+        {tab === 'achievement' && (
           <div className="space-y-4">
             <WorkspacePanel
               title="Scope"
@@ -3219,7 +3273,7 @@ export default function ProgrammeDetailPage() {
                   clearText="Every module has a tutor"
                   issueText={`${untutoredModules.length} ${untutoredModules.length === 1 ? 'module needs' : 'modules need'} a tutor`}
                   icon="ri-user-settings-line"
-                  onClick={() => goToTab('design')}
+                  onClick={() => goToTab('modules')}
                 />
                 <QualityCheckCard
                   title="Coach assignment"
@@ -3227,7 +3281,7 @@ export default function ProgrammeDetailPage() {
                   clearText="Every group has a coach"
                   issueText={`${unstaffedGroupCount} ${unstaffedGroupCount === 1 ? 'group needs' : 'groups need'} a coach`}
                   icon="ri-user-search-line"
-                  onClick={() => goToTab('delivery')}
+                  onClick={() => goToTab('groups')}
                 />
                 <QualityCheckCard
                   title="Delivery links"
@@ -3235,7 +3289,7 @@ export default function ProgrammeDetailPage() {
                   clearText="Every module is linked to delivery"
                   issueText={`${unlinkedModules.length} ${unlinkedModules.length === 1 ? 'module is' : 'modules are'} not linked to a live cohort`}
                   icon="ri-link-unlink"
-                  onClick={() => goToTab('design')}
+                  onClick={() => goToTab('modules')}
                 />
                 <QualityCheckCard
                   title="Published content"
@@ -3281,17 +3335,6 @@ export default function ProgrammeDetailPage() {
         onClose={() => setGroupDrawerCohortId(null)}
         onSaved={() => reload({ silent: true })}
       />
-      <ModuleFormDrawer
-        open={moduleDrawerOpen}
-        defaults={moduleDrawerDefaults}
-        programmes={drawerProgrammes}
-        cohorts={data?.cohorts || []}
-        groups={data?.groups || []}
-        holidays={data?.holidays || []}
-        tutorNames={drawerTutorNames}
-        onClose={() => setModuleDrawerOpen(false)}
-        onSaved={() => reload({ silent: true })}
-      />
       {ksbTraceOpen && (
         <KsbTraceModal
           programme={PROGRAMME}
@@ -3306,20 +3349,6 @@ export default function ProgrammeDetailPage() {
 // ============================================================
 // Helper Components
 // ============================================================
-
-function ContextSwitch({ active, label, icon, onClick }: { active: boolean; label: string; icon: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[10px] font-bold transition-smooth ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-primary-50 hover:text-primary-700'}`}
-    >
-      <AppIcon className={icon}></AppIcon>
-      {label}
-    </button>
-  );
-}
 
 function QualityCheckCard({ title, count, clearText, issueText, icon, onClick }: { title: string; count: number; clearText: string; issueText: string; icon: string; onClick: () => void }) {
   const clear = count === 0;

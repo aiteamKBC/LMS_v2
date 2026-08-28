@@ -21,16 +21,34 @@ from azure.storage.blob import (
 )
 
 
+AZURE_UPLOAD_CONNECTION_TIMEOUT_SECONDS = 60
+AZURE_UPLOAD_READ_TIMEOUT_SECONDS = 60
+
+
 def azure_configured() -> bool:
     """True when both the account and key are present, so views can 503 cleanly
     instead of throwing an opaque SDK error when storage isn't set up."""
     return bool(settings.AZURE_STORAGE_ACCOUNT and settings.AZURE_STORAGE_KEY)
 
 
-def _service_client() -> BlobServiceClient:
+def _service_client(upload_block_bytes=None, retry_total=None) -> BlobServiceClient:
+    options = {}
+    if upload_block_bytes:
+        options.update({
+            'max_single_put_size': upload_block_bytes,
+            'max_block_size': upload_block_bytes,
+        })
+    if retry_total is not None:
+        options.update({
+            'retry_total': retry_total,
+            'retry_connect': retry_total,
+            'retry_read': retry_total,
+            'retry_status': retry_total,
+        })
     return BlobServiceClient(
         account_url=f"https://{settings.AZURE_STORAGE_ACCOUNT}.blob.core.windows.net",
         credential=settings.AZURE_STORAGE_KEY,
+        **options,
     )
 
 
@@ -45,22 +63,34 @@ def upload_to_quarantine(file_obj, blob_name, content_type):
         file_obj,
         overwrite=False,
         content_settings=ContentSettings(content_type=content_type or "application/octet-stream"),
+        max_concurrency=2,
+        connection_timeout=AZURE_UPLOAD_CONNECTION_TIMEOUT_SECONDS,
+        read_timeout=AZURE_UPLOAD_READ_TIMEOUT_SECONDS,
     )
     return blob_name
 
 
-def upload_blob(file_obj, container, blob_name, content_type, overwrite=True):
+def upload_blob(
+    file_obj, container, blob_name, content_type, overwrite=True,
+    upload_block_bytes=None, max_concurrency=2, retry_total=None,
+):
     """Write directly to `container`, bypassing the quarantine lifecycle.
 
     Only for content the platform generates itself (see enrolment_api/documents.py)
     — learner-supplied uploads must still go through upload_to_quarantine so they
     get scanned before anyone can download them.
     """
-    client = _service_client().get_blob_client(container=container, blob=blob_name)
+    client = _service_client(
+        upload_block_bytes=upload_block_bytes,
+        retry_total=retry_total,
+    ).get_blob_client(container=container, blob=blob_name)
     client.upload_blob(
         file_obj,
         overwrite=overwrite,
         content_settings=ContentSettings(content_type=content_type or "application/octet-stream"),
+        max_concurrency=max_concurrency,
+        connection_timeout=AZURE_UPLOAD_CONNECTION_TIMEOUT_SECONDS,
+        read_timeout=AZURE_UPLOAD_READ_TIMEOUT_SECONDS,
     )
     return blob_name
 
