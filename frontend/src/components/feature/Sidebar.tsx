@@ -93,6 +93,12 @@ export interface SidebarNavItem {
   icon: string;
   /** Leaf destination. Navigation groups intentionally omit it. */
   href?: string;
+  /**
+   * Existing routes that belong to this destination without changing their
+   * public URL. Hub-style navigation uses these aliases to keep one of the five
+   * primary destinations highlighted while a person works in a deeper tool.
+   */
+  matchPaths?: string[];
   badge?: number;
   comingSoon?: boolean;
   statusDot?: 'red' | 'amber' | 'blue' | 'green';
@@ -121,7 +127,7 @@ interface SidebarProps {
 function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   const key = `${id} ${label} ${sourceIcon}`.toLowerCase();
 
-  if (/dashboard|overview/.test(key)) return LayoutDashboard;
+  if (/dashboard|overview|\bhome\b/.test(key)) return LayoutDashboard;
   // Curriculum workspace groups get distinct icons so the sidebar is scannable.
   if (/programme\s*-?\s*design|programme-design/.test(key)) return Presentation;
   if (/curriculum\s*-?\s*builder|curriculum-builder/.test(key)) return Workflow;
@@ -320,29 +326,32 @@ export function Sidebar({
     [filteredNavItems],
   );
 
-  const isActive = (href?: string) => {
+  const isActive = useCallback((href?: string, matchPaths: string[] = []) => {
     if (!href) return false;
     const [hrefPath] = href.split('?');
     const current = `${location.pathname}${location.search}`;
     if (href.includes('?')) return current === href;
     if (queryMatchedHref && hrefPath === queryMatchedHref.split('?')[0]) return false;
-    const matches = location.pathname === href || location.pathname.startsWith(href + '/');
+    const candidates = [hrefPath, ...matchPaths];
+    const matches = candidates.some(candidate => (
+      location.pathname === candidate || location.pathname.startsWith(candidate + '/')
+    ));
     if (!matches) return false;
 
     // Nested sibling routes can share a prefix (for example /learner/clubs
     // and /learner/clubs/events). Only the most specific matching item should
     // receive the active style.
-    return !navHrefs.some(candidate =>
+    return matchPaths.length > 0 || !navHrefs.some(candidate =>
       candidate.length > href.length
       && (location.pathname === candidate || location.pathname.startsWith(candidate + '/'))
     );
-  };
+  }, [location.pathname, location.search, navHrefs, queryMatchedHref]);
 
   // Keep the section containing the current route open when navigation is
   // supplied dynamically by the active role/configuration.
   useEffect(() => {
     const activeGroupIds = filteredNavItems
-      .filter(item => item.children?.some(child => isActive(child.href)))
+      .filter(item => item.children?.some(child => isActive(child.href, child.matchPaths)))
       .map(item => item.id);
     if (activeGroupIds.length === 0) return;
     setExpandedGroups(prev => {
@@ -350,7 +359,7 @@ export function Sidebar({
       activeGroupIds.forEach(id => next.add(id));
       return next.size === prev.size ? prev : next;
     });
-  }, [filteredNavItems, location.pathname, location.search]);
+  }, [filteredNavItems, isActive]);
 
   const hasChildren = (item: SidebarNavItem) => item.children && item.children.length > 0;
 
@@ -513,10 +522,10 @@ function RailLabel({ children, compact }: { children: string; compact?: boolean 
 
 function RailLink({ item, isActive, compact }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   compact?: boolean;
 }) {
-  const active = isActive(item.href);
+  const active = isActive(item.href, item.matchPaths);
   return (
     <Link
       to={item.href ?? '#'}
@@ -546,13 +555,13 @@ function RailDot({ className }: { className: string }) {
  */
 function RailGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   isDropdownOpen: boolean;
   onOpen: () => void;
   onClose: () => void;
 }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const anyChildActive = item.children?.some(child => isActive(child.href)) ?? false;
+  const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
   const { hoverProps, flyout } = useFlyout({ item, isActive, isOpen: isDropdownOpen, onOpen, onClose, anchorRef: buttonRef });
 
   return (
@@ -586,11 +595,11 @@ function RailGroup({ item, isActive, isDropdownOpen, onOpen, onClose }: {
 
 function ExpandedLink({ item, isActive, onNavigate, compact }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   onNavigate?: () => void;
   compact?: boolean;
 }) {
-  const active = isActive(item.href);
+  const active = isActive(item.href, item.matchPaths);
   return (
     <Link
       to={item.href ?? '#'}
@@ -619,12 +628,12 @@ function ExpandedLink({ item, isActive, onNavigate, compact }: {
  */
 function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   isExpanded: boolean;
   onToggle: () => void;
   onNavigate?: () => void;
 }) {
-  const anyChildActive = item.children?.some(child => isActive(child.href)) ?? false;
+  const anyChildActive = item.children?.some(child => isActive(child.href, child.matchPaths)) ?? false;
 
   return (
     <div>
@@ -651,7 +660,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
       {isExpanded && item.children && (
         <div className="ml-[19px] mt-0.5 space-y-0.5 border-l border-foreground-100 pl-2">
           {item.children.map(child => {
-            const childActive = isActive(child.href);
+            const childActive = isActive(child.href, child.matchPaths);
             return (
               <Link
                 key={child.id}
@@ -691,7 +700,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate }: {
  */
 function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
   item: SidebarNavItem;
-  isActive: (href?: string) => boolean;
+  isActive: (href?: string, matchPaths?: string[]) => boolean;
   isOpen: boolean;
   onOpen: () => void;
   onClose: () => void;
@@ -766,7 +775,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
 
       <div className="max-h-[calc(100vh-96px)] space-y-0.5 overflow-y-auto">
         {filteredChildren.map(child => {
-          const childActive = isActive(child.href);
+          const childActive = isActive(child.href, child.matchPaths);
           return (
             <Link
               key={child.id}
