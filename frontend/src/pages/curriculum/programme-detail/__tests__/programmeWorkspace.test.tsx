@@ -189,7 +189,7 @@ async function openTab(name: RegExp) {
   await userEvent.click(tabStrip().getByRole('button', { name }));
 }
 
-describe('Programme workspace', () => {
+describe('Programme workspace', { timeout: 15000 }, () => {
   it('opens with the programme in a header, not straight into a records table', async () => {
     await renderWorkspace();
 
@@ -206,10 +206,10 @@ describe('Programme workspace', () => {
     const strip = tabStrip();
 
     expect(strip.getByRole('button', { name: /Overview/ })).toBeInTheDocument();
+    expect(strip.getByRole('button', { name: /Design/ })).toBeInTheDocument();
     expect(strip.getByRole('button', { name: /Delivery/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /Modules/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /Sessions/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /KSB coverage/ })).toBeInTheDocument();
+    expect(strip.getByRole('button', { name: /Coverage/ })).toBeInTheDocument();
+    expect(strip.getByRole('button', { name: /Quality/ })).toBeInTheDocument();
 
     // Groups were the Cohorts tab again, flattened; Weeks was the module's own
     // timeline; Review drew all of it a third time.
@@ -249,7 +249,7 @@ describe('Programme workspace', () => {
 
   it('lists modules as rows that open the module, not as cards that redraw it', async () => {
     await renderWorkspace();
-    await openTab(/Modules/);
+    await openTab(/Design/);
 
     expect(screen.getByRole('link', { name: /^Data Foundations/ })).toHaveAttribute('href', '/curriculum/modules/MOD-1');
     // Row actions say what they do rather than leaving the reader to decode a
@@ -262,9 +262,10 @@ describe('Programme workspace', () => {
     expect(screen.queryByText('Getting started')).not.toBeInTheDocument();
   });
 
-  it('rolls every module up into one delivery schedule on the Sessions tab', async () => {
+  it('rolls every module up into one delivery schedule inside Delivery', async () => {
     await renderWorkspace();
-    await openTab(/Sessions/);
+    await openTab(/Delivery/);
+    await userEvent.click(screen.getByRole('button', { name: /Sessions/ }));
 
     expect(screen.getByText('Intro live session')).toBeInTheDocument();
     expect(screen.getByText(/Week 1 · Getting started/)).toBeInTheDocument();

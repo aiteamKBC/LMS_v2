@@ -111,7 +111,8 @@ const PROGRAMMES_PER_PAGE = 6;
 type SelectOption = { value: string; label: string; meta?: string; color?: string; aliases?: string[] };
 type StructureWizardStep = 'programme' | 'cohort' | 'group' | 'modules' | 'weeks' | 'review';
 /** Tabs the programme workspace owns; mirrors its `?tab=` values. */
-type ProgrammeDetailTab = 'overview' | 'delivery' | 'modules' | 'sessions' | 'ksb' | 'achievement';
+type ProgrammeDetailTab = 'overview' | 'design' | 'delivery' | 'coverage' | 'quality';
+type ProgrammeDetailView = 'sessions' | 'mapping' | 'achievement';
 
 function showProgrammeSwalToast(title: string, text: string, icon: 'success' | 'error' | 'info' = 'success') {
   return showCurriculumAlert({
@@ -212,6 +213,17 @@ export default function CurriculumProgrammes() {
   const [programmePage, setProgrammePage] = useState(() => Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1));
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
   const [programmeDrawerTarget, setProgrammeDrawerTarget] = useState<CurriculumProgramme | null>(null);
+  const [newProgrammeNext, setNewProgrammeNext] = useState<CurriculumProgramme | null>(null);
+  // Direct actions from Curriculum Home open the one canonical programme form
+  // immediately instead of making the person find the same button on this page.
+  useEffect(() => {
+    if (searchParams.get('create') !== 'programme') return;
+    setProgrammeDrawerTarget(null);
+    setProgrammeDrawerOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('create');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   // The guided run. Two ways in, one wizard: the hero button starts at the
   // programme form, for a programme being stood up from nothing; clicking a card
   // starts at the cohort step with that programme already chosen, because the
@@ -413,9 +425,13 @@ export default function CurriculumProgrammes() {
   // the card are the navigation - a Cohorts count opens Delivery, a Modules
   // count opens Modules - instead of landing everyone on Overview to hunt for
   // the same number twice.
-  const openProgramme = (programme: CurriculumProgramme, tab?: ProgrammeDetailTab) => {
+  const openProgramme = (programme: CurriculumProgramme, tab?: ProgrammeDetailTab, view?: ProgrammeDetailView) => {
     const programmeId = programme.sourceId || programme.id;
-    navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}${tab ? `?tab=${tab}` : ''}`);
+    const params = new URLSearchParams();
+    if (tab && tab !== 'overview') params.set('tab', tab);
+    if (view) params.set('view', view);
+    const query = params.toString();
+    navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}${query ? `?${query}` : ''}`);
   };
 
   // Editing programme-level details is a focused form. Structure edits live on
@@ -776,7 +792,10 @@ export default function CurriculumProgrammes() {
     // that the programme exists, and waiting for a multi-table refresh to prove
     // it reads as a save that did not happen.
     if (result?.programme) upsertProgramme(result.programme);
-    if (result?.programme) setApplyProgramme(result.programme);
+    if (result?.programme) {
+      setNewProgrammeNext(result.programme);
+      setApplyProgramme(result.programme);
+    }
     await refreshProgrammeCards();
   };
 
@@ -1029,9 +1048,9 @@ export default function CurriculumProgrammes() {
                 : () => setWizardRun({ from: 'cohort', programmeId: prog.sourceId || prog.id });
               // Deep links from the figures on the card into the tab that owns
               // each one. Stops the card click from also firing behind them.
-              const openTab = (tab: ProgrammeDetailTab) => (event: { stopPropagation: () => void }) => {
+              const openTab = (tab: ProgrammeDetailTab, view?: ProgrammeDetailView) => (event: { stopPropagation: () => void }) => {
                 event.stopPropagation();
-                openProgramme(prog, tab);
+                openProgramme(prog, tab, view);
               };
               return (
               <article
@@ -1203,12 +1222,12 @@ export default function CurriculumProgrammes() {
                 <div className="programmes-metrics mb-3 grid grid-cols-2 gap-2.5 rounded-xl border border-primary-100/70 bg-primary-50/65 p-2.5 sm:grid-cols-5">
                   <Metric label="Cohorts" value={String(prog.cohorts)} onOpen={openTab('delivery')} hint={`Open the ${prog.cohorts} cohorts of ${prog.name}`} />
                   <Metric label="Groups" value={String(prog.groups || 0)} onOpen={openTab('delivery')} hint={`Open the groups of ${prog.name}`} />
-                  <Metric label="Modules" value={String(prog.modules)} onOpen={openTab('modules')} hint={`Open the ${prog.modules} modules of ${prog.name}`} />
-                  <Metric label="Weeks" value={`${prog.weeks}`} onOpen={openTab('modules')} hint={`Open the module plan of ${prog.name}`} />
-                  <Metric label="Learners" value={String(prog.learners)} onOpen={openTab('achievement')} hint={`Open learner achievement for ${prog.name}`} />
+                  <Metric label="Modules" value={String(prog.modules)} onOpen={openTab('design')} hint={`Open the ${prog.modules} modules of ${prog.name}`} />
+                  <Metric label="Weeks" value={`${prog.weeks}`} onOpen={openTab('design')} hint={`Open the module plan of ${prog.name}`} />
+                  <Metric label="Learners" value={String(prog.learners)} onOpen={openTab('coverage', 'achievement')} hint={`Open learner achievement for ${prog.name}`} />
                   <button
                     type="button"
-                    onClick={openTab('ksb')}
+                    onClick={openTab('coverage', 'mapping')}
                     title={`Open KSB coverage for ${prog.name}`}
                     className="col-span-2 rounded-lg px-1 py-0.5 text-left transition-smooth hover:bg-primary-100/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 sm:col-span-5"
                   >
@@ -1381,9 +1400,31 @@ export default function CurriculumProgrammes() {
             standards={standards}
             currentSource={programmeKsbSources.get(applyProgramme.sourceId || applyProgramme.id) || resolveProgrammeAppliedKsbSource(applyProgramme, ksbSets, standards)}
             applying={applyingKsbSource}
-            onClose={() => setApplyProgramme(null)}
+            onClose={() => {
+              setApplyProgramme(null);
+              // Cancelling the required source step is a deliberate pause. Do
+              // not immediately claim the programme is ready or push the user
+              // into Design/Delivery while the prerequisite is still missing.
+              setNewProgrammeNext(null);
+            }}
             onApply={sourceValue => applyProgrammeKsbSource(applyProgramme, sourceValue)}
             onUnapply={() => unapplyProgrammeKsbSource(applyProgramme, programmeKsbSources.get(applyProgramme.sourceId || applyProgramme.id) || resolveProgrammeAppliedKsbSource(applyProgramme, ksbSets, standards))}
+          />
+        )}
+        {newProgrammeNext && !applyProgramme && (
+          <ProgrammeNextStepModal
+            programme={newProgrammeNext}
+            onClose={() => setNewProgrammeNext(null)}
+            onDesign={() => {
+              const programmeId = newProgrammeNext.sourceId || newProgrammeNext.id;
+              setNewProgrammeNext(null);
+              navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=design`);
+            }}
+            onDelivery={() => {
+              const programmeId = newProgrammeNext.sourceId || newProgrammeNext.id;
+              setNewProgrammeNext(null);
+              navigate(`/curriculum/programmes/${encodeURIComponent(programmeId)}?tab=delivery`);
+            }}
           />
         )}
         {sourceReview && (
@@ -1394,6 +1435,42 @@ export default function CurriculumProgrammes() {
         )}
       </div>
     </WorkspaceShell>
+  );
+}
+
+function ProgrammeNextStepModal({ programme, onClose, onDesign, onDelivery }: { programme: CurriculumProgramme; onClose: () => void; onDesign: () => void; onDelivery: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-foreground-950/45 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-2xl overflow-hidden rounded-2xl border border-primary-100 bg-background-50 shadow-2xl" onClick={event => event.stopPropagation()}>
+        <div className="border-b border-background-200 px-5 py-5 sm:px-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.16em] text-primary-600">Programme created</p>
+              <h2 className="mt-1 font-heading text-xl font-bold text-foreground-950">What do you want to do next?</h2>
+              <p className="mt-1 text-[12px] leading-5 text-foreground-500">{programme.name} is ready. Design and delivery are independent, so you can start with either one.</p>
+            </div>
+            <button type="button" onClick={onClose} aria-label="Close next step" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-foreground-700"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
+          </div>
+        </div>
+        <div className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6">
+          <button type="button" onClick={onDesign} className="group flex min-h-44 flex-col rounded-2xl border-2 border-primary-200 bg-primary-50/55 p-5 text-left transition-smooth hover:border-primary-400 hover:bg-primary-50 hover:shadow-md">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary-600 text-white"><AppIcon className="ri-layout-4-line text-xl"></AppIcon></span>
+            <span className="mt-4 font-heading text-base font-bold text-foreground-950">Start designing</span>
+            <span className="mt-1 text-[11px] leading-5 text-foreground-500">Add reusable modules, weeks and components. Delivery details can wait.</span>
+            <span className="mt-auto inline-flex items-center gap-1 pt-4 text-[11px] font-bold text-primary-700">Open Design <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5"></AppIcon></span>
+          </button>
+          <button type="button" onClick={onDelivery} className="group flex min-h-44 flex-col rounded-2xl border border-foreground-200 bg-background-100/60 p-5 text-left transition-smooth hover:border-sky-300 hover:bg-sky-50/60 hover:shadow-md">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-sky-100 text-sky-700"><AppIcon className="ri-calendar-schedule-line text-xl"></AppIcon></span>
+            <span className="mt-4 font-heading text-base font-bold text-foreground-950">Set up delivery</span>
+            <span className="mt-1 text-[11px] leading-5 text-foreground-500">Create cohorts and groups, then assign dates, coaches and tutors.</span>
+            <span className="mt-auto inline-flex items-center gap-1 pt-4 text-[11px] font-bold text-sky-700">Open Delivery <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5"></AppIcon></span>
+          </button>
+        </div>
+        <div className="border-t border-background-200 bg-background-100/55 px-5 py-3 text-center sm:px-6">
+          <button type="button" onClick={onClose} className="text-[11px] font-bold text-foreground-500 hover:text-foreground-800">I’ll do this later</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1411,7 +1488,7 @@ function ProgrammeLearnerImpactModal({
   onClose: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const learners = data?.learnerKsbConsumption || [];
+  const learners = useMemo(() => data?.learnerKsbConsumption || [], [data]);
   const assignedLearners = data?.assignedLearners || [];
   const achievementsByLearner = useMemo(() => learnerAchievementMap(data), [data]);
   const filteredLearners = useMemo(() => {
@@ -2085,7 +2162,7 @@ function ApplyProgrammeKsbSourceModal({
             {currentSource.value && (
               <button type="button" disabled={applying} onClick={onUnapply} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 text-[12px] font-bold text-red-700 transition-smooth hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50">
                 <AppIcon className={applying ? 'ri-loader-4-line animate-spin' : 'ri-link-unlink-m'}></AppIcon>
-                Unapply Standards
+                Unapply source
               </button>
             )}
           </div>
@@ -2095,7 +2172,7 @@ function ApplyProgrammeKsbSourceModal({
             </button>
             <button type="button" disabled={!selectedSource || applying || selectedIsCurrent} onClick={() => onApply(selectedSource)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50">
               <AppIcon className={applying ? 'ri-loader-4-line animate-spin' : selectedIsCurrent ? 'ri-checkbox-circle-line' : 'ri-check-line'}></AppIcon>
-              {applying ? 'Applying...' : selectedIsCurrent ? 'Applied' : 'Apply Standards'}
+              {applying ? 'Applying...' : selectedIsCurrent ? 'Applied' : 'Apply source'}
             </button>
           </div>
         </div>

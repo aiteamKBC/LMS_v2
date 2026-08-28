@@ -1615,7 +1615,9 @@ function EnrolledLearnersPanel({
  * chrome, and every one of them now has exactly one home.
  */
 
-type Tab = 'overview' | 'delivery' | 'modules' | 'sessions' | 'ksb' | 'achievement';
+type Tab = 'overview' | 'design' | 'delivery' | 'coverage' | 'quality';
+type DeliveryView = 'structure' | 'sessions';
+type CoverageView = 'mapping' | 'achievement';
 
 const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_80px_80px_minmax(100px,.8fr)_120px]';
 const GROUP_GRID = 'grid grid-cols-[minmax(160px,1.3fr)_minmax(170px,1.1fr)_minmax(150px,1fr)_80px_80px_130px]';
@@ -1624,11 +1626,17 @@ const SESSION_GRID = 'grid grid-cols-[minmax(200px,1.6fr)_minmax(150px,1.1fr)_mi
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: 'Overview',
+  design: 'Design',
   delivery: 'Delivery',
-  modules: 'Modules',
-  sessions: 'Sessions',
-  ksb: 'KSB coverage',
-  achievement: 'Achievement KSBs',
+  coverage: 'Coverage',
+  quality: 'Quality',
+};
+
+const LEGACY_TAB_MAP: Record<string, { tab: Tab; view?: DeliveryView | CoverageView }> = {
+  modules: { tab: 'design' },
+  sessions: { tab: 'delivery', view: 'sessions' },
+  ksb: { tab: 'coverage', view: 'mapping' },
+  achievement: { tab: 'coverage', view: 'achievement' },
 };
 
 /**
@@ -1688,7 +1696,11 @@ export default function ProgrammeDetailPage() {
   // browser Back button walk tabs and a pasted URL reopen what the sender saw.
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedTab = searchParams.get('tab');
-  const tab: Tab = isProgrammeDetailTab(requestedTab) ? requestedTab : 'overview';
+  const legacyTab = requestedTab ? LEGACY_TAB_MAP[requestedTab] : undefined;
+  const tab: Tab = isProgrammeDetailTab(requestedTab) ? requestedTab : legacyTab?.tab || 'overview';
+  const requestedView = searchParams.get('view');
+  const deliveryView: DeliveryView = legacyTab?.view === 'sessions' || requestedView === 'sessions' ? 'sessions' : 'structure';
+  const coverageView: CoverageView = legacyTab?.view === 'achievement' || requestedView === 'achievement' ? 'achievement' : 'mapping';
   const setTab = useCallback((next: Tab) => {
     // Replace rather than push: switching tabs is not a navigation the reader
     // should have to unwind one step at a time to get back to the card grid.
@@ -1696,9 +1708,18 @@ export default function ProgrammeDetailPage() {
       const params = new URLSearchParams(previous);
       if (next === 'overview') params.delete('tab');
       else params.set('tab', next);
+      params.delete('view');
       return params;
     }, { replace: true });
   }, [setSearchParams]);
+  const setWorkspaceView = useCallback((next: DeliveryView | CoverageView) => {
+    setSearchParams(previous => {
+      const params = new URLSearchParams(previous);
+      params.set('tab', tab);
+      params.set('view', next);
+      return params;
+    }, { replace: true });
+  }, [setSearchParams, tab]);
   // Delivery tab: which cohort's groups are shown, and which group's learners.
   const [selectedCohort, setSelectedCohort] = useState('');
   const [selectedGroup, setSelectedGroup] = useState('');
@@ -1781,7 +1802,7 @@ export default function ProgrammeDetailPage() {
   // Overview reads the same coverage the KSB tab draws — its readiness figure and
   // the header's coverage stat are that heatmap counted, not a second calculation
   // — so landing on the page loads it once and both agree.
-  const needsCoverage = tab === 'overview' || tab === 'ksb' || ksbTraceOpen;
+  const needsCoverage = tab === 'overview' || tab === 'coverage' || tab === 'quality' || ksbTraceOpen;
 
   useEffect(() => {
     if (!needsCoverage) return;
@@ -2221,11 +2242,10 @@ export default function ProgrammeDetailPage() {
 
   const tabs = [
     { key: 'overview', label: TAB_LABELS.overview, icon: 'ri-dashboard-line' },
-    { key: 'delivery', label: TAB_LABELS.delivery, icon: 'ri-group-line', count: liveCohortCount },
-    { key: 'modules', label: TAB_LABELS.modules, icon: 'ri-stack-line', count: PROGRAMME.modules.length },
-    { key: 'sessions', label: TAB_LABELS.sessions, icon: 'ri-time-line', count: totalSessions },
-    { key: 'ksb', label: TAB_LABELS.ksb, icon: 'ri-bar-chart-line', count: PROGRAMME.ksbHeatmap.length || undefined },
-    { key: 'achievement', label: TAB_LABELS.achievement, icon: 'ri-medal-line', count: totalLearners || undefined },
+    { key: 'design', label: TAB_LABELS.design, icon: 'ri-layout-4-line', count: PROGRAMME.modules.length },
+    { key: 'delivery', label: TAB_LABELS.delivery, icon: 'ri-calendar-schedule-line', count: liveCohortCount },
+    { key: 'coverage', label: TAB_LABELS.coverage, icon: 'ri-node-tree', count: missingKsbCount || undefined },
+    { key: 'quality', label: TAB_LABELS.quality, icon: 'ri-shield-check-line' },
   ];
 
   return (
@@ -2289,6 +2309,47 @@ export default function ProgrammeDetailPage() {
 
         <WorkspaceTabs tabs={tabs} active={tab} onChange={key => setTab(key as Tab)} />
 
+        {tab !== 'overview' && (
+          <div className="flex flex-col gap-3 rounded-2xl border border-primary-100 bg-primary-50/45 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-background-50 text-primary-700 shadow-sm">
+                <AppIcon className={tab === 'design' ? 'ri-layout-4-line' : tab === 'delivery' ? 'ri-calendar-schedule-line' : tab === 'coverage' ? 'ri-node-tree' : 'ri-shield-check-line'}></AppIcon>
+              </span>
+              <div className="min-w-0">
+                <p className="text-[11px] font-extrabold uppercase tracking-wide text-primary-700">
+                  {tab === 'design' ? 'Shared programme design' : tab === 'delivery' ? 'Delivery instance' : tab === 'coverage' ? 'Coverage scope' : 'Live curriculum checks'}
+                </p>
+                <p className="mt-0.5 text-[11px] leading-5 text-foreground-600">
+                  {tab === 'design'
+                    ? 'Modules, weeks and components are authored once and reused by every delivery group.'
+                    : tab === 'delivery'
+                      ? 'Choose the delivery structure or its scheduled sessions. Cohort and group filters only change delivery data.'
+                      : tab === 'coverage'
+                        ? 'Switch between what the design maps and what assigned learners have achieved.'
+                        : 'Only checks backed by live programme records are shown here.'}
+                </p>
+              </div>
+            </div>
+            {tab === 'design' && (
+              <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700">
+                <AppIcon className="ri-tools-line"></AppIcon> Open 3-column editor
+              </button>
+            )}
+            {tab === 'delivery' && (
+              <div className="inline-flex shrink-0 rounded-xl border border-primary-100 bg-background-50 p-1 shadow-sm">
+                <ContextSwitch active={deliveryView === 'structure'} label="Cohorts & groups" icon="ri-group-line" onClick={() => setWorkspaceView('structure')} />
+                <ContextSwitch active={deliveryView === 'sessions'} label="Sessions" icon="ri-time-line" onClick={() => setWorkspaceView('sessions')} />
+              </div>
+            )}
+            {tab === 'coverage' && (
+              <div className="inline-flex shrink-0 rounded-xl border border-primary-100 bg-background-50 p-1 shadow-sm">
+                <ContextSwitch active={coverageView === 'mapping'} label="Design mapping" icon="ri-node-tree" onClick={() => setWorkspaceView('mapping')} />
+                <ContextSwitch active={coverageView === 'achievement'} label="Learner achievement" icon="ri-medal-line" onClick={() => setWorkspaceView('achievement')} />
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ═══════════════════════════════════════════════════════════════════
             Overview — the only view that spans the whole programme
         ═══════════════════════════════════════════════════════════════════ */}
@@ -2316,7 +2377,7 @@ export default function ProgrammeDetailPage() {
                 actions={(
                   <button
                     type="button"
-                    onClick={() => goToTab('ksb')}
+                    onClick={() => goToTab('coverage')}
                     className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100"
                   >
                     <AppIcon className="ri-bar-chart-line text-sm"></AppIcon>
@@ -2379,7 +2440,7 @@ export default function ProgrammeDetailPage() {
                       tone="amber"
                       title={`${untutoredModules.length} ${untutoredModules.length === 1 ? 'module has' : 'modules have'} no tutor`}
                       detail="The tutor is set on the module, and its sessions cannot be timetabled without one."
-                      action={{ label: 'Open Modules', onClick: () => goToTab('modules') }}
+                      action={{ label: 'Open Design', onClick: () => goToTab('design') }}
                     />
                   )}
                   {unlinkedModules.length > 0 && (
@@ -2388,7 +2449,7 @@ export default function ProgrammeDetailPage() {
                       tone="rose"
                       title={`${unlinkedModules.length} ${unlinkedModules.length === 1 ? 'module is' : 'modules are'} not attached to a live cohort`}
                       detail={`Stored against ${unlinkedModules.slice(0, 2).map(mod => clean(mod.cohort, 'no cohort')).join(', ')}${unlinkedModules.length > 2 ? '…' : ''}, which is not a cohort record on this programme.`}
-                      action={{ label: 'Open Modules', onClick: () => goToTab('modules') }}
+                      action={{ label: 'Open Design', onClick: () => goToTab('design') }}
                     />
                   )}
                   {emptyWeekCount > 0 && (
@@ -2406,7 +2467,7 @@ export default function ProgrammeDetailPage() {
                       tone="sky"
                       title={`${missingKsbCount} ${missingKsbCount === 1 ? 'KSB is' : 'KSBs are'} not taught anywhere`}
                       detail="Every KSB in the programme's source has to be mapped to a component before delivery."
-                      action={{ label: 'Open KSB coverage', onClick: () => goToTab('ksb') }}
+                      action={{ label: 'Open Coverage', onClick: () => goToTab('coverage') }}
                     />
                   )}
                 </ul>
@@ -2452,7 +2513,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             Delivery — cohorts, and the groups under the one being read
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'delivery' && (
+        {tab === 'delivery' && deliveryView === 'structure' && (
           <div className="space-y-5">
             <EntityFilterBar
               search={cohortSearch}
@@ -2668,7 +2729,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             Modules — every module at once; each one opens its own workspace
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'modules' && (
+        {tab === 'design' && (
           <div className="space-y-5">
             <EntityFilterBar
               search={moduleSearch}
@@ -2786,7 +2847,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             Sessions — every live session and recording across every module
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'sessions' && (
+        {tab === 'delivery' && deliveryView === 'sessions' && (
           <div className="space-y-5">
             <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="inline-flex rounded-xl border border-background-200 bg-background-100 p-1">
@@ -2966,7 +3027,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             KSB coverage — the programme-wide roll-up, which exists nowhere else
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'ksb' && (
+        {tab === 'coverage' && coverageView === 'mapping' && (
           <WorkspacePanel
             title="KSB coverage heatmap"
             description="Component KSB mappings rolled up into weeks, modules and programme coverage. An empty cell means the KSB is not addressed in that module."
@@ -3073,7 +3134,7 @@ export default function ProgrammeDetailPage() {
         {/* ═══════════════════════════════════════════════════════════════════
             Achievement — what the learners actually earned, at any level
         ═══════════════════════════════════════════════════════════════════ */}
-        {tab === 'achievement' && (
+        {tab === 'coverage' && coverageView === 'achievement' && (
           <div className="space-y-4">
             <WorkspacePanel
               title="Scope"
@@ -3095,6 +3156,79 @@ export default function ProgrammeDetailPage() {
               learnerStatus="all"
               active
             />
+          </div>
+        )}
+
+        {tab === 'quality' && (
+          <div className="space-y-5">
+            <WorkspacePanel
+              title="Programme quality checks"
+              description="These checks come from the programme's current structure, content, staffing and KSB mappings. They do not imply an approval or publishing state."
+              actions={(
+                <button type="button" onClick={() => void reload({ silent: true })} disabled={refreshing} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-foreground-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-60">
+                  <AppIcon className={refreshing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon>
+                  Refresh checks
+                </button>
+              )}
+            >
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <QualityCheckCard
+                  title="KSB mapping"
+                  count={missingKsbCount}
+                  clearText="Every KSB is mapped"
+                  issueText={`${missingKsbCount} ${missingKsbCount === 1 ? 'KSB has' : 'KSBs have'} nowhere to be taught`}
+                  icon="ri-node-tree"
+                  onClick={() => goToTab('coverage')}
+                />
+                <QualityCheckCard
+                  title="Week content"
+                  count={emptyWeekCount}
+                  clearText="Every week has content"
+                  issueText={`${emptyWeekCount} ${emptyWeekCount === 1 ? 'week is' : 'weeks are'} empty`}
+                  icon="ri-calendar-close-line"
+                  onClick={() => navigate(moduleBuilderProgrammeUrl)}
+                />
+                <QualityCheckCard
+                  title="Tutor assignment"
+                  count={untutoredModules.length}
+                  clearText="Every module has a tutor"
+                  issueText={`${untutoredModules.length} ${untutoredModules.length === 1 ? 'module needs' : 'modules need'} a tutor`}
+                  icon="ri-user-settings-line"
+                  onClick={() => goToTab('design')}
+                />
+                <QualityCheckCard
+                  title="Coach assignment"
+                  count={unstaffedGroupCount}
+                  clearText="Every group has a coach"
+                  issueText={`${unstaffedGroupCount} ${unstaffedGroupCount === 1 ? 'group needs' : 'groups need'} a coach`}
+                  icon="ri-user-search-line"
+                  onClick={() => goToTab('delivery')}
+                />
+                <QualityCheckCard
+                  title="Delivery links"
+                  count={unlinkedModules.length}
+                  clearText="Every module is linked to delivery"
+                  issueText={`${unlinkedModules.length} ${unlinkedModules.length === 1 ? 'module is' : 'modules are'} not linked to a live cohort`}
+                  icon="ri-link-unlink"
+                  onClick={() => goToTab('design')}
+                />
+                <QualityCheckCard
+                  title="Published content"
+                  count={Math.max(0, allComponents.length - publishedComponents)}
+                  clearText="Every component is published"
+                  issueText={`${Math.max(0, allComponents.length - publishedComponents)} components are not published`}
+                  icon="ri-draft-line"
+                  onClick={() => navigate(moduleBuilderProgrammeUrl)}
+                />
+              </div>
+            </WorkspacePanel>
+
+            <div className="rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 text-[11px] leading-5 text-sky-800">
+              <div className="flex items-start gap-2">
+                <AppIcon className="ri-information-line mt-0.5 text-sm"></AppIcon>
+                <p><strong>Approval workflow is intentionally separate.</strong> Draft, Review, Approved and Published lifecycle states will only appear here when the backend owns real versions and reviewer decisions.</p>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -3147,6 +3281,43 @@ export default function ProgrammeDetailPage() {
 // ============================================================
 // Helper Components
 // ============================================================
+
+function ContextSwitch({ active, label, icon, onClick }: { active: boolean; label: string; icon: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[10px] font-bold transition-smooth ${active ? 'bg-primary-600 text-white shadow-sm' : 'text-foreground-600 hover:bg-primary-50 hover:text-primary-700'}`}
+    >
+      <AppIcon className={icon}></AppIcon>
+      {label}
+    </button>
+  );
+}
+
+function QualityCheckCard({ title, count, clearText, issueText, icon, onClick }: { title: string; count: number; clearText: string; issueText: string; icon: string; onClick: () => void }) {
+  const clear = count === 0;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group flex min-h-32 flex-col rounded-xl border border-background-200 bg-background-100/50 p-4 text-left transition-smooth hover:border-primary-200 hover:bg-background-50 hover:shadow-sm"
+    >
+      <div className="flex w-full items-start justify-between gap-3">
+        <span className={`flex h-9 w-9 items-center justify-center rounded-lg ${clear ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+          <AppIcon className={clear ? 'ri-checkbox-circle-line' : icon}></AppIcon>
+        </span>
+        <span className={`rounded-full px-2.5 py-1 text-[9px] font-extrabold uppercase ${clear ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+          {clear ? 'Clear' : count}
+        </span>
+      </div>
+      <p className="mt-3 text-[12px] font-bold text-foreground-900">{title}</p>
+      <p className={`mt-1 text-[11px] leading-5 ${clear ? 'text-emerald-700' : 'text-foreground-500'}`}>{clear ? clearText : issueText}</p>
+      <span className="mt-auto inline-flex items-center gap-1 pt-3 text-[10px] font-bold text-primary-700">{clear ? 'Review' : 'Fix issue'} <AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5"></AppIcon></span>
+    </button>
+  );
+}
 
 // The Achievement tab's level selector.
 //
