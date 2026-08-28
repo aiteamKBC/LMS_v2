@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # Bumped when the emitted model changes shape, so cached renders from an older
 # version of this module are discarded instead of being replayed.
-MODEL_VERSION = 6
+MODEL_VERSION = 7
 
 #: Cache directory name, a sibling of the uploads it renders.
 RENDER_DIR_NAME = '_slide_renders'
@@ -52,6 +52,18 @@ RENDER_DIR_NAME = '_slide_renders'
 #: python-pptx reads OOXML only; legacy binary PowerPoint is a different format.
 OOXML_SUFFIXES = {'.pptx', '.ppsx', '.pptm', '.ppsm'}
 LEGACY_SUFFIXES = {'.ppt', '.pps'}
+
+#: PDFs are rendered to page images rather than handed to the browser: whether a
+#: browser previews a PDF in an iframe or offers it as a download is a setting on
+#: the reader's own machine, which no response header can override. Page images
+#: always display, and the file itself never reaches the page.
+PDF_SUFFIXES = {'.pdf'}
+
+#: Raster scale for a page. 1.5x of the 72-dpi page box is ~108 dpi: sharp on a
+#: normal display, and an A4 page lands around 150-250 KB.
+PDF_RENDER_ZOOM = 1.5
+#: A long document would otherwise rasterise for minutes on its first open.
+PDF_MAX_PAGES = 60
 
 EMU_PER_PX = 9525          # 914400 EMU/inch / 96 px/inch
 PT_TO_PX = 96 / 72
@@ -868,6 +880,121 @@ def _deck_model(source, asset_dir, url_prefix):
     }
 
 
+class _RenderedPage:
+    """The shape _image_source expects, wrapping one rendered page."""
+
+    ext = 'png'
+
+    def __init__(self, blob):
+        self.blob = blob
+
+
+def _pdf_model(source, asset_dir, url_prefix):
+    """A PDF as the same model a deck produces: one full-page image per page.
+
+    Reusing the deck viewer means paging, scaling and the page strip all work
+    without the viewer knowing which kind of document it has.
+    """
+    import fitz  # PyMuPDF, already in requirements.txt
+
+    # Opened from memory rather than by path: PyMuPDF can keep a handle on a
+    # file it failed to parse, and on Windows that blocks deleting the temporary
+    # copy this render is usually working from.
+    document = fitz.open(stream=Path(source).read_bytes(), filetype='pdf')
+    # Read anything needed for the result before the document is closed below —
+    # PyMuPDF raises "document closed" on attribute access afterwards.
+    total_pages = document.page_count
+    try:
+        if document.needs_pass:
+            raise UnsupportedDeck(
+                'This PDF is password-protected, so it cannot be shown here. '
+                'Open or download it instead.'
+            )
+        if not total_pages:
+            raise UnsupportedDeck('This PDF has no pages to show.')
+
+        context = {'assets': {}, 'asset_dir': asset_dir, 'url_prefix': url_prefix}
+        matrix = fitz.Matrix(PDF_RENDER_ZOOM, PDF_RENDER_ZOOM)
+        pages = []
+        width_px = height_px = 0
+        for number, page in enumerate(document, start=1):
+            if number > PDF_MAX_PAGES:
+                break
+            pixmap = page.get_pixmap(matrix=matrix, alpha=False)
+            # The stage takes the first page's size; a document with mixed page
+            # sizes still renders, each image scaled into that stage.
+            width_px = width_px or pixmap.width
+            height_px = height_px or pixmap.height
+            source_url = _image_source(_RenderedPage(pixmap.tobytes('png')), context)
+            pages.append({
+                'number': number,
+                'layout': 'Page',
+                'background': {'color': '#ffffff'},
+                'shapes': [{
+                    'kind': 'image', 'x': 0, 'y': 0,
+                    'w': pixmap.width, 'h': pixmap.height,
+                    'src': source_url, 'alt': 'Page %d' % number, 'rotation': None,
+                }],
+                'notes': '',
+            })
+    finally:
+        document.close()
+
+    return {
+        'slideWidthPx': width_px or DEFAULT_SLIDE_WIDTH_PX,
+        'slideHeightPx': height_px or DEFAULT_SLIDE_HEIGHT_PX,
+        'slideCount': len(pages),
+        'slides': pages,
+        # Lets the viewer say "Page 3 of 12" for a document and "Slide 3 of 12"
+        # for a deck, from the same component.
+        'unit': 'page',
+        'truncated': total_pages > PDF_MAX_PAGES,
+        'totalPages': total_pages,
+    }
+
+
+def _cached_render(relative_path, source, stamp, build, kind):
+    """Render `source` through the on-disk cache, or return what is cached.
+
+    Shared by decks and PDFs: both key on the upload path, both invalidate on
+    the content stamp, and both keep their page images in the same directory as
+    the manifest so dropping the directory drops the whole render.
+    """
+    key = render_cache_key(relative_path)
+    cache_dir = render_root() / key
+    manifest = cache_dir / 'deck.json'
+    url_prefix = '/curriculum_api/curriculum/uploads/%s/%s' % (RENDER_DIR_NAME, key)
+    stamp = stamp or _stamp(source)
+
+    if manifest.exists():
+        try:
+            cached = json.loads(manifest.read_text(encoding='utf-8'))
+            if cached.get('stamp') == stamp:
+                return cached['deck']
+        except Exception:
+            logger.warning('Discarding unreadable render cache at %s', manifest)
+    # Any surviving render belongs to a replaced file; its images are dead weight.
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir, ignore_errors=True)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        deck = build(source, cache_dir, url_prefix)
+    except UnsupportedDeck:
+        raise
+    except Exception as error:
+        logger.exception('Could not render %s %s', kind, relative_path)
+        raise UnsupportedDeck(
+            'This %s could not be read for inline display. Open or download it instead.' % kind
+        ) from error
+
+    manifest.write_text(
+        json.dumps({'stamp': stamp, 'source': relative_path, 'deck': deck}),
+        encoding='utf-8',
+    )
+    return deck
+
+
 def render_root():
     from curriculum_api.views import COMPONENT_UPLOAD_ROOT
     return Path(settings.MEDIA_ROOT) / COMPONENT_UPLOAD_ROOT / RENDER_DIR_NAME
@@ -944,48 +1071,19 @@ def render_uploaded_deck(relative_path, source, stamp=None):
     """
     source = Path(source)
     suffix = source.suffix.lower()
+    if suffix in PDF_SUFFIXES:
+        return _cached_render(relative_path, source, stamp, _pdf_model, 'document')
     if suffix in LEGACY_SUFFIXES:
         raise UnsupportedDeck(
             'This deck uses the older PowerPoint 97-2003 format, which cannot be shown '
             'inline. Re-save it as .pptx — or as a PDF — and upload it again.'
         )
     if suffix not in OOXML_SUFFIXES:
-        raise UnsupportedDeck('This file is not a PowerPoint deck that can be shown inline.')
-
-    key = hashlib.sha1(relative_path.encode('utf-8')).hexdigest()[:20]
-    cache_dir = render_root() / key
-    manifest = cache_dir / 'deck.json'
-    url_prefix = '/curriculum_api/curriculum/uploads/%s/%s' % (RENDER_DIR_NAME, key)
-    stamp = stamp or _stamp(source)
-
-    if manifest.exists():
-        try:
-            cached = json.loads(manifest.read_text(encoding='utf-8'))
-            if cached.get('stamp') == stamp:
-                return cached['deck']
-        except Exception:
-            logger.warning('Discarding unreadable slide render cache at %s', manifest)
-    # Any surviving render belongs to a replaced file; its images are dead weight.
-    if cache_dir.exists():
-        shutil.rmtree(cache_dir, ignore_errors=True)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    try:
-        deck = _deck_model(source, cache_dir, url_prefix)
-    except Exception as error:
-        logger.exception('Could not render slide deck %s', relative_path)
-        raise UnsupportedDeck(
-            'This deck could not be read for inline display. Open or download it instead.'
-        ) from error
-
-    manifest.write_text(
-        json.dumps({'stamp': stamp, 'source': relative_path, 'deck': deck}),
-        encoding='utf-8',
-    )
-    return deck
+        raise UnsupportedDeck('This file is not a document that can be shown inline.')
+    return _cached_render(relative_path, source, stamp, _deck_model, 'deck')
 
 
 def is_renderable_deck_path(path):
-    """True when a resource path looks like a deck this module can render."""
+    """True when a resource path is a document this module can render."""
     cleaned = str(path or '').split('?')[0].split('#')[0]
-    return Path(cleaned).suffix.lower() in OOXML_SUFFIXES
+    return Path(cleaned).suffix.lower() in (OOXML_SUFFIXES | PDF_SUFFIXES)

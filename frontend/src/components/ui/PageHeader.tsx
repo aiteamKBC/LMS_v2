@@ -1,15 +1,9 @@
 // ============================================================================
 // Page header.
 //
-// This replaces eight different full-bleed purple gradient heroes. They were
-// costing 200-odd pixels above the fold on screens whose whole job is a queue,
-// and every one of them re-printed a title the shell's topbar had already drawn
-// two rows above.
-//
-// So the default is compact and horizontal: what this page is, one line on why
-// you would open it, the facts that decide whether you act, and the action. The
-// brand stays in the accent rule and the icon well rather than in a slab of
-// purple.
+// This is the shared deep-purple page hero used across queue, report, and
+// detail screens. Keeping it here makes the visual treatment consistent with
+// the platform accounts page without duplicating markup in every route.
 //
 // `variant="feature"` keeps a tinted surface for the two or three screens that
 // genuinely open a session rather than continue one. It is a tint, not a hero —
@@ -27,7 +21,7 @@ export function PageHeader({
   meta,
   actions,
   backTo,
-  variant = 'default',
+  decoration,
   className,
 }: {
   title: string;
@@ -39,52 +33,53 @@ export function PageHeader({
   meta?: ReactNode;
   /** Primary action(s). Right-aligned from `sm` up. */
   actions?: ReactNode;
+  /** Optional decorative artwork rendered behind the header content. */
+  decoration?: ReactNode;
   /** Shown as a back link above the title, for detail pages. */
   backTo?: { to: string; label: string };
   variant?: 'default' | 'feature';
   className?: string;
 }) {
-  const feature = variant === 'feature';
-
   return (
     <header
       className={cn(
-        'rounded-2xl border px-4 py-4 md:px-5',
-        feature
-          ? 'border-primary-200/70 bg-primary-50/50'
-          : 'border-foreground-200/70 bg-background-50 shadow-sm',
+        'page-header relative overflow-hidden rounded-2xl border-0 px-5 py-5 shadow-sm md:px-7 md:py-7',
         className,
       )}
+      style={{ background: 'linear-gradient(108deg, oklch(var(--primary-700)) 0%, oklch(var(--primary-500)) 30%, oklch(var(--primary-100)) 66%, oklch(var(--background-50)) 100%)' }}
     >
       {backTo ? (
         <Link
           to={backTo.to}
-          className="mb-2 inline-flex items-center gap-1.5 text-[12px] font-semibold text-foreground-500 transition hover:text-primary-700"
+          className="relative z-10 mb-3 inline-flex items-center gap-1.5 text-[12px] font-semibold text-white/75 transition hover:text-white"
         >
           <AppIcon className="ri-arrow-left-line text-[14px]"></AppIcon>
           {backTo.label}
         </Link>
       ) : null}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
+      {decoration ? (
+        <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-0">
+          {decoration}
+        </div>
+      ) : null}
+
+      <div className="relative z-10 flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-start gap-4">
           {icon ? (
             <span
-              className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
-                feature ? 'bg-primary-100 text-primary-700' : 'bg-primary-50 text-primary-600',
-              )}
+              className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white/20 text-white backdrop-blur-sm"
             >
-              <AppIcon className={cn(icon, 'text-[19px]')}></AppIcon>
+              <AppIcon className={cn(icon, 'text-2xl')}></AppIcon>
             </span>
           ) : null}
 
           <div className="min-w-0">
-            <h1 className="truncate text-[20px] font-semibold tracking-tight text-foreground-950">
+            <h1 className="text-xl font-heading font-bold tracking-tight text-white md:text-2xl">
               {title}
             </h1>
             {description ? (
-              <p className="mt-0.5 max-w-2xl text-[13px] leading-relaxed text-foreground-500">
+              <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-white/80">
                 {description}
               </p>
             ) : null}
@@ -99,7 +94,7 @@ export function PageHeader({
       {/* The facts sit below the title rule rather than beside it, so a long
           title never squeezes them into a column one word wide. */}
       {meta ? (
-        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-foreground-100 pt-3">
+        <div className="relative z-10 mt-4 flex flex-wrap items-start gap-x-5 gap-y-2 border-t border-white/20 pt-3 text-white/80">
           {meta}
         </div>
       ) : null}

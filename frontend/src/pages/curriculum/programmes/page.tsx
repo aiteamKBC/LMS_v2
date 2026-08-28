@@ -234,7 +234,12 @@ export default function CurriculumProgrammes() {
   const [ksbSets, setKsbSets] = useState<CurriculumKsbSet[]>([]);
   const [standards, setStandards] = useState<CurriculumStandard[]>([]);
   const [programmeSourceOverrides, setProgrammeSourceOverrides] = useState<Map<string, string>>(new Map());
-  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored } = useCurriculumProgrammes({ visibility: 'all' });
+  // skipCache on this page: it *is* the list of programmes, so arriving on it
+  // must show what exists now. The 30s collection cache is there to spare other
+  // pages a rebuild, and reading it here meant a programme created elsewhere —
+  // another tab, the structure wizard, a programme's own page — was missing until
+  // the entry aged out or the browser was reloaded by hand.
+  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, markProgrammeRestored, upsertProgramme } = useCurriculumProgrammes({ visibility: 'all', skipCache: true });
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 
@@ -361,6 +366,30 @@ export default function CurriculumProgrammes() {
     [filtered, programmeKsbSources, showArchived],
   );
   const programmesWithEmptyKsbSource = programmesMissingKsbSource.filter(entry => Boolean(entry.source?.value));
+
+  // Programmes are also created from other places — the structure wizard, a
+  // programme's own page, a second tab — and this page has no way to hear about
+  // those. Coming back to the tab is the moment the reader expects to be looking
+  // at the truth, so that is when it re-reads. Silent: the cards stay on screen
+  // with the previous data rather than collapsing to skeletons on every focus.
+  // (Same pattern as the staff-profile refresh in ProgrammeStructureEditor.)
+  // Read through a ref so the listeners are bound once: `reload` is a fresh
+  // closure on every render, and re-subscribing on each one would swap the
+  // handlers under the events they are meant to catch.
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState && document.visibilityState !== 'visible') return;
+      void reloadRef.current({ skipCache: true, silent: true });
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, []);
 
   const refreshProgrammeCards = async () => {
     const [nextKsbSets, nextStandards] = await Promise.all([
@@ -743,8 +772,12 @@ export default function CurriculumProgrammes() {
   // profile is one of the options — rather than leaving the reader to notice the
   // gap on the card later. An edit passes nothing and changes nothing.
   const handleProgrammeSaved = async (result?: { programme: CurriculumProgramme }) => {
-    await refreshProgrammeCards();
+    // On the list before the rebuild comes back: the card is the confirmation
+    // that the programme exists, and waiting for a multi-table refresh to prove
+    // it reads as a save that did not happen.
+    if (result?.programme) upsertProgramme(result.programme);
     if (result?.programme) setApplyProgramme(result.programme);
+    await refreshProgrammeCards();
   };
 
   const openAppliedKsbSourceReview = (programme: CurriculumProgramme, source: ProgrammeAppliedKsbSource) => {
@@ -1308,7 +1341,10 @@ export default function CurriculumProgrammes() {
           onClose={() => setWizardRun(null)}
           onStepSaved={() => refreshProgrammeCards()}
           onFinished={(created: StructureWizardCreated) => {
-            if (created.programme) setApplyProgramme(created.programme);
+            if (created.programme) {
+              upsertProgramme(created.programme);
+              setApplyProgramme(created.programme);
+            }
           }}
         />
         {reviewProgramme && (

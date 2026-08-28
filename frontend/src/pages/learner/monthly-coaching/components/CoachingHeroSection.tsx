@@ -30,7 +30,7 @@ export default function CoachingHeroSection() {
           <div className="flex items-center gap-2 shrink-0">
             <a
               href={m.meetingUrl}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-accent-500 text-foreground-950 text-sm font-semibold hover:bg-accent-600 transition-smooth cursor-pointer whitespace-nowrap"
+              className="meeting-join-action inline-flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap"
               onMouseEnter={() => setHovered(true)}
               onMouseLeave={() => setHovered(false)}
             >

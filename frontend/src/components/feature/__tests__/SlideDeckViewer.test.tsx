@@ -67,6 +67,15 @@ describe('SlideDeckViewer', () => {
     expect(screen.getByText(/Slide 1 of 2/)).toBeInTheDocument();
   });
 
+  it('counts pages for a rendered document and slides for a deck', async () => {
+    fetchSlideDeck.mockResolvedValue({ ...deck('One', 'Two'), unit: 'page' as const });
+    render(<SlideDeckViewer src="/handout.pdf" title="Handout" fallback={fallback} />);
+    await screen.findByText('One');
+
+    expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Next page')).toBeInTheDocument();
+  });
+
   it('pages forward and back, and stops at the ends', async () => {
     fetchSlideDeck.mockResolvedValue(deck('Slide one', 'Slide two'));
     render(<SlideDeckViewer src="/deck.pptx" title="Deck" fallback={fallback} />);
@@ -126,10 +135,10 @@ describe('SlideDeckViewer', () => {
     expect(await screen.findByText(/not on the server any more/)).toBeInTheDocument();
   });
 
-  it('falls back rather than showing an empty stage for a deck with no slides', async () => {
+  it('falls back rather than showing an empty stage for a document with no pages', async () => {
     fetchSlideDeck.mockResolvedValue(deck());
     render(<SlideDeckViewer src="/deck.pptx" title="Deck" fallback={fallback} />);
 
-    expect(await screen.findByText(/no slides to show/)).toBeInTheDocument();
+    expect(await screen.findByText(/no pages to show/)).toBeInTheDocument();
   });
 });

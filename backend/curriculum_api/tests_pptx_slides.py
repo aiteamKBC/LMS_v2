@@ -240,3 +240,110 @@ class EmuGeometryTests(SimpleTestCase):
         # With no chOff/chExt to read, children are simply offset by the group.
         self.assertEqual(frame.px(0, 0, 0, 0)['x'], round(1000 / pptx_slides.EMU_PER_PX, 2))
         self.assertEqual(frame.px(0, 0, 0, 0)['y'], round(2000 / pptx_slides.EMU_PER_PX, 2))
+
+
+class PdfPageRenderTests(SimpleTestCase):
+    """A PDF is rendered to page images rather than handed to the browser.
+
+    Whether a browser previews a PDF in an iframe or offers it as a download is
+    a setting on the reader's own machine — learners were getting the download
+    prompt inside the frame, which no response header can override.
+    """
+
+    def setUp(self):
+        self._directory = TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self.media = Path(self._directory.name)
+        self.pdf = self.media / 'handout.pdf'
+        self._write_pdf(self.pdf, pages=3)
+
+    @staticmethod
+    def _write_pdf(path, pages=1):
+        import fitz
+        document = fitz.open()
+        for number in range(pages):
+            page = document.new_page(width=612, height=792)  # US Letter
+            page.insert_text((72, 144), f'Page {number + 1}', fontsize=24)
+        document.save(str(path))
+        document.close()
+
+    def render(self, path=None):
+        return pptx_slides._pdf_model(path or self.pdf, self.media / 'assets', '/assets')
+
+    def test_each_page_becomes_one_full_page_image(self):
+        model = self.render()
+
+        self.assertEqual(model['slideCount'], 3)
+        self.assertEqual(model['unit'], 'page', 'the viewer says "Page 1 of 3", not "Slide"')
+        for index, page in enumerate(model['slides'], start=1):
+            self.assertEqual(page['number'], index)
+            self.assertEqual(len(page['shapes']), 1)
+            shape = page['shapes'][0]
+            self.assertEqual(shape['kind'], 'image')
+            self.assertEqual((shape['x'], shape['y']), (0, 0))
+            self.assertTrue(shape['src'].startswith('/assets/'))
+
+    def test_the_stage_is_the_page_at_the_render_scale(self):
+        model = self.render()
+
+        # 612x792pt at 1.5x -> 918x1188 device pixels.
+        self.assertEqual(model['slideWidthPx'], round(612 * pptx_slides.PDF_RENDER_ZOOM))
+        self.assertEqual(model['slideHeightPx'], round(792 * pptx_slides.PDF_RENDER_ZOOM))
+
+    def test_the_images_are_written_where_they_will_be_served_from(self):
+        self.render()
+
+        written = sorted(p.name for p in (self.media / 'assets').iterdir())
+        self.assertEqual(len(written), 3, written)
+        self.assertTrue(all(name.endswith('.png') for name in written), written)
+
+    def test_a_long_document_is_capped_and_says_so(self):
+        long_pdf = self.media / 'long.pdf'
+        self._write_pdf(long_pdf, pages=pptx_slides.PDF_MAX_PAGES + 4)
+        model = self.render(long_pdf)
+
+        self.assertEqual(model['slideCount'], pptx_slides.PDF_MAX_PAGES)
+        self.assertTrue(model['truncated'])
+        self.assertEqual(model['totalPages'], pptx_slides.PDF_MAX_PAGES + 4)
+
+    def test_a_short_document_is_not_marked_truncated(self):
+        model = self.render()
+
+        self.assertFalse(model['truncated'])
+        self.assertEqual(model['totalPages'], 3)
+
+    def test_a_pdf_goes_through_the_same_cache_as_a_deck(self):
+        relative = f'{COMPONENT_UPLOAD_ROOT}/MOD/COMP/handout.pdf'
+        source = self.media / relative
+        source.parent.mkdir(parents=True, exist_ok=True)
+        self._write_pdf(source, pages=2)
+        with override_settings(MEDIA_ROOT=self.media):
+            first = pptx_slides.render_uploaded_deck(relative, source)
+            # Same stamp, so the second call must not re-rasterise.
+            manifest = next(
+                (self.media / COMPONENT_UPLOAD_ROOT / pptx_slides.RENDER_DIR_NAME).glob('*/deck.json')
+            )
+            stored = json.loads(manifest.read_text(encoding='utf-8'))
+            manifest.write_text(json.dumps({**stored, 'deck': {'slideCount': 99}}), encoding='utf-8')
+            second = pptx_slides.render_uploaded_deck(relative, source)
+
+        self.assertEqual(first['slideCount'], 2)
+        self.assertEqual(second['slideCount'], 99, 'the render was not read from the cache')
+
+    def test_a_file_that_is_not_really_a_pdf_reports_rather_than_crashing(self):
+        # A zero-page PDF cannot be written at all, so the realistic failure is
+        # a truncated or mislabelled upload.
+        relative = f'{COMPONENT_UPLOAD_ROOT}/MOD/COMP/broken.pdf'
+        broken = self.media / relative
+        broken.parent.mkdir(parents=True, exist_ok=True)
+        broken.write_bytes(b'%PDF-1.7 truncated right here')
+
+        with override_settings(MEDIA_ROOT=self.media):
+            with self.assertRaises(pptx_slides.UnsupportedDeck) as caught:
+                pptx_slides.render_uploaded_deck(relative, broken)
+        self.assertIn('document', str(caught.exception).lower())
+
+    def test_a_pdf_is_recognised_as_renderable(self):
+        self.assertTrue(pptx_slides.is_renderable_deck_path('/uploads/a/b/handout.pdf'))
+        self.assertTrue(pptx_slides.is_renderable_deck_path('/uploads/a/b/deck.pptx'))
+        self.assertFalse(pptx_slides.is_renderable_deck_path('/uploads/a/b/notes.docx'))

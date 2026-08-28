@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { setCoachViewAs, withCoachViewAs } from '@/lib/coachViewAs';
 import { useAuth } from '@/hooks/useAuth';
@@ -1308,7 +1309,11 @@ export default function CoachDashboard() {
   if (coach.canChooseCoach && !coach.isViewingAsCoach) {
     return (
       <WorkspaceShell
-        role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel}
+        // No sidebar until a coach is chosen: every coach page reads the
+        // selected coach, so those links would open a caseload, a timetable and
+        // a marking queue belonging to nobody. Picking one is the only thing to
+        // do here, and the nav returns with the choice.
+        role="coach" roleLabel={coachNav.label} navItems={[]} workspaceLabel={coachNav.workspaceLabel}
         pageTitle="Coach Workspace" pageSubtitle="Choose a coach to open their workspace"
         userName={auth.account?.displayName || auth.user?.fullName || 'Administrator'} userRole="Administrator"
       >
@@ -1333,6 +1338,44 @@ export default function CoachDashboard() {
             1. CASELOAD HEALTH — the 3-4 numbers that matter, not
                eight equally-loud tiles.
             ═══════════════════════════════════════════════════ */}
+        {/* The coach dashboard uses the same opening rhythm as the Super Admin
+            dashboard: a welcome row followed by the shared control hero. */}
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+          <div>
+            <h1 className="font-heading text-2xl font-bold tracking-tight text-foreground-950 md:text-3xl">Welcome back, {ownerName} 👋</h1>
+            <p className="mt-1 text-[11px] text-foreground-500 md:text-xs">Monitor your caseload health, learner progress and coaching actions in real time.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Link
+              to="/coach/timetable"
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
+            >
+              <AppIcon className="ri-calendar-line text-sm text-foreground-500"></AppIcon>
+              <span>{formatWeekRangeLabel()}</span>
+              <AppIcon className="ri-arrow-right-s-line text-xs text-foreground-400"></AppIcon>
+            </Link>
+            <button
+              type="button"
+              onClick={scrollToAttention}
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-foreground-200/70 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700 shadow-sm transition-smooth hover:border-primary-300 hover:bg-primary-50/40"
+            >
+              <AppIcon className="ri-equalizer-line text-sm text-foreground-500"></AppIcon>
+              <span>Filters</span>
+            </button>
+          </div>
+        </div>
+
+        <WorkspaceHeroBanner
+          title="Coach Control"
+          description="Caseload health, learner progress and coaching actions"
+          icon="ri-user-heart-line"
+          stats={[
+            { label: 'Caseload', value: String(totalCaseload) },
+            { label: 'At risk', value: String(atRiskCount) },
+            { label: 'Need action', value: String(needsActionCount) },
+          ]}
+        />
+
         <SectionReveal delay={40}>
           <div className="space-y-3">
             <SectionHeader icon="ri-pulse-line" title="Caseload health" />

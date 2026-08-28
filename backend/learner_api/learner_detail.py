@@ -941,6 +941,75 @@ def refresh_learner_otjh_snapshot(learner_profile, *, source=None, detail=None):
     return snapshot
 
 
+def _authored_source_type(settings):
+    """Which source an author chose for a component: a link, or an upload.
+
+    The builder writes it as `powerpointSource` (or `uploadSource`), and rows
+    that came through the older authoring path carry it inside `legacySettings`,
+    which is itself a JSON string. Both are read, because both exist in the data.
+    """
+    for key in ("powerpointSource", "uploadSource"):
+        value = _s(settings.get(key))
+        if value:
+            return value
+    legacy = settings.get("legacySettings")
+    if isinstance(legacy, str):
+        try:
+            legacy = json.loads(legacy)
+        except ValueError:
+            legacy = None
+    if isinstance(legacy, dict):
+        for key in ("powerpointSource", "uploadSource"):
+            value = _s(legacy.get(key))
+            if value:
+                return value
+    return ""
+
+
+# Every way a component can name its attached document, in the order they are
+# tried when nothing says which the author meant.
+_RESOURCE_URL_KEYS = (
+    "resourceUrl",
+    "presentationUrl",
+    "externalUrl",
+    "fileUrl",
+    "uploadedFileUrl",
+    "url",
+)
+# The same keys with the file we host first, for a component whose author chose
+# to upload one.
+_UPLOADED_FIRST_KEYS = (
+    "uploadedFileUrl",
+    "fileUrl",
+    "resourceUrl",
+    "presentationUrl",
+    "externalUrl",
+    "url",
+)
+
+
+def _component_resource_url(settings):
+    """The document a learner should be shown for this component.
+
+    A component can hold both a link and an uploaded file: switching source type
+    in the builder leaves the other field exactly as it was, so a deck uploaded
+    after a link was tried keeps that link on the record. The author's chosen
+    source is therefore what decides which one is served — reading the link first
+    regardless showed the learner a document they have no access to (a personal
+    SharePoint share, say) while the real deck sat uploaded beside it.
+
+    With no source recorded — every bulk-imported row — the original order
+    stands; those carry the same hosted path in both fields anyway.
+    """
+    uploaded = "upload" in _authored_source_type(settings).casefold()
+    keys = _UPLOADED_FIRST_KEYS if uploaded else _RESOURCE_URL_KEYS
+    for key in keys:
+        value = _s(settings.get(key))
+        if value:
+            return value
+    return None
+
+
 def _resolve_from_master(modules, weeks, components):
     """Rebuild the module -> week -> component tree LIVE from the master
     authoring tables (curriculum.module_authoring_*) so coach edits in the
@@ -1135,16 +1204,9 @@ def _resolve_from_master(modules, weeks, components):
             or None
         )
         # PowerPoint (presentationUrl / uploadedFileUrl) and any other component
-        # with an attached link/file all resolve to the same resourceUrl field.
-        resource_url = (
-            _s(settings.get("resourceUrl"))
-            or _s(settings.get("presentationUrl"))
-            or _s(settings.get("externalUrl"))
-            or _s(settings.get("fileUrl"))
-            or _s(settings.get("uploadedFileUrl"))
-            or _s(settings.get("url"))
-            or None
-        )
+        # with an attached link/file all resolve to the same resourceUrl field,
+        # picking the one the author actually chose — see _component_resource_url.
+        resource_url = _component_resource_url(settings)
         duration = settings.get("durationMinutes")
         ksb_weight, ksb_count = ksb_weight_by_component.get(comp_id, (0.0, 0))
         linked_quiz = quiz_meta_by_id.get(quiz_id_by_component.get(comp_id))
