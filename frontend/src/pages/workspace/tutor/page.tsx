@@ -127,7 +127,7 @@ function NextSessionCard({ session }: { session: TutorNextSession }) {
             <span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-white/80">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-white" /> Next session
             </span>
-            <h2 className="mt-1 truncate font-heading text-lg font-bold leading-tight">{day || 'Scheduled'}</h2>
+            <h2 className="mt-1 truncate font-heading text-lg font-bold leading-tight text-white">{day || 'Scheduled'}</h2>
             <p className="truncate text-[12px] text-white/75">{session.moduleTitle || 'Module'}</p>
           </div>
           <div className="shrink-0 text-right">

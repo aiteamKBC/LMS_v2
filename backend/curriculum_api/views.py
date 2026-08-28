@@ -21333,6 +21333,35 @@ def tutor_profile_for_identity(email, name):
     return None, ''
 
 
+def staff_profile_assignment_ids(role, profile):
+    """Module catalogue ids this tutor profile is assigned to.
+
+    Merges the two sources the module above documents: the profile's own
+    ``assigned_module_ids`` and any module naming this tutor on
+    ``tutor_name``. Coaches have no equivalent here yet, so any other role
+    returns nothing.
+    """
+    if role != 'tutor' or not profile:
+        return set()
+
+    stored_ids = {
+        clean_str(item)
+        for item in as_json_value(profile.get('assigned_module_ids') or profile.get('assignedModuleIds'), [])
+        if clean_str(item)
+    }
+
+    name_key = staff_assignment_key(profile.get('name'))
+    named_ids = set()
+    if name_key:
+        for row in authoring_fetch_all(AUTHORING_MODULES_TABLE):
+            if staff_assignment_key(row.get('tutor_name')) == name_key:
+                module_id = clean_str(row.get('module_catalogue_id'))
+                if module_id:
+                    named_ids.add(module_id)
+
+    return stored_ids | named_ids
+
+
 def tutor_workspace_module_payload(row):
     """One assigned module, as the workspace shows it."""
     return {
@@ -21513,7 +21542,7 @@ def curriculum_tutor_workspace(request):
             'jobTitle': clean_str(profile.get('job_title')) if profile else '',
         },
         # This is the source of truth for both this list and `modules`.
-        'assignedModuleIds': [clean_str(module_id) for module_id in staff_profile_assignment_ids('tutor', profile)],
+        'assignedModuleIds': module_ids,
         'modules': modules,
         'nextSession': headline,
     })
