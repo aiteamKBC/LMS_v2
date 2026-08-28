@@ -20,7 +20,6 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ActionRow } from '@/components/ui/ActionRow';
 import { Panel } from '@/components/ui/Panel';
-import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { FilterChip } from '@/components/ui/FilterToolbar';
 import { LearnerAvatar, ReasonLine } from '@/pages/coach/shared/LearnerIdentity';
 import {
@@ -959,7 +958,6 @@ export default function CoachDashboard() {
   // never blocks the other.
   const [kpiFilter, setKpiFilter] = useState<DashboardKpi | null>(null);
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
-  const [priorityFilter, setPriorityFilter] = useState<PriorityKey | null>(null);
   const [ownerName, setOwnerName] = useState('Coach');
   const [learners, setLearners] = useState<CoachLearner[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
@@ -1184,13 +1182,6 @@ export default function CoachDashboard() {
       .sort((left, right) => right.priority.urgency - left.priority.urgency || left.learner.name.localeCompare(right.learner.name)),
     [activeLearners, priorityMap],
   );
-  const priorityCounts = useMemo(() => {
-    const counts = {} as Record<PriorityKey, number>;
-    PRIORITY_ORDER.forEach(key => { counts[key] = 0; });
-    attentionQueue.forEach(entry => entry.priority.keys.forEach(key => { counts[key] += 1; }));
-    return counts;
-  }, [attentionQueue]);
-
   const kpiFilterPredicate = useMemo((): ((learner: CoachLearner) => boolean) | null => {
     switch (kpiFilter) {
       case 'caseload': return () => true;
@@ -1213,10 +1204,8 @@ export default function CoachDashboard() {
         .map(learner => ({ learner, priority: priorityMap.get(learner.id)! }))
         .sort((left, right) => right.priority.urgency - left.priority.urgency || left.learner.name.localeCompare(right.learner.name));
     }
-    return priorityFilter
-      ? attentionQueue.filter(entry => entry.priority.keys.has(priorityFilter))
-      : attentionQueue;
-  }, [attentionQueue, enrichedLearners, kpiFilterPredicate, priorityFilter, priorityMap]);
+    return attentionQueue;
+  }, [attentionQueue, enrichedLearners, kpiFilterPredicate, priorityMap]);
 
   const attentionPanelTitle = kpiFilter ? KPI_FILTER_LABEL[kpiFilter] : 'Learners Requiring Attention';
   const attentionPanelSubtitle = kpiFilter
@@ -1240,14 +1229,8 @@ export default function CoachDashboard() {
   };
 
   const applyKpiFilter = (kpi: DashboardKpi) => {
-    setPriorityFilter(null);
     setKpiFilter(current => (current === kpi ? null : kpi));
     if (kpiFilter !== kpi) scrollToAttention();
-  };
-
-  const applyPriorityFilter = (key: PriorityKey) => {
-    setKpiFilter(null);
-    setPriorityFilter(current => (current === key ? null : key));
   };
 
   const allActionItems: ActionItem[] = [
@@ -1298,9 +1281,18 @@ export default function CoachDashboard() {
     },
   ];
   const actionItems = allActionItems.filter(item => item.count > 0);
+  const learnerActionItems = actionItems.filter(item => ['at-risk', 'evidence'].includes(item.id));
+  const generalActionItems = actionItems.filter(item => !['at-risk', 'evidence'].includes(item.id));
   // The number that answers "how much is on me today" for the KPI strip —
   // a straight sum of the same counts the action list below already shows.
-  const needsActionCount = actionItems.reduce((total, item) => total + item.count, 0);
+  const learnerActionCount = learnerActionItems.reduce((total, item) => total + item.count, 0);
+  const generalActionCount = generalActionItems.reduce((total, item) => total + item.count, 0);
+  const learnerActionNote = learnerActionCount
+    ? `${learnerActionCount} student action${learnerActionCount === 1 ? '' : 's'}`
+    : 'No student actions';
+  const generalActionNote = generalActionCount
+    ? `${generalActionCount} schedule task${generalActionCount === 1 ? '' : 's'}`
+    : 'Nothing overdue';
 
   // An administrator reaches this page with no caseload of their own. Rather
   // than a dashboard of zeros, they pick whose workspace to open; the selection
@@ -1372,7 +1364,8 @@ export default function CoachDashboard() {
           stats={[
             { label: 'Caseload', value: String(totalCaseload) },
             { label: 'At risk', value: String(atRiskCount) },
-            { label: 'Need action', value: String(needsActionCount) },
+            { label: 'Learner actions', value: String(learnerActionCount) },
+            { label: 'General tasks', value: String(generalActionCount) },
           ]}
         />
 
@@ -1391,11 +1384,20 @@ export default function CoachDashboard() {
                 onExpand={() => setSelectedKpi('caseload')}
               />
               <FilterMetricCard
-                label="Needs action today"
-                value={needsActionCount}
-                note={actionItems.length ? `${actionItems.length} item${actionItems.length === 1 ? '' : 's'} to review` : 'Nothing overdue'}
-                tone={needsActionCount > 0 ? 'critical' : 'positive'}
-                icon="ri-alarm-warning-line"
+                label="Learner actions"
+                value={learnerActionCount}
+                note={learnerActionNote}
+                tone={learnerActionCount > 0 ? 'critical' : 'positive'}
+                icon="ri-user-warning-line"
+                active={false}
+                onFilter={scrollToToday}
+              />
+              <FilterMetricCard
+                label="General tasks"
+                value={generalActionCount}
+                note={generalActionNote}
+                tone={generalActionCount > 0 ? 'caution' : 'positive'}
+                icon="ri-calendar-check-line"
                 active={false}
                 onFilter={scrollToToday}
               />
@@ -1409,20 +1411,11 @@ export default function CoachDashboard() {
                 onFilter={() => applyKpiFilter('at-risk')}
                 onExpand={() => setSelectedKpi('at-risk')}
               />
-              <FilterMetricCard
-                label="Need attention"
-                value={needAttentionCount}
-                note={OTJH_STATUS_META['need-attention'].sub}
-                tone="caution"
-                icon="ri-error-warning-line"
-                active={kpiFilter === 'need-attention'}
-                onFilter={() => applyKpiFilter('need-attention')}
-                onExpand={() => setSelectedKpi('need-attention')}
-              />
             </div>
             <MetricRow>
               <FilterCompactMetric label="On track" value={onTrackCount} note={OTJH_STATUS_META['on-track'].sub} tone="positive" active={kpiFilter === 'on-track'} onFilter={() => applyKpiFilter('on-track')} />
               <FilterCompactMetric label="Active" value={activeLearners.length} note="Currently active" tone="positive" active={kpiFilter === 'active'} onFilter={() => applyKpiFilter('active')} />
+              <FilterCompactMetric label="Need attention" value={needAttentionCount} note={OTJH_STATUS_META['need-attention'].sub} tone="caution" active={kpiFilter === 'need-attention'} onFilter={() => applyKpiFilter('need-attention')} />
               <FilterCompactMetric label="On break" value={onBreakLearners.length} note="Programme paused" tone="caution" active={kpiFilter === 'on-break'} onFilter={() => applyKpiFilter('on-break')} />
               <FilterCompactMetric label="Gateway" value={gatewayLearners.length} note="At gateway stage" tone="upcoming" active={kpiFilter === 'gateway'} onFilter={() => applyKpiFilter('gateway')} />
               <FilterCompactMetric label="EPA" value={epaLearners.length} note="At EPA stage" tone="info" active={kpiFilter === 'epa'} onFilter={() => applyKpiFilter('epa')} />
@@ -1454,43 +1447,34 @@ export default function CoachDashboard() {
             <SectionHeader
               icon="ri-focus-3-line"
               title="Today &amp; needs action"
-              description="Overdue reviews, at-risk learners and urgent tasks"
+              description="Student-specific actions separated from general schedule tasks"
               actions={<StatusBadge tone="info" dot={false} label={`${todayEvents.length} today`} />}
             />
 
-            <div className="mt-4 grid gap-2.5 sm:grid-cols-2">
-              {actionItems.map(item => (
-                <ActionRow
-                  key={item.id}
-                  tone={ACTION_TONE[item.tone]}
-                  onClick={() => (item.to ? navigate(item.to) : item.onClick?.())}
-                  leading={
-                    <span className={cn('flex h-10 w-10 items-center justify-center rounded-lg', toneStyle(ACTION_TONE[item.tone]).bg, toneStyle(ACTION_TONE[item.tone]).text)}>
-                      <AppIcon className={cn(item.icon, 'text-[17px]')}></AppIcon>
-                    </span>
-                  }
-                  title={item.label}
-                  subtitle={item.hint}
-                  meta={<span className={cn('text-[20px] font-semibold tabular-nums', toneStyle(ACTION_TONE[item.tone]).text)}>{item.count}</span>}
-                  actions={<AppIcon className="ri-arrow-right-s-line text-[17px] text-foreground-300"></AppIcon>}
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              <div>
+                <SectionLabel>Student actions</SectionLabel>
+                <ActionItemList
+                  items={learnerActionItems}
+                  loading={loading}
+                  emptyIcon="ri-user-follow-line"
+                  emptyTitle="No student actions"
+                  emptyDescription="No learner risk or evidence review actions are waiting."
+                  onOpen={item => (item.to ? navigate(item.to) : item.onClick?.())}
                 />
-              ))}
-              {loading && !actionItems.length && (
-                <>
-                  <LoadingBlock className="h-[76px] rounded-2xl" />
-                  <LoadingBlock className="h-[76px] rounded-2xl" />
-                </>
-              )}
+              </div>
+              <div>
+                <SectionLabel>General tasks</SectionLabel>
+                <ActionItemList
+                  items={generalActionItems}
+                  loading={loading}
+                  emptyIcon="ri-calendar-check-line"
+                  emptyTitle="No general tasks"
+                  emptyDescription="No overdue reviews, coaching sessions or scheduling tasks."
+                  onOpen={item => (item.to ? navigate(item.to) : item.onClick?.())}
+                />
+              </div>
             </div>
-            {!loading && !actionItems.length && (
-              <EmptyState
-                size="sm"
-                icon="ri-check-double-line"
-                title="Nothing overdue"
-                description="No reviews, sessions or evidence are waiting on you."
-              />
-            )}
-
             {todayEvents.length > 0 && (
               <div className="mt-4 border-t border-foreground-100 pt-3.5">
                 <SectionLabel>On today</SectionLabel>
@@ -1543,19 +1527,11 @@ export default function CoachDashboard() {
                 }
               />
 
-              {/* Priority queue filters */}
-              <div className="mt-3.5">
-                {kpiFilter ? (
+              {kpiFilter && (
+                <div className="mt-3.5">
                   <FilterChip label="Filter" value={KPI_FILTER_LABEL[kpiFilter]} onRemove={() => setKpiFilter(null)} />
-                ) : (
-                  <PageTabs
-                    label="Filter learners by priority"
-                    value={priorityFilter ?? 'all'}
-                    onChange={(next) => (next === 'all' ? setPriorityFilter(null) : applyPriorityFilter(next as PriorityKey))}
-                    items={priorityTabItems(attentionQueue.length, priorityCounts)}
-                  />
-                )}
-              </div>
+                </div>
+              )}
 
               <div className={cn('mt-3.5 space-y-2.5', attentionHasOverflow && 'max-h-[36rem] overflow-y-auto pr-1.5')}>
                 {loading && !attentionRows.length && <AttentionSkeleton />}
@@ -1572,10 +1548,10 @@ export default function CoachDashboard() {
                 ))}
                 {!loading && !attentionRows.length && (
                   <EmptyState
-                    variant={kpiFilter || priorityFilter ? 'no-matches' : 'empty'}
-                    icon={kpiFilter || priorityFilter ? undefined : 'ri-shield-check-line'}
-                    title={kpiFilter || priorityFilter ? 'No learners match this filter' : 'No learners need attention'}
-                    description={kpiFilter || priorityFilter
+                    variant={kpiFilter ? 'no-matches' : 'empty'}
+                    icon={kpiFilter ? undefined : 'ri-shield-check-line'}
+                    title={kpiFilter ? 'No learners match this filter' : 'No learners need attention'}
+                    description={kpiFilter
                       ? 'Clear the filter to see the full priority queue.'
                       : 'Everyone on your caseload is on track for hours, attendance and reviews.'}
                   />
@@ -1766,23 +1742,51 @@ interface ActionItem {
 
 const ACTION_TONE: Record<ActionItem['tone'], StatusTone> = { danger: 'critical', warning: 'caution' };
 
+function ActionItemList({
+  items,
+  loading,
+  emptyIcon,
+  emptyTitle,
+  emptyDescription,
+  onOpen,
+}: {
+  items: ActionItem[];
+  loading: boolean;
+  emptyIcon: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  onOpen: (item: ActionItem) => void;
+}) {
+  return (
+    <div className="mt-2 grid gap-2.5">
+      {items.map(item => (
+        <ActionRow
+          key={item.id}
+          tone={ACTION_TONE[item.tone]}
+          onClick={() => onOpen(item)}
+          leading={
+            <span className={cn('flex h-10 w-10 items-center justify-center rounded-lg', toneStyle(ACTION_TONE[item.tone]).bg, toneStyle(ACTION_TONE[item.tone]).text)}>
+              <AppIcon className={cn(item.icon, 'text-[17px]')}></AppIcon>
+            </span>
+          }
+          title={item.label}
+          subtitle={item.hint}
+          meta={<span className={cn('text-[20px] font-semibold tabular-nums', toneStyle(ACTION_TONE[item.tone]).text)}>{item.count}</span>}
+          actions={<AppIcon className="ri-arrow-right-s-line text-[17px] text-foreground-300"></AppIcon>}
+        />
+      ))}
+      {loading && !items.length && <LoadingBlock className="h-[76px] rounded-2xl" />}
+      {!loading && !items.length && (
+        <EmptyState size="sm" icon={emptyIcon} title={emptyTitle} description={emptyDescription} />
+      )}
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════
    Priority filter tabs — "All" plus the five ranked reasons,
    in priority order, hiding whichever have nothing in them.
    ═══════════════════════════════════════════════════════════ */
-function priorityTabItems(totalCount: number, counts: Record<PriorityKey, number>): PageTabItem[] {
-  return [
-    { value: 'all', label: 'All', count: totalCount },
-    ...PRIORITY_ORDER.map(key => ({
-      value: key,
-      label: PRIORITY_META[key].label,
-      count: counts[key],
-      tone: PRIORITY_TONE[key],
-      hideWhenEmpty: true,
-    })),
-  ];
-}
-
 /* ═══════════════════════════════════════════════════════════
    Learners Requiring Attention — one row per learner: rank,
    who, why, and the four figures a coach checks before opening
