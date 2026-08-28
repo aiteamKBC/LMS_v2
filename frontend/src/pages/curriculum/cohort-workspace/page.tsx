@@ -10,6 +10,7 @@ import {
   findCohort,
   formatDateLabel,
   moduleIdentity,
+  namedCurriculumWorkspacePath,
   normaliseKey,
   programmeIdentity,
   scheduleLabel,
@@ -225,7 +226,7 @@ export default function CohortWorkspacePage() {
               <DetailRow
                 label="Programme"
                 value={programme ? (
-                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(programme))}?tab=delivery`} className="text-primary-700 hover:underline">
+                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(programme))}?tab=cohorts`} className="text-primary-700 hover:underline">
                     {programme.name}
                   </Link>
                 ) : cleanText(cohort?.programme, '—')}
@@ -263,7 +264,7 @@ export default function CohortWorkspacePage() {
             renderRow={group => (
               <>
                 <StackedCell
-                  href={`/curriculum/groups/${encodeURIComponent(group.id)}`}
+                  href={namedCurriculumWorkspacePath('groups', group.id, group.name)}
                   primary={group.name}
                   secondary={group.id}
                 />
@@ -301,7 +302,7 @@ export default function CohortWorkspacePage() {
             renderRow={module => (
               <>
                 <StackedCell
-                  href={`/curriculum/modules/${encodeURIComponent(moduleIdentity(module))}`}
+                  href={namedCurriculumWorkspacePath('modules', moduleIdentity(module), module.name)}
                   primary={module.name}
                   secondary={`${module.weeks || 0} weeks · ${module.lessons || 0} lessons`}
                 />

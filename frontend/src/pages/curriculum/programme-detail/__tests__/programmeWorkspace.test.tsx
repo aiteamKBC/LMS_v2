@@ -199,34 +199,44 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(screen.getByRole('link', { name: 'Programmes' })).toHaveAttribute('href', '/curriculum/programmes');
     expect(screen.getByRole('heading', { name: 'Data Analyst' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Edit programme/ })).toBeInTheDocument();
+    expect(screen.getByText('Delivery setup')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Manage Cohorts & Groups/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Open Module Builder/ })).toBeInTheDocument();
   });
 
-  it('carries one tab per programme-level question and none that repeat a lower level', async () => {
+  it('shows the programme hierarchy as explicit, ordered navigation', async () => {
     await renderWorkspace();
     const strip = tabStrip();
 
     expect(strip.getByRole('button', { name: /Overview/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /Design/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /Delivery/ })).toBeInTheDocument();
-    expect(strip.getByRole('button', { name: /Coverage/ })).toBeInTheDocument();
+    const cohortsTab = strip.getByRole('button', { name: /Cohorts/ });
+    const groupsTab = strip.getByRole('button', { name: /Groups/ });
+    const modulesTab = strip.getByRole('button', { name: /Modules/ });
+    const sessionsTab = strip.getByRole('button', { name: /Sessions/ });
+    expect(cohortsTab.compareDocumentPosition(groupsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(groupsTab.compareDocumentPosition(modulesTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(modulesTab.compareDocumentPosition(sessionsTab) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(strip.getByRole('button', { name: /KSB Coverage/ })).toBeInTheDocument();
+    expect(strip.getByRole('button', { name: /Achievement KSBs/ })).toBeInTheDocument();
     expect(strip.getByRole('button', { name: /Quality/ })).toBeInTheDocument();
 
-    // Groups were the Cohorts tab again, flattened; Weeks was the module's own
-    // timeline; Review drew all of it a third time.
-    expect(strip.queryByRole('button', { name: /^Groups/ })).not.toBeInTheDocument();
+    // Weeks and components still belong to an individual module workspace.
     expect(strip.queryByRole('button', { name: /^Weeks/ })).not.toBeInTheDocument();
     expect(strip.queryByRole('button', { name: /^Review/ })).not.toBeInTheDocument();
   });
 
-  it('keeps Design recommended while providing a clear handoff to Delivery', async () => {
+  it('puts Modules after the delivery hierarchy and hands completed design on to KSB Coverage', async () => {
     await renderWorkspace();
-    await openTab(/Design/);
+    await openTab(/Modules/);
 
-    expect(screen.getByRole('button', { name: /Set up delivery instead/ })).toBeInTheDocument();
+    expect(screen.queryByText('Programme design')).not.toBeInTheDocument();
+    expect(tabStrip().getByRole('button', { name: /Open Module Builder/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Add cohort$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Add module$/ })).not.toBeInTheDocument();
     expect(await screen.findByText('Design foundation ready')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: /Continue to Delivery/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Continue to KSB Coverage/ }));
 
-    expect(await screen.findByText('Cohorts & groups')).toBeInTheDocument();
+    expect(await screen.findByText('KSB coverage heatmap')).toBeInTheDocument();
   });
 
   it('sends the reader to the page that owns each record type rather than being a second catalogue', async () => {
@@ -234,7 +244,7 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
     expect(screen.getByRole('link', { name: /cohort/ })).toHaveAttribute('href', '/curriculum/cohorts?programme=PROG-DATA');
     expect(screen.getByRole('link', { name: /group/ })).toHaveAttribute('href', '/curriculum/groups?programme=PROG-DATA');
-    expect(screen.getByRole('link', { name: /module/ })).toHaveAttribute('href', '/curriculum/module-builder?programme=PROG-DATA');
+    expect(screen.getByRole('link', { name: /module/ })).toHaveAttribute('href', '/curriculum/module-builder?programme=PROG-DATA&programmeName=Data+Analyst');
   });
 
   it('reports a module whose cohort is not a cohort record instead of inventing one', async () => {
@@ -248,21 +258,58 @@ describe('Programme workspace', { timeout: 15000 }, () => {
 
   it('shows a cohort with its groups, and never a tutor on a group', async () => {
     await renderWorkspace();
-    await openTab(/Delivery/);
+    await openTab(/Cohorts/);
 
+    expect(screen.queryByText('Delivery setup')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /^Sept 2026/ })).toHaveAttribute('href', '/curriculum/cohorts/COHORT-1');
-    expect(screen.getByRole('link', { name: /Group A/ })).toHaveAttribute('href', '/curriculum/groups/GROUP-1');
+
+    await openTab(/Groups/);
+    expect(screen.getByPlaceholderText('Search groups, coaches, days or mode...')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Cohort' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Coaching' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Group A/ })).toHaveAttribute('href', '/curriculum/groups/GROUP-1?groupName=Group+A');
+    expect(screen.getByRole('button', { name: 'Add module' })).toBeInTheDocument();
     // The coach belongs to the group and is assignable in place.
     expect(screen.getByText('Coach One')).toBeInTheDocument();
     // The tutor does not, even though the group payload carries one.
     expect(screen.queryByText('Tutor One')).not.toBeInTheDocument();
   });
 
+  it('keeps empty table structure visible and disables filters until records exist', async () => {
+    const api = await import('@/lib/curriculumApi');
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: { cohorts: [], groups: [], groupIds: [], modules: [], sessions: [], components: [] },
+    });
+
+    await renderWorkspace();
+    await openTab(/Cohorts/);
+
+    expect(screen.getAllByRole('button', { name: /^Add cohort$/ })).toHaveLength(1);
+    expect(screen.getByPlaceholderText('Search cohorts, dates, status...')).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Status' })).toBeDisabled();
+
+    await openTab(/Groups/);
+    expect(screen.getByText('Coach')).toBeInTheDocument();
+    expect(screen.getByText('Add a cohort before creating groups')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search groups, coaches, days or mode...')).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Cohort' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Coaching' })).toBeDisabled();
+
+    await openTab(/Modules/);
+    expect(screen.getByText('Module')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Search modules, cohort, group, tutor, KSB...')).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Cohort' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Group' })).toBeDisabled();
+  });
+
   it('lists modules as rows that open the module, not as cards that redraw it', async () => {
     await renderWorkspace();
-    await openTab(/Design/);
+    await openTab(/Modules/);
 
-    expect(screen.getByRole('link', { name: /^Data Foundations/ })).toHaveAttribute('href', '/curriculum/modules/MOD-1');
+    expect(screen.getByRole('link', { name: /^Data Foundations/ })).toHaveAttribute('href', '/curriculum/modules/MOD-1?moduleName=Data+Foundations');
     // Row actions say what they do rather than leaving the reader to decode a
     // glyph, and there is one per module.
     expect(screen.getAllByRole('button', { name: 'Builder' })).toHaveLength(2);
@@ -273,10 +320,9 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(screen.queryByText('Getting started')).not.toBeInTheDocument();
   });
 
-  it('rolls every module up into one delivery schedule inside Delivery', async () => {
+  it('rolls every module up into one programme Sessions view', async () => {
     await renderWorkspace();
-    await openTab(/Delivery/);
-    await userEvent.click(screen.getByRole('button', { name: /Sessions/ }));
+    await openTab(/Sessions/);
 
     expect(screen.getByText('Intro live session')).toBeInTheDocument();
     expect(screen.getByText(/Week 1 · Getting started/)).toBeInTheDocument();

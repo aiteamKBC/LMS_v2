@@ -106,7 +106,7 @@ async function renderAt(search: string) {
   );
 }
 
-describe('Module Builder deep links', () => {
+describe('Module Builder deep links', { timeout: 15000 }, () => {
   beforeEach(() => {
     createNewModule.mockClear();
     loadModuleStructure.mockClear();

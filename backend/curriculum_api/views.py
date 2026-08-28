@@ -426,6 +426,10 @@ def ensure_ksb_profile_identity_columns():
         ensure_columns('ksb_profiles', {
             'ksb_profile_id': 'varchar(128)',
             'programme_ids': 'jsonb',
+            # A reusable profile can carry its own KSB definitions while still
+            # inheriting funding, duration and compliance metadata from the
+            # Skills England standard it was derived from.
+            'standard_source_id': 'varchar(128)',
         })
         if connection.vendor == 'postgresql':
             with connection.cursor() as cursor:
@@ -537,7 +541,7 @@ def json_body(request):
 
 
 COMPONENT_UPLOAD_ROOT = 'curriculum_component_uploads'
-COMPONENT_UPLOAD_MAX_BYTES = 80 * 1024 * 1024
+COMPONENT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 COMPONENT_UPLOAD_EXTENSIONS = {
     'podcast': {'.mp3', '.m4a', '.mp4', '.wav', '.aac', '.ogg', '.oga', '.webm'},
     'powerpoint': {'.ppt', '.pptx', '.pps', '.ppsx', '.pdf'},
@@ -563,9 +567,11 @@ def component_upload_metadata(module_catalogue_id, component_id, component_type,
     if suffix not in allowed:
         return None, f'{component_type} uploads must use one of: {", ".join(sorted(allowed))}.'
     if uploaded_file.size > COMPONENT_UPLOAD_MAX_BYTES:
-        return None, 'File is too large. Maximum upload size is 80 MB.'
+        return None, 'File is too large. Maximum upload size is 5 MB.'
 
-    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+    # Microseconds make the path unique even when the same component retries or
+    # replaces a same-named resource within one second.
+    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
     stem = safe_upload_segment(Path(original_name).stem, 'resource')
     stored_name = f'{stem}-{timestamp}{suffix}'
     relative_path = f'{COMPONENT_UPLOAD_ROOT}/{module_catalogue_id}/{component_id}/{stored_name}'
@@ -7802,6 +7808,7 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             'id': framework_id,
             'profileId': profile.get('id'),
             'ksbProfileId': framework_id,
+            'standardSourceId': clean_str(profile.get('standard_source_id')),
             'programmeId': primary_programme_id,
             'programmeIds': programme_ids,
             'cohortIds': [],
@@ -7829,6 +7836,7 @@ def build_ksb_data(ksb_profiles, modules, training_rows):
             'frameworkId': framework_id,
             'profileId': profile.get('id'),
             'ksbProfileId': framework_id,
+            'standardSourceId': clean_str(profile.get('standard_source_id')),
             'programmeId': primary_programme_id,
             'programmeIds': programme_ids,
             'cohortIds': [],
@@ -16786,7 +16794,14 @@ def curriculum_component_upload(request, component_id):
         return json_error('Uploads are only supported for reading, podcast, PowerPoint and assignment components.', status=400)
 
     module_catalogue_id = clean_str(request.POST.get('moduleCatalogueId') or request.POST.get('moduleId') or 'module')
-    metadata, error = component_upload_metadata(module_catalogue_id, component_id, component_type, uploaded_file)
+    try:
+        metadata, error = component_upload_metadata(module_catalogue_id, component_id, component_type, uploaded_file)
+    except Exception:
+        logger.exception('Unable to store upload for curriculum component %s.', component_id)
+        return json_error(
+            'The file could not be stored. Please retry the upload.',
+            status=503,
+        )
     if error:
         return json_error(error, status=400)
 
@@ -16819,7 +16834,14 @@ def curriculum_week_component_upload(request, component_id):
     # patched row-by-row — so this just stores the file and hands back its
     # metadata; the frontend writes it into the component's own settings and
     # persists it the normal way.
-    metadata, error = component_upload_metadata('week-template', component_id, component_type, uploaded_file)
+    try:
+        metadata, error = component_upload_metadata('week-template', component_id, component_type, uploaded_file)
+    except Exception:
+        logger.exception('Unable to store upload for week component %s.', component_id)
+        return json_error(
+            'The file could not be stored. Please retry the upload.',
+            status=503,
+        )
     if error:
         return json_error(error, status=400)
 
@@ -19697,6 +19719,7 @@ def curriculum_ksb_framework_collection(request):
     missing = require_fields(payload, ['name'])
     if missing:
         return json_error('Missing required fields.', fields=missing)
+    ensure_ksb_profile_identity_columns()
     name = clean_str(payload.get('name'))
     duplicate = next((row for row in get_ksb_profile_rows() if normalise(row.get('name')) == normalise(name)), None)
     if duplicate:
@@ -19704,10 +19727,14 @@ def curriculum_ksb_framework_collection(request):
     programme_id = canonical_programme_id(payload.get('programmeId') or payload.get('programme_id'), payload.get('programmeName') or payload.get('programme'))
     existing_profile_ids = [row.get('ksb_profile_id') for row in get_ksb_profile_rows()]
     ksb_profile_id = unique_ksb_profile_id(payload.get('ksbProfileId') or payload.get('ksb_profile_id') or programme_id, existing_profile_ids)
+    standard_source_id = clean_str(payload.get('standardSourceId') or payload.get('standard_source_id')).replace('standard:', '', 1)
+    if standard_source_id and not find_skills_england_standard(standard_source_id):
+        return json_error('Skills England standard not found.', fields=['standardSourceId'], status=400)
     row = insert_row('ksb_profiles', {
         'id': ksb_profile_id,
         'name': name,
         'ksb_profile_id': ksb_profile_id,
+        'standard_source_id': standard_source_id,
         'programme_ids': json.dumps(unique([
             programme_id,
             payload.get('programmeName'),
@@ -19768,6 +19795,12 @@ def curriculum_ksb_framework_detail(request, identifier):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
+    standard_source_sent = 'standardSourceId' in payload or 'standard_source_id' in payload
+    standard_source_id = clean_str(
+        payload.get('standardSourceId') if 'standardSourceId' in payload else payload.get('standard_source_id')
+    ).replace('standard:', '', 1)
+    if standard_source_sent and standard_source_id and not find_skills_england_standard(standard_source_id):
+        return json_error('Skills England standard not found.', fields=['standardSourceId'], status=400)
     should_sync_programme_links = any(key in payload for key in ('programmeIds', 'programme_ids', 'programmeId', 'programme_id', 'programmeName', 'programme'))
     linked_programme_values = []
     if should_sync_programme_links:
@@ -19792,6 +19825,7 @@ def curriculum_ksb_framework_detail(request, identifier):
     updates = {
         'name': payload.get('name'),
         'ksb_profile_id': unique_ksb_profile_id(payload.get('ksbProfileId') or payload.get('ksb_profile_id'), [row.get('ksb_profile_id') for row in get_ksb_profile_rows() if clean_str(row.get('id')) != profile_id]) if any(key in payload for key in ('ksbProfileId', 'ksb_profile_id')) else None,
+        'standard_source_id': standard_source_id if standard_source_sent else None,
         'programme_ids': json.dumps(unique([
             canonical_programme_id(payload.get('programmeId') or payload.get('programme_id'), payload.get('programmeName') or payload.get('programme')),
             payload.get('programmeName'),
