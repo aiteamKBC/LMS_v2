@@ -218,6 +218,17 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(strip.queryByRole('button', { name: /^Review/ })).not.toBeInTheDocument();
   });
 
+  it('keeps Design recommended while providing a clear handoff to Delivery', async () => {
+    await renderWorkspace();
+    await openTab(/Design/);
+
+    expect(screen.getByRole('button', { name: /Set up delivery instead/ })).toBeInTheDocument();
+    expect(await screen.findByText('Design foundation ready')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Continue to Delivery/ }));
+
+    expect(await screen.findByText('Cohorts & groups')).toBeInTheDocument();
+  });
+
   it('sends the reader to the page that owns each record type rather than being a second catalogue', async () => {
     await renderWorkspace();
 

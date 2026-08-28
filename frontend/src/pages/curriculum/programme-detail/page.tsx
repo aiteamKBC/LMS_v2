@@ -2111,6 +2111,9 @@ export default function ProgrammeDetailPage() {
   const emptyWeekCount = PROGRAMME.modules
     .flatMap(mod => mod.weeksData)
     .filter(wk => !(wk.components || []).length).length;
+  // A useful first design slice is tangible rather than percentage-based: at
+  // least one module, one authored week and one component learners can consume.
+  const hasMinimumDesign = PROGRAMME.modules.length > 0 && totalWeeks > 0 && allComponents.length > 0;
   const untutoredModules = PROGRAMME.modules.filter(mod => !isStaffAssigned(mod.tutor));
   // Modules whose stored cohort is not one of this programme's cohort records.
   // This page used to invent a cohort row for them, which is why its cohort count
@@ -2331,9 +2334,14 @@ export default function ProgrammeDetailPage() {
               </div>
             </div>
             {tab === 'design' && (
-              <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700">
-                <AppIcon className="ri-tools-line"></AppIcon> Open 3-column editor
-              </button>
+              <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                <button type="button" onClick={() => navigate(moduleBuilderProgrammeUrl)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[11px] font-bold text-white hover:bg-primary-700">
+                  <AppIcon className="ri-tools-line"></AppIcon> Open 3-column editor
+                </button>
+                <button type="button" onClick={() => setTab('delivery')} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-primary-200 bg-background-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100">
+                  Set up delivery instead <AppIcon className="ri-arrow-right-line"></AppIcon>
+                </button>
+              </div>
             )}
             {tab === 'delivery' && (
               <div className="inline-flex shrink-0 rounded-xl border border-primary-100 bg-background-50 p-1 shadow-sm">
@@ -2841,6 +2849,23 @@ export default function ProgrammeDetailPage() {
                 );
               }}
             />
+
+            {hasMinimumDesign && (
+              <div className="flex flex-col gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white">
+                    <AppIcon className="ri-check-line"></AppIcon>
+                  </span>
+                  <div>
+                    <p className="text-[12px] font-extrabold text-emerald-950">Design foundation ready</p>
+                    <p className="mt-0.5 text-[11px] leading-5 text-emerald-800">This programme has a module, an authored week and learner-facing content. You can now organise its delivery.</p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setTab('delivery')} className="inline-flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-emerald-700 px-4 text-[12px] font-bold text-white transition-smooth hover:bg-emerald-800">
+                  Continue to Delivery <AppIcon className="ri-arrow-right-line"></AppIcon>
+                </button>
+              </div>
+            )}
           </div>
         )}
 
