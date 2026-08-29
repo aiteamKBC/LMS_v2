@@ -89,20 +89,10 @@ def _active_profile_for_source(source, source_pk):
     # reads the same graph again).  Load the complete graph in a fixed number
     # of queries so learner pages stay fast as their history grows.
     try:
-        prefetch_related_objects(
-            [profile],
-            "ksb_assignment__profile_version__definitions",
-            "assigned_ksbs",
-            "progress_entries__ksb_links",
-            "progress_entries__quiz_answers__chosen_answers",
-            "progress_entries__quiz_answers__correct_answers",
-        )
-    except DatabaseError:
-        logger.warning(
-            "Could not prefetch legacy assigned KSBs for profile %s; retrying current graph.",
-            source_pk,
-            exc_info=True,
-        )
+        # ``Learner.learner_ksbs`` was the legacy per-learner snapshot and is
+        # absent from current environments. Do not prefetch it unconditionally:
+        # the LearnerProfile.ksbs compatibility property will query it lazily
+        # only when an older profile has no current KSB assignment.
         prefetch_related_objects(
             [profile],
             "ksb_assignment__profile_version__definitions",

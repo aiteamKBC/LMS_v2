@@ -6,6 +6,7 @@ import { EmptyState } from '@/pages/users/components/ui';
 import { fetchLearnerDetail, type LearnerDetail, type LearnerKind, type LearnerKsbItem } from '@/api/learnerDetail';
 import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
+import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
 import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
@@ -92,10 +93,10 @@ export default function ComponentViewPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [phase, setPhase] = useState<Phase>('consume');
-  const [startedAt, setStartedAt] = useState<string | null>(null);
   // Real playback state (video only), driven by the player.
   const [realDuration, setRealDuration] = useState<number | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
+  const [playerPlaying, setPlayerPlaying] = useState(false);
   const [unsupported, setUnsupported] = useState(false); // no player progress events → wall-clock
   const [wallElapsed, setWallElapsed] = useState(0);
   const [submitting, setSubmitting] = useState(false);
@@ -104,6 +105,8 @@ export default function ComponentViewPage() {
   // Bumped by the uploader so the criteria panel re-checks after an upload.
   const [evidenceVersion, setEvidenceVersion] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
+  const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
 
   useEffect(() => {
     if ((kind !== 'commercial' && kind !== 'apprenticeship') || !id) {
@@ -183,7 +186,8 @@ export default function ComponentViewPage() {
   useEffect(() => { if (component && !isVideo) setUnsupported(true); }, [component, isVideo]);
 
   const remaining = realDuration !== null ? Math.max(0, Math.round(realDuration - currentTime)) : null;
-  const elapsedSeconds = isVideo && !unsupported ? Math.round(currentTime) : wallElapsed;
+  // Seeking changes the playhead/remaining time, but cannot add watched time.
+  const elapsedSeconds = wallElapsed;
   // Planned time preset in the reflection window: always the component's
   // authored expected_otjh (its OTJ hours) when set, so "the planned time"
   // means the same thing for every component type in the training plan.
@@ -209,17 +213,41 @@ export default function ComponentViewPage() {
   // made a 1h42m video look like 102 hours.
   const plannedTimeLabel = plannedHours != null ? formatHoursMinutes(plannedHours) : '';
 
-  // Stamp the start time once we're on an openable component.
-  useEffect(() => {
-    if (phase === 'consume' && openable && startedAt === null) setStartedAt(new Date().toISOString());
-  }, [phase, openable, startedAt]);
+  const trackingMode: TrackingCountingMode = isVideo && parsed?.kind !== 'vimeo'
+    ? 'active_playback'
+    : 'visible_page';
 
-  // Wall-clock counter (non-video, or an unsupported player).
+  // The server stamps and signs the start, preventing claims for time before
+  // this learner opened this specific activity.
   useEffect(() => {
-    if (phase !== 'consume' || !unsupported) return;
-    timerRef.current = setInterval(() => setWallElapsed((s) => s + 1), 1000);
+    if (phase !== 'consume' || !openable || !componentId || !kind || !id || !canProgress) return;
+    const learnerKind = kind as LearnerKind;
+    const activityKind = isVideo ? 'video' : 'component';
+    let cancelled = false;
+    trackingSessionRef.current = null;
+    const pending = startTimeTracking(activityKind, componentId, learnerKind, id, trackingMode);
+    trackingPromiseRef.current = pending;
+    pending
+      .then((session) => {
+        if (!cancelled) {
+          trackingSessionRef.current = session;
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Could not start activity timing');
+      });
+    return () => { cancelled = true; };
+  }, [phase, openable, componentId, kind, id, canProgress, isVideo, trackingMode]);
+
+  // Only visible time counts. Supported videos must also actually be playing;
+  // iframe-only players use the explicit visible-page fallback.
+  useEffect(() => {
+    if (phase !== 'consume' || (!unsupported && !playerPlaying)) return;
+    timerRef.current = setInterval(() => {
+      if (document.visibilityState === 'visible') setWallElapsed((s) => s + 1);
+    }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, unsupported]);
+  }, [phase, unsupported, playerPlaying]);
 
   const finishConsuming = () => {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -239,10 +267,12 @@ export default function ComponentViewPage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
+      if (!tracking) throw new Error('Activity timing did not start. Reopen the activity and try again.');
       if (isVideo) {
         const res = await submitVideoProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
-          startedAt: startedAt || new Date().toISOString(), timeTakenSeconds: elapsedSeconds,
+          startedAt: tracking.startedAt, timeTakenSeconds: elapsedSeconds, trackingToken: tracking.trackingToken,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
@@ -250,7 +280,7 @@ export default function ComponentViewPage() {
       } else {
         const res = await submitComponentProgress(componentId, kind as 'commercial' | 'apprenticeship', id, {
           week: weekTitle || null, module: moduleTitle || null,
-          startedAt: startedAt || new Date().toISOString(), timeTakenSeconds: elapsedSeconds,
+          startedAt: tracking.startedAt, timeTakenSeconds: elapsedSeconds, trackingToken: tracking.trackingToken,
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
         });
@@ -328,6 +358,7 @@ export default function ComponentViewPage() {
               <ComponentContent component={component} contentKind={contentKind} parsed={parsed} title={pageTitle}
                 onDuration={(d) => setRealDuration((prev) => prev ?? d)}
                 onProgress={(t) => setCurrentTime(t)}
+                onPlayingChange={setPlayerPlaying}
                 onEnded={finishConsuming}
                 onUnsupported={() => setUnsupported(true)}
                 evidenceContext={
@@ -789,13 +820,14 @@ function LiveSessionResultsCard({
   );
 }
 
-function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onEnded, onUnsupported }: {
+function ComponentBody({ component, contentKind, parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported }: {
   component: JourneyComponent;
   contentKind: ReturnType<typeof componentContentKind>;
   parsed: ReturnType<typeof parseVideoUrl> | null;
   title: string;
   onDuration: (d: number) => void;
   onProgress: (t: number) => void;
+  onPlayingChange: (playing: boolean) => void;
   onEnded: () => void;
   onUnsupported: () => void;
 }) {
@@ -803,7 +835,7 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
     return (
       <div className="rounded-2xl overflow-hidden bg-black shadow-sm ring-1 ring-background-300">
         <div className="relative w-full mx-auto" style={{ aspectRatio: '16 / 9', maxHeight: 'calc(100vh - 14rem)' }}>
-          <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onEnded={onEnded} onUnsupported={onUnsupported} />
+          <VideoPlayer parsed={parsed} title={title} onDuration={onDuration} onProgress={onProgress} onPlayingChange={onPlayingChange} onEnded={onEnded} onUnsupported={onUnsupported} />
         </div>
       </div>
     );

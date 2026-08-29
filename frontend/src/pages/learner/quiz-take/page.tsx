@@ -14,6 +14,7 @@ import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { startTimeTracking, type TimeTrackingSession } from '@/api/timeTracking';
 
 const learnerNav = roleNavMap.learner;
 
@@ -44,12 +45,13 @@ export default function QuizTakePage() {
   const [phase, setPhase] = useState<Phase>('intro');
   const [current, setCurrent] = useState(0);
   const [answers, setAnswers] = useState<Record<string, QuizAnswerValue>>({});
-  const [startedAt, setStartedAt] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [result, setResult] = useState<QuizAttemptResult | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
+  const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
 
   useEffect(() => {
     if (!quizId) return;
@@ -87,14 +89,25 @@ export default function QuizTakePage() {
 
   useEffect(() => {
     if (phase !== 'quiz') return;
-    timerRef.current = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    timerRef.current = setInterval(() => {
+      if (document.visibilityState === 'visible') setElapsedSeconds((s) => s + 1);
+    }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [phase]);
 
   const totalPoints = useMemo(() => (quiz ? quiz.questions.reduce((n, q) => n + q.points, 0) : 0), [quiz]);
 
   const startQuiz = () => {
-    setStartedAt(new Date().toISOString());
+    if (!quiz || !kind || !id) return;
+    setSubmitError(null);
+    trackingSessionRef.current = null;
+    const pending = startTimeTracking(
+      'quiz', quiz.id, kind as LearnerKind, id, 'active_quiz',
+    );
+    trackingPromiseRef.current = pending;
+    pending
+      .then((session) => { trackingSessionRef.current = session; })
+      .catch((error) => setSubmitError(error instanceof Error ? error.message : 'Could not start quiz timing'));
     setElapsedSeconds(0);
     setCurrent(0);
     setAnswers({});
@@ -132,10 +145,13 @@ export default function QuizTakePage() {
     setSubmitting(true);
     setSubmitError(null);
     try {
+      const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
+      if (!tracking) throw new Error('Quiz timing did not start. Reopen the quiz and try again.');
       const res = await submitQuizAttempt(quiz.id, kind as 'commercial' | 'apprenticeship', id, {
         answers,
         timeTakenSeconds: elapsedSeconds,
-        startedAt: startedAt || new Date().toISOString(),
+        startedAt: tracking.startedAt,
+        trackingToken: tracking.trackingToken,
         module: moduleTitle,
         week: weekTitle,
         ksbs: reflection.ksbs,

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, videos, views
+from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, time_tracking, videos, views
 
 urlpatterns = [
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
@@ -93,6 +93,8 @@ urlpatterns = [
     path("curriculum/components/", curriculum.components, name="curriculum-components"),
     path("curriculum/ksb-profile/", curriculum.ksb_profile, name="curriculum-ksb-profile"),
     path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
+    # Signed start time shared by quizzes and learning components.
+    path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
     path("quizzes/<int:quiz_id>/submit/", quizzes.submit_quiz_attempt, name="quiz-submit"),

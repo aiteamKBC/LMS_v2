@@ -18,6 +18,8 @@ export interface ParsedVideo {
 }
 
 /** Classify a provider URL and extract the id/src needed to play it. */
+// Kept here because the parser and player share the provider contract.
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseVideoUrl(url: string): ParsedVideo {
   const clean = url.trim();
   const yt =
@@ -75,18 +77,19 @@ function loadYouTubeApi(): Promise<YTNamespace> {
 }
 
 export function VideoPlayer({
-  parsed, title, onDuration, onProgress, onEnded, onUnsupported,
+  parsed, title, onDuration, onProgress, onPlayingChange, onEnded, onUnsupported,
 }: {
   parsed: ParsedVideo;
   title: string;
   onDuration?: (seconds: number) => void;   // real total length, once known
   onProgress?: (currentSeconds: number) => void; // real elapsed within the video
+  onPlayingChange?: (playing: boolean) => void; // actual playback state; seeking does not count as time
   onEnded?: () => void;                      // playback reached the end
   onUnsupported?: () => void;                // no progress events available (Vimeo/unknown)
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
-  const cbRef = useRef({ onDuration, onProgress, onEnded, onUnsupported });
-  cbRef.current = { onDuration, onProgress, onEnded, onUnsupported };
+  const cbRef = useRef({ onDuration, onProgress, onPlayingChange, onEnded, onUnsupported });
+  cbRef.current = { onDuration, onProgress, onPlayingChange, onEnded, onUnsupported };
 
   // ── YouTube: IFrame Player API ──
   useEffect(() => {
@@ -115,6 +118,7 @@ export function VideoPlayer({
               const d = player?.getDuration() ?? 0;
               if (d > 0) cbRef.current.onDuration?.(Math.round(d));
             }
+            cbRef.current.onPlayingChange?.(e.data === YT.PlayerState.PLAYING);
             if (e.data === YT.PlayerState.ENDED) cbRef.current.onEnded?.();
           },
         },
@@ -128,6 +132,7 @@ export function VideoPlayer({
 
     return () => {
       cancelled = true;
+      cbRef.current.onPlayingChange?.(false);
       if (poll) clearInterval(poll);
       try { player?.destroy(); } catch { /* player may not be constructed yet */ }
     };
@@ -150,7 +155,9 @@ export function VideoPlayer({
         className="absolute inset-0 w-full h-full bg-black"
         onLoadedMetadata={(e) => onDuration?.(Math.round((e.target as HTMLVideoElement).duration))}
         onTimeUpdate={(e) => onProgress?.((e.target as HTMLVideoElement).currentTime)}
-        onEnded={() => onEnded?.()}
+        onPlay={() => onPlayingChange?.(true)}
+        onPause={() => onPlayingChange?.(false)}
+        onEnded={() => { onPlayingChange?.(false); onEnded?.(); }}
       >
         Your browser does not support the video tag.
       </video>

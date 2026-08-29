@@ -24,7 +24,7 @@ import json
 import random
 import re
 
-from django.db import DatabaseError, connections
+from django.db import DatabaseError, IntegrityError, connections
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -33,6 +33,7 @@ from .identity import learner_profile_for_source
 
 from .active_users import ComponentReferenceError, save_progress_record
 from .models import CommercialUser, EnrolmentUser
+from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
 from login.permissions import learner_self_only
 
 SOURCE_MODELS = {
@@ -392,7 +393,6 @@ def submit_quiz_attempt(request, quiz_id):
 
     submitted_answers = payload.get("answers") or {}
     time_taken_seconds = payload.get("timeTakenSeconds")
-    started_at = payload.get("startedAt")
     week_title = payload.get("week")
     module_title = payload.get("module")
     # Post-quiz reflection window: KSBs the learner marks this quiz as fulfilling,
@@ -475,8 +475,24 @@ def submit_quiz_attempt(request, quiz_id):
     )
     attempt_number = prior + 1
 
-    submitted_at = timezone.now().isoformat()
-    time_taken = _format_clock(time_taken_seconds)
+    submitted_at_dt = timezone.now()
+    try:
+        tracking = verify_tracking_session(
+            payload.get("trackingToken"),
+            activity_kind="quiz",
+            activity_id=quiz_id,
+            learner_kind=kind,
+            learner_id=learner_id,
+            claimed_seconds=time_taken_seconds,
+            submitted_at=submitted_at_dt,
+        )
+    except TrackingSessionError as exc:
+        return _error(str(exc), 400)
+    if tracking_session_already_used(tracking["sessionId"]):
+        return _error("This activity timing session has already been submitted.", 409)
+    started_at = tracking["startedAt"].isoformat()
+    submitted_at = submitted_at_dt.isoformat()
+    time_taken = _format_clock(tracking["verifiedSeconds"])
 
     # Slim, id-referenced record actually stored in Training_plan_progress.
     # Names (quizName/week/module) are dropped — the plan tree resolves them from
@@ -496,6 +512,12 @@ def submit_quiz_attempt(request, quiz_id):
         "startedAt": started_at,
         "submittedAt": submitted_at,
         "timeTaken": time_taken,
+        "timeTrackingSource": tracking["source"],
+        "timeTrackingCalculation": tracking["calculation"],
+        "timeTrackingSessionId": tracking["sessionId"],
+        "claimedSeconds": tracking["claimedSeconds"],
+        "serverSessionSeconds": tracking["serverSessionSeconds"],
+        "verifiedSeconds": tracking["verifiedSeconds"],
     }
 
     if active is not None:
@@ -514,6 +536,10 @@ def submit_quiz_attempt(request, quiz_id):
             save_progress_record(active, attempt, activity)
         except ComponentReferenceError as exc:
             return _error(str(exc), 400)
+        except IntegrityError as exc:
+            if "learner_progress_tracking_session_uq" in str(exc):
+                return _error("This activity timing session has already been submitted.", 409)
+            return _error(f"Database error saving attempt: {exc}", 502)
         except DatabaseError as exc:
             return _error(f"Database error saving attempt: {exc}", 502)
 
