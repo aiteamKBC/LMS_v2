@@ -608,6 +608,22 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        # Curriculum write tracking (curriculum_api.views.log_curriculum_*).
+        # INFO carries the decision events -- what each write chose to do and
+        # why -- and is always on because it is low volume and it is what makes
+        # a silent no-op visible. DEBUG adds one line per write reaching a
+        # curriculum table, which is complete but far too loud for normal
+        # running: a tree save writes thousands of rows. Raise it per-process
+        # with CURRICULUM_WRITE_TRACE=true.
+        'curriculum_api.writes': {
+            'handlers': ['console'],
+            'level': (
+                'DEBUG'
+                if os.environ.get('CURRICULUM_WRITE_TRACE', 'false').lower() == 'true'
+                else os.environ.get('CURRICULUM_WRITE_LOG_LEVEL', 'INFO')
+            ),
+            'propagate': False,
+        },
         # Daphne warns when a client disconnects before a slow synchronous view
         # finishes and it has to kill the orphaned application task. The
         # underlying slowness is a real thing to fix separately; this just quiets
