@@ -1108,6 +1108,84 @@ export interface CurriculumTeamsMeetingSummary {
   occurrenceDates?: string[];
 }
 
+/** One scheduled instance of a live-session series. `status` is authored by the
+ *  Graph artifact-sync service — never derived from a date on the client. */
+export interface CurriculumLiveSessionOccurrence {
+  occurrenceId: string;
+  liveSessionId: string;
+  moduleCatalogueId: string;
+  sessionNumber: number;
+  status: string; // 'scheduled' | 'completed' | 'cancelled' | ...
+  scheduledStart: string;
+  scheduledEnd: string;
+  actualStart: string;
+  actualEnd: string;
+  participantCount: number;
+  joinUrl: string;
+  attendanceReportId: string;
+  artifactsSyncedAt: string;
+}
+
+export interface CurriculumLiveSessionSeries {
+  liveSessionId: string;
+  moduleCatalogueId: string;
+  moduleTitle?: string;
+  status: string;
+  joinUrl: string;
+  provider?: string;
+}
+
+export interface CurriculumLiveSessionOccurrencesResponse {
+  series: CurriculumLiveSessionSeries[];
+  occurrences: CurriculumLiveSessionOccurrence[];
+}
+
+/** A completed occurrence's captured artifacts (transcript / recording). */
+export interface LiveSessionArtifact {
+  id: string;
+  occurrence_id: string;
+  artifact_type: string; // 'transcript' | 'recording'
+  graph_artifact_id?: string;
+  content_url?: string;
+  created_datetime?: string;
+  end_datetime?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/** One attendee row for a completed occurrence. */
+export interface LiveSessionAttendance {
+  id: string;
+  occurrence_id: string;
+  email?: string;
+  display_name?: string;
+  role?: string;
+  total_attendance_seconds?: number;
+  intervals?: Array<Record<string, unknown>>;
+  raw_data?: Record<string, unknown>;
+}
+
+/** An occurrence enriched with its attendance + artifacts (from the per-series
+ *  artifacts endpoint), loaded lazily when a completed row is expanded. */
+export interface LiveSessionArtifactOccurrence {
+  id: string;
+  live_session_id: string;
+  session_number?: number;
+  status?: string;
+  scheduled_start?: string;
+  scheduled_end?: string;
+  actual_start?: string;
+  actual_end?: string;
+  participant_count?: number;
+  join_url?: string;
+  attendance?: LiveSessionAttendance[];
+  artifacts?: LiveSessionArtifact[];
+}
+
+export interface LiveSessionArtifactsResponse {
+  series: Record<string, unknown>;
+  occurrences: LiveSessionArtifactOccurrence[];
+}
+
 export interface CurriculumHoliday {
   id: string | number;
   label: string;
@@ -2069,6 +2147,49 @@ export function fetchCurriculumTeamsMeetingSummaries(
     `/curriculum/teams-meetings/summary/${suffix}`,
     { signal, skipCache: options.skipCache },
   );
+}
+
+/** Real per-occurrence live-session state (status/dates/attendance counts) for a
+ *  set of modules and/or series. Feeds the Sessions tab's scheduled/completed
+ *  badges — the status comes from the sync service, not a client date guess.
+ *  Light by design: attendance rows and transcript/recording artifacts are NOT
+ *  included here (load them lazily with `fetchLiveSessionArtifacts`). */
+export function fetchCurriculumLiveSessionOccurrences(
+  options: { moduleCatalogueIds?: string[]; liveSessionIds?: string[]; skipCache?: boolean; signal?: AbortSignal } = {},
+): Promise<CurriculumLiveSessionOccurrencesResponse> {
+  const moduleIds = (options.moduleCatalogueIds || []).filter(Boolean);
+  const sessionIds = (options.liveSessionIds || []).filter(Boolean);
+  if (!moduleIds.length && !sessionIds.length) {
+    return Promise.resolve({ series: [], occurrences: [] });
+  }
+  const query = new URLSearchParams();
+  if (moduleIds.length) query.set('module_catalogue_ids', moduleIds.join(','));
+  if (sessionIds.length) query.set('live_session_ids', sessionIds.join(','));
+  return fetchJson<CurriculumLiveSessionOccurrencesResponse>(
+    `/curriculum/live-sessions/occurrences/?${query.toString()}`,
+    { signal: options.signal, skipCache: options.skipCache },
+  );
+}
+
+/** A completed live session's captured artifacts: every occurrence with its
+ *  attendance list and transcript/recording artifacts. Keyed by the series id
+ *  (`teamsLiveSessionId` on the component). Heavier than the occurrences read, so
+ *  the Sessions tab only calls this when a completed row is expanded. */
+export function fetchLiveSessionArtifacts(
+  liveSessionId: string,
+  options: { skipCache?: boolean; signal?: AbortSignal } = {},
+): Promise<LiveSessionArtifactsResponse> {
+  return fetchJson<LiveSessionArtifactsResponse>(
+    `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`,
+    { signal: options.signal, skipCache: options.skipCache },
+  );
+}
+
+/** Absolute URL that streams a transcript/recording artifact's content (proxied
+ *  from Graph server-side). Same-origin + cookie auth, so it can be used directly
+ *  as an `href` / `download` / media `src`. */
+export function liveSessionArtifactContentUrl(liveSessionId: string, artifactId: string): string {
+  return `${API_BASE_URL}/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/${encodeURIComponent(artifactId)}/content/`;
 }
 
 export function fetchCurriculumSessions(

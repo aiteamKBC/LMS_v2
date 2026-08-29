@@ -1574,6 +1574,12 @@ export default function ModuleBuilder() {
                 });
               }}
               onCreateAllTeamsMeetings={() => setBulkTeamsMeetingOpen(true)}
+              onRestoreAllTeamsMeetings={() => { void restoreTeamsMeetingForWorkingModule(); }}
+              hasTrackedTeamsMeeting={
+                teamsMeetings.some(summary => String(summary.moduleCatalogueId || '').trim().toLowerCase() === String(workingModule.catalogueId || '').trim().toLowerCase())
+                || workingModule.weekStructure.some(week => week.components.some(component => component.type === 'live-session' && String(component.settings?.liveSessionUrl || component.settings?.teamsMeetingUrl || '').trim()))
+              }
+              restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
               onDeleteWeek={weekId => {
                 void confirmDeleteWeek(weekId);
               }}
@@ -2302,7 +2308,7 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModul
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onCreateAllTeamsMeetings, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onCreateAllTeamsMeetings, onRestoreAllTeamsMeetings, hasTrackedTeamsMeeting, restoringTeamsMeeting, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -2313,6 +2319,9 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onAddWeekFromTemplate: () => void;
   onGenerateLiveSessions: () => void;
   onCreateAllTeamsMeetings: () => void;
+  onRestoreAllTeamsMeetings: () => void;
+  hasTrackedTeamsMeeting: boolean;
+  restoringTeamsMeeting: boolean;
   onDeleteWeek: (weekId: string) => void;
   onDropReorder: (targetWeekId: string) => void;
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
@@ -2386,19 +2395,33 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             Generate live sessions ({missingLiveSessionCount} across {missingLiveSessionWeekCount} week{missingLiveSessionWeekCount === 1 ? '' : 's'})
           </button>
         )}
-        {/* Bulk-create the Teams meeting for the whole module at once, on its
-            saved session dates, without leaving the editor. Opens the same
-            create form a single live session uses, but writes the join link
-            into every live-session component rather than just one. */}
+        {/* One whole-module Teams action, on the module's saved session dates,
+            without leaving the editor. If a meeting was already created for this
+            module (e.g. from the Live Teams Meetings tab before these components
+            existed), creating again would duplicate it — so the button switches
+            to Restore, which pulls the existing dates and join links into every
+            live-session component instead. Otherwise it opens the create form. */}
         {hasLiveSessions && module.catalogueId && (
-          <button
-            onClick={onCreateAllTeamsMeetings}
-            title="Create the Microsoft Teams meeting for the whole module at once, on its saved session dates, and attach its join link to every live-session component."
-            className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-3 text-[11px] font-bold text-cyan-700 transition-smooth hover:bg-cyan-100"
-          >
-            <AppIcon className="ri-microsoft-teams-line"></AppIcon>
-            Create all Teams meetings
-          </button>
+          hasTrackedTeamsMeeting ? (
+            <button
+              onClick={onRestoreAllTeamsMeetings}
+              disabled={restoringTeamsMeeting}
+              title="This module already has a Teams meeting. Restore its saved dates and join links onto every live-session component instead of creating a duplicate."
+              className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60"
+            >
+              <AppIcon className={restoringTeamsMeeting ? 'ri-loader-4-line animate-spin' : 'ri-links-line'}></AppIcon>
+              {restoringTeamsMeeting ? 'Restoring Teams sessions…' : 'Restore Teams sessions & links'}
+            </button>
+          ) : (
+            <button
+              onClick={onCreateAllTeamsMeetings}
+              title="Create the Microsoft Teams meeting for the whole module at once, on its saved session dates, and attach its join link to every live-session component."
+              className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-3 text-[11px] font-bold text-cyan-700 transition-smooth hover:bg-cyan-100"
+            >
+              <AppIcon className="ri-microsoft-teams-line"></AppIcon>
+              Create all Teams meetings
+            </button>
+          )
         )}
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
