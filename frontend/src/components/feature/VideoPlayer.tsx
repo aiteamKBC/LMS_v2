@@ -30,15 +30,14 @@ export function parseVideoUrl(url: string): ParsedVideo {
   const vm = clean.match(/vimeo\.com\/(?:video\/)?(\d+)/);
   if (vm) return { kind: 'vimeo', src: `https://player.vimeo.com/video/${vm[1]}` };
   if (/\.(mp4|webm|ogg|mov|m4v)(\?.*)?$/i.test(clean)) return { kind: 'file', src: clean };
-  // Google Drive. A share link points at Drive's own page ("…/view"), which in an
-  // iframe renders the whole Drive UI — a sign-in or permission notice, not a
-  // player. "/preview" is the embeddable form. It still only plays for someone
-  // the file is shared with; that part is Drive's sharing settings, not this URL.
+  // Google Drive. Use our same-origin media proxy rather than Drive's /preview
+  // iframe: Drive can show "Unable to load video" for playable files, while the
+  // proxy returns the actual MP4 and preserves Range requests for seeking.
   const drive =
     clean.match(/drive\.google\.com\/file\/d\/([\w-]{10,})/) ||
     clean.match(/drive\.google\.com\/open\?id=([\w-]{10,})/) ||
     clean.match(/drive\.google\.com\/uc\?[^#]*id=([\w-]{10,})/);
-  if (drive) return { kind: 'vimeo', src: `https://drive.google.com/file/d/${drive[1]}/preview` };
+  if (drive) return { kind: 'file', src: `/learner_api/media/google-drive/${drive[1]}/` };
   // Unknown — best-effort iframe, treated like vimeo (no progress events).
   return { kind: 'vimeo', src: clean };
 }
