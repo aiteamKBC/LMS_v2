@@ -12854,6 +12854,120 @@ def curriculum_teams_meeting_summary(request):
     return curriculum_results_response(results, request=request)
 
 
+@require_GET
+def curriculum_live_session_occurrences(request):
+    """Real per-occurrence state for a set of modules or live-session series.
+
+    The Sessions tab lists a whole programme's live sessions and must show each
+    one's true status (``scheduled`` / ``completed`` / ``cancelled``), which lives
+    only on ``curriculum.live_session_occurrences`` and is written by the Graph
+    artifact-sync -- never derived from a date here. The programme-detail payload
+    carries the components (with their ``teamsLiveSessionId``/``teamsOccurrenceId``)
+    but no occurrence status, so this is the one extra read that turns the tab from
+    a date guess into the sync service's actual record.
+
+    Narrow it with ``?module_catalogue_ids=A,B`` and/or ``?live_session_ids=X,Y``
+    (the caller already holds both from the components it rendered). Read-only,
+    additive, and deliberately light: attendance/transcripts/recordings are NOT
+    included -- those load lazily per series from the artifacts endpoint only when
+    a completed row is expanded.
+    """
+    try:
+        ensure_live_session_tracking_tables()
+    except (Exception, AssertionError):
+        return JsonResponse({'series': [], 'occurrences': []})
+
+    module_ids = [
+        clean_str(item)
+        for item in clean_str(
+            request.GET.get('module_catalogue_ids') or request.GET.get('moduleCatalogueIds')
+        ).split(',')
+        if clean_str(item)
+    ]
+    requested_session_ids = [
+        clean_str(item)
+        for item in clean_str(
+            request.GET.get('live_session_ids') or request.GET.get('liveSessionIds')
+        ).split(',')
+        if clean_str(item)
+    ]
+    if not module_ids and not requested_session_ids:
+        return JsonResponse({'series': [], 'occurrences': []})
+
+    where = "status = 'active'"
+    params = []
+    id_clauses = []
+    if module_ids:
+        clause, values = curriculum_in_clause('module_catalogue_id', module_ids)
+        if clause:
+            id_clauses.append(clause)
+            params.extend(values)
+    if requested_session_ids:
+        clause, values = curriculum_in_clause('id', requested_session_ids)
+        if clause:
+            id_clauses.append(clause)
+            params.extend(values)
+    if not id_clauses:
+        return JsonResponse({'series': [], 'occurrences': []})
+    where += ' and (' + ' or '.join(id_clauses) + ')'
+
+    try:
+        series_rows = authoring_fetch_all(
+            LIVE_SESSIONS_TABLE, where, params, 'updated_at desc, created_at desc'
+        )
+    except (Exception, AssertionError):
+        logger.warning('Could not read live-session series.', exc_info=True)
+        return JsonResponse({'series': [], 'occurrences': []})
+
+    module_by_session = {}
+    series_payload = []
+    for row in series_rows:
+        session_id = clean_str(row.get('id'))
+        if not session_id:
+            continue
+        module_by_session[session_id] = clean_str(row.get('module_catalogue_id'))
+        series_payload.append({
+            'liveSessionId': session_id,
+            'moduleCatalogueId': clean_str(row.get('module_catalogue_id')),
+            'moduleTitle': clean_str(row.get('module_title')),
+            'status': clean_str(row.get('status')) or 'active',
+            'joinUrl': clean_str(row.get('join_url')),
+            'provider': clean_str(row.get('provider')),
+        })
+
+    occurrences_payload = []
+    session_ids = list(module_by_session.keys())
+    if session_ids:
+        clause, values = curriculum_in_clause('live_session_id', session_ids)
+        try:
+            occurrence_rows = authoring_fetch_all(
+                LIVE_SESSION_OCCURRENCES_TABLE, clause, values, 'live_session_id, session_number'
+            )
+        except (Exception, AssertionError):
+            logger.warning('Could not read live-session occurrences.', exc_info=True)
+            occurrence_rows = []
+        iso_value = utc_iso_value
+        for row in occurrence_rows:
+            live_session_id = clean_str(row.get('live_session_id'))
+            occurrences_payload.append({
+                'occurrenceId': clean_str(row.get('id')),
+                'liveSessionId': live_session_id,
+                'moduleCatalogueId': module_by_session.get(live_session_id, ''),
+                'sessionNumber': parse_int(row.get('session_number'), 0),
+                'status': clean_str(row.get('status')) or 'scheduled',
+                'scheduledStart': iso_value(row.get('scheduled_start')),
+                'scheduledEnd': iso_value(row.get('scheduled_end')),
+                'actualStart': iso_value(row.get('actual_start')),
+                'actualEnd': iso_value(row.get('actual_end')),
+                'participantCount': parse_int(row.get('participant_count'), 0),
+                'joinUrl': clean_str(row.get('join_url')),
+                'attendanceReportId': clean_str(row.get('attendance_report_id')),
+                'artifactsSyncedAt': iso_value(row.get('artifacts_synced_at')),
+            })
+
+    return JsonResponse({'series': series_payload, 'occurrences': occurrences_payload})
+
+
 def get_authoring_structure_payload(module_catalogue_id):
     module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
     if not module_rows:
