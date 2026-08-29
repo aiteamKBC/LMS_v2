@@ -150,10 +150,10 @@ export function WorkspaceShell({
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
   // running training plan. Applied here so every learner page inherits it.
-  const navItems = useLearnerNavGate(role, navItemsProp);
+  const { auth } = useAuth();
+  const navItems = useLearnerNavGate(role, navItemsProp, auth.account?.email);
   const location = useLocation();
   const navigate = useNavigate();
-  const { auth } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
 

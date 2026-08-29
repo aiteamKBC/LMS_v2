@@ -48,6 +48,17 @@ beforeEach(() => {
 });
 
 describe('useLearnerNavGate', () => {
+  it('shows only Overview to a focused learner account', () => {
+    getRememberedLearner.mockReturnValue({ kind: 'apprenticeship', id: 'focused-1' });
+    const { result } = renderHook(() => useLearnerNavGate(
+      'learner',
+      FULL_NAV,
+      'learner-me@learner.local',
+    ));
+
+    expect(result.current.map((item) => item.id)).toEqual(['learner-overview']);
+  });
+
   it('shows no menu at all rather than the wrong one while the status loads', () => {
     getRememberedLearner.mockReturnValue({ kind: 'commercial', id: 'first-visit' });
     const { result } = renderHook(() => useLearnerNavGate('learner', FULL_NAV));

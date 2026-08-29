@@ -3,6 +3,7 @@ import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { fetchLearnerDetail } from '@/api/learnerDetail';
 import { getRememberedLearner, rememberLearner } from './useMyLearner';
 import { navItemsForStatus } from './useOnboardingRedirect';
+import { isLearnerFlowAccount } from '@/lib/learnerFlowAccess';
 
 // ============================================================================
 // Restricts the learner sidebar to match their programme status.
@@ -82,7 +83,7 @@ export function syncLearnerStatus(
   listeners.forEach((notify) => notify());
 }
 
-export function useLearnerNavGate(role: string, navItems: SidebarNavItem[]): SidebarNavItem[] {
+export function useLearnerNavGate(role: string, navItems: SidebarNavItem[], accountEmail?: string | null): SidebarNavItem[] {
   const learner = role === 'learner' ? getRememberedLearner() : null;
   const cacheKey = learner ? `${learner.kind}:${learner.id}` : '';
   const [status, setStatus] = useState<string | null>(
@@ -146,6 +147,9 @@ export function useLearnerNavGate(role: string, navItems: SidebarNavItem[]): Sid
   }, [learner, cacheKey]);
 
   // Not a learner — the gate doesn't apply.
+  if (role === 'learner' && isLearnerFlowAccount(accountEmail)) {
+    return navItems.filter((item) => item.id === 'learner-overview');
+  }
   if (!learner) return navItems;
   // First visit of the session, status still in flight. An empty rail for that
   // moment is honest; showing the full menu would be showing the wrong one, and

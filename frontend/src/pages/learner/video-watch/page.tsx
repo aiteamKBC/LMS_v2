@@ -17,6 +17,10 @@ import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWi
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
+import { useAuth } from '@/hooks/useAuth';
+import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
+import { actualMinutesFor, demoTimeKey, expectedMinutesFor } from '@/lib/demoTime';
+import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { resolveDocEmbed } from '@/lib/docEmbed';
@@ -161,6 +165,15 @@ export default function ComponentViewPage() {
   const moduleTitle = ctx?.moduleTitle ?? searchParams.get('module') ?? '';
   const weekTitle = ctx?.weekTitle ?? searchParams.get('week') ?? '';
   const backHref = kind && id ? `/learner/training-plan/${kind}/${id}` : '/learner/training-plan';
+
+  // Inspection-demo accounts only — see isInspectionDemoAccount. The results
+  // screen shows an editable "demo time" beside the expected time; everyone
+  // else sees the page exactly as before.
+  const { auth } = useAuth();
+  const isDemoAccount = isInspectionDemoAccount(auth.account?.email);
+  const demoScopeKey = kind && id ? `${kind}:${id}` : '';
+  const demoKey = componentId ? demoTimeKey({ isQuiz: false, componentId }) : '';
+  const demoExpectedMinutes = component ? expectedMinutesFor(component) : null;
 
   // A quiz component has nowhere to show its questions — the quiz page owns
   // that. Reaching this page for one (a direct link, a bookmark, the sidebar
@@ -319,7 +332,16 @@ export default function ComponentViewPage() {
           </div>
         ) : phase === 'results' && record ? (
           <div className="w-full max-w-5xl mx-auto">
-            <ResultsScreen record={record} title={pageTitle} noun={noun} onBack={() => navigate(-1)} />
+            <ResultsScreen
+              record={record}
+              title={pageTitle}
+              noun={noun}
+              onBack={() => navigate(-1)}
+              demoAccount={isDemoAccount}
+              demoScopeKey={demoScopeKey}
+              demoKey={demoKey}
+              demoExpectedMinutes={demoExpectedMinutes}
+            />
           </div>
         ) : (
           /* ── consume phase: content + details + sidebar ── */
@@ -1002,7 +1024,11 @@ function ComponentBody({ component, contentKind, parsed, title, onDuration, onPr
 }
 
 /* Results screen after a completion + reflection is saved. */
-function ResultsScreen({ record, title, noun, onBack }: { record: DoneRecord; title: string; noun: string; onBack: () => void }) {
+function ResultsScreen({ record, title, noun, onBack, demoAccount, demoScopeKey, demoKey, demoExpectedMinutes }: {
+  record: DoneRecord; title: string; noun: string; onBack: () => void;
+  /** Inspection-demo accounts only — see isInspectionDemoAccount. */
+  demoAccount?: boolean; demoScopeKey?: string; demoKey?: string; demoExpectedMinutes?: number | null;
+}) {
   return (
     <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6 md:p-8 card-premium text-center">
       <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 bg-emerald-100">
@@ -1016,6 +1042,18 @@ function ResultsScreen({ record, title, noun, onBack }: { record: DoneRecord; ti
         <StatTile icon="ri-links-line" label="KSBs" value={String(record.ksbs?.length ?? 0)} />
         <StatTile icon="ri-time-line" label="Reported" value={record.reportedTime || '—'} />
       </div>
+
+      {demoAccount && demoKey && (
+        <div className="mb-6 flex justify-center">
+          <DemoTimeChip
+            scopeKey={demoScopeKey || ''}
+            timeKey={demoKey}
+            expectedMinutes={demoExpectedMinutes ?? null}
+            actualMinutes={actualMinutesFor(record)}
+            editable
+          />
+        </div>
+      )}
 
       {record.feedback && (
         <div className="text-left max-w-md mx-auto mb-6 rounded-xl border border-background-300 bg-white p-3">
