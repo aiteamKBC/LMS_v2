@@ -7,6 +7,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+// Deck previews below: the same pair the learner's page uses, so an author sees
+// what the learner will (see UploadedDeckPreview / PowerPointLinkPreview).
+import { resolveDocEmbed } from '@/lib/docEmbed';
+import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import { type CurriculumGroup, type CurriculumModule, type CurriculumProgramme } from '@/lib/curriculumApi';
 import {
   createEmptyComponent,

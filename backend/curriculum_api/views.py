@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import json
 import logging
+import mimetypes
 import calendar
 import os
 import re
@@ -24,7 +25,7 @@ from django.core.cache import cache
 from django.core.files.storage import default_storage
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.core.serializers.json import DjangoJSONEncoder
-from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModified, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseNotModified, JsonResponse, StreamingHttpResponse
 from django.utils.text import get_valid_filename
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
@@ -34,6 +35,7 @@ from learner_api.progress_rules import (
     progress_achievement_status,
     progress_counts_as_achieved,
 )
+from learner_api.models import LearnerTrainingPlanModule
 
 from . import pptx_slides
 from . import schema_gate
@@ -795,7 +797,7 @@ def provision_live_session_tracking_tables():
                 page_url text not null default '', referrer text not null default '', metadata {json_type},
                 created_at timestamp not null default current_timestamp,
                 foreign key (live_session_id) references {live_sessions} (id) on delete cascade,
-                foreign key (artifact_id) references {artifacts} (id) on delete cascade
+                foreign key (artifact_id) references {artifacts} (id) on delete cascade on update cascade
             )
         ''')
         cursor.execute(f'create index if not exists curriculum_live_occurrence_series_idx on {occurrences} (live_session_id)')
@@ -1156,6 +1158,28 @@ def teams_recurrence_slot_count(payload, local_start, repeat, occurrences):
     return max(occurrences, min(52, spanned))
 
 
+def teams_event_body_html(title, details=''):
+    """Branded HTML body for a Module Builder Teams calendar invite.
+
+    Calendar clients sanitize event descriptions inconsistently (Outlook keeps
+    inline styles, Google Calendar's forwarded-mail rendering is pickier), so
+    this leans on a small set of inline styles that degrade gracefully to
+    plain, still-readable text if a client strips them.
+    """
+    parts = [
+        '<p style="margin:0 0 6px;font-size:11px;font-weight:600;letter-spacing:0.4px;'
+        'color:#616e7c;text-transform:uppercase;">KBC LearningOS &middot; Module Builder</p>',
+        f'<p style="margin:0 0 16px;font-size:18px;font-weight:600;color:#0b3d6b;">{escape(title)}</p>',
+    ]
+    if details:
+        parts.append(
+            '<p style="margin:0 0 16px;font-size:14px;line-height:1.55;color:#1f2933;">'
+            f'{escape(details).replace(chr(10), "<br>")}</p>'
+        )
+    parts.append('<hr style="border:none;border-top:1px solid #e4e7eb;margin:0;">')
+    return ''.join(parts)
+
+
 def teams_event_payload(payload, graph_settings):
     title = clean_str(payload.get('title')) or 'Live session'
     local_start_raw = clean_str(payload.get('localStartDateTime'))
@@ -1178,12 +1202,6 @@ def teams_event_payload(payload, graph_settings):
     presenters = teams_attendee_emails(payload.get('presenters'))
     invited_people = list(dict.fromkeys([*presenters, *attendees]))
     details = clean_str(payload.get('details'))
-    body_parts = [
-        f'<p><strong>{escape(title)}</strong></p>',
-        '<p>Created from the KBC LearningOS Module Builder.</p>',
-    ]
-    if details:
-        body_parts.append(f'<p>{escape(details).replace(chr(10), "<br>")}</p>')
 
     # Anchor the series to the same UTC instant the per-session occurrences are
     # derived from. The wizard computes those in the browser's timezone, so reading
@@ -1197,7 +1215,7 @@ def teams_event_payload(payload, graph_settings):
     anchor = anchor.replace(second=0, microsecond=0)
     event = {
         'subject': title,
-        'body': {'contentType': 'HTML', 'content': ''.join(body_parts)},
+        'body': {'contentType': 'HTML', 'content': teams_event_body_html(title, details)},
         'start': {
             'dateTime': anchor.isoformat(timespec='seconds'),
             'timeZone': 'UTC',
@@ -1233,13 +1251,7 @@ def teams_event_payload(payload, graph_settings):
 def teams_single_occurrence_payload(title, target, attendees):
     return {
         'subject': title,
-        'body': {
-            'contentType': 'HTML',
-            'content': ''.join([
-                f'<p><strong>{escape(title)}</strong></p>',
-                '<p>Created from the KBC LearningOS Module Builder.</p>',
-            ]),
-        },
+        'body': {'contentType': 'HTML', 'content': teams_event_body_html(title)},
         'start': {
             'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'),
             'timeZone': 'UTC',
@@ -2129,8 +2141,18 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
     graph_id = clean_str(artifact.get('id'))
     if not graph_id:
         return False
+    # Deterministic, not uuid4(): the upsert key below (occurrence_id +
+    # artifact_type + graph_artifact_id) already recognises a re-synced
+    # artifact as the same row, but a random id here still overwrote its own
+    # primary key on every sync -- so a link or an open preview holding
+    # yesterday's id 404'd the moment someone re-fetched attendance, even
+    # though the underlying Teams artifact never changed. Hashing the same
+    # key this row is matched on gives it one id for life.
+    artifact_id = 'ART-' + hashlib.sha256(
+        f"{occurrence['id']}|{artifact_type}|{graph_id}".encode('utf-8')
+    ).hexdigest()[:32].upper()
     authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], {
-        'id': f'ART-{uuid.uuid4().hex.upper()}',
+        'id': artifact_id,
         'occurrence_id': occurrence['id'],
         'artifact_type': artifact_type,
         'graph_artifact_id': graph_id,
@@ -2378,17 +2400,30 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     )
     graph_settings = get_graph_settings()
     url = f'{graph_settings["base_url"].rstrip("/")}/{path}'
-    graph_request = urllib_request.Request(
-        url,
-        headers={
-            'Authorization': f'Bearer {microsoft_graph_token()}',
-            'Accept': 'text/vtt' if artifact_type == 'transcript' else 'video/mp4',
-        },
-        method='GET',
-    )
+    request_headers = {
+        'Authorization': f'Bearer {microsoft_graph_token()}',
+        'Accept': 'text/vtt' if artifact_type == 'transcript' else 'video/mp4',
+    }
+    # <video preload="metadata"> and its seek bar both depend on being able to
+    # ask for a byte range: without one it has to fetch the whole recording
+    # before it can show a duration or play a second of it. Graph's own
+    # /content route understands Range the same way a plain file download
+    # does, so the browser's header is forwarded verbatim and Graph's answer
+    # (200 or 206) decides what comes back -- this never guesses a range
+    # itself, only relays the one the browser already asked for.
+    range_header = clean_str(request.META.get('HTTP_RANGE')) if artifact_type == 'recording' else ''
+    if range_header:
+        request_headers['Range'] = range_header
+    graph_request = urllib_request.Request(url, headers=request_headers, method='GET')
     try:
         graph_response = urllib_request.urlopen(graph_request, timeout=45)
     except urllib_error.HTTPError as exc:
+        if exc.code == 416 and artifact_type == 'recording':
+            response = HttpResponse(status=416)
+            content_range = exc.headers.get('Content-Range')
+            if content_range:
+                response['Content-Range'] = content_range
+            return response
         detail = exc.read().decode('utf-8', errors='ignore')
         logger.warning('Unable to fetch Teams %s content: %s %s', artifact_type, exc.code, detail)
         return json_error(f'Microsoft Graph could not return the {artifact_type} content.', status=exc.code)
@@ -2399,12 +2434,27 @@ def curriculum_teams_meeting_artifact_content(request, live_session_id, artifact
     content_type = graph_response.headers.get('Content-Type') or ('text/vtt' if artifact_type == 'transcript' else 'video/mp4')
     filename = f'{live_session_id}-{artifact_type}.{"vtt" if artifact_type == "transcript" else "mp4"}'
     if artifact_type == 'recording':
-        return FileResponse(
-            graph_response,
-            as_attachment=clean_str(request.GET.get('preview')).lower() not in {'1', 'true', 'yes'},
-            filename=filename,
+        # Streamed straight through rather than buffered -- a recording can run
+        # to hundreds of MB, and FileResponse cannot help here anyway: it only
+        # learns a Content-Length by seeking the file it is given, and this one
+        # is a live, one-way socket read with no seek of its own.
+        response = StreamingHttpResponse(
+            iter(lambda: graph_response.read(65536), b''),
+            status=graph_response.status,
             content_type=content_type,
         )
+        response['Accept-Ranges'] = 'bytes'
+        content_length = graph_response.headers.get('Content-Length')
+        if content_length:
+            response['Content-Length'] = content_length
+        content_range = graph_response.headers.get('Content-Range')
+        if content_range:
+            response['Content-Range'] = content_range
+        as_attachment = clean_str(request.GET.get('preview')).lower() not in {'1', 'true', 'yes'}
+        response['Content-Disposition'] = (
+            f'{"attachment" if as_attachment else "inline"}; filename="{filename}"'
+        )
+        return response
     content = graph_response.read()
     graph_response.close()
     response = HttpResponse(content, content_type=content_type)
@@ -5560,6 +5610,23 @@ def canonical_staff_assignment_name(role, value, include_archived=True):
         return ''
     row = find_staff_profile_row(role, assignment, include_archived=include_archived)
     return staff_profile_name(row) or assignment
+
+
+def resolve_staff_assignment_email(role, value, include_archived=True):
+    """The staff directory email behind a tutor/coach name, or ''.
+
+    Modules only ever store the assigned person as a *name* (``tutor_name``),
+    matched here the same way ``canonical_staff_assignment_name`` matches it --
+    by id, then email, then name/slug -- against ``enrolment.Staff_users``. A
+    name with no matching staff profile (renamed, archived and excluded, or
+    simply mistyped) resolves to '' rather than raising, since a module save
+    must not fail just because the invite email could not be derived.
+    """
+    assignment = clean_str(value)
+    if is_blank_staff_assignment(assignment):
+        return ''
+    row = find_staff_profile_row(role, assignment, include_archived=include_archived)
+    return staff_profile_email(row) if row else ''
 
 
 def module_assignment_ids(module):
@@ -9486,6 +9553,7 @@ def provision_module_authoring_tables():
                 group_id varchar(255),
                 group_name varchar(255),
                 tutor_name varchar(255),
+                tutor_email varchar(320),
                 title varchar(500) not null,
                 description text,
                 color varchar(32),
@@ -9521,6 +9589,7 @@ def provision_module_authoring_tables():
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_type varchar(64)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists source_id varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists tutor_name varchar(255)')
+            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists tutor_email varchar(320)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists is_programme_deleted boolean not null default false')
         else:
             cursor.execute(f'pragma table_info({quote_ident(AUTHORING_MODULES_TABLE)})')
@@ -9555,6 +9624,8 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column source_id varchar(255)')
             if 'tutor_name' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column tutor_name varchar(255)')
+            if 'tutor_email' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column tutor_email varchar(320)')
             if 'is_programme_deleted' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column is_programme_deleted boolean not null default false')
         cursor.execute(f'''
@@ -14071,6 +14142,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     group_id = clean_str(payload.get('groupId') or payload.get('group_id') or delivery_metadata.get('groupId') or delivery_metadata.get('group_id') or existing_module_row.get('group_id'))
     group_name = clean_str(payload.get('groupName') or payload.get('group_name') or payload.get('group') or delivery_metadata.get('group') or existing_module_row.get('group_name'))
     tutor_name = canonical_staff_assignment_name('tutor', payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or delivery_metadata.get('tutor') or existing_module_row.get('tutor_name'))
+    tutor_email = resolve_staff_assignment_email('tutor', tutor_name) if tutor_name else ''
     session_week_day = payload.get('weekDays') or payload.get('sessionWeekDay') or payload.get('session_week_day') or payload.get('deliveryDays') or delivery_metadata.get('weekDays') or delivery_metadata.get('deliveryDays') or existing_module_row.get('session_week_day')
     session_start_time = payload.get('startTime') or payload.get('sessionStartTime') or payload.get('session_start_time') or delivery_metadata.get('startTime') or delivery_metadata.get('start_time') or existing_module_row.get('session_start_time')
     session_end_time = payload.get('endTime') or payload.get('sessionEndTime') or payload.get('session_end_time') or delivery_metadata.get('endTime') or delivery_metadata.get('end_time') or existing_module_row.get('session_end_time')
@@ -14122,7 +14194,6 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'cohort_name': cohort_name,
             'group_id': group_id,
             'group_name': group_name,
-            'tutor_name': tutor_name,
             'title': payload.get('title') or payload.get('name') or existing_module_row.get('title') or f'Module {module_catalogue_id}',
             'description': payload.get('description') if 'description' in payload else existing_module_row.get('description') or '',
             'color': payload.get('color') if 'color' in payload else delivery_metadata.get('color') or existing_module_row.get('color') or '',
@@ -14140,6 +14211,7 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'session_start_time': session_start_time or None,
             'session_end_time': session_end_time or None,
             'tutor_name': tutor_name or None,
+            'tutor_email': tutor_email or None,
         })
         link_live_session_series_to_module(module_catalogue_id, {**payload, 'weekStructure': weeks})
         authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
@@ -16942,8 +17014,15 @@ def curriculum_uploaded_file(request, path):
     )
     response['Accept-Ranges'] = 'bytes'
     response['Content-Length'] = str(length)
-    if content_type:
-        response['Content-Type'] = content_type
+    # Always state the type. FileResponse cannot infer one from a generator (it
+    # has no file name to look at) and falls back to text/html, which — with the
+    # nosniff header this site sends — is enough for a browser to refuse to
+    # render a rendered page image or play an audio file.
+    response['Content-Type'] = (
+        content_type
+        or mimetypes.guess_type(relative_path)[0]
+        or 'application/octet-stream'
+    )
     if requested:
         response['Content-Range'] = f'bytes {offset}-{offset + length - 1}/{total_size}'
     return response
@@ -19045,6 +19124,48 @@ def scope_learner_roster_payload(request, scope, identifier):
     }
 
 
+@require_GET
+def curriculum_module_meeting_invitees(request, module_catalogue_id):
+    """Who to invite to this module's Teams meeting, derived rather than typed.
+
+    Presenters: the module's own ``tutor_email`` (one tutor per module, stored
+    alongside ``tutor_name`` by both write paths -- module save and the group
+    staffing PATCH that fans a tutor out across its group's modules).
+
+    Attendees: every learner whose training plan carries this module, read off
+    ``learner_api.LearnerTrainingPlanModule.module_ref`` -- populated with the
+    same module catalogue id this endpoint is addressed by. This is a
+    per-learner plan, not the group roster: a learner whose plan has not
+    reached this module yet is correctly left out.
+
+    Both lists are a starting point for the Presenters/Attendees fields on the
+    Teams-meeting form, not a binding assignment -- the caller can still edit
+    freely before saving.
+    """
+    module_catalogue_id = clean_str(module_catalogue_id)
+    if not module_catalogue_id:
+        return json_error('A module id is required.')
+
+    module_rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+    module_row = module_rows[0] if module_rows else {}
+    tutor_email = clean_str(module_row.get('tutor_email'))
+
+    attendee_emails = (
+        LearnerTrainingPlanModule.objects
+        .filter(module_ref=module_catalogue_id)
+        .exclude(learner__email='')
+        .order_by('learner__email')
+        .values_list('learner__email', flat=True)
+        .distinct()
+    )
+
+    return JsonResponse({
+        'moduleCatalogueId': module_catalogue_id,
+        'presenters': [tutor_email] if tutor_email else [],
+        'attendees': [email for email in attendee_emails if email],
+    })
+
+
 # ---------------------------------------------------------------------------
 # Learner roster and achievement, one endpoint shape per scope.
 #
@@ -20920,6 +21041,7 @@ def update_staffing_assignment(identifier, payload):
     update_group_fields(group_id, updates)
 
     next_tutor = canonical_staff_assignment_name('tutor', payload.get('tutor')) if 'tutor' in payload else ''
+    next_tutor_email = resolve_staff_assignment_email('tutor', next_tutor) if next_tutor else ''
     next_coach = canonical_staff_assignment_name('coach', payload.get('coach')) if 'coach' in payload else clean_str(group_row.get('coach_name'))
     module_assignment_ids = [
         clean_str(row.get('module_catalogue_id'))
@@ -20930,6 +21052,7 @@ def update_staffing_assignment(identifier, payload):
         for module_id in module_assignment_ids:
             update_authoring_rows(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_id], {
                 'tutor_name': next_tutor or None,
+                'tutor_email': next_tutor_email or None,
                 'updated_at': datetime.utcnow(),
             })
     notify_staff_assignment_change()

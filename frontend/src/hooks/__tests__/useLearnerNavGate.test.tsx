@@ -27,6 +27,15 @@ const FULL_NAV: SidebarNavItem[] = [
   { id: 'learner-onboarding', label: 'My Enrolment', icon: 'ri-file-user-line', href: '/learner/onboarding' },
   { id: 'learner-compliance-documents', label: 'Compliance documents', icon: 'ri-file-line', href: '/learner/compliance-documents' },
   { id: 'learner-attendance', label: 'Attendance', icon: 'ri-calendar-line', href: '/learner/attendance' },
+  {
+    id: 'learner-group-monthly',
+    label: 'My Progress',
+    icon: 'ri-loop-left-line',
+    href: '',
+    children: [
+      { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+    ],
+  },
 ];
 
 beforeEach(() => {

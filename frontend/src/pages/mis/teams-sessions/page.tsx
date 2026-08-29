@@ -194,7 +194,7 @@ export default function MisTeamsSessionsPage() {
                 </div>
               )}
               <div className="flex items-center gap-3 mt-4">
-                <button className="flex-1 px-3 py-2 bg-primary-500 text-white rounded-lg text-[11px] font-semibold hover:bg-primary-600 transition-colors cursor-pointer whitespace-nowrap">
+                <button className="meeting-join-action flex-1 px-3 py-2 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer whitespace-nowrap">
                   <AppIcon className="ri-video-line mr-1"></AppIcon> Join Teams
                 </button>
                 <button className="flex-1 px-3 py-2 border border-background-300 bg-background-50 rounded-lg text-[11px] font-medium text-foreground-600 hover:bg-background-100 transition-colors cursor-pointer whitespace-nowrap">

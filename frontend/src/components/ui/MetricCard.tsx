@@ -44,34 +44,34 @@ export const MetricCard = memo(function MetricCard({
   const neutral = tone === 'neutral';
 
   const body = (
-    <>
-      <div className="flex items-start justify-between gap-2">
-        <p className="text-[12px] font-semibold uppercase tracking-[0.06em] text-foreground-400">
-          {label}
+    <div className="flex min-w-0 items-start gap-3">
+      {icon ? (
+        <span className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', style.bg, style.text)}>
+          <AppIcon className={cn(icon, 'text-[18px]')}></AppIcon>
+        </span>
+      ) : null}
+
+      <div className="min-w-0">
+        <p className="truncate text-[11px] font-medium text-foreground-500">{label}</p>
+        <p
+          className={cn(
+            'mt-1 text-[25px] font-semibold leading-none tabular-nums',
+            neutral ? 'text-foreground-900' : style.text,
+          )}
+        >
+          {value}
         </p>
-        {icon ? (
-          <AppIcon className={cn(icon, 'shrink-0 text-[15px]', neutral ? 'text-foreground-300' : style.text)}></AppIcon>
+
+        {note ? (
+          <p className="mt-1.5 truncate text-[11px] leading-snug text-foreground-500">{note}</p>
         ) : null}
       </div>
-
-      <p
-        className={cn(
-          'mt-1.5 text-[28px] font-semibold leading-none tabular-nums',
-          neutral ? 'text-foreground-900' : style.text,
-        )}
-      >
-        {value}
-      </p>
-
-      {note ? (
-        <p className="mt-1.5 text-[12px] leading-snug text-foreground-500">{note}</p>
-      ) : null}
-    </>
+    </div>
   );
 
   const surface = cn(
-    'rounded-2xl border bg-background-50 p-4 text-left shadow-sm',
-    active ? 'border-primary-400 ring-1 ring-primary-200' : 'border-foreground-200/70',
+    'rounded-xl bg-background-50 p-4 text-left shadow-sm',
+    active ? 'ring-1 ring-primary-200' : '',
     className,
   );
 
@@ -84,7 +84,7 @@ export const MetricCard = memo(function MetricCard({
       type="button"
       onClick={onClick}
       aria-pressed={active}
-      className={cn(surface, 'transition hover:border-primary-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300')}
+      className={cn(surface, 'transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300')}
     >
       {body}
     </button>
@@ -137,7 +137,7 @@ export function MetricRow({ children, className }: { children: ReactNode; classN
   return (
     <div
       className={cn(
-        'grid grid-cols-2 gap-x-5 gap-y-4 rounded-2xl border border-foreground-200/70 bg-background-50 p-4 shadow-sm sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6',
+        'grid grid-cols-2 gap-x-5 gap-y-4 rounded-xl bg-background-50 p-4 shadow-sm sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6',
         className,
       )}
     >

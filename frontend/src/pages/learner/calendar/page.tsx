@@ -870,7 +870,7 @@ export function LearnerCalendarContent() {
             <p className="text-sm text-foreground-500 leading-relaxed mb-5">{showEventDetails.description}</p>
             <div className="flex gap-2">
               {showEventDetails.meetingLink && (
-                <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap text-center"><AppIcon className="ri-video-chat-line mr-1"></AppIcon>Join Meeting</a>
+                <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap text-center"><AppIcon className="ri-video-chat-line mr-1"></AppIcon>Join Meeting</a>
               )}
               <button onClick={() => handleExportICS(showEventDetails)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line mr-1"></AppIcon>Export .ics</button>
               {showEventDetails.id.startsWith('custom-') && (

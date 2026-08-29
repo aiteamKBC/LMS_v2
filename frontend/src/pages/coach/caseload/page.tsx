@@ -17,7 +17,7 @@
 // ./components, anything that computes lives in ./lib.
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -33,7 +33,7 @@ import { LearnerQuickViewDrawer } from './components/LearnerQuickViewDrawer';
 import { LearnerStatusTabs } from './components/LearnerStatusTabs';
 import { LearnerTable } from './components/LearnerTable';
 import { LearnerToolbar, type CaseloadFilterState } from './components/LearnerToolbar';
-import { LearnersHeaderActions, LearnersHeaderMeta } from './components/LearnersHeader';
+import { LearnersHeaderActions } from './components/LearnersHeader';
 import { Pagination } from './components/Pagination';
 import { buildInsightMap, countCaseload } from './lib/attention';
 import { downloadLearnersPdf } from './lib/exportPdf';
@@ -106,7 +106,7 @@ const COACH_RAG_ORDER: Record<string, number> = { Red: 0, Amber: 1, Green: 2 };
 
 export default function CoachCaseload() {
   const navigate = useNavigate();
-  const { isInitialized } = useAuth();
+  const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator
   // opened the workspace as.
   const coach = useCoachIdentity();
@@ -151,7 +151,11 @@ export default function CoachCaseload() {
       if (!authenticatedCoachEmail) {
         setOwnerName(authenticatedCoachName);
         setLearners([]);
-        setError('Coach access is required to load this caseload.');
+        setError(
+          auth.account
+            ? 'Coach access is required to load this caseload.'
+            : 'Sign in with a coach account to load live learner data. Preview mode does not have a server session.',
+        );
         setLoading(false);
         return;
       }
@@ -159,7 +163,8 @@ export default function CoachCaseload() {
       try {
         const caseloadResponse = await coachFetch(CASELOAD_ENDPOINT, { signal: controller.signal });
         if (!caseloadResponse.ok) {
-          throw new Error(`Request failed with status ${caseloadResponse.status}`);
+          const payload = await caseloadResponse.json().catch(() => ({})) as { detail?: string; message?: string };
+          throw new Error(payload.detail || payload.message || `Request failed with status ${caseloadResponse.status}`);
         }
 
         const data: CaseloadApiResponse = await caseloadResponse.json();
@@ -181,7 +186,7 @@ export default function CoachCaseload() {
 
     loadCaseload();
     return () => controller.abort();
-  }, [authenticatedCoachEmail, authenticatedCoachName, isInitialized, reloadToken]);
+  }, [auth.account, authenticatedCoachEmail, authenticatedCoachName, isInitialized, reloadToken]);
 
   // --- derived data ---------------------------------------------------------
 
@@ -474,6 +479,15 @@ export default function CoachCaseload() {
     || Object.entries(filters).some(([key, value]) => value !== INITIAL_FILTERS[key as keyof CaseloadFilterState]);
   const allPageSelected = paginated.length > 0 && paginated.every((learner) => selectedLearnerIds.has(learner.id));
 
+  // A super-admin cannot read an arbitrary coach caseload until a coach has
+  // been selected. Reuse the existing directory picker instead of showing a
+  // misleading empty/error state when a deep link lands here first.
+  if (isInitialized && coach.canChooseCoach && !coach.isViewingAsCoach) {
+    return <Navigate to="/workspace/coach" replace />;
+  }
+
+  const needsLiveSignIn = isInitialized && !auth.account && !authenticatedCoachEmail;
+
   return (
     <WorkspaceShell
       role="coach"
@@ -490,7 +504,6 @@ export default function CoachCaseload() {
           icon="ri-group-line"
           title="My Learners"
           description="Monitor learner progress, identify risks and take action."
-          meta={<LearnersHeaderMeta counts={counts} />}
           actions={(
             <LearnersHeaderActions
               viewMode={viewMode}
@@ -521,7 +534,7 @@ export default function CoachCaseload() {
           </>
         ) : null}
 
-        <section className="overflow-hidden rounded-2xl border border-foreground-200/70 bg-white">
+        <section className="overflow-hidden rounded-2xl bg-white shadow-sm">
           {!error && learners.length > 0 ? (
             <div className="border-b border-foreground-100 p-3.5">
               <LearnerToolbar
@@ -590,7 +603,11 @@ export default function CoachCaseload() {
           {loading ? (
             <CaseloadLoading viewMode={viewMode} />
           ) : error ? (
-            <CaseloadError message={error} onRetry={handleRetry} />
+            <CaseloadError
+              message={error}
+              onRetry={handleRetry}
+              action={needsLiveSignIn ? { label: 'Sign in', onClick: () => navigate('/login', { state: { from: '/coach/caseload' } }) } : undefined}
+            />
           ) : learners.length === 0 ? (
             <CaseloadEmpty />
           ) : sorted.length === 0 ? (

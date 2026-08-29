@@ -4,8 +4,10 @@
  * Authored resource URLs are free text or an uploaded file's path, and each kind
  * needs a different viewer:
  *
- * - A deck WE host is rendered in-house (see @/api/slideDeck) — the same result
- *   on a laptop as in production, and the file never leaves our servers.
+ * - A deck or PDF WE host is rendered in-house, page by page (see
+ *   @/api/slideDeck) — the same result on a laptop as in production, the file
+ *   never leaves our servers, and it does not depend on whether the reader's
+ *   browser is set to preview PDFs or download them.
  * - Google Slides/Docs links have native embeds, and a PDF the browser draws
  *   itself, so both work from any origin.
  * - Anything else falls to Microsoft's Office Online viewer, which downloads the
@@ -29,8 +31,8 @@ export type DocEmbed =
   | { mode: 'unavailable'; reason: string };
 
 const PDF_RE = /\.pdf$/i;
-/** Deck formats the in-house renderer reads (OOXML only — not legacy .ppt). */
-const DECK_RE = /\.(pptx|ppsx|pptm|ppsm)$/i;
+/** Formats the in-house renderer reads: OOXML decks (not legacy .ppt) and PDFs. */
+const DECK_RE = /\.(pptx|ppsx|pptm|ppsm|pdf)$/i;
 
 /** Hostnames the public internet cannot resolve or route to. */
 function isPubliclyReachable(hostname: string): boolean {
@@ -83,13 +85,14 @@ export function resolveDocEmbed(url: string, origin = window.location.origin): D
   if (google) return { mode: 'native', src: google };
 
   const { pathname, hostname, origin: fileOrigin } = new URL(absolute);
-  // A deck we host ourselves: the backend renders it, so it shows the same way
-  // wherever this runs and the file is never handed to a third party.
+  // A document we host ourselves: the backend renders it to page images, so it
+  // shows the same way wherever this runs, is never handed to a third party,
+  // and never depends on the browser's own PDF handling.
   if (DECK_RE.test(pathname) && fileOrigin === new URL(origin).origin) {
     return { mode: 'deck', src: absolute };
   }
-  // PDFs render in the browser's own viewer, so they work from any origin —
-  // including a local dev server the Office viewer could never reach.
+  // A PDF somewhere else: the browser's own viewer is all we have, and it
+  // works from any origin unlike the Office viewer.
   if (PDF_RE.test(pathname)) return { mode: 'native', src: absolute };
 
   if (!isPubliclyReachable(hostname)) {

@@ -104,7 +104,11 @@ function buildBreadcrumbs(pathname: string, search: string, navItems: SidebarNav
 
     if (matched) {
       if (matchedParent && matchedParent.label) {
-        crumbs.push({ label: matchedParent.label, href: '', isLink: false });
+        // Group headers do not need a separate route in the sidebar, but a
+        // breadcrumb for the group should still be useful. Link it to the
+        // group's first available child rather than leaving plain text here.
+        const parentHref = matchedParent.href || matchedParent.children?.find(child => child.href)?.href || '';
+        crumbs.push({ label: matchedParent.label, href: parentHref, isLink: Boolean(parentHref) });
       }
       if (matched.href !== (dashboardItem?.href ?? '')) {
         crumbs.push({ label: matched.label, href: matched.href, isLink: true });
@@ -225,6 +229,7 @@ export function WorkspaceShell({
           onOpenSearch={() => setSearchOpen(true)}
           userName={displayName}
           onToggleMobileSidebar={handleToggleMobileSidebar}
+          role={role}
         />
 
         {/* Breadcrumbs */}
@@ -240,7 +245,7 @@ export function WorkspaceShell({
                   {index < breadcrumbs.length - 1 ? (
                     <>
                       {crumb.isLink ? (
-                        <Link to={crumb.href} className="text-foreground-400 hover:text-foreground-600 transition-smooth whitespace-nowrap">
+                        <Link to={crumb.href} className="whitespace-nowrap text-foreground-400 underline decoration-foreground-300/70 underline-offset-2 transition-smooth hover:text-primary-700 hover:decoration-primary-500">
                           {crumb.label}
                         </Link>
                       ) : (
@@ -249,7 +254,17 @@ export function WorkspaceShell({
                       <AppIcon className="ri-arrow-right-s-line text-foreground-200 text-xs"></AppIcon>
                     </>
                   ) : (
-                    <span className="text-foreground-700 font-medium whitespace-nowrap">{crumb.label}</span>
+                    crumb.isLink && crumb.href ? (
+                      <Link
+                        to={crumb.href}
+                        aria-current="page"
+                        className="whitespace-nowrap font-medium text-foreground-700 underline decoration-foreground-300/70 underline-offset-2 transition-colors hover:text-primary-700 hover:decoration-primary-500"
+                      >
+                        {crumb.label}
+                      </Link>
+                    ) : (
+                      <span className="font-medium whitespace-nowrap text-foreground-700">{crumb.label}</span>
+                    )
                   )}
                 </span>
               ))}

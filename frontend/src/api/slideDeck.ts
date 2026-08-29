@@ -88,6 +88,12 @@ export interface SlideDeck {
   slideHeightPx: number;
   slideCount: number;
   slides: Slide[];
+  /** 'page' for a rendered PDF, absent (slides) for a deck. */
+  unit?: 'slide' | 'page';
+  /** True when the document was longer than the renderer's page cap. */
+  truncated?: boolean;
+  /** Pages the document actually has, when more than were rendered. */
+  totalPages?: number;
   /** The uploaded file has gone; these slides come from the surviving render.
    *  Set by the backend — the open/download links stay broken until someone
    *  re-uploads the deck, so the viewer says so. */

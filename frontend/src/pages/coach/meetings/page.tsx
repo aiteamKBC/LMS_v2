@@ -389,7 +389,7 @@ export default function CoachMeetings() {
                         <RowAction
                           label="Join Meeting"
                           icon="ri-video-on-line"
-                          emphasis="primary"
+                          emphasis="meeting"
                           disabled={isBusy}
                           onClick={() => { handleJoin(event); }}
                         />
@@ -416,7 +416,7 @@ export default function CoachMeetings() {
                     ) : null}
 
                     {(actionError || actionNotice) ? (
-                      <div className={cn('rounded-lg border px-3 py-2 text-[12px]', actionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800')}>
+                      <div className={cn('rounded-lg border px-3 py-2 text-[12px]', actionError ? 'border-red-200 bg-red-50 text-red-700' : 'border-rose-200 bg-rose-50 text-rose-800')}>
                         {actionError || actionNotice}
                       </div>
                     ) : null}
