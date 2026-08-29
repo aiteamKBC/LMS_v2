@@ -20893,6 +20893,23 @@ def curriculum_group_detail(request, identifier):
 
     with transaction.atomic():
         updated_group = update_group_fields(group_id, updates) or group_row
+        module_delivery_updates = {
+            key: updates[key]
+            for key in ('session_week_day', 'session_start_time', 'session_end_time')
+            if key in updates
+        }
+        if module_delivery_updates:
+            module_delivery_updates['updated_at'] = datetime.utcnow()
+            # Module rows are the source used to derive the session calendar.
+            # They inherit the group's slot when attached, so a later group edit
+            # must move those inherited copies too or the calendar stays on the
+            # day/time chosen when the group was first created.
+            update_authoring_rows(
+                AUTHORING_MODULES_TABLE,
+                'group_id = %s',
+                [group_id],
+                module_delivery_updates,
+            )
         next_cohort_id = clean_str(updated_group.get('cohort_id'))
         if next_cohort_id and next_cohort_id != previous_cohort_id:
             if previous_cohort_id:
