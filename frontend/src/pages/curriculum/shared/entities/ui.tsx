@@ -181,8 +181,11 @@ export function EntityFilterBar({
 }
 
 /**
- * A CSS-grid table. Rows are buttons so the whole row opens the record — the
- * action cell stops propagation for the inline edit/delete controls.
+ * A CSS-grid table. Give it `rowHref` and the whole row opens the record: a
+ * stretched link is laid over the row, and the cells that are themselves
+ * interactive (`StackedCell` with an href, `NamedActions`) sit above it, so the
+ * inline controls keep working and the record still has one real, focusable
+ * link rather than a row-sized one that reads out every cell.
  *
  * Two states sit on top of the rows, both there because a save and the refresh
  * that follows it are seconds apart. `refreshing` runs a bar under the header
@@ -198,6 +201,7 @@ export function EntityTable<T>({
   rows,
   rowKey,
   renderRow,
+  rowHref,
   loading,
   refreshing,
   highlightKey,
@@ -208,6 +212,8 @@ export function EntityTable<T>({
   rows: T[];
   rowKey: (row: T) => string;
   renderRow: (row: T) => ReactNode;
+  /** Where clicking anywhere in the row goes, or nothing for a static row. */
+  rowHref?: (row: T) => string | null | undefined;
   loading?: boolean;
   /** A background reload is running behind the rows already on screen. */
   refreshing?: boolean;
@@ -270,6 +276,7 @@ export function EntityTable<T>({
             <div className="divide-y divide-background-200/70">
               {rows.map(row => {
                 const key = rowKey(row);
+                const href = rowHref?.(row);
                 return (
                   <div
                     key={key}
@@ -277,10 +284,23 @@ export function EntityTable<T>({
                       if (node) rowNodes.current.set(key, node);
                       else rowNodes.current.delete(key);
                     }}
-                    className={`${gridClass} gap-3 px-4 py-3 transition-smooth hover:bg-background-100/60${
+                    className={`relative ${gridClass} gap-3 px-4 py-3 transition-smooth hover:bg-background-100/60${
                       flashKey === key ? (reduceMotion ? ' bg-primary-100/70' : ' animate-row-flash') : ''
                     }`}
                   >
+                    {/* First in the row on purpose: positioned cells rendered
+                        after it paint on top, so the row's own links and
+                        buttons stay clickable. It is hidden from assistive
+                        tech and the tab order — the cell link is the one real
+                        link to the record. */}
+                    {href && (
+                      <Link
+                        to={href}
+                        aria-hidden="true"
+                        tabIndex={-1}
+                        className="absolute inset-0 cursor-pointer"
+                      />
+                    )}
                     {renderRow(row)}
                   </div>
                 );
@@ -340,7 +360,7 @@ export function RowActions({ actions }: {
   actions: Array<{ icon: string; label: string; onClick: () => void; tone?: 'default' | 'danger'; disabled?: boolean }>;
 }) {
   return (
-    <span className="flex items-center justify-end gap-1 self-center">
+    <span className="relative flex items-center justify-end gap-1 self-center">
       {actions.map(action => (
         <button
           key={action.label}
@@ -386,7 +406,7 @@ export function NamedActions({ actions }: {
   }>;
 }) {
   return (
-    <span className="flex flex-wrap items-center justify-end gap-1.5 self-center">
+    <span className="relative flex flex-wrap items-center justify-end gap-1.5 self-center">
       {actions.map(action => (
         <button
           key={action.label}
@@ -418,7 +438,7 @@ export function StackedCell({ primary, secondary, href }: { primary: ReactNode; 
   );
   if (!href) return <span className="min-w-0 self-center">{body}</span>;
   return (
-    <Link to={href} className="min-w-0 self-center transition-smooth hover:text-primary-700">
+    <Link to={href} className="relative min-w-0 self-center transition-smooth hover:text-primary-700">
       {body}
     </Link>
   );

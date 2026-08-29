@@ -15188,17 +15188,24 @@ def curriculum_preview_tutor_availability(request):
 @require_GET
 def curriculum_programmes(request):
     visibility = curriculum_visibility(request)
+    # All three layers have to honour the bypass together: rebuilding the overview
+    # but then reading module counts off a cached enrichment of the previous one
+    # would report the fresh programmes with stale numbers.
+    force = request_bypasses_curriculum_cache(request)
     payload = cached_curriculum_value(
         f'overview:{visibility}:compact',
         lambda: build_curriculum_payload(visibility, compact=True),
+        force=force,
     )
     enriched_modules = cached_curriculum_value(
         f'modules:{visibility}:enriched',
         lambda: enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all'),
+        force=force,
     )
     programmes = cached_curriculum_value(
         f'programmes:{visibility}:with-module-counts',
         lambda: enrich_programmes_with_module_counts(payload['programmes'], enriched_modules, modules_enriched=True, include_archived=visibility == 'all'),
+        force=force,
     )
     return curriculum_collection_response(
         payload,
@@ -15224,9 +15231,24 @@ def curriculum_programme_tree_detail(request, identifier):
     payload = cached_curriculum_value(
         f'programme-detail:{visibility}:{clean_str(identifier)}',
         build_detail_payload,
+        # Without this, the reload a save fires against this endpoint was answered
+        # out of the payload cache. In one worker the write had already cleared
+        # that cache, so it looked correct; under Gunicorn the reload lands on a
+        # worker that never saw the write and serves its pre-write tree for the
+        # rest of the TTL -- a cohort or group created in the wizard that does
+        # not appear until the cache expires.
+        force=request_bypasses_curriculum_cache(request),
     )
     if not payload:
         return json_error('Programme not found.', status=404)
+    # ``cohorts`` is the same cohorts/groups/modules as ``flat``, re-emitted as a
+    # nested tree, so every module is serialised twice -- and a module carries its
+    # whole weekStructure, which is the bulk of this response. A caller that reads
+    # ``flat`` (the Programme workspace reads nothing else) can ask for the tree to
+    # be left out. The cache still holds the full payload, so one entry serves both
+    # shapes and no caller has to change.
+    if clean_str(request.GET.get('shape')).lower() == 'flat':
+        payload = {key: value for key, value in payload.items() if key != 'cohorts'}
     return JsonResponse(payload)
 
 
@@ -16385,6 +16407,7 @@ def curriculum_module_structure_resolve(request):
     structure_payloads = cached_curriculum_value(
         structure_payloads_cache_key(structure_ids, **structure_options),
         lambda: get_authoring_structure_payloads(structure_ids, **structure_options),
+        force=request_bypasses_curriculum_cache(request),
     )
 
     def resolved_payloads(candidate_ids):
@@ -16639,7 +16662,11 @@ def curriculum_component_collection(request):
             if module_catalogue_ids:
                 return curriculum_results_response(component_builder_rows(module_catalogue_ids), request=request)
             return curriculum_results_response(
-                cached_curriculum_value('components:builder', component_builder_rows),
+                cached_curriculum_value(
+                    'components:builder',
+                    component_builder_rows,
+                    force=request_bypasses_curriculum_cache(request),
+                ),
                 request=request,
             )
         except Exception:
@@ -21042,7 +21069,11 @@ def curriculum_holidays(request):
             ]
         return [serialize_holiday_row(item) for item in rows]
 
-    holidays = cached_curriculum_value(f'holidays:{visibility}', build_holidays)
+    holidays = cached_curriculum_value(
+        f'holidays:{visibility}',
+        build_holidays,
+        force=request_bypasses_curriculum_cache(request),
+    )
     return curriculum_results_response(holidays)
 
 

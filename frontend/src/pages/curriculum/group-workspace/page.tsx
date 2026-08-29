@@ -256,6 +256,7 @@ export default function GroupWorkspacePage() {
             gridClass={MODULE_GRID}
             rows={groupModules}
             rowKey={module => moduleIdentity(module) || module.id}
+            rowHref={module => (moduleIdentity(module) ? `/curriculum/modules/${encodeURIComponent(moduleIdentity(module))}` : undefined)}
             loading={loading && !loaded}
             refreshing={refreshing}
             empty={(

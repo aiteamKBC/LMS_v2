@@ -1227,7 +1227,8 @@ export interface FreeProgrammeModule {
 export interface CurriculumProgrammeDetail {
   schema: string;
   programme: CurriculumProgramme;
-  cohorts: Array<CurriculumCohort & { groups: Array<CurriculumGroup & { modules: CurriculumModule[] }> }>;
+  /** Only present when the caller does not ask for `shape=flat`; `flat` carries the same records. */
+  cohorts?: Array<CurriculumCohort & { groups: Array<CurriculumGroup & { modules: CurriculumModule[] }> }>;
   flat: {
     cohorts: CurriculumCohort[];
     groups: CurriculumGroup[];
@@ -1565,47 +1566,70 @@ export function getCurriculumCacheStats() {
   return multiTierCache.getStats();
 }
 
+/**
+ * Drop what a write to `path` has just made stale.
+ *
+ * Called twice per mutation (see fetchJson): once before the request, so a read
+ * that races it cannot be answered out of the pre-write cache, and once after it
+ * resolves, because a GET that finished while the write was in flight will have
+ * stored a payload built before the write landed.
+ */
+function invalidateForMutation(path: string): void {
+  if (path.includes('/programmes/tree/')) {
+    // Tree save: invalidate all programme trees and related data
+    multiTierCache.invalidateByPattern(/\/overview\//);
+    multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
+    multiTierCache.invalidateByEntity('programme');
+    multiTierCache.invalidateByEntity('cohort');
+    multiTierCache.invalidateByEntity('group');
+    multiTierCache.invalidateByEntity('module');
+  } else if (path.includes('/programmes/')) {
+    multiTierCache.invalidateByPattern(/\/overview\//);
+    multiTierCache.invalidateByEntity('programme');
+    multiTierCache.invalidateByEntity('cohort');
+    multiTierCache.invalidateByEntity('group');
+    multiTierCache.invalidateByEntity('module');
+  } else if (path.includes('/cohorts/') || path.includes('/groups/') || path.includes('/modules/')) {
+    // The overview payload carries programmes, cohorts, groups AND modules in
+    // one document, and a programme's detail tree carries the same structure.
+    // Neither is tagged with an entity type, so an entity-scoped invalidation
+    // left both in place: creating a group refreshed the page you were on (that
+    // reload asks for fresh data explicitly) but the next page you opened read
+    // the pre-write overview out of cache and showed no new group until a full
+    // browser refresh threw the cache away.
+    multiTierCache.invalidateByPattern(/\/overview\//);
+    multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
+    multiTierCache.invalidateByEntity('cohort');
+    multiTierCache.invalidateByEntity('group');
+    multiTierCache.invalidateByEntity('module');
+  } else if (path.includes('/ksb-')) {
+    multiTierCache.invalidateByEntity('ksb');
+  } else {
+    // Fallback: clear all caches for unknown mutations
+    multiTierCache.clear();
+  }
+}
+
 async function fetchJson<T>(path: string, init?: CurriculumRequestInit): Promise<T> {
   const method = (init?.method || 'GET').toUpperCase();
   if (method !== 'GET') {
-    // Any GET started before this point predates the write, so skipCache callers
-    // must not reuse it.
-    mutationEpoch += 1;
-    // For mutations, invalidate cache selectively based on the endpoint
-    if (path.includes('/programmes/tree/')) {
-      // Tree save: invalidate all programme trees and related data
-      multiTierCache.invalidateByPattern(/\/overview\//);
-      multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
-      multiTierCache.invalidateByEntity('programme');
-      multiTierCache.invalidateByEntity('cohort');
-      multiTierCache.invalidateByEntity('group');
-      multiTierCache.invalidateByEntity('module');
-    } else if (path.includes('/programmes/')) {
-      multiTierCache.invalidateByPattern(/\/overview\//);
-      multiTierCache.invalidateByEntity('programme');
-      multiTierCache.invalidateByEntity('cohort');
-      multiTierCache.invalidateByEntity('group');
-      multiTierCache.invalidateByEntity('module');
-    } else if (path.includes('/cohorts/') || path.includes('/groups/') || path.includes('/modules/')) {
-      // The overview payload carries programmes, cohorts, groups AND modules in
-      // one document, and a programme's detail tree carries the same structure.
-      // Neither is tagged with an entity type, so an entity-scoped invalidation
-      // left both in place: creating a group refreshed the page you were on (that
-      // reload asks for fresh data explicitly) but the next page you opened read
-      // the pre-write overview out of cache and showed no new group until a full
-      // browser refresh threw the cache away.
-      multiTierCache.invalidateByPattern(/\/overview\//);
-      multiTierCache.invalidateByPattern(/\/programmes\/.*\/detail\//);
-      multiTierCache.invalidateByEntity('cohort');
-      multiTierCache.invalidateByEntity('group');
-      multiTierCache.invalidateByEntity('module');
-    } else if (path.includes('/ksb-')) {
-      multiTierCache.invalidateByEntity('ksb');
-    } else {
-      // Fallback: clear all caches for unknown mutations
-      multiTierCache.clear();
+    invalidateForMutation(path);
+    try {
+      return await fetchJsonUncached<T>(path, init);
+    } finally {
+      // The write is committed only now. A GET that was already in flight read
+      // the database before it landed, so its payload predates the write even
+      // though it finished afterwards -- drop it, and only then move the epoch
+      // on.
+      //
+      // The epoch used to be bumped up front, which tagged every GET started
+      // *during* the write as current. The reload a save fires straight
+      // afterwards would then be allowed to join one of them (see the in-flight
+      // check below) and paint a payload that did not contain the record just
+      // written: a create that reported success and left no row on screen.
+      invalidateForMutation(path);
+      mutationEpoch += 1;
     }
-    return fetchJsonUncached<T>(path, init);
   }
 
   // GET: check multi-tier cache
@@ -1683,8 +1707,18 @@ async function fetchJsonUncached<T>(path: string, init?: CurriculumRequestInit):
   const signal = callerSignal && timeoutController
     ? anySignal([callerSignal, timeoutController.signal])
     : callerSignal || timeoutController?.signal;
+  // The bypass travels as a query parameter as well as a header. A reverse
+  // proxy is free to drop Cache-Control on the way to the origin, and when that
+  // happens the backend stops treating the request as a post-write read and
+  // answers it from its own payload cache -- the reload after a save then paints
+  // the state from before the save. The query string cannot be stripped, and the
+  // backend already accepts either. The cache key is deliberately still `path`,
+  // so this does not fragment in-flight sharing.
+  const url = init?.skipCache
+    ? `${API_BASE_URL}${path}${path.includes('?') ? '&' : '?'}skipCache=true`
+    : `${API_BASE_URL}${path}`;
   try {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(url, {
     ...fetchInit,
     ...(init?.skipCache ? { cache: 'no-store' as const } : {}),
     signal,
@@ -2089,6 +2123,11 @@ export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact
 export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; skipCache?: boolean } = {}): Promise<CurriculumProgrammeDetail> {
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
+  // `flat` is the only half of this response anything reads. The other half is
+  // the same cohorts, groups and modules again as a nested tree, and a module
+  // carries its whole weekStructure -- so asking for it was doubling a payload
+  // that is already the largest in the app.
+  query.set('shape', 'flat');
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache });
 }

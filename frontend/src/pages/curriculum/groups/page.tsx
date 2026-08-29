@@ -262,6 +262,7 @@ export default function CurriculumGroupsPage() {
           gridClass={GRID}
           rows={visibleGroups}
           rowKey={group => group.id}
+          rowHref={group => `/curriculum/groups/${encodeURIComponent(group.id)}`}
           loading={loading && !loaded}
           refreshing={refreshing}
           highlightKey={highlightId}

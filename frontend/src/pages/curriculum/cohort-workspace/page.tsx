@@ -249,6 +249,7 @@ export default function CohortWorkspacePage() {
             gridClass={GROUP_GRID}
             rows={cohortGroups}
             rowKey={group => group.id}
+            rowHref={group => `/curriculum/groups/${encodeURIComponent(group.id)}`}
             loading={loading && !loaded}
             refreshing={refreshing}
             highlightKey={highlightId}
@@ -290,6 +291,7 @@ export default function CohortWorkspacePage() {
             gridClass={MODULE_GRID}
             rows={cohortModules}
             rowKey={module => moduleIdentity(module) || module.id}
+            rowHref={module => (moduleIdentity(module) ? `/curriculum/modules/${encodeURIComponent(moduleIdentity(module))}` : undefined)}
             loading={loading && !loaded}
             empty={(
               <EntityEmptyState

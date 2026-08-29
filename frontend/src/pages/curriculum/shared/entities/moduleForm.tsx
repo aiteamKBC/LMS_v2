@@ -328,7 +328,6 @@ export function ModuleFormDrawer({
       color: module?.color || parentGroup?.color || '#2563eb',
     };
     baseline.current = initial;
-    console.log('[TEMP-DEBUG moduleForm] drawer (re)initialised. module prop =', module, 'initial state =', initial);
     setName(initial.name);
     setProgrammeId(initial.programmeId);
     setCohortId(initial.cohortId);
@@ -620,10 +619,7 @@ export function ModuleFormDrawer({
     const trimmed = name.trim();
     if (!trimmed) { setError('Give the module a name.'); return; }
     if (!module && !programmeId && !groupIds.length) { setError('Choose the programme this module belongs to.'); return; }
-    if (dateWindowError) {
-      console.log('[TEMP-DEBUG moduleForm] blocked by dateWindowError', dateWindowError, { startDate, endDate, selectedCohort });
-      setError(dateWindowError); return;
-    }
+    if (dateWindowError) { setError(dateWindowError); return; }
     // Pre-empted rather than sent: the save enforces this and would refuse, so
     // firing it only trades an instant answer for a round-trip and the same
     // refusal. The clash itself is spelled out under the Tutor field, so this is
@@ -719,14 +715,10 @@ export function ModuleFormDrawer({
           startTime: cleanText(selectedGroup?.startTime) || undefined,
           endTime: cleanText(selectedGroup?.endTime) || undefined,
         };
-        console.log('[TEMP-DEBUG moduleForm] baseline at open', baseline.current);
-        console.log('[TEMP-DEBUG moduleForm] current form state', { name, programmeId, cohortId, groupIds, sessionsNumber, startDate, targetEndDate, endDate, tutor, status, description, color });
-        console.log('[TEMP-DEBUG moduleForm] PATCH module.id =', module.id, 'payload =', patchPayload);
         // The PATCH merges onto the stored structure, so only what this form
         // owns is sent: the weeks, components and KSB mappings authored in the
         // Module Builder are left exactly as they are.
-        const patchResult = await updateCurriculumModule(module.id, patchPayload);
-        console.log('[TEMP-DEBUG moduleForm] PATCH response =', patchResult);
+        await updateCurriculumModule(module.id, patchPayload);
         // Groups ticked on top of the module's own: each gets a delivery of its
         // own rather than sharing this one, so its dates come from its own
         // delivery days and its tutor booking is checked against its own slot.
@@ -748,7 +740,6 @@ export function ModuleFormDrawer({
         // is seconds on a slow connection -- where reopening the drawer offered the
         // pre-save weeks and saving again wrote them straight back.
         await onSaved({ catalogueId: module.id, name: trimmed, created: false, ...savedParents() });
-        console.log('[TEMP-DEBUG moduleForm] onSaved() resolved for', module.id);
         // In a chain the wizard owns closing and confirming, so that a run of
         // four steps says what it created once rather than four times.
         if (chained) return;
@@ -783,13 +774,19 @@ export function ModuleFormDrawer({
         }
         if (!chained) onClose();
         await onSaved({ catalogueId: createdCatalogueId.current, name: trimmed, created: true, ...savedParents() });
-        if (!chained && ordered.length > 1) {
-          // Worth saying out loud: one press produced one delivery per group, and
-          // each of them is authored and scheduled separately from here on.
+        // In a chain the wizard owns closing and confirming, so that a run of
+        // four steps says what it created once rather than four times.
+        if (!chained) {
+          // Worth saying out loud when it is more than one group: one press
+          // produced one delivery per group, and each of them is authored and
+          // scheduled separately from here on.
+          const many = ordered.length > 1;
           await showCurriculumAlert({
-            title: 'Module created for each group',
-            text: `${trimmed} now runs for ${ordered.map(group => group.name).join(', ')}. Each group has its own dates and tutor.`,
-            timer: 3000,
+            title: many ? 'Module created for each group' : 'Module created',
+            text: many
+              ? `${trimmed} now runs for ${ordered.map(group => group.name).join(', ')}. Each group has its own dates and tutor.`
+              : `${trimmed} now runs for ${ordered[0]?.name || selectedGroup?.name || 'this group'}.`,
+            timer: many ? 3000 : 1800,
           });
         }
         return;
@@ -813,8 +810,13 @@ export function ModuleFormDrawer({
       });
       if (!chained) onClose();
       await onSaved({ catalogueId: created.catalogueId || created.id, name: trimmed, created: true, ...savedParents() });
+      if (chained) return;
+      await showCurriculumAlert({
+        title: 'Module created',
+        text: `${trimmed} is saved to the catalogue. Place it in a group to give it dates and a tutor.`,
+        timer: 2200,
+      });
     } catch (err) {
-      console.log('[TEMP-DEBUG moduleForm] submit() threw', err);
       // A tutor already booked in that slot is reported by the backend as a
       // sentence worth showing verbatim.
       setError(tutorConflictMessage(err) || (err instanceof Error ? err.message : 'The module could not be saved.'));

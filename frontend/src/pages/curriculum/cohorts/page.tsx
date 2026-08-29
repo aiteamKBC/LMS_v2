@@ -238,6 +238,7 @@ export default function CurriculumCohortsPage() {
           gridClass={GRID}
           rows={visibleCohorts}
           rowKey={cohort => cohort.id}
+          rowHref={cohort => `/curriculum/cohorts/${encodeURIComponent(cohort.id)}`}
           loading={loading && !loaded}
           refreshing={refreshing}
           highlightKey={highlightId}
