@@ -2071,8 +2071,15 @@ export function fetchCurriculumTeamsMeetingSummaries(
   );
 }
 
-export function fetchCurriculumSessions(signal?: AbortSignal): Promise<CurriculumSession[]> {
-  return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal });
+export function fetchCurriculumSessions(
+  signal?: AbortSignal,
+  options: { skipCache?: boolean } = {},
+): Promise<CurriculumSession[]> {
+  // Sessions live in the 45s "dynamic" cache tier, so a caller that has just
+  // scheduled a module (or opens straight after) can otherwise read a stale
+  // snapshot that predates its session dates. skipCache lets those callers read
+  // the current plan instead of waiting out the TTL.
+  return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal, skipCache: options.skipCache });
 }
 
 export function fetchCurriculumTutors(signal?: AbortSignal, options: { skipCache?: boolean } = {}): Promise<CurriculumStaffProfile[]> {
