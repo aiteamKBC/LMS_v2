@@ -2493,6 +2493,31 @@ class CurriculumPersistenceTests(CurriculumPersistenceHarness):
         self.assertEqual(module['cohort_id'], 'COHORT-DATA-2')
         self.assertEqual(module['programme_id'], 'PROG-DATA')
 
+    def test_editing_group_delivery_slot_moves_existing_module_sessions(self):
+        self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
+
+        response = self.patch_json('/curriculum_api/curriculum/groups/GROUP-DATA-1/', {
+            'weekDays': 'Friday',
+            'startTime': '13:00',
+            'endTime': '15:00',
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+
+        module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
+        self.assertEqual(module['session_week_day'], 'Friday')
+        self.assertEqual(module['session_start_time'], '13:00')
+        self.assertEqual(module['session_end_time'], '15:00')
+
+        sessions = views.build_sessions_from_authoring_modules(
+            views.safe_authoring_module_rows(),
+            {},
+        )
+        module_sessions = [item for item in sessions if item['moduleCatalogueId'] == 'MOD-DATA-1']
+        self.assertTrue(module_sessions)
+        self.assertTrue(all(item['day'] == 'Friday' for item in module_sessions))
+        self.assertTrue(all(item['startTime'] == '13:00' for item in module_sessions))
+        self.assertTrue(all(item['endTime'] == '15:00' for item in module_sessions))
+
     def test_id_edits_preserve_parent_relationships(self):
         self.post_json('/curriculum_api/curriculum/programmes/tree/', self.tree_payload())
         self.patch_json('/curriculum_api/curriculum/cohorts/COHORT-DATA-1/', {'name': 'Renamed Cohort'})

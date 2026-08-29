@@ -977,10 +977,13 @@ function buildModuleWeeks(
     const sorted = [...weekSessions].sort((a, b) => clean(a.date).localeCompare(clean(b.date)));
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    const componentOtjh = weekComponents.reduce((sum, component) => (
-      sum + (Number(component.expectedOtjh) || ((Number(component.duration) || 0) / 60))
-    ), 0);
-    const sessionOtjh = sorted.reduce((sum, session) => sum + durationMinutes(session.startTime, session.endTime), 0) / 60;
+    // Programme OTJH is authored curriculum: only a component's explicit
+    // expected OTJH contributes. Generated timetable sessions (and a generic
+    // component duration) must not invent planned OTJH before content exists.
+    const componentOtjh = weekComponents.reduce(
+      (sum, component) => sum + (Number(component.expectedOtjh) || 0),
+      0,
+    );
     const weekTitle = clean(weekComponents.find(component => clean(component.weekTitle))?.weekTitle);
 
     return {
@@ -991,7 +994,7 @@ function buildModuleWeeks(
       title: clean(authoredWeek?.title) || weekTitle || `Week ${weekNumber}`,
       startDate: formatDateLabel(first?.date || ''),
       endDate: formatDateLabel(last?.date || first?.date || ''),
-      otjh: Math.round((weekComponents.length ? componentOtjh : sessionOtjh) * 10) / 10,
+      otjh: Math.round(componentOtjh * 10) / 10,
       components: weekComponents,
       sessions: sorted.map(session => ({
         id: session.id,
@@ -1166,13 +1169,30 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   });
   const holidayById = new Map((data.holidays || []).map(holiday => [String(holiday.id), holiday]));
 
-  const moduleMatchesGroup = (module: Module, cohortName: string, group: CurriculumGroup | { id: string; name: string; modules?: string[] }) => {
-    const groupModuleNames = group.modules ?? [];
-    const sameGroupId = Boolean(module.groupId && normalise(module.groupId) === normalise(group.id));
-    const sameGroupName = Boolean(module.group && normalise(module.group) === normalise(group.name));
-    const sameCohort = !module.cohort || normalise(module.cohort) === normalise(cohortName);
-    const listedByName = groupModuleNames.some(name => normalise(name) === normalise(module.name));
-    return sameGroupId || (sameGroupName && sameCohort) || listedByName;
+  const moduleMatchesGroup = (module: Module, cohortName: string, group: CurriculumGroup | { id: string; name: string; moduleIds?: string[]; modules?: string[] }) => {
+    const moduleGroupId = normalise(module.groupId);
+    if (moduleGroupId) return moduleGroupId === normalise(group.id);
+
+    const moduleGroupName = normalise(module.group);
+    if (moduleGroupName) {
+      const sameCohort = !module.cohort || normalise(module.cohort) === normalise(cohortName);
+      return moduleGroupName === normalise(group.name) && sameCohort;
+    }
+
+    const moduleIdentityKeys = uniqueCleanValues([
+      module.moduleCatalogueId,
+      module.catalogueId,
+      module.structureId,
+      module.moduleId,
+      module.id,
+      module.sourceId,
+    ]).map(normalise);
+    const groupModuleIds = (group.moduleIds ?? []).map(normalise);
+    if (groupModuleIds.length && moduleIdentityKeys.some(key => groupModuleIds.includes(key))) return true;
+
+    // Name-only membership is retained for legacy rows with no group context.
+    // It must never override an explicit group id/name from another group.
+    return (group.modules ?? []).some(name => normalise(name) === normalise(module.name));
   };
 
   const cohorts = programmeCohorts.map(cohort => ({

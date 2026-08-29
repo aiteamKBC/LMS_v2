@@ -9,6 +9,7 @@ import type {
   CurriculumGroup,
   CurriculumModule,
   CurriculumProgramme,
+  CurriculumSession,
 } from '@/lib/curriculumApi';
 
 /**
@@ -273,6 +274,91 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     expect(screen.getByText('Coach One')).toBeInTheDocument();
     // The tutor does not, even though the group payload carries one.
     expect(screen.queryByText('Tutor One')).not.toBeInTheDocument();
+  });
+
+  it('does not count a same-named module that is assigned to another group', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const otherGroup = {
+      ...groups[0],
+      id: 'GROUP-2',
+      name: 'Group B',
+      learners: 0,
+      modules: ['Data Foundations'],
+    } as CurriculumGroup;
+    const otherModule = {
+      ...modules[0],
+      id: 'MOD-OTHER-GROUP',
+      moduleCatalogueId: 'MOD-OTHER-GROUP',
+      sourceId: 'MOD-OTHER-GROUP',
+      groupId: 'GROUP-2',
+      group: 'Group B',
+    } as CurriculumModule;
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: {
+        cohorts,
+        groups: [...groups, otherGroup],
+        groupIds: ['GROUP-1', 'GROUP-2'],
+        modules: [...modules, otherModule],
+        sessions: [],
+        components: [],
+      },
+    });
+
+    await renderWorkspace();
+    await openTab(/Groups/);
+
+    const groupRow = screen.getByRole('link', { name: /Group A/ }).parentElement;
+    expect(groupRow).not.toBeNull();
+    expect(groupRow?.children[4]).toHaveTextContent('1');
+  });
+
+  it('reports zero OTJH when sessions exist but no components have been authored', async () => {
+    const api = await import('@/lib/curriculumApi');
+    const scheduledSession = {
+      id: 'SESSION-1',
+      trainingPlanId: 'PLAN-1',
+      programmeId: 'PROG-DATA',
+      cohortId: 'COHORT-1',
+      groupId: 'GROUP-1',
+      moduleCatalogueId: 'MOD-1',
+      title: 'Generated live session',
+      type: 'Live Session',
+      date: '2026-09-07',
+      day: 'Monday',
+      startTime: '09:00',
+      endTime: '11:00',
+      tutor: 'Tutor One',
+      group: 'Group A',
+      cohort: 'Sept 2026',
+      programme: 'Data Analyst',
+      venue: 'Online',
+      module: 'Data Foundations',
+      week: 1,
+      status: 'scheduled',
+      ksbCodes: [],
+    } as CurriculumSession;
+    vi.mocked(api.fetchCurriculumProgrammeDetail).mockResolvedValueOnce({
+      schema: 'test',
+      programme,
+      cohorts: [],
+      flat: {
+        cohorts,
+        groups,
+        groupIds: ['GROUP-1'],
+        modules,
+        sessions: [scheduledSession],
+        components: [],
+      },
+    });
+
+    await renderWorkspace();
+
+    const otjhCard = screen.getByText('OTJH').closest('.rounded-xl');
+    expect(otjhCard).not.toBeNull();
+    expect(otjhCard).toHaveTextContent('0h');
   });
 
   it('keeps empty table structure visible and disables filters until records exist', async () => {

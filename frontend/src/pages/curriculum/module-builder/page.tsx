@@ -7,6 +7,7 @@ import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature
 import { useCurriculumModules } from '@/hooks/useCurriculumModules';
 import { useCurriculumKsbSets } from '@/hooks/useCurriculumKsbSets';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
+import { useReducedMotion } from '@/hooks/useReducedMotion';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
   fetchCurriculumHolidays,
@@ -225,6 +226,7 @@ async function showBuilderDeleteSwal({
 }
 
 export default function ModuleBuilder() {
+  const reduceMotion = useReducedMotion();
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedCreateScopeRef = useRef({
     programmeId: (searchParams.get('programme') || searchParams.get('programmeId') || '').trim(),
@@ -252,6 +254,10 @@ export default function ModuleBuilder() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
   const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === '1');
+  // The create drawer can fan one module out into several group deliveries.
+  // Keep the catalogue visibly busy until creation and its silent reload both
+  // finish, matching the progress line used by the Groups table.
+  const [moduleCreating, setModuleCreating] = useState(false);
   // Programme -> cohort -> group tree plus the holiday list: read only by the
   // module form, so it is fetched the first time that drawer opens rather than
   // on every Module Builder load.
@@ -1928,6 +1934,18 @@ export default function ModuleBuilder() {
               </button>
             </div>
           </div>
+          <div className="relative h-0.5 overflow-hidden" aria-hidden="true">
+            {moduleCreating && !loading && (
+              <span
+                className={reduceMotion
+                  ? 'absolute inset-0 bg-primary-500/40'
+                  : 'absolute inset-y-0 left-0 w-1/4 animate-entity-refresh rounded-full bg-primary-500/70'}
+              />
+            )}
+          </div>
+          <span className="sr-only" role="status" aria-live="polite">
+            {moduleCreating && !loading ? 'Creating module and refreshing the catalogue' : ''}
+          </span>
           <div className="max-h-[calc(100vh-270px)] min-h-[480px] overflow-auto bg-background-100/35 p-3">
             {loading ? (
               <ModuleListSkeleton />
@@ -2007,6 +2025,7 @@ export default function ModuleBuilder() {
           groups={moduleFormScope.groups}
           holidays={moduleFormScope.holidays}
           tutorNames={tutorNames}
+          onSavingChange={setModuleCreating}
           onClose={closeCreateDrawer}
           onSaved={openSavedModule}
         />

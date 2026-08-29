@@ -34,9 +34,15 @@ vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
 }));
 
 vi.mock('@/pages/curriculum/shared/entities/moduleForm', () => ({
-  ModuleFormDrawer: ({ open, defaults }: { open: boolean; defaults?: { programmeId?: string; cohortId?: string; groupId?: string } }) => open ? (
+  ModuleFormDrawer: ({ open, defaults, onSavingChange }: {
+    open: boolean;
+    defaults?: { programmeId?: string; cohortId?: string; groupId?: string };
+    onSavingChange?: (saving: boolean) => void;
+  }) => open ? (
     <div data-testid="module-form-defaults">
       {defaults?.programmeId}|{defaults?.cohortId}|{defaults?.groupId}
+      <button type="button" onClick={() => onSavingChange?.(true)}>Start module creation</button>
+      <button type="button" onClick={() => onSavingChange?.(false)}>Finish module creation</button>
     </div>
   ) : null,
 }));
@@ -340,6 +346,20 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
     expect(await within(hierarchy).findByText('Sept 2026')).toBeInTheDocument();
     expect(within(hierarchy).getByText('Group A')).toBeInTheDocument();
     expect(within(hierarchy).getByText('Modules')).toBeInTheDocument();
+  });
+
+  it('shows the catalogue progress line for the full module creation lifecycle', async () => {
+    const user = userEvent.setup();
+    await renderCatalogue('?programme=PROG-DATA&cohort=COHORT-1&group=GROUP-1&create=1');
+
+    await user.click(screen.getByRole('button', { name: 'Start module creation' }));
+
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('Creating module and refreshing the catalogue');
+    expect(status.previousElementSibling?.querySelector('.animate-entity-refresh')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Finish module creation' }));
+    expect(status).toBeEmptyDOMElement();
   });
 
   it('opens components with the programme name, programme KSB source and one week per session', async () => {
