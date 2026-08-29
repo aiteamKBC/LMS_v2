@@ -118,7 +118,8 @@ class Command(BaseCommand):
                         "Ip_address"   text,
                         "User_agent"   text,
                         "Created_at"   timestamptz NOT NULL DEFAULT now(),
-                        "Last_seen_at" timestamptz
+                        "Last_seen_at" timestamptz,
+                        "Remember"     boolean NOT NULL DEFAULT false
                     )
                 ''')
                 # Supports "revoke every session for this account" on password
@@ -200,6 +201,17 @@ class Command(BaseCommand):
                         f'ALTER TABLE "{SCHEMA}"."{table}" '
                         f'ADD COLUMN IF NOT EXISTS "Acknowledged_by" text'
                     )
+
+                # --- rolling session expiry (added after first release) -------
+                # Renewal happens long after login, so it cannot ask the request
+                # whether "remember me" was ticked — the choice has to live on
+                # the row. NOT NULL DEFAULT false backfills every existing
+                # session as a normal one, which is the safer policy and means
+                # nobody is signed out by the column appearing.
+                cur.execute(
+                    f'ALTER TABLE "{SCHEMA}"."Login_sessions" '
+                    f'ADD COLUMN IF NOT EXISTS "Remember" boolean NOT NULL DEFAULT false'
+                )
 
                 # --- audit ----------------------------------------------------
                 # No FK to Login_accounts: a failed attempt against an address

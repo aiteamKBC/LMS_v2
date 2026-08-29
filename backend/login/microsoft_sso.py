@@ -396,5 +396,9 @@ def callback(request):
 
     destination = payload.get("next") or "/"
     response = HttpResponseRedirect(f"{frontend_base_url()}{destination}")
-    set_session_cookie(response, token, ttl)
+    # Deliberately not remembered. There is no checkbox on this route to read a
+    # preference from, and inventing one in the person's favour is the wrong
+    # default for a console holding learner records: signing in again costs a
+    # redirect through a tenant that has usually already authenticated them.
+    set_session_cookie(response, token, ttl, remember=False)
     return _clear_nonce(response)

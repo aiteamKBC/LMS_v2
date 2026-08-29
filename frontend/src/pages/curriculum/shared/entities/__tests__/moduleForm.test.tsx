@@ -232,6 +232,33 @@ describe('ModuleFormDrawer', () => {
     expect(onSaved).toHaveBeenCalledWith({ catalogueId: 'MOD-NEW', name: 'Data Modelling', created: true });
   });
 
+  it('reports saving for the full create and caller refresh lifecycle', async () => {
+    let releaseCreate!: () => void;
+    const createPending = new Promise<void>(resolve => { releaseCreate = resolve; });
+    createGroupModuleMock.mockImplementationOnce(async () => {
+      await createPending;
+      return { created: [{ moduleCatalogueId: 'MOD-NEW' }] };
+    });
+    const onSavingChange = vi.fn();
+    const onSaved = vi.fn(async () => undefined);
+    renderDrawer({
+      lockGroup: true,
+      defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' },
+      onSavingChange,
+      onSaved,
+    });
+
+    await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Data Modelling');
+    await userEvent.click(screen.getByRole('button', { name: 'Create module' }));
+
+    await waitFor(() => expect(onSavingChange).toHaveBeenLastCalledWith(true));
+    expect(onSaved).not.toHaveBeenCalled();
+
+    releaseCreate();
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    await waitFor(() => expect(onSavingChange).toHaveBeenLastCalledWith(false));
+  });
+
   it('shows the end date the backend calculated by default', async () => {
     // The end date is the last session of the generated plan, so the drawer
     // displays it until the user picks a different date.

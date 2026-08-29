@@ -1,6 +1,7 @@
 import { lazy } from "react";
 import type { RouteObject } from "react-router-dom";
 import { Navigate } from "react-router-dom";
+import { RequireAuth } from "@/components/feature/RequireAuth";
 
 // Route components are code-split: each page becomes its own chunk, fetched on
 // first navigation instead of shipping in the entry bundle. `lazy` is provided
@@ -1371,4 +1372,45 @@ const routes: RouteObject[] = [
   },
 ];
 
-export default routes;
+/**
+ * The only routes a signed-out visitor may render. Everything else in `routes`
+ * is nested under <RequireAuth> below, so protection is the default and opening
+ * a page to the public is an edit to this list — not something a new route gets
+ * for free by being added to the array like every other one.
+ *
+ * What is here and why:
+ *  - "/" and "/login" are the sign-in form itself.
+ *  - "/forgot-password", "/set-password", "/reset-password" are reached from an
+ *    emailed link by someone who by definition cannot sign in yet; each carries
+ *    its own single-use token, which the backend validates.
+ *  - "/access-required" is where a signed-in staff account with no access grant
+ *    lands. It holds no data — only the request-access button.
+ *
+ * "/home" is deliberately NOT here. It was the public launcher, and its "explore
+ * this section" buttons opened real workspaces reading live data for a visitor
+ * with no session at all.
+ */
+const PUBLIC_PATHS = new Set([
+  "/",
+  "/login",
+  "/access-required",
+  "/forgot-password",
+  "/set-password",
+  "/reset-password",
+]);
+
+const isPublic = (route: RouteObject) =>
+  typeof route.path === "string" && PUBLIC_PATHS.has(route.path);
+
+export default [
+  ...routes.filter(isPublic),
+  {
+    // Pathless layout route: matching is unchanged (children keep their own
+    // absolute paths), but nothing below renders until RequireAuth has a
+    // server session to render it for. The "*" catch-all lives in here too, so
+    // a signed-out visitor guessing at URLs is asked to sign in rather than
+    // being told which paths exist.
+    element: <RequireAuth />,
+    children: routes.filter((route) => !isPublic(route)),
+  },
+] satisfies RouteObject[];

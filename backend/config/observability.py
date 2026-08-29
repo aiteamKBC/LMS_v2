@@ -25,6 +25,24 @@ SAFE_LOG_FIELDS = (
     "operation_id",
     "graph_status",
     "attempt_count",
+    # Curriculum write tracking. Ids, tables, counts and branch names only --
+    # deliberately no group/cohort/staff *names*, so turning the trace on never
+    # starts spilling people's names into the log stream.
+    "entity_type",
+    "entity_id",
+    "parent_id",
+    "action",
+    "outcome",
+    "table",
+    "row_count",
+    "matched_id",
+    "reason",
+    # Session lifecycle (login.sessions). Ids, a boolean and a duration -- no
+    # token, no token hash, no email, no IP, so turning these into counters
+    # never puts a credential or a person's identity in the log stream.
+    "session_id",
+    "remember",
+    "ttl_seconds",
 )
 
 

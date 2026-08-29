@@ -181,16 +181,16 @@ export default function CurriculumStudio() {
             <SummaryCard label="Needs attention" value={openIssueCount} detail={attentionIssues.length ? `${attentionIssues.length} types of action` : 'No blockers found'} href="/curriculum/quality" icon="ri-error-warning-line" loading={loading} warning={openIssueCount > 0} />
           </section>
 
-          <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(340px,.65fr)]">
-            <div className="rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
+          <section className="grid min-w-0 items-stretch gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,.65fr)]">
+            <div className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Needs attention" detail="Live gaps, ordered by impact. Each row opens where it can be fixed." href="/curriculum/quality" action="View Quality" />
-              <div className="p-3">
+              <div className="flex-1 p-3">
                 {loading ? <LoadingRows count={4} /> : attentionIssues.length ? <div className="space-y-2">{attentionIssues.map(issue => <AttentionRow key={issue.key} issue={issue} />)}</div> : <EmptyState icon="ri-checkbox-circle-line" title="No curriculum blockers found" detail="You can continue authoring or review an active programme." />}
               </div>
             </div>
-            <aside className="rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
+            <aside className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-foreground-200 bg-background-50 shadow-sm">
               <SectionHeader title="Continue working" detail="Draft and recently updated modules." href="/curriculum/library" action="Open Library" />
-              <div className="divide-y divide-background-200 px-4">
+              <div className="flex-1 divide-y divide-background-200 px-3 sm:px-4">
                 {loading ? <LoadingRows count={4} /> : continueModules.length ? continueModules.map(module => <ContinueModuleRow key={moduleIdentity(module)} module={module} />) : <EmptyState icon="ri-layout-4-line" title="No modules yet" detail="Create your first reusable module from the Library." compact />}
               </div>
             </aside>
@@ -326,7 +326,7 @@ function SummaryCard({ label, value, detail, href, icon, loading, warning = fals
 
 function AttentionRow({ issue }: { issue: AttentionIssue }) {
   const tones: Record<AttentionTone, string> = { rose: 'bg-rose-50 text-rose-700', amber: 'bg-amber-50 text-amber-700', sky: 'bg-sky-50 text-sky-700' };
-  return <Link to={issue.href} className="group grid gap-3 rounded-xl border border-background-200 bg-background-100/45 p-3 transition-smooth hover:border-primary-200 hover:bg-primary-50/35 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"><span className={`flex h-10 w-10 items-center justify-center rounded-xl ${tones[issue.tone]}`}><AppIcon className={`${issue.icon} text-lg`} /></span><span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><span className="text-[12px] font-bold text-foreground-900">{issue.title}</span><span className="rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-extrabold text-foreground-700 shadow-sm">{issue.count}</span></span><span className="mt-1 block text-[11px] leading-5 text-foreground-500">{issue.detail}</span></span><span className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700">{issue.action}<AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5" /></span></Link>;
+  return <Link to={issue.href} className="group grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-x-3 gap-y-2 rounded-xl border border-background-200 bg-background-100/45 p-3 transition-smooth hover:border-primary-200 hover:bg-primary-50/35 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"><span className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tones[issue.tone]}`}><AppIcon className={`${issue.icon} text-lg`} /></span><span className="min-w-0"><span className="flex flex-wrap items-center gap-2"><span className="text-[12px] font-bold text-foreground-900">{issue.title}</span><span className="shrink-0 rounded-full bg-background-50 px-2 py-0.5 text-[10px] font-extrabold text-foreground-700 shadow-sm">{issue.count}</span></span><span className="mt-1 block text-[11px] leading-5 text-foreground-500">{issue.detail}</span></span><span className="col-start-2 inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 sm:col-start-auto sm:whitespace-nowrap">{issue.action}<AppIcon className="ri-arrow-right-line transition-transform group-hover:translate-x-0.5" /></span></Link>;
 }
 
 function ContinueModuleRow({ module }: { module: CurriculumModule }) {
@@ -345,7 +345,7 @@ function WorkflowCard({ step, title, detail, href, icon }: { step: string; title
 }
 
 function SectionHeader({ title, detail, href, action }: { title: string; detail: string; href: string; action: string }) {
-  return <div className="flex flex-col gap-2 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="font-heading text-base font-bold text-foreground-950">{title}</h2><p className="mt-1 text-[11px] text-foreground-500">{detail}</p></div><Link to={href} className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:text-primary-800">{action}<AppIcon className="ri-arrow-right-line" /></Link></div>;
+  return <div className="flex min-w-0 flex-col gap-2 border-b border-background-200 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><h2 className="font-heading text-base font-bold text-foreground-950">{title}</h2><p className="mt-1 text-[11px] leading-5 text-foreground-500">{detail}</p></div><Link to={href} className="inline-flex shrink-0 items-center gap-1 self-start whitespace-nowrap text-[11px] font-bold text-primary-700 hover:text-primary-800 sm:self-auto">{action}<AppIcon className="ri-arrow-right-line" /></Link></div>;
 }
 
 function EmptyState({ icon, title, detail, compact = false }: { icon: string; title: string; detail: string; compact?: boolean }) {

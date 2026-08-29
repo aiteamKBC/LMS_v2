@@ -175,6 +175,7 @@ export function ModuleFormDrawer({
   chain,
   onClose,
   onSaved,
+  onSavingChange,
 }: {
   open: boolean;
   /** Present when editing; absent when creating. */
@@ -192,6 +193,8 @@ export function ModuleFormDrawer({
   chain?: FormChainStep;
   onClose: () => void;
   onSaved: (saved: SavedModuleRef) => unknown | Promise<unknown>;
+  /** Lets the owning table keep its progress line visible for the whole save. */
+  onSavingChange?: (saving: boolean) => void;
 }) {
   const [name, setName] = useState('');
   const [programmeId, setProgrammeId] = useState('');
@@ -243,6 +246,10 @@ export function ModuleFormDrawer({
 
   // The structure wizard drives this same form as the last step of its chain.
   const chained = Boolean(chain?.chained);
+
+  useEffect(() => {
+    onSavingChange?.(saving);
+  }, [onSavingChange, saving]);
 
   const dirty = !sameFormValues(
     { name, programmeId, cohortId, groupIds, sessionsNumber, startDate, targetEndDate, tutor, status, description, color },

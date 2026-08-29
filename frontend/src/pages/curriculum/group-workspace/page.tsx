@@ -52,6 +52,7 @@ export default function GroupWorkspacePage() {
   const [tab, setTab] = useState<Tab>('overview');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [moduleDrawerOpen, setModuleDrawerOpen] = useState(false);
+  const [moduleCreating, setModuleCreating] = useState(false);
   const [sessions, setSessions] = useState<CurriculumSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
@@ -202,12 +203,15 @@ export default function GroupWorkspacePage() {
               </button>
               <button
                 type="button"
-                onClick={() => setModuleDrawerOpen(true)}
-                disabled={!group}
+                onClick={() => {
+                  setTab('modules');
+                  setModuleDrawerOpen(true);
+                }}
+                disabled={!group || moduleCreating}
                 className="inline-flex h-10 items-center gap-2 rounded-xl border border-foreground-200 bg-background-50 px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:opacity-50"
               >
-                <AppIcon className="ri-add-line text-sm"></AppIcon>
-                Add module
+                <AppIcon className={`${moduleCreating ? 'ri-loader-4-line animate-spin' : 'ri-add-line'} text-sm`}></AppIcon>
+                {moduleCreating ? 'Creating module...' : 'Add module'}
               </button>
             </>
           )}
@@ -261,7 +265,7 @@ export default function GroupWorkspacePage() {
             rows={groupModules}
             rowKey={module => moduleIdentity(module) || module.id}
             loading={loading && !loaded}
-            refreshing={refreshing}
+            refreshing={refreshing || moduleCreating}
             empty={(
               <EntityEmptyState
                 icon="ri-stack-line"
@@ -357,6 +361,7 @@ export default function GroupWorkspacePage() {
         holidays={holidays}
         tutorNames={tutorNames}
         lockGroup
+        onSavingChange={setModuleCreating}
         onClose={() => setModuleDrawerOpen(false)}
         onSaved={async () => {
           await reload({ silent: true });

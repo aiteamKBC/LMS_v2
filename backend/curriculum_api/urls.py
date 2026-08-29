@@ -58,6 +58,7 @@ urlpatterns = [
     path('curriculum/components/<str:component_id>/', views.curriculum_component_detail, name='curriculum-component-detail'),
     path('curriculum/teams-meetings/', views.curriculum_teams_meeting, name='curriculum-teams-meeting'),
     path('curriculum/teams-meetings/summary/', views.curriculum_teams_meeting_summary, name='curriculum-teams-meeting-summary'),
+    path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule/', views.curriculum_teams_meeting_schedule, name='curriculum-teams-meeting-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/', views.curriculum_teams_meeting_artifacts, name='curriculum-teams-meeting-artifacts'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/<str:artifact_id>/content/', views.curriculum_teams_meeting_artifact_content, name='curriculum-teams-meeting-artifact-content'),

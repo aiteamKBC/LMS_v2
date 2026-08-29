@@ -49,6 +49,8 @@ import type {
 } from '@/lib/curriculumApi';
 import {
   fetchCurriculumComponents,
+  fetchCurriculumLiveSessionOccurrences,
+  type CurriculumLiveSessionOccurrence,
   fetchCurriculumProgrammes,
   fetchCurriculumProgrammeDetail,
   fetchCurriculumProgrammeKsbCoverage,
@@ -64,6 +66,7 @@ import {
   updateCurriculumGroup,
 } from '@/lib/curriculumApi';
 import { type KsbMapping } from '../module-builder/moduleAuthoringData';
+import { SessionsTree } from './SessionsTree';
 
 // ============================================================
 // Types — Full Programme Hierarchy
@@ -254,11 +257,13 @@ interface Programme {
 // A delivery session shown on the Sessions tab, derived from real week-builder
 // components: `live-session` components are Live, `video` components are Recorded.
 type DeliverySessionKind = 'live' | 'recorded';
-interface DeliverySession {
+export interface DeliverySession {
   id: string;
   kind: DeliverySessionKind;
   title: string;
   module: string;
+  /** The module the row belongs to — the link target for "Open in builder". */
+  moduleCatalogueId: string;
   week: number;
   /** The week's own title, empty when the author never gave it one. */
   weekTitle: string;
@@ -266,6 +271,9 @@ interface DeliverySession {
   weekStartDate: string;
   /** The meeting's own scheduled date and time. Empty means unscheduled. */
   date: string;
+  /** The best machine-sortable instant for this session (occurrence start when
+   *  tracked, else the authored date). Drives month grouping and ordering. */
+  dateIso: string;
   time: string;
   groups: string[];
   url: string;
@@ -274,7 +282,20 @@ interface DeliverySession {
   attendanceRequired: boolean;
   recordingExpected: boolean;
   ksbRefs: string[];
+  /** Real occurrence status from the sync service ('scheduled' | 'completed' |
+   *  'cancelled'); falls back to a planned/authoring status when untracked. */
   status: CurriculumComponent['status'] | string;
+  /** The live-session series id (component.settings.teamsLiveSessionId), needed
+   *  to lazy-load a completed session's attendance/transcript/recording. */
+  liveSessionId: string;
+  /** This session's occurrence id + number, used to pick its row out of the
+   *  series' artifacts payload. */
+  occurrenceId: string;
+  sessionNumber: number;
+  /** Populated only for completed occurrences (from the sync service). */
+  actualStart: string;
+  actualEnd: string;
+  participantCount: number;
 }
 
 // A week and a session are two different records and neither may borrow the
@@ -705,9 +726,17 @@ function repairMojibake(value: string) {
 
 function formatDateLabel(value: string) {
   if (!value) return 'TBD';
-  const date = new Date(value);
+  // A date-only string ("2026-08-29") parses as UTC midnight; rendering it in the
+  // browser's local zone then rolls it back a day for anyone west of UTC. Anchor
+  // those to UTC noon and format in UTC so the calendar day is preserved. Full
+  // ISO instants carry a real moment and keep their local rendering.
+  const trimmed = value.trim();
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(trimmed);
+  const date = new Date(dateOnly ? `${trimmed}T12:00:00Z` : trimmed);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  return date.toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short', year: 'numeric', ...(dateOnly ? { timeZone: 'UTC' } : {}),
+  });
 }
 
 function durationMinutes(startTime: string, endTime: string) {
@@ -977,10 +1006,13 @@ function buildModuleWeeks(
     const sorted = [...weekSessions].sort((a, b) => clean(a.date).localeCompare(clean(b.date)));
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    const componentOtjh = weekComponents.reduce((sum, component) => (
-      sum + (Number(component.expectedOtjh) || ((Number(component.duration) || 0) / 60))
-    ), 0);
-    const sessionOtjh = sorted.reduce((sum, session) => sum + durationMinutes(session.startTime, session.endTime), 0) / 60;
+    // Programme OTJH is authored curriculum: only a component's explicit
+    // expected OTJH contributes. Generated timetable sessions (and a generic
+    // component duration) must not invent planned OTJH before content exists.
+    const componentOtjh = weekComponents.reduce(
+      (sum, component) => sum + (Number(component.expectedOtjh) || 0),
+      0,
+    );
     const weekTitle = clean(weekComponents.find(component => clean(component.weekTitle))?.weekTitle);
 
     return {
@@ -991,7 +1023,7 @@ function buildModuleWeeks(
       title: clean(authoredWeek?.title) || weekTitle || `Week ${weekNumber}`,
       startDate: formatDateLabel(first?.date || ''),
       endDate: formatDateLabel(last?.date || first?.date || ''),
-      otjh: Math.round((weekComponents.length ? componentOtjh : sessionOtjh) * 10) / 10,
+      otjh: Math.round(componentOtjh * 10) / 10,
       components: weekComponents,
       sessions: sorted.map(session => ({
         id: session.id,
@@ -1166,13 +1198,30 @@ function buildLiveProgramme(data: CurriculumOverview | null, routeId: string): {
   });
   const holidayById = new Map((data.holidays || []).map(holiday => [String(holiday.id), holiday]));
 
-  const moduleMatchesGroup = (module: Module, cohortName: string, group: CurriculumGroup | { id: string; name: string; modules?: string[] }) => {
-    const groupModuleNames = group.modules ?? [];
-    const sameGroupId = Boolean(module.groupId && normalise(module.groupId) === normalise(group.id));
-    const sameGroupName = Boolean(module.group && normalise(module.group) === normalise(group.name));
-    const sameCohort = !module.cohort || normalise(module.cohort) === normalise(cohortName);
-    const listedByName = groupModuleNames.some(name => normalise(name) === normalise(module.name));
-    return sameGroupId || (sameGroupName && sameCohort) || listedByName;
+  const moduleMatchesGroup = (module: Module, cohortName: string, group: CurriculumGroup | { id: string; name: string; moduleIds?: string[]; modules?: string[] }) => {
+    const moduleGroupId = normalise(module.groupId);
+    if (moduleGroupId) return moduleGroupId === normalise(group.id);
+
+    const moduleGroupName = normalise(module.group);
+    if (moduleGroupName) {
+      const sameCohort = !module.cohort || normalise(module.cohort) === normalise(cohortName);
+      return moduleGroupName === normalise(group.name) && sameCohort;
+    }
+
+    const moduleIdentityKeys = uniqueCleanValues([
+      module.moduleCatalogueId,
+      module.catalogueId,
+      module.structureId,
+      module.moduleId,
+      module.id,
+      module.sourceId,
+    ]).map(normalise);
+    const groupModuleIds = (group.moduleIds ?? []).map(normalise);
+    if (groupModuleIds.length && moduleIdentityKeys.some(key => groupModuleIds.includes(key))) return true;
+
+    // Name-only membership is retained for legacy rows with no group context.
+    // It must never override an explicit group id/name from another group.
+    return (group.modules ?? []).some(name => normalise(name) === normalise(module.name));
   };
 
   const cohorts = programmeCohorts.map(cohort => ({
@@ -1624,7 +1673,6 @@ const COHORT_GRID = 'grid grid-cols-[minmax(170px,1.4fr)_minmax(150px,1.1fr)_min
 // buttons or turning a single row into an uneven two-line layout.
 const GROUP_GRID = 'grid grid-cols-[minmax(200px,1.35fr)_minmax(160px,1fr)_minmax(180px,1fr)_90px_90px_minmax(210px,auto)]';
 const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_70px_100px_80px_70px_120px]';
-const SESSION_GRID = 'grid grid-cols-[minmax(200px,1.6fr)_minmax(150px,1.1fr)_minmax(130px,.9fr)_90px_minmax(130px,1fr)_170px]';
 
 const TAB_LABELS: Record<Tab, string> = {
   overview: 'Overview',
@@ -1731,8 +1779,13 @@ export default function ProgrammeDetailPage() {
   const [sessionKind, setSessionKind] = useState<'live' | 'recorded'>('live');
   const [sessionSearch, setSessionSearch] = useState('');
   const [sessionModuleFilter, setSessionModuleFilter] = useState('');
-  const [sessionPage, setSessionPage] = useState(1);
-  const [sessionPageSize, setSessionPageSize] = useState(25);
+  // Real per-occurrence status/dates from the sync service, keyed for O(1) lookup
+  // by occurrence id and by `${liveSessionId}::${sessionNumber}` (a component
+  // carries one or both). The Sessions tab reads status from here — it never
+  // decides scheduled/completed from a date itself.
+  const [liveOccurrences, setLiveOccurrences] = useState<Map<string, CurriculumLiveSessionOccurrence>>(() => new Map());
+  const [occurrencesLoading, setOccurrencesLoading] = useState(false);
+  const occurrencesRequestKeyRef = useRef('');
   const [ksbSearch, setKsbSearch] = useState('');
   const [ksbTraceOpen, setKsbTraceOpen] = useState(false);
   const [programmeDrawerOpen, setProgrammeDrawerOpen] = useState(false);
@@ -1867,6 +1920,8 @@ export default function ProgrammeDetailPage() {
     componentsRequestKeyRef.current = '';
     coverageRequestKeyRef.current = '';
     rosterRequestKeyRef.current = '';
+    occurrencesRequestKeyRef.current = '';
+    setLiveOccurrences(new Map());
     setLearnerRoster(null);
     setLearnerRosterError(null);
   }, [id]);
@@ -1899,6 +1954,63 @@ export default function ProgrammeDetailPage() {
     };
   }, [data]);
 
+  const programmeModuleCatalogueIds = useMemo(() => {
+    if (!data) return [] as string[];
+    return [...new Set(data.modules.flatMap(module => [
+      module.moduleCatalogueId,
+      module.catalogueId,
+      module.structureId,
+      module.moduleId,
+      ...(module.relatedCatalogueIds || []),
+    ]).map(value => clean(value)).filter(Boolean))];
+  }, [data]);
+
+  const loadLiveOccurrences = useCallback(async (options: { skipCache?: boolean } = {}) => {
+    if (!programmeModuleCatalogueIds.length) {
+      setLiveOccurrences(new Map());
+      return;
+    }
+    setOccurrencesLoading(true);
+    try {
+      const response = await fetchCurriculumLiveSessionOccurrences({
+        moduleCatalogueIds: programmeModuleCatalogueIds,
+        skipCache: options.skipCache,
+      });
+      const next = new Map<string, CurriculumLiveSessionOccurrence>();
+      for (const occurrence of response.occurrences) {
+        if (occurrence.occurrenceId) next.set(occurrence.occurrenceId, occurrence);
+        if (occurrence.liveSessionId && occurrence.sessionNumber) {
+          next.set(`${occurrence.liveSessionId}::${occurrence.sessionNumber}`, occurrence);
+        }
+        // Components created before the per-occurrence link was stamped carry only
+        // the series id + their scheduled instant (never the session number). The
+        // instant is the reliable join in that case — it matches the occurrence's
+        // scheduled_start exactly. Key by epoch ms so tz spelling can't matter.
+        const instant = Date.parse(occurrence.scheduledStart);
+        if (occurrence.liveSessionId && Number.isFinite(instant)) {
+          next.set(`${occurrence.liveSessionId}::inst:${instant}`, occurrence);
+        }
+      }
+      setLiveOccurrences(next);
+    } catch (error) {
+      console.warn('Unable to load live-session occurrences.', error);
+    } finally {
+      setOccurrencesLoading(false);
+    }
+  }, [programmeModuleCatalogueIds]);
+
+  // Fetch real occurrence status once, when the Sessions tab is first opened for
+  // a programme. Keyed on the module set so switching programmes refetches, but
+  // re-opening the same tab does not.
+  useEffect(() => {
+    if (tab !== 'sessions') return;
+    const key = programmeModuleCatalogueIds.join('|');
+    if (!key) return;
+    if (occurrencesRequestKeyRef.current === key) return;
+    occurrencesRequestKeyRef.current = key;
+    void loadLiveOccurrences();
+  }, [tab, programmeModuleCatalogueIds, loadLiveOccurrences]);
+
   useEffect(() => {
     if (!needsCoverage) return undefined;
     if (programmeKsbSets.length) return undefined;
@@ -1923,9 +2035,6 @@ export default function ProgrammeDetailPage() {
     return () => controller.abort();
   }, [needsCoverage, skillsStandards.length]);
 
-  useEffect(() => {
-    setSessionPage(1);
-  }, [sessionSearch, sessionModuleFilter, sessionKind, sessionPageSize]);
 
   // ---------------------------------------------------------------- delivery
 
@@ -2025,6 +2134,7 @@ export default function ProgrammeDetailPage() {
   const deliverySessions = useMemo<DeliverySession[]>(() => {
     const rows: DeliverySession[] = [];
     PROGRAMME.modules.forEach(mod => {
+      const moduleCatalogueId = clean(mod.moduleCatalogueId || mod.catalogueId);
       mod.weeksData.forEach(wk => {
         (wk.components || []).forEach(component => {
           const kind = deliveryKindForComponent(component);
@@ -2042,30 +2152,68 @@ export default function ProgrammeDetailPage() {
           // A generic "Week 3" is the absence of a title, not a title, so the
           // row is not made to print it twice.
           const authoredWeekTitle = clean(wk.title);
+
+          // Match this live component to its real occurrence. The attach flow
+          // stamps the occurrence id/number into the component's settings; the
+          // occurrence carries the status the sync service authored. We never
+          // decide scheduled/completed from a date here.
+          const liveSessionId = clean(settings.teamsLiveSessionId);
+          const occurrenceId = clean(settings.teamsOccurrenceId);
+          const sessionNumber = Number(settings.teamsSessionNumber) || 0;
+          // Match by occurrence id, then session number, then the scheduled
+          // instant — the last covers components that only ever got the series id
+          // stamped (no per-occurrence link), which is common in existing data.
+          const componentInstant = parsedSessionDate && !Number.isNaN(parsedSessionDate.getTime())
+            ? parsedSessionDate.getTime()
+            : NaN;
+          const occurrence = kind === 'live'
+            ? (liveOccurrences.get(occurrenceId)
+              || (liveSessionId && sessionNumber ? liveOccurrences.get(`${liveSessionId}::${sessionNumber}`) : undefined)
+              || (liveSessionId && Number.isFinite(componentInstant) ? liveOccurrences.get(`${liveSessionId}::inst:${componentInstant}`) : undefined))
+            : undefined;
+
+          const authoredDate = clean(settings.sessionDate);
+          // Only positive, finite minutes are a duration; anything else is "—".
+          const rawDuration = Number(settings.durationMinutes) || Number(component.duration) || 0;
+          const safeDuration = Number.isFinite(rawDuration) && rawDuration > 0 ? Math.round(rawDuration) : 0;
+
+          // Real status wins. Without a tracked occurrence, fall back to a plain
+          // planned/authoring label (never "completed", which only the service sets).
+          const status = occurrence?.status
+            || (kind === 'live' && (sessionUrl || authoredDate) ? 'scheduled' : component.status || 'draft');
+
           rows.push({
             id: component.id,
             kind,
             title: clean(component.title, kind === 'live' ? 'Live session' : 'Recorded video'),
             module: mod.name,
+            moduleCatalogueId,
             week: wk.number,
             weekTitle: normalise(authoredWeekTitle) === `week ${wk.number}` ? '' : authoredWeekTitle,
             weekStartDate: clean(wk.startDate),
-            date: clean(settings.sessionDate),
+            date: authoredDate,
+            dateIso: clean(occurrence?.scheduledStart) || sessionDateTimeUtc || authoredDate,
             time: clean(settings.sessionTime) || sessionTimeUtc,
             groups: groupNames,
             url: sessionUrl,
             provider: clean(settings.provider || settings.sourceType),
-            durationMinutes: Number(settings.durationMinutes) || Number(component.duration) || 0,
+            durationMinutes: safeDuration,
             attendanceRequired: kind === 'live' && settings.attendanceRequired !== false,
             recordingExpected: Boolean(settings.recordingExpected),
             ksbRefs: component.ksbRefs || [],
-            status: kind === 'live' && sessionUrl ? 'scheduled' : component.status || 'draft',
+            status,
+            liveSessionId,
+            occurrenceId: clean(occurrence?.occurrenceId) || occurrenceId,
+            sessionNumber,
+            actualStart: clean(occurrence?.actualStart),
+            actualEnd: clean(occurrence?.actualEnd),
+            participantCount: occurrence?.participantCount || 0,
           });
         });
       });
     });
     return rows;
-  }, [PROGRAMME.modules]);
+  }, [PROGRAMME.modules, liveOccurrences]);
   const liveSessions = useMemo(() => deliverySessions.filter(session => session.kind === 'live'), [deliverySessions]);
   const recordedSessions = useMemo(() => deliverySessions.filter(session => session.kind === 'recorded'), [deliverySessions]);
   const activeSessions = sessionKind === 'live' ? liveSessions : recordedSessions;
@@ -2082,11 +2230,23 @@ export default function ProgrammeDetailPage() {
       return matchesModule && matchesQuery;
     });
   }, [activeSessions, sessionModuleFilter, sessionSearch]);
-  const sessionPageCount = Math.max(1, Math.ceil(filteredSessions.length / sessionPageSize));
-  const currentSessionPage = Math.min(sessionPage, sessionPageCount);
-  const sessionStartIndex = (currentSessionPage - 1) * sessionPageSize;
-  const pagedSessions = filteredSessions.slice(sessionStartIndex, sessionStartIndex + sessionPageSize);
-  const totalSessions = deliverySessions.length;
+
+  // Resolve a session's "open in Module Builder" link once per module, keyed by
+  // both catalogue id and name so a row matches however it identifies its module.
+  const sessionModuleHref = useMemo(() => {
+    const byId = new Map<string, string>();
+    const byName = new Map<string, string>();
+    for (const mod of PROGRAMME.modules) {
+      const href = moduleBuilderUrl(mod, PROGRAMME);
+      const catalogueId = clean(mod.moduleCatalogueId || mod.catalogueId);
+      if (catalogueId) byId.set(catalogueId, href);
+      if (mod.name) byName.set(mod.name, href);
+    }
+    return (session: DeliverySession) =>
+      (session.moduleCatalogueId && byId.get(session.moduleCatalogueId))
+      || byName.get(session.module)
+      || '';
+  }, [PROGRAMME.modules, PROGRAMME]);
 
   // --------------------------------------------------------------------- KSB
 
@@ -2270,7 +2430,7 @@ export default function ProgrammeDetailPage() {
     { key: 'cohorts', label: TAB_LABELS.cohorts, icon: 'ri-group-line', count: liveCohortCount },
     { key: 'groups', label: TAB_LABELS.groups, icon: 'ri-team-line', count: totalGroups },
     { key: 'modules', label: TAB_LABELS.modules, icon: 'ri-stack-line', count: PROGRAMME.modules.length },
-    { key: 'sessions', label: TAB_LABELS.sessions, icon: 'ri-time-line', count: totalSessions || undefined },
+    { key: 'sessions', label: TAB_LABELS.sessions, icon: 'ri-time-line', count: deliverySessions.length || undefined },
     { key: 'coverage', label: TAB_LABELS.coverage, icon: 'ri-node-tree', count: missingKsbCount || undefined },
     { key: 'achievement', label: TAB_LABELS.achievement, icon: 'ri-medal-line' },
     { key: 'quality', label: TAB_LABELS.quality, icon: 'ri-shield-check-line' },
@@ -2969,136 +3129,43 @@ export default function ProgrammeDetailPage() {
                 options: [{ value: '', label: 'All modules' }, ...sessionModules.map(name => ({ value: name, label: name }))],
               }]}
               onReset={() => { setSessionSearch(''); setSessionModuleFilter(''); }}
-              summary={`Showing ${filteredSessions.length === 0 ? 0 : sessionStartIndex + 1}–${Math.min(sessionStartIndex + sessionPageSize, filteredSessions.length)} of ${filteredSessions.length} ${sessionKind === 'live' ? 'live sessions' : 'recordings'}`}
+              summary={`${filteredSessions.length} ${sessionKind === 'live' ? 'live session' : 'recording'}${filteredSessions.length === 1 ? '' : 's'} across ${new Set(filteredSessions.map(session => session.module)).size} module${new Set(filteredSessions.map(session => session.module)).size === 1 ? '' : 's'}`}
               trailing={(
-                <label className="flex items-center gap-2">
-                  <span className="text-[11px] font-semibold uppercase text-foreground-400">Rows</span>
-                  <select
-                    value={sessionPageSize}
-                    onChange={event => setSessionPageSize(Number(event.target.value))}
-                    aria-label="Rows per page"
-                    className="h-10 cursor-pointer rounded-lg border border-background-200 bg-background-50 px-2 text-[12px] text-foreground-900 outline-none focus:border-primary-300"
-                  >
-                    {[25, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
-                  </select>
-                </label>
+                <button
+                  type="button"
+                  onClick={() => { void reload({ silent: true }); void loadLiveOccurrences({ skipCache: true }); }}
+                  disabled={occurrencesLoading || refreshing}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <AppIcon className={`${occurrencesLoading || refreshing ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
+                  Refresh
+                </button>
               )}
             />
 
-            <EntityTable
-              columns={[
-                { label: sessionKind === 'live' ? 'Session' : 'Recording' },
-                { label: 'Module / Week' },
-                { label: sessionKind === 'live' ? 'Scheduled' : 'Provider' },
-                { label: 'Length', align: 'center' },
-                { label: 'Groups' },
-                { label: 'Actions', align: 'right' },
-              ]}
-              gridClass={SESSION_GRID}
-              rows={pagedSessions}
-              rowKey={session => session.id}
-              loading={loading && !deliverySessions.length}
-              refreshing={refreshing}
-              empty={(
-                <EntityEmptyState
-                  icon={activeSessions.length ? 'ri-filter-off-line' : sessionKind === 'live' ? 'ri-broadcast-line' : 'ri-film-line'}
-                  title={activeSessions.length
-                    ? 'No rows match these filters'
-                    : sessionKind === 'live' ? 'No live sessions yet' : 'No recorded videos yet'}
-                  message={activeSessions.length
-                    ? 'Clear a filter, or search for a different session.'
-                    : sessionKind === 'live'
-                      ? 'Add a Live Teams Session component to a week in the Module Builder and it will appear here.'
-                      : 'Add a Video component to a week in the Module Builder and it will appear here.'}
-                />
-              )}
-              renderRow={session => (
-                <>
-                  <StackedCell
-                    primary={(
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${session.kind === 'live' ? 'bg-primary-50 text-primary-600' : 'bg-sky-50 text-sky-700'}`}>
-                          <AppIcon className={`${session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-film-line'} text-[11px]`}></AppIcon>
-                        </span>
-                        <span className="min-w-0 truncate">{session.title}</span>
-                      </span>
-                    )}
-                    secondary={session.kind === 'live'
-                      ? [session.attendanceRequired ? 'Attendance tracked' : '', session.recordingExpected ? 'Recording enabled' : ''].filter(Boolean).join(' · ') || undefined
-                      : session.ksbRefs.slice(0, 4).join(', ') || undefined}
-                  />
-                  <StackedCell primary={session.module} secondary={sessionWeekLabel(session)} />
-                  <StackedCell
-                    primary={session.kind === 'live'
-                      ? formatDateLabel(session.date) || 'Date not set'
-                      : clean(session.provider, 'Provider not set')}
-                    secondary={session.kind === 'live'
-                      ? session.date
-                        ? (session.time || 'Time to be confirmed')
-                        : (session.weekStartDate ? `Its week starts ${session.weekStartDate}` : 'Not in the Teams calendar yet')
-                      : 'Recorded content'}
-                  />
-                  <PlainCell align="center">{session.durationMinutes ? `${session.durationMinutes}m` : '—'}</PlainCell>
-                  <PlainCell>{session.groups.length ? session.groups.join(', ') : 'All assigned groups'}</PlainCell>
-                  <span className="flex items-center justify-end gap-2 self-center">
-                    <StatusBadge status={session.status} />
-                    {session.url && (
-                      <a
-                        href={session.url}
-                        target="_blank"
-                        rel="noreferrer"
-                        title={session.kind === 'live' ? 'Join this meeting in Microsoft Teams' : 'Open this recording'}
-                        className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-bold transition-smooth ${session.kind === 'live' ? 'meeting-join-action' : 'bg-primary-600 text-white hover:bg-primary-700'}`}
-                      >
-                        <AppIcon className={`${session.kind === 'live' ? 'ri-microsoft-teams-line' : 'ri-play-circle-line'} text-sm`}></AppIcon>
-                        {session.kind === 'live' ? 'Join' : 'Watch'}
-                      </a>
-                    )}
-                  </span>
-                </>
-              )}
-            />
-
-            {sessionPageCount > 1 && (
-              <div className="flex items-center justify-center gap-1 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3">
-                <button
-                  type="button"
-                  onClick={() => setSessionPage(1)}
-                  disabled={currentSessionPage === 1}
-                  aria-label="First page"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <AppIcon className="ri-skip-left-line text-xs"></AppIcon>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSessionPage(page => Math.max(1, page - 1))}
-                  disabled={currentSessionPage === 1}
-                  aria-label="Previous page"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <AppIcon className="ri-arrow-left-s-line text-sm"></AppIcon>
-                </button>
-                <span className="px-4 text-[12px] font-semibold text-foreground-800">Page {currentSessionPage} of {sessionPageCount}</span>
-                <button
-                  type="button"
-                  onClick={() => setSessionPage(page => Math.min(sessionPageCount, page + 1))}
-                  disabled={currentSessionPage === sessionPageCount}
-                  aria-label="Next page"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <AppIcon className="ri-arrow-right-s-line text-sm"></AppIcon>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSessionPage(sessionPageCount)}
-                  disabled={currentSessionPage === sessionPageCount}
-                  aria-label="Last page"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-background-200 bg-background-50 text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  <AppIcon className="ri-skip-right-line text-xs"></AppIcon>
-                </button>
+            {loading && !deliverySessions.length ? (
+              <div className="flex items-center justify-center gap-2 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-10 text-[12px] text-foreground-500">
+                <AppIcon className="ri-loader-4-line animate-spin text-base"></AppIcon>
+                Loading sessions…
               </div>
+            ) : (
+              <SessionsTree
+                sessions={filteredSessions}
+                moduleHrefFor={sessionModuleHref}
+                empty={(
+                  <EntityEmptyState
+                    icon={activeSessions.length ? 'ri-filter-off-line' : sessionKind === 'live' ? 'ri-broadcast-line' : 'ri-film-line'}
+                    title={activeSessions.length
+                      ? 'No rows match these filters'
+                      : sessionKind === 'live' ? 'No live sessions yet' : 'No recorded videos yet'}
+                    message={activeSessions.length
+                      ? 'Clear a filter, or search for a different session.'
+                      : sessionKind === 'live'
+                        ? 'Add a Live Teams Session component to a week in the Module Builder and it will appear here.'
+                        : 'Add a Video component to a week in the Module Builder and it will appear here.'}
+                  />
+                )}
+              />
             )}
           </div>
         )}
