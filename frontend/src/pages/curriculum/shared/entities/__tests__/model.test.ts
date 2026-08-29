@@ -12,12 +12,25 @@ import {
   matchesSearch,
   moduleCohortDateError,
   modulesForScope,
+  namedCurriculumWorkspacePath,
   resolveGroupContext,
   resolveModuleContext,
   sameFormValues,
   scheduleLabel,
   visibleNotes,
 } from '../model';
+
+describe('named curriculum workspace paths', () => {
+  it('keeps the canonical id and carries the group name for immediate rendering', () => {
+    expect(namedCurriculumWorkspacePath('groups', 'GROUP-1', 'Group A'))
+      .toBe('/curriculum/groups/GROUP-1?groupName=Group+A');
+  });
+
+  it('keeps the canonical id and carries the module name for immediate rendering', () => {
+    expect(namedCurriculumWorkspacePath('modules', 'MOD-1', 'Data Foundations'))
+      .toBe('/curriculum/modules/MOD-1?moduleName=Data+Foundations');
+  });
+});
 
 // The entity pages must never invent a Module -> Cohort relationship: a module's
 // programme and cohort are read through its group. These fixtures make that

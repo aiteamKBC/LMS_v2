@@ -30,6 +30,12 @@ export function useCurriculumKsbSets({ all = false, enabled = true }: UseCurricu
         if (!mounted) return;
         setKsbSets(result);
         setError(null);
+        // Do not mark this request as complete until its value has actually
+        // reached the mounted consumer. React StrictMode deliberately runs an
+        // effect setup/cleanup/setup cycle in development. Marking it before
+        // the request resolved made the cleanup abort the first subscriber and
+        // the second setup incorrectly believe the KSB sets were already here.
+        hasLoadedRef.current = true;
       })
       .catch(err => {
         if (!mounted || controller.signal.aborted) return;
@@ -47,7 +53,6 @@ export function useCurriculumKsbSets({ all = false, enabled = true }: UseCurricu
 
   useEffect(() => {
     if (!enabled || hasLoadedRef.current) return undefined;
-    hasLoadedRef.current = true;
     return load();
   }, [enabled, load]);
 

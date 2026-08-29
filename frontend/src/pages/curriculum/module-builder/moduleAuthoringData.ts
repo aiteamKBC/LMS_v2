@@ -1,5 +1,9 @@
 import type { CurriculumKsbEntry, CurriculumModule, LibraryComponent } from '@/lib/curriculumApi';
 import {
+  assertComponentUploadAllowed,
+  uploadComponentFile,
+} from '@/pages/curriculum/shared/componentUploadPolicy';
+import {
   componentTypeGroups,
   componentTypes,
   getDefaultComponentSettings,
@@ -1060,11 +1064,12 @@ export interface ComponentUploadResult {
 }
 
 export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment'; file: File }) {
+  assertComponentUploadAllowed(input.file);
   const form = new FormData();
   form.set('file', input.file);
   form.set('moduleCatalogueId', input.moduleCatalogueId);
   form.set('componentType', input.componentType);
-  return apiForm<ComponentUploadResult>(`/curriculum/components/${encodeURIComponent(input.componentId)}/upload/`, form, { timeoutMs: 90000 });
+  return uploadComponentFile<ComponentUploadResult>(`${API_BASE_URL}/curriculum/components/${encodeURIComponent(input.componentId)}/upload/`, form);
 }
 
 export interface TeamsMeetingInput {
@@ -1468,39 +1473,6 @@ class ApiError extends Error {
     super(message);
     this.status = status;
     this.detail = detail;
-  }
-}
-
-async function apiForm<T>(path: string, body: FormData, init?: { timeoutMs?: number }): Promise<T> {
-  const controller = init?.timeoutMs ? new AbortController() : undefined;
-  const timeout = controller && init?.timeoutMs
-    ? window.setTimeout(() => controller.abort(), init.timeoutMs)
-    : undefined;
-  try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
-      method: 'POST',
-      body,
-      signal: controller?.signal,
-    });
-    if (!response.ok) {
-      let message = `Curriculum API returned ${response.status} for ${path}`;
-      try {
-        const payload = await response.json();
-        const detail = typeof payload?.detail === 'string' ? payload.detail : '';
-        if (payload?.error) message = detail ? `${payload.error} ${detail}` : payload.error;
-      } catch {
-        // Keep the original status message when a non-JSON error body is returned.
-      }
-      throw new ApiError(response.status, message);
-    }
-    return response.json();
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new Error('The file upload is taking too long. It was stopped so you can retry.');
-    }
-    throw err;
-  } finally {
-    if (timeout) window.clearTimeout(timeout);
   }
 }
 

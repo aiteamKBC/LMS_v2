@@ -608,5 +608,14 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        # Daphne warns when a client disconnects before a slow synchronous view
+        # finishes and it has to kill the orphaned application task. The
+        # underlying slowness is a real thing to fix separately; this just quiets
+        # the noise it prints to the console.
+        'daphne.server': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
     },
 }

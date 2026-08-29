@@ -42,6 +42,7 @@ import {
   matchesSearch,
   moduleIdentity,
   modulesForScope,
+  namedCurriculumWorkspacePath,
   normaliseKey,
   programmeIdentity,
   resolveModuleContext,
@@ -1684,7 +1685,7 @@ export default function CurriculumTeamsMeetingsPage() {
           renderRow={row => (
             <>
               <StackedCell
-                href={`/curriculum/modules/${encodeURIComponent(row.catalogueId)}?tab=teams`}
+                href={`${namedCurriculumWorkspacePath('modules', row.catalogueId, row.name)}&tab=teams`}
                 primary={row.name}
                 secondary={row.programmeName}
               />

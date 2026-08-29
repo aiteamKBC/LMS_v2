@@ -1804,6 +1804,24 @@ class CurriculumPersistenceHarness(TestCase):
 
 
 class CurriculumPersistenceTests(CurriculumPersistenceHarness):
+    @patch.object(views, 'find_skills_england_standard', return_value={'id': 'st0845-v1-1'})
+    def test_ksb_profile_can_link_and_unlink_its_parent_standard(self, _standard):
+        response = self.patch_json(
+            '/curriculum_api/curriculum/ksb-frameworks/KSBP-DATA/',
+            {'standardSourceId': 'standard:st0845-v1-1'},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        profile = self.row('ksb_profiles', 'id', 'KSBP-DATA')
+        self.assertEqual(profile['standard_source_id'], 'st0845-v1-1')
+
+        response = self.patch_json(
+            '/curriculum_api/curriculum/ksb-frameworks/KSBP-DATA/',
+            {'standardSourceId': ''},
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        profile = self.row('ksb_profiles', 'id', 'KSBP-DATA')
+        self.assertEqual(profile['standard_source_id'], '')
+
     def test_tree_save_persists_components_without_a_module_builder_save(self):
         """A wizard-created module's components must land in the normalized tables
         immediately, so resolve-structures reports them with no manual Save."""
@@ -3180,7 +3198,7 @@ class KsbFrameworkLibraryVisibilityTests(SimpleTestCase):
     """
 
     @staticmethod
-    def _profile(profile_id, name, programme_ids, is_active=True):
+    def _profile(profile_id, name, programme_ids, is_active=True, standard_source_id=''):
         return {
             'id': profile_id,
             'name': name,
@@ -3190,6 +3208,7 @@ class KsbFrameworkLibraryVisibilityTests(SimpleTestCase):
             'behaviour_codes': json.dumps([]),
             'ksb_items': json.dumps([]),
             'is_active': is_active,
+            'standard_source_id': standard_source_id,
             'created_by': 'Tester',
         }
 
@@ -3249,6 +3268,14 @@ class KsbFrameworkLibraryVisibilityTests(SimpleTestCase):
         with patch.object(views, 'build_programmes', return_value=[]),              patch.object(views, 'build_modules', return_value=[]),              patch.object(views, 'build_cohorts_and_groups', return_value=([], [])):
             payload = views.build_curriculum_payload_from_rows(rows, visibility='all', compact=True)
         self.assertEqual([item['name'] for item in payload['ksbFrameworks']], ['Retired standard'])
+
+    def test_framework_and_set_expose_the_explicit_parent_standard(self):
+        payload = self._payload(
+            [self._profile('KSBP-1', 'Custom project profile', [], standard_source_id='st0845-v1-1')],
+            [],
+        )
+        self.assertEqual(payload['ksbFrameworks'][0]['standardSourceId'], 'st0845-v1-1')
+        self.assertEqual(payload['ksbSets'][0]['standardSourceId'], 'st0845-v1-1')
 
 
 class StructurePayloadsCacheKeyTests(SimpleTestCase):
