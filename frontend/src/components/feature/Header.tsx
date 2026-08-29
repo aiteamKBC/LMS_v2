@@ -36,20 +36,19 @@ function AccountAvatar({ initials, className = '', textClassName = 'text-[11px]'
   );
 }
 
-function SignOutConfirmModal({
+export function SignOutConfirmModal({
   displayName,
   email,
-  initials,
   onClose,
   onConfirm,
 }: {
   displayName: string;
   email: string;
-  initials: string;
   onClose: () => void;
   onConfirm: () => void;
 }) {
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const initials = initialsOf(displayName);
 
   // Escape closes, the confirm button takes focus on open and hands it back to
   // whatever opened the dialog on close, and the page behind cannot scroll.
@@ -300,7 +299,6 @@ export function Header({ pageTitle, pageSubtitle, onOpenSearch, userName = 'Sara
       <SignOutConfirmModal
         displayName={displayName}
         email={email || 'Signed in'}
-        initials={initials}
         onClose={() => setSignOutOpen(false)}
         onConfirm={() => { setSignOutOpen(false); logout(); }}
       />,

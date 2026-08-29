@@ -12,6 +12,7 @@ import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
 import { demoProgrammeFor, materialForModuleId, type DemoMaterialDef } from '@/lib/demoProgrammeMaterials';
 import { buildDemoTimings, currentWeekStatus, demoCompletionState, expectedMinutesFor, formatDemoMinutes, summariseDemoTimings, timingsForModuleIds, useDemoTimeOverrides, type DemoProgrammeSummary } from '@/lib/demoTime';
 import { DemoMaterialCard, DemoMaterialStatusBadge } from '@/components/feature/DemoTimePanel';
+import { SignOutConfirmModal } from '@/components/feature/Header';
 import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent, type JourneyModule, type JourneyWeek } from '@/utils/learnerJourney';
 import type {
   LearnerComponentProgress,
@@ -416,7 +417,8 @@ export default function LearnerOverview() {
      videoProgress, componentProgress); see lib/demoTime.ts. The
      programme/material structure itself comes from the central config in
      lib/demoProgrammeMaterials.ts — nothing here string-matches a title. */
-  const { auth } = useAuth();
+  const { auth, logout } = useAuth();
+  const [demoSignOutOpen, setDemoSignOutOpen] = useState(false);
   const demoProgramme = useMemo(() => demoProgrammeFor(auth.account?.email), [auth.account?.email]);
   const isDemoAccount = isRealMode && isInspectionDemoAccount(auth.account?.email) && demoProgramme != null;
   const demoScopeKey = kind && id ? `${kind}:${id}` : '';
@@ -841,9 +843,20 @@ export default function LearnerOverview() {
                     <p className="mt-1 text-[13px] text-white/75">{demoProgramme?.programmeName}</p>
                   </div>
                 </div>
-                <div className="rounded-2xl bg-white/10 px-5 py-3 text-right ring-1 ring-white/15">
-                  <p className="text-2xl font-bold tabular-nums">{demoMaterialCards.length}</p>
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-white/65">Materials</p>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setDemoSignOutOpen(true)}
+                    className="inline-flex h-11 items-center gap-2 rounded-xl bg-white/10 px-4 text-[13px] font-semibold text-white ring-1 ring-white/20 transition hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
+                    aria-label="Sign out"
+                  >
+                    <AppIcon className="ri-logout-box-line text-base" />
+                    <span>Logout</span>
+                  </button>
+                  <div className="rounded-2xl bg-white/10 px-5 py-3 text-right ring-1 ring-white/15">
+                    <p className="text-2xl font-bold tabular-nums">{demoMaterialCards.length}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-white/65">Materials</p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1071,6 +1084,17 @@ export default function LearnerOverview() {
         </SectionReveal>}
 
       </PageContainer>
+      {demoSignOutOpen && (
+        <SignOutConfirmModal
+          displayName={heroFullName}
+          email={auth.user?.email || auth.account?.email || 'Signed in'}
+          onClose={() => setDemoSignOutOpen(false)}
+          onConfirm={() => {
+            setDemoSignOutOpen(false);
+            logout();
+          }}
+        />
+      )}
     </WorkspaceShell>
   );
 }

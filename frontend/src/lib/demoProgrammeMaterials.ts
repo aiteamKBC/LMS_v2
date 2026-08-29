@@ -64,11 +64,6 @@ export const DEMO_PROGRAMMES: DemoProgrammeDef[] = [
       { key: 'strategy-planning', name: 'Strategy Planning', order: 1, moduleIds: ['MOD-202608223E23693425BC'] },
       { key: 'customer-journey', name: 'Customer Journey', order: 2, moduleIds: ['MOD-20260822222D7B9190AA'] },
       { key: 'commercial-intelligence', name: 'Commercial Intelligence', order: 3, moduleIds: ['MOD-20260822BFA56444DE10'] },
-      // No authored curriculum module exists for this material yet — kept in
-      // the list (with no module ids) so it still renders as an upcoming
-      // material rather than silently vanishing. See the final report's
-      // "missing data mappings" note.
-      { key: 'ai-in-marketing', name: 'AI in Marketing', order: 4, moduleIds: [] },
     ],
   },
   {
