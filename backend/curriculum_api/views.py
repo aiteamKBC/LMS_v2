@@ -14208,8 +14208,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'status': clean_str(payload.get('status') or existing_module_row.get('status') or 'draft').lower(),
             'sessions_number': stored_sessions_number,
             'weeks_number': authored_week_count or None,
-            'start_date': payload.get('startDate') if 'startDate' in payload else payload.get('start_date') if 'start_date' in payload else existing_module_row.get('start_date') or None,
-            'end_date': payload.get('endDate') if 'endDate' in payload else payload.get('end_date') if 'end_date' in payload else existing_module_row.get('end_date') or None,
+            # parse_date, not the raw value: callers that merge a stored payload
+            # send '' for a module that has no dates, and an empty string reaching
+            # a date column is a DataError, not a null. '' means "no date".
+            'start_date': parse_date(payload.get('startDate') if 'startDate' in payload else payload.get('start_date') if 'start_date' in payload else existing_module_row.get('start_date')),
+            'end_date': parse_date(payload.get('endDate') if 'endDate' in payload else payload.get('end_date') if 'end_date' in payload else existing_module_row.get('end_date')),
             'total_otjh': declared_total,
             'quality_score': quality_score,
             'source_type': payload.get('sourceType') or payload.get('source_type') or existing_module_row.get('source_type') or None,
