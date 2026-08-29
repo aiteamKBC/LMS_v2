@@ -121,10 +121,13 @@ const summaries: CurriculumTeamsMeetingSummary[] = [
   },
 ];
 
-import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
+import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 
 const confirmMock = vi.mocked(showCurriculumConfirm);
+const alertMock = vi.mocked(showCurriculumAlert);
 
+// Every week already has its live session unless a test says otherwise.
+const probeModuleTeamsAttachment = vi.fn(async () => 0);
 const fetchCurriculumTeamsMeetingSummaries = vi.fn(async () => summaries);
 const fetchCurriculumSessions = vi.fn(async () => sessions);
 
@@ -168,6 +171,7 @@ vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
     errors: [], partial: false,
   })),
   restoreModuleTeamsMeeting: vi.fn(async () => ({ restored: true, updatedComponents: 1, meeting: {}, module: {} })),
+  probeModuleTeamsAttachment: (...args: unknown[]) => probeModuleTeamsAttachment(...(args as [])),
   updateTeamsMeetingSchedule: (...args: unknown[]) => updateTeamsMeetingSchedule(...(args as [])),
   createTeamsMeeting: (...args: unknown[]) => createTeamsMeeting(...(args as [])),
   saveTeamsRecordingEvents: (...args: unknown[]) => saveTeamsRecordingEvents(...(args as [])),
@@ -210,6 +214,12 @@ describe('Teams Meetings page', () => {
     fetchCurriculumTeamsMeetingSummaries.mockImplementation(async () => summaries);
     confirmMock.mockReset();
     confirmMock.mockResolvedValue(false);
+    probeModuleTeamsAttachment.mockClear();
+    probeModuleTeamsAttachment.mockResolvedValue(0);
+    // Cleared like the rest: without this the call count is cumulative across
+    // the file, so any test asserting on what a click confirmed counts every
+    // earlier test's alerts too.
+    alertMock.mockClear();
   });
 
   it('reports a calendar that matches the module session plan as in sync', async () => {
@@ -278,7 +288,7 @@ describe('Teams Meetings page', () => {
       .toHaveTextContent('Teams still holds 08:30; sending moves it here.');
     // …and the note is only worth reading next to what makes it happen.
     expect(within(clinic).getByText(/Nothing on the Teams calendar changes/))
-      .toHaveTextContent('until you press Send session dates to Teams');
+      .toHaveTextContent('until you press Update Teams calendar');
     await userEvent.click(within(clinic).getByRole('button', { name: 'Close' }));
 
     await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
@@ -321,6 +331,74 @@ describe('Teams Meetings page', () => {
     }
   });
 
+  /**
+   * A filled-in Detail button marks a row that is waiting on somebody. Colour
+   * cannot be looked up, so the row and the toolbar both say what it means.
+   */
+  it('says what a highlighted Detail button means, on the button and above the table', async () => {
+    await renderPage();
+    expect(await screen.findByText('Risk Management')).toBeInTheDocument();
+
+    // Risk Management's calendar disagrees with its module dates.
+    expect(within(rowFor('Risk Management')).getByText('Dates differ')).toBeInTheDocument();
+    expect(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }))
+      .toHaveAttribute('title', expect.stringContaining('Needs attention'));
+
+    // A row that agrees says so rather than saying nothing.
+    expect(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }))
+      .toHaveAttribute('title', expect.stringContaining('Up to date'));
+
+    // And the convention is decoded once, where the highlight is.
+    expect(screen.getByText(/highlighted Detail button/)).toBeInTheDocument();
+  });
+
+  /**
+   * The footer used to offer all three actions in every state, so a module with
+   * every session attached and none of them run yet showed two buttons that
+   * would have changed nothing. What is left appears only where it can act.
+   */
+  describe('the footer only offers what the module can actually do', () => {
+    it('shows the update action alone when nothing is missing and nothing has run', async () => {
+      await renderPage();
+      expect(await screen.findByText('Risk Management')).toBeInTheDocument();
+      await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
+
+      const dialog = within(await screen.findByRole('dialog'));
+      expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toBeInTheDocument();
+      await waitFor(() => expect(probeModuleTeamsAttachment).toHaveBeenCalled());
+      expect(dialog.queryByRole('button', { name: /missing live session/ })).not.toBeInTheDocument();
+      expect(dialog.queryByRole('button', { name: /Fetch attendance/ })).not.toBeInTheDocument();
+    });
+
+    it('offers the missing live sessions, counted, when weeks are still without one', async () => {
+      probeModuleTeamsAttachment.mockResolvedValue(3);
+      await renderPage();
+      expect(await screen.findByText('Risk Management')).toBeInTheDocument();
+      await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
+
+      const dialog = within(await screen.findByRole('dialog'));
+      // The count is on the button, so the action says what it will do.
+      expect(await dialog.findByRole('button', { name: 'Add 3 missing live sessions' })).toBeInTheDocument();
+    });
+
+    // Ended sessions used to add a third button. The dialog is for the dates, so
+    // the fetch is gone even in the one state that used to justify it.
+    it('never offers the attendance fetch, even once every session has ended', async () => {
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-01T09:00:00Z'));
+      try {
+        await renderPage();
+        expect(await screen.findByText('Risk Management')).toBeInTheDocument();
+        await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
+
+        const dialog = within(await screen.findByRole('dialog'));
+        expect(dialog.getAllByText('Session ended').length).toBeGreaterThan(0);
+        expect(dialog.queryByRole('button', { name: /Fetch attendance/ })).not.toBeInTheDocument();
+      } finally {
+        clock.mockRestore();
+      }
+    });
+  });
+
   it('sends the module’s own holiday-shifted session dates to Teams', async () => {
     await renderPage();
     expect(await screen.findByText('Risk Management')).toBeInTheDocument();
@@ -329,7 +407,7 @@ describe('Teams Meetings page', () => {
     await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
 
     const dialog = await screen.findByRole('dialog');
-    const send = within(dialog).getByRole('button', { name: 'Send session dates to Teams' });
+    const send = within(dialog).getByRole('button', { name: 'Update Teams calendar' });
     await waitFor(() => expect(send).not.toBeDisabled());
     await userEvent.click(send);
 
@@ -457,6 +535,33 @@ describe('Teams Meetings page', () => {
     expect(input.scheduledOccurrences.map(item => item.startDateTimeUtc)).toEqual([
       '2026-09-04T08:30:00.000Z',
     ]);
+  });
+
+  /**
+   * Create is the end of this dialog's job. Leaving it open re-rendered the
+   * module in its summary view, which reads as "nothing happened" on top of a
+   * form that has just sent real invitations.
+   */
+  it('confirms the dates reached Teams and closes the dialog', async () => {
+    // Graph accepted the meeting options, so this is the clean-success path --
+    // the one whose confirmation names the dates rather than warning about them.
+    createTeamsMeeting.mockResolvedValueOnce({
+      created: true,
+      meeting: { settingsApplied: true } as never,
+      warnings: [],
+    });
+    await renderPage();
+    expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+
+    await waitFor(() => expect(alertMock).toHaveBeenCalledTimes(1));
+    expect(alertMock.mock.calls[0][0]).toMatchObject({ title: 'Session dates sent to Teams' });
+
+    // The dialog is gone, not swapped for the summary view of the same module.
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   });
   /**
    * The create form lives in the dialog itself, so the dialog's own X, backdrop

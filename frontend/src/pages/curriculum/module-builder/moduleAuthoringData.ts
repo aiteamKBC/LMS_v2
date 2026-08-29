@@ -1310,6 +1310,20 @@ export function restoreModuleTeamsMeeting(moduleCatalogueId: string, options: { 
   }));
 }
 
+/**
+ * How many weeks re-attaching would give a live-session component to.
+ *
+ * A read-only dry run of the same walk `restoreModuleTeamsMeeting` performs, so
+ * the answer can never drift from what pressing re-attach would actually do.
+ * Zero means every week already has its session and the action would be a no-op.
+ */
+export function probeModuleTeamsAttachment(moduleCatalogueId: string) {
+  return apiJson<{ pendingComponents?: number }>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-meetings/restore/?probe=1`,
+    { timeoutMs: 30000 },
+  ).then(result => Math.max(0, Number(result.pendingComponents) || 0));
+}
+
 export interface ModuleMeetingInvitees {
   moduleCatalogueId: string;
   presenters: string[];
