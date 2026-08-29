@@ -219,6 +219,23 @@ def upload_url(relative_path) -> str:
     return UPLOAD_URL_PREFIX + blob_name_for(relative_path)
 
 
+def signed_read_url(relative_path) -> str:
+    """A short-lived direct Azure URL for a stored upload, or ``''``.
+
+    Most callers should keep using :func:`upload_url`, which streams the bytes
+    through the LMS and never exposes storage credentials.  Office Online is
+    the exception: its servers must fetch a DOCX/XLSX/PPTX themselves, so the
+    iframe preview page hands Microsoft a read-only SAS URL that expires using
+    the normal evidence-storage TTL.
+    """
+    if not azure_enabled():
+        return ''
+    blob_name = blob_name_for(relative_path)
+    if not evidence_storage.blob_exists(container_name(), blob_name):
+        return ''
+    return evidence_storage.get_read_sas(container_name(), blob_name)
+
+
 #: Bulk uploads are big and the link is shared with other transfers, so they get
 #: a longer socket timeout than the SDK's default and are retried.
 BULK_UPLOAD_TIMEOUT_SECONDS = 600
