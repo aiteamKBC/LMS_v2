@@ -114,9 +114,9 @@ ${profileBlock}
 ═══════════════════════════════════════
 HOW TO FILL THE SHEET
 ═══════════════════════════════════════
-1. Fill ONLY the "${COL_KSBS}" column. Leave every other column exactly as it is.
+1. The "${COL_KSBS}" column is PRE-FILLED with each component's current KSBs. KEEP every code that is already there and ADD any new applicable codes. Only remove a code if it genuinely does NOT apply to that component. Edit ONLY this column — leave every other column exactly as it is.
 2. NEVER edit the "${COL_COMPONENT_ID}" column — each row is matched back to its component by that id. Do not add, remove, reorder, or renumber rows.
-3. In the "${COL_KSBS}" cell, list the applicable codes separated by commas, each as:
+3. Each code in the "${COL_KSBS}" cell is written, separated by commas, as:
       CODE:classification:weight
    • CODE — a code from the allowed list above (e.g. K1, S3.2, B2).
    • classification — one of: main, secondary, possible.
@@ -126,20 +126,20 @@ HOW TO FILL THE SHEET
    • main (weight ~40) — the component directly teaches or assesses this KSB; it is a core focus.
    • secondary (weight ~20) — the KSB is practised or reinforced, but is not the main focus.
    • possible (weight ~10) — the KSB is lightly touched or optional.
-5. Keep it precise: most components map to 2–6 KSBs. Do not over-map — only include a KSB if the title/description clearly supports it.
-6. If a component genuinely develops NO KSB from the list, leave its "${COL_KSBS}" cell blank.
+5. Keep it precise: most components map to 2–6 KSBs total (the ones already there plus any you add). Do not over-map — only include a KSB if the title/description clearly supports it.
+6. If a component's current KSBs are already correct and nothing needs adding, leave its "${COL_KSBS}" cell exactly as it is. A component with no applicable KSB keeps an empty cell.
 7. Balance across the whole module: aim to give every KSB in the list at least one "main" mapping somewhere if the content supports it, so the standard is fully covered.
 
 ═══════════════════════════════════════
 OUTPUT
 ═══════════════════════════════════════
-Return the SAME spreadsheet with only the "${COL_KSBS}" column filled in, in the same row order, ready to download as .xlsx (or .csv). Do not add commentary in the sheet. After the file, give a short summary of any components you left blank and why.`;
+Return the SAME spreadsheet with the "${COL_KSBS}" column updated — the pre-filled codes kept, plus any you added — in the same row order, ready to download as .xlsx (or .csv). Do not add commentary in the sheet. After the file, give a short summary of any codes you added or removed and why.`;
 }
 
 /** A one-line summary of what an import changed, for a toast or status line. */
 export function describeKsbImport(summary: KsbImportSummary): string {
   const parts = [`Applied ${summary.codesApplied} KSB code${summary.codesApplied === 1 ? '' : 's'} across ${summary.componentsUpdated} component${summary.componentsUpdated === 1 ? '' : 's'}.`];
-  if (summary.unmatchedIds.length) parts.push(`${summary.unmatchedIds.length} row${summary.unmatchedIds.length === 1 ? '' : 's'} matched no component (deleted since export) and were skipped.`);
+  if (summary.unmatchedIds.length) parts.push(`${summary.unmatchedIds.length} row${summary.unmatchedIds.length === 1 ? '' : 's'} matched no component here (deleted since export, or the sheet is from a different module) and ${summary.unmatchedIds.length === 1 ? 'was' : 'were'} skipped.`);
   if (summary.skippedTokens.length) parts.push(`Ignored ${summary.skippedTokens.length} invalid code${summary.skippedTokens.length === 1 ? '' : 's'}: ${summary.skippedTokens.slice(0, 8).join(', ')}${summary.skippedTokens.length > 8 ? '…' : ''}.`);
   parts.push('Review the mappings, then save to persist them.');
   return parts.join(' ');
@@ -201,6 +201,23 @@ function componentCurrentCodes(mappings: KsbMapping[]): string {
   return mappings.map(mapping => mapping.code).filter(Boolean).join(', ');
 }
 
+// The editable `KSBs` column ships PRE-FILLED with the component's current
+// mappings, written in the exact `CODE:type:weight` format the importer parses
+// back. Because a filled row replaces the component outright on import, shipping
+// the current set in the cell means keeping a code is the default and the sheet
+// always carries the whole truth — the operator (or ChatGPT) edits only to add
+// or remove, and existing KSBs are never silently dropped.
+function componentCurrentCells(mappings: KsbMapping[]): string {
+  return mappings
+    .filter(mapping => mapping.code)
+    .map(mapping => {
+      const type = normaliseType(mapping.type || mapping.classification || 'main');
+      const weight = Number.isFinite(mapping.weight) ? mapping.weight : defaultWeightForType(type);
+      return `${mapping.code}:${type}:${weight}`;
+    })
+    .join(', ');
+}
+
 function slugify(value: string, fallback: string): string {
   const slug = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   return slug || fallback;
@@ -226,7 +243,7 @@ async function writeKsbWorkbook(rows: ExportRow[], fileNameBase: string): Promis
     [COL_TITLE]: component.title,
     [COL_DESCRIPTION]: component.description || '',
     [COL_CURRENT]: componentCurrentCodes(component.ksbMappings),
-    [COL_KSBS]: '',
+    [COL_KSBS]: componentCurrentCells(component.ksbMappings),
   }));
 
   const dataSheet = XLSX.utils.json_to_sheet(data, {
@@ -238,11 +255,10 @@ async function writeKsbWorkbook(rows: ExportRow[], fileNameBase: string): Promis
     ['How to fill this sheet'],
     [''],
     [`1. Read each component's "${COL_TITLE}" and "${COL_DESCRIPTION}".`],
-    [`2. Write the KSB codes that apply into the "${COL_KSBS}" column, separated by commas — e.g. K1, S3.2, B2.`],
-    ['3. Optionally set classification and weight per code as CODE:type:weight — e.g. K1:main:40, S3:secondary:20.'],
-    ['   Types are main, secondary or possible. Weight is 0-100. Omit them to default to a main mapping.'],
-    [`4. Do NOT edit the "${COL_COMPONENT_ID}" column — rows are matched back to components by that id.`],
-    [`5. Leave "${COL_KSBS}" empty for any component that should keep its current KSBs unchanged.`],
+    [`2. The "${COL_KSBS}" column is PRE-FILLED with the component's current KSBs. Keep them and add any new codes that apply, separated by commas — e.g. K1, S3.2, B2.`],
+    ['3. Each code is written as CODE:type:weight — e.g. K1:main:40, S3:secondary:20. Types are main, secondary or possible; weight is 0-100. Omit them to default to a main mapping.'],
+    ['4. Only remove a code if it genuinely does not apply. A blank cell leaves that component unchanged, so keep the cell as it is to keep the current KSBs.'],
+    [`5. Do NOT edit the "${COL_COMPONENT_ID}" column — rows are matched back to components by that id.`],
     ['6. Save and re-upload this file where you exported it from.'],
   ]);
   guide['!cols'] = [{ wch: 110 }];
@@ -264,6 +280,14 @@ async function readKsbWorkbook(file: File): Promise<{ byId: Map<string, ParsedKs
   const workbook = XLSX.read(buffer, { type: 'array' });
   const sheetName = workbook.SheetNames.includes(DATA_SHEET) ? DATA_SHEET : workbook.SheetNames[0];
   const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], { defval: '' });
+
+  // Guard against the wrong file: a sheet with data rows but no "Component ID"
+  // column can't be a KSB mapping sheet (a picture, a different export, a random
+  // spreadsheet). Fail loudly here rather than silently importing zero KSBs,
+  // which reads as "the sheet was empty" and hides the real mistake.
+  if (rows.length && !(COL_COMPONENT_ID in rows[0])) {
+    throw new Error(`This file doesn't look like a KSB mapping sheet — it has no "${COL_COMPONENT_ID}" column. Export the sheet from here, fill the "${COL_KSBS}" column, then re-upload that same file.`);
+  }
 
   const skippedTokens: string[] = [];
   const byId = new Map<string, ParsedKsb[]>();

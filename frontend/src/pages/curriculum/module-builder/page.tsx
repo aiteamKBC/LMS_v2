@@ -276,6 +276,7 @@ export default function ModuleBuilder() {
   const [pendingComponentSelection, setPendingComponentSelection] = useState<{ weekId: string; componentId: string } | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
+  const [bulkTeamsMeetingOpen, setBulkTeamsMeetingOpen] = useState(false);
   const [ksbTarget, setKsbTarget] = useState<KsbTarget | null>(null);
   const [ksbMapModule, setKsbMapModule] = useState<ModuleBuilderListItem | null>(null);
   const [programmeKsbMap, setProgrammeKsbMap] = useState<ProgrammeKsbMapState | null>(null);
@@ -1578,6 +1579,13 @@ export default function ModuleBuilder() {
                   timer: 3200,
                 });
               }}
+              onCreateAllTeamsMeetings={() => setBulkTeamsMeetingOpen(true)}
+              onRestoreAllTeamsMeetings={() => { void restoreTeamsMeetingForWorkingModule(); }}
+              hasTrackedTeamsMeeting={
+                teamsMeetings.some(summary => String(summary.moduleCatalogueId || '').trim().toLowerCase() === String(workingModule.catalogueId || '').trim().toLowerCase())
+                || workingModule.weekStructure.some(week => week.components.some(component => component.type === 'live-session' && String(component.settings?.liveSessionUrl || component.settings?.teamsMeetingUrl || '').trim()))
+              }
+              restoringTeamsMeeting={restoringTeamsModuleId === workingModule.catalogueId}
               onDeleteWeek={weekId => {
                 void confirmDeleteWeek(weekId);
               }}
@@ -1764,6 +1772,28 @@ export default function ModuleBuilder() {
             onImport={importWeekTemplateAsNewWeek}
           />
         )}
+        {/* Bulk "Create all Teams meetings": the same create form a single live
+            session uses, opened at module level (its defaults come from the first
+            live-session component, its title from the module). One Teams series is
+            built on the module's saved dates; on success the restore endpoint
+            writes the join link + settings into EVERY live-session component and
+            persists them server-side, so there is no separate save step. */}
+        {bulkTeamsMeetingOpen && workingModule && (() => {
+          const liveSessions = workingModule.weekStructure.flatMap(week => week.components.filter(component => component.type === 'live-session'));
+          const base = liveSessions[0];
+          if (!base) return null;
+          return (
+            <TeamsMeetingModal
+              component={{ ...base, title: workingModule.title }}
+              module={{ catalogueId: workingModule.catalogueId, title: workingModule.title }}
+              onClose={() => setBulkTeamsMeetingOpen(false)}
+              // The series is now tracked against this module, so re-attaching pulls
+              // its join link into every live-session component and saves them — the
+              // one-step "create and it's saved" the per-component modal can't give.
+              onCreated={() => { void restoreTeamsMeetingForWorkingModule(); }}
+            />
+          );
+        })()}
         {reusePickerWeekId && (
           <ComponentLibraryModal
             weekLabel={(() => {
@@ -2297,7 +2327,7 @@ function WorkspaceActionFooter({ saving, saved, onPreview, onEditModule, onModul
 // expanding a week renders its parts timeline (the shared WeekComponentRail,
 // nested variant) indented underneath, so the week list and "the week, in
 // order" view are one nested panel instead of two side-by-side ones.
-function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
+function CourseStructure({ module, selection, dragState, onDragState, onSelectWeek, onSelectComponent, onAddWeek, onAddWeekFromTemplate, onGenerateLiveSessions, onCreateAllTeamsMeetings, onRestoreAllTeamsMeetings, hasTrackedTeamsMeeting, restoringTeamsMeeting, onDeleteWeek, onDropReorder, onComponentsChange, onReuseComponents, pointsByType, expandedWeekIds, onExpandedWeekIdsChange, allowMultipleExpanded = false }: {
   module: ModuleCatalogueItem;
   selection: Selection | null;
   dragState: DragState;
@@ -2307,6 +2337,10 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   onAddWeek: () => void;
   onAddWeekFromTemplate: () => void;
   onGenerateLiveSessions: () => void;
+  onCreateAllTeamsMeetings: () => void;
+  onRestoreAllTeamsMeetings: () => void;
+  hasTrackedTeamsMeeting: boolean;
+  restoringTeamsMeeting: boolean;
   onDeleteWeek: (weekId: string) => void;
   onDropReorder: (targetWeekId: string) => void;
   onComponentsChange: (weekId: string, components: ModuleComponent[]) => void;
@@ -2319,6 +2353,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
   const totalComponents = module.weekStructure.reduce((total, week) => total + week.components.length, 0);
   const missingLiveSessionWeekCount = weeksMissingLiveSession(module).length;
   const missingLiveSessionCount = countAddedLiveSessions(module);
+  const hasLiveSessions = module.weekStructure.some(week => week.components.some(component => component.type === 'live-session'));
 
   // The weeks, split into the months they run in. A module is authored week by
   // week but delivered and reported on by month, so the rail says which month
@@ -2378,6 +2413,34 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             <AppIcon className="ri-group-line"></AppIcon>
             Generate live sessions ({missingLiveSessionCount} across {missingLiveSessionWeekCount} week{missingLiveSessionWeekCount === 1 ? '' : 's'})
           </button>
+        )}
+        {/* One whole-module Teams action, on the module's saved session dates,
+            without leaving the editor. If a meeting was already created for this
+            module (e.g. from the Live Teams Meetings tab before these components
+            existed), creating again would duplicate it — so the button switches
+            to Restore, which pulls the existing dates and join links into every
+            live-session component instead. Otherwise it opens the create form. */}
+        {hasLiveSessions && module.catalogueId && (
+          hasTrackedTeamsMeeting ? (
+            <button
+              onClick={onRestoreAllTeamsMeetings}
+              disabled={restoringTeamsMeeting}
+              title="This module already has a Teams meeting. Restore its saved dates and join links onto every live-session component instead of creating a duplicate."
+              className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[11px] font-bold text-emerald-700 transition-smooth hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60"
+            >
+              <AppIcon className={restoringTeamsMeeting ? 'ri-loader-4-line animate-spin' : 'ri-links-line'}></AppIcon>
+              {restoringTeamsMeeting ? 'Restoring Teams sessions…' : 'Restore Teams sessions & links'}
+            </button>
+          ) : (
+            <button
+              onClick={onCreateAllTeamsMeetings}
+              title="Create the Microsoft Teams meeting for the whole module at once, on its saved session dates, and attach its join link to every live-session component."
+              className="mt-2 inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-cyan-200 bg-cyan-50 px-3 text-[11px] font-bold text-cyan-700 transition-smooth hover:bg-cyan-100"
+            >
+              <AppIcon className="ri-microsoft-teams-line"></AppIcon>
+              Create all Teams meetings
+            </button>
+          )
         )}
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <MiniStructureMetric label="Items" value={String(totalComponents)} />
