@@ -21,9 +21,82 @@ from curriculum_api import upload_storage
 from curriculum_api.management.commands.repoint_programme_audit_to_azure import (
     attachment_id_from_row, attachment_id_from_url, stable_urls,
 )
-from curriculum_api.views import COMPONENT_UPLOAD_ROOT, parse_byte_range
+from curriculum_api.views import (
+    COMPONENT_UPLOAD_MAX_BYTES,
+    COMPONENT_UPLOAD_ROOT,
+    component_upload_metadata,
+    parse_byte_range,
+)
 
 RELATIVE = f'{COMPONENT_UPLOAD_ROOT}/MOD-1/COMP-1/deck.pptx'
+
+
+class UploadFailureResponseTests(SimpleTestCase):
+    def setUp(self):
+        self.client = Client()
+
+    @patch('curriculum_api.views.component_upload_metadata', side_effect=OSError('storage unavailable'))
+    def test_module_component_upload_returns_a_retryable_json_error(self, _metadata):
+        response = self.client.post(
+            '/curriculum_api/curriculum/components/COMP-1/upload/',
+            {
+                'componentType': 'powerpoint',
+                'moduleCatalogueId': 'MOD-1',
+                'file': SimpleUploadedFile('deck.pptx', b'fake-deck'),
+            },
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()['error'], 'The file could not be stored. Please retry the upload.')
+
+    @patch('curriculum_api.views.component_upload_metadata', side_effect=OSError('storage unavailable'))
+    def test_week_component_upload_returns_a_retryable_json_error(self, _metadata):
+        response = self.client.post(
+            '/curriculum_api/curriculum/week-components/COMP-1/upload/',
+            {
+                'componentType': 'powerpoint',
+                'file': SimpleUploadedFile('deck.pptx', b'fake-deck'),
+            },
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()['error'], 'The file could not be stored. Please retry the upload.')
+
+
+class ComponentUploadLimitTests(SimpleTestCase):
+    @patch('curriculum_api.views.upload_storage.store')
+    def test_file_over_5_mb_is_rejected_before_storage(self, store):
+        uploaded = SimpleUploadedFile(
+            'large-deck.pptx',
+            b'x' * (COMPONENT_UPLOAD_MAX_BYTES + 1),
+        )
+
+        metadata, error = component_upload_metadata('MOD-1', 'COMP-1', 'powerpoint', uploaded)
+
+        self.assertIsNone(metadata)
+        self.assertEqual(error, 'File is too large. Maximum upload size is 5 MB.')
+        store.assert_not_called()
+
+    @patch('curriculum_api.views.upload_storage.store', return_value=RELATIVE)
+    def test_every_upload_component_type_uses_the_shared_storage_path(self, store):
+        cases = {
+            'reading': 'guide.docx',
+            'podcast': 'episode.mp3',
+            'powerpoint': 'deck.pptx',
+            'assignment': 'brief.pdf',
+        }
+
+        for component_type, filename in cases.items():
+            with self.subTest(component_type=component_type):
+                uploaded = SimpleUploadedFile(filename, b'component-bytes')
+                metadata, error = component_upload_metadata(
+                    'MOD-1', f'COMP-{component_type}', component_type, uploaded,
+                )
+                self.assertEqual(error, '')
+                self.assertEqual(metadata['componentType'], component_type)
+                self.assertEqual(metadata['fileName'], filename)
+
+        self.assertEqual(store.call_count, len(cases))
 
 
 class BlobNameTests(SimpleTestCase):
@@ -130,7 +203,7 @@ class FakeBlobClient:
             self.content_settings = type('CS', (), {'content_type': content_type})()
             self.etag = etag
 
-    def exists(self):
+    def exists(self, **_kwargs):
         return self.blob in self.store
 
     def get_blob_properties(self):
@@ -173,10 +246,10 @@ class FakeServiceClient:
         store = self.store
 
         class Container:
-            def exists(self_inner):
+            def exists(self_inner, **_kwargs):
                 return True
 
-            def create_container(self_inner):
+            def create_container(self_inner, **_kwargs):
                 store.setdefault('__created__', b'')
 
         return Container()
@@ -208,6 +281,42 @@ class AzureBackendTests(SimpleTestCase):
             upload_storage.store(SimpleUploadedFile('deck.pptx', b'deck-bytes'), RELATIVE)
             self.assertEqual(self.blobs['MOD-1/COMP-1/deck.pptx'], b'deck-bytes')
             self.assertIsNone(upload_storage.local_path(RELATIVE).exists() or None)
+
+    @patch('curriculum_api.upload_storage.evidence_storage.upload_blob')
+    def test_curriculum_uploads_request_small_azure_blocks(self, upload_blob):
+        with self.azure():
+            upload_storage.store(SimpleUploadedFile('deck.pptx', b'deck-bytes'), RELATIVE)
+
+        self.assertEqual(upload_blob.call_args.kwargs['upload_block_bytes'], 256 * 1024)
+        self.assertEqual(upload_blob.call_args.kwargs['max_concurrency'], 1)
+        self.assertEqual(upload_blob.call_args.kwargs['retry_total'], 1)
+        self.assertTrue(upload_blob.call_args.kwargs['overwrite'])
+
+    @patch('curriculum_api.upload_storage.ensure_container')
+    @patch('curriculum_api.upload_storage.evidence_storage.upload_blob')
+    def test_a_transient_failure_rewinds_and_retries_the_same_upload(self, upload_blob, _ensure):
+        upload_blob.side_effect = [TimeoutError('slow'), TimeoutError('slow again'), None]
+        uploaded = SimpleUploadedFile('guide.docx', b'reading-material')
+
+        with self.azure():
+            saved = upload_storage.store(uploaded, RELATIVE, 'application/octet-stream')
+
+        self.assertEqual(saved, RELATIVE)
+        self.assertEqual(upload_blob.call_count, 3)
+        self.assertEqual([call.args[0].tell() for call in upload_blob.call_args_list], [0, 0, 0])
+
+    @patch('curriculum_api.upload_storage.evidence_storage._service_client')
+    def test_container_check_is_cached_and_has_a_bounded_timeout(self, service_client):
+        container = service_client.return_value.get_container_client.return_value
+        container.exists.return_value = True
+        key = ('kbcdocs', 'curriculum-uploads')
+        upload_storage._ready_containers.discard(key)
+
+        with self.azure():
+            upload_storage.ensure_container()
+            upload_storage.ensure_container()
+
+        container.exists.assert_called_once_with(connection_timeout=30, read_timeout=30)
 
     def test_reads_fall_back_to_the_container(self):
         with self.azure():

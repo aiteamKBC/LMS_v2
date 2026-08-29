@@ -26,7 +26,7 @@ from .active_users import (
 )
 from .active_users import connections as active_users_connections
 from .components import submit_component_progress
-from . import progress_rules
+from . import evidence_storage, progress_rules
 from .progress_rules import (
     progress_achievement_status,
     progress_counts_as_achieved,
@@ -869,6 +869,14 @@ class LearnerOtjhTargetTests(SimpleTestCase):
     AZURE_SAS_TTL_MINUTES=15,
 )
 class EvidenceStorageUrlTests(SimpleTestCase):
+    @patch("learner_api.evidence_storage.BlobServiceClient")
+    def test_service_client_splits_multi_megabyte_uploads_into_small_blocks(self, service_client_class):
+        evidence_storage._service_client(upload_block_bytes=256 * 1024)
+
+        kwargs = service_client_class.call_args.kwargs
+        self.assertEqual(kwargs["max_single_put_size"], 256 * 1024)
+        self.assertEqual(kwargs["max_block_size"], 256 * 1024)
+
     @patch("learner_api.evidence_storage._service_client")
     def test_upload_rewinds_file_before_sending_it_to_azure(self, service_client):
         upload = BytesIO(b"complete-file-content")
@@ -882,6 +890,9 @@ class EvidenceStorageUrlTests(SimpleTestCase):
 
         uploaded_stream = blob_client.upload_blob.call_args.args[0]
         self.assertEqual(b"complete-file-content", uploaded_stream.read())
+        self.assertEqual(blob_client.upload_blob.call_args.kwargs["max_concurrency"], 2)
+        self.assertEqual(blob_client.upload_blob.call_args.kwargs["connection_timeout"], 60)
+        self.assertEqual(blob_client.upload_blob.call_args.kwargs["read_timeout"], 60)
 
     def test_canonical_url_round_trips_container_and_blob_name(self):
         url = blob_url(

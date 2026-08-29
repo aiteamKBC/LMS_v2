@@ -7,7 +7,12 @@ import { TRAINING_ACTIVITIES } from '@/mocks/training-plan';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
-import { buildLearnerJourney, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
+import { useAuth } from '@/hooks/useAuth';
+import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
+import { demoProgrammeFor, materialForModuleId, type DemoMaterialDef } from '@/lib/demoProgrammeMaterials';
+import { buildDemoTimings, currentWeekStatus, demoTimeKey, summariseDemoTimings, timingsForModuleIds, useDemoTimeOverrides, type DemoComponentTiming } from '@/lib/demoTime';
+import { DemoMaterialCard, DemoProgrammeSummaryCard, DemoTimeChip } from '@/components/feature/DemoTimePanel';
+import { buildLearnerJourney, completedComponentIds, componentTypeMeta, componentNoun, gradePercent, formatHoursMinutes, hasComponentContent, isOpenableComponent, parseHours, recordedKsbEvidenceCodes, type JourneyComponent } from '@/utils/learnerJourney';
 import type {
   LearnerComponentProgress,
   LearnerDetail,
@@ -130,11 +135,12 @@ function weekPeriodLabel(value: string): string | null {
 /* ─────────────────────────────────────────────
    Scroll-triggered reveal component
    ───────────────────────────────────────────── */
-function SectionReveal({ children, className = '', delay = 0 }: { children: React.ReactNode; className?: string; delay?: number }) {
+function SectionReveal({ children, className = '', delay = 0, immediate = false }: { children: React.ReactNode; className?: string; delay?: number; immediate?: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
+    if (immediate) return;
     const el = ref.current;
     if (!el) return;
     const observer = new IntersectionObserver(
@@ -148,13 +154,13 @@ function SectionReveal({ children, className = '', delay = 0 }: { children: Reac
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [delay]);
+  }, [delay, immediate]);
 
   return (
     <div
       ref={ref}
       className={`transition-all duration-[500ms] ease-out ${className} ${
-        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
+        immediate || visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
       }`}
     >
       {children}
@@ -405,6 +411,52 @@ export default function LearnerOverview() {
   }, [currentStation, currentWeekLabel, journey]);
   const evidencedKsbCodes = useMemo(() => recordedKsbEvidenceCodes(real), [real]);
 
+  /* ── Inspection-demo time overlay — scoped to the 3 provisioned accounts ──
+     Everything here is derived from data already fetched above (journey,
+     videoProgress, componentProgress); see lib/demoTime.ts. The
+     programme/material structure itself comes from the central config in
+     lib/demoProgrammeMaterials.ts — nothing here string-matches a title. */
+  const { auth } = useAuth();
+  const demoProgramme = useMemo(() => demoProgrammeFor(auth.account?.email), [auth.account?.email]);
+  const isDemoAccount = isRealMode && isInspectionDemoAccount(auth.account?.email) && demoProgramme != null;
+  const demoScopeKey = kind && id ? `${kind}:${id}` : '';
+  const demoOverrides = useDemoTimeOverrides(demoScopeKey);
+  const allJourneyComponents = useMemo(() => journey.flatMap((m) => m.weeks.flatMap((w) => w.components)), [journey]);
+  const demoCompletedIds = useMemo(() => completedComponentIds(real), [real]);
+  const demoTimings = useMemo(
+    () => (isDemoAccount
+      ? buildDemoTimings(allJourneyComponents, real?.videoProgress ?? [], real?.componentProgress ?? [], demoCompletedIds, demoOverrides)
+      : []),
+    [isDemoAccount, allJourneyComponents, real, demoCompletedIds, demoOverrides],
+  );
+  const demoTimingsByKey = useMemo(() => {
+    const map = new Map<string, DemoComponentTiming>();
+    for (const t of demoTimings) if (t.key) map.set(t.key, t);
+    return map;
+  }, [demoTimings]);
+  // Programme-level totals: always the sum of every material's component
+  // rows above, never a separately-tracked figure.
+  const demoProgrammeSummary = useMemo(() => summariseDemoTimings(demoTimings), [demoTimings]);
+  // Each material's constituent modules (by authored module id), its own
+  // component-level rollup, and its "current week" — the same journey data
+  // used everywhere else, grouped per lib/demoProgrammeMaterials.ts.
+  const demoMaterialCards = useMemo(() => {
+    if (!demoProgramme) return [];
+    return demoProgramme.materials.map((materialDef: DemoMaterialDef) => {
+      const modules = journey.filter((m) => m.weeks.some((w) => w.components.some((c) => materialForModuleId(demoProgramme, c.moduleId)?.key === materialDef.key)));
+      const timings = timingsForModuleIds(demoTimings, materialDef.moduleIds);
+      const weekStatus = currentWeekStatus(modules, demoCompletedIds);
+      return {
+        def: materialDef,
+        modules,
+        summary: summariseDemoTimings(timings),
+        weekStatus,
+        available: materialDef.moduleIds.length > 0 && modules.length > 0,
+      };
+    });
+  }, [demoProgramme, journey, demoTimings, demoCompletedIds]);
+  const [selectedMaterialKey, setSelectedMaterialKey] = useState<string | null>(null);
+  const selectedMaterialCard = demoMaterialCards.find((m) => m.def.key === selectedMaterialKey) || null;
   // OTJ hours: completed + planned come from the backend (stored in
   // Active_users.Completed_hours / planned_hours). "activities" counts every
   // completed item across kinds (distinct quizzes + videos + future types).
@@ -721,43 +773,126 @@ export default function LearnerOverview() {
         <SectionReveal delay={0}>
           <PageHeader
             icon="ri-graduation-cap-line"
-            title={displayLearnerName}
-            description={headerDescription}
+            title={isDemoAccount ? (demoProgramme?.programmeName || displayLearnerName) : displayLearnerName}
+            description={isDemoAccount ? `Inspection demo account · ${displayLearnerName}` : headerDescription}
             meta={
-              <>
-                <ProfileFact icon="ri-stack-line" label="Cohort" value={displayCohort} />
-                <ProfileFact icon="ri-flag-2-line" label="Module" value={currentModuleLabel} />
-                <ProfileFact icon="ri-user-star-line" label="Coach" value={coachDisplayName} />
-                <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
-                <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
-                <StatusBadge status={isRealMode ? real?.programmeStatus : p.status} tone={!isRealMode ? 'positive' : undefined} />
-              </>
+              isDemoAccount ? undefined : (
+                <>
+                  <ProfileFact icon="ri-stack-line" label="Cohort" value={displayCohort} />
+                  <ProfileFact icon="ri-flag-2-line" label="Module" value={currentModuleLabel} />
+                  <ProfileFact icon="ri-user-star-line" label="Coach" value={coachDisplayName} />
+                  <ProfileFact icon="ri-calendar-event-line" label="Start date" value={startDateDisplay} />
+                  <ProfileFact icon="ri-calendar-check-line" label="Planned end" value={plannedEndDisplay} />
+                  <StatusBadge status={isRealMode ? real?.programmeStatus : p.status} tone={!isRealMode ? 'positive' : undefined} />
+                </>
+              )
             }
             actions={
-              <>
-                <RowAction label="Message coach" icon="ri-chat-3-line" onClick={() => navigate('/learner/messages')} />
-                <RowAction label="Continue learning" icon="ri-play-circle-line" emphasis="primary" onClick={() => navigate(trainingPlanHref)} />
-              </>
+              isDemoAccount ? undefined : (
+                <>
+                  <RowAction label="Message coach" icon="ri-chat-3-line" onClick={() => navigate('/learner/messages')} />
+                  <RowAction label="Continue learning" icon="ri-play-circle-line" emphasis="primary" onClick={() => navigate(trainingPlanHref)} />
+                </>
+              )
             }
           />
         </SectionReveal>
 
         {/* ================================================================
+            INSPECTION-DEMO: programme summary + Your Materials
+            ================================================================ */}
+        {isDemoAccount && (
+          <SectionReveal delay={60} immediate>
+            <DemoProgrammeSummaryCard summary={demoProgrammeSummary} />
+          </SectionReveal>
+        )}
+        {isDemoAccount && (
+          <SectionReveal delay={100} immediate>
+            {selectedMaterialCard ? (
+              <Panel>
+                <SectionHeader
+                  title={selectedMaterialCard.def.name}
+                  icon="ri-book-2-line"
+                  actions={
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMaterialKey(null)}
+                      className="text-[12px] font-semibold text-primary-600 hover:text-primary-700"
+                    >
+                      <AppIcon className="ri-arrow-left-line mr-1"></AppIcon>Back to materials
+                    </button>
+                  }
+                />
+                <div className="mt-4 space-y-8">
+                  {selectedMaterialCard.modules.length === 0 ? (
+                    <EmptyState size="sm" title="This material has no published content yet." />
+                  ) : selectedMaterialCard.modules.map((module) => (
+                    <div key={module.module} className="space-y-8">
+                      {selectedMaterialCard.modules.length > 1 && (
+                        <h2 className="text-center text-[15px] font-bold text-foreground-900">{module.module}</h2>
+                      )}
+                      {module.weeks.map((week, weekIndex) => (
+                        <CurrentWeekCard
+                          key={`${module.module}:${week.week}`}
+                          moduleTitle={module.module}
+                          weekLabel={week.week}
+                          weekIndex={weekIndex}
+                          totalWeeks={module.weeks.length}
+                          components={week.components}
+                          videos={real?.videoProgress ?? []}
+                          completions={real?.componentProgress ?? []}
+                          kind={kind}
+                          learnerId={id}
+                          reflectionStatuses={reflectionStatuses}
+                          canProgress={canProgress}
+                          demoTimingsByKey={demoTimingsByKey}
+                          demoScopeKey={demoScopeKey}
+                          showWeekHeading
+                        />
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </Panel>
+            ) : (
+              <Panel>
+                <SectionHeader title="Your Materials" icon="ri-book-2-line" count={demoMaterialCards.length} />
+                <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {demoMaterialCards.map((m) => (
+                    <DemoMaterialCard
+                      key={m.def.key}
+                      name={m.def.name}
+                      summary={m.summary}
+                      currentWeekLabel={m.weekStatus.label}
+                      complete={m.weekStatus.complete}
+                      available={m.available}
+                      onContinue={() => setSelectedMaterialKey(m.def.key)}
+                    />
+                  ))}
+                </div>
+              </Panel>
+            )}
+          </SectionReveal>
+        )}
+
+        {/* ================================================================
             COMPACT PROGRESS CARDS
             ================================================================ */}
-        <SectionReveal delay={60}>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <ProgressStat icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
-            <ProgressStat icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
-            <ProgressStat icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
-            <ProgressStat icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
-          </div>
-        </SectionReveal>
+        {!isDemoAccount && (
+          <SectionReveal delay={60}>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <ProgressStat icon="ri-road-map-line" label="Programme Progress" value={programmeProgressValue} percent={programmeProgressPercent} caption={programmeProgressCaption} tone="brand" />
+              <ProgressStat icon="ri-calendar-check-line" label="Attendance" value={attendanceValue} percent={attendancePercent} caption={attendanceCaption} tone={attendanceTone} />
+              <ProgressStat icon="ri-time-line" label="OTJ Hours" value={otjValue} percent={otjPercent} caption={otjCaption} tone={otjTone} />
+              <ProgressStat icon="ri-bar-chart-2-line" label="KSB Progress" value={ksbValue} percent={ksbPercent} caption={ksbCaption} tone={ksbTone} />
+            </div>
+          </SectionReveal>
+        )}
 
         {/* ================================================================
             CONTINUE LEARNING + UPCOMING / MY COACH
             ================================================================ */}
-        <SectionReveal delay={100}>
+        {!isDemoAccount && <SectionReveal delay={100}>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <div className="lg:col-span-2">
               <Panel>
@@ -766,7 +901,7 @@ export default function LearnerOverview() {
                   icon="ri-play-circle-line"
                   description={isRealMode ? (currentWeek ? `${currentWeek.week.week} · ${currentWeek.module}` : undefined) : "This week's plan"}
                   actions={
-                    ((isRealMode && real && journey.length > 0) || !isRealMode) ? (
+                    (isRealMode && real && journey.length > 0) || !isRealMode ? (
                       <Link to={trainingPlanHref} className="text-[12px] font-semibold text-primary-600 hover:text-primary-700">
                         View full plan
                       </Link>
@@ -784,8 +919,10 @@ export default function LearnerOverview() {
                 )}
                 <div className="mt-3">
                   {isRealMode ? (
-                    (journey.length === 0 || !currentWeek) ? (
+                    journey.length === 0 ? (
                       loading ? <RowsSkeleton rows={4} /> : <EmptyState size="sm" title="No training plan yet" description="Your training plan will appear here once it's built." />
+                    ) : !currentWeek ? (
+                      <EmptyState size="sm" title="No training plan yet" description="Your training plan will appear here once it's built." />
                     ) : (
                       <CurrentWeekCard
                         moduleTitle={currentWeek.module}
@@ -799,6 +936,7 @@ export default function LearnerOverview() {
                         learnerId={id}
                         reflectionStatuses={reflectionStatuses}
                         canProgress={canProgress}
+                        demoScopeKey={demoScopeKey}
                       />
                     )
                   ) : (
@@ -865,12 +1003,12 @@ export default function LearnerOverview() {
               </Panel>
             </div>
           </div>
-        </SectionReveal>
+        </SectionReveal>}
 
         {/* ================================================================
             MY TASKS
             ================================================================ */}
-        <SectionReveal delay={140}>
+        {!isDemoAccount && <SectionReveal delay={140}>
           <Panel>
             <SectionHeader title="My Tasks" count={tasks.length} description="What needs your attention next" icon="ri-list-check-3" />
             <div className="mt-3 space-y-2">
@@ -890,12 +1028,12 @@ export default function LearnerOverview() {
               )}
             </div>
           </Panel>
-        </SectionReveal>
+        </SectionReveal>}
 
         {/* ================================================================
             MY APPRENTICESHIP JOURNEY
             ================================================================ */}
-        <SectionReveal delay={180}>
+        {!isDemoAccount && <SectionReveal delay={180}>
           <Panel>
             <SectionHeader
               title="My Apprenticeship Journey"
@@ -920,7 +1058,7 @@ export default function LearnerOverview() {
               )}
             </div>
           </Panel>
-        </SectionReveal>
+        </SectionReveal>}
 
       </PageContainer>
     </WorkspaceShell>
@@ -985,12 +1123,15 @@ function UpcomingRow({ day, month, timeLabel, title, subtitle, tone = 'neutral',
 }
 
 /** One component row inside the Continue Learning card. */
-function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
+function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen, demoTiming, demoScopeKey }: {
   c: JourneyComponent;
   videos: LearnerVideoProgress[];
   completions: LearnerComponentProgress[];
   reflectionStatus?: string;
   onOpen?: () => void;
+  /** Inspection-demo accounts only — see isInspectionDemoAccount. */
+  demoTiming?: DemoComponentTiming;
+  demoScopeKey?: string;
 }) {
   const meta = componentTypeMeta(c.title);
   const prog = componentProgress(c, videos, completions);
@@ -1054,7 +1195,14 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
             {reflection.label}
           </span>
         )}
-        {c.expectedOtjh != null && c.expectedOtjh > 0 && (
+        {demoTiming ? (
+          <DemoTimeChip
+            scopeKey={demoScopeKey || ''}
+            timeKey={demoTiming.key}
+            expectedMinutes={demoTiming.expectedMinutes}
+            actualMinutes={demoTiming.actualMinutes}
+          />
+        ) : c.expectedOtjh != null && c.expectedOtjh > 0 && (
           <span className="text-[10px] text-foreground-400 inline-flex items-center gap-1"><AppIcon className="ri-time-line text-[10px]" />{c.expectedOtjh}h</span>
         )}
       </span>
@@ -1064,7 +1212,7 @@ function CurrentWeekRow({ c, videos, completions, reflectionStatus, onOpen }: {
 }
 
 /** The Continue Learning card body: progress + this week's components. */
-function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress }: {
+function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, components, videos, completions, kind, learnerId, reflectionStatuses, canProgress, demoTimingsByKey, demoScopeKey, showWeekHeading = false }: {
   moduleTitle: string; weekLabel: string; weekIndex: number; totalWeeks: number; components: JourneyComponent[];
   videos: LearnerVideoProgress[]; completions: LearnerComponentProgress[];
   kind?: string; learnerId?: string;
@@ -1072,6 +1220,10 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
   /** False for a staff/coach viewer: the rows still show progress, but none of
    *  them opens the runner that would record progress as the learner. */
   canProgress: boolean;
+  /** Inspection-demo accounts only — see isInspectionDemoAccount. */
+  demoTimingsByKey?: Map<string, DemoComponentTiming>;
+  demoScopeKey?: string;
+  showWeekHeading?: boolean;
 }) {
   const navigate = useNavigate();
   const availableComponents = components.filter(hasComponentContent);
@@ -1106,20 +1258,29 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
 
   return (
     <div>
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-100 bg-primary-50/50 px-3.5 py-2.5">
-        <span className="flex min-w-0 items-center gap-2.5">
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700">
-            <AppIcon className="ri-calendar-event-line text-[15px]" />
+      {showWeekHeading && (
+        <div className="mb-4 flex items-center gap-3" aria-label={weekLabel}>
+          <span className="h-px flex-1 bg-foreground-200" />
+          <h3 className="max-w-[70%] text-center text-[14px] font-bold text-foreground-900">{weekLabel}</h3>
+          <span className="h-px flex-1 bg-foreground-200" />
+        </div>
+      )}
+      {!showWeekHeading && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary-100 bg-primary-50/50 px-3.5 py-2.5">
+          <span className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-100 text-primary-700">
+              <AppIcon className="ri-calendar-event-line text-[15px]" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">Current period</span>
+              <span className="block truncate text-[12px] font-semibold text-foreground-800">{period || 'Date not scheduled yet'}</span>
+            </span>
           </span>
-          <span className="min-w-0">
-            <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">Current period</span>
-            <span className="block truncate text-[12px] font-semibold text-foreground-800">{period || 'Date not scheduled yet'}</span>
+          <span className="shrink-0 rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700 ring-1 ring-primary-200">
+            Week {weekIndex + 1} of {totalWeeks}
           </span>
-        </span>
-        <span className="shrink-0 rounded-full bg-background-50 px-2.5 py-1 text-[10px] font-semibold text-primary-700 ring-1 ring-primary-200">
-          Week {weekIndex + 1} of {totalWeeks}
-        </span>
-      </div>
+        </div>
+      )}
       <div className="mb-3 flex items-center justify-between gap-3">
         <span className="text-[13px] font-semibold text-foreground-900">{done}/{total} complete</span>
         <span className="text-[13px] font-semibold tabular-nums text-primary-700">{percent}%</span>
@@ -1137,6 +1298,8 @@ function CurrentWeekCard({ moduleTitle, weekLabel, weekIndex, totalWeeks, compon
               completions={completions}
               reflectionStatus={reflectionStatusFor(c)}
               onOpen={openFor(c)}
+              demoTiming={demoTimingsByKey?.get(demoTimeKey({ isQuiz: c.isQuiz, quizId: c.quizMeta?.quizId, componentId: c.componentId }))}
+              demoScopeKey={demoScopeKey}
             />
           ))}
         </div>

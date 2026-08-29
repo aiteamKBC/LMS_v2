@@ -12,6 +12,10 @@ import { fetchLearnerDetail, type LearnerKsbItem, type LearnerKind } from '@/api
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
+import { useAuth } from '@/hooks/useAuth';
+import { isInspectionDemoAccount } from '@/lib/learnerFlowAccess';
+import { actualMinutesFor, demoTimeKey } from '@/lib/demoTime';
+import { DemoTimeChip } from '@/components/feature/DemoTimePanel';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { startTimeTracking, type TimeTrackingSession } from '@/api/timeTracking';
@@ -140,6 +144,13 @@ export default function QuizTakePage() {
     ? (quiz.duration * (quiz.timeUnit === 'seconds' ? 1 : 60)) / 3600
     : undefined;
 
+  // Inspection-demo accounts only — see isInspectionDemoAccount.
+  const { auth } = useAuth();
+  const isDemoAccount = isInspectionDemoAccount(auth.account?.email);
+  const demoScopeKey = kind && id ? `${kind}:${id}` : '';
+  const demoKey = quizId ? demoTimeKey({ isQuiz: true, quizId }) : '';
+  const demoExpectedMinutes = quizPlannedHours != null ? Math.round(quizPlannedHours * 60) : null;
+
   const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
     if (!quiz || !kind || !id || submitting || !canProgress) return;
     setSubmitting(true);
@@ -223,7 +234,17 @@ export default function QuizTakePage() {
               onClose={() => navigate(-1)}
             />
         ) : (
-          result && <ResultsScreen quiz={quiz} result={result} onBack={() => navigate(-1)} />
+          result && (
+            <ResultsScreen
+              quiz={quiz}
+              result={result}
+              onBack={() => navigate(-1)}
+              demoAccount={isDemoAccount}
+              demoScopeKey={demoScopeKey}
+              demoKey={demoKey}
+              demoExpectedMinutes={demoExpectedMinutes}
+            />
+          )
         )}
       </div>
     </WorkspaceShell>
@@ -635,7 +656,11 @@ function MatchingInputRich({ question, value, onChange }: {
 /* ═══════════════════════════════════════════════════════
    RESULTS
    ═══════════════════════════════════════════════════════ */
-function ResultsScreen({ quiz, result, onBack }: { quiz: Quiz; result: QuizAttemptResult; onBack: () => void }) {
+function ResultsScreen({ quiz, result, onBack, demoAccount, demoScopeKey, demoKey, demoExpectedMinutes }: {
+  quiz: Quiz; result: QuizAttemptResult; onBack: () => void;
+  /** Inspection-demo accounts only — see isInspectionDemoAccount. */
+  demoAccount?: boolean; demoScopeKey?: string; demoKey?: string; demoExpectedMinutes?: number | null;
+}) {
   const { attempt } = result;
   return (
     <div className="space-y-4">
@@ -652,6 +677,18 @@ function ResultsScreen({ quiz, result, onBack }: { quiz: Quiz; result: QuizAttem
           <StatTile icon="ri-medal-line" label="Points" value={`${result.earned}/${result.possible}`} />
           <StatTile icon="ri-timer-line" label="Time taken" value={attempt.timeTaken} />
         </div>
+
+        {demoAccount && demoKey && (
+          <div className="mb-6 flex justify-center">
+            <DemoTimeChip
+              scopeKey={demoScopeKey || ''}
+              timeKey={demoKey}
+              expectedMinutes={demoExpectedMinutes ?? null}
+              actualMinutes={actualMinutesFor({ timeTaken: attempt.timeTaken, reportedTime: attempt.reportedTime })}
+              editable
+            />
+          </div>
+        )}
 
         <button
           onClick={onBack}

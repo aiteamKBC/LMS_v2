@@ -328,6 +328,8 @@ export interface CurriculumKsbSet {
   frameworkId?: string;
   profileId?: string | number;
   ksbProfileId?: string;
+  /** Skills England standard supplying funding/compliance metadata for this profile. */
+  standardSourceId?: string;
   programmeId: string;
   programmeIds?: string[];
   cohortIds?: string[];
@@ -344,6 +346,8 @@ export interface CurriculumKsbFramework {
   id: string;
   profileId?: string | number;
   ksbProfileId?: string;
+  /** Explicit parent standard; independent from the programmes using the profile. */
+  standardSourceId?: string;
   programmeId?: string;
   programmeIds?: string[];
   cohortIds?: string[];
@@ -963,6 +967,7 @@ export type CurriculumKsbItemInput = {
 export type CurriculumKsbFrameworkInput = {
   name?: string;
   ksbProfileId?: string;
+  standardSourceId?: string;
   programmeId?: string;
   programmeIds?: string[];
   cohortIds?: string[];

@@ -18,6 +18,8 @@ interface WorkspaceShellProps {
   userRole?: string;
   workspaceLabel?: string;
   showBackButton?: boolean;
+  /** Replaces the route-derived final breadcrumb (which may contain a raw id). */
+  breadcrumbCurrentLabel?: string;
 }
 
 interface BreadcrumbItem {
@@ -143,14 +145,15 @@ export function WorkspaceShell({
   userRole,
   workspaceLabel,
   showBackButton = false,
+  breadcrumbCurrentLabel,
 }: WorkspaceShellProps) {
   // A learner who is still onboarding, or who has finished enrolment but is not
   // yet being taught, gets a reduced sidebar — most of the workspace needs a
   // running training plan. Applied here so every learner page inherits it.
-  const navItems = useLearnerNavGate(role, navItemsProp);
+  const { auth } = useAuth();
+  const navItems = useLearnerNavGate(role, navItemsProp, auth.account?.email);
   const location = useLocation();
   const navigate = useNavigate();
-  const { auth } = useAuth();
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
 
@@ -182,7 +185,12 @@ export function WorkspaceShell({
     writeRouteHistory(nextHistory);
   }, [location.hash, location.pathname, location.search]);
 
-  const breadcrumbs = buildBreadcrumbs(location.pathname, location.search, navItems, defaultWorkspaceLabel, roleLabel);
+  const routeBreadcrumbs = buildBreadcrumbs(location.pathname, location.search, navItems, defaultWorkspaceLabel, roleLabel);
+  const breadcrumbs = breadcrumbCurrentLabel && routeBreadcrumbs.length
+    ? routeBreadcrumbs.map((crumb, index) => (
+        index === routeBreadcrumbs.length - 1 ? { ...crumb, label: breadcrumbCurrentLabel } : crumb
+      ))
+    : routeBreadcrumbs;
 
   const handleToggleMobileSidebar = () => {
     setMobileSidebarOpen(prev => !prev);

@@ -55,6 +55,9 @@ const CoachReportsPage = lazy(() => import("../pages/coach/reports/page"));
 const CoachTimetable = lazy(() => import("../pages/coach/timetable/page"));
 const CommunicationPage = lazy(() => import("../pages/communication/page"));
 const CurriculumDashboard = lazy(() => import("../pages/workspace/curriculum/page"));
+const CurriculumLibraryHub = lazy(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumLibraryHub })));
+const CurriculumDeliveryHub = lazy(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
+const CurriculumQualityHub = lazy(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CurriculumFreeCourses = lazy(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazy(() => import("../pages/curriculum/ksb-frameworks/page"));
 const CurriculumCohorts = lazy(() => import("../pages/curriculum/cohorts/page"));
@@ -724,6 +727,18 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/programmes",
     element: <CurriculumProgrammes />,
+  },
+  {
+    path: "/curriculum/library",
+    element: <CurriculumLibraryHub />,
+  },
+  {
+    path: "/curriculum/delivery",
+    element: <CurriculumDeliveryHub />,
+  },
+  {
+    path: "/curriculum/quality",
+    element: <CurriculumQualityHub />,
   },
   {
     path: "/curriculum/free-courses",

@@ -1,10 +1,12 @@
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 // Deck previews below: the same pair the learner's page uses, so an author sees
@@ -53,6 +55,7 @@ import { loadModuleStructure, saveModuleStructure } from '@/pages/curriculum/mod
 import { TeamsMeetingModal, type TeamsMeetingModuleContext } from '@/pages/curriculum/module-builder/TeamsMeetingModal';
 import { RichTextDraft } from '@/pages/curriculum/module-builder/RichTextEditor';
 import { formatDateLabel } from '@/pages/curriculum/shared/entities/model';
+import { COMPONENT_UPLOAD_MAX_LABEL } from '@/pages/curriculum/shared/componentUploadPolicy';
 // Both panels are heavy and only mount when their modal opens — GuidedQuizUpload
 // alone pulls in xlsx (~420 kB). Splitting them keeps that weight off the initial
 // load of this page and of module-builder, which imports from this module.
@@ -845,29 +848,17 @@ function FlowStrip({ components, selectedId, onJump }: { components: ModuleCompo
   );
 }
 
-// The signature interaction: a "+" threaded into the spine that expands a
-// contextual type picker exactly where the new part will land.
-function InsertionZone({ index, open, onOpen, onClose, onPick, first, last }: { index: number; open: boolean; onOpen: () => void; onClose: () => void; onPick: (type: ModuleComponentType) => void; first?: boolean; last?: boolean }) {
-  if (open) {
-    return (
-      <div className="flex gap-3">
-        <SpineGutter connectTop={!first} connectBottom={!last}>
-          <span className="grid place-items-center w-6 h-6 rounded-full bg-primary-500 text-white text-xs shadow ring-4 ring-primary-100"><AppIcon className="ri-add-line"></AppIcon></span>
-        </SpineGutter>
-        <div className="flex-1 my-1.5">
-          <TypePicker onPick={onPick} onClose={onClose} atIndex={index} />
-        </div>
-      </div>
-    );
-  }
+// A "+" threaded into the spine records exactly where the new component lands;
+// the actual picker opens in a roomy dialog instead of squeezing into the rail.
+function InsertionZone({ active, onOpen, first, last }: { active: boolean; onOpen: () => void; first?: boolean; last?: boolean }) {
   return (
-    <div className="group/insert flex gap-3">
+    <div className={`group/insert flex gap-3 ${active ? 'py-1' : ''}`}>
       <SpineGutter connectTop={!first} connectBottom={!last} />
       <div className="flex-1 flex items-center">
-        <button onClick={onOpen} className="relative w-full h-5 flex items-center justify-center" aria-label="Add a component here">
-          <span className="absolute inset-x-0 h-px bg-primary-200 opacity-0 group-hover/insert:opacity-100 transition-opacity" />
-          <span className="relative inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold text-foreground-400 opacity-0 group-hover/insert:opacity-100 group-hover/insert:text-primary-600 group-hover/insert:border-primary-200 transition-all">
-            <AppIcon className="ri-add-line"></AppIcon> Add here
+        <button onClick={onOpen} className={`relative flex w-full items-center justify-center transition-all ${active ? 'h-8' : 'h-5'}`} aria-label="Add a component here">
+          <span className={`absolute inset-x-0 h-px bg-primary-200 transition-opacity ${active ? 'opacity-100' : 'opacity-0 group-hover/insert:opacity-100'}`} />
+          <span className={`relative inline-flex items-center gap-1 rounded-full border bg-background-50 px-2 py-0.5 text-[10px] font-bold transition-all ${active ? 'border-primary-300 text-primary-700 shadow-sm' : 'border-background-200 text-foreground-400 opacity-0 group-hover/insert:border-primary-200 group-hover/insert:text-primary-600 group-hover/insert:opacity-100'}`}>
+            <AppIcon className="ri-add-line"></AppIcon> {active ? 'Adding here' : 'Add here'}
           </span>
         </button>
       </div>
@@ -934,7 +925,7 @@ function RailNodeCard({ component, index, selected, issues, weekSessionDate, dra
             <span className="text-[13px] font-bold text-foreground-900 truncate">{component.title || weekTypeLabel(component.type)}</span>
             {issues > 0 && <span className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-600"><AppIcon className="ri-error-warning-fill"></AppIcon>{issues}</span>}
           </span>
-          <span className="mt-0.5 flex items-center gap-2 text-[10px] text-foreground-400">
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-foreground-400">
             <span className={`font-semibold ${tone.text}`}>{weekTypeLabel(component.type)}</span>
             <span className="tabular-nums">{component.expectedOtjh}h</span>
             <span className="tabular-nums">{component.points}pts</span>
@@ -943,9 +934,9 @@ function RailNodeCard({ component, index, selected, issues, weekSessionDate, dra
           </span>
         </span>
         {(onDuplicate || onDelete) && (
-          <span className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover/node:opacity-100 transition-opacity">
-            <span onClick={e => { e.stopPropagation(); onDuplicate?.(); }} className="grid place-items-center w-7 h-7 rounded-lg text-foreground-400 hover:bg-background-100 hover:text-primary-600 cursor-pointer"><AppIcon className="ri-file-copy-line text-[13px]"></AppIcon></span>
-            <span onClick={e => { e.stopPropagation(); onDelete?.(); }} className="grid place-items-center w-7 h-7 rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600 cursor-pointer"><AppIcon className="ri-delete-bin-line text-[13px]"></AppIcon></span>
+          <span className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover/node:opacity-100 sm:group-focus-within/node:opacity-100">
+            <button type="button" aria-label={`Duplicate ${component.title || weekTypeLabel(component.type)}`} title="Duplicate component" onClick={e => { e.stopPropagation(); onDuplicate?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-background-100 hover:text-primary-600"><AppIcon className="ri-file-copy-line text-[13px]"></AppIcon></button>
+            <button type="button" aria-label={`Delete ${component.title || weekTypeLabel(component.type)}`} title="Delete component" onClick={e => { e.stopPropagation(); onDelete?.(); }} className="grid h-7 w-7 place-items-center rounded-lg text-foreground-400 hover:bg-red-100 hover:text-red-600"><AppIcon className="ri-delete-bin-line text-[13px]"></AppIcon></button>
           </span>
         )}
       </div>
@@ -953,36 +944,118 @@ function RailNodeCard({ component, index, selected, issues, weekSessionDate, dra
   );
 }
 
-function TypePicker({ onPick, onClose, atIndex }: { onPick: (type: ModuleComponentType) => void; onClose: () => void; atIndex: number }) {
-  return (
-    <div className="rounded-xl border border-primary-200 bg-background-50 shadow-lg ring-1 ring-primary-100 overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-background-200 bg-primary-50/50">
-        <span className="text-[11px] font-bold text-primary-700"><AppIcon className="ri-add-circle-line mr-1"></AppIcon>Add a part {atIndex === 0 ? 'at the start' : ''}</span>
-        <button onClick={onClose} className="grid place-items-center w-6 h-6 rounded-md text-foreground-400 hover:bg-background-100 hover:text-foreground-700"><AppIcon className="ri-close-line"></AppIcon></button>
-      </div>
-      <div className="p-3 space-y-3 max-h-[340px] overflow-y-auto">
-        {weekPaletteGroups.map(group => (
-          <div key={group}>
-            <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-foreground-400 mb-1.5">{group}</p>
-            <div className="grid grid-cols-2 gap-2">
-              {weekPaletteTypes.filter(type => type.group === group).map(type => {
-                const tone = TONE[type.tone] || TONE.slate;
-                const definition = getComponentDefinition(type.type);
-                return (
-                  <button key={type.type} onClick={() => onPick(type.type)} className={`group/tile flex items-center gap-2.5 rounded-lg border border-background-200 bg-background-50 p-2.5 text-left hover:border-background-300 hover:shadow-sm transition-all`}>
-                    <span className={`grid place-items-center w-8 h-8 rounded-lg shrink-0 ${tone.chip} group-hover/tile:scale-105 transition-transform`}><AppIcon className={`${type.icon} text-base`}></AppIcon></span>
-                    <span className="min-w-0">
-                      <span className="block text-[12px] font-bold text-foreground-800 truncate">{type.label}</span>
-                      <span className="block text-[10px] text-foreground-400 tabular-nums">{definition.defaultOtjh}h · {definition.defaultPoints}pts</span>
-                    </span>
-                  </button>
-                );
-              })}
+const COMPONENT_PICKER_DESCRIPTIONS: Partial<Record<ModuleComponentType, string>> = {
+  'live-session': 'Schedule a tutor-led Teams session.',
+  video: 'Add a recorded lesson or external video.',
+  reading: 'Share written guidance, a document or PDF.',
+  podcast: 'Add audio learners can listen to in their own time.',
+  powerpoint: 'Upload a slide deck or learner presentation.',
+  quiz: 'Check understanding with a linked quiz.',
+  assignment: 'Set a task for learners to submit.',
+};
+
+function ComponentTypePickerDialog({ atIndex, componentCount, onPick, onClose, onReuse }: {
+  atIndex: number;
+  componentCount: number;
+  onPick: (type: ModuleComponentType) => void;
+  onClose: () => void;
+  onReuse?: () => void;
+}) {
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLowerCase();
+  const visibleTypes = weekPaletteTypes.filter(type => (
+    !query
+    || type.label.toLowerCase().includes(query)
+    || type.group.toLowerCase().includes(query)
+    || String(COMPONENT_PICKER_DESCRIPTIONS[type.type] || '').toLowerCase().includes(query)
+  ));
+  const placement = componentCount === 0
+    ? 'This will be the first component in the week.'
+    : atIndex === 0
+      ? 'The new component will be added at the start of the week.'
+      : atIndex >= componentCount
+        ? 'The new component will be added at the end of the week.'
+        : `The new component will be inserted at position ${atIndex + 1}.`;
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/45 p-0 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="component-picker-title" className="flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-background-200 bg-background-50 shadow-2xl sm:max-w-3xl sm:rounded-2xl" onClick={event => event.stopPropagation()}>
+        <div className="border-b border-background-200 px-4 py-4 sm:px-5">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex min-w-0 items-start gap-3">
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary-50 text-primary-600"><AppIcon className="ri-add-box-line text-lg"></AppIcon></span>
+              <div className="min-w-0">
+                <h3 id="component-picker-title" className="text-base font-heading font-bold text-foreground-950">Add a component</h3>
+                <p className="mt-1 text-[12px] font-medium text-foreground-500">Choose one learning activity. It will open immediately so you can complete its details.</p>
+              </div>
             </div>
+            <button type="button" onClick={onClose} aria-label="Close component picker" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-foreground-500 transition-smooth hover:bg-background-100 hover:text-foreground-900"><AppIcon className="ri-close-line text-lg"></AppIcon></button>
           </div>
-        ))}
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-primary-100 bg-primary-50/60 px-3 py-2 text-[11px] font-semibold text-primary-700">
+            <AppIcon className="ri-map-pin-line shrink-0"></AppIcon>
+            {placement}
+          </div>
+          <label className="relative mt-3 block">
+            <AppIcon className="ri-search-line pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-foreground-400"></AppIcon>
+            <input autoFocus value={search} onChange={event => setSearch(event.target.value)} placeholder="Search component types..." className="h-10 w-full rounded-lg border border-foreground-200/70 bg-background-50 pl-9 pr-3 text-[12px] font-medium text-foreground-900 outline-none transition-smooth placeholder:text-foreground-300 focus:border-primary-300 focus:ring-2 focus:ring-primary-100" />
+          </label>
+        </div>
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-background-100/45 p-4 sm:p-5">
+          {weekPaletteGroups.map(group => {
+            const groupTypes = visibleTypes.filter(type => type.group === group);
+            if (!groupTypes.length) return null;
+            return (
+              <section key={group}>
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">{group}</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {groupTypes.map(type => {
+                    const tone = TONE[type.tone] || TONE.slate;
+                    const definition = getComponentDefinition(type.type);
+                    return (
+                      <button key={type.type} type="button" onClick={() => onPick(type.type)} className="group/tile flex min-h-[88px] items-start gap-3 rounded-xl border border-background-200 bg-background-50 p-3 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary-200">
+                        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${tone.chip} transition-transform group-hover/tile:scale-105`}><AppIcon className={`${type.icon} text-lg`}></AppIcon></span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-start justify-between gap-2">
+                            <span className="text-[13px] font-bold text-foreground-900">{type.label}</span>
+                            <AppIcon className="ri-arrow-right-line shrink-0 text-primary-500 opacity-0 transition-opacity group-hover/tile:opacity-100"></AppIcon>
+                          </span>
+                          <span className="mt-1 block text-[11px] leading-relaxed text-foreground-500">{COMPONENT_PICKER_DESCRIPTIONS[type.type]}</span>
+                          <span className="mt-2 flex items-center gap-2 text-[10px] font-semibold text-foreground-400 tabular-nums">
+                            <span>{definition.defaultOtjh}h OTJH</span><span className="h-1 w-1 rounded-full bg-foreground-300"></span><span>{definition.defaultPoints} points</span>
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+          {!visibleTypes.length && <div className="rounded-xl border border-dashed border-background-300 bg-background-50 px-4 py-10 text-center text-[12px] font-medium text-foreground-500">No component types match “{search}”.</div>}
+        </div>
+        <div className="flex flex-col-reverse gap-2 border-t border-background-200 bg-background-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <p className="text-[10px] font-medium text-foreground-400">You can reorder components from the week timeline at any time.</p>
+          <div className="flex items-center justify-end gap-2">
+            {onReuse && <button type="button" onClick={onReuse} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[11px] font-bold text-primary-700 hover:bg-primary-100"><AppIcon className="ri-file-copy-line"></AppIcon>Reuse existing</button>}
+            <button type="button" onClick={onClose} className="h-9 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-700 hover:bg-background-100">Cancel</button>
+          </div>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1067,9 +1140,16 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
           <span className="text-[11px] text-foreground-400 tabular-nums">{components.length} {components.length === 1 ? 'part' : 'parts'}</span>
         </div>
       )}
-      {nested && onReuseComponents && (
-        <div className="flex justify-end">
-          <ReuseComponentsButton onClick={onReuseComponents} />
+      {components.length > 0 && (
+        <div className={`flex flex-wrap items-center gap-2 ${nested ? 'justify-end' : 'mt-3 justify-between border-y border-background-200 py-2'}`}>
+          {!nested && <p className="text-[10px] font-medium text-foreground-400">Select a component to edit it, or add another.</p>}
+          <div className="flex items-center gap-2">
+            {onReuseComponents && <ReuseComponentsButton onClick={onReuseComponents} />}
+            <button type="button" onClick={() => setPickerIndex(components.length)} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary-500 px-3 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600">
+              <AppIcon className="ri-add-line"></AppIcon>
+              Add component
+            </button>
+          </div>
         </div>
       )}
 
@@ -1077,8 +1157,8 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
         <div className="mt-3">
           <button onClick={() => setPickerIndex(0)} className="w-full rounded-xl border-2 border-dashed border-background-300 bg-background-50 py-10 text-center hover:border-primary-300 hover:bg-primary-50/40 transition-all group">
             <span className="grid place-items-center w-11 h-11 mx-auto rounded-full bg-primary-500 text-white text-xl group-hover:scale-110 transition-transform"><AppIcon className="ri-add-line"></AppIcon></span>
-            <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first part</p>
-            <p className="text-[11px] text-foreground-400">Live sessions, videos, readings, quizzes…</p>
+            <p className="mt-3 text-[13px] font-bold text-foreground-800">Add the first component</p>
+            <p className="text-[11px] text-foreground-400">Choose a live session, recording, learning material or assessment.</p>
           </button>
           {onReuseComponents && (
             <div className="mt-2 flex justify-center">
@@ -1090,7 +1170,7 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={() => setActiveDragId(null)} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
           <SortableContext items={components.map(c => c.id)} strategy={verticalListSortingStrategy}>
             <div className="mt-2 max-h-[calc(100vh-15rem)] overflow-y-auto overflow-x-hidden px-1.5 py-1.5">
-              <InsertionZone index={0} open={pickerIndex === 0} onOpen={() => setPickerIndex(0)} onClose={() => setPickerIndex(null)} onPick={type => addComponentAt(type, 0)} first />
+              <InsertionZone active={pickerIndex === 0} onOpen={() => setPickerIndex(0)} first />
               {components.map((component, index) => (
                 <Fragment key={component.id}>
                   <SortableRailNode
@@ -1103,7 +1183,7 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
                     issues={validateWeekComponent(component).length}
                     weekSessionDate={weekSessionDate}
                   />
-                  <InsertionZone index={index + 1} open={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} onClose={() => setPickerIndex(null)} onPick={type => addComponentAt(type, index + 1)} last={index === components.length - 1} />
+                  <InsertionZone active={pickerIndex === index + 1} onOpen={() => setPickerIndex(index + 1)} last={index === components.length - 1} />
                 </Fragment>
               ))}
             </div>
@@ -1112,6 +1192,18 @@ export function WeekComponentRail({ weekId, components, selectedId, onSelectId, 
             {activeComponent ? <RailNodeCard component={activeComponent} index={components.findIndex(c => c.id === activeComponent.id)} selected dragging issues={0} weekSessionDate={weekSessionDate} /> : null}
           </DragOverlay>
         </DndContext>
+      )}
+      {pickerIndex !== null && (
+        <ComponentTypePickerDialog
+          atIndex={pickerIndex}
+          componentCount={components.length}
+          onPick={type => addComponentAt(type, pickerIndex)}
+          onClose={() => setPickerIndex(null)}
+          onReuse={onReuseComponents ? () => {
+            setPickerIndex(null);
+            onReuseComponents();
+          } : undefined}
+        />
       )}
     </div>
   );
@@ -1122,7 +1214,7 @@ function ReuseComponentsButton({ onClick, label = 'Reuse' }: { onClick: () => vo
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100"
+      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-semibold text-primary-700 transition-smooth hover:bg-primary-100"
     >
       <AppIcon className="ri-file-copy-line text-[12px]"></AppIcon>
       {label}
@@ -1927,6 +2019,7 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
           <Field label="Expected OTJH hours"><input type="number" step="0.5" min="0" value={component.expectedOtjh} onChange={e => onChange({ expectedOtjh: Number(e.target.value) || 0 })} className={`${inputClass} tabular-nums`} /></Field>
           <Field label="Points"><input type="number" min="0" value={component.points} disabled readOnly title="Points are set by the Engagement points rule for this component type and can't be edited here." className={`${inputClass} tabular-nums cursor-not-allowed opacity-70`} /></Field>
         </div>
+        <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>2 hours is the starting estimate for a PowerPoint component. It is not calculated from the uploaded file or slide count; adjust it to the learner's expected off-the-job learning time.</p>
         <p className="mt-2 text-[11px] text-foreground-400"><AppIcon className="ri-flashlight-line mr-1 text-amber-500"></AppIcon>{typeof rulePoints === 'number' ? `Fixed by the Engagement points rule for PowerPoint decks (${rulePoints} pts).` : 'Points are fixed by the Engagement points rules — not editable here.'}</p>
       </Section>
 
@@ -2261,16 +2354,19 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const [failedFile, setFailedFile] = useState<File | null>(null);
   const inputId = useMemo(() => `week-component-upload-${Math.random().toString(36).slice(2)}`, []);
 
   const handleFile = async (file: File) => {
     setUploading(true);
     setError('');
+    setFailedFile(null);
     try {
       const result = await onUpload(componentId, file, componentType);
       onUploaded(result.file);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to upload file.');
+      setFailedFile(file);
     } finally {
       setUploading(false);
     }
@@ -2290,7 +2386,7 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
             </a>
           )}
         </div>
-        <div className="shrink-0">
+        <div className="w-full shrink-0 sm:w-auto">
           <input
             id={inputId}
             type="file"
@@ -2303,13 +2399,30 @@ function WeekComponentFileUpload({ componentId, componentType, accept, uploadedN
               if (file) void handleFile(file);
             }}
           />
-          <label htmlFor={inputId} className={`inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold text-white transition-smooth ${uploading ? 'bg-foreground-300' : 'bg-primary-500 hover:bg-primary-600'}`}>
-            <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'}></AppIcon>
+          <label htmlFor={inputId} aria-disabled={uploading} className={`inline-flex h-9 w-full min-w-[124px] items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold !text-white shadow-sm transition-smooth sm:w-auto ${uploading ? 'cursor-wait bg-foreground-300' : 'cursor-pointer bg-primary-600 hover:bg-primary-700'}`}>
+            <AppIcon className={`${uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'} !text-white`}></AppIcon>
             {uploading ? 'Uploading…' : 'Upload file'}
           </label>
         </div>
       </div>
-      {error && <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700">{error}</p>}
+      <p className="mt-2 flex items-center gap-1 text-[10px] font-medium text-foreground-400">
+        <AppIcon className="ri-information-line shrink-0"></AppIcon>
+        Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL}.
+      </p>
+      {error && (
+        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-red-700 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold">
+            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
+            <span>{error}</span>
+          </p>
+          {failedFile && (
+            <button type="button" disabled={uploading} onClick={() => void handleFile(failedFile)} className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md border border-red-200 bg-background-50 px-3 text-[11px] font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
+              <AppIcon className="ri-refresh-line"></AppIcon>
+              Retry upload
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
