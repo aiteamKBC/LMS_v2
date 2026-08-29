@@ -23,6 +23,7 @@ import {
 } from '@/pages/curriculum/module-builder/componentAuthoringModel';
 import { fetchPointsRules } from '@/api/engagement';
 import { fetchCurriculumOverview, type CurriculumGroup, type CurriculumModule, type CurriculumProgramme } from '@/lib/curriculumApi';
+import { assertComponentUploadAllowed, uploadComponentFile } from '@/pages/curriculum/shared/componentUploadPolicy';
 
 export { componentTypeGroups, componentTypes, createEmptyComponent, getComponentDefinition, makeAuthoringId };
 export type { KsbMapping, ModuleComponent, ModuleComponentType, ModuleStatus };
@@ -335,21 +336,11 @@ export interface WeekComponentUploadResult {
 // into the component's own settings and it's persisted on the next Save,
 // the same way every other field on a week component is.
 export async function uploadWeekComponentResource(componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment'): Promise<WeekComponentUploadResult> {
+  assertComponentUploadAllowed(file);
   const form = new FormData();
   form.set('file', file);
   form.set('componentType', componentType);
-  const response = await fetch(`${API_BASE_URL}/curriculum/week-components/${encodeURIComponent(componentId)}/upload/`, { method: 'POST', body: form });
-  if (!response.ok) {
-    let detail = '';
-    try {
-      const payload = await response.json();
-      detail = payload?.error ? `: ${payload.error}` : '';
-    } catch {
-      detail = '';
-    }
-    throw new Error(`Week template API returned ${response.status} for upload${detail}`);
-  }
-  return response.json();
+  return uploadComponentFile<WeekComponentUploadResult>(`${API_BASE_URL}/curriculum/week-components/${encodeURIComponent(componentId)}/upload/`, form);
 }
 
 export async function fetchComponentPointsDefaults(): Promise<Partial<Record<ModuleComponentType, number>>> {

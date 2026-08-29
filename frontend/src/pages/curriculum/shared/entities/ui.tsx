@@ -118,6 +118,9 @@ export function EntityFilterBar({
   onReset,
   summary,
   trailing,
+  isDirty,
+  disabled,
+  searchDisabled,
 }: {
   search: string;
   onSearch: (value: string) => void;
@@ -126,8 +129,14 @@ export function EntityFilterBar({
   onReset: () => void;
   summary?: string;
   trailing?: ReactNode;
+  /** Override when a select is required context rather than a resettable filter. */
+  isDirty?: boolean;
+  /** Disable the full toolbar when there are no records to filter. */
+  disabled?: boolean;
+  /** Disable search while leaving contextual selects, such as Cohort, usable. */
+  searchDisabled?: boolean;
 }) {
-  const dirty = Boolean(search) || selects.some(select => select.value);
+  const dirty = !disabled && (isDirty ?? (Boolean(search) || selects.some(select => select.value)));
   return (
     <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
@@ -140,7 +149,8 @@ export function EntityFilterBar({
                 value={search}
                 onChange={event => onSearch(event.target.value)}
                 placeholder={placeholder}
-                className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-300"
+                disabled={disabled || searchDisabled}
+                className="h-10 w-full rounded-lg border border-background-200 bg-background-50 pl-9 pr-3 text-[13px] text-foreground-900 outline-none transition-smooth focus:border-primary-300 disabled:cursor-not-allowed disabled:bg-background-100 disabled:text-foreground-400"
               />
             </span>
           </label>
@@ -154,20 +164,20 @@ export function EntityFilterBar({
                 value={select.value}
                 onChange={select.onChange}
                 options={select.options}
-                disabled={select.disabled}
-                disabledHint={select.disabledHint}
+                disabled={disabled || select.disabled}
+                disabledHint={disabled ? 'Filters become available when this list has records.' : select.disabledHint}
                 ariaLabelledBy={`filter-${slug(select.label)}`}
                 placeholder={select.options[0]?.label || 'All'}
               />
             </div>
           ))}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:shrink-0 xl:justify-end">
           {trailing}
           <button
             type="button"
             onClick={onReset}
-            disabled={!dirty}
+            disabled={disabled || !dirty}
             className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-semibold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <AppIcon className="ri-refresh-line text-sm"></AppIcon>
@@ -386,7 +396,7 @@ export function NamedActions({ actions }: {
   }>;
 }) {
   return (
-    <span className="flex flex-wrap items-center justify-end gap-1.5 self-center">
+    <span className="flex flex-nowrap items-center justify-end gap-1.5 self-center">
       {actions.map(action => (
         <button
           key={action.label}
@@ -394,7 +404,7 @@ export function NamedActions({ actions }: {
           title={action.title}
           disabled={action.disabled}
           onClick={event => { event.stopPropagation(); action.onClick(); }}
-          className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-50 ${
             action.primary
               ? 'border-primary-600 bg-primary-600 text-white hover:bg-primary-700'
               : 'border-background-200 bg-background-50 text-foreground-600 hover:bg-background-100'
@@ -1155,8 +1165,8 @@ export function WorkspaceTabs({
   trailing?: ReactNode;
 }) {
   return (
-    <div className="sticky top-0 z-20 flex items-center gap-2 rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur">
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+    <div className="sticky top-0 z-20 flex flex-col gap-1.5 rounded-2xl border border-foreground-200/70 bg-background-50/95 p-1.5 shadow-sm backdrop-blur sm:flex-row sm:items-center sm:gap-2">
+      <div className="flex w-full min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
         {tabs.map(tab => (
           <button
             key={tab.key}
@@ -1178,7 +1188,11 @@ export function WorkspaceTabs({
           </button>
         ))}
       </div>
-      {trailing && <div className="flex shrink-0 items-center gap-2 border-l border-background-200 pl-2">{trailing}</div>}
+      {trailing && (
+        <div className="flex w-full items-center gap-2 border-t border-background-200 pt-1.5 sm:w-auto sm:shrink-0 sm:border-l sm:border-t-0 sm:pl-2 sm:pt-0">
+          {trailing}
+        </div>
+      )}
     </div>
   );
 }

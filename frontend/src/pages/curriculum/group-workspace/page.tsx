@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
@@ -9,6 +9,7 @@ import {
   findGroup,
   formatDateLabel,
   moduleIdentity,
+  namedCurriculumWorkspacePath,
   normaliseKey,
   programmeIdentity,
   resolveGroupContext,
@@ -42,6 +43,7 @@ const SESSION_GRID = 'grid grid-cols-[110px_minmax(170px,1.4fr)_minmax(140px,1fr
 
 export default function GroupWorkspacePage() {
   const { id = '' } = useParams();
+  const [searchParams] = useSearchParams();
   const {
     programmes, cohorts, groups, modules, coaches, tutors, holidays,
     loading, loaded, refreshing, error, reload, applyLocal,
@@ -64,6 +66,7 @@ export default function GroupWorkspacePage() {
   };
 
   const group = useMemo(() => findGroup(groups, id), [groups, id]);
+  const groupDisplayName = cleanText(group?.name) || cleanText(searchParams.get('groupName')) || 'Group';
   const context = useMemo(
     () => (group ? resolveGroupContext(group, cohorts, programmes) : null),
     [cohorts, group, programmes],
@@ -156,8 +159,9 @@ export default function GroupWorkspacePage() {
       roleLabel="Curriculum Designer"
       navItems={curriculumNavItems}
       workspaceLabel="Curriculum Studio"
-      pageTitle={group?.name || 'Group'}
+      pageTitle={groupDisplayName}
       pageSubtitle={context ? `${context.cohortName} · ${context.programmeName}` : 'Loading group'}
+      breadcrumbCurrentLabel={`Groups — ${groupDisplayName}`}
       userName="Rachel Myers"
       userRole="Curriculum Designer"
     >
@@ -171,10 +175,10 @@ export default function GroupWorkspacePage() {
             ...(context?.cohortId
               ? [{ label: context.cohortName, href: `/curriculum/cohorts/${encodeURIComponent(context.cohortId)}` }]
               : []),
-            { label: group?.name || id },
+            { label: groupDisplayName },
           ]}
           eyebrow="Group"
-          title={group?.name || 'Loading…'}
+          title={groupDisplayName}
           subtitle={context ? `${context.cohortName} · ${context.programmeName}` : ''}
           accentColor={group?.color}
           stats={[
@@ -233,7 +237,7 @@ export default function GroupWorkspacePage() {
               <DetailRow
                 label="Programme"
                 value={context?.programme ? (
-                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=delivery`} className="text-primary-700 hover:underline">
+                  <Link to={`/curriculum/programmes/${encodeURIComponent(programmeIdentity(context.programme))}?tab=groups`} className="text-primary-700 hover:underline">
                     {context.programmeName}
                   </Link>
                 ) : cleanText(context?.programmeName, '—')}
@@ -268,7 +272,7 @@ export default function GroupWorkspacePage() {
             renderRow={module => (
               <>
                 <StackedCell
-                  href={`/curriculum/modules/${encodeURIComponent(moduleIdentity(module))}`}
+                  href={namedCurriculumWorkspacePath('modules', moduleIdentity(module), module.name)}
                   primary={module.name}
                   secondary={`${module.weeks || 0} weeks · ${module.lessons || 0} lessons`}
                 />

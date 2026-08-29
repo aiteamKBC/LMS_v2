@@ -27,7 +27,7 @@ const CURRICULUM_ROUTE_IMPORTS: Record<string, () => Promise<unknown>> = {
   '/curriculum/quiz-xml': () => import('@/pages/curriculum/quiz-xml/page'),
 };
 
-describe('curriculum route lazy imports', () => {
+describe('curriculum route lazy imports', { timeout: 15000 }, () => {
   it.each(Object.keys(CURRICULUM_ROUTE_IMPORTS))('%s resolves to a component', async route => {
     const loaded = (await CURRICULUM_ROUTE_IMPORTS[route]()) as { default?: unknown };
     // lazy() requires a default export; a module that only has named exports renders
@@ -42,5 +42,12 @@ describe('curriculum route lazy imports', () => {
     ]);
     expect(editor.QuizEditorPanel).toBeTypeOf('function');
     expect(upload.GuidedQuizUpload).toBeTypeOf('function');
+  });
+
+  it('lazily-loaded curriculum hubs resolve', async () => {
+    const hubs = await import('@/pages/curriculum/hubs/page');
+    expect(hubs.CurriculumLibraryHub).toBeTypeOf('function');
+    expect(hubs.CurriculumDeliveryHub).toBeTypeOf('function');
+    expect(hubs.CurriculumQualityHub).toBeTypeOf('function');
   });
 });

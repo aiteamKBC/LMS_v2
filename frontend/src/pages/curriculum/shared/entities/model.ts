@@ -30,6 +30,21 @@ export function cleanText(value: unknown, fallback = ''): string {
 }
 
 /**
+ * Link to an entity workspace with its readable name alongside the canonical id.
+ * The id remains the API identity; the name lets the destination render useful
+ * headings and breadcrumbs immediately while the entity collection is loading.
+ */
+export function namedCurriculumWorkspacePath(kind: 'groups' | 'modules', identifier: unknown, name: unknown): string {
+  const id = cleanText(identifier);
+  if (!id) return `/curriculum/${kind}`;
+  const params = new URLSearchParams();
+  const label = cleanText(name);
+  if (label) params.set(kind === 'groups' ? 'groupName' : 'moduleName', label);
+  const query = params.toString();
+  return `/curriculum/${kind}/${encodeURIComponent(id)}${query ? `?${query}` : ''}`;
+}
+
+/**
  * A record's notes with the API's bookkeeping lines removed.
  *
  * Every module the API returns carries its parent chain appended to `notes` as

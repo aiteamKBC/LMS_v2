@@ -235,59 +235,56 @@ export const employerNavItems: SidebarNavItem[] = [
 // CURRICULUM STUDIO — Grouped sidebar
 // ============================================================================
 export const curriculumNavItems: SidebarNavItem[] = [
-  { id: 'curriculum-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/curriculum' },
+  { id: 'curriculum-home', label: 'Home', icon: 'ri-home-5-line', href: '/workspace/curriculum' },
   {
-    // The primary Curriculum navigation is entity-based: each record type has a
-    // page of its own, and exactly one form. The multi-step structure wizard that
-    // used to be a second way to create the same records is gone.
-    id: 'curriculum-group-manage',
-    label: 'Curriculum',
+    id: 'curriculum-programmes',
+    label: 'Programmes',
     icon: 'ri-stack-line',
-    href: '',
-    children: [
-      { id: 'curriculum-programmes', label: 'Programmes', icon: 'ri-stack-line', href: '/curriculum/programmes' },
-      { id: 'curriculum-cohorts', label: 'Cohorts', icon: 'ri-calendar-event-line', href: '/curriculum/cohorts' },
-      { id: 'curriculum-groups', label: 'Groups', icon: 'ri-team-line', href: '/curriculum/groups' },
-      { id: 'curriculum-module-builder', label: 'Module Builder', icon: 'ri-layout-4-line', href: '/curriculum/module-builder' },
-      { id: 'curriculum-teams-meetings', label: 'Teams Meetings', icon: 'ri-vidicon-line', href: '/curriculum/teams-meetings' },
-      // The calendar reads the same modules the entries above author, so it sits
-      // with them rather than alone in a group of its own.
-      { id: 'curriculum-session-calendar', label: 'Session Calendar', icon: 'ri-calendar-schedule-line', href: '/curriculum/session-calendar' },
-      { id: 'curriculum-holidays', label: 'Holidays', icon: 'ri-calendar-close-line', href: '/curriculum/holidays' },
-      { id: 'curriculum-free-courses', label: 'Free Courses', icon: 'ri-graduation-cap-line', href: '/curriculum/free-courses' },
-      { id: 'curriculum-week-builder', label: 'Week Builder', icon: 'ri-calendar-line', href: '/curriculum/week-builder' },
-      // KSB work reads top-down: the standard, the framework built from it, then
-      // the mapping of modules onto it.
-      { id: 'curriculum-standards', label: 'KSB Standards', icon: 'ri-file-list-3-line', href: '/curriculum/standards' },
-      { id: 'curriculum-ksb-frameworks', label: 'KSB Frameworks', icon: 'ri-bar-chart-line', href: '/curriculum/ksb-frameworks' },
-      { id: 'curriculum-ksb-mapping', label: 'KSB Mapping', icon: 'ri-link', href: '/curriculum/ksb-mapping' },
+    href: '/curriculum/programmes',
+  },
+  {
+    id: 'curriculum-library',
+    label: 'Library',
+    icon: 'ri-folder-open-line',
+    href: '/curriculum/library',
+    matchPaths: [
+      '/curriculum/module-builder',
+      '/curriculum/week-builder',
+      '/curriculum/free-courses',
+      '/curriculum/standards',
+      '/curriculum/ksb-frameworks',
+      '/curriculum/quiz-xml',
+      '/curriculum/question-bank',
+      '/curriculum/checkpoints',
     ],
   },
   {
-    id: 'curriculum-group-assessment',
-    label: 'Assessment Design',
-    icon: 'ri-question-answer-line',
-    href: '',
-    children: [
-      { id: 'curriculum-quiz-xml', label: 'Quiz Workspace', icon: 'ri-code-box-line', href: '/curriculum/quiz-xml' },
-      { id: 'curriculum-question-bank', label: 'Question Bank', icon: 'ri-questionnaire-line', href: '/curriculum/question-bank' },
-      { id: 'curriculum-quiz-archive', label: 'Quiz Archive', icon: 'ri-archive-line', href: '/curriculum/quiz-xml?status=archive' },
-      { id: 'curriculum-checkpoints', label: 'Checkpoint Assessments', icon: 'ri-check-double-line', href: '/curriculum/checkpoints' },
+    id: 'curriculum-delivery',
+    label: 'Delivery',
+    icon: 'ri-calendar-schedule-line',
+    href: '/curriculum/delivery',
+    matchPaths: [
+      '/curriculum/cohorts',
+      '/curriculum/groups',
+      '/curriculum/modules',
+      '/curriculum/teams-meetings',
+      '/curriculum/session-calendar',
+      '/curriculum/holidays',
     ],
   },
   {
-    id: 'curriculum-group-quality',
-    label: 'Quality & Publishing',
+    id: 'curriculum-quality',
+    label: 'Quality',
     icon: 'ri-shield-check-line',
-    href: '',
-    comingSoon: true,
-    children: [
-      { id: 'curriculum-version-control', label: 'Version Control', icon: 'ri-git-branch-line', href: '/curriculum/version-control', comingSoon: true },
-      { id: 'curriculum-qa', label: 'Curriculum QA', icon: 'ri-shield-check-line', href: '/curriculum/qa', comingSoon: true },
-      { id: 'curriculum-published', label: 'Published Curriculum', icon: 'ri-book-open-line', href: '/curriculum/published', comingSoon: true },
+    href: '/curriculum/quality',
+    matchPaths: [
+      '/curriculum/ksb-mapping',
+      '/curriculum/qa',
+      '/curriculum/reports',
+      '/curriculum/version-control',
+      '/curriculum/published',
     ],
   },
-  { id: 'curriculum-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/curriculum/reports', comingSoon: true },
 ];
 
 // ============================================================================
