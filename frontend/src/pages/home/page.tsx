@@ -2,7 +2,6 @@ import { useCountUp, useInView } from '@/hooks/useCountUp';
 import { BrandLockup } from '@/components/BrandLockup';
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
 import { PORTAL_WORKSPACES } from '@/lib/portalWorkspaces';
 
 // ── Workspaces shown as launch buttons on the home page ──
@@ -83,31 +82,31 @@ function CountUpStat({ end, suffix = '', prefix = '', duration = 1200, label }: 
 }
 
 export default function Home() {
-  const { previewAs } = useAuth();
   const navigate = useNavigate();
   const { ref: portalCardsRef, isInView: portalCardsInView } = useInView();
 
-  // Enter a section directly — sign in as its demo account, then route in.
   const [enrolmentChoiceOpen, setEnrolmentChoiceOpen] = useState(false);
   const [portalWave, setPortalWave] = useState(false);
 
-  // Enter a section directly — sign in as its demo account, then route in.
+  // Route into a section as yourself. This used to call `previewAs` first,
+  // entering as the section's demo account — which set a signed-in-looking UI
+  // with no server session behind it, so a visitor with no account could open a
+  // real workspace. The page is behind RequireAuth now, so whoever is here is
+  // already signed in and keeps their own identity through the click; what they
+  // may actually read is decided by the API, per their session.
   const enterWorkspace = (section: WorkspaceSection) => {
-    previewAs(section.email);
     navigate(section.workspacePath);
   };
 
-  // Enrolment-type choices from the modal — both sign in as the compliance
-  // demo account (the enrolment section's account) before routing in.
+  // Enrolment-type choices from the modal. Same reasoning as `enterWorkspace`:
+  // both used to switch the browser into the compliance demo account first.
   const chooseApprenticeshipEnrolment = () => {
     setEnrolmentChoiceOpen(false);
-    previewAs('compliance@kbc.test');
     navigate('/users');
   };
 
   const choosedelivery = () => {
     setEnrolmentChoiceOpen(false);
-    previewAs('compliance@kbc.test');
     navigate('/users');
   };
 
